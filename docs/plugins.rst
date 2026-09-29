@@ -1496,6 +1496,13 @@ and its ROS interface -- topic, type, service, action, frames, rate, QoS -- stay
    worlds that use the plugin, before and after, together with the messages its outputs fill; both
    must be equal. A test that called ``write(payload)`` passes the mapping of parameters.
 
+An endpoint that only carries a model's fixed frames returns them with ``static: true``
+(``roqsim.frames.static_transforms_of`` turns the frame dicts into ``Transforms``); a plugin that
+still builds its endpoints by hand adds ``roqsim.frames.static_tf_endpoint``, which does the same.
+Where a ``static_tf`` hint on an endpoint with nothing else to publish becomes such an endpoint, its
+transforms are unchanged: they are sent once on the latched ``/tf_static`` on the first step, and the
+idle ``tf`` publisher the hint's endpoint held goes.
+
 What stays hand-built: a port whose name or number is only known *during* the run, and a plugin's
 own transport thread (``px4_sitl``'s socket reader posts what it received; that is not an endpoint).
 
@@ -1508,22 +1515,14 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
    * - Package
      - Plugins (endpoints)
      - Needs
-   * - ``roqsim`` (core plugins and helpers)
-     - ``bumper`` (``bumper/<zone>``), ``clearance_monitor``, ``contact_impulse``,
-       ``contact_location``, ``contact_monitor``, ``energy_monitor`` (``battery``),
-       ``joint_state_publisher``, ``model_override`` (``override`` command, one ``out`` per
-       target), ``spawn_model`` (``<entity>_pose``), and ``roqsim.frames.static_tf_endpoint``
-       (``frames``, used by ``spawn_robot`` and ``spawn_sensor``)
-     - families: ``bumper``, ``model_override``; owner: ``model_override`` (its own name),
-       ``spawn_model`` (the entity it spawns)
    * - ``roqsim_sensors``
      - ``camera_common`` (``image``, ``image_compressed``, ``camera_info``), ``depth_camera``
        (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),
        ``segmentation_camera`` (``labels``, ``instances``, ``detections``), ``lidar_common``,
        ``imu``, ``gnss`` (``fix``), ``object_detector`` (``detections``), ``force_limit``,
        ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
-       per fault), ``spawn_sensor`` (``frames``)
-     - families: ``live_config``; owner: ``spawn_sensor`` (the sensor entity)
+       per fault)
+     - families: ``live_config``
    * - ``roqsim_mobile``
      - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
        ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)

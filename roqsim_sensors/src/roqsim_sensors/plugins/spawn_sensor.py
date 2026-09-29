@@ -232,13 +232,13 @@ import math
 import mujoco
 import numpy as np
 
-from roqsim import raycast
+from roqsim import endpoint, raycast
 from roqsim.context import Entity, SimContext
 from roqsim.frames import (
     add_frame_sites,
     parse_frames,
-    static_tf_endpoint,
     static_transforms,
+    static_transforms_of,
     substitute,
 )
 from roqsim.manifest import (
@@ -256,6 +256,7 @@ from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import config_pose, config_pose_errors
 from roqsim.registry import resolve_plugin
 from roqsim.schema import Field
+from roqsim.types import Transforms
 
 from .camera_common import DEPTH_CAMERA_SUFFIX
 
@@ -793,6 +794,7 @@ class SpawnSensorPlugin(Plugin):
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.sensor_name = self.address
+        self._links: list[dict] = []  # the fixed frames published as static transforms
         self.prefix = self.config.get("prefix", "")
         self.pos, self.quat = config_pose(self.config)
         # `motion` names who owns the mount's pose, in the same three answers `spawn_model` uses
@@ -1351,6 +1353,15 @@ class SpawnSensorPlugin(Plugin):
                 },
             )
         )
-        links = self._frame_links(ctx)
-        if links:
-            ctx.interface.add(static_tf_endpoint("frames", self.sensor_name, namespace, links))
+        self._links = self._frame_links(ctx)
+
+    @property
+    def endpoint_owner(self) -> str:
+        """The mount's frames belong to the sensor entity it registers, not to its carrier."""
+        return self.sensor_name
+
+    # Named `frames` on the wire; the method is not, since `self.frames` holds the parsed frames.
+    @endpoint.out(name="frames", when="_links", ros2={"static": True})
+    def static_frames(self) -> Transforms:
+        """The mount's fixed frames, sent once as static transforms."""
+        return static_transforms_of(self._links)

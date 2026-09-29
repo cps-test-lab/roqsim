@@ -13,6 +13,7 @@ import pytest
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugins.joint_state_publisher import JointStatePublisherPlugin
+from roqsim.types import JointState
 
 SCENE = """
 <mujoco model="jsp_test">
@@ -61,6 +62,7 @@ def _plugin(**cfg):
     plugin = JointStatePublisherPlugin(dict(cfg), entity="robot")
     assert plugin.validate_config(dict(cfg)) == []
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     return ctx, plugin
 
 
@@ -68,7 +70,8 @@ def test_every_scalar_joint_of_the_entity_and_nothing_else():
     """Driven and passive together; the ball joint and the other body's joint left out; names
     without the spawn prefix."""
     ctx, plugin = _plugin()
-    names, pos, vel, eff = plugin.read_joint_states()
+    js = plugin.joint_states()
+    names, pos, vel, eff = js.names, js.positions, js.velocities, js.efforts
     assert names == ["wheel_joint", "drop_joint"]
     assert len(pos) == len(vel) == len(eff) == 2
 
@@ -79,7 +82,8 @@ def test_the_state_is_the_joints_state():
     for _ in range(200):
         mujoco.mj_step(ctx.model, ctx.data)
         plugin.post_step(ctx)
-    names, pos, vel, eff = plugin.read_joint_states()
+    js = plugin.joint_states()
+    pos, vel, eff = js.positions, js.velocities, js.efforts
     assert vel[0] == pytest.approx(5.0, abs=0.5)
     assert abs(pos[0]) > 0.1
     assert eff[0] != 0.0, "a driven joint reports the actuator's generalised force"
@@ -88,7 +92,7 @@ def test_the_state_is_the_joints_state():
 
 def test_joints_restricts_and_orders_the_message():
     ctx, plugin = _plugin(joints=["drop_joint"])
-    assert plugin.read_joint_states()[0] == ["drop_joint"]
+    assert plugin.joint_states().names == ["drop_joint"]
 
 
 def test_one_endpoint_named_joint_states():
@@ -96,8 +100,9 @@ def test_one_endpoint_named_joint_states():
     (ep,) = ctx.interface.all()
     assert ep.name == "joint_states"
     assert ep.rate_hz == 62.0
-    assert ep.backend["ros2"]["type"] == "sensor_msgs.msg.JointState"
-    assert ep.backend["ros2"]["topic"] == "joint_states"
+    # A JointState needs no hint: a bridge maps the type, on the endpoint's own name.
+    assert ep.result.cls is JointState
+    assert ep.backend == {}
 
 
 @pytest.mark.parametrize(

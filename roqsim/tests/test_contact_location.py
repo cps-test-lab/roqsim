@@ -365,5 +365,6 @@ def test_the_point_is_stamped_in_the_frame_its_coordinates_are_in(frame):
         assert point == pytest.approx([0.2, 0.0, 0.0], abs=0.05), "the ball is dead ahead"
     assert [r.x, r.y, r.z] == pytest.approx(point.tolist(), abs=1e-9)
 
+    plugin.register_endpoints(ctx)
     hints = ctx.interface.find("robot", "contact_location").backend["ros2"]
     assert hints["frame_id"] == ("base_link" if frame == "base" else "world")
