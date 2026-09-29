@@ -293,7 +293,7 @@ class InProcessAccess(WorldAccess):
             raise AccessError(
                 f"entity {name!r} has no navigator, so nothing can drive it. A `navigator` component "
                 f"must be nested under the entry that provides it (spawn_robot, spawn_model with "
-                f"`mocap: true`, or walker). This world can navigate: "
+                f"`motion: driven`, or walker). This world can navigate: "
                 f"{', '.join(offered) if offered else '(nothing)'}."
             )
         return handle

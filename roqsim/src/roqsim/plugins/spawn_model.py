@@ -44,9 +44,10 @@ the default), **welded** scenery (``static``), or a **mocap** body some plugin d
 it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
 and a robot bumps into. Its pose is written every step by whoever owns it -- a ``navigator``
 component nested under this entry, say -- rather than integrated. That is what a *controlled* obstacle
-is: it goes where the experiment says, and the robot under test cannot shove it off course. Like
-``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
-rather than a joint), so a repetition never inherits where the last one left it.
+is: it goes where the experiment says, and the robot under test cannot shove it off course. Like a
+``physics`` prop, it is re-seated at its spawn pose on ``on_reset`` (through
+``mocap_pos``/``mocap_quat`` rather than a joint), so a repetition never inherits where the last one
+left it.
 
 ``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves --
 a box a robot can pick up. It also registers the joint as the entity's
@@ -532,7 +533,7 @@ class SpawnModelPlugin(Plugin):
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: motion: driven, but {asset.path} gives its root body "
                 f"a joint. A mocap body has no degrees of freedom, so the articulation would be "
-                f"inert -- spawn it without `mocap`."
+                f"inert -- spawn it with `motion: physics` or `motion: static`."
             )
         root.mocap = True
 

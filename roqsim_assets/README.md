@@ -113,7 +113,7 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   deliberately: a scene is what an occupancy grid gets generated *from*, so a baked obstacle lands in
   the map — and an experiment about *unknown* obstacles then has none. Round vs square is not
   cosmetic where clearance is the subject: two diagonally adjacent boxes of the cell pitch seal the
-  diagonal, two tangent cylinders leave a gap. `box` also takes `free: true`, which adds a free joint
+  diagonal, two tangent cylinders leave a gap. `box` defaults to `motion: physics`, which adds a free joint
   and registers it as the entity's `base_joint` — the prerequisite for `simulation_interfaces`'
   `SetEntityState`. That is how an obstacle *appears* mid-trial: roqsim never recompiles the model at
   runtime, so a box that must show up on cue is compiled in up front, parked out of the way, and
