@@ -48,7 +48,9 @@ class PayloadPlugin(Plugin):
         self._bid = -1
 
     #: Declared once, so `roqsim plugins describe payload` publishes the same keys the checks run
-    #: on -- with their types, units and bounds, which a docstring cannot give a caller.
+    #: on -- with their types, units and bounds, which a docstring cannot give a caller. Complete,
+    #: which is what makes `STRICT_KEYS` safe: a misspelt `mas` would otherwise be refused only as a
+    #: missing `mass`, and a misspelt `bdy` would load the root body without a word.
     CONFIG_SCHEMA = {
         "mass": Field(
             float,
@@ -64,6 +66,7 @@ class PayloadPlugin(Plugin):
             str, default="", static=True, doc="entity that carries it (default: the owning entity)"
         ),
     }
+    STRICT_KEYS = True
 
     def validate_config(self, config: dict) -> list[str]:
         # The mechanical half from the declaration; the rest is what only this plugin knows.

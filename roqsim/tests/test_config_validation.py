@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from roqsim.config import instantiate_plugins, load_config_from_dict
+from roqsim.config import SIM_KEYS, SIM_OPTION_KEYS, instantiate_plugins, load_config_from_dict
 from roqsim.plugin import Plugin, PluginError
 
 
@@ -126,6 +126,66 @@ def test_view_accepts_the_camera_keys():
         "follow_heading": True,
     }
     assert load_config_from_dict({"sim": {"view": view}, "components": []}).view == view
+
+
+#: A value each ``sim`` key accepts.
+_SIM_SAMPLES = {
+    "cone": "elliptic",
+    "contact_override": {"solref": [0.02, 1]},
+    "dedup_assets": False,
+    "density": 1.2,
+    "gravity": [0, 0, 0],
+    "impratio": 10,
+    "integrator": "rk4",
+    "iterations": 50,
+    "ls_iterations": 20,
+    "name": "Lab",
+    "noslip_iterations": 3,
+    "pacing": "asap",
+    "seed": 7,
+    "solver": "newton",
+    "sync": {"enabled": False},
+    "timestep": 0.002,
+    "view": {"azimuth": 90},
+    "viscosity": 1.8e-5,
+    "wind": [1, 0, 0],
+    "world": "world.xml",
+}
+
+
+def test_sim_samples_cover_the_keys():
+    assert set(_SIM_SAMPLES) == SIM_KEYS
+
+
+def test_each_option_key_is_a_sim_key_and_a_mujoco_option_field():
+    """The engine sets these on ``spec.option`` by their own names, and the loader admits them."""
+    import mujoco
+
+    option = mujoco.MjSpec().option
+    assert set(SIM_OPTION_KEYS) <= SIM_KEYS
+    assert [k for k in SIM_OPTION_KEYS if not hasattr(option, k)] == []
+
+
+@pytest.mark.parametrize("key", sorted(SIM_KEYS))
+def test_sim_accepts_each_key(key):
+    cfg = load_config_from_dict({"sim": {key: _SIM_SAMPLES[key]}, "components": []})
+    assert cfg.sim == {key: _SIM_SAMPLES[key]}
+
+
+@pytest.mark.parametrize("key", ["foo", "headless"])
+def test_sim_refuses_unknown_keys(key):
+    with pytest.raises(PluginError, match=f"sim: unknown key\\(s\\) '{key}'"):
+        load_config_from_dict({"sim": {key: 1, "pacing": "asap"}, "components": []})
+
+
+def test_sim_refuses_unknown_key_from_an_override():
+    with pytest.raises(PluginError, match="sim: unknown key\\(s\\) 'foo'"):
+        load_config_from_dict({"components": []}, overrides={"sim": {"foo": 1}})
+
+
+def test_sim_unknown_key_names_the_nearest():
+    with pytest.raises(PluginError, match="'timestp' \\(did you mean 'timestep'\\?\\)"):
+        load_config_from_dict({"sim": {"timestp": 0.002}, "components": []})
 
 
 def test_view_rejects_unknown_keys():
