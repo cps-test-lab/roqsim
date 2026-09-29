@@ -200,6 +200,21 @@ def _refusal(route, make) -> str:
     return f"failed: {outcome.detail}"
 
 
+class _MotionOf:
+    """What entity_moved and entity_rotated ask of a pose: that it can change at all."""
+
+    def __init__(self, access, name):
+        self._access, self._name = access, name
+
+    def poll(self):
+        from scenario_execution_roqsim.access import immovable
+
+        pose = self._access.ground_truth_pose(self._name)
+        if pose is not None and not pose.movable:
+            raise immovable(self._name)
+        return pose
+
+
 REFUSALS = {
     "an unknown command": lambda a: a.call_endpoint("parcel", "arn"),
     "a producer's refusal": lambda a: a.call_endpoint("parcel", "arm"),
@@ -215,6 +230,7 @@ REFUSALS = {
     "a field that is not a single value": lambda a: a.entity_report("parcel", "tank", "gauges"),
     "a pose of an unknown entity": lambda a: a.ground_truth_pose("parcle"),
     "a pose of a name no entity has": lambda a: a.ground_truth_pose("ghost"),
+    "motion of a welded entity": lambda a: _MotionOf(a, "prop"),
 }
 
 
@@ -439,13 +455,6 @@ WHERE = {
     "outside a box": ("region", dict(entity="cart", region=BOX_ELSEWHERE, outside=True), "SUCCESS"),
     "inside a polygon": ("region", dict(entity="cart", region=TRIANGLE_AT_CART), "SUCCESS"),
     "in a polygon's notch": ("region", dict(entity="cart", region=L_AROUND_CART), "RUNNING"),
-    # A welded entity has a pose on both routes, and never moves.
-    "a welded entity has not moved": (
-        "moved",
-        dict(entities=["prop"], threshold=0.05),
-        "RUNNING",
-    ),
-    "a welded entity has not turned": ("rotated", dict(entities=["prop"], angle=0.1), "RUNNING"),
 }
 
 
@@ -575,6 +584,24 @@ def test_an_absent_entity_is_waited_for_alike_on_both_routes(
         "entity 'parcel' is absent (deleted, or not spawned yet): nothing can see or touch it, so "
         "it has no pose until it is spawned.",
     )
+
+
+@pytest.mark.parametrize("condition", ["entity_moved", "entity_rotated"])
+def test_waiting_for_a_welded_entity_to_move_is_refused_alike_on_both_routes(
+    routes, tmp_path, monkeypatch, condition
+):
+    """It can never happen, so it fails at once rather than as a slow timeout."""
+    pytest.importorskip("scenario_execution")
+    from scenario_execution.actions.base_action import ActionError
+
+    kind, args = CONDITIONS[condition]
+    texts = []
+    for route in ("in-process", "control socket"):
+        with pytest.raises(ActionError) as err:
+            _judge(routes, route, tmp_path, monkeypatch, kind, args("prop"))
+        texts.append(str(err.value).replace(f" ({route})", ""))
+    assert texts[0] == texts[1]
+    assert "'prop' is welded to the world" in texts[0]
 
 
 def test_a_condition_resumes_when_the_absent_entity_is_spawned(routes, tmp_path, monkeypatch):

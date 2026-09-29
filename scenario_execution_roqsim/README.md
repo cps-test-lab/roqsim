@@ -155,6 +155,10 @@ scenario delivery:
 - **Entities, not bodies.** Every condition reads the core's `sim/entities/<name>/pose`, the same
   endpoint on both routes, so it names entities (the world's `name:`), and a welded entity (a
   shelf) is a valid target on both.
+- **Waiting for a welded entity to move is refused.** `entity_moved` and `entity_rotated` refuse an
+  entity welded to the world at once, with the same text on both routes: the pose endpoint reports
+  `movable: false`, its pose never changes, and a condition that can never be met must not look
+  like a slow timeout.
 
 ## One action, two transports
 

@@ -10,7 +10,8 @@ otherwise wonder why this number is smaller.
 
 Works over both transports: the pose is the core's ``sim/entities/<name>/pose`` either way, read
 in-process or over the control socket, keyed by the entity's name. An entity that is absent
-(deleted, or not spawned yet) is waited for; a name the world never had is refused. See
+(deleted, or not spawned yet) is waited for; a name the world never had, and an entity welded to
+the world (whose pose never changes), are refused. See
 :mod:`scenario_execution_roqsim.access`.
 """
 

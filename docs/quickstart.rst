@@ -1121,7 +1121,8 @@ Every ``entity_*`` condition (``entity_moved``, ``entity_rotated`` and these) re
 ``sim/entities/<name>/pose`` on both transports, so it names entities, not bodies. An entity that
 exists but is absent (deleted, or not spawned yet) is nowhere, so the condition waits for it and says
 so; a name the world never had is refused at once, naming the closest names, with the same text on
-both transports.
+both transports. ``entity_moved`` and ``entity_rotated`` also refuse an entity welded to the world
+(the pose endpoint's ``movable: false``), whose pose can never change.
 
 Each works in a stepped run *and* against a simulator in another process, unedited: the transport is
 chosen from what the runner offered. In-process they read ``MujocoSim.context`` (entity poses,

@@ -14,7 +14,7 @@ from __future__ import annotations
 import py_trees
 from scenario_execution.actions.base_action import ActionError
 
-from ..access import AccessError, EntityAbsent, Pose
+from ..access import AccessError, EntityAbsent, Pose, immovable
 from ..base import SimAction
 
 
@@ -92,6 +92,9 @@ class EntityCondition(SimAction):
         try:
             for name in self._entities:
                 poses[name] = self._access.ground_truth_pose(name)
+                if poses[name] is not None and not poses[name].movable:
+                    # A condition that can never be met fails now, not as a slow timeout.
+                    raise immovable(name)
         except EntityAbsent as err:
             # Deleted, or not spawned yet: nowhere, so nothing has moved. A name the world never
             # had raises instead (below), on the first tick. A dwell does not survive it.

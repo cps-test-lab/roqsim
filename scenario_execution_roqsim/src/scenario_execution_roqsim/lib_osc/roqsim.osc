@@ -28,7 +28,9 @@ enum entity_quantifier: [ all, any ]
 # and over the control socket alike, so they name ENTITIES (the world's `name:`), not bodies or TF
 # frames. A name the world never had is refused at once, naming the closest ones. An entity that
 # exists but is absent (deleted, or not spawned yet) is nowhere: the condition waits for it, and
-# its feedback says so.
+# its feedback says so. entity_moved and entity_rotated also refuse, at once, an entity welded to
+# the world: its pose never changes, so the condition could never be met. A welded entity (a shelf)
+# is a valid subject for the others.
 
 action entity_moved:
     # Succeed once the named entities have been DISPLACED from where they were when this action

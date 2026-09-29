@@ -79,10 +79,12 @@ class Pose:
     MuJoCo's ``xquat`` order, which is also the order the bridge fills
     ``geometry_msgs/Quaternion`` in (``sim_interfaces._get_entity_state``), so the two transports
     hand back the same numbers in the same order and the caller never asks which it is talking to.
+    ``movable`` is false for a body welded to the world, whose pose never changes.
     """
 
     pos: np.ndarray
     quat: np.ndarray
+    movable: bool = True
 
 
 @dataclass(frozen=True)
@@ -454,6 +456,16 @@ def pose_reading(name: str, payload) -> Pose:
     return Pose(
         pos=np.asarray(get("position"), dtype=float),
         quat=np.asarray(get("orientation"), dtype=float),
+        movable=bool(get("movable")),
+    )
+
+
+def immovable(name: str) -> AccessError:
+    """Why a condition on *name*'s motion can never be met: it is welded to the world."""
+    return AccessError(
+        f"entity {name!r} is welded to the world: its pose never changes, so waiting for it to "
+        "move or turn never ends. Give it a free joint (`motion: physics` on a spawn_model) or "
+        "drive it (`motion: driven`), or name something that can move."
     )
 
 

@@ -281,8 +281,8 @@ def test_an_unknown_entity_raises_and_names_the_near_miss(world):
         action.update()
 
 
-def test_a_welded_entity_is_measured_like_any_other(world):
-    """Its pose is the core's, as for any entity: it never moves, so the condition keeps waiting."""
+def test_a_welded_entity_raises_rather_than_waiting_forever(world):
+    """Its pose is a compile-time constant, so "wait until it moves" can never be satisfied."""
     ctx, clock, sim = world
     ctx.entities.add(Entity(name="ramp_entity", kind="prop", body="world"))
     action = _start(
@@ -295,9 +295,8 @@ def test_a_welded_entity_is_measured_like_any_other(world):
         dwell=0.0,
         require="all",
     )
-    _step(ctx, clock, seconds=0.2)
-    assert action.update() is RUNNING
-    assert action.feedback_message.startswith("ramp_entity 0/+50mm distance")
+    with pytest.raises(ActionError, match="'ramp_entity' is welded to the world"):
+        action.update()
 
 
 def test_an_entity_not_spawned_yet_is_waited_for_and_measured_from_when_it_appears(world):
