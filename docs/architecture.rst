@@ -828,12 +828,14 @@ tuples; an ``in`` endpoint names its type (``@endpoint.stream(Twist)``) and take
 by name, and ``Endpoint.payload_type`` says what a transport carries. A bridge passes parameters by
 name, and ``write`` refuses a missing, unknown or mistyped one before queueing
 (:class:`~roqsim.endpoint.ParameterError`). Options name attributes or config keys (``rate=``,
-``when=``, ``each=``) rather than wrapping them in callables; the owner and namespace come from the
+``when=``, ``lazy=``, ``each=``) rather than wrapping them in callables; the owner and namespace come from the
 plugin (``endpoint_owner``, ``endpoint_namespace``; ``owner=`` for one that belongs elsewhere).
 **The engine registers** a plugin's endpoints right after its ``configure``
 (``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a bridge
 listed later binds them; it then applies the plugin's ``qos:`` to every endpoint the plugin
-registered, and the framework records its ``topics:`` renames as ``Endpoint.topic``.
+registered, and the framework records its ``topics:`` renames as ``Endpoint.topic`` and renders a
+hint topic that names a sibling endpoint (``"{image}/compressed"``) from where that sibling is
+carried (:func:`roqsim.endpoint.topic_of`).
 :func:`roqsim.endpoint.declared` lists a class's endpoints with that schema without a world, and
 ``roqsim plugins describe`` publishes them, with how each installed transport (the
 ``roqsim.transports`` entry points) carries them. A port known only at run time is added with
@@ -904,7 +906,8 @@ scalar maps to its message (``Twist`` to ``geometry_msgs/Twist``, ``Odometry`` t
 ``nav_msgs/Odometry``, ...) with a converter each way, a ``stamped`` hint choosing between a
 message and its stamped form. ``typemap.resolve`` gives an endpoint's effective hints -- the
 message ``type`` (or a ``std_srvs/Trigger`` service for a command without parameters), the
-``topic`` (the world's ``topics:`` name, else the hint's, else the endpoint's name), the ``qos``
+``topic`` (:func:`roqsim.endpoint.topic_of`: the world's ``topics:`` name, else the hint's, else
+the endpoint's name), the ``qos``
 (the world's ``qos:``, else the hint's, else ``default``: reliable, depth 10) and the producer's own
 frames -- and the converters. A dataclass without a row maps **by field name** onto the message its
 hint names, checked when the bridge binds it: a field that does not fit is refused by name, never
