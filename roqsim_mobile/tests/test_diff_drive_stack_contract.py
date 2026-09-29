@@ -110,7 +110,8 @@ def test_publish_joint_states_false_leaves_the_topic_to_a_joint_state_publisher(
     engine = _engine({"publish_joint_states": False}, extra=[{"joint_state_publisher": {}}])
     try:
         (joints,) = _endpoints(engine, "joint_states")
-        names, pos, vel, eff = joints.read()
+        state = joints.read()
+        names, pos, vel, eff = state.names, state.positions, state.velocities, state.efforts
         assert "left_wheel_joint" in names and "right_wheel_joint" in names
         assert len(pos) == len(vel) == len(eff) == len(names)
         drive = next(p for p in engine.plugins if isinstance(p, DiffDrivePlugin))
@@ -120,7 +121,7 @@ def test_publish_joint_states_false_leaves_the_topic_to_a_joint_state_publisher(
         for _ in range(500):
             engine.step()
         i = names.index("left_wheel_joint")
-        assert abs(float(joints.read()[2][i])) > 1.0
+        assert abs(float(joints.read().velocities[i])) > 1.0
     finally:
         engine.shutdown()
 

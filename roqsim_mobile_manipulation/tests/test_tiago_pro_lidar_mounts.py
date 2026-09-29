@@ -202,7 +202,7 @@ def test_the_static_tf_and_topic_are_pals(engine, label):
     endpoints = {(e.owner, e.name): e for e in engine.ctx.interface.all()}
     tfs = endpoints[(f"tp.{label}", "frames")]
     assert tfs.namespace == NAMESPACE
-    (tf,) = tfs.backend["ros2"]["static_tf"]
+    (tf,) = [vars(t) for t in tfs.read().transforms]
     assert (tf["parent"], tf["child"]) == ("base_link", frame)
     np.testing.assert_allclose(tf["translation"], xyz, atol=1e-9)
     assert abs(abs(float(np.dot(tf["rotation"], rpy_to_quat(*rpy)))) - 1.0) < 1e-9
