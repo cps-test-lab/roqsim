@@ -22,7 +22,8 @@ from .registry import resolve_plugin
 
 #: Every key a manifest may carry at its top level: ``components`` (or its alias ``plugins``) and
 #: ``extends`` read here, ``assets`` in :mod:`roqsim.models`,
-#: ``fov``/``frames``/``frame_id``/``device_name``/``license`` by the accessors below.
+#: ``fov``/``frames``/``frame_id``/``device_name``/``license`` by the accessors below,
+#: ``end_effector`` by ``spawn_arm`` (the site an arm mounts a tool at).
 #: :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would load a model with no
 #: frames.
 MANIFEST_KEYS = frozenset(
@@ -36,6 +37,7 @@ MANIFEST_KEYS = frozenset(
         "frame_id",
         "device_name",
         "license",
+        "end_effector",
     }
 )
 
