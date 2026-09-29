@@ -80,7 +80,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 import mujoco
-import numpy as np
 
 from roqsim import endpoint
 from roqsim.actuators import (
@@ -93,13 +92,19 @@ from roqsim.actuators import (
     validate_override as validate_actuators,
 )
 from roqsim.context import Entity, SimContext
-from roqsim.frames import add_frame_sites, parse_frames, static_transforms, tf_anchors
+from roqsim.frames import (
+    add_frame_sites,
+    parse_frames,
+    static_transforms,
+    static_transforms_of,
+    tf_anchors,
+)
 from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import PoseError, parse_pose, yaw_of
 from roqsim.schema import Field
-from roqsim.types import Transform, Transforms
+from roqsim.types import Transforms
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -342,17 +347,7 @@ class SpawnRobotPlugin(Plugin):
     @endpoint.out(when="frame_links", ros2={"static": True})
     def frames(self) -> Transforms:
         """The robot's fixed frames, with bare names, sent once as static transforms."""
-        return Transforms(
-            [
-                Transform(
-                    link["parent"],
-                    link["child"],
-                    np.array(link["translation"]),
-                    np.array(link["rotation"]),
-                )
-                for link in self.frame_links
-            ]
-        )
+        return static_transforms_of(self.frame_links)
 
     def _root_links(
         self, ctx: SimContext, base_body: str, anchors: dict[str, str]
