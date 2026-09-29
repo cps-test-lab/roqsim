@@ -319,9 +319,18 @@ def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
         clash = seen.get(spec.label)
         if clash is not None:
             where = f"'{owner}'" if owner else "this document"
+            # Top-level entries are the ones `extends:` inherits, and re-declaring one to swap it
+            # is the usual way to land here -- so say how to replace it, not only how to rename.
+            replace = (
+                f" To replace an inherited '{spec.label}' with this one, write "
+                f"'disable: [{spec.label}]' beside 'extends:'."
+                if owner is None
+                else ""
+            )
             raise PluginError(
                 f"{where} has two components labelled '{spec.label}' ({clash.ref} and {spec.ref}). "
-                f"A label addresses one component, so give at least one of them a 'name:' of its own."
+                f"A label addresses one component, so give at least one of them a 'name:' of its "
+                f"own.{replace}"
             )
         seen[spec.label] = spec
 
@@ -994,6 +1003,11 @@ def _resolve_targets(
                 out.append((spec, ()))
             continue
         segment = rest[i]
+        # A disabled entry a live sibling replaces is not addressable (see `_replaced_by_live`):
+        # `robot` names the robot that runs, and a value meant for it does not also land on the one
+        # it replaced.
+        live = {c.label for c in siblings if c.enabled}
+        siblings = [c for c in siblings if c.enabled or c.label not in live]
         children = siblings if segment == _WILDCARD else [c for c in siblings if c.label == segment]
         if not children:
             # A segment straight after a wildcard has to name a component -- see the docstring.
@@ -1738,18 +1752,29 @@ def expand_document(
     that reaches the same model file twice, or nests deeper than :data:`_MAX_EXPANSION_DEPTH`, is
     refused with the chain named.
 
+    **A disabled entry that a live sibling replaces is not expanded** (:func:`_replaced_by_live`).
+    Everything here is keyed on addresses -- a manifest's dedupe, a mount finding its carrier, the
+    wait for an owner -- and ``disable:`` leaves the inherited entry in the document, so a world that
+    disables its parent's ``robot`` and declares its own holds two entries at one address. The
+    replaced one and what it owns stay in the list, in the record and turned off, but nothing looks
+    them up: otherwise the live robot dedupes its manifest against the dead one's injected copies
+    and loses every one of them, or takes the dead model's defaults into the overrides it declares.
+
     Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
     """
     effective: list[PluginSpec] = []
     unresolved: list[tuple[str, str]] = []
+    replaced = _replaced_by_live(declared)
     # Handed to every `expand`, and grown by what each returns, so a nested producer dedupes against
     # what the world AND an outer manifest already said for its entity.
-    world: list[PluginSpec] = list(declared)
+    world: list[PluginSpec] = [s for s in declared if id(s) not in replaced]
     landed: set[str] = set()
     waiting: dict[str, list[tuple[PluginSpec, tuple]]] = {}
 
     def place(spec: PluginSpec, chain: tuple) -> None:
         effective.append(spec)
+        if id(spec) in replaced:
+            return
         landed.add(spec.address)
         try:
             cls = resolve_plugin(spec.ref, base_dir=base_dir)
@@ -1788,6 +1813,35 @@ def expand_document(
             f"`expand` must wire what it returns to its own address or to one of its components."
         )
     return effective, unresolved
+
+
+def _replaced_by_live(declared: list[PluginSpec]) -> set[int]:
+    """The declared specs a live sibling replaces, and everything they own, by identity.
+
+    A disabled entry is replaced when an enabled sibling -- same owner, same label -- exists: the
+    shape ``extends`` + ``disable: [robot]`` + a new ``robot`` leaves. Siblings are read from the
+    declared tree rather than from addresses, which are exactly what the two share. A disabled entry
+    with no live twin is not replaced: it expands as it always did, so an override reaching below
+    it still has a target. An override naming the shared address reaches the live entry alone
+    (:func:`_resolve_targets`).
+    """
+    out: set[int] = set()
+
+    def drop(spec: PluginSpec) -> None:
+        out.add(id(spec))
+        for child in spec.children:
+            drop(child)
+
+    def walk(siblings: list[PluginSpec]) -> None:
+        live = {s.label for s in siblings if s.enabled}
+        for spec in siblings:
+            if not spec.enabled and spec.label in live:
+                drop(spec)
+            else:
+                walk(spec.children)
+
+    walk([s for s in declared if s.entity is None])
+    return out
 
 
 #: How many expansions one chain may nest: a world's robot, the device it mounts, a device on that

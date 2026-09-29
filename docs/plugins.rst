@@ -1134,8 +1134,9 @@ load's energy instead of drawing it from the pack::
          - energy_monitor: {efficiency: 0.85, idle_w: 35.0, resistive_w_per_nm2: 0.012}
 
 The torque metered is the one a real drive supplies: the actuator's own force **plus its share of
-the gravity-compensation force**. MuJoCo carries a compensated arm's weight outside the actuator, so
-``actuator_force`` reads exactly zero on a joint holding a payload against gravity -- and since every
+the gravity-compensation force**. MuJoCo adds a compensated joint's gravity term to
+``qfrc_actuator`` after the actuator's own force is computed, so ``actuator_force`` reads exactly zero
+on a joint holding a payload against gravity -- and since every
 position- and impedance-driven arm is compensated, metering it alone would report an arm that is free
 to hold a load up and free to lift one. It is the same quantity ``arm_controller`` reports as a
 joint's effort, and for the same reason. Under ``control: effort``, where nothing is compensated
@@ -2209,7 +2210,12 @@ they cost something a navigation world should not pay:
    controller also reports only its own joints, so several can share one ``/joint_states`` topic.
 4. **``mass`` / ``friction``** on the spawn, if either is a factor you want to vary — they are ordinary
    world-YAML keys, so an ordinary parameter sweep varies them and needs no new
-   variation plugin.
+   variation plugin. ``mass`` works whichever way the prop's MJCF states its mass: geoms with a
+   ``mass``, geoms with only a ``density`` (MuJoCo's 1000 kg/m³ when neither is given), or an
+   ``<inertial>`` on the root body. It scales them all by one factor, so the split between geoms
+   stays, and a visual geom with ``mass="0"`` or ``density="0"`` stays massless. The rescaled prop
+   is compiled and must weigh what was asked, or the spawn is refused; so is a prop that weighs
+   nothing. What is scaled is the root body (plus any flex it owns), not bodies hinged below it.
 
 ``unitree_g1_dex1``'s manifest is a worked example of (3): three ``arm_controller`` instances on one
 entity -- one per arm, each owning its seven arm joints and its own Dex1 gripper, and a
@@ -2237,6 +2243,18 @@ the base pose and no joint stance, so the arm falls back to ``qpos0``. For the P
 but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap by 0.030 m at all-zeros.
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
 trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
+
+**Motion limits.** ``arm_controller``'s ``max_velocity`` and ``max_acceleration`` (a scalar, or
+``{joint: value}``) turn every position command into a trapezoidal ramp of the held target instead
+of a step the servo takes as fast as its force range allows. Set them where a step is wrong: a lift,
+a gantry, a mast, a joint carrying a load that must not be thrown. They are off unless set, and no
+bundled model sets them, because an MJCF declares no joint velocity limit to default from; take the
+values from the source -- the URDF's ``<limit velocity=>`` and the vendor's ``joint_limits.yaml``.
+A robot whose drives always limit carries them in its manifest's ``arm_controller`` entry; a world
+overrides them per key there, and ``max_velocity: null`` lifts one. Give the planner the same
+numbers (``roqsim export moveit --max-velocity … --max-acceleration …``): a trajectory faster than
+the limits arrives late and is graded by ``goal_time_tolerance``. The module docstring of
+``roqsim_manipulation.plugins.arm_controller`` has the profile and what each command path does.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
