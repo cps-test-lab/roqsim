@@ -136,9 +136,9 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 | `velodyne_vlp16` | Velodyne VLP-16 (Puck) lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` casting one plane of its 16 as the driver's `velodyne_laserscan` publishes it (898 rays of 0.007 rad from −π, header 0–200 m, returns measured 0.9–100 m, too close and no return `+inf`, 10 Hz), excluding only its own `mount`, stamped in `velodyne` 37.7 mm above the housing base. Mounted by `roqsim_mobile`'s `clearpath_jackal`. Meshes and link frames from Dataspeed `velodyne_description` — see `models/velodyne_vlp16/velodyne_vlp16_LICENSE`. |
 
 The twelve scanners, the three RealSense cameras and the OAK-D Pro are device models a robot
-mounts from its manifest: a `spawn_sensor` whose `parent_frame` is a `tf: false` entry of the robot's `frames:` (the
-vendor's parent link and the origin the robot description gives the vendor macro), overriding a value only where its
-vendor configuration differs. The RealSense MJCFs
+mounts from its manifest: a `spawn_sensor` whose `parent_frame` is the vendor's parent link (a body of the robot or
+an entry of its `frames:`) and whose `pose` is the origin the robot description gives the vendor macro, overriding a
+value only where its vendor configuration differs. The RealSense MJCFs
 and their manifests' `frames:` blocks are written by `external/convert/build_realsense_devices.py`
 from `realsense2_description` at a pinned realsense-ros tag, including the fixed
 `camera_bottom_screw_frame` → `camera_link` offset (`--mount-delta` prints it).

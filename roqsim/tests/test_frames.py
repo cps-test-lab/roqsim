@@ -16,7 +16,6 @@ from roqsim.frames import (
     static_tf_endpoint,
     static_transforms,
     substitute,
-    tf_anchors,
 )
 from roqsim.manifest import (
     expand_manifest,
@@ -87,9 +86,9 @@ def test_a_rotated_parent_frame_rotates_what_hangs_from_it():
         ([{"name": "base_link", "parent": "base_link"}], "own parent"),
         ([{"name": "a", "parent": "base_link"}, {"name": "a", "parent": "base_link"}], "twice"),
         ([{"name": "a", "parent": "base_link", "xyz": [0, 0, 0]}], "unknown key"),
+        ([{"name": "a", "parent": "base_link", "tf": False}], r"unknown key\(s\) \['tf'\]"),
         ([{"name": "a", "parent": "base_link", "pose": {"position": {"q": 0}}}], "'pose.position'"),
         ([{"name": "a", "parent": "base_link", "pose": {"header": {}}}], "no 'header'"),
-        ([{"name": "a", "parent": "base_link", "tf": "no"}], "'tf' must be true or false"),
         ([{"parent": "base_link"}], "'name' is required"),
     ],
 )
@@ -187,7 +186,7 @@ def test_a_pose_is_an_offset_whose_omitted_components_are_zero():
     (frame,) = parse_frames(
         [{"name": "a", "parent": "base_link", "pose": {"position": {"z": 0.2}}}], "t"
     )
-    assert frame.pos == (0.0, 0.0, 0.2) and frame.quat == (1.0, 0.0, 0.0, 0.0) and frame.tf
+    assert frame.pos == (0.0, 0.0, 0.2) and frame.quat == (1.0, 0.0, 0.0, 0.0)
     (bare,) = parse_frames([{"name": "a", "parent": "base_link"}], "t")
     assert bare.pos == (0.0, 0.0, 0.0) and bare.quat == (1.0, 0.0, 0.0, 0.0)
 
@@ -200,21 +199,3 @@ def test_pos_and_rpy_are_refused_showing_the_pose_they_mean():
         r"orientation: \{yaw: 1\.5\}\}",
     ):
         parse_frames([entry], "t")
-
-
-def test_a_published_frame_below_unpublished_ones_is_anchored_at_the_nearest_published():
-    frames = parse_frames(
-        [
-            {"name": "shell", "parent": "base_link"},
-            {"name": "place", "parent": "shell", "tf": False},
-            {"name": "deeper", "parent": "place", "tf": False},
-            {"name": "link", "parent": "deeper"},
-        ],
-        "t",
-    )
-    assert tf_anchors(frames) == {
-        "shell": "base_link",
-        "place": "shell",
-        "deeper": "shell",
-        "link": "shell",
-    }
