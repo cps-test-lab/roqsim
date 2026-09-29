@@ -91,7 +91,14 @@ the PiRacer (``robot:=piracer``, the default):
 * ``params/carlike_<robot>.yaml`` -- loaded after it, so its values win: the footprint polygon about
   ``base_link``, the ``minimum_turning_radius``, speeds, lookahead, inflation, tolerances and which
   costmap layers there are (the PiRacer has no scanner, so its costmaps are the map alone);
-* ``worlds/<robot>_nav2.yaml`` -- the robot in the built-in empty room, with ``ground_truth_pose``.
+* ``worlds/<robot>_nav2.yaml`` -- the robot in the built-in empty room, with the ROS bridge and
+  ``sim_interfaces``. The drive comes from the robot's manifest, so the world declares none.
+
+The velocity command's message type is the drive's ``stamped_cmd_vel`` (``geometry_msgs/Twist``
+unless it is set) and Nav2's ``enable_stamped_cmd_vel`` (unstamped on Jazzy unless it is set);
+``nav2_params_carlike.yaml`` sets neither, so both sides use ``Twist``. A stack that publishes
+``TwistStamped`` sets both, because a subscription takes one type and a mismatch leaves the robot
+with no command at all.
 
 ``base_link`` must be the point the robot turns about, the centre of its fixed axle.
 ``minimum_turning_radius`` is a planning value, not the physical minimum: the physical minimum is
@@ -112,9 +119,10 @@ The goal-reaching tests
 -----------------------
 
 ``test/test_nav2_carlike_goals.py`` drives each robot in its ``ROBOTS`` (the PiRacer) to two goals --
-ahead and to the left facing left, then straight back from there -- and judges each on the
-ground-truth frame ``<model>_base_link_gt``, not on the odometry Nav2 steers by. It also asserts the steering swung over
-on the turn and the odometry ran backwards on the second goal. Each launch gets a ROS domain of its
+ahead and to the left facing left, then straight back from there -- and judges each on ground
+truth, not on the odometry Nav2 steers by: the robot entity's world pose from ``sim_interfaces``'
+``get_entity_state`` (:doc:`interfaces`), read when Nav2 reports the goal done. It also asserts the
+steering swung over on the turn and the odometry ran backwards on the second goal. Each launch gets a ROS domain of its
 own (``ROS_DOMAIN_ID`` if set, otherwise one derived from the test's process id) on localhost only,
 because a second simulator's ``/clock`` on the same domain breaks every sim-time wait in Nav2.
 ``CARLIKE_NAV_LOG=<dir>`` keeps each launch's output.

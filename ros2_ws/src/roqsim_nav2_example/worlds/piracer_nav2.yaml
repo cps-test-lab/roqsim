@@ -24,12 +24,7 @@ components:
         position:    {x: 0.0, y: 0.0}
         orientation: {yaw: 0.0}
     name: robot
-    components:
-      # Nav2 on Jazzy publishes an unstamped Twist unless enable_stamped_cmd_vel is set, which
-      # nav2_params_carlike.yaml does not; stated here because a mismatch is silence.
-      - ackermann_drive: {stamped_cmd_vel: false}
-      # Ground truth, map -> piracer_base_link_gt on /tf, for judging a run; not wired into
-      # localisation. A component of the robot, so it builds before the bridge below binds.
-      - ground_truth_pose: {}
   # Publishes /clock, /odom with odom -> base_link and /joint_states; subscribes /cmd_vel.
   - ros2_bridge: {}
+  # simulation_interfaces services; get_entity_state is the robot's true pose, for judging a run.
+  - sim_interfaces: {}

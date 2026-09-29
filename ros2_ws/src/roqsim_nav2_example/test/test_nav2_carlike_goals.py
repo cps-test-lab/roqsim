@@ -7,10 +7,12 @@ goals through ``nav2_simple_commander``:
 2. straight behind that pose with the same heading -- reached by reversing, since a forward loop
    round to it is far longer than the reverse penalty makes the straight line.
 
-Each goal is judged on GROUND TRUTH (``ground_truth_pose``'s ``map -> <model>_base_link_gt`` on
-``/tf``), not on the odometry Nav2 steers by. Alongside, the test records what makes the run a
-car-like one: the measured steering angle from ``/joint_states`` swings over on the turn, and the
-odometry reports backwards travel on the reverse.
+Each goal is judged on GROUND TRUTH, not on the odometry Nav2 steers by: the robot entity's world
+pose from the simulator's ``simulation_interfaces/GetEntityState`` service (the ``sim_interfaces``
+plugin in the world), read once Nav2 reports the goal done. The world's origin is the map's, so the
+pose compares with the goal as it is. Alongside, the test records what makes the run a car-like
+one: the measured steering angle from ``/joint_states`` swings over on the turn, and the odometry
+reports backwards travel on the reverse.
 
 Each launch runs on a ROS domain of its own, discovered on localhost only: a second simulator's
 ``/clock`` on the same domain -- another test, another checkout's run -- interleaves with this one's
@@ -47,7 +49,8 @@ from nav_msgs.msg import Odometry  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from sensor_msgs.msg import JointState  # noqa: E402
-from tf2_msgs.msg import TFMessage  # noqa: E402
+from simulation_interfaces.msg import Result  # noqa: E402
+from simulation_interfaces.srv import GetEntityState  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -74,37 +77,48 @@ MIN_STEER = 0.15  # rad the steering must reach on the turn leg
 SERVER_TIMEOUT = 120.0
 GOAL_TIMEOUT = 180.0
 LIFECYCLE_NODES = ["map_server", "planner_server", "controller_server", "bt_navigator"]
+ENTITY = "robot"  # the spawn_robot entry's name in worlds/<robot>_nav2.yaml
 
 
 class _Recorder(Node):
-    """Ground truth, odometry speed and the steering angle, as they arrive."""
+    """Odometry speed and the steering angle as they arrive, and ground truth on request."""
 
-    def __init__(self, gt_frame: str, steer_joint: str):
+    def __init__(self, steer_joint: str):
         super().__init__("carlike_nav_recorder")
-        self.gt_frame = gt_frame
         self.steer_joint = steer_joint
-        self.gt = None  # (x, y, yaw)
         self.v = 0.0
         self.steer = 0.0
-        self.rows: list[tuple] = []  # (x, y, yaw, v, steer)
-        self.create_subscription(TFMessage, "/tf", self._on_tf, 50)
+        self.rows: list[tuple] = []  # (v, steer), one per odometry message
         self.create_subscription(Odometry, "/odom", self._on_odom, 50)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 50)
-
-    def _on_tf(self, msg):
-        for tf in msg.transforms:
-            if tf.child_frame_id == self.gt_frame:
-                q = tf.transform.rotation
-                yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y**2 + q.z**2))
-                self.gt = (tf.transform.translation.x, tf.transform.translation.y, yaw)
-                self.rows.append((*self.gt, self.v, self.steer))
+        self._truth = self.create_client(GetEntityState, "get_entity_state")
 
     def _on_odom(self, msg):
         self.v = msg.twist.twist.linear.x
+        self.rows.append((self.v, self.steer))
 
     def _on_joints(self, msg):
         if self.steer_joint in msg.name:
             self.steer = msg.position[msg.name.index(self.steer_joint)]
+
+    def ground_truth(self, entity: str, timeout: float = 10.0) -> tuple[float, float, float]:
+        """*entity*'s true (x, y, yaw) in the world; raises when the simulator does not answer."""
+        if not self._truth.wait_for_service(timeout_sec=timeout):
+            raise AssertionError("no get_entity_state service (sim_interfaces not in the world?)")
+        fut = self._truth.call_async(GetEntityState.Request(entity=entity))
+        deadline = time.time() + timeout
+        while not fut.done():  # the executor thread spins this node and completes the future
+            if time.time() >= deadline:
+                raise AssertionError(f"get_entity_state({entity!r}) did not answer in {timeout}s")
+            time.sleep(0.05)
+        resp = fut.result()
+        if resp.result.result != Result.RESULT_OK:
+            raise AssertionError(
+                f"get_entity_state({entity!r}): {resp.result.result} {resp.result.error_message}"
+            )
+        p, q = resp.state.pose.position, resp.state.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y**2 + q.z**2))
+        return p.x, p.y, yaw
 
 
 def _wait_active(nav, node_names, timeout):
@@ -137,16 +151,21 @@ def _pose(x, y, yaw):
 
 
 def _drive_to(nav, rec, goal):
-    """Send one goal and wait for Nav2 to finish it; returns (result, rows recorded meanwhile)."""
+    """Send one goal and wait for Nav2 to finish it.
+
+    Returns (result, ground truth when it finished, rows recorded meanwhile).
+    """
     start = len(rec.rows)
     nav.goToPose(_pose(*goal))
     t0 = time.time()
     while not nav.isTaskComplete():
         if time.time() - t0 > GOAL_TIMEOUT:
             nav.cancelTask()
-            pytest.fail(f"goal {goal} not reached within {GOAL_TIMEOUT}s; last truth {rec.gt}")
+            pytest.fail(
+                f"goal {goal} not reached within {GOAL_TIMEOUT}s; truth {rec.ground_truth(ENTITY)}"
+            )
         time.sleep(0.5)
-    return nav.getResult(), rec.rows[start:]
+    return nav.getResult(), rec.ground_truth(ENTITY), rec.rows[start:]
 
 
 def _error(gt, goal):
@@ -211,7 +230,7 @@ def test_carlike_robot_turns_to_a_goal_and_reverses_to_the_next(nav2_stack, monk
     monkeypatch.setenv("ROS_AUTOMATIC_DISCOVERY_RANGE", "LOCALHOST")
     rclpy.init(domain_id=domain)
     nav = BasicNavigator()
-    rec = _Recorder(f"{name}_base_link_gt", robot.steer_joint)
+    rec = _Recorder(robot.steer_joint)
     executor = SingleThreadedExecutor()
     executor.add_node(rec)
     spinner = threading.Thread(target=executor.spin, daemon=True)
@@ -219,11 +238,11 @@ def test_carlike_robot_turns_to_a_goal_and_reverses_to_the_next(nav2_stack, monk
     try:
         assert _wait_active(nav, LIFECYCLE_NODES, SERVER_TIMEOUT), "nav2 did not become active"
         time.sleep(3.0)  # the costmaps take the map and their first scans
-        assert rec.gt is not None, f"no ground truth on /tf ({name}_base_link_gt)"
+        rec.ground_truth(ENTITY)  # answers before the first goal, or the run fails here
 
-        result, turn = _drive_to(nav, rec, robot.turn_goal)
-        dist, dyaw = _error(rec.gt, robot.turn_goal)
-        steer = max(abs(r[4]) for r in turn)
+        result, truth, turn = _drive_to(nav, rec, robot.turn_goal)
+        dist, dyaw = _error(truth, robot.turn_goal)
+        steer = max(abs(r[1]) for r in turn)
         print(
             f"{name} turn goal: {result}, error {dist:.3f} m / {dyaw:.3f} rad, "
             f"max |steer| {steer:.3f} rad"
@@ -232,9 +251,9 @@ def test_carlike_robot_turns_to_a_goal_and_reverses_to_the_next(nav2_stack, monk
         assert dist <= robot.xy_tolerance and dyaw <= YAW_TOLERANCE, (dist, dyaw)
         assert steer > MIN_STEER, "reached a goal a quarter turn round without steering"
 
-        result, back = _drive_to(nav, rec, robot.reverse_goal)
-        dist, dyaw = _error(rec.gt, robot.reverse_goal)
-        slowest = min(r[3] for r in back)
+        result, truth, back = _drive_to(nav, rec, robot.reverse_goal)
+        dist, dyaw = _error(truth, robot.reverse_goal)
+        slowest = min(r[0] for r in back)
         print(
             f"{name} reverse goal: {result}, error {dist:.3f} m / {dyaw:.3f} rad, "
             f"min odom speed {slowest:.3f} m/s"
