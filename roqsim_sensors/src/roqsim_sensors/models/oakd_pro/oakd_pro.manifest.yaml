@@ -17,13 +17,13 @@ device_name: oakd
 frame_id: "{device_name}_rgb_camera_optical_frame"
 frames:
   - {name: "{device_name}_link", parent: mount}
-  - {name: "{device_name}_rgb_camera_frame", parent: "{device_name}_link", pos: [0, 0, 0]}
-  - {name: "{frame_id}", parent: "{device_name}_rgb_camera_frame", rpy: [-1.5707963268, 0, -1.5707963268]}
-  - {name: "{device_name}_left_camera_frame", parent: "{device_name}_link", pos: [0, 0.0375, 0]}
-  - {name: "{device_name}_left_camera_optical_frame", parent: "{device_name}_left_camera_frame", rpy: [-1.5707963268, 0, -1.5707963268]}
-  - {name: "{device_name}_right_camera_frame", parent: "{device_name}_link", pos: [0, -0.0375, 0]}
-  - {name: "{device_name}_right_camera_optical_frame", parent: "{device_name}_right_camera_frame", rpy: [-1.5707963268, 0, -1.5707963268]}
-  - {name: "{device_name}_imu_frame", parent: "{device_name}_link", pos: [0, 0, 0], rpy: [-1.5707963268, 0, -1.5707963268]}
+  - {name: "{device_name}_rgb_camera_frame", parent: "{device_name}_link"}
+  - {name: "{frame_id}", parent: "{device_name}_rgb_camera_frame", pose: {orientation: {roll: -1.5707963268, yaw: -1.5707963268}}}
+  - {name: "{device_name}_left_camera_frame", parent: "{device_name}_link", pose: {position: {y: 0.0375}}}
+  - {name: "{device_name}_left_camera_optical_frame", parent: "{device_name}_left_camera_frame", pose: {orientation: {roll: -1.5707963268, yaw: -1.5707963268}}}
+  - {name: "{device_name}_right_camera_frame", parent: "{device_name}_link", pose: {position: {y: -0.0375}}}
+  - {name: "{device_name}_right_camera_optical_frame", parent: "{device_name}_right_camera_frame", pose: {orientation: {roll: -1.5707963268, yaw: -1.5707963268}}}
+  - {name: "{device_name}_imu_frame", parent: "{device_name}_link", pose: {orientation: {roll: -1.5707963268, yaw: -1.5707963268}}}
 # --- end of generated block
 
 components:

@@ -43,8 +43,6 @@ components:
   - spawn_sensor:
       model: hokuyo_ust
       parent_frame: bracket_0_mount
-      pos: [0.0, 0.0, 0.0]          # a200_sample.yaml:65-67
-      rpy: [0.0, 0.0, 0.0]
       frame_id: lidar2d_0_laser     # a200_sample.yaml:70, Clearpath's first 2D lidar
     name: lidar2d_0
     components:
@@ -59,12 +57,12 @@ components:
 # top_plate_link in the PACS macro, is left out.
 frames:
   # clearpath_platform_description urdf/a200/a200.urdf.xacro:153-159 @ b0f6d92
-  - {name: default_mount, parent: base_link, pos: [0.0, 0.0, 0.224], rpy: [0.0, 0.0, 0.0]}
+  - {name: default_mount, parent: base_link, pose: {position: {z: 0.224}}}
   # urdf/a200/attachments/top_plate.urdf.xacro:138-142 (PACS model)
-  - {name: top_plate_link, parent: default_mount, pos: [0.04825, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+  - {name: top_plate_link, parent: default_mount, pose: {position: {x: 0.04825}}}
   # top_plate.urdf.xacro:145-154 with common.urdf.xacro full_mounts/row_mounts (:75-125): row 1 at
   # x 0.28, column a at y 0.24 stepping -0.08, so column d is y 0.
-  - {name: top_plate_mount_d1, parent: top_plate_link, pos: [0.28, 0.0, 0.00635], rpy: [0.0, 0.0, 0.0]}
+  - {name: top_plate_mount_d1, parent: top_plate_link, pose: {position: {x: 0.28, z: 0.00635}}}
   # clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:36-42, 106-110 @ 33e4b31: horizontal
   # bracket, mount mesh_thickness 0.010125 above the bracket link at top_plate_mount_d1.
-  - {name: bracket_0_mount, parent: top_plate_mount_d1, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
+  - {name: bracket_0_mount, parent: top_plate_mount_d1, pose: {position: {z: 0.010125}}}

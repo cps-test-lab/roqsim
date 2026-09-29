@@ -33,8 +33,8 @@ Endpoint ``contact`` (out) reads a :class:`ContactReport`:
 ``(in_contact, first_time, count, geom_a, geom_b)`` -- ``first_time`` is the simulation time of the
 first qualifying contact since reset (``-1.0`` if none), and ``geom_a``/``geom_b`` name the two sides
 of that first contact, so a failure is attributable rather than just flagged -- a geom by its name, a
-flex as ``flex:<name>[v<i>]`` with the vertex that touched. The ROS 2 backend hint
-publishes ``in_contact`` as a ``std_msgs/Bool`` on ``collision`` (relative, so it is scoped by the
+flex as ``flex:<name>[v<i>]`` with the vertex that touched. ROS carries ``in_contact`` alone, a
+``std_msgs/Bool`` on ``collision`` (relative, so it is scoped by the
 entity's namespace: two namespaced robots get ``/a/collision`` and ``/b/collision``); a bridge that
 wants the detail reads the fields directly.
 
@@ -72,21 +72,31 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
 from ..plugin import Plugin
+from ..types import Duration
 
 _log = logging.getLogger(__name__)
 
 
 @dataclass
 class ContactReport:
-    """Neutral payload for the ``contact`` endpoint."""
+    """What the ``contact`` endpoint reads.
+
+    Attributes:
+        in_contact: the verdict
+        first_time: sim time of the first qualifying contact since reset; -1.0 if none
+        count: qualifying contacts in the most recent step
+        geom_a: one side of the first qualifying contact; "" until one happens
+        geom_b: the other side of that contact
+    """
 
     in_contact: bool
-    first_time: float  # sim time of the first qualifying contact since reset; -1.0 if none
-    count: int  # qualifying contacts in the most recent step
-    geom_a: str  # sides of the FIRST qualifying contact ("" until one happens); see side_name
+    first_time: Duration
+    count: int
+    geom_a: str
     geom_b: str
 
 
@@ -133,7 +143,6 @@ class ContactMonitorPlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
         # severity of the very contacts this reports, and a rule restated in each would be two.
@@ -155,26 +164,13 @@ class ContactMonitorPlugin(Plugin):
         # first -- one robot's collisions reported as another's.
         ctx.blackboard.set(f"contact:{self.address}", self.read_state)
 
-        ctx.interface.add(
-            Endpoint(
-                name="contact",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Bool",
-                        # The report is a structure and Bool carries one field, so the endpoint says
-                        # WHICH -- rather than the bridge holding a converter that knows this
-                        # plugin's attribute names. The other fields stay readable in-process.
-                        "field": "in_contact",
-                        "topic": self.topic_override("contact") or "collision",
-                    }
-                },
-            )
-        )
+    # The report is a structure and Bool carries one field, so the endpoint says WHICH -- rather
+    # than the bridge holding a converter that knows this plugin's attribute names. The other fields
+    # stay readable in-process.
+    @endpoint.out(rate="rate_hz", ros2={"field": "in_contact", "topic": "collision"})
+    def contact(self) -> ContactReport:
+        """Whether the entity has touched anything it may not, and what, since reset."""
+        return self._report
 
     def read_state(self) -> ContactReport:
         """The latest report. What the blackboard handle hands an in-process consumer.

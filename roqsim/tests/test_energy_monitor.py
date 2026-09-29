@@ -21,7 +21,7 @@ import pytest
 from roqsim.config import PluginError, load_config_from_dict
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
-from roqsim.plugins.energy_monitor import JOULES_PER_WH, EnergyMonitorPlugin
+from roqsim.plugins.energy_monitor import JOULES_PER_WH, EnergyMonitorPlugin, EnergyReport
 
 #: Constant control on the motor; with heavy damping the joint settles at a constant rate, so power
 #: settles too and the integral over a known time is predictable.
@@ -388,7 +388,8 @@ def test_the_endpoint_and_the_blackboard_reader_agree():
     endpoint = next(e for e in engine.ctx.interface.all() if e.name == "battery")
     assert reader is not None
     assert reader.read().energy_j == endpoint.read().energy_j
-    assert endpoint.backend["ros2"]["type"] == "sensor_msgs.msg.BatteryState"
+    # The payload type is what a bridge maps (a BatteryState over ROS); the topic is the deviation.
+    assert endpoint.result.cls is EnergyReport
     assert endpoint.backend["ros2"]["topic"] == "battery_state"
 
 

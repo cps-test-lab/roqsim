@@ -379,7 +379,26 @@ themselves ``extends`` (cycles are rejected).
 set ``enabled: false`` on it, so the entry stays in the document, addressable and in the run's
 record; a selector that matches nothing is an error, not a silent no-op. There is no separate
 "modify" key -- to change an inherited entry, override its keys, or ``disable`` it and add a tweaked
-copy under another label in the child's ``components``.
+copy in the child's ``components``, under its own label or another.
+
+**Reusing a world with a different robot** is that second form, under the same label:
+
+.. code-block:: yaml
+
+   extends: roqsim_mobile:husky_demo  # a world whose robot is labelled `robot`
+   disable: [robot]                   # replace the inherited robot ...
+   components:
+     - spawn_robot: {model: turtlebot3_waffle, pose: {position: {x: 1.0, y: 0.0}}}
+       name: robot                    # ... with this one, under the same label
+
+The new ``robot`` *replaces* the disabled one. It gets exactly the components a world declaring it
+directly gets -- its own model's drive, sensors and controllers from its manifest, with the same
+configs -- and nothing from the model it replaced; nest entries under it to change a default, as
+anywhere else. The label, and every override that names it (``components.robot.diff_drive.*``),
+addresses the new robot alone. The replaced entry stays in the record, turned off, with what the
+parent declared for it. Leaving out ``disable`` is refused, and the message says to add it: two live
+components cannot share one label. For a one-off run, ``--set components.robot.model=<model>``
+swaps the model without a new world, and brings in that model's manifest the same way.
 
 Drawing on a render (``roqsim.render_overlays``)
 -------------------------------------------------
@@ -529,8 +548,16 @@ Declaring a robot interface (endpoints)
 ---------------------------------------
 
 A robot describes its own I/O so a bridge can wire it to *any* transport (ROS 2, and later zenoh /
-zmq) without the robot package importing that transport. In ``configure`` a plugin registers
-``Endpoint``\ s on ``ctx.interface``:
+zmq) without the robot package importing that transport. A plugin declares its ports by decorating
+the methods that serve them (``@endpoint.out`` / ``@endpoint.command`` / ``@endpoint.stream``, see
+:doc:`plugins`, *Declaring a plugin's endpoints*), and the engine registers them as ``Endpoint``\ s
+on ``ctx.interface`` and marshals every inbound call onto the physics thread. The method's signature
+is the endpoint's schema, carried as ``params`` (what ``write`` takes, by name), ``result`` (what
+``read`` returns, or a command's outcome) and ``payload_type`` (the neutral type a transport
+carries, one of ``roqsim.types`` or a plugin's dataclass), so a bridge can describe, check and map a
+port without knowing the plugin -- the ROS bridge gives every neutral type its message, so such a
+plugin names no ROS type. Every entity also has a core pose endpoint, ``sim/entities/<name>/pose``.
+A port known only at run time is registered by hand in ``configure``:
 
 .. code-block:: python
 
@@ -577,9 +604,10 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
   grade the cancelled goal on the pose it stopped in -- so a caller that cancels and reads the
   joints reads an arm that has stopped, and a result it can tell from a goal that ran to its end.
 
-  ``write`` returns ``None`` in all three cases. A reply is assembled by the backend's handler from
-  the producer's published state — named by a ``state_key`` hint — rather than returned from the
-  plugin, which is what keeps ``Endpoint`` free of any backend's reply types. Both the service and
+  A bridge's inbound callback returns a future for a command, holding what the producer's method
+  returned or raised; a service handler waits on it, so a producer that raised is a failed reply. The
+  rest of a reply is assembled by the backend's handler from the producer's published state — named
+  by a ``state_key`` hint — which is what keeps ``Endpoint`` free of any backend's reply types. Both the service and
   action handlers come from per-type registries in ``roqsim_ros_bridge`` (``services.py`` /
   ``actions.py``), so a new srv or action type is a handler there and no change here. A handler,
   converter or decoder in another package is registered by naming its module in the

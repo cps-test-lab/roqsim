@@ -42,7 +42,9 @@ import scan_mount_utils as scan_mount
 import yaml
 
 from roqsim.context import Entity, SimContext
+from roqsim.frames import parse_frames
 from roqsim.models import apply_assets, resolve_model
+from roqsim.pose import parse_pose, rpy_to_quat
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile" / "models"
@@ -148,6 +150,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -450,39 +453,37 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
     is the RPLIDAR A1 device's.
     """
     manifest = yaml.safe_load(MANIFEST.read_text())
-    assert manifest["frames"] == [
-        {
-            "name": "shell_link",
-            "parent": "base_link",
-            "pos": [*SHELL_LINK[0]],
-            "rpy": [*SHELL_LINK[1]],
-        },
-        {
-            "name": "oakd_camera_bracket",
-            "parent": "shell_link",
-            "pos": [*CAMERA_BRACKET[0]],
-            "rpy": [*CAMERA_BRACKET[1]],
-        },
+    # The vendor's flattened links; each device hangs from its vendor parent at the joint origin.
+    frames = [(f.name, f.parent, f.pos, f.quat) for f in parse_frames(manifest["frames"], "tb4")]
+    assert frames == [
+        (name, parent, pos, tuple(rpy_to_quat(*rpy)))
+        for name, parent, (pos, rpy) in (
+            ("shell_link", "base_link", SHELL_LINK),
+            ("oakd_camera_bracket", "shell_link", CAMERA_BRACKET),
+        )
     ]
+
+    def placed(spawn, joint):
+        spawn = dict(spawn)
+        pos, quat = parse_pose(spawn.pop("pose"), relative=True)
+        assert tuple(pos) == joint[0] and quat == pytest.approx(rpy_to_quat(*joint[1]), abs=1e-15)
+        return spawn
+
     mounts = {c["name"]: c for c in manifest["components"] if "spawn_sensor" in c}
     assert set(mounts) == {"rplidar", "oakd"}
     mount = mounts["rplidar"]
-    assert mount["spawn_sensor"] == {
+    assert placed(mount["spawn_sensor"], RPLIDAR_JOINT) == {
         "model": "rplidar_a1",
         "parent_frame": "shell_link",
-        "pos": [*RPLIDAR_JOINT[0]],
-        "rpy": [*RPLIDAR_JOINT[1]],
         "frame_id": "rplidar_link",
     }
     assert mount["components"] == [{"lidar": {"rays": 360}}]
     assert not any("lidar" in c for c in manifest["components"])
     # The OAK-D: the vendor joint and nothing else. Its device name is the macro's default, `oakd`,
     # so the robot sets none; only the TurtleBot 4's topic names are overridden.
-    assert mounts["oakd"]["spawn_sensor"] == {
+    assert placed(mounts["oakd"]["spawn_sensor"], OAKD_JOINT) == {
         "model": "oakd_pro",
         "parent_frame": "oakd_camera_bracket",
-        "pos": [*OAKD_JOINT[0]],
-        "rpy": [*OAKD_JOINT[1]],
     }
     ((camera,),) = [list(c.values()) for c in mounts["oakd"]["components"]]
     assert set(camera) == {"topics"}
@@ -659,7 +660,7 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
     engine, _ = mounted
     scan = scan_mount.scan_endpoint(engine)
     assert scan.owner == "robot.rplidar" and scan.namespace == scan_mount.NAMESPACE
-    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan_mount.topic_of(scan) == "scan"
     assert scan.backend["ros2"]["frame_id"] == "rplidar_link"
     assert "static_tf" not in scan.backend["ros2"]
 
@@ -719,19 +720,21 @@ def test_e1_the_manifest_declares_the_create3_surface():
             assert cfg["h_fov"] == pytest.approx(math.radians(10), abs=1e-6)
             assert (cfg["range_min"], cfg["max_range"]) == (0.025, 0.2)
 
-    poses = {e["name"]: e["ground_truth_pose"] for e in _manifest_entries("ground_truth_pose")}
-    assert poses["gt_base"]["child_frame"] == "turtlebot4"
-    assert poses["gt_mouse"] == {
-        "site": "mouse",
-        "relative_to": "base",
+    assert _manifest_plugin("pose_publisher") == {
+        "poses": [
+            {"frame": ".", "child": "turtlebot4"},
+            {"frame": "mouse", "relative_to": "base_link"},
+            {"frame": "ir_omni", "relative_to": "base_link"},
+        ],
         "rate_hz": 62,
         "lazy": True,
-        "topics": {"pose": "_internal/sim_ground_truth_pose"},
+        "topics": {"poses": "_internal/sim_ground_truth_pose"},
     }
-    assert poses["gt_ir_omni"]["site"] == "ir_omni"
 
     assert _manifest_plugin("imu")["topic"] == "imu"
-    assert _manifest_plugin("imu")["pos"] == pytest.approx([0.050613, 0.043673, 0.0844])
+    assert _manifest_plugin("imu")["pose"] == {
+        "position": {"x": 0.050613, "y": 0.043673, "z": 0.0844}
+    }
     assert _manifest_plugin("diff_drive") == {
         "max_linear_vel": 0.46,
         "max_angular_vel": 1.9,
@@ -762,8 +765,11 @@ def create3():
 
 
 def _by_topic(engine, topic):
+    """The endpoint on *topic*: the world's rename, else its ros2 hint's topic, else its name."""
     return next(
-        e for e in engine.ctx.interface.all() if e.backend.get("ros2", {}).get("topic") == topic
+        e
+        for e in engine.ctx.interface.all()
+        if (e.topic or (e.backend.get("ros2") or {}).get("topic") or e.name) == topic
     )
 
 
@@ -787,7 +793,8 @@ def test_e2_the_cliff_sensors_read_the_floor_and_the_ir_sensors_read_nothing(cre
 def test_e3_one_joint_states_message_carries_wheels_and_suspension(create3):
     """E3: the message a consumer derives the wheel state from also carries the suspension."""
     (js,) = [e for e in create3.ctx.interface.all() if e.name == "joint_states"]
-    names, pos, vel, eff = js.read()
+    state = js.read()
+    names, pos = state.names, state.positions
     assert set(names) == {
         "left_wheel_joint",
         "right_wheel_joint",
@@ -803,9 +810,10 @@ def test_e3_one_joint_states_message_carries_wheels_and_suspension(create3):
 def test_e3b_the_base_takes_a_plain_twist_and_expires_it(create3):
     """E3b: a Twist on cmd_vel as the Create 3 takes it, good for 0.5 s; odometry at 62 Hz."""
     ins = {e.name: e for e in create3.ctx.interface.all() if e.direction == "in"}
-    assert ins["cmd_vel"].backend["ros2"] == {"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"}
+    assert ins["cmd_vel"].backend["ros2"] == {"stamped": False}  # geometry_msgs/Twist on cmd_vel
+    assert ins["cmd_vel"].topic is None
     handle = create3.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
-    ins["cmd_vel"].write((0.2, 0.0, 0.0))
+    ins["cmd_vel"].write({"vx": 0.2})
     for _ in range(50):
         create3.step()
     assert handle.read_odom()[3] > 0.05
@@ -818,14 +826,18 @@ def test_e3b_the_base_takes_a_plain_twist_and_expires_it(create3):
 
 def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
     """E4: the base under the robot's name in the world, the mouse and IR receiver relative to it."""
-    poses = [e for e in create3.ctx.interface.all() if e.name == "pose"]
-    by_child = {e.read()[0][0]: e for e in poses}
+    poses = [
+        e
+        for e in create3.ctx.interface.all()
+        if (e.backend.get("ros2") or {}).get("topic") == "_internal/sim_ground_truth_pose"
+    ]
+    by_child = {e.read().child: e for e in poses}
     assert set(by_child) == {"turtlebot4", "mouse", "ir_omni"}
     assert by_child["turtlebot4"].backend["ros2"]["frame_id"] == "map"
-    _, pos, _ = by_child["mouse"].read()[0]
+    pos = by_child["mouse"].read().translation
     assert np.allclose(pos, [0.1015, 0.087, 0.0092], atol=1e-6)
     assert by_child["mouse"].backend["ros2"]["frame_id"] == "base_link"
-    _, pos, _ = by_child["ir_omni"].read()[0]
+    pos = by_child["ir_omni"].read().translation
     assert np.allclose(pos, [0.153, 0.0, 0.0992], atol=1e-6)
     assert all(e.lazy for e in poses)
 
@@ -846,7 +858,8 @@ def test_e5_lifting_the_robot_drops_the_wheels_and_opens_the_cliffs():
             d.qvel[:6] = 0.0
             engine.step()
         (js,) = [e for e in engine.ctx.interface.all() if e.name == "joint_states"]
-        names, pos, *_ = js.read()
+        state = js.read()
+        names, pos = state.names, state.positions
         for side in ("left", "right"):
             assert pos[names.index(f"wheel_drop_{side}_joint")] >= 0.0285
         for name in ("cliff_front_left", "cliff_side_right"):
@@ -905,19 +918,14 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
                 "name": "standard_dock",
                 "components": [
                     {
-                        "ground_truth_pose": {
-                            "child_frame": "standard_dock",
-                            "topics": {"pose": "_internal/sim_ground_truth_dock_pose"},
+                        "pose_publisher": {
+                            "poses": [
+                                {"frame": "."},
+                                {"frame": "halo_link", "relative_to": "std_dock_link"},
+                            ],
+                            "topics": {"poses": "_internal/sim_ground_truth_dock_pose"},
                         },
-                        "name": "gt_dock",
-                    },
-                    {
-                        "ground_truth_pose": {
-                            "site": "halo_link",
-                            "relative_to": "base",
-                            "topics": {"pose": "_internal/sim_ground_truth_dock_pose"},
-                        },
-                        "name": "gt_halo",
+                        "name": "gt",
                     },
                 ],
             },
@@ -932,15 +940,16 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
         for _ in range(200):
             engine.step()
         poses = {
-            e.read()[0][0]: e
+            e.read().child: e
             for e in engine.ctx.interface.all()
-            if e.backend.get("ros2", {}).get("topic") == "_internal/sim_ground_truth_dock_pose"
+            if (e.backend.get("ros2") or {}).get("topic") == "_internal/sim_ground_truth_dock_pose"
         }
         assert set(poses) == {"standard_dock", "halo_link"}
-        _, dock_pos, dock_quat = poses["standard_dock"].read()[0]
+        dock = poses["standard_dock"].read()
+        dock_pos, dock_quat = dock.translation, dock.rotation
         assert np.allclose(dock_pos[:2], [0.157, 0.0], atol=1e-4)
         assert abs(float(dock_quat[3])) == pytest.approx(1.0, abs=1e-3), "turned to face the robot"
-        _, halo, _ = poses["halo_link"].read()[0]
+        halo = poses["halo_link"].read().translation
         assert np.allclose(halo, [-0.06, 0.0, 0.0904], atol=1e-6)
         # A static prop: the robot did not push it while settling next to it.
         m = engine.ctx.model
