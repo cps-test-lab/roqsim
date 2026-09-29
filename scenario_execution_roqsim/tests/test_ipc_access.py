@@ -30,7 +30,7 @@ from roqsim.plugins.entity_control import EntityControlPlugin  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
 from roqsim.plugins.run_control import RunControlPlugin  # noqa: E402
 from roqsim_nav.plugins.navigator import NavigatorPlugin  # noqa: E402
-from scenario_execution_roqsim.access import AccessError  # noqa: E402
+from scenario_execution_roqsim.access import AccessError, EntityAbsent  # noqa: E402
 from scenario_execution_roqsim.access.in_process import InProcessAccess  # noqa: E402
 from scenario_execution_roqsim.access.ipc import IpcAccess  # noqa: E402
 
@@ -251,7 +251,7 @@ def test_poses_reports_and_placement_over_the_socket(routes):
     _local, socket = routes
     pose = None
     while pose is None:
-        pose = socket.entity_pose("parcel")
+        pose = socket.ground_truth_pose("parcel")
     assert pose.pos.shape == (3,) and pose.quat.shape == (4,)
     reading = _settle_socket(socket.entity_report("parcel", "level", "full"))
     assert reading.value is False and reading.field == "full"
@@ -259,8 +259,8 @@ def test_poses_reports_and_placement_over_the_socket(routes):
     assert placed.ok, placed.detail
     gone = _settle_socket(socket.set_entity_presence("parcel", False))
     assert gone.ok, gone.detail
-    with pytest.raises(AccessError, match="ABSENT"):
-        while socket.entity_pose("parcel") is None:
+    with pytest.raises(EntityAbsent, match="absent"):
+        while socket.ground_truth_pose("parcel") is None:
             pass
 
 
@@ -416,17 +416,17 @@ WHERE = {
         "RUNNING",
     ),
     "near a position": (
-        "near",
+        "position",
         dict(entity="cart", position={"x": 4.0, "y": 4.5}, distance=0.6),
         "SUCCESS",
     ),
     "planar ignores height": (
-        "near",
+        "position",
         dict(entity="cart", position=ABOVE_CART, distance=0.5),
         "SUCCESS",
     ),
     "spatial counts it": (
-        "near",
+        "position",
         dict(entity="cart", position=ABOVE_CART, distance=0.5, mode="spatial"),
         "RUNNING",
     ),
@@ -439,17 +439,32 @@ WHERE = {
     "outside a box": ("region", dict(entity="cart", region=BOX_ELSEWHERE, outside=True), "SUCCESS"),
     "inside a polygon": ("region", dict(entity="cart", region=TRIANGLE_AT_CART), "SUCCESS"),
     "in a polygon's notch": ("region", dict(entity="cart", region=L_AROUND_CART), "RUNNING"),
+    # A welded entity has a pose on both routes, and never moves.
+    "a welded entity has not moved": (
+        "moved",
+        dict(entities=["prop"], threshold=0.05),
+        "RUNNING",
+    ),
+    "a welded entity has not turned": ("rotated", dict(entities=["prop"], angle=0.1), "RUNNING"),
 }
 
 
 def _where(kind, **args):
+    """An entity_* condition action of *kind*, and its arguments with the declared defaults."""
     from scenario_execution_roqsim.actions.entity_in_region import EntityInRegion
-    from scenario_execution_roqsim.actions.entity_near import EntityNear
+    from scenario_execution_roqsim.actions.entity_moved import EntityMoved
+    from scenario_execution_roqsim.actions.entity_near import EntityNear, EntityNearPosition
+    from scenario_execution_roqsim.actions.entity_rotated import EntityRotated
 
-    if kind == "near":
-        full = {"target": "", "position": None, "mode": "planar"} | args
-        return EntityNear(), full
-    return EntityInRegion(), {"outside": False} | args
+    condition = {"dwell": 0.0, "require": "all"}
+    action, defaults = {
+        "near": (EntityNear, {"mode": "planar"}),
+        "position": (EntityNearPosition, {"mode": "planar"}),
+        "region": (EntityInRegion, {"outside": False}),
+        "moved": (EntityMoved, {"mode": "distance"} | condition),
+        "rotated": (EntityRotated, condition),
+    }[kind]
+    return action(), defaults | args
 
 
 def _judge(routes, route, tmp_path, monkeypatch, kind, args, measured_ticks=10):
@@ -507,43 +522,72 @@ def test_near_measures_between_reference_points(routes, tmp_path, monkeypatch):
     assert message == "'cart' 1.41 m planar from 'prop' (near: <= 1.5 m)"
 
 
-def test_an_unknown_target_is_refused_alike_on_both_routes(routes, tmp_path, monkeypatch):
+#: Each entity_* condition, naming *name* where it names an entity.
+CONDITIONS = {
+    "entity_near (entity)": ("near", lambda n: dict(entity=n, target="cart", distance=100.0)),
+    "entity_near (target)": ("near", lambda n: dict(entity="cart", target=n, distance=100.0)),
+    "entity_near_position": (
+        "position",
+        lambda n: dict(entity=n, position={"x": 0.0}, distance=100.0),
+    ),
+    "entity_in_region": (
+        "region",
+        lambda n: dict(entity=n, region=BOX_ELSEWHERE, outside=True),
+    ),
+    "entity_moved": ("moved", lambda n: dict(entities=[n], threshold=0.05)),
+    "entity_rotated": ("rotated", lambda n: dict(entities=[n], angle=0.1)),
+}
+
+
+@pytest.mark.parametrize("condition", list(CONDITIONS))
+def test_a_name_the_world_never_had_is_refused_alike_on_both_routes(
+    routes, tmp_path, monkeypatch, condition
+):
     pytest.importorskip("scenario_execution")
     from scenario_execution.actions.base_action import ActionError
 
+    kind, args = CONDITIONS[condition]
     texts = []
     for route in ("in-process", "control socket"):
         with pytest.raises(ActionError) as err:
-            _judge(
-                routes,
-                route,
-                tmp_path,
-                monkeypatch,
-                "near",
-                dict(entity="cart", target="prp", distance=1.0),
-            )
+            _judge(routes, route, tmp_path, monkeypatch, kind, args("prp"))
         texts.append(str(err.value).replace(f" ({route})", ""))
     assert texts[0] == texts[1]
     assert "no entity called 'prp'" in texts[0] and "Did you mean 'prop'?" in texts[0]
 
 
-def test_an_absent_entity_is_waited_for_alike_on_both_routes(routes, tmp_path, monkeypatch):
-    """Deleted at run time, an entity is nowhere: the condition does not hold, and the run goes on."""
+@pytest.mark.parametrize("condition", list(CONDITIONS))
+def test_an_absent_entity_is_waited_for_alike_on_both_routes(
+    routes, tmp_path, monkeypatch, condition
+):
+    """Deleted, an entity is nowhere: the condition does not hold, and the run goes on."""
     pytest.importorskip("scenario_execution")
     (local, engine), socket = routes
     assert _settle_local(local.set_entity_presence("parcel", False), engine).ok
     assert _settle_socket(socket.set_entity_presence("parcel", False)).ok
-    args = dict(entity="parcel", region=BOX_ELSEWHERE, outside=True)
-    here = _judge(routes, "in-process", tmp_path, monkeypatch, "region", args, measured_ticks=3)
-    there = _judge(
-        routes, "control socket", tmp_path, monkeypatch, "region", args, measured_ticks=3
-    )
+    kind, args = CONDITIONS[condition]
+    args = args("parcel")
+    here = _judge(routes, "in-process", tmp_path, monkeypatch, kind, args, measured_ticks=3)
+    there = _judge(routes, "control socket", tmp_path, monkeypatch, kind, args, measured_ticks=3)
     assert here == there
     assert here == (
         "RUNNING",
-        "entity 'parcel' is absent (deleted at run time): nothing can see or touch it, so it has no "
-        "pose until it is spawned again.",
+        "entity 'parcel' is absent (deleted, or not spawned yet): nothing can see or touch it, so "
+        "it has no pose until it is spawned.",
     )
+
+
+def test_a_condition_resumes_when_the_absent_entity_is_spawned(routes, tmp_path, monkeypatch):
+    """Absence is waited out, not a verdict: spawned where the region is, the condition holds."""
+    pytest.importorskip("scenario_execution")
+    (local, engine), _socket = routes
+    assert _settle_local(local.set_entity_presence("parcel", False), engine).ok
+    action, full = _where("region", entity="parcel", region=BOX_AT_CART)
+    action.setup(simulation=_Sim(engine.ctx), clock=_HostClock())
+    action.execute(**full)
+    assert action.update().name == "RUNNING" and "absent" in action.feedback_message
+    assert _settle_local(local.set_entity_presence("parcel", True, [4.0, 4.0, 1.0]), engine).ok
+    assert action.update().name == "SUCCESS", action.feedback_message
 
 
 #: The cart drives past the welded prop into a box. The keep-out rule on that box holds only until
@@ -562,8 +606,8 @@ scenario cart_arrives:
             emit approached
             entity_in_region(entity: 'cart', region: [position_3d(x: 3.0m, y: 3.0m),
                                                       position_3d(x: 3.6m, y: 3.6m)])
-            entity_near(entity: 'cart', position: position_3d(x: 3.3m, y: 3.3m, z: 5.0m),
-                        distance: 0.3)
+            entity_near_position(entity: 'cart', position: position_3d(x: 3.3m, y: 3.3m, z: 5.0m),
+                                 distance: 0.3)
             emit end
         serial:
             entity_in_region(entity: 'cart', region: [position_3d(x: 3.0m, y: 3.0m),

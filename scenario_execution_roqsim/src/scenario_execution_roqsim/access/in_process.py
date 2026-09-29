@@ -3,7 +3,7 @@
 
 """The stepped backend: the simulator is this process, so the world is an object graph.
 
-Reads are direct -- ``data.xpos`` between two ``mj_step``s is consistent by construction. Writes are
+Reads are direct -- an endpoint read between two ``mj_step``s is consistent by construction. Writes are
 not: only the physics thread may touch ``model``/``data``, so a write goes through
 :meth:`~roqsim.context.SimContext.post` (or an endpoint's own marshalled ``write``) and is observed
 one step later. That is roqsim's single-writer rule (architecture.rst §7), and it holds here even
@@ -198,11 +198,6 @@ class InProcessAccess(WorldAccess):
 
     def __init__(self, sim):
         self._sim = sim
-        #: body id per name, valid for :attr:`_bids_model` only: a reset with other `world_overrides`
-        #: compiles a new model with other ids. The model is held, not its `id()`, which a freed
-        #: model may pass on to the next one.
-        self._bids: dict[str, int] = {}
-        self._bids_model = None
 
     # -- the world ------------------------------------------------------------------------------
     def _ctx(self):
@@ -218,13 +213,6 @@ class InProcessAccess(WorldAccess):
     def ready(self) -> bool:
         return self._ctx() is not None
 
-    def entity_pose(self, name: str) -> Pose | None:
-        ctx = self._ctx()
-        if ctx is None:
-            return None
-        bid = self._body_id(ctx, name)
-        return Pose(pos=np.array(ctx.data.xpos[bid]), quat=np.array(ctx.data.xquat[bid]))
-
     def ground_truth_pose(self, name: str) -> Pose | None:
         from roqsim.entity_pose import OWNER, endpoint_name
 
@@ -235,21 +223,6 @@ class InProcessAccess(WorldAccess):
         if ep is None:
             raise no_entity(_rows(ctx), name)
         return pose_reading(name, ep.read())
-
-    def _body_id(self, ctx, name: str) -> int:
-        if ctx.model is not self._bids_model:
-            self._bids, self._bids_model = {}, ctx.model
-        if name not in self._bids:
-            # Imported HERE rather than at module scope: importing `roqsim.lookup` pulls in MuJoCo, and
-            # the behaviour tree is built before any world is compiled. Same reason the actions
-            # compare the plugin's verdict strings by value instead of importing its constants.
-            from roqsim.lookup import LookupError_, resolve_body_id
-
-            try:
-                self._bids[name] = resolve_body_id(ctx, name, what="entity")
-            except LookupError_ as err:
-                raise AccessError(str(err)) from None
-        return self._bids[name]
 
     # -- reports ----------------------------------------------------------------------------------
     def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:

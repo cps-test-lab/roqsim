@@ -29,6 +29,7 @@ import py_trees  # noqa: E402
 from scenario_execution.actions.base_action import ActionError  # noqa: E402
 from scenario_execution.model.types import VariableReference  # noqa: E402
 
+from roqsim import entity_pose  # noqa: E402
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
 from scenario_execution_roqsim.actions.delete_entity import DeleteEntity  # noqa: E402
@@ -128,6 +129,10 @@ def _step(ctx, clock, plugin=None, seconds=0.002):
 
 
 def _start(action, sim, clock, **args):
+    ctx = getattr(sim, "context", None)
+    if ctx is not None:
+        # What the engine does after every plugin's configure: a pose endpoint per entity.
+        entity_pose.register(ctx)
     action.setup(simulation=sim, clock=clock)
     action.execute(**args)
     return action
@@ -276,8 +281,8 @@ def test_an_unknown_entity_raises_and_names_the_near_miss(world):
         action.update()
 
 
-def test_a_welded_entity_raises_rather_than_waiting_forever(world):
-    """Its pose is a compile-time constant, so "wait until it moves" can never be satisfied."""
+def test_a_welded_entity_is_measured_like_any_other(world):
+    """Its pose is the core's, as for any entity: it never moves, so the condition keeps waiting."""
     ctx, clock, sim = world
     ctx.entities.add(Entity(name="ramp_entity", kind="prop", body="world"))
     action = _start(
@@ -290,8 +295,33 @@ def test_a_welded_entity_raises_rather_than_waiting_forever(world):
         dwell=0.0,
         require="all",
     )
-    with pytest.raises(ActionError, match="welded to the world"):
-        action.update()
+    _step(ctx, clock, seconds=0.2)
+    assert action.update() is RUNNING
+    assert action.feedback_message.startswith("ramp_entity 0/+50mm distance")
+
+
+def test_an_entity_not_spawned_yet_is_waited_for_and_measured_from_when_it_appears(world):
+    """Absent is not unknown: the condition waits, and its baseline is where the entity appeared."""
+    from roqsim.presence import set_present
+
+    ctx, clock, sim = world
+    parcel = ctx.entities.get("parcel")
+    assert set_present(ctx, parcel, False)
+    action = _start(
+        EntityMoved(),
+        sim,
+        clock,
+        entities=["parcel"],
+        threshold=0.05,
+        mode="distance",
+        dwell=0.0,
+        require="all",
+    )
+    assert action.update() is RUNNING
+    assert "is absent (deleted, or not spawned yet)" in action.feedback_message
+    assert set_present(ctx, parcel, True)
+    assert action.update() is RUNNING
+    assert action.feedback_message.startswith("parcel 0/+50mm distance"), "measured from here"
 
 
 def test_it_waits_rather_than_building_a_world(world):
@@ -1528,13 +1558,10 @@ def test_a_target_that_is_not_a_variable_raises_at_execute(world):
 # -- a rebuilt world ------------------------------------------------------------------------------
 
 
-def test_a_rebuilt_world_is_not_answered_from_the_old_models_body_ids(monkeypatch):
-    """A reset with other `world_overrides` compiles a new model with other body ids; the cache must
-    notice even when the new model gets the freed one's `id()`, which is forced here."""
-    from scenario_execution_roqsim.access import in_process
+def test_a_rebuilt_world_is_answered_from_its_own_pose_endpoints():
+    """A reset with other `world_overrides` compiles a new model with other body ids; the pose is
+    read from the running world's endpoint, never from anything held over from the old one."""
     from scenario_execution_roqsim.access.in_process import InProcessAccess
-
-    monkeypatch.setattr(in_process, "id", lambda _obj: 1, raising=False)
 
     def ctx_for(xml):
         model = mujoco.MjModel.from_xml_string(xml)
@@ -1542,6 +1569,7 @@ def test_a_rebuilt_world_is_not_answered_from_the_old_models_body_ids(monkeypatc
         ctx.model, ctx.data = model, mujoco.MjData(model)
         mujoco.mj_forward(model, ctx.data)
         ctx.entities.add(Entity(name="parcel", kind="object", body="crate"))
+        entity_pose.register(ctx)
         return ctx
 
     crate = "<body name='crate' pos='{x} 0 1'><freejoint/><geom type='box' size='.1 .1 .1'/></body>"
@@ -1551,6 +1579,6 @@ def test_a_rebuilt_world_is_not_answered_from_the_old_models_body_ids(monkeypatc
     second = ctx_for(f"<mujoco><worldbody>{other}{crate.format(x=2)}</worldbody></mujoco>")
     sim = FakeSim(first)
     access = InProcessAccess(sim)
-    assert access.entity_pose("parcel").pos[0] == pytest.approx(0.0)
+    assert access.ground_truth_pose("parcel").pos[0] == pytest.approx(0.0)
     sim.context = second
-    assert access.entity_pose("parcel").pos[0] == pytest.approx(2.0)
+    assert access.ground_truth_pose("parcel").pos[0] == pytest.approx(2.0)

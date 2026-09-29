@@ -14,7 +14,7 @@ from __future__ import annotations
 import py_trees
 from scenario_execution.actions.base_action import ActionError
 
-from ..access import AccessError, Pose
+from ..access import AccessError, EntityAbsent, Pose
 from ..base import SimAction
 
 
@@ -88,17 +88,22 @@ class EntityCondition(SimAction):
             # that. Waiting is correct; asking for the world here would compile one as a side effect.
             return self.waiting("waiting for the simulation")
 
+        poses = {}
         try:
-            poses = {}
             for name in self._entities:
-                pose = self._access.entity_pose(name)
-                if pose is None:
-                    # Over the control socket a pose is a round-trip. Not knowing YET is not the same as not being
-                    # resolvable -- that one raises.
-                    return self.waiting(f"waiting for {name!r}'s pose over {self.transport}")
-                poses[name] = pose
+                poses[name] = self._access.ground_truth_pose(name)
+        except EntityAbsent as err:
+            # Deleted, or not spawned yet: nowhere, so nothing has moved. A name the world never
+            # had raises instead (below), on the first tick. A dwell does not survive it.
+            self._since = None
+            return self.waiting(str(err))
         except AccessError as err:
             self.reraise(err)
+        pending = [name for name, pose in poses.items() if pose is None]
+        if pending:
+            # Over the control socket a pose is a round-trip. Not knowing YET is not the same as
+            # not being resolvable -- that one raises.
+            return self.waiting(f"waiting for {pending[0]!r}'s pose over {self.transport}")
 
         if not self._baseline:
             # Captured on the first tick where EVERY pose is known, not in setup() and not at reset:

@@ -8,8 +8,9 @@ the opposite of ``osc.ros``' ``odometry_distance_traveled`` -- pick this one for
 table yet", that one for an odometry budget. Someone measuring a robot's progress on a curved path will
 otherwise wonder why this number is smaller.
 
-Works over both transports: in a stepped run the pose is read from ``data.xpos``, over the control
-socket from ``sim/entities/<name>/pose``, keyed by the same entity name either way. See
+Works over both transports: the pose is the core's ``sim/entities/<name>/pose`` either way, read
+in-process or over the control socket, keyed by the entity's name. An entity that is absent
+(deleted, or not spawned yet) is waited for; a name the world never had is refused. See
 :mod:`scenario_execution_roqsim.access`.
 """
 

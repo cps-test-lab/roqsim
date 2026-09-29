@@ -1086,12 +1086,12 @@ pattern. An entity, endpoint or field that does not exist, and a field that is n
 flag or string, are refused with the same text on both transports.
 
 Where an entity is -- near something, inside an area -- is geometry, which an expression cannot
-compute, so two actions state it; each succeeds on the first tick its condition holds:
+compute, so actions state it; each succeeds on the first tick its condition holds:
 
 .. code-block:: text
 
    entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
-   entity_near(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+   entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
    entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)
    entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
    entity_in_region(entity: 'person', outside: true, region: [p1, p2, p3, p4])   # a polygon
@@ -1117,12 +1117,15 @@ for as long as the rule applies:
        with:
            until @door_open
 
-An entity deleted at run time is nowhere, so the condition waits for it; an unknown entity or target
-is refused, naming the closest names, with the same text on both transports.
+Every ``entity_*`` condition (``entity_moved``, ``entity_rotated`` and these) reads the core's
+``sim/entities/<name>/pose`` on both transports, so it names entities, not bodies. An entity that
+exists but is absent (deleted, or not spawned yet) is nowhere, so the condition waits for it and says
+so; a name the world never had is refused at once, naming the closest names, with the same text on
+both transports.
 
 Each works in a stepped run *and* against a simulator in another process, unedited: the transport is
-chosen from what the runner offered. In-process they read ``MujocoSim.context`` (entity poses from
-``data.xpos``, commands and reports through the world's endpoints, writes queued on the physics
+chosen from what the runner offered. In-process they read ``MujocoSim.context`` (entity poses,
+commands and reports through the world's endpoints, writes queued on the physics
 thread); otherwise they reach ``roqsim sim``'s control socket (:doc:`control`) -- the same endpoints,
 found by the same entity and endpoint names, which is what makes one scenario serve both. None of them
 can run under ``remote()``: a remote server is handed no simulation.

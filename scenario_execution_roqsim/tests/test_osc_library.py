@@ -37,7 +37,10 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
     EntityNavigateStart,
 )
-from scenario_execution_roqsim.actions.entity_near import EntityNear  # noqa: E402
+from scenario_execution_roqsim.actions.entity_near import (  # noqa: E402
+    EntityNear,
+    EntityNearPosition,
+)
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.displacement import MODES  # noqa: E402
 from scenario_execution_roqsim.get_osc_library import get_osc_library  # noqa: E402
@@ -69,6 +72,7 @@ def _entry_points(group):
             EntryPointStub("entity_rotated", EntityRotated, "scenario_execution_roqsim"),
             EntryPointStub("entity_call", EntityCall, "scenario_execution_roqsim"),
             EntryPointStub("entity_near", EntityNear, "scenario_execution_roqsim"),
+            EntryPointStub("entity_near_position", EntityNearPosition, "scenario_execution_roqsim"),
             EntryPointStub("entity_in_region", EntityInRegion, "scenario_execution_roqsim"),
             EntryPointStub("entity_navigate", EntityNavigate, "scenario_execution_roqsim"),
             EntryPointStub(
@@ -164,7 +168,6 @@ def test_a_missing_required_argument_arrives_as_none_and_the_action_rejects_it()
         "dwell: float = 0.0",
         "require: entity_quantifier = entity_quantifier!all",
         "require_verified: bool = true",
-        "target: string = ''",
         "mode: distance_mode = distance_mode!planar",
         "outside: bool = false",
     ],
@@ -297,7 +300,8 @@ scenario test:
         serial:
             entity_near(entity: 'robot', target: 'shelf', distance: 0.6) with:
                 timeout(60s)
-            entity_near(entity: 'robot', position: position_3d(x: 4.0m, y: 2.0m), distance: 0.3)
+            entity_near_position(entity: 'robot', position: position_3d(x: 4.0m, y: 2.0m),
+                                 distance: 0.3)
             entity_near(entity: 'gripper', target: 'parcel', distance: 0.05,
                         mode: distance_mode!spatial)
             emit end
@@ -324,15 +328,16 @@ def _args(node):
 def test_the_where_conditions_parse_and_hand_over_positions_in_metres():
     tree = _build(WHERE)
     near = _nodes(tree, EntityNear)
-    assert len(near) == 3
+    assert len(near) == 2
     assert _args(near[0])["target"] == "shelf"
     assert _args(near[0])["mode"][0] == "planar"
-    assert _args(near[1])["target"] == ""
-    assert _args(near[1])["position"] == {"x": 4.0, "y": 2.0, "z": 0.0}
-    assert _args(near[2])["mode"][0] == "spatial"
+    assert _args(near[1])["mode"][0] == "spatial"
+    (point,) = _nodes(tree, EntityNearPosition)
+    assert _args(point)["position"] == {"x": 4.0, "y": 2.0, "z": 0.0}
+    assert _args(point)["mode"][0] == "planar"
     regions = _nodes(tree, EntityInRegion)
     assert [len(_args(n)["region"]) for n in regions] == [2, 3]
     assert _args(regions[0])["region"][1] == {"x": 3.0, "y": 1.0, "z": 0.0}
     assert [_args(n)["outside"] for n in regions] == [False, True]
-    for node in near + regions:
+    for node in [*near, point, *regions]:
         node.execute(**_args(node))

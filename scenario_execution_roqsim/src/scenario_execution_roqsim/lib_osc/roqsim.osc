@@ -23,6 +23,13 @@ enum displacement_mode: [ distance, planar, x, y, z ]
 # instrument -- "did anything on this table get knocked over".
 enum entity_quantifier: [ all, any ]
 
+# The entity_* CONDITIONS (entity_moved, entity_rotated, entity_near, entity_near_position,
+# entity_in_region) read an entity's pose from the core's `sim/entities/<name>/pose`, in-process
+# and over the control socket alike, so they name ENTITIES (the world's `name:`), not bodies or TF
+# frames. A name the world never had is refused at once, naming the closest ones. An entity that
+# exists but is absent (deleted, or not spawned yet) is nowhere: the condition waits for it, and
+# its feedback says so.
+
 action entity_moved:
     # Succeed once the named entities have been DISPLACED from where they were when this action
     # started. Net displacement, NOT path length: an entity that goes out and comes back has moved
@@ -52,17 +59,16 @@ action entity_rotated:
     dwell: float = 0.0
     require: entity_quantifier = entity_quantifier!all
 
-# How entity_near measures a distance. `planar` ignores z: "the robot reached the shelf" and "a
+# How entity_near and entity_near_position measure a distance. `planar` ignores z: "the robot reached the shelf" and "a
 # person came within 1 m" are statements about the floor plan, and two entities of different heights
 # never share a z. `spatial` is the full 3D distance.
 enum distance_mode: [ planar, spatial ]
 
-# entity_near and entity_in_region are conditions on WHERE an entity is -- geometry, which an
-# OpenSCENARIO expression cannot compute, so they are actions rather than monitors. Each reads the
-# ground truth of the core's `sim/entities/<name>/pose` on every tick and succeeds on the first tick
-# the condition holds; it never fails on its own. The point measured is the entity's REFERENCE
-# POINT, the origin of its body, not the nearest point of its geometry. An absent entity (deleted at
-# run time) is nowhere, so the condition waits for it. Bounding the wait is the scenario's:
+# entity_near, entity_near_position and entity_in_region are conditions on WHERE an entity is --
+# geometry, which an OpenSCENARIO expression cannot compute, so they are actions rather than
+# monitors. Each reads the entity's pose on every tick and succeeds on the first tick the condition
+# holds; it never fails on its own. The point measured is the entity's REFERENCE POINT, the origin
+# of its body, not the nearest point of its geometry. Bounding the wait is the scenario's:
 # `timeout(60s)` on the action or the scenario fails the trial when it never holds, and `until`
 # ends the wait as a success, so it bounds a watch rather than a goal.
 #
@@ -84,15 +90,21 @@ enum distance_mode: [ planar, spatial ]
 #             until door_open == true
 
 action entity_near:
-    # Succeed once `entity` is within `distance` of a target: another entity named in `target`, or,
-    # with `target` empty, the point `position`.
+    # Succeed once `entity` is within `distance` of another entity, `target`.
     #
     #     entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
-    #     entity_near(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
     #     entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)
     entity: string                                    # roqsim entity name -- the world's `name:`
-    target: string = ''                               # the other entity; empty -> `position`
-    position: position_3d = position_3d()             # world frame; z is read only by `spatial`
+    target: string                                    # the other entity, by its `name:`
+    distance: float                                   # metres, > 0; within means <= distance
+    mode: distance_mode = distance_mode!planar
+
+action entity_near_position:
+    # Succeed once `entity` is within `distance` of the point `position` (world frame).
+    #
+    #     entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+    entity: string                                    # roqsim entity name -- the world's `name:`
+    position: position_3d                             # world frame; z is read only by `spatial`
     distance: float                                   # metres, > 0; within means <= distance
     mode: distance_mode = distance_mode!planar
 

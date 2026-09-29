@@ -21,8 +21,7 @@ It works out cleanly because both transports speak the same vocabulary -- the wo
 ===========================  ==================================  ====================================
 need                         in-process                          over the control socket
 ===========================  ==================================  ====================================
-pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``sim/entities/X/pose``
-ground-truth pose of ``X``   ``sim/entities/X/pose``, read        the same endpoint, over the socket
+pose of entity ``X``         ``sim/entities/X/pose``, read        the same endpoint, over the socket
 call command ``C`` of ``X``  ``ctx.interface``, its ``write``     ``call``, which waits for it
 did it land                  its confirming endpoint, read       the same, in the reply
                              after the step that applied it
@@ -45,9 +44,7 @@ action takes the clock it is handed and never knows which.
 
 What DOES differ, and is stated rather than hidden: over the socket a read is a round-trip, so the
 instant a threshold is crossed is resolved at the tick period rather than at the physics step. A
-dwell shorter than one tick means "the first tick past the threshold" on both paths. And a pose over
-the socket is an entity's (``sim/entities/<name>/pose``), where in-process a raw body name is
-accepted as well.
+dwell shorter than one tick means "the first tick past the threshold" on both paths.
 """
 
 from __future__ import annotations
@@ -68,10 +65,10 @@ class AccessError(RuntimeError):
 
 
 class EntityAbsent(AccessError):
-    """The entity exists and is absent (deleted at run time): it has no pose now, and may again.
+    """The entity exists and is absent (deleted, or not spawned yet): it has no pose now, and may.
 
-    A fact about the trial rather than about the scenario, so a caller that can wait for the entity
-    to come back catches this one; any other caller lets it reach the scenario as an AccessError.
+    A fact about the trial rather than about the scenario, so a condition waits for the entity to
+    be present; any other caller lets it reach the scenario as an AccessError.
     """
 
 
@@ -450,8 +447,8 @@ def pose_reading(name: str, payload) -> Pose:
     """A core pose endpoint's value as a :class:`Pose`; ``None`` is an absent entity."""
     if payload is None:
         raise EntityAbsent(
-            f"entity {name!r} is absent (deleted at run time): nothing can see or touch it, so it "
-            "has no pose until it is spawned again."
+            f"entity {name!r} is absent (deleted, or not spawned yet): nothing can see or touch it, "
+            "so it has no pose until it is spawned."
         )
     get = payload.get if isinstance(payload, dict) else lambda k: getattr(payload, k)
     return Pose(
@@ -476,21 +473,13 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def entity_pose(self, name: str) -> Pose | None:
-        """The entity's world pose, or ``None`` if it is not known YET (a reply in flight).
-
-        Raises :class:`AccessError` when the name can never resolve, which is a different thing from
-        not knowing yet and must not be confused with it.
-        """
-
-    @abstractmethod
     def ground_truth_pose(self, name: str) -> Pose | None:
         """Entity *name*'s pose as the core's ``sim/entities/<name>/pose`` endpoint reads it.
 
         The same endpoint on both transports, so an entity welded to the world (a shelf) has a
         pose here too, and a name the core serves no pose for is refused with the same text
-        (:func:`no_entity`). ``None`` while a reply is in flight; :class:`EntityAbsent` while the
-        entity is absent.
+        (:func:`no_entity`) -- at once, since the world never had it. ``None`` while a reply is in
+        flight; :class:`EntityAbsent` while the entity exists and is absent.
         """
 
     @abstractmethod

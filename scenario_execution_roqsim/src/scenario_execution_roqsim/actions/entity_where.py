@@ -1,7 +1,8 @@
 # Copyright (C) 2026 Frederik Pasch
 # SPDX-License-Identifier: Apache-2.0
 
-"""What ``entity_near`` and ``entity_in_region`` share: the entities' ground truth, every tick.
+"""What ``entity_near``, ``entity_near_position`` and ``entity_in_region`` share: the entities'
+ground truth, every tick.
 
 Each tick reads the core's ``sim/entities/<name>/pose`` of every entity the condition names -- on
 both transports the same endpoint, so an entity welded to the world (a shelf) has a pose, and a name
@@ -9,9 +10,9 @@ the core does not serve is refused with the same text -- and succeeds on the fir
 condition holds. Sampled like ``entity_moved``: in-process at every tick, over the control socket at
 the tick period of the replies.
 
-An absent entity (deleted at run time) is nowhere: the condition does not hold, and the action
-waits, saying so, until it is spawned again. Bounding the wait is the scenario's (``timeout()``,
-``until``).
+An absent entity (deleted, or not spawned yet) is nowhere: the condition does not hold, and the
+action waits, saying so, until it is spawned. A name the world never had is refused on the first
+tick. Bounding the wait is the scenario's (``timeout()``, ``until``).
 """
 
 from __future__ import annotations
