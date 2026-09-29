@@ -2,14 +2,18 @@
 # head-mounted Mid-360. Inheriting them says that once, instead of repeating two blocks that must then
 # be kept in step by hand. `extends:` carries COMPONENTS, not geometry -- this model keeps its own
 # MJCF, and not unitree_g1's `frames:`: here torso_link is a body at the end of the waist chain, so
-# the inherited mount's `parent_frame: torso_link` hangs the sensor off it and it turns with the waist,
-# as on the real robot.
+# the Mid-360's frame hangs the sensor off it and it turns with the waist, as on the real robot.
 
 # The models directory is flat, and this variant's description comes from a different Unitree
 # upstream than unitree_g1's, so the licence is named rather than guessed (THIRD_PARTY.md).
 license: LICENSE.unitree_ros
 
 extends: unitree_g1
+
+# Where the inherited Mid-360 goes: mid360_joint on torso_link, g1_29dof_mode_15_with_dex1_1.urdf:548-552,
+# the origin unitree_g1 declares. A place, not a link, so not published.
+frames:
+  - {name: mid360, parent: torso_link, pose: {position: {x: 0.0002835, y: 0.00003, z: 0.428434}, orientation: {roll: 3.141592653589793, pitch: 0.05112069379091391}}, tf: false}
 
 components:
 

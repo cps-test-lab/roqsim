@@ -20,16 +20,18 @@ Config::
       namespace: ""         # optional transport scope for the speed endpoint (/<ns>/speed)
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 belt)
       model: conveyor       # bundled model name / path
-      pos: [0.0, 0.0, 0.0]  # world placement of the belt model
-      rpy: [0.0, 0.0, 0.0]  # belt orientation as roll/pitch/yaw (rad)
+      pose:                 # the belt model in the world, a geometry_msgs/Pose (roqsim.pose); omitted
+        position: {x: 0.0, y: 0.0, z: 0.0}          #   components are 0
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       length: 2.442         # optional full belt length (X, m); default keeps the base model
       width: 0.58           # optional full belt width  (Y, m); default keeps the base model
       speed: 0.1            # belt speed at the start of each episode (m/s); negative reverses
       friction: 0.6         # optional belt<->package sliding friction override
       roller_radius: 0.0275
       belt_wrap: 0.025      # +/- position wrap (m); keep <= half the slab overhang
-      package_pose: [1.0, 0.6, 0.996, 1, 0, 0, 0]  # free-body reset pose (x y z qw qx qy qz),
-                                                   # in the BELT's frame -- pos/rpy are applied to it
+      package_pose:         # the package's free-body reset pose, in the BELT's frame (the belt's
+        position: {x: 1.0, y: 0.6, z: 0.996}   #   own pose is applied to it); a geometry_msgs/Pose,
+                                               #   omitted components 0; default at the feed end
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ import numpy as np
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 
 @dataclass
@@ -73,10 +75,7 @@ class ConveyorPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.conveyor_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.pos, self.quat = config_pose(self.config)
         # Optional belt size (full length/width, m). Absent -> keep the base model exactly. Bad
         # values are tolerated here (kept as the base half-extent) so validate_config can report
         # them with a friendly message rather than crashing during construction.
@@ -90,9 +89,11 @@ class ConveyorPlugin(Plugin):
         # Default free-body start pose tracks the +x (feed) end so the package starts on the belt
         # for any length (1.0 == base 1.221 - 0.221). Explicit package_pose still wins.
         default_pkg_x = self._half_len - 0.221
-        self.package_pose = list(
-            self.config.get("package_pose", [default_pkg_x, 0.6, 0.996, 1, 0, 0, 0])
-        )
+        if "package_pose" in self.config:
+            pkg_pos, pkg_quat = config_pose({"pose": self.config["package_pose"]})
+            self.package_pose = [*pkg_pos, *pkg_quat]
+        else:
+            self.package_pose = [default_pkg_x, 0.6, 0.996, 1.0, 0.0, 0.0, 0.0]
         self._package_pose_world = self._to_world(self.package_pose)
         # resolved in configure()
         self._belt_dadr = self._belt_qadr = -1
@@ -109,7 +110,7 @@ class ConveyorPlugin(Plugin):
         ``package_pose`` is expressed in the belt model's own frame (its default tracks the belt's
         feed end), but the package hangs off a **free joint**, whose ``qpos`` MuJoCo reads as a WORLD
         pose -- the attach frame that places every welded part is not applied to it. So the belt's
-        own ``pos``/``rpy`` has to be composed in here; without it a belt spawned anywhere but the
+        own ``pose`` has to be composed in here; without it a belt spawned anywhere but the
         world origin resets its package onto the floor at the origin.
         """
         local_pos = np.asarray(pose[:3], dtype=float)
@@ -133,10 +134,9 @@ class ConveyorPlugin(Plugin):
 
     def validate_config(self, config: dict) -> list[str]:
         errors = self.validate_topics(config)
-        if "package_pose" in config and len(config["package_pose"]) != 7:
-            errors.append("'package_pose' must be [x, y, z, qw, qx, qy, qz]")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
+        if "package_pose" in config:
+            errors += config_pose_errors({"pose": config["package_pose"]}, "conveyor package_pose")
+        errors += config_pose_errors(config, "conveyor")
         if float(config.get("roller_radius", 0.0275)) <= 0:
             errors.append("'roller_radius' must be > 0")
         for key in ("length", "width"):

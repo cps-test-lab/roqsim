@@ -13,17 +13,18 @@ Config::
         model: realsense_d435  # bundled model name, filename, or absolute path
         namespace: ""          # optional transport scope; the capture plugin's endpoints inherit it
         prefix: ""             # MJCF name prefix (use distinct prefixes for >1 mount of the model)
-        pos: [0.0, 0.0, 0.0]
-        rpy: [0.0, 0.0, 0.0]   # mount orientation as roll/pitch/yaw (rad)
+        pose:                  # the mount pose in its parent (world, `attach_to` or `parent_frame`):
+          position: {x: 0.0, y: 0.0, z: 0.0}     # a geometry_msgs/Pose; omitted components are 0
+          orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   # or a quaternion x/y/z/w
         motion: static         # who owns the mount's pose: static (default; welded, nothing moves
                                #   it), driven (a plugin or scenario places it), physics (the solver)
         attach_to: wrist_3_link # OPTIONAL: weld the mount to this body of an ALREADY-SPAWNED robot
                                #   or arm instead of to the world, so it rides what carries it.
-                               #   `pos`/`rpy` are then relative to that body. Same spelling as
+                               #   `pose` is then relative to that body. Same spelling as
                                #   `fiducial_marker`'s, and mutually exclusive with `motion:`.
         attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`/`parent_frame`
         parent_frame: cover_link # OPTIONAL, instead of `attach_to`: a body OR a declared frame of
-                               #   the carrier to hang from; `pos`/`rpy` are the vendor macro's origin
+                               #   the carrier to hang from; `pose` is an offset from it
         frame_id: laser        # the device's scan frame name, filled into its manifest; default: the
                                #   vendor name its manifest's `frame_id:` declares (see below)
         device_name: camera    # the vendor macro's `name` param, which prefixes the device's frame
@@ -41,8 +42,13 @@ Config::
 
 **Mounting on something that moves: eye-in-hand and friends.** ``attach_to`` welds the mount to a
 named body of a robot or arm spawned EARLIER in the document, so the sensor rides the flange, the
-mast or the chassis and needs no pose of its own to be maintained. ``pos``/``rpy`` are then read
+mast or the chassis and needs no pose of its own to be maintained. ``pose`` is then read
 relative to that body, and ``attach_prefix`` carries the carrier's MJCF prefix.
+
+``pose`` is read by :func:`roqsim.pose.parse_pose` with ``relative=True``, wherever the mount hangs:
+it is an offset in the frame it hangs from (the world, a body, a declared frame), so every omitted
+component is 0 -- there is no resting height, as a world spawn of a robot has -- and no pose at all
+puts the mount exactly at that frame. ``pos``/``rpy`` are refused, with the ``pose:`` they mean.
 
 This is what puts a sensor on an arm that does not ship one. An arm whose MODEL carries a camera
 needs nothing here -- its manifest offers the capture plugin and a world switches it on -- but that
@@ -56,12 +62,27 @@ such a sensor means moving what carries it.
 
 **A device mounted by its carrier.** Nested under a robot or arm -- in the world's ``components:``,
 or in the robot's own manifest -- a ``spawn_sensor`` is that carrier's device and inherits its
-identity, so a robot manifest states a vendor mount and nothing else::
+identity. Where it goes is a **frame** of the carrier: a body, or an entry of the carrier
+manifest's ``frames:`` block (:mod:`roqsim.frames`). The robot declares where its devices go as
+frames -- ``tf: false`` for a place that is not a link of the robot description, so the TF tree
+stays the description's -- and each device names one and states no pose of its own::
 
+    frames:
+      - name: rplidar_mount
+        parent: shell_link
+        pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5708}}
+        tf: false
     components:
-      - spawn_sensor: {model: rplidar_a1, parent_frame: shell_link,
-                       pos: [-0.04, 0, 0.098715], rpy: [0, 0, 1.5708], frame_id: rplidar_link}
+      - spawn_sensor: {model: rplidar_a1, parent_frame: rplidar_mount, frame_id: rplidar_link}
         name: rplidar
+
+A ``pose`` beside ``parent_frame`` is an offset from that frame, so a world or a campaign moves a
+device by overriding its ``pose`` (``robot.rplidar.pose.position.z=0.05``), and the record states
+the frame and the offset. A ``parent_frame`` that is neither a body nor a frame of the carrier is
+refused when the document expands, with a did-you-mean and the carrier's frames listed. A world
+puts another device on a robot's frame by nesting it in that robot's ``components:`` (or adding it
+there from an override) with the same ``parent_frame``, switching the robot's own device off with
+``enabled: false`` if the new one replaces it.
 
 * ``attach_prefix`` defaults to the carrier's prefix, and ``prefix`` to ``<attach_prefix><name>_``,
   so two identical scanners on one base never collide and the device's own components resolve
@@ -75,7 +96,7 @@ identity, so a robot manifest states a vendor mount and nothing else::
 
 **The mount frame.** A device model's ``mount`` body is the frame its vendor macro's ``origin``
 places -- the link the macro attaches to its ``parent`` (a RealSense's ``<name>_bottom_screw_frame``,
-the tripod screw) -- and ``pos``/``rpy`` are that origin. A pose copied from a robot description's
+the tripod screw) -- and ``pose`` is that origin. A pose copied from a robot description's
 call of the macro therefore places the device where ``robot_state_publisher`` would.
 
 **Frames and placeholders.** A device manifest may declare a ``frames:`` chain relative to its own
@@ -86,7 +107,8 @@ bodies (:mod:`roqsim.frames`), first entry hanging from the mount and the scan f
     components:
       - lidar: {site: scan, frame_id: "{frame_id}", exclude_body: mount, emit_static_tf: false}
     frames:
-      - {name: "{frame_id}", parent: mount, pos: [0, 0, 0.03], rpy: [3.14159, 0, 0]}
+      - {name: "{frame_id}", parent: mount,
+         pose: {position: {z: 0.03}, orientation: {roll: 3.14159}}}
 
 Three placeholders are filled into every string of the manifest's component configs and
 ``frames:``: ``{frame_id}`` (this mount's ``frame_id``), ``{device_name}`` (its ``device_name``) and
@@ -104,7 +126,10 @@ wins. A device whose vendor names no default declares none, and a mount of it th
 ``{frame_id}`` (or ``{device_name}``) without setting one is refused. Each frame becomes a site of the
 device; at configure the mount publishes, from the compiled model, ``parent_frame -> first frame``
 (only for a welded mount, whose pose that is) and each further frame from its declared parent,
-or from the first frame when its parent is a body of the device. Names are bare and scoped by the
+or from the first frame when its parent is a body of the device. A ``parent_frame`` the carrier
+declares with ``tf: false`` is not in the TF tree, so that first transform starts at the frame's
+nearest published ancestor instead. A device's own frames are its vendor links and are all
+published: ``tf: false`` in a device manifest is refused. Names are bare and scoped by the
 mount's namespace.
 
 Mounts on one carrier share its namespace, so two of them that would publish any one frame name --
@@ -230,10 +255,11 @@ from roqsim.manifest import (
     manifest_frame_id,
     manifest_frames,
     manifest_path,
+    resolve_parent_frame,
 )
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 from roqsim.registry import resolve_plugin
 from roqsim.schema import Field
 
@@ -631,8 +657,9 @@ class SpawnSensorPlugin(Plugin):
             str, default="", doc="transport scope; a nested mount's is its carrier's"
         ),
         "prefix": Field(str, default="", doc="MJCF name prefix; nested: <attach_prefix><name>_"),
-        "pos": Field(list, unit="m", doc="[x, y] or [x, y, z] mount position"),
-        "rpy": Field(list, unit="rad", doc="[roll, pitch, yaw] mount orientation"),
+        "pose": Field(
+            dict, doc="mount pose in its parent, a geometry_msgs/Pose (omitted components: 0)"
+        ),
         "motion": Field(str, default="static", doc="static | driven | physics"),
         "attach_to": Field(str, doc="body of an already-spawned carrier to weld the mount to"),
         "attach_prefix": Field(str, doc="carrier's MJCF prefix for attach_to/parent_frame"),
@@ -675,6 +702,13 @@ class SpawnSensorPlugin(Plugin):
                 )
             cfg.setdefault("attach_prefix", carrier.config.get("prefix", ""))
             cfg.setdefault("prefix", f"{cfg['attach_prefix']}{spec.label}_")
+            if cfg.get("parent_frame") and carrier.config.get("model"):
+                resolve_parent_frame(
+                    resolve_model(carrier.config["model"], base_dir=base_dir).path,
+                    str(cfg["parent_frame"]),
+                    carrier.config.get("frames"),
+                    f"spawn_sensor '{spec.address}'",
+                )
         if cfg.get("model"):
             model_file = resolve_model(cfg["model"], base_dir=base_dir).path
             for key, value in _identity(cfg, model_file).items():
@@ -712,7 +746,7 @@ class SpawnSensorPlugin(Plugin):
     def _refuse_carrier_mount_without_frames(spec, model_file) -> None:
         """Refuse a carrier mount of a device that declares no vendor frame chain.
 
-        Such a device has no vendor frame to hang from: its ``pos``/``rpy`` would place a body whose
+        Such a device has no vendor frame to hang from: its ``pose`` would place a body whose
         frame no vendor description names, and nothing would publish a transform between the
         carrier and the frame its data is stamped in.
         """
@@ -766,10 +800,7 @@ class SpawnSensorPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.sensor_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.pos, self.quat = config_pose(self.config)
         # `motion` names who owns the mount's pose, in the same three answers `spawn_model` uses
         # for a prop. `static` is the default: the mount is part of the model, and nothing can
         # move it.
@@ -815,8 +846,7 @@ class SpawnSensorPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
+        errors += config_pose_errors(config, f"spawn_sensor '{self.address}'")
         if config.get("attach_to") and config.get("motion"):
             errors.append(
                 "'attach_to' and 'motion' are mutually exclusive: a mount welded to a body has "
@@ -853,8 +883,6 @@ class SpawnSensorPlugin(Plugin):
                 "It says who owns the mount's pose: nobody (static, the default -- welded into "
                 "the model), a plugin or a scenario (driven), or the solver (physics)."
             )
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
         if not 0.0 <= float(config.get("fov_alpha", 0.25)) <= 1.0:
             errors.append("'fov_alpha' must be in [0, 1]")
         # Only explicit world values are checked here (the manifest default is validated at build time,
@@ -913,11 +941,17 @@ class SpawnSensorPlugin(Plugin):
         where = f"spawn_sensor {self.sensor_name} ({self.config['model']})"
         raw_frames = substitute(manifest_frames(asset.path), _placeholders(self.config), where)
         self.frames = parse_frames(raw_frames, where)
+        if hidden := [f.name for f in self.frames if not f.tf]:
+            raise ModelError(
+                f"{where}: frame(s) {hidden} say 'tf: false', but a device's frames are its vendor "
+                f"links and are all published. A place to hang something from is a frame of the "
+                f"carrier."
+            )
         add_frame_sites(child, self.frames, where)
         site = spec.site(self.attach_prefix + self.parent_frame) if self.parent_frame else None
         if site is not None:
-            # Attaching AT a site makes the site's orientation the parent frame, so `pos`/`rpy` are
-            # the joint origin within it -- the `spawn_arm` end-effector pattern.
+            # Attaching AT a site makes the site's orientation the parent frame, so `pose` is the
+            # joint origin within it -- the `spawn_arm` end-effector pattern.
             frame = spec.attach(child, prefix=self.prefix, site=site)
         else:
             frame = self._parent_body(spec).add_frame()
@@ -947,12 +981,13 @@ class SpawnSensorPlugin(Plugin):
             )
         return parent
 
-    def _frame_links(self, ctx: SimContext) -> list[dict]:
+    def _frame_links(self, ctx: SimContext, anchors: dict[str, str]) -> list[dict]:
         """The device chain as static transforms: ``parent_frame -> first frame``, then the rest.
 
         The root link is published only for a welded mount -- a driven or free one moves, and a
         latched transform would freeze it at its spawn pose -- while the device's own links are
-        rigid whatever carries it.
+        rigid whatever carries it. *anchors* are the carrier's unpublished frames and their nearest
+        published ancestors: a device on one is published from that ancestor.
         """
         if not self.frames:
             return []
@@ -961,6 +996,7 @@ class SpawnSensorPlugin(Plugin):
         links = []
         if not (self.driven or self.free):
             anchor = self.parent_frame or self.attach_to
+            anchor = anchors.get(anchor, anchor)
             links.append(
                 (
                     anchor or "world",
@@ -1329,6 +1365,8 @@ class SpawnSensorPlugin(Plugin):
                 },
             )
         )
-        links = self._frame_links(ctx)
+        carrier = ctx.entities.get(self.entity) if self.entity is not None else None
+        anchors = carrier.meta.get("frame_anchors", {}) if carrier is not None else {}
+        links = self._frame_links(ctx, anchors)
         if links:
             ctx.interface.add(static_tf_endpoint("frames", self.sensor_name, namespace, links))

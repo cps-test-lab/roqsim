@@ -92,7 +92,11 @@ def _arm(*components: dict) -> dict:
 def _sensor(model: str, *components: dict) -> dict:
     return _world(
         {
-            "spawn_sensor": {"model": model, "prefix": f"{model}_", "pos": [0.0, 0.0, 0.5]},
+            "spawn_sensor": {
+                "model": model,
+                "prefix": f"{model}_",
+                "pose": {"position": {"z": 0.5}},
+            },
             "name": model,
             "components": list(components),
         },
@@ -380,7 +384,7 @@ CASES: dict[str, Case] = {
                 "family": "apriltag_36h11",
                 "id": 0,
                 "size": 0.12,
-                "pose": [0.0, 0.0, 0.5],
+                "pose": {"position": {"z": 0.5}},
             }
         }
     ),
@@ -482,7 +486,9 @@ CASES: dict[str, Case] = {
     "workbench": _static({"workbench": {}, "name": "bench"}),
     "palm_tree": _static({"palm_tree": {}, "name": "palm"}),
     "duct": _static({"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [3.0, 1.0], "z": 3.2}}),
-    "strip_light": _static({"strip_light": {"prefix": "s_", "pos": [2.0, 3.0, 3.5]}}),
+    "strip_light": _static(
+        {"strip_light": {"prefix": "s_", "pose": {"position": {"x": 2.0, "y": 3.0, "z": 3.5}}}}
+    ),
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),

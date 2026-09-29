@@ -218,7 +218,7 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
 * **markers** — prop points whose ``comment`` names the model to place; dropped in **mark** mode
   and/or added from 3D-review comment dots, and carried through a wall-editing round. ``in_room`` is
   the id of the room containing the marker (computed; ``null`` if outside every room). A marker also
-  carries ``yaw_deg`` (heading about +Z, 0 = +x, CCW → the prop's ``spawn_model`` ``rpy``) **only
+  carries ``yaw_deg`` (heading about +Z, 0 = +x, CCW → the yaw of the prop's ``spawn_model`` ``pose``) **only
   when the human dragged a direction** out of the point in mark mode; a plain click leaves it
   headingless (the prop is placed axis-aligned). Orientation the agent decides for a 3D-review prop
   goes in the generator's ``--markers-map`` instead (``roqsim scenes floorplan-to-world``), whose ``yaw_deg``
