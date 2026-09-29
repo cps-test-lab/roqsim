@@ -13,6 +13,7 @@ from roqsim.plugins.contact_monitor import ContactMonitorPlugin
 from roqsim.plugins.energy_monitor import EnergyMonitorPlugin
 from roqsim.plugins.joint_state_publisher import JointStatePublisherPlugin
 from roqsim.plugins.model_override import ModelOverridePlugin
+from roqsim.plugins.pose_publisher import PosePublisherPlugin
 from roqsim.plugins.spawn_model import SpawnModelPlugin
 
 #: plugin class -> {endpoint name: (kind, payload type)}
@@ -29,6 +30,7 @@ EXPECTED = {
         "override_state": ("out", "OverrideReport"),
         "override_verified": ("out", "OverrideReport"),
     },
+    PosePublisherPlugin: {"poses/{item}": ("out", "Transform")},
 }
 
 
