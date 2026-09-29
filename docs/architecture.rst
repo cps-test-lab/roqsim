@@ -328,18 +328,22 @@ knows it is finished -- the goal was reached, the episode failed -- therefore pu
 observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
 condition on, and holds the robot idle until the scenario ends the run.
 
-For an endpoint, that condition is ``osc.roqsim``'s ``entity_reports``: the plugin registers its
-outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s ``tripped``, a trial
-plugin's own ``resolved``), and the scenario waits on it, then ends the run, with a ``timeout`` as the
-bound on the trial:
+For an endpoint, ``osc.roqsim``'s ``entity_monitor`` keeps a scenario variable equal to it: the
+plugin registers its outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s
+``tripped``, a trial plugin's own ``resolved``), the monitor writes it into the variable every tick,
+and the scenario waits on the variable, then ends the run, with a ``timeout`` as the bound on the
+trial:
 
 .. code-block:: text
 
    scenario trial:
        timeout(120s)
-       do serial:
-           entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-           emit end
+       var tripped: bool = false
+       do parallel:
+           entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+           serial:
+               wait tripped == true
+               emit end
 
 The report is addressed as the world names it -- the entity and the endpoint -- and read from the
 endpoint itself in a stepped run and over the control socket (§13), so one
@@ -651,7 +655,7 @@ Instead, each sensor owns its noise as plain config:
 -  **Wheel odometry** (``roqsim_mobile``): ``diff_drive``'s ``odom_noise`` puts a multiplicative bias (``linear_scale``, ``angular_scale``) and zero-mean white noise (``linear_stddev``, ``angular_stddev``) on the velocities read off the wheels, before they are integrated, so the reported pose drifts the way real odometry does while the base itself moves exactly as the physics says. One draw per physics step from ``rng_for``, under the same seed and episode rules as the lidar; omitted, nothing is drawn.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``endpoint_call(entity: 'robot.lidar', endpoint: 'override')``), over the same endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``entity_call(entity: 'robot.lidar', command: 'override')``), over the same endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the detection limits and the noise so the devices cannot drift apart on them: the far limit and the presence mask are applied there once, for every device.
 

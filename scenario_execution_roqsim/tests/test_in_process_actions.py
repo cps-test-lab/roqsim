@@ -27,17 +27,18 @@ pytest.importorskip(
 
 import py_trees  # noqa: E402
 from scenario_execution.actions.base_action import ActionError  # noqa: E402
+from scenario_execution.model.types import VariableReference  # noqa: E402
 
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
 from scenario_execution_roqsim.actions.delete_entity import DeleteEntity  # noqa: E402
-from scenario_execution_roqsim.actions.endpoint_call import EndpointCall  # noqa: E402
+from scenario_execution_roqsim.actions.entity_call import EntityCall  # noqa: E402
+from scenario_execution_roqsim.actions.entity_monitor import EntityMonitor  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
     EntityNavigateStart,
 )
-from scenario_execution_roqsim.actions.entity_reports import EntityReports  # noqa: E402
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.spawn_entity import SpawnEntity  # noqa: E402
@@ -342,14 +343,14 @@ def test_an_angle_beyond_pi_is_refused(world):
         action.execute(entities=["parcel"], angle=7.0, dwell=0.0, require="all")
 
 
-# -- endpoint_call, on a model_override's `override` ---------------------------------------------
+# -- entity_call, on a model_override's `override` -----------------------------------------------
 def _call(sim, clock, value="true", require_verified=True, entity="grip_fault"):
     return _start(
-        EndpointCall(),
+        EntityCall(),
         sim,
         clock,
         entity=entity,
-        endpoint="override",
+        command="override",
         value=value,
         require_verified=require_verified,
     )
@@ -435,7 +436,7 @@ def test_a_command_the_producer_refuses_fails_with_its_own_text(world):
     from roqsim.context import Endpoint
 
     ctx.interface.add(Endpoint(name="arm", direction="in", owner="grip_fault", write=refuse))
-    action = _start(EndpointCall(), sim, clock, entity="grip_fault", endpoint="arm", value="")
+    action = _start(EntityCall(), sim, clock, entity="grip_fault", command="arm", value="")
     action.update()
     _step(ctx, clock)
     assert action.update() is FAILURE
@@ -905,7 +906,7 @@ def test_spawn_raises_on_an_entity_the_world_never_declared(teleport_world):
         action.update()
 
 
-# -- endpoint_call, on a sensor's `fault:` override ------------------------------------------------
+# -- entity_call, on a sensor's `fault:` override --------------------------------------------------
 #
 # The report channel, driven through the SAME action: a sensor's override is addressed by the
 # component that declares it (`rig.lidar`), since one entity may carry two faultable sensors.
@@ -936,7 +937,7 @@ def _sensor_handle(ctx, address="rig.lidar"):
 
 
 def _sensor_call(sim, clock, entity="rig.lidar"):
-    return _start(EndpointCall(), sim, clock, entity=entity, endpoint="override", value="true")
+    return _start(EntityCall(), sim, clock, entity=entity, command="override", value="true")
 
 
 def test_a_sensor_fault_is_applied_and_the_verdict_read_back(world):
@@ -981,12 +982,12 @@ def test_an_unknown_sensor_address_names_what_the_world_offers(world):
     assert "no command or stream 'override' of 'lidar'" in str(err.value)
 
 
-def test_an_empty_endpoint_is_refused_at_execute(world):
+def test_an_empty_command_is_refused_at_execute(world):
     _, clock, sim = world
-    action = EndpointCall()
+    action = EntityCall()
     action.setup(simulation=sim, clock=clock)
     with pytest.raises(ActionError, match="both required"):
-        action.execute(entity="rig.lidar", endpoint="", value="true")
+        action.execute(entity="rig.lidar", command="", value="true")
 
 
 # -- entity_navigate ------------------------------------------------------------------------------
@@ -1298,27 +1299,27 @@ def test_delete_refuses_an_empty_entity_name(teleport_world):
         action.execute(entity="")
 
 
-# -- entity_reports -------------------------------------------------------------------------------
+# -- entity_monitor -------------------------------------------------------------------------------
 #
-# A plugin's report, read the way a scenario ends a run on a trial's outcome. The arm test is the
-# case the action exists for; the crate on the ramp is the same path with core plugins only.
+# A plugin's report kept in a scenario variable, which the scenario's own conditions read. The arm
+# test is the case the action exists for; the others use a report under the test's control.
 
 
-def _reports(sim, clock, **args):
-    full = {
-        "comparison_operator": "eq",
-        "dwell": 0.0,
-        "fail_if_bad_comparison": False,
-        **args,
-    }
-    return _start(EntityReports(), sim, clock, **full)
+def _variable(name, default):
+    """A scenario variable as the parser hands one over: a reference to write, holding a default."""
+    ref = VariableReference(py_trees.blackboard.Client(name=f"test {name}"), f"/{name}")
+    ref.set_value(default)
+    return ref
 
 
-def test_a_stepped_run_ends_when_the_arm_trips_its_force_limit_and_not_before(tmp_path):
-    """The idiom end to end on a real arm: `entity_reports(... 'force_limit.tripped' ...)` is what
-    a scenario waits on before `emit end`, so it must hold RUNNING for every step before the trip
-    and succeed on the tick after it -- read through the endpoint the plugin declared, which is the
-    one the ROS bridge publishes too."""
+def _monitor(sim, clock, entity, value, variable):
+    return _start(EntityMonitor(), sim, clock, entity=entity, value=value, target_variable=variable)
+
+
+def test_the_variable_follows_the_arms_force_limit_and_turns_on_the_tick_it_trips(tmp_path):
+    """The idiom end to end on a real arm: `entity_monitor(... 'force_limit.tripped' ...)` keeps the
+    variable a scenario's `wait tripped` reads. It must read False on every tick before the trip and
+    True on the tick after it, read through the endpoint the plugin declared."""
     pytest.importorskip("roqsim_sensors", reason="force_limit is a roqsim_sensors plugin")
     pytest.importorskip("roqsim_manipulation_assets", reason="the ur5e model")
     from roqsim.config import load_config_from_dict
@@ -1358,22 +1359,22 @@ def test_a_stepped_run_ends_when_the_arm_trips_its_force_limit_and_not_before(tm
     engine.setup()
     engine.reset()
     ctx, clock = engine.ctx, FakeClock()
-    action = _reports(
-        FakeSim(ctx), clock, entity="ur5e", report="force_limit.tripped", expected_value="True"
-    )
+    tripped = _variable("tripped", False)
+    action = _monitor(FakeSim(ctx), clock, "ur5e", "force_limit.tripped", tripped)
     report = ctx.blackboard.get("force_limit:ur5e.safety")
 
     ticks = 0
-    while action.update() is RUNNING:
-        assert not report().tripped, "RUNNING although the limit had already tripped"
+    while not report().tripped:
+        assert action.update() is RUNNING
+        assert tripped.get_value() is False
         engine.step()
         clock.t = ctx.sim_time
         ticks += 1
         assert ticks < 200, "never tripped"
-    assert report().tripped
-    assert report().at_time >= settle, "and not before the moment it was configured to trip at"
-    assert ticks >= round(settle / 0.002), "so the action waited out every step before the trip"
-    assert "force_limit.tripped = True" in action.feedback_message
+    assert ticks >= round(settle / 0.002), "the limit tripped no earlier than configured"
+    assert action.update() is RUNNING, "a monitor never ends on its own"
+    assert tripped.get_value() is True
+    assert "force_limit.tripped = True -> /tripped" in action.feedback_message
 
 
 @pytest.fixture
@@ -1388,38 +1389,20 @@ def ramp_contact(world):
     return ctx, clock, sim, monitor
 
 
-def test_a_bare_report_compares_the_field_its_publication_carries(ramp_contact):
-    """`report: 'contact'` means `contact.in_contact`: the field the ROS bridge publishes, so the
-    short form compares the same value on both transports."""
+def test_a_bare_endpoint_monitors_the_field_its_publication_carries(ramp_contact):
+    """`value: 'contact'` means `contact.in_contact`: the field the ROS bridge publishes."""
     ctx, clock, sim, monitor = ramp_contact
-    action = _reports(sim, clock, entity="parcel", report="contact", expected_value="True")
-    assert action.update() is RUNNING, "falling, not yet touching"
+    touching = _variable("touching", False)
+    action = _monitor(sim, clock, "parcel", "contact", touching)
+    assert action.update() is RUNNING
+    assert touching.get_value() is False, "falling, not yet touching"
     for _ in range(500):
         _step(ctx, clock, monitor)
-        if action.update() is SUCCESS:
+        action.update()
+        if touching.get_value():
             break
-    assert action.status is not FAILURE
-    assert action.update() is SUCCESS
+    assert touching.get_value() is True
     assert "parcel.contact.in_contact = True" in action.feedback_message
-
-
-def test_every_field_of_a_report_is_readable_in_process(ramp_contact):
-    """Not only the published one: a stepped run reads the report itself."""
-    ctx, clock, sim, monitor = ramp_contact
-    action = _reports(
-        sim,
-        clock,
-        entity="parcel",
-        report="contact.first_time",
-        expected_value="0.0",
-        comparison_operator="gt",
-    )
-    assert action.update() is RUNNING, "first_time is -1.0 until the first contact"
-    for _ in range(500):
-        _step(ctx, clock, monitor)
-        if action.update() is SUCCESS:
-            break
-    assert action.update() is SUCCESS
 
 
 class _Outcome:
@@ -1428,6 +1411,8 @@ class _Outcome:
     def __init__(self):
         self.resolved = False
         self.score = 0.0
+        self.samples = [0.0, 1.0]
+        self.pending = None
 
 
 def _outcome_world(world):
@@ -1447,64 +1432,48 @@ def _outcome_world(world):
     return ctx, clock, sim, outcome
 
 
-def test_the_dwell_is_held_on_the_runners_clock_and_restarts_on_a_dip(world):
-    ctx, clock, sim, outcome = _outcome_world(world)
-    action = _reports(sim, clock, entity="parcel", report="trial", expected_value="True", dwell=1.0)
-    assert action.update() is RUNNING
-
-    outcome.resolved = True
-    clock.t = 10.0
-    assert action.update() is RUNNING
-    clock.t = 10.5
-    assert action.update() is RUNNING, "half the dwell is not the dwell"
-    outcome.resolved = False
-    assert action.update() is RUNNING
-    outcome.resolved = True
-    clock.t = 11.0
-    assert action.update() is RUNNING, "the dwell restarted at 11.0"
-    clock.t = 12.01
-    assert action.update() is SUCCESS
+def test_the_variable_is_rewritten_on_every_tick(world):
+    """A value that goes up and comes down is followed both ways: the monitor keeps no latch, so
+    `wait` and `until` see what the plugin says now."""
+    _ctx, clock, sim, outcome = _outcome_world(world)
+    score = _variable("score", -1.0)
+    action = _monitor(sim, clock, "parcel", "trial.score", score)
+    for value in (0.0, 0.7, 0.2, 0.9):
+        outcome.score = value
+        assert action.update() is RUNNING
+        assert score.get_value() == value
 
 
-def test_a_comparison_that_does_not_hold_waits_unless_told_to_fail(world):
-    ctx, clock, sim, outcome = _outcome_world(world)
-    patient = _reports(
-        sim,
-        clock,
-        entity="parcel",
-        report="trial.score",
-        expected_value="0.5",
-        comparison_operator="ge",
-    )
-    strict = _reports(
-        sim,
-        clock,
-        entity="parcel",
-        report="trial.score",
-        expected_value="0.5",
-        comparison_operator="ge",
-        fail_if_bad_comparison=True,
-    )
-    assert patient.update() is RUNNING
-    assert strict.update() is FAILURE
-    assert "trial.score = 0.0 (want >= 0.5)" in strict.feedback_message
-    outcome.score = 0.7
-    assert patient.update() is SUCCESS
+def test_a_field_with_no_value_yet_leaves_the_default(world):
+    _ctx, clock, sim, outcome = _outcome_world(world)
+    pending = _variable("pending", "unset")
+    action = _monitor(sim, clock, "parcel", "trial.pending", pending)
+    assert action.update() is RUNNING
+    assert pending.get_value() == "unset"
+    assert "waiting for parcel.trial" in action.feedback_message
+    outcome.pending = "done"
+    action.update()
+    assert pending.get_value() == "done"
 
 
 @pytest.mark.parametrize(
-    "entity,report,message",
+    "entity,value,message",
     [
         ("nobody", "trial", r"no entity 'nobody' publishes a report\. .*parcel: trial"),
         ("parcel", "verdict", r"publishes no report 'verdict'\. It publishes: trial"),
-        ("parcel", "trial.sucess", r"no field 'sucess'.*resolved, score"),
+        ("parcel", "trial.sucess", r"no field 'sucess'. It has: pending, resolved, samples, score"),
+        (
+            "parcel",
+            "trial.samples",
+            r"parcel\.trial\.samples is not a single number, flag or string",
+        ),
     ],
 )
-def test_a_name_that_does_not_exist_raises_listing_what_does(world, entity, report, message):
+def test_a_value_that_cannot_be_monitored_raises_naming_it(world, entity, value, message):
     """Authoring errors, so they raise -- and say what the world does offer, since the mistake is
     almost always a near miss."""
     _ctx, clock, sim, _outcome = _outcome_world(world)
-    action = _reports(sim, clock, entity=entity, report=report, expected_value="True")
+    action = _monitor(sim, clock, entity, value, _variable("v", None))
     with pytest.raises(ActionError, match=message):
         action.update()
 
@@ -1512,60 +1481,46 @@ def test_a_name_that_does_not_exist_raises_listing_what_does(world, entity, repo
 def test_an_entity_with_no_report_is_told_apart_from_no_entity(world):
     ctx, clock, sim = world
     ctx.entities.add(Entity(name="crate_b", kind="object", body="crate_b"))
-    action = _reports(sim, clock, entity="crate_b", report="trial", expected_value="True")
+    action = _monitor(sim, clock, "crate_b", "trial", _variable("v", None))
     with pytest.raises(ActionError, match="'crate_b' is an entity, but no plugin on it publishes"):
         action.update()
 
 
-def test_a_bare_report_that_publishes_no_field_asks_for_one(world):
-    """A report with no published field has no short form; comparing the whole structure against a
-    literal would wait forever on a comparison that can never hold."""
+def test_a_bare_endpoint_that_publishes_no_field_asks_for_one(world):
     ctx, clock, sim = world
     from roqsim.context import Endpoint
 
     ctx.interface.add(Endpoint(name="trial", direction="out", owner="parcel", read=_Outcome))
-    action = _reports(sim, clock, entity="parcel", report="trial", expected_value="True")
-    with pytest.raises(ActionError, match=r"name the one to compare.*resolved, score"):
-        action.update()
-
-
-def test_a_literal_that_cannot_be_compared_with_the_value_raises(world):
-    _ctx, clock, sim, _outcome = _outcome_world(world)
-    action = _reports(
-        sim,
-        clock,
-        entity="parcel",
-        report="trial.score",
-        expected_value="'high'",
-        comparison_operator="gt",
-    )
-    with pytest.raises(ActionError, match="cannot be compared"):
+    action = _monitor(sim, clock, "parcel", "trial", _variable("v", None))
+    with pytest.raises(
+        ActionError, match=r"name the one to read.*pending, resolved, samples, score"
+    ):
         action.update()
 
 
 @pytest.mark.parametrize(
     "args,message",
     [
-        (dict(entity="", report="trial", expected_value="True"), "`entity` is empty"),
-        (dict(entity=None, report="trial", expected_value="True"), "`entity` is empty"),
-        (dict(entity="parcel", report="", expected_value="True"), "names no report"),
-        (dict(entity="parcel", report=".resolved", expected_value="True"), "names no report"),
-        (dict(entity="parcel", report="trial", expected_value="resolved"), "quoted inside"),
-        (dict(entity="parcel", report="trial", expected_value=None), "must be a string"),
-        (
-            dict(entity="parcel", report="trial", expected_value="1", comparison_operator="approx"),
-            "unknown `comparison_operator`",
-        ),
-        (dict(entity="parcel", report="trial", expected_value="1", dwell=-0.1), "must be >= 0"),
+        (dict(entity="", value="trial"), "`entity` is empty"),
+        (dict(entity=None, value="trial"), "`entity` is empty"),
+        (dict(entity="parcel", value=""), "names no endpoint"),
+        (dict(entity="parcel", value=".resolved"), "names no endpoint"),
     ],
 )
-def test_an_unusable_report_configuration_raises_at_execute(world, args, message):
+def test_an_unusable_monitor_configuration_raises_at_execute(world, args, message):
     _ctx, clock, sim = world
-    action = EntityReports()
+    action = EntityMonitor()
     action.setup(simulation=sim, clock=clock)
-    full = {"comparison_operator": "eq", "dwell": 0.0, "fail_if_bad_comparison": False, **args}
     with pytest.raises(ActionError, match=message):
-        action.execute(**full)
+        action.execute(target_variable=_variable("v", None), **args)
+
+
+def test_a_target_that_is_not_a_variable_raises_at_execute(world):
+    _ctx, clock, sim = world
+    action = EntityMonitor()
+    action.setup(simulation=sim, clock=clock)
+    with pytest.raises(ActionError, match="must name a variable"):
+        action.execute(entity="parcel", value="trial", target_variable="tripped")
 
 
 # -- a rebuilt world ------------------------------------------------------------------------------

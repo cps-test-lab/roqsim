@@ -18,10 +18,6 @@ import osc.types  # pose_3d / velocity_6d, for set_entity_state
 # different QUESTIONS, not two levels of one factor.
 enum displacement_mode: [ distance, planar, x, y, z ]
 
-# How a report's value is compared with `expected_value`: the `operator` module's six, spelled as
-# `osc.ros` spells them for `check_data`, so an argument reads the same in both libraries.
-enum comparison_operator: [ lt, le, eq, ne, ge, gt ]
-
 # How a list of entities is quantified. `all` because that is how the rest of the vocabulary reads a
 # list (`wait_for_topics(topics: [...])` waits for all of them); `any` is a genuinely different
 # instrument -- "did anything on this table get knocked over".
@@ -56,31 +52,32 @@ action entity_rotated:
     dwell: float = 0.0
     require: entity_quantifier = entity_quantifier!all
 
-action entity_reports:
-    # Succeed once a value a PLUGIN publishes about an entity compares as expected -- how a scenario
-    # reads a trial's outcome, and so how it ends a run on one:
+action entity_monitor:
+    # Keep a scenario variable equal to a value a PLUGIN publishes about an entity, every tick -- the
+    # simulator's counterpart of `osc.ros`'s `topic_monitor`. The condition is then plain
+    # OpenSCENARIO over the variable, so a scenario reads a trial's outcome and ends a run on it:
     #
-    #     entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-    #     emit end
+    #     var tripped: bool = false
+    #     do parallel:
+    #         entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+    #         serial:
+    #             wait tripped == true
+    #             emit end
     #
     # A report is an endpoint the plugin declares on the entity it watches (`force_limit`, `contact`,
-    # a trial plugin's own), addressed as the world names it -- never as a topic. `report` is
-    # '<report>.<field>'; a bare '<report>' means the field its ROS publication carries
-    # (`force_limit` -> `tripped`), so the short form compares the same value on both transports.
-    # Every field of a report is readable on both.
+    # `clearance`, a trial plugin's own), addressed as the world names it -- never as a topic. `value`
+    # is '<report>.<field>'; a bare '<report>' means the field its ROS publication carries
+    # (`force_limit` -> `tripped`). Every field of a report is readable on both transports.
     #
-    # The comparison is `check_data`'s: `expected_value` is a Python literal (a string is quoted
-    # inside the string: "'resolved'"), and `fail_if_bad_comparison` fails the action on the first
-    # comparison that does not hold instead of waiting. Bound the wait with a `timeout`.
+    # It never succeeds: put it in a `parallel` branch beside the ones that decide, as any monitor.
+    # Until the first reading arrives the variable keeps its declared default, so declare one the
+    # condition does not hold for. A name that does not exist, and a field that is not a single
+    # number, flag or string, are refused with the same text in-process and over the socket.
     entity: string                                    # the entity that owns the report -- the world's
                                                       # `name:` for it
-    report: string                                    # '<report>.<field>', or '<report>' for the
+    value: string                                     # '<report>.<field>', or '<report>' for the
                                                       # field it publishes
-    expected_value: string                            # a Python literal, read with ast.literal_eval
-    comparison_operator: comparison_operator = comparison_operator!eq
-    dwell: time = 0s                                  # SIM time the comparison must hold,
-                                                      # continuously. 0 = fire on the first match.
-    fail_if_bad_comparison: bool = false              # FAILURE, not RUNNING, when a comparison fails
+    target_variable: string                           # the variable to keep current, e.g. `tripped`
 
 action entity_navigate:
     # Send an entity somewhere, and succeed when it gets there. The mover is the SIMULATOR's -- a
@@ -165,23 +162,27 @@ action set_entity_state:
     pose: pose_3d
     twist: velocity_6d = velocity_6d()                # zero unless stated
 
-action endpoint_call:
+action entity_call:
     # Send any command a world's plugins declare, and fail the trial when it did not land. A fault
     # switched on (a `model_override`'s `override`, a sensor `fault:` block's `override`), a tare, a
-    # gripper -- addressed as the world names it: the entity that owns the endpoint (the world's
-    # `name:`) or the component that declares it ('robot.lidar'), and the endpoint's name.
-    # `roqsim endpoints` lists a running world's.
+    # gripper -- addressed as the world names it: the entity that owns the command (the world's
+    # `name:`) or the component that declares it ('robot.lidar'), and the command's name. `command`
+    # may also carry the component's path ('force_torque/tare'). `roqsim endpoints` lists a running
+    # world's. (The parameter is not called `call`: that is an OpenSCENARIO keyword.)
+    #
+    #     entity_call(entity: 'ur5e', command: 'force_torque/tare')
+    #     entity_call(entity: 'grip_fault', command: 'override', value: 'true', require_verified: true)
     #
     # The WORLD owns what the command does and how much (a fault's `to:`, a sensor's `fault:`
     # values), so severity stays a campaign factor; this owns only WHEN. Restoring a fault is the
     # same call with value 'false', so a transient fault is two calls with a `wait` between them.
     #
-    # Where the endpoint names one that confirms it, the command's outcome carries that verdict,
+    # Where the command names an endpoint that confirms it, the outcome carries that verdict,
     # recorded in the step that applied it, and `require_verified` fails the trial on 'no_effect' --
     # a row that claims a fault which never happened -- and on a confirmation that could not be read
     # (a paused simulator). 'untested' (nothing to verify, a restore) passes. A command the producer
     # refuses, or one with no outcome in time, fails with the producer's own text.
     entity: string                                    # the owning entity, or the declaring component
-    endpoint: string                                  # the command's name, e.g. 'override'
+    command: string                                   # the command's name, e.g. 'override'
     value: string = ''                                # JSON: 'true', '{"vx": 0.2}'; empty = none
     require_verified: bool = true                     # fail on 'no_effect' or no confirmation

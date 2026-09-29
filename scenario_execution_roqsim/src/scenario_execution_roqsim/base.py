@@ -34,8 +34,8 @@ from .access import AccessError, clock_of, select
 class SimAction(BaseAction):
     """Base for an action that reads or drives an roqsim simulation over either transport."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, resolve_variable_reference_arguments_in_execute=True):
+        super().__init__(resolve_variable_reference_arguments_in_execute)
         self._access = None
         self._clock = None
 

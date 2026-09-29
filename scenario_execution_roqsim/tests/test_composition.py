@@ -86,7 +86,7 @@ def test_success_is_running_restarts_the_branch_instead_of_holding_it():
     A py_trees `Decorator` always ticks its child; only the DECORATOR's status is rewritten. A
     `Sequence` resets to its first child whenever its own status is not RUNNING. Together, SUCCESS ->
     RUNNING means "run the branch again", so a real scenario re-takes the condition's baseline and
-    re-fires the fault on every fresh crossing -- for an `endpoint_call` applying a fault an
+    re-fires the fault on every fresh crossing -- for an `entity_call` applying a fault an
     idempotent no-op that still churns, and for a restore a fault that flaps on and off.
     """
     condition, effect = Condition(), Effect()

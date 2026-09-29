@@ -52,10 +52,16 @@ SCENE = """
 """
 
 
+#: The sim time at which ``parcel``'s ``tank.full`` report turns true.
+FULL_AT = 0.2
+
+
 class Things(Plugin):
-    """The world's entities, a command that refuses, and a report."""
+    """The world's entities, a command that refuses, and two reports: one fixed, one that follows
+    sim time (``tank.full`` turns true at 0.2 s)."""
 
     def configure(self, ctx: SimContext) -> None:
+        self._ctx = ctx
         ctx.entities.add(
             Entity(name="parcel", kind="object", body="crate", meta={"base_joint": "crate_free"})
         )
@@ -73,6 +79,11 @@ class Things(Plugin):
     @endpoint.out
     def level(self) -> dict:
         return {"litres": 3.5, "full": False}
+
+    @endpoint.out
+    def tank(self) -> dict:
+        t = float(self._ctx.data.time)
+        return {"litres": t, "full": t >= FULL_AT, "gauges": [t, 2 * t]}
 
 
 def _plugins(*extra):
@@ -195,6 +206,7 @@ REFUSALS = {
     "an unknown report": lambda a: a.entity_report("parcel", "levle"),
     "an unknown field": lambda a: a.entity_report("parcel", "level", "litre"),
     "a report with no single field": lambda a: a.entity_report("parcel", "level"),
+    "a field that is not a single value": lambda a: a.entity_report("parcel", "tank", "gauges"),
 }
 
 
@@ -234,3 +246,124 @@ def test_a_route_is_followed_to_its_end_over_the_socket(routes):
     _local, socket = routes
     outcome = _settle_socket(socket.navigate("cart", [(4.2, 4.0)], wait=True))
     assert outcome.ok and outcome.detail == "arrived"
+
+
+# -- entity_monitor: a variable kept current, and a scenario that waits on it -----------------------
+
+
+def _variable(name, default):
+    import py_trees
+    from scenario_execution.model.types import VariableReference
+
+    ref = VariableReference(py_trees.blackboard.Client(name=f"test {name}"), f"/{name}")
+    ref.set_value(default)
+    return ref
+
+
+class _HostClock:
+    def __init__(self):
+        self._start = time.monotonic()
+
+    def now(self) -> float:
+        return time.monotonic() - self._start
+
+
+def test_a_monitor_keeps_its_variable_current_over_the_socket(routes, tmp_path, monkeypatch):
+    """Found the way a scenario finds the simulator (``ROQSIM_CONTROL``), and rewritten with each
+    reading: the served world's sim time climbs, so every new reading is a new value."""
+    pytest.importorskip("scenario_execution")
+    from scenario_execution_roqsim.actions.entity_monitor import EntityMonitor
+
+    monkeypatch.setenv("ROQSIM_CONTROL", "ipc://" + str(tmp_path / "c.sock"))
+    litres = _variable("litres", -1.0)
+    action = EntityMonitor()
+    action.setup(clock=_HostClock())
+    action.execute(entity="parcel", value="tank.litres", target_variable=litres)
+    seen = []
+    deadline = time.monotonic() + 10
+    while len(seen) < 5:
+        assert time.monotonic() < deadline, f"only {seen} over the socket"
+        assert action.update().name == "RUNNING", "a monitor never ends on its own"
+        if litres.get_value() != -1.0 and (not seen or litres.get_value() != seen[-1]):
+            seen.append(litres.get_value())
+        time.sleep(0.005)
+    action.shutdown()
+    assert seen == sorted(seen), "the variable follows the report as it climbs"
+    assert "control socket" in action.feedback_message
+
+
+SCENARIO = """
+import osc.helpers
+import osc.roqsim
+
+scenario tank_fills:
+    timeout(30s)
+    var full: bool = false
+    var litres: float = 0.0
+    do parallel:
+        entity_monitor(entity: 'parcel', value: 'tank.full', target_variable: full)
+        entity_monitor(entity: 'parcel', value: 'tank.litres', target_variable: litres)
+        serial:
+            wait full == true and litres >= FULL_AT
+            emit end
+""".replace("FULL_AT", str(FULL_AT))
+
+
+def _scenario(tmp_path):
+    from scenario_execution.scenario_execution_base import ScenarioExecution
+
+    path = tmp_path / "tank_fills.osc"
+    path.write_text(SCENARIO)
+    run = ScenarioExecution(
+        debug=False,
+        log_model=False,
+        live_tree=False,
+        scenario_file=str(path),
+        output_dir=None,
+        register_signal=False,
+    )
+    assert run.parse(), run.results
+    return run
+
+
+def test_a_wait_on_a_monitored_variable_ends_a_stepped_run_when_it_holds(routes, tmp_path):
+    """`wait full == true and litres >= 0.2` over two monitors, in a scenario parsed from its
+    text: the run ends on the first tick the report says full, and not before."""
+    pytest.importorskip("scenario_execution")
+    from scenario_execution.simulation import SimulationClock
+
+    (local, engine), _socket = routes
+    run = _scenario(tmp_path)
+    clock = SimulationClock(engine.dt)
+    run.setup(run.tree, simulation=_Sim(engine.ctx), clock=clock)
+    try:
+        for _ in range(1000):
+            if run.shutdown_requested:
+                break
+            engine.step()
+            clock.advance()
+            run.behaviour_tree.tick()
+    finally:
+        run.behaviour_tree.shutdown()
+    assert run.process_results(), run.results
+    ended = float(engine.ctx.data.time)
+    assert FULL_AT <= ended <= FULL_AT + 5 * engine.dt, f"ended at {ended} s"
+
+
+def test_a_wait_on_a_monitored_variable_ends_a_run_over_the_socket(routes, tmp_path, monkeypatch):
+    """The same scenario text, unedited, against the served simulator."""
+    pytest.importorskip("scenario_execution")
+
+    monkeypatch.setenv("ROQSIM_CONTROL", "ipc://" + str(tmp_path / "c.sock"))
+    run = _scenario(tmp_path)
+    run.setup(run.tree, clock=_HostClock())
+    deadline = time.monotonic() + 20
+    try:
+        while not run.shutdown_requested:
+            assert time.monotonic() < deadline, "the scenario never ended"
+            run.behaviour_tree.tick()
+            time.sleep(0.005)
+    finally:
+        # Each action closes its connection to the simulator.
+        run.behaviour_tree.shutdown()
+    assert run.process_results(), run.results

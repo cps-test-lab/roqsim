@@ -76,9 +76,9 @@ From Python::
            path, t, value = odom.get(timeout=1.0)
 
 A scenario reaches it too: ``osc.roqsim``'s actions, run against a simulator in another process,
-talk to its control socket, and ``endpoint_call`` sends any command a world declares::
+talk to its control socket, and ``entity_call`` sends any command a world declares::
 
-   endpoint_call(entity: 'grip_fault', endpoint: 'override', value: 'true')
+   entity_call(entity: 'grip_fault', command: 'override', value: 'true')
 
 An MCP client reaches the same calls through ``roqsim mcp serve``: ``list_endpoints``,
 ``describe_endpoint``, ``read_endpoint``, ``call_endpoint``, ``pause``, ``resume`` and ``step``.

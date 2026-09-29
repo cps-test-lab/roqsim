@@ -20,7 +20,7 @@ transport, through :func:`roqsim.entity_control.set_state` -- and takes the name
 two vocabularies.
 
 Not a condition (contrast ``entity_moved``/``entity_rotated``): it is a WRITE with a verdict, same
-shape as ``endpoint_call``. **A write that did not land fails the trial**, because the
+shape as ``entity_call``. **A write that did not land fails the trial**, because the
 alternative is a row that claims the robot started somewhere the physics never put it -- exactly the
 localisation-vs-physical-pose mismatch this action exists to prevent (a scenario that seeds nav2's
 initial pose estimate at a point the robot's body never reached spends the whole trial recovering

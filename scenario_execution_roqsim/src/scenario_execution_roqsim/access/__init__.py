@@ -208,9 +208,10 @@ class NavCall(PendingCall):
 class ReportReading:
     """The value a plugin's report holds now, and which field of it that is.
 
-    ``field`` is the field that was read: the one the scenario named, or for a bare report the one
-    its endpoint publishes (``""`` where the publication is the whole payload, a plain number or
-    flag). ``source`` says where it was read from, for a message.
+    ``value`` is a single number, flag or string. ``field`` is the field that was read: the one the
+    scenario named, or for a bare report the one its endpoint publishes (``""`` where the
+    publication is the whole payload, a plain number or flag). ``source`` says where it was read
+    from, for a message.
     """
 
     value: object
@@ -220,19 +221,16 @@ class ReportReading:
 
 class ReportCall(PendingCall):
     """A report being watched. ``poll()`` returns the current :class:`ReportReading`, or ``None``
-    while no value is known yet -- over the socket, before the first reply has arrived."""
+    while no value is known yet: the producer has none, the field holds none, or over the socket
+    the reply has not arrived. Each poll after a reading starts the next one."""
 
     @abstractmethod
     def poll(self) -> ReportReading | None: ...
 
 
 def plain(value):
-    """A report value as the Python value a literal compares against.
-
-    A NumPy scalar becomes its Python scalar and an array a list, so ``expected_value: 'True'`` or
-    ``'[0.0, 1.0]'`` compares by value, not by NumPy's element-wise rules -- an array compared with
-    ``==`` is an array, whose truth is an error.
-    """
+    """A report value as a plain Python value: a NumPy scalar becomes its Python scalar and an
+    array a list, so a scenario variable holds the same value whichever transport read it."""
     if isinstance(value, np.generic):
         return value.item()
     tolist = getattr(value, "tolist", None)
@@ -242,7 +240,7 @@ def plain(value):
 def published_field(backend: dict) -> str:
     """The field of a report its ROS publication carries (the ``field`` hint), ``""`` for all of it.
 
-    What a bare ``report: '<endpoint>'`` means on both transports, so the short form compares the
+    What a bare ``value: '<endpoint>'`` means on both transports, so the short form reads the
     same value whichever way the world is reached.
     """
     return str((backend.get("ros2") or {}).get("field") or "")
@@ -352,11 +350,15 @@ def _fields_of(payload) -> list[str]:
         return []
 
 
-def report_value(name: str, payload, field: str, published: str, source: str) -> ReportReading:
+def report_value(
+    name: str, payload, field: str, published: str, source: str
+) -> ReportReading | None:
     """Field *field* of a report (else the field its endpoint publishes), as a reading.
 
     One function for both transports: in-process *payload* is the producer's object, over the
-    socket the mapping it arrived as, and a field is looked up the same way in either.
+    socket the mapping it arrived as, and a field is looked up the same way in either. A field
+    holding ``None`` has no value yet (``None`` is returned); one holding a structure or a sequence
+    is refused, naming it, since a condition compares one value.
     """
     field = field or published
     report = name.rpartition(".")[2]
@@ -366,7 +368,7 @@ def report_value(name: str, payload, field: str, published: str, source: str) ->
         fields = _fields_of(payload)
         raise AccessError(
             f"{name} publishes no single field (its endpoint names none for ROS), so name the "
-            f"one to compare: report: '{report}.<field>', with <field> one of: "
+            f"one to read: '{report}.<field>', with <field> one of: "
             f"{', '.join(fields) if fields else '(none -- a single value)'}."
         )
     if isinstance(payload, dict):
@@ -381,7 +383,17 @@ def report_value(name: str, payload, field: str, published: str, source: str) ->
             f"{name} has no field {field!r}. It has: "
             f"{', '.join(fields) if fields else '(no named fields)'}."
         )
-    return ReportReading(plain(value), field, source)
+    value = plain(value)
+    if value is None:
+        return None
+    if not isinstance(value, (bool, int, float, str)):
+        fields = _fields_of(payload)
+        raise AccessError(
+            f"{name}.{field} is not a single number, flag or string, so no condition can compare "
+            f"it. Name a field of {name} that is one: "
+            f"{', '.join(fields) if fields else '(no named fields)'}."
+        )
+    return ReportReading(value, field, source)
 
 
 def no_navigator(name: str, offered: list[str]) -> AccessError:
@@ -493,11 +505,12 @@ class WorldAccess(ABC):
         Addressed as the world names it -- the entity that owns the endpoint and the endpoint's name
         (``'ur5e'``, ``'force_limit'``), never a topic. An empty *field* means the one the
         endpoint's ROS publication carries (``LimitReport.tripped`` for ``force_limit``), so the
-        short form compares one value whichever way the world is reached. Every field of the report
+        short form reads one value whichever way the world is reached. Every field of the report
         is readable on both transports.
 
         Raises :class:`AccessError`, from this call or from ``poll()``, for an entity, report or
-        field that does not exist, listing what does.
+        field that does not exist, listing what does, and for a field that is not a single number,
+        flag or string.
         """
 
     def pending_reason(self) -> str | None:

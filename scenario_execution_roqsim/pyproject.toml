@@ -44,14 +44,14 @@ roqsim = "scenario_execution_roqsim.get_osc_library:get_osc_library"
 # action acts on.
 [project.entry-points."scenario_execution.actions"]
 entity_moved = "scenario_execution_roqsim.actions.entity_moved:EntityMoved"
-entity_reports = "scenario_execution_roqsim.actions.entity_reports:EntityReports"
+entity_monitor = "scenario_execution_roqsim.actions.entity_monitor:EntityMonitor"
 entity_rotated = "scenario_execution_roqsim.actions.entity_rotated:EntityRotated"
 entity_navigate = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigate"
 entity_navigate_start = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigateStart"
 delete_entity = "scenario_execution_roqsim.actions.delete_entity:DeleteEntity"
 set_entity_state = "scenario_execution_roqsim.actions.set_entity_state:SetEntityState"
 spawn_entity = "scenario_execution_roqsim.actions.spawn_entity:SpawnEntity"
-endpoint_call = "scenario_execution_roqsim.actions.endpoint_call:EndpointCall"
+entity_call = "scenario_execution_roqsim.actions.entity_call:EntityCall"
 
 [tool.setuptools.packages.find]
 where = ["src"]

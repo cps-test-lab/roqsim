@@ -28,7 +28,7 @@ sensor's own config, where the value being perturbed already lives::
 
 and a scenario switches it through the ``override`` command of the sensor's **address**::
 
-    endpoint_call(entity: 'robot.rplidar.lidar', endpoint: 'override', value: 'true')
+    entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'true')
 
 Three properties follow, each mirroring the physics channel rather than re-deciding it.
 

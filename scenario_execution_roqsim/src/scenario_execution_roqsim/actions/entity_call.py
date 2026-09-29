@@ -1,16 +1,16 @@
 # Copyright (C) 2026 Frederik Pasch
 # SPDX-License-Identifier: Apache-2.0
 
-"""``endpoint_call()``: send any command a world's plugins declare, and say whether it landed.
+"""``entity_call()``: send any command a world's plugins declare, and say whether it landed.
 
 One action for every command endpoint -- a fault switched on (``model_override``'s ``override``), a
 sensor degraded (a ``fault:`` block's ``override``), a tare, a gripper opened -- addressed as the
 world names it: the entity that owns the endpoint and the endpoint's name, or the component that
 declares it (``robot.lidar``) where one entity has two of that name::
 
-    endpoint_call(entity: 'grip_fault', endpoint: 'override', value: 'true')
-    endpoint_call(entity: 'robot.lidar', endpoint: 'override', value: 'false')
-    endpoint_call(entity: 'robot', endpoint: 'cmd_vel', value: '{"vx": 0.2}')
+    entity_call(entity: 'grip_fault', command: 'override', value: 'true')
+    entity_call(entity: 'robot.lidar', command: 'override', value: 'false')
+    entity_call(entity: 'ur5e', command: 'force_torque/tare')
 
 ``value`` is JSON (a bare word is a string); an endpoint declared with typed parameters takes a
 mapping of their names. The world owns what a command does and how much -- a fault's ``to:``, a
@@ -43,20 +43,20 @@ from ..base import SimAction
 _NO_EFFECT = "no_effect"
 
 
-class EndpointCall(SimAction):
+class EntityCall(SimAction):
     def __init__(self):
         super().__init__()
         self._entity = ""
-        self._endpoint = ""
+        self._command = ""
         self._value = None
         self._require_verified = True
         self._call = None
 
-    def execute(self, entity: str, endpoint: str, value: str = "", require_verified: bool = True):
-        self._entity, self._endpoint = str(entity), str(endpoint)
-        if not self._entity or not self._endpoint:
+    def execute(self, entity: str, command: str, value: str = "", require_verified: bool = True):
+        self._entity, self._command = str(entity or ""), str(command or "")
+        if not self._entity or not self._command:
             raise ActionError(
-                "endpoint_call: `entity` and `endpoint` are both required -- the entity that owns "
+                "entity_call: `entity` and `command` are both required -- the entity that owns "
                 "the command (or the component that declares it) and the command's name. "
                 "`roqsim endpoints` lists a running world's.",
                 action=self,
@@ -71,10 +71,10 @@ class EndpointCall(SimAction):
         if not self._access.ready():
             return self.waiting("waiting for the simulation", self._access)
 
-        name = f"{self._entity}/{self._endpoint}"
+        name = f"{self._entity}/{self._command}"
         try:
             if self._call is None:
-                self._call = self._access.call_endpoint(self._entity, self._endpoint, self._value)
+                self._call = self._access.call_endpoint(self._entity, self._command, self._value)
             outcome = self._call.poll()
         except AccessError as err:
             self.reraise(err)

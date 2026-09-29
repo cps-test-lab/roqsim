@@ -4,12 +4,12 @@ The substrate's OpenSCENARIO 2 vocabulary. The actions that observe a run and dr
 others -- spawning, deleting, placing and navigating entities -- are declared, with their arguments,
 in [`lib_osc/roqsim.osc`](src/scenario_execution_roqsim/lib_osc/roqsim.osc)):
 
-| action | succeeds when |
+| action | what it does |
 | --- | --- |
-| `entity_moved(entities, threshold, mode, dwell, require)` | the named entities have been **displaced** from where they were when the action started |
-| `entity_rotated(entities, angle, dwell, require)` | ...have **turned** by an angle (geodesic, so axis-free) |
-| `entity_reports(entity, report, expected_value, comparison_operator, dwell, fail_if_bad_comparison)` | a value a **plugin publishes** about the entity compares as expected -- how a scenario ends a run on a trial's outcome |
-| `endpoint_call(entity, endpoint, value, require_verified)` | a command a plugin declares -- a `model_override` fault, a sensor's `fault:` block, a tare -- has applied **and, where the endpoint names a confirmation, it says the command landed** |
+| `entity_moved(entities, threshold, mode, dwell, require)` | succeeds once the named entities have been **displaced** from where they were when the action started |
+| `entity_rotated(entities, angle, dwell, require)` | ...once they have **turned** by an angle (geodesic, so axis-free) |
+| `entity_monitor(entity, value, target_variable)` | keeps a scenario variable equal to a value a **plugin publishes** about the entity, every tick; never succeeds on its own |
+| `entity_call(entity, command, value, require_verified)` | sends a command a plugin declares -- a `model_override` fault, a sensor's `fault:` block, a tare -- and succeeds once it has applied **and, where the command names a confirmation, it says the command landed** |
 
 ```
 import osc.roqsim
@@ -20,14 +20,21 @@ do parallel:
         emit end
     serial:
         entity_moved(entities: ['parcel'], threshold: 0.05, mode: displacement_mode!z, dwell: 8.0)
-        endpoint_call(entity: 'grip_fault', endpoint: 'override', value: 'true')
+        entity_call(entity: 'grip_fault', command: 'override', value: 'true')
 ```
 
-## Ending a run on a trial's outcome
+`entity_call` fails the trial (FAILURE, not an exception) when the producer refuses the command,
+when no outcome arrives in time, and with `require_verified` (the default) when the confirmation
+reports `no_effect` or could not be read. `command` is the command's name, or
+`'<component>/<name>'` to pick one of two with that name (`entity_call(entity: 'ur5e', command:
+'force_torque/tare')`); the parameter is not called `call` because that is an OpenSCENARIO keyword.
 
-The scenario owns when a run ends. A plugin that knows the outcome -- a `force_limit` that tripped,
-a `contact` monitor, a trial plugin's own verdict -- publishes it as an `out` endpoint on the entity
-it concerns, and the scenario waits on it and ends the run, with a `timeout` as the bound:
+## Conditions on what a plugin reports
+
+A plugin that knows something about an entity -- a `force_limit` that tripped, a `clearance`
+distance, a trial plugin's own verdict -- publishes it as an `out` endpoint on that entity.
+`entity_monitor` keeps a variable equal to one field of it, the way `osc.ros`'s `topic_monitor` does
+for a topic, and every condition is then plain OpenSCENARIO over that variable:
 
 ```
 import osc.helpers
@@ -35,18 +42,48 @@ import osc.roqsim
 
 scenario trial:
     timeout(120s)
-    do serial:
-        entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-        emit end
+    min_clearance: float = 0.3
+    var tripped: bool = false
+    var clearance: float = 10.0
+    do parallel:
+        entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+        entity_monitor(entity: 'robot', value: 'clearance.current', target_variable: clearance)
+        serial:
+            wait tripped == true
+            emit end
+        serial:
+            wait clearance < 0.2
+            emit fail
 ```
 
-`report` is `<report>.<field>` as the world names it, never a topic; a bare `'force_limit'` means the
-field its ROS publication carries (`tripped`), so the short form compares one value wherever it runs.
-The comparison arguments are `osc.ros`'s `check_data`'s: `expected_value` is a Python
-literal (a string is quoted inside the string, `"'resolved'"`), `comparison_operator` one of
-`lt le eq ne ge gt`, and `fail_if_bad_comparison` fails instead of waiting. `dwell` is
-`entity_moved`'s: the comparison must hold continuously for that much sim time. An entity, report or
-field that does not exist raises, listing the ones that do.
+| pattern | how it reads |
+| --- | --- |
+| end the run on an outcome | `wait tripped == true` then `emit end` |
+| threshold | `wait clearance < 0.3` |
+| assertion: fail if it ever goes bad | a parallel branch: `wait clearance < 0.2` then `emit fail` |
+| bound an action | `entity_navigate(entity: 'cart', goal_poses: [...]) with:` then `until docked == true` |
+| combined conditions | `wait tripped or clearance < 0.1` |
+| comparison with a parameter | `wait clearance < min_clearance` |
+| event and condition | `wait @fault_on if clearance < 0.3` |
+
+A flag is compared explicitly (`tripped == true`): a condition is a comparison or a logical
+expression, not a bare variable. A condition that must hold for a length of time is composed in the
+language itself; scenario-execution's language documentation describes that pattern.
+
+`value` is `<endpoint>.<field>` as the world names it, never a topic; a bare `'force_limit'` means the
+field its ROS publication carries (`tripped`), so the short form reads one value wherever it runs.
+`target_variable` names a `var` of the scenario or of an actor.
+
+- **It never succeeds.** Put it in a `parallel` branch beside the ones that decide; it runs until
+  the scenario ends or its branch is ended (`until`, `one_of`).
+- **Until the first reading arrives the variable keeps its declared default**, so declare one the
+  condition does not hold for (`false`, a clearance larger than any threshold).
+- **Refused, with the same text on both transports:** an entity, endpoint or field that does not
+  exist (listing the ones that do), and a field that is not a single number, flag or string (naming
+  it). These are authoring errors and raise; a field that holds no value yet leaves the variable
+  unchanged.
+- In a stepped run the variable is written on every tick. Over the control socket a read is a
+  round-trip, so it follows at the rate replies arrive.
 
 ## One action, two transports
 
