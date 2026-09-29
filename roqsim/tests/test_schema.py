@@ -416,3 +416,90 @@ def test_the_docs_page_renders_a_schema_as_a_config_block():
     parsed = _parse_config_block("\n".join(block))
     assert [f["name"] for f in parsed] == ["keep", "above_z"]
     assert parsed[1]["example"] == "2.5"
+
+
+# -- a block declared as a schema of its own -----------------------------------------------------
+
+PLANNER = {
+    "radius": Field(float, default=0.3, minimum=0.0, unit="m", doc="a waypoint counts as reached"),
+    "retries": Field(int, default=4),
+}
+NESTED = {
+    "speed": Field(float, default=1.0, unit="m/s"),
+    "planner": Field(dict, schema=PLANNER, doc="the path between points"),
+}
+
+
+class _Nested(Plugin):
+    CONFIG_SCHEMA = NESTED
+
+
+def test_an_unknown_nested_key_is_refused_by_its_path_with_a_suggestion():
+    """Strict inside a block whatever the top level says: nothing is injected into a block."""
+    expected = [
+        "'planner.radus' is not a key of 'planner' -- did you mean 'radius'?. Known: radius, retries"
+    ]
+    assert validate(NESTED, {"planner": {"radus": 0.2}}, strict_keys=True) == expected
+    assert validate(NESTED, {"planner": {"radus": 0.2}}) == expected
+
+
+def test_a_nested_value_is_checked_and_named_by_its_path():
+    assert validate(NESTED, {"planner": {"radius": "far"}}) == [
+        "'planner.radius' must be float, got str ('far')"
+    ]
+    assert validate(NESTED, {"planner": {"radius": -1.0}}) == [
+        "'planner.radius' must be >= 0.0 m, got -1.0"
+    ]
+
+
+def test_a_block_that_is_not_a_mapping_is_one_type_error():
+    assert validate(NESTED, {"planner": 3}) == ["'planner' must be dict, got int (3)"]
+
+
+def test_a_block_declares_its_keys_defaults_rather_than_its_own():
+    schema = {"planner": Field(dict, default={}, schema=PLANNER)}
+    assert validate(schema, {}) == [
+        "schema error: 'planner' declares its keys, so it must take a dict and declare no default "
+        "of its own -- its keys' defaults are its default"
+    ]
+    assert validate({"planner": Field(list, schema=PLANNER)}, {})[0].startswith("schema error")
+
+
+def test_settings_fill_a_nested_default_whether_the_block_is_written_or_not():
+    assert _Nested({}).settings.planner.radius == 0.3
+    written = _Nested({"planner": {"retries": 2}}).settings.planner
+    assert written.radius == 0.3 and written.retries == 2
+    radius = _Nested({"planner": {"radius": 1}}).settings.planner.radius
+    assert radius == 1.0 and isinstance(radius, float)
+    with pytest.raises(AttributeError, match=r"_Nested\.planner declares no setting 'radus'"):
+        _ = _Nested({}).settings.planner.radus
+    assert _Nested({"planner": 3}).settings.planner == 3, "a wrong type reads as given"
+
+
+def test_a_block_publishes_its_keys_under_fields():
+    (_, planner) = describe(NESTED)
+    assert "default" not in planner
+    assert planner["fields"] == [
+        {
+            "name": "radius",
+            "type": "float",
+            "required": False,
+            "default": 0.3,
+            "minimum": 0.0,
+            "unit": "m",
+            "doc": "a waypoint counts as reached",
+        },
+        {"name": "retries", "type": "int", "required": False, "default": 4},
+    ]
+
+
+def test_a_block_publishes_its_parameters_and_config_block_as_the_world_nests_it():
+    from roqsim.introspection import _parse_config_block, _schema_parameters, schema_config_block
+
+    names = ["speed", "planner", "planner.radius", "planner.retries"]
+    assert [p["name"] for p in _schema_parameters(NESTED)] == names
+    block = schema_config_block("mover", _Nested)
+    assert "        radius: 0.3" in "\n".join(block)
+    parsed = _parse_config_block("\n".join(block))
+    assert [f["name"] for f in parsed] == names
+    assert parsed[2]["doc"] == "m; a waypoint counts as reached"

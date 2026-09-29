@@ -59,6 +59,20 @@ above is a number or a mapping. The value must be one of them, and each rule app
 has a meaning for -- a bound to a number, a length to a sequence -- so a mapping's entries are the
 plugin's to check in ``validate_config``.
 
+**A block of fixed keys declares them as a schema of its own**, on the field that holds it::
+
+    "planner": Field(dict, schema={
+        "inflation_radius": Field(float, default=None, unit="m"),
+        "waypoint_radius": Field(float, default=0.3, unit="m"),
+    }),
+
+Its keys are checked as the top level's are, each named by its path (``'planner.waypoint_radius'``),
+and an unknown one is refused whatever ``strict_keys`` says: nothing is injected into a block, so its
+schema is complete by construction. A block whose keys are open (a model's parameters, passed through)
+is a plain ``Field(dict)``. A block's default is its keys' defaults, so it declares none itself:
+``settings.planner.waypoint_radius`` reads 0.3 when the world wrote no ``planner:`` at all, and
+``describe`` publishes the keys under ``fields``.
+
 **An unknown key is refused by default.** A plugin that declares a schema says what its config is,
 and a key outside it is a typo that would otherwise leave a setting at its default and look
 configured. What a component carries without the world's author writing it -- a manifest's
@@ -115,6 +129,8 @@ class Field:
     #: Keys whose value this plugin reads once at configure -- documented as such so a caller knows
     #: writing it later takes effect nowhere (what `model_override` documents about geom_size).
     static: bool = dataclass_field(default=False)
+    #: For a mapping of fixed keys: those keys, declared the same way. See the module docstring.
+    schema: dict[str, Field] | None = None
 
     def describe(self, name: str) -> dict:
         """The published form: JSON-friendly, and the same shape for every plugin."""
@@ -126,7 +142,7 @@ class Field:
             "type": names[0] if len(names) == 1 else names,
             "required": self.required,
         }
-        if not self.required:
+        if not self.required and self.schema is None:
             described["default"] = self.default
         for key in ("minimum", "maximum", "length"):
             value = getattr(self, key)
@@ -140,6 +156,9 @@ class Field:
             described["doc"] = self.doc
         if self.static:
             described["static"] = True
+        if self.schema is not None:
+            # In place of a default: each key carries its own.
+            described["fields"] = describe(self.schema)
         return described
 
 
@@ -162,6 +181,10 @@ class Settings:
     the schema check reports it -- a view that fell back to the default would run the plugin on a
     value nobody stated.
 
+    A block declared with a ``schema`` reads as a view of the same kind, so a nested key is
+    ``settings.planner.waypoint_radius``, with its default filled whether the world wrote the block
+    or not.
+
     Only declared keys are here. The keys another owner injects (:data:`INJECTED_KEYS`) stay where
     their owner reads them, on ``self.config``.
     """
@@ -183,6 +206,11 @@ class Settings:
             raise AttributeError(
                 f"{self._owner} declares no setting {name!r}. Declared: {', '.join(self._schema)}"
             )
+        if spec.schema is not None:
+            block = self._config.get(name, {})
+            if isinstance(block, dict):
+                return Settings(spec.schema, block, owner=f"{self._owner}.{name}")
+            return block
         if name not in self._config:
             return copy.deepcopy(spec.default)
         value = self._config[name]
@@ -209,41 +237,55 @@ def describe(schema: dict[str, Field]) -> list[dict]:
     return [spec.describe(name) for name, spec in schema.items()]
 
 
-def validate(schema: dict[str, Field], config: dict, *, strict_keys: bool = False) -> list[str]:
+def validate(
+    schema: dict[str, Field], config: dict, *, strict_keys: bool = False, where: str = ""
+) -> list[str]:
     """Config errors for *config* against *schema*, in the same voice as a hand-written check.
 
     Every error names the key, because a message that does not is a message a caller has to bisect a
     world file to act on. Errors accumulate rather than raising at the first: a world with three
     mistakes should take one run to find them, which is the same reason ``instantiate_plugins``
     aggregates across plugins.
+
+    *where* is the path of the block *config* is, for a schema checked as part of a larger one: its
+    keys are then named ``where.key``, and an unknown one is refused as a key of that block rather
+    than of the component. A field declaring a ``schema`` is descended into with its own path.
     """
     errors: list[str] = []
     for name, spec in schema.items():
+        path = f"{where}.{name}" if where else name
         if spec.required and spec.default is not None:
             errors.append(
-                f"schema error: '{name}' is required AND has a default, which cannot both be true"
+                f"schema error: '{path}' is required AND has a default, which cannot both be true"
+            )
+        if spec.schema is not None and (dict not in _types(spec.type) or spec.default is not None):
+            errors.append(
+                f"schema error: '{path}' declares its keys, so it must take a dict and declare no "
+                f"default of its own -- its keys' defaults are its default"
             )
         if name not in config:
             if spec.required:
                 doc = f" -- {spec.doc}" if spec.doc else ""
-                errors.append(f"'{name}' is required{doc}")
+                errors.append(f"'{path}' is required{doc}")
             continue
-        errors += _check_value(name, spec, config[name])
+        errors += _check_value(path, spec, config[name])
 
     if strict_keys:
-        known = set(schema) | INJECTED_KEYS
+        known = set(schema) | (set() if where else INJECTED_KEYS)
+        owner = f"a key of '{where}'" if where else "a setting of this component"
         for key in config:
             if key not in known:
                 near = nearest(key, schema)
                 suggestion = f" -- did you mean '{near}'?" if near else ""
+                path = f"{where}.{key}" if where else key
                 errors.append(
-                    f"'{key}' is not a setting of this component{suggestion}. Known: "
-                    f"{', '.join(sorted(schema))}"
+                    f"'{path}' is not {owner}{suggestion}. Known: {', '.join(sorted(schema))}"
                 )
     return errors
 
 
 def _check_value(name: str, spec: Field, value: Any) -> list[str]:
+    """Errors for one present *value*; *name* is its full path, as each error names it."""
     errors: list[str] = []
     wanted = _types(spec.type)
     if not any(_has_type(value, t) for t in wanted):
@@ -262,6 +304,8 @@ def _check_value(name: str, spec: Field, value: Any) -> list[str]:
         errors.append(f"'{name}' must be >= {spec.minimum}{_unit(spec)}, got {value}")
     if number and spec.maximum is not None and value > spec.maximum:
         errors.append(f"'{name}' must be <= {spec.maximum}{_unit(spec)}, got {value}")
+    if spec.schema is not None and isinstance(value, dict):
+        errors += validate(spec.schema, value, strict_keys=True, where=name)
     return errors
 
 

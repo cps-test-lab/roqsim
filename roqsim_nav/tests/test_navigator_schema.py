@@ -94,6 +94,32 @@ def test_the_catalog_publishes_the_schema_as_strict():
     assert "action_name" not in names and "traffic" not in names
 
 
+def test_the_catalog_publishes_each_nested_block_s_keys():
+    schema = {row["name"]: row for row in get_plugin_details("navigator")["schema"]}
+    for block, keys in (
+        ("avoidance", navigator.AVOIDANCE_SCHEMA),
+        ("planner", navigator.PLANNER_SCHEMA),
+        ("recovery", navigator.RECOVERY_SCHEMA),
+        ("action_names", NavigatorPlugin.ACTIONS),
+    ):
+        assert [f["name"] for f in schema[block]["fields"]] == list(keys), block
+    (stuck,) = [f for f in schema["recovery"]["fields"] if f["name"] == "stuck_time"]
+    assert stuck == {
+        "name": "stuck_time",
+        "type": "float",
+        "required": False,
+        "default": 1.5,
+        "unit": "s",
+        "doc": "window progress is measured over",
+    }
+
+
+def test_settings_read_a_nested_default():
+    settings = NavigatorPlugin({"speed": 0.5, "recovery": {"enabled": False}}).settings
+    assert settings.recovery.enabled is False and settings.recovery.stuck_time == 1.5
+    assert settings.action_names.start_route == "start_route"
+
+
 # -- every shipped world that configures a navigator ----------------------------------------------
 WALKER_WORLDS = Path(roqsim_walker.__file__).parent / "worlds"
 WALKER_NAV2 = REPO / "ros2_ws/src/roqsim_walker_ros/worlds/walker_nav2.yaml"

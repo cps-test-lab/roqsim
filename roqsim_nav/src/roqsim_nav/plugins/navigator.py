@@ -15,7 +15,9 @@ an entry-point group, so nothing here knows what embodiments exist.
 It is a component of the entry that provides the entity it moves, since ownership is where the entry
 sits rather than a config key. Every key, with its type, unit and default, is
 :data:`NavigatorPlugin.CONFIG_SCHEMA`, which ``roqsim plugins describe navigator`` publishes, and a
-key it does not name is refused. The keys grouped by what reads them, the nested blocks included::
+key it does not name is refused. The nested blocks -- ``avoidance``, ``planner``, ``recovery`` and
+``action_names`` -- declare their keys there too, and are published with them. The top-level keys,
+grouped by what reads them::
 
     navigator:
       output: auto            # auto | drive | mocap | ... | module:Class | file.py:Class
@@ -39,23 +41,8 @@ key it does not name is refused. The keys grouped by what reads them, the nested
       arrival_radius: 0.25
 
       # -- what it does about what the plan did not contain -----------------------------------
-      # Three independent capabilities, not a ladder. See AVOIDANCE_KEYS for why.
-      avoidance:
-        stop: true            # look ahead and hold until the way is clear
-        steer: none           # none | give_way | orca | module:Class -- which model gives way
-        reroute: false        # remember what stopped it and plan around it (needs `stop`)
-        params: {}            # the chosen model's world-level keys, checked at load
-
-        # the probe's own tuning, in the same block
-        lookahead: 1.2        # m of clear corridor needed, measured from the mover's FRONT
-        width: 0.6            # m of corridor swept: the body, plus the clearance it should keep
-        rays: 5               # how finely that width is sampled
-        height: 0             # m above the floor to scan; 0 -> just above obstacle_height's floor
-        clear_time: 0.5       # s the way must stay open before setting off again
-        yield_time: 3.0       # s a blockage reads as traffic before recovery may engage
-        forget_after: 5.0     # s a remembered blockage keeps steering the planner (reroute only)
-        blockage_radius: 0    # m of the disc a blockage marks; 0 -> half the corridor width
-        ignore: []            # entities this mover never stops for
+      # `avoidance:` holds three independent capabilities, not a ladder (see AVOIDANCE_KEYS for
+      # why), and the probe's tuning.
       radius: 0.3             # m, this mover's disc to the avoidance model (default: measured
                               #   from its footprint) and the planner's inflation (default: 0.3)
       max_speed: 1.0          # m/s the avoidance model may command it (default: max(1, 2*speed))
@@ -75,8 +62,6 @@ key it does not name is refused. The keys grouped by what reads them, the nested
       # -- planning --------------------------------------------------------------------------
       obstacle_height: [0.1, 1.8]   # z band a geom must span to be a wall FOR THIS MOVER
       resolution: 0.05              # m per planner grid cell
-      planner:  {inflation_radius: 0.35, waypoint_radius: 0.3}
-      recovery: {enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       update_hz: 20.0               # nav pipeline rate; physics steps far faster
 
 ``obstacle_height`` is per mover on purpose: a 0.4 m pallet is not stopped by a ceiling beam that
@@ -97,7 +82,6 @@ from roqsim.context import SimContext
 from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 from roqsim.schema import Field
-from roqsim.schema import validate as validate_schema
 from roqsim.types import Length
 
 from .._resolve import RegistryError
@@ -186,7 +170,9 @@ _PROBE_FIELDS = {
 #: probe's tuning.
 AVOIDANCE_SCHEMA = {
     "stop": Field(bool, default=True, doc="look ahead and hold until the way is clear"),
-    "steer": Field(str, default="none", doc="the model that gives way for this mover, or none"),
+    "steer": Field(
+        str, default="none", doc="none | give_way | orca | module:Class: which model gives way"
+    ),
     "reroute": Field(bool, default=False, doc="plan around what stopped it; needs stop"),
     "params": Field(dict, default={}, doc="the steer model's world-level keys"),
     **_PROBE_FIELDS,
@@ -216,18 +202,6 @@ def _number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _block_errors(block: str, schema: dict, value) -> list[str]:
-    """The schema's errors for one nested block, each naming its key as ``block.key``."""
-    if not isinstance(value, dict):
-        return []  # the top-level schema refuses the type
-    return [
-        (f"'{block}." + e[1:] if e.startswith("'") else e).replace(
-            "a setting of this component", f"a key of '{block}'"
-        )
-        for e in validate_schema(schema, value, strict_keys=True)
-    ]
-
-
 def _params_errors(where: str, cls, steer: str, params) -> list[str]:
     """Keys of *params* the model *steer* does not accept."""
     schema = set(getattr(cls, "params_schema", ()) or ())
@@ -241,7 +215,7 @@ def _params_errors(where: str, cls, steer: str, params) -> list[str]:
 
 
 def _validate_avoidance(config: dict, base_dir) -> list[str]:
-    """Check the `avoidance:` block: its three capabilities, its model, and the probe's tuning."""
+    """What the schema cannot say about `avoidance:`: how its keys combine, and its model."""
     spec = config.get("avoidance")
     if spec is None:
         return []
@@ -252,7 +226,7 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
             "and `reroute` (remember a blockage and plan around it) -- plus the probe's tuning. "
             "For example: avoidance: {steer: give_way, stop: true, lookahead: 0.6}"
         ]
-    errors = _block_errors("avoidance", AVOIDANCE_SCHEMA, spec)
+    errors = []
     if spec.get("reroute") and not spec.get("stop", True):
         errors.append(
             "'avoidance.reroute' needs 'stop': a blockage is only ever discovered by looking ahead "
@@ -273,9 +247,7 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
         else:
             errors += _params_errors("avoidance.params", cls, steer, spec.get("params"))
             errors += _params_errors("params", cls, steer, config.get("params"))
-    if errors:
-        return errors  # the probe's range checks assume the types above
-    return CautionProbe.validate({k: v for k, v in spec.items() if k in _PROBE_FIELDS})
+    return errors + CautionProbe.validate({k: v for k, v in spec.items() if k in _PROBE_FIELDS})
 
 
 def _dwell_pair(d) -> tuple[float, float]:
@@ -344,8 +316,17 @@ class NavigatorPlugin(Plugin):
     #: attribute it can honestly carry.
     requires_owner = True
 
-    #: Every key the navigator and its ``drive`` and ``mocap`` outputs read; nested blocks are
-    #: checked key by key in :meth:`validate_config`.
+    #: Action types a bridge may serve this navigator's goal endpoint as. Named as STRINGS, so this
+    #: package imports nothing ROS and a world that declares no bridge needs no nav2 installed --
+    #: the bridge resolves the name and finds its handler.
+    ACTIONS = {
+        "navigate_to_pose": "nav2_msgs.action.NavigateToPose",
+        "navigate_through_poses": "nav2_msgs.action.NavigateThroughPoses",
+        "start_route": "roqsim_nav_interfaces.action.StartRoute",
+    }
+
+    #: Every key the navigator and its ``drive`` and ``mocap`` outputs read, its nested blocks'
+    #: included.
     CONFIG_SCHEMA = {
         "output": Field(str, default="auto", doc="auto | drive | mocap | walker | module:Class"),
         "speed": Field(float, required=True, minimum=0.0, unit="m/s", doc="0: does not move"),
@@ -362,7 +343,7 @@ class NavigatorPlugin(Plugin):
         "autostart": Field(bool, default=True, doc="false: hold at the start until started"),
         "loop": Field(bool, default=False, doc="cycle the route forever"),
         "arrival_radius": Field(float, default=0.25, unit="m", doc="a goal counts as reached"),
-        "avoidance": Field(dict, default={}, doc=f"keys: {', '.join(AVOIDANCE_SCHEMA)}"),
+        "avoidance": Field(dict, schema=AVOIDANCE_SCHEMA, doc="what it does about the unplanned"),
         "params": Field(dict, default={}, doc="this mover's own keys for the steer model"),
         "radius": Field(float, default=None, unit="m", doc="footprint; default: measured"),
         "max_speed": Field(
@@ -383,14 +364,18 @@ class NavigatorPlugin(Plugin):
             list, default=[0.1, 1.8], length=2, unit="m", doc="z band a geom spans to be a wall"
         ),
         "resolution": Field(float, default=DEFAULT_RESOLUTION, unit="m", doc="planner grid cell"),
-        "planner": Field(dict, default={}, doc=f"keys: {', '.join(PLANNER_SCHEMA)}"),
-        "recovery": Field(dict, default={}, doc=f"keys: {', '.join(RECOVERY_SCHEMA)}"),
+        "planner": Field(dict, schema=PLANNER_SCHEMA, doc="the path between the route's points"),
+        "recovery": Field(dict, schema=RECOVERY_SCHEMA, doc="backing away when wedged"),
         "update_hz": Field(
             float, default=None, unit="Hz", doc="nav rate; default: the output's, else 20"
         ),
         "goal_endpoint": Field(bool, default=True, doc="false: declares no goal endpoint"),
         "actions": Field(list, default=None, doc="actions served; default: all"),
-        "action_names": Field(dict, default={}, doc="action -> its name; default: the action's"),
+        "action_names": Field(
+            dict,
+            schema={a: Field(str, default=a, doc="the action's name") for a in ACTIONS},
+            doc="the name each action is served under",
+        ),
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -416,7 +401,7 @@ class NavigatorPlugin(Plugin):
 
     # -- validation ----------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
-        """What the schema cannot say: the nested blocks, and keys that depend on each other."""
+        """What the schema cannot say: keys that depend on each other, and the avoidance model."""
         errors: list[str] = []
         tracker = config.get("tracker", "waypoint")
         if config.get("lookahead") is not None:
@@ -465,10 +450,6 @@ class NavigatorPlugin(Plugin):
         for key in actions if isinstance(actions, list) else ():
             if key not in self.ACTIONS:
                 errors.append(f"'actions' names {key!r}; the actions are {', '.join(self.ACTIONS)}")
-        names = {a: Field(str, default=a) for a in self.ACTIONS}
-        errors += _block_errors("action_names", names, config.get("action_names"))
-        errors += _block_errors("planner", PLANNER_SCHEMA, config.get("planner"))
-        errors += _block_errors("recovery", RECOVERY_SCHEMA, config.get("recovery"))
         errors += _validate_avoidance(config, self.base_dir)
         avoid_spec = config.get("avoidance")
         avoid_spec = avoid_spec if isinstance(avoid_spec, dict) else {}
@@ -876,15 +857,6 @@ class NavigatorPlugin(Plugin):
         st.dwell = _dwell_list(self._dwell_spec, len(st.waypoints))
         st.loop = bool(self.config.get("loop", False))
         self._core.reset()
-
-    #: Action types a bridge may serve this navigator's goal endpoint as. Named as STRINGS, so this
-    #: package imports nothing ROS and a world that declares no bridge needs no nav2 installed --
-    #: the bridge resolves the name and finds its handler.
-    ACTIONS = {
-        "navigate_to_pose": "nav2_msgs.action.NavigateToPose",
-        "navigate_through_poses": "nav2_msgs.action.NavigateThroughPoses",
-        "start_route": "roqsim_nav_interfaces.action.StartRoute",
-    }
 
     def _select_goal_endpoints(self) -> None:
         """Which goal endpoints this mover declares, and each one's action name.

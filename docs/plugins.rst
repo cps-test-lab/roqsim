@@ -1308,6 +1308,22 @@ A key that takes more than one shape declares a tuple of types, as ``isinstance`
 ``"type": ["float", "dict"]``. The bound applies to the number; a mapping's entries stay with
 ``validate_config``, which is the rule a schema cannot state for a shape it does not look inside.
 
+A **block of fixed keys** declares them as a schema of its own, on the field that holds it::
+
+   PLANNER = {
+       "inflation_radius": Field(float, default=None, unit="m", doc="default: the footprint"),
+       "waypoint_radius": Field(float, default=0.3, unit="m", doc="a waypoint counts as reached"),
+   }
+   CONFIG_SCHEMA = {"planner": Field(dict, schema=PLANNER, doc="the path between points")}
+
+Its keys are checked like the top level's and named by their path (``'planner.waypoint_radius' must
+be float``), and an unknown one is refused with a suggestion, whatever ``STRICT_KEYS`` says: nothing
+is injected into a block, so its schema is complete. ``self.settings.planner.waypoint_radius`` reads
+0.3 whether the world wrote the block or not -- a block's default is its keys' defaults, so it
+declares none of its own. ``describe`` publishes the keys under the block's ``fields``, and the
+``Config::`` block on this page nests them as a world writes them. A block whose keys are open (a
+model's parameters, passed through) stays a plain ``Field(dict)``.
+
 A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
 (``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
 block, and ``present``, which the base class checks for every plugin). The same guard test holds
