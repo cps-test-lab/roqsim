@@ -33,6 +33,11 @@ reachability predicate or the admissibility test the experiment cares about. The
 Entity names are ``<name>_<index>`` unless an entry names itself, so ``SetEntityState`` can address a
 single cylinder out of the population and ``on_reset`` restores each to its own declared pose --
 which is what makes a per-trial layout a reset rather than a reload.
+
+Config::
+
+    cylinders:
+      instances: []       # list of cylinder configs, each accepting every key `cylinder` does (required)
 """
 
 from __future__ import annotations
