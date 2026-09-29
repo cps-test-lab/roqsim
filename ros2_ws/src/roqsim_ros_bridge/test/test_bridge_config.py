@@ -14,7 +14,7 @@ from roqsim_ros_bridge.ros2_bridge import Ros2Bridge
 
 
 def test_a_gt_block_is_refused_when_the_world_loads():
-    world = {"plugins": [{"ros2_bridge": {"gt": {"prefix": "/gt", "exempt": ["odom"]}}}]}
+    world = {"components": [{"ros2_bridge": {"gt": {"prefix": "/gt", "exempt": ["odom"]}}}]}
     with pytest.raises(PluginError, match="'gt' is not a key of ros2_bridge"):
         instantiate_plugins(load_config_from_dict(world, base_dir=Path(".")))
 

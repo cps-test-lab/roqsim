@@ -226,7 +226,7 @@ def _composed(tmp_path):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_robot": {
                         "model": "husky_a200",
@@ -280,7 +280,7 @@ def bolted(tmp_path_factory):
     config = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_arm": {
                         "model": "ur5e",

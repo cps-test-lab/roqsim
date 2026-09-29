@@ -79,7 +79,7 @@ class Drive(Plugin):
 
 
 def _engine(**config):
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     drive = Drive(dict(config), entity="box", label="drive")
     return Engine(cfg, plugins=[DummyPlugin({}, name="box"), drive], preview=True), drive
 
@@ -289,7 +289,7 @@ def test_an_endpoint_on_another_entity_names_its_owner_and_scope():
         def speed(self) -> float:
             return 1.0
 
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     carrier = Carrier({"namespace": "belt"}, entity="box", label="carrier")
     with Engine(cfg, plugins=[DummyPlugin({}, name="box"), carrier], preview=True) as engine:
         package = engine.ctx.interface.find("package", "package_pose")

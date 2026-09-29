@@ -50,7 +50,7 @@ def _cell(tmp_path, model="ur5e", *, gripper="robotiq_2f85", name="ur5e", namesp
     if namespace:
         arm["namespace"] = namespace
     return load_config_from_dict(
-        {"sim": {}, "plugins": [{"spawn_arm": arm, "name": name}]}, base_dir=tmp_path
+        {"sim": {}, "components": [{"spawn_arm": arm, "name": name}]}, base_dir=tmp_path
     )
 
 
@@ -256,7 +256,7 @@ def _refused(capsys, tmp_path, world: dict, *extra) -> str:
 
 _WORLD = {
     "sim": {},
-    "plugins": [
+    "components": [
         {
             "spawn_arm": {
                 "model": "ur5e",
@@ -353,7 +353,7 @@ def test_a_tip_that_is_not_a_link_is_refused(tmp_path, capsys):
 def test_a_world_with_no_arm_says_so(tmp_path, capsys):
     world = {
         "sim": {},
-        "plugins": [
+        "components": [
             {
                 "spawn_model": {
                     "model": "industrial_table",
@@ -369,7 +369,7 @@ def test_a_world_with_no_arm_says_so(tmp_path, capsys):
 def test_two_arms_must_be_disambiguated(tmp_path, capsys):
     world = {
         "sim": {},
-        "plugins": [
+        "components": [
             {
                 "spawn_arm": {"model": "ur5e", "prefix": "a_", "pose": pose_mapping([0, 0, 0])},
                 "name": "a",
@@ -410,7 +410,7 @@ def _dual_world(joint_prefix: bool = True) -> dict:
             entry["components"] = [{"arm_controller": {"joint_prefix": f"{name}_"}}]
         return entry
 
-    return {"sim": {}, "plugins": [arm("left", -0.4), arm("right", 0.4)]}
+    return {"sim": {}, "components": [arm("left", -0.4), arm("right", 0.4)]}
 
 
 @pytest.fixture(scope="module")

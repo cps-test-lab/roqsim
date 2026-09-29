@@ -14,7 +14,7 @@ from roqsim.engine import Engine
 
 
 def _engine() -> Engine:
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{"dummy": {}, "name": "d0"}]})
+    cfg = load_config_from_dict({"sim": {}, "components": [{"dummy": {}, "name": "d0"}]})
     return Engine(cfg, preview=True)
 
 
