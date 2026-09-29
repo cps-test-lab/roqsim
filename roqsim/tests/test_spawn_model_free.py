@@ -132,6 +132,89 @@ def test_mass_and_friction_overrides_are_campaign_factors(tmp_path):
     assert model.geom_friction[gid][0] == pytest.approx(0.4)
 
 
+def _prop_mass(tmp_path, geoms: str, mass: float, name: str = "prop"):
+    """Spawn an inline prop with a mass override; return the compiled model and its root body id."""
+    prop = tmp_path / f"{name}.xml"
+    prop.write_text(
+        f'<mujoco model="{name}"><worldbody><body name="{name}">{geoms}</body></worldbody></mujoco>'
+    )
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {"spawn_model": {"model": str(prop), "prefix": "p_", "mass": mass}, "name": "p"}
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    engine = Engine(cfg)
+    engine.setup()
+    model = engine.ctx.model
+    return model, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"p_{name}")
+
+
+# Two density-only boxes (0.2 m and 0.1 m cubes at 1000 and 500 kg/m^3: 8 kg and 0.5 kg) and a large
+# visual-only box that declares mass="0", the way a prop's render mesh does.
+_DENSITY_ONLY = (
+    '<geom name="big" type="box" size="0.1 0.1 0.1" density="1000"/>'
+    '<geom name="small" type="box" size="0.05 0.05 0.05" pos="0.3 0 0" density="500"/>'
+    '<geom name="visual" type="box" size="0.5 0.5 0.5" mass="0" contype="0" conaffinity="0"/>'
+)
+
+
+def test_mass_override_of_a_density_only_prop_gives_the_requested_mass(tmp_path):
+    """A geom that states only a density has no mass in the spec: MjSpec reports NaN.
+
+    NaN passes both ``mass or 0.0`` and ``total <= 0.0``, so a total summed from the spec slips past
+    any guard and a rescale by it writes NaN into every geom -- a visual box's ``mass="0"`` among
+    them, which the compiler then weighs at the default 1000 kg/m^3.
+    """
+    model, bid = _prop_mass(tmp_path, _DENSITY_ONLY, mass=40.0)
+    assert model.body_mass[bid] == pytest.approx(40.0)
+
+
+def test_mass_override_keeps_the_split_and_leaves_a_visual_geom_massless(tmp_path):
+    """The 8 : 0.5 split survives the rescale, and the mass="0" box is handed none of it."""
+    model, bid = _prop_mass(tmp_path, _DENSITY_ONLY, mass=17.0)
+    # The body's centre of mass sits where the two boxes' masses put it: 16 kg at x=0 and 1 kg at
+    # x=0.3. A visual box carrying any mass would pull it back towards x=0.
+    assert model.body_mass[bid] == pytest.approx(17.0)
+    assert model.body_ipos[bid][0] == pytest.approx(0.3 * 1.0 / 17.0)
+
+
+def test_mass_override_of_a_mixed_prop(tmp_path):
+    """One geom declares mass, one only a density: both scale by the one factor."""
+    geoms = (
+        '<geom type="box" size="0.1 0.1 0.1" mass="2"/>'  # 2 kg at x=0
+        '<geom type="box" size="0.1 0.1 0.1" pos="0.4 0 0" density="250"/>'  # 2 kg at x=0.4
+    )
+    model, bid = _prop_mass(tmp_path, geoms, mass=10.0)
+    assert model.body_mass[bid] == pytest.approx(10.0)
+    assert model.body_ipos[bid][0] == pytest.approx(0.2)
+
+
+def test_mass_override_scales_an_explicit_inertial(tmp_path):
+    """An <inertial> replaces what the geoms weigh, so it is what the override must scale."""
+    geoms = (
+        '<inertial pos="0 0 0" mass="3" diaginertia="0.1 0.2 0.3"/>'
+        '<geom type="box" size="0.1 0.1 0.1" mass="1"/>'
+    )
+    model, bid = _prop_mass(tmp_path, geoms, mass=6.0)
+    assert model.body_mass[bid] == pytest.approx(6.0)
+    assert list(model.body_inertia[bid]) == pytest.approx([0.2, 0.4, 0.6])
+
+
+def test_mass_override_of_a_massless_prop_is_refused(tmp_path):
+    """Only visual geoms: nothing to rescale, so the override is refused rather than ignored."""
+    from roqsim.models import ModelError
+
+    geoms = (
+        '<geom type="box" size="0.1 0.1 0.1" mass="0"/><geom type="sphere" size="0.1" density="0"/>'
+    )
+    with pytest.raises(ModelError, match="mass override needs the prop to have mass"):
+        _prop_mass(tmp_path, geoms, mass=5.0)
+
+
 def test_friction_on_a_root_with_no_geoms_is_refused(tmp_path):
     """A friction override lands on the root body's geoms; with none there it would change nothing.
 

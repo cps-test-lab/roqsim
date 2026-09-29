@@ -44,7 +44,27 @@ def test_every_tool_is_registered():
         "list_models",
         "get_model_details",
         "list_worlds",
+        "list_endpoints",
+        "describe_endpoint",
+        "read_endpoint",
+        "call_endpoint",
+        "pause",
+        "resume",
+        "step",
+        "check_world",
     }
+
+
+def test_a_simulation_tool_with_no_simulator_answers_with_an_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.delenv("ROQSIM_CONTROL", raising=False)
+
+    async def _call():
+        return await create_server().call_tool("list_endpoints", {})
+
+    payload = json.loads(_run(_call()).content[0].text)
+    assert payload["kind"] == "not_found" and "roqsim sim" in payload["error"]
 
 
 def test_the_catalog_tools_answer_with_usable_refs():
@@ -78,18 +98,16 @@ def test_get_plugin_details_unknown_name_is_error_not_an_exception():
     assert "error" in payload
 
 
-def test_the_server_tells_a_client_what_the_tools_are_for():
-    """The loop -- list, then detail, then write the ``use`` line -- is visible from no single tool,
-    so it is stated once at connect time, and it must name every tool it describes."""
+def test_the_server_tells_a_client_what_every_tool_is_for():
+    """The loop -- list, detail, write the ``use`` line, check, then run -- is visible from no single
+    tool, so it is stated once at connect time, and it must name every tool the server registers."""
     server = create_server()
     instructions = server.instructions or ""
     assert instructions.strip(), "a client that connects is told nothing"
-    for tool in (
-        "list_plugins",
-        "get_plugin_details",
-        "list_models",
-        "get_model_details",
-        "list_worlds",
-    ):
-        assert tool in instructions
+
+    async def _names():
+        return {t.name for t in await server.list_tools()}
+
+    missing = {name for name in _run(_names()) if name not in instructions}
+    assert not missing, f"the instructions do not mention {sorted(missing)}"
     assert "`use`" in instructions

@@ -57,11 +57,6 @@ class ZividPlugin(DepthCameraPlugin):
         cfg.setdefault("clip_far", 5.0)
         super().__init__(cfg, name=name, entity=entity, label=label)
 
-    def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
+    def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         # `depth/image_raw` -- Zivid's own namespace, not under the colour prefix.
-        self._add_depth_endpoints(
-            ctx,
-            ns,
-            self.topic_override("depth") or join_topic(DEPTH_PREFIX, "image_raw"),
-            self.frame_id,
-        )
+        self._add_depth_endpoints(ctx, join_topic(DEPTH_PREFIX, "image_raw"), self.frame_id)

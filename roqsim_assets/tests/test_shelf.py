@@ -76,5 +76,6 @@ def test_validate_config_rejects_bad_geometry():
     assert errs({"layers": 3.5})  # non-integer
     assert errs({"width": 0})  # not > 0
     assert errs({"thickness": 0.5, "layers": 8, "height": 2.0})  # boards don't fit
-    assert errs({"rpy": [0.0, 0.0]})  # wrong length
+    assert errs({"rpy": [0.0, 0.0, 1.0]})  # a pose is `pose:`
+    assert errs({"pose": {"orientation": {"heading": 1.0}}})  # not a pose
     assert not errs({"layers": 8, "depth": 0.40})  # a valid custom shelf

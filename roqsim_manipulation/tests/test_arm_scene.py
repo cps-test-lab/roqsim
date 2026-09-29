@@ -7,6 +7,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.types import JointPositions
 
 
 def _world(tmp_path, arm_extra=None, ctrl_extra=None):
@@ -53,8 +54,9 @@ def test_arm_endpoints_inherit_spawn_namespace(tmp_path):
     assert fjt.direction == "in"
     assert fjt.backend["ros2"]["action"] == "control_msgs.action.FollowJointTrajectory"
     assert fjt.backend["ros2"]["name"] == "arm_controller/follow_joint_trajectory"
-    # The action endpoint's write takes the neutral (names, positions) waypoint payload.
-    fjt.write((["shoulder_pan_joint"], [0.5]))
+    # The action endpoint is a command taking a waypoint's names and positions.
+    assert [p.name for p in fjt.params] == ["names", "positions"]
+    assert fjt.write({"names": ["shoulder_pan_joint"], "positions": [0.5]}) is not None
 
 
 def test_stream_commands_declares_joint_trajectory_topic(tmp_path):
@@ -71,13 +73,14 @@ def test_stream_commands_declares_joint_trajectory_topic(tmp_path):
     engine.setup()
     ep = {e.name: e for e in engine.ctx.interface.all()}["joint_command"]
     assert ep.direction == "in" and ep.namespace == "ur10e"
-    assert ep.backend["ros2"]["type"] == "trajectory_msgs.msg.JointTrajectory"
-    assert ep.backend["ros2"]["topic"] == "arm_controller/joint_trajectory"
-    # Same neutral (names, positions) payload as the action -> set_targets.
-    ep.write((["shoulder_pan_joint"], [0.4]))
+    # A JointPositions, which travels as trajectory_msgs/JointTrajectory.
+    assert ep.payload_type.cls is JointPositions
+    assert ep.backend["ros2"] == {"topic": "arm_controller/joint_trajectory"}
+    # The same names and positions as the action -> set_targets.
+    ep.write({"names": ["shoulder_pan_joint"], "positions": [0.4]})
     handle = engine.ctx.blackboard.require("arm:ur10e")
     engine.reset()
-    ep.write((["shoulder_pan_joint"], [0.4]))
+    ep.write({"names": ["shoulder_pan_joint"], "positions": [0.4]})
     for _ in range(400):
         engine.step()
     _, pos, *_ = handle.read_state()
@@ -152,9 +155,10 @@ def test_controller_state_endpoint_mirrors_a_jtc(tmp_path):
     assert ep.direction == "out"
     assert ep.backend["ros2"]["type"] == "control_msgs.msg.JointTrajectoryControllerState"
     assert ep.backend["ros2"]["topic"] == "arm_controller/controller_state"
-    names, desired, actual, velocities = ep.read()
+    state = ep.read()
+    names, desired, actual = state.joint_names, state.reference.positions, state.feedback.positions
     # Only the *commanded* joints: a JTC states its control loop, not every reported joint.
-    assert len(names) == len(desired) == len(actual) == len(velocities) == 6
+    assert len(names) == len(desired) == len(actual) == len(state.feedback.velocities) == 6
     assert np.allclose(actual, desired, atol=0.05)  # settled at home, so error is small
 
 
