@@ -196,16 +196,11 @@ def test_the_g1_mid360_is_at_the_vendor_joint_origin_and_publishes_that_chain(mo
             d.site_xmat[sensor._site_id].reshape(3, 3), tmat @ _mat(rpy_to_quat(*rpy)), atol=1e-9
         )
 
-        # The robot's frames are the Transforms it returns; a mounted device's its static_tf hint.
         published = [
             t
             for e in engine.ctx.interface.all()
             if e.name == "frames"
-            for t in (
-                e.backend["ros2"]["static_tf"]
-                if "static_tf" in (e.backend.get("ros2") or {})
-                else [vars(tf) for tf in e.read().transforms]
-            )
+            for t in [vars(x) for x in e.read().transforms]
         ]
         assert [(t["parent"], t["child"]) for t in published] == [
             (p, c) for p, c, _, _ in G1_TRANSFORMS[model]

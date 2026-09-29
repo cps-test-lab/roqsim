@@ -24,7 +24,6 @@ from pathlib import Path
 import mujoco
 import numpy as np
 from mobile_scene_utils import named
-from scan_mount_utils import frame_links
 
 from roqsim import raycast
 from roqsim.config import load_config_from_dict
@@ -144,7 +143,7 @@ def test_the_static_tf_chain_is_published_in_the_robots_namespace():
         robot = endpoints[("rb", "frames")]
         device = endpoints[("rb.rplidar", "frames")]
         assert robot.namespace == device.namespace == NAMESPACE
-        links = frame_links(robot) + frame_links(device)
+        links = [vars(t) for ep in (robot, device) for t in ep.read().transforms]
         # One tree from base_link to laser: a consumer asks for the scan in base_link.
         assert [(t["parent"], t["child"]) for t in links] == [
             ("base_link", "body_link"),
