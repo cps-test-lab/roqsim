@@ -320,3 +320,50 @@ def test_a_reset_restarts_the_decimation_phase():
     mujoco.mj_resetData(ctx.model, ctx.data)
     plugin.on_reset(ctx)
     assert first_refresh(ctx, plugin) == pytest.approx(fresh)
+
+
+# A prefixed robot turned a quarter turn left, so its base frame and the world disagree on every
+# axis, pushed into a ball: one contact, at a position the model alone determines.
+TURNED = """
+<mujoco model="contact_location_turned">
+  <worldbody>
+    <geom name="floor" type="plane" size="10 10 0.05"/>
+    <geom name="ball" type="sphere" size="0.05" pos="0 0.45 0.1"/>
+    <body name="r1_base_link" pos="0 0 0.1" quat="0.70710678 0 0 0.70710678">
+      <freejoint/>
+      <geom name="r1_chassis" type="box" size="0.2 0.15 0.1" mass="10"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.mark.parametrize("frame", ["base", "world"])
+def test_the_point_is_stamped_in_the_frame_its_coordinates_are_in(frame):
+    """The ROS header must name the frame the reported coordinates are expressed in; a base-frame
+    point stamped `world` (or the reverse) is a valid-looking message a consumer transforms wrong."""
+    model = mujoco.MjModel.from_xml_string(TURNED)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    ctx = SimContext(config={})
+    ctx.model, ctx.data = model, data
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="r1_base_link", meta={"prefix": "r1_"})
+    )
+    plugin = ContactLocationPlugin({"frame": frame}, entity="robot")
+    plugin.configure(ctx)
+    plugin.on_reset(ctx)
+    r = _drive(ctx, plugin, 1.0, vy=0.4)
+    assert r.in_contact is True and r.count == 1
+
+    ball = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball")
+    (i,) = [i for i in range(data.ncon) if ball in (data.contact[i].geom1, data.contact[i].geom2)]
+    point = data.contact[i].pos.copy()
+    root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "r1_base_link")
+    if frame == "base":
+        point = data.xmat[root].reshape(3, 3).T @ (point - data.xpos[root])
+        assert point == pytest.approx([0.2, 0.0, 0.0], abs=0.05), "the ball is dead ahead"
+    assert [r.x, r.y, r.z] == pytest.approx(point.tolist(), abs=1e-9)
+
+    hints = ctx.interface.find("robot", "contact_location").backend["ros2"]
+    assert hints["frame_id"] == ("base_link" if frame == "base" else "world")
