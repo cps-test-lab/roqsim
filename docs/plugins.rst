@@ -2163,7 +2163,12 @@ they cost something a navigation world should not pay:
    controller also reports only its own joints, so several can share one ``/joint_states`` topic.
 4. **``mass`` / ``friction``** on the spawn, if either is a factor you want to vary — they are ordinary
    world-YAML keys, so an ordinary parameter sweep varies them and needs no new
-   variation plugin.
+   variation plugin. ``mass`` works whichever way the prop's MJCF states its mass: geoms with a
+   ``mass``, geoms with only a ``density`` (MuJoCo's 1000 kg/m³ when neither is given), or an
+   ``<inertial>`` on the root body. It scales them all by one factor, so the split between geoms
+   stays, and a visual geom with ``mass="0"`` or ``density="0"`` stays massless. The rescaled prop
+   is compiled and must weigh what was asked, or the spawn is refused; so is a prop that weighs
+   nothing. What is scaled is the root body (plus any flex it owns), not bodies hinged below it.
 
 ``unitree_g1_dex1``'s manifest is a worked example of (3): three ``arm_controller`` instances on one
 entity -- one per arm, each owning its seven arm joints and its own Dex1 gripper, and a
