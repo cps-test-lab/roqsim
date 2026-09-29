@@ -40,9 +40,7 @@ components:
   # configuration calls the same frame `lidar3d_0_laser`.
   - spawn_sensor:
       model: velodyne_vlp16
-      parent_frame: mid_mount
-      pos: [0.0, 0.0, 0.1]          # vlp16_mount.urdf.xacro tower height 0.1 @ 4ddf9b5
-      rpy: [0.0, 0.0, 0.0]
+      parent_frame: vlp16_mount
       frame_id: velodyne            # VLP-16.urdf.xacro default name, called without one by vlp16_mount
     name: velodyne
     # No override: the scan is the device's, as the VLP-16 driver publishes it. Clearpath's own driver
@@ -55,4 +53,6 @@ components:
 frames:
   # jackal_description urdf/jackal.urdf.xacro `mid_mount` @ 4ddf9b5, the chassis top; Clearpath's ROS 2
   # `default_mount` is the same link (j100.urdf.xacro:125-129 @ b0f6d92).
-  - {name: mid_mount, parent: base_link, pos: [0.0, 0.0, 0.184], rpy: [0.0, 0.0, 0.0]}
+  - {name: mid_mount, parent: base_link, pose: {position: {z: 0.184}}}
+  # vlp16_mount.urdf.xacro tower height 0.1 @ 4ddf9b5
+  - {name: vlp16_mount, parent: mid_mount, pose: {position: {z: 0.1}}, tf: false}

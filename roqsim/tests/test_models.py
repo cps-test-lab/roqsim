@@ -144,7 +144,7 @@ def test_a_retired_model_name_is_refused_naming_its_replacement(monkeypatch):
             "convention pointing the lens along +y)"
         ),
         then=(
-            "Update the name, and re-express this mount's pos/rpy as the vendor macro's origin; "
+            "Update the name, and re-express this mount's pose as the vendor macro's origin; "
             "see roqsim_sensors/README.md."
         ),
     )
@@ -158,7 +158,7 @@ def test_a_retired_model_name_is_refused_naming_its_replacement(monkeypatch):
     assert str(exc.value) == (
         "spawn_sensor: model 'retired_cam' — renamed to 'realsense_d455' when its mount frame "
         "became the one its vendor macro places (it was a display convention pointing the lens "
-        "along +y). Update the name, and re-express this mount's pos/rpy as the vendor macro's "
+        "along +y). Update the name, and re-express this mount's pose as the vendor macro's "
         "origin; see roqsim_sensors/README.md."
     )
 

@@ -48,6 +48,7 @@ from vendor_mount import (  # noqa: E402
     fmt_list,
     fmt_num,
     fmt_vec,
+    frame_pose,
     matrix_rpy,
     quat_matrix,
     rewrite_mounts,
@@ -162,7 +163,7 @@ def mjcf(v: dict) -> str:
 
 
 def frames_block(v: dict) -> str:
-    opt = fmt_list(v["optical_rpy"])
+    opt = frame_pose(rpy=v["optical_rpy"])
     lines = [
         BEGIN,
         f"# ({XACRO.split('/', 1)[1]}). The macro's `name` param is the device name; the TurtleBot 4",
@@ -171,20 +172,20 @@ def frames_block(v: dict) -> str:
         'frame_id: "{device_name}_rgb_camera_optical_frame"',
         "frames:",
         '  - {name: "{device_name}_link", parent: mount}',
-        f'  - {{name: "{{device_name}}_rgb_camera_frame", parent: "{{device_name}}_link", '
-        f"pos: {fmt_list(v['rgb'])}}}",
-        f'  - {{name: "{{frame_id}}", parent: "{{device_name}}_rgb_camera_frame", rpy: {opt}}}',
+        f'  - {{name: "{{device_name}}_rgb_camera_frame", parent: "{{device_name}}_link"'
+        f"{frame_pose(v['rgb'])}}}",
+        f'  - {{name: "{{frame_id}}", parent: "{{device_name}}_rgb_camera_frame"{opt}}}',
     ]
     for side in ("left", "right"):
         lines += [
-            f'  - {{name: "{{device_name}}_{side}_camera_frame", parent: "{{device_name}}_link", '
-            f"pos: {fmt_list(v[side])}}}",
+            f'  - {{name: "{{device_name}}_{side}_camera_frame", parent: "{{device_name}}_link"'
+            f"{frame_pose(v[side])}}}",
             f'  - {{name: "{{device_name}}_{side}_camera_optical_frame", '
-            f'parent: "{{device_name}}_{side}_camera_frame", rpy: {opt}}}',
+            f'parent: "{{device_name}}_{side}_camera_frame"{opt}}}',
         ]
     lines += [
-        f'  - {{name: "{{device_name}}_imu_frame", parent: "{{device_name}}_link", '
-        f"pos: {fmt_list(v['imu'])}, rpy: {fmt_list(v['imu_rpy'])}}}",
+        f'  - {{name: "{{device_name}}_imu_frame", parent: "{{device_name}}_link"'
+        f"{frame_pose(v['imu'], v['imu_rpy'])}}}",
         END,
     ]
     return "\n".join(lines) + "\n"

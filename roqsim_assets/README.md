@@ -106,9 +106,9 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 - **`box`** / **`cylinder`** — the two **anonymous** obstacles: a rectangular box (`size`, full
   extents) and a post (`radius` + full `height`). Every other prop here is a specific object; these
   two are shape and position and nothing else, which is what a navigation experiment's scenery
-  usually is. Both take `pos` as `[x, y]` to sit on the floor or `[x, y, z]` for an explicit centre,
-  plus `color` / `collide` / `friction` / `prefix`; `box` additionally takes `yaw` (a cylinder is
-  rotationally symmetric, so it has none), and `cylinder` additionally takes `mass` (kg — unset means
+  usually is. Both take a `pose` as `spawn_model` does -- `position` without `z` to sit on the floor,
+  with `z` for an explicit centre, and an `orientation` that may tip them over -- plus `color` /
+  `collide` / `friction` / `prefix`, and `cylinder` additionally takes `mass` (kg — unset means
   MuJoCo's default 1000 kg/m³ density, several times too heavy for anything hollow). Declared in the world YAML rather than baked into a scene,
   deliberately: a scene is what an occupancy grid gets generated *from*, so a baked obstacle lands in
   the map — and an experiment about *unknown* obstacles then has none. Round vs square is not

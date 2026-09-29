@@ -6,14 +6,27 @@ every one of them. A model states them in a ``frames:`` block -- in its manifest
 config -- as the vendor writes them::
 
     frames:
-      - {name: shell_link, parent: base_link, pos: [0, 0, 0.0945], rpy: [0, 0, 0]}
-      - {name: rplidar_link, parent: shell_link, pos: [-0.04, 0, 0.0987], rpy: [0, 0, 1.5708]}
+      - {name: shell_link, parent: base_link, pose: {position: {z: 0.0945}}}
+      - name: rplidar_link
+        parent: shell_link
+        pose: {position: {x: -0.04, z: 0.0987}, orientation: {yaw: 1.5708}}
+      - name: rplidar_mount
+        parent: shell_link
+        pose: {position: {x: -0.04, z: 0.0987}}
+        tf: false
 
-``parent`` is a body of the model or a frame declared before this one; ``pos``/``rpy`` are the
-fixed joint's origin relative to it (metres, radians; both default to zero). Each frame becomes a
-site of the model at build time, on the body its chain ends at, so the pose lives in the compiled
-model and a mount can name the frame as where it hangs. At configure the chain is published as
-static transforms read back from that compiled model, never recomputed from the numbers above.
+``parent`` is a body of the model or a frame declared before this one; ``pose`` is the fixed joint's
+origin relative to it, a ``geometry_msgs/Pose`` read by :func:`roqsim.pose.parse_pose` with
+``relative=True``: every omitted component is zero, so an absent ``pose`` is the parent itself.
+Each frame becomes a site of the model at build time, on the body its chain ends at, so the pose
+lives in the compiled model and a device can name the frame as where it hangs (``parent_frame``).
+
+``tf`` (default ``true``) says whether the frame is published. At configure every published frame
+is sent as a static transform from its nearest published ancestor, read back from the compiled
+model, never recomputed from the numbers above. ``tf: false`` makes a frame a named place and
+nothing more -- where a device goes, without adding a link the robot description does not have;
+a device hanging there is published from that frame's nearest published ancestor
+(:func:`tf_anchors`).
 
 ROS-free: a transform is plain numbers, and the bridge turns it into a message.
 """
@@ -29,10 +42,10 @@ import numpy as np
 from .context import Endpoint
 from .endpoint import value_type
 from .plugin import PluginError
-from .pose import rpy_to_quat
+from .pose import PoseError, parse_pose, refuse_pos_rpy
 from .types import Transform, Transforms
 
-_FRAME_KEYS = frozenset({"name", "parent", "pos", "rpy"})
+_FRAME_KEYS = frozenset({"name", "parent", "pose", "tf"})
 
 #: Geom/site group the frame sites live in. Not a rendered one: a frame is a coordinate system, and
 #: a marker drawn at every flattened link would clutter every render of the robot.
@@ -44,7 +57,10 @@ class FrameDecl:
     name: str
     parent: str
     pos: tuple[float, float, float]
-    rpy: tuple[float, float, float]
+    #: ``(w, x, y, z)``, MuJoCo's order.
+    quat: tuple[float, float, float, float]
+    #: Whether the frame is published as a static transform.
+    tf: bool = True
 
 
 def substitute(value, values: dict[str, str], where: str):
@@ -85,29 +101,20 @@ def substitute(value, values: dict[str, str], where: str):
     return "".join(out)
 
 
-def _triple(value, key: str, where: str) -> tuple[float, float, float]:
-    if value is None:
-        return (0.0, 0.0, 0.0)
-    if not isinstance(value, (list, tuple)) or len(value) != 3:
-        raise PluginError(f"{where}: '{key}' must be [x, y, z] / [roll, pitch, yaw], got {value!r}")
-    try:
-        return (float(value[0]), float(value[1]), float(value[2]))
-    except (TypeError, ValueError):
-        raise PluginError(f"{where}: '{key}' must be three numbers, got {value!r}") from None
-
-
 def parse_frames(entries, where: str) -> list[FrameDecl]:
     """Validate a ``frames:`` block into declarations, in order. ``None`` is no frames."""
     if entries is None:
         return []
     if not isinstance(entries, list):
-        raise PluginError(f"{where}: 'frames' must be a list of {{name, parent, pos, rpy}} entries")
+        raise PluginError(f"{where}: 'frames' must be a list of {{name, parent, pose, tf}} entries")
     out: list[FrameDecl] = []
     seen: set[str] = set()
     for i, entry in enumerate(entries):
         at = f"{where}.frames[{i}]"
         if not isinstance(entry, dict):
-            raise PluginError(f"{at}: must be a mapping of name, parent, pos, rpy")
+            raise PluginError(f"{at}: must be a mapping of name, parent, pose, tf")
+        if refusal := refuse_pos_rpy(entry, at):
+            raise PluginError(refusal)
         unknown = sorted(set(entry) - _FRAME_KEYS)
         if unknown:
             raise PluginError(f"{at}: unknown key(s) {unknown}; a frame has {sorted(_FRAME_KEYS)}")
@@ -119,15 +126,29 @@ def parse_frames(entries, where: str) -> list[FrameDecl]:
             raise PluginError(f"{at}: frame {name!r} is declared twice")
         if parent == name:
             raise PluginError(f"{at}: frame {name!r} cannot be its own parent")
+        tf = entry.get("tf", True)
+        if not isinstance(tf, bool):
+            raise PluginError(f"{at}: 'tf' must be true or false, got {tf!r}")
+        try:
+            pos, quat = parse_pose(entry.get("pose") or {}, relative=True)
+        except PoseError as exc:
+            raise PluginError(f"{at}: {exc}") from None
         seen.add(name)
-        out.append(
-            FrameDecl(
-                name,
-                parent,
-                _triple(entry.get("pos"), "pos", at),
-                _triple(entry.get("rpy"), "rpy", at),
-            )
-        )
+        out.append(FrameDecl(name, parent, tuple(pos), tuple(quat), tf))
+    return out
+
+
+def tf_anchors(frames: list[FrameDecl]) -> dict[str, str]:
+    """Each frame's nearest published ancestor: its TF parent, or where a device on it is published from.
+
+    A frame's ``parent`` when that is a body or a published frame, else the parent's own anchor, so
+    a chain through ``tf: false`` frames is published as one transform across them.
+    """
+    by_name = {f.name: f for f in frames}
+    out: dict[str, str] = {}
+    for frame in frames:  # in order: a parent frame is declared before its children
+        parent = by_name.get(frame.parent)
+        out[frame.name] = out[parent.name] if parent is not None and not parent.tf else frame.parent
     return out
 
 
@@ -175,7 +196,7 @@ def add_frame_sites(spec: mujoco.MjSpec, frames: list[FrameDecl], where: str) ->
                 f"{where}: frame {frame.name!r} hangs from {frame.parent!r}, which is neither a body "
                 f"of this model nor a frame declared before it."
             )
-        quat = _compose(pquat, rpy_to_quat(*frame.rpy))
+        quat = _compose(pquat, frame.quat)
         pos = ppos + _rotate(pquat, frame.pos)
         site = body.add_site(name=frame.name, pos=pos.tolist(), quat=quat.tolist())
         site.group = FRAME_SITE_GROUP
