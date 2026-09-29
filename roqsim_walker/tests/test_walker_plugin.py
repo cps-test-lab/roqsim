@@ -93,13 +93,16 @@ def test_plugin_registers_entity_handle_and_goal_endpoint(sim):
     # interface, as it does for a robot or a prop -- which is why there are TWO goal endpoints.
     # `navigate_through_poses` keeps the name and type a walker client expects; `navigate_to_pose`
     # is the navigator's single-goal surface.
-    # `start_route` is there because this walker has a patrol: it runs the configured route.
+    # `start_route` is a ROS action because this walker has a patrol: it runs the configured route.
+    # `route_status` and `cancel_route` follow and stop a route by its sequence number.
     endpoints = {e.name: e for e in ctx.interface.all() if e.owner == "pedestrian"}
     assert set(endpoints) == {
         "body_poses",
         "navigate_through_poses",
         "navigate_to_pose",
         "start_route",
+        "route_status",
+        "cancel_route",
     }
     assert endpoints["body_poses"].direction == "out"
     assert (

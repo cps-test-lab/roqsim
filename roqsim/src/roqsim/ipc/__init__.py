@@ -45,6 +45,16 @@ PROTOCOL = 1
 log = logging.getLogger(__name__)
 
 
+def path_of(ep) -> str:
+    """An endpoint's path: ``<producer address, dots as slashes>/<name>``.
+
+    ``robot.lidar`` + ``scan`` is ``robot/lidar/scan``; an endpoint with no producer (the core's
+    entity poses) is placed under its owner (``sim`` + ``entities/robot/pose``).
+    """
+    producer = ep.producer or ep.owner
+    return f"{producer.replace('.', '/')}/{ep.name}" if producer else ep.name
+
+
 class ControlError(RuntimeError):
     """No simulator to talk to, or one that refused the request. ``kind`` names which.
 

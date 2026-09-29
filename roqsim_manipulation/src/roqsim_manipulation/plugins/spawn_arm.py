@@ -113,6 +113,12 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
 ``pose`` is an offset within it -- matching how a real tool adapter is specified.
 
+**Who carries the arm's weight.** Its drives, as a torque each joint's actuator supplies
+(:func:`roqsim.actuators.apply_gravity_compensation`): bounded by the actuator's force limit, so a
+drive too weak for its load sags, and pushing on the mount, so an arm on a ``mount:`` that moves --
+a mobile base -- loads that base's wheels with its full weight (the engine's
+:class:`roqsim.actuators.GravityReaction`). On the world or a fixed table there is nothing to load.
+
 **A tool that deforms.** The end effector's MJCF may carry a ``<flexcomp>`` -- a soft pad, a
 compliant finger -- pinned to one of its bodies (``<pin>``), or written under its ``<worldbody>``,
 in which case it is moved into a body named after the file so its pins hold on the flange. Its

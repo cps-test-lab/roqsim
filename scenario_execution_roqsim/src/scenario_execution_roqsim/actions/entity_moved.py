@@ -8,8 +8,8 @@ the opposite of ``osc.ros``' ``odometry_distance_traveled`` -- pick this one for
 table yet", that one for an odometry budget. Someone measuring a robot's progress on a curved path will
 otherwise wonder why this number is smaller.
 
-Works over both transports: in a stepped run the pose is read from ``data.xpos``, in a ROS run from
-``simulation_interfaces/GetEntityState``, keyed by the same entity name either way. See
+Works over both transports: in a stepped run the pose is read from ``data.xpos``, over the control
+socket from ``sim/entities/<name>/pose``, keyed by the same entity name either way. See
 :mod:`scenario_execution_roqsim.access`.
 """
 
