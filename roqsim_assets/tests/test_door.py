@@ -21,7 +21,7 @@ def _plugin_endpoints(engine):
 
 def _door(tmp_path, extra=None):
     plugins = [{"door": dict(extra or {}), "name": "door"}]
-    return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path)
 
 
 def _built(tmp_path, extra=None):
@@ -225,7 +225,7 @@ def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
             "name": "obs",
         },
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     engine.reset()
     aid = _id(engine, mujoco.mjtObj.mjOBJ_ACTUATOR, "hinge_pos")

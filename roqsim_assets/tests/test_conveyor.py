@@ -16,7 +16,7 @@ def _belt_only(tmp_path, conv_extra=None):
     plugins = [
         {"conveyor": dict(conv_extra or {}), "name": "conveyor"},
     ]
-    return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path)
 
 
 def _run(engine, steps):
@@ -170,7 +170,7 @@ def test_industrial_table_top_carries_the_belt(tmp_path):
         },
         {"conveyor": {}, "name": "conveyor"},
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     top = _geom_pos(engine, "industrial_table_top")
     assert top[2] + _geom_size(engine, "industrial_table_top")[2] == pytest.approx(0.76, abs=1e-6)

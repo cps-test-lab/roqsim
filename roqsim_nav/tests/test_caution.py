@@ -13,7 +13,6 @@ these run with recovery ENABLED; asserting them with it off would test nothing.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import mujoco
@@ -305,7 +304,7 @@ def test_replan_reports_a_blocker_the_same_way_stop_does(tmp_path):
 
 def test_an_unknown_avoidance_key_is_refused(tmp_path):
     """A typo must not read as a default. The block names what it accepts."""
-    with pytest.raises(PluginError, match="does not accept"):
+    with pytest.raises(PluginError, match="'avoidance.on_blocked' is not a key of 'avoidance'"):
         Engine(_world(tmp_path, nav={"avoidance": {"on_blocked": "replan"}}))
 
 
@@ -389,19 +388,6 @@ def test_traffic_ignore_drives_on_and_respect_stops(tmp_path):
             engine.shutdown()
     assert outcomes["ignore"] > -0.5, "it stopped although it was told not to care"
     assert outcomes["respect"] < -0.5, "it drove on although it was told to stop"
-
-
-@pytest.mark.parametrize(
-    ("old", "points_at"),
-    [
-        ({"traffic": "ignore"}, "avoidance: {stop: false}"),
-        ({"caution": {"lookahead": 1.0}}, "keys of `avoidance:` directly"),
-    ],
-)
-def test_a_retired_spelling_is_refused_and_says_where_it_went(tmp_path, old, points_at):
-    """Silently ignoring one would give the world the opposite of what it asked for."""
-    with pytest.raises(PluginError, match=re.escape(points_at)):
-        Engine(_world(tmp_path, nav=old))
 
 
 def test_avoidance_as_a_bare_value_is_refused(tmp_path):

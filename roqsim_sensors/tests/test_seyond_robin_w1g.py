@@ -32,7 +32,7 @@ class _OneWallScene(Plugin):
 def _world(**cfg):
     config = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_OneWallScene": {}},
             {"roqsim_sensors.plugins.seyond_robin_w1g:SeyondRobinW1GPlugin": cfg},
         ],

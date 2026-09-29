@@ -106,7 +106,7 @@ def _plugins(*extra):
 def _engine(tmp_path, *extra) -> Engine:
     scene = tmp_path / "scene.xml"
     scene.write_text(SCENE)
-    cfg = load_config_from_dict({"sim": {"world": str(scene)}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {"world": str(scene)}, "components": []})
     engine = Engine(cfg, plugins=_plugins(*extra), preview=True)
     return engine
 

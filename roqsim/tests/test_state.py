@@ -46,7 +46,7 @@ def recording(tmp_path, monkeypatch):
         yaml.safe_dump(
             {
                 "sim": {"world": str(scene)},
-                "plugins": [
+                "components": [
                     {"lidar": {"site": "scan", "rays": 180, "range_stddev": 0.05}, "name": "front"}
                 ],
             }
