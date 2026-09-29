@@ -9,6 +9,8 @@ Ask the installation, not this file:
 - `roqsim --help` — every command; then `roqsim <group> --help` and `roqsim <group> <tool> --help`.
 - `roqsim plugins list` / `roqsim plugins describe <name>` — every registered plugin, as JSON.
 - `roqsim catalog models|worlds [--refs]` / `roqsim catalog model <name>` — what can be spawned and run.
+- `roqsim ls` / `roqsim endpoints` / `roqsim describe <path>` — a running simulation's endpoints,
+  over the control socket `roqsim sim` serves (`docs/control.rst`).
 - OSC actions: `docs/quickstart.rst` and `scenario_execution_roqsim/src/scenario_execution_roqsim/lib_osc/roqsim.osc`.
 
 ## Package layout

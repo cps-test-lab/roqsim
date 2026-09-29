@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .endpoint import hints_for
 from .plugin import Plugin
 from .rates import SNAP_NOTABLE, SNAP_QUIET, GridRate, snap_rate
 
@@ -99,6 +100,9 @@ class BridgeBase(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self._ctx: SimContext | None = None
         self._outputs: list[_Output] = []
+        #: What this bridge made of each endpoint it bound, by ``id(endpoint)`` (see
+        #: :meth:`bound_name`).
+        self._names: dict[int, dict] = {}
         self._ready = False
         # Optional owner filter (``owner``: a name or list of names; omit to serve all endpoints).
         # The common case is ONE bridge serving everything -- per-robot scoping comes from each
@@ -123,6 +127,7 @@ class BridgeBase(Plugin):
         # convention enforced rather than assumed: a producer listed after the bridge now raises
         # instead of quietly never being published.
         ctx.interface.mark_bound(self.name)
+        ctx.interface.bridges.append(self)
         rate_overrides = self.config.get("rates", {})
         for ep in ctx.interface.all():
             if self._owners is not None and ep.owner not in self._owners:
@@ -130,6 +135,8 @@ class BridgeBase(Plugin):
             hints = self._hints_for(ep)
             if hints is None:
                 continue
+            # Before the backend hook, which may replace it with the name it resolved.
+            self._names[id(ep)] = dict(hints)
             if ep.direction == "out":
                 if ep.read is None:
                     ctx.logger.warning("bridge: out endpoint %r has no read(); skipped", ep.name)
@@ -156,9 +163,7 @@ class BridgeBase(Plugin):
         endpoint (``Endpoint.transport``) is bound without one, with an empty block -- a backend
         overrides this to fill in what its payload type maps to.
         """
-        if self.BACKEND in ep.backend:
-            return ep.backend[self.BACKEND]
-        return {} if ep.transport else None
+        return hints_for(ep, self.BACKEND)
 
     def endpoint_map(self, describe: Callable[[_Output], dict]) -> dict:
         """What this bridge publishes, keyed as the world names it: ``(owner, endpoint name)``.
@@ -180,6 +185,15 @@ class BridgeBase(Plugin):
                 for out in self._outputs
             ],
         }
+
+    def bound_name(self, ep: Endpoint) -> dict | None:
+        """What this bridge made of *ep*: its hints, or what the backend resolved them to (a ROS
+        topic after namespaces and renames). ``None`` when this bridge did not bind it.
+
+        For a reader that describes an endpoint across transports -- another bridge answering
+        "what is this called on ROS" -- so the name it gives is the one this bridge actually used.
+        """
+        return self._names.get(id(ep))
 
     def _rate_gate(self, ctx: SimContext, rate_hz: float, subject: str) -> _RateGate:
         """A gate at the nearest rate this world can hold, announced in proportion to the move.
@@ -320,6 +334,9 @@ class BridgeBase(Plugin):
         ``marshalled`` endpoint queues the work itself, so it is called directly; any other write
         is submitted to run on the physics thread.
         """
+        if ep.slot is not None:
+            # Tagged, so two transports driving one stream are told apart (StreamSlot.put).
+            return lambda payload, write=ep.write, src=self.BACKEND: write(payload, source=src)
         if ep.marshalled:
             return ep.write
 
