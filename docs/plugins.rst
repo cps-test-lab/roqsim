@@ -2228,6 +2228,18 @@ but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap 
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
 trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
 
+**Motion limits.** ``arm_controller``'s ``max_velocity`` and ``max_acceleration`` (a scalar, or
+``{joint: value}``) turn every position command into a trapezoidal ramp of the held target instead
+of a step the servo takes as fast as its force range allows. Set them where a step is wrong: a lift,
+a gantry, a mast, a joint carrying a load that must not be thrown. They are off unless set, and no
+bundled model sets them, because an MJCF declares no joint velocity limit to default from; take the
+values from the source -- the URDF's ``<limit velocity=>`` and the vendor's ``joint_limits.yaml``.
+A robot whose drives always limit carries them in its manifest's ``arm_controller`` entry; a world
+overrides them per key there, and ``max_velocity: null`` lifts one. Give the planner the same
+numbers (``roqsim export moveit --max-velocity … --max-acceleration …``): a trajectory faster than
+the limits arrives late and is graded by ``goal_time_tolerance``. The module docstring of
+``roqsim_manipulation.plugins.arm_controller`` has the profile and what each command path does.
+
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
