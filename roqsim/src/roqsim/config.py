@@ -19,7 +19,7 @@ The YAML has two top-level sections::
         follow_heading: true # optional: chase cam -- azimuth becomes an offset from the robot's yaw
       sync: {enabled: false} # foreseen lockstep mode (inert in M1)
 
-    components:            # ``plugins:`` is accepted as an alias of this key
+    components:
       - floorplan:                                # a short-name ref is the entry's key
           size: 3.0                               # its config: opaque, validated by the plugin itself
         name: ground                              # reserved sibling key; identifies this instance
@@ -55,9 +55,9 @@ A world may inherit another with two optional top-level keys (see :func:`_resolv
     extends: roqsim_scenes:depot # a parent world YAML ("<package>:<world>" ref or a path)
     disable: [table_2]      # OPTIONAL: drop inherited plugins by name (needs ``extends``)
 
-The parent's ``sim`` is deep-merged (the child wins per key) and the child's ``plugins`` are
+The parent's ``sim`` is deep-merged (the child wins per key) and the child's ``components`` are
 appended after the parent's (minus any ``disable``\\ d). To *modify* an inherited plugin, ``disable``
-it and re-add a tweaked copy in the child's ``plugins``.
+it and re-add a tweaked copy in the child's ``components``.
 
 Validation is delegated to each plugin's ``validate_config``; the engine aggregates all errors and
 fails fast with one readable report before the build phase.
@@ -83,7 +83,7 @@ from typing import Any
 
 import yaml
 
-from .document import check_version
+from .document import check_version, refuse_unknown_keys
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -122,28 +122,18 @@ class PluginSpec:
         return f"{self.entity}.{self.label}" if self.entity else self.label
 
 
-#: The document key holding the list of entries. ``plugins`` is an accepted alias: a document may
-#: use either, but never both -- two spellings of one key in
-#: one file is a merge nobody can predict, so it is refused rather than resolved.
+#: The document key holding the list of entries.
 _ENTRIES_KEY = "components"
-_ENTRIES_KEY_LEGACY = "plugins"
 
 
-def document_entries(doc: dict, where: str = "document") -> list:
-    """The entry list of *doc*, under either spelling; ``[]`` when it has neither."""
-    if _ENTRIES_KEY in doc and _ENTRIES_KEY_LEGACY in doc:
-        raise PluginError(
-            f"{where}: has both 'components:' and 'plugins:', which are one key under two spellings "
-            f"('plugins' is the former one). Keep 'components:' and delete 'plugins:'."
-        )
-    return list(doc.get(_ENTRIES_KEY, doc.get(_ENTRIES_KEY_LEGACY)) or [])
+def document_entries(doc: dict) -> list:
+    """The entry list of *doc*; ``[]`` when it has none."""
+    return list(doc.get(_ENTRIES_KEY) or [])
 
 
 def with_document_entries(doc: dict, entries: list) -> dict:
-    """*doc* with its entry list replaced, normalised onto the current spelling."""
-    out = {k: v for k, v in doc.items() if k != _ENTRIES_KEY_LEGACY}
-    out[_ENTRIES_KEY] = entries
-    return out
+    """*doc* with its entry list replaced."""
+    return {**doc, _ENTRIES_KEY: entries}
 
 
 #: Reserved sibling keys on a components-list entry: everything an entry says about *itself* rather
@@ -598,9 +588,14 @@ def _apply_disable(plugins: list, selectors: list) -> list:
 
 
 #: The world document version this roqsim reads, stated with a top-level ``version:`` (absent is 1).
-#: Bumped when a key is renamed, moved or changes meaning, not when one is added.
+#: It covers the world document's own keys (:data:`WORLD_KEYS`), and is bumped when one of them is
+#: renamed, moved or changes meaning, not when one is added. Each plugin's config is that plugin's
+#: own.
 WORLD_VERSION = 1
 _VERSION_KEY = "version"
+
+#: The top-level keys of a world document.
+WORLD_KEYS = frozenset({_VERSION_KEY, "extends", "disable", "sim", _ENTRIES_KEY})
 
 
 def _check_world_version(raw: dict, where: str) -> dict:
@@ -617,17 +612,19 @@ def _check_world_version(raw: dict, where: str) -> dict:
 def _resolve_inheritance(
     raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset(), *, where: str = "world config"
 ) -> dict:
-    """Expand an ``extends``/``disable`` world into a plain ``{sim, plugins}`` dict.
+    """Expand an ``extends``/``disable`` world into a plain ``{sim, components}`` dict.
 
     Recursively merges the parent world (which may itself ``extends``): ``sim`` is deep-merged with
-    the child winning, and ``plugins`` becomes ``(parent - disabled) + child``. A no-op when the
+    the child winning, and ``components`` becomes ``(parent - disabled) + child``. A no-op when the
     world declares no ``extends``. Cycles raise.
 
-    Every document in the chain passes through here, so each one's ``version:`` is checked
-    (:data:`WORLD_VERSION`), a parent's like a leaf's.
+    Every document in the chain passes through here, so each one's top-level keys
+    (:data:`WORLD_KEYS`) and ``version:`` (:data:`WORLD_VERSION`) are checked, a parent's like a
+    leaf's.
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
+    refuse_unknown_keys(raw, WORLD_KEYS, where, error=PluginError)
     raw = _check_world_version(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
@@ -659,7 +656,7 @@ def _resolve_inheritance(
         )
     merged_sim = deep_merge(parent_sim, raw.get("sim") or {})
 
-    kept = _apply_disable(document_entries(parent_raw, str(parent_path)), disable or [])
+    kept = _apply_disable(document_entries(parent_raw), disable or [])
     merged = {k: v for k, v in raw.items() if k not in ("extends", "disable")}
     merged["sim"] = merged_sim
     return with_document_entries(merged, kept + document_entries(raw))
@@ -942,8 +939,8 @@ def _flatten(value: Any, prefix: tuple[str, ...], out: list, source: str) -> Non
     """Leaves of a nested override document, with dotted keys split into segments.
 
     A non-empty mapping recurses; ``{}``, a list and a scalar are leaves. Splitting dotted keys is
-    what makes ``{plugins: {"robot.lidar": {...}}}`` and ``{plugins: {robot: {lidar: {...}}}}`` the
-    same assignment -- which they have to be, since a caller flattening a path onto a command line
+    what makes ``{components: {"robot.lidar": {...}}}`` and
+    ``{components: {robot: {lidar: {...}}}}`` the same assignment -- which they have to be, since a caller flattening a path onto a command line
     and one writing a document are describing the same override.
     """
     if isinstance(value, dict) and value:
@@ -962,9 +959,8 @@ def assignments_from_mapping(doc: dict, source: str = "override") -> list[Assign
     return out
 
 
-#: Roots an assignment may address. ``plugins`` is an alias of the container key and is
-#: accepted here for the same reason it is accepted in a document.
-_COMPONENT_ROOTS = (_ENTRIES_KEY, _ENTRIES_KEY_LEGACY)
+#: Roots an assignment may address.
+_COMPONENT_ROOTS = (_ENTRIES_KEY,)
 
 
 #: Matches exactly one address segment. One segment, not any number of them, because a path that
@@ -1281,7 +1277,11 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # Non-component assignments (`sim.*`) merge into the document before anything reads it -- and
     # before it is validated, so a typo arriving by `--set` is refused exactly like one written in
     # the file.
-    apply_assignments(raw, [], [a for a in assignments if not _is_component(a)])
+    rest = [a for a in assignments if not _is_component(a)]
+    refuse_unknown_keys(
+        {a.path[0]: None for a in rest if a.path}, WORLD_KEYS, "world override", error=PluginError
+    )
+    apply_assignments(raw, [], rest)
     if "headless" in (raw.get("sim") or {}):
         _logger.warning(
             "\u26a0\ufe0f  sim.headless is IGNORED: the viewer is windowed by default; run with "

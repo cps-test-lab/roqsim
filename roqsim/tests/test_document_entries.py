@@ -2,42 +2,43 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""The document key that holds a list of entries: ``components:``.
-
-``plugins:`` is accepted as an alias, so a world or manifest spelled that way keeps loading until
-it is swept over. Both in one document is refused rather than merged -- two
-spellings of one key in one file is a merge nobody can predict.
-"""
+"""The document key that holds a list of entries is ``components:``, and a world has no other
+top-level key than the ones it reads: any other is refused, naming it."""
 
 import pytest
 
-from roqsim.config import PluginError, document_entries, load_config_from_dict, with_transport
+from roqsim.config import PluginError, document_entries, load_config, load_config_from_dict
 
 
-def _refs(raw):
-    return [s.ref for s in load_config_from_dict(raw).plugins]
+def test_the_entries_are_read_from_components():
+    assert [
+        s.ref for s in load_config_from_dict({"sim": {}, "components": [{"dummy": {}}]}).plugins
+    ] == ["dummy"]
 
 
-def test_either_spelling_loads_the_same_world():
-    assert _refs({"sim": {}, "components": [{"dummy": {}}]}) == ["dummy"]
-    assert _refs({"sim": {}, "plugins": [{"dummy": {}}]}) == ["dummy"]
-
-
-def test_both_spellings_in_one_document_are_refused_by_name():
-    """Silently preferring one would make the other's entries vanish without a word."""
-    with pytest.raises(PluginError) as exc:
-        document_entries({"components": [], "plugins": []}, "w.yaml")
-    msg = str(exc.value)
-    assert "w.yaml" in msg
-    assert "components" in msg and "plugins" in msg
-
-
-def test_a_document_with_neither_key_has_no_entries():
+def test_a_document_without_components_has_no_entries():
     assert document_entries({"sim": {}}) == []
 
 
-def test_the_loader_normalises_onto_the_current_spelling():
-    """Anything reading the loaded document back -- describe, the exporters -- sees one key."""
-    out = with_transport({"plugins": [{"floorplan": {}}]}, ros=True)
-    assert "plugins" not in out
-    assert [k for e in out["components"] for k in e] == ["floorplan", "ros2_bridge"]
+@pytest.mark.parametrize("key", ["plugins", "robots"])
+def test_an_unknown_top_level_key_is_refused_naming_the_file(tmp_path, key):
+    """Nothing reads it, so its entries would vanish without a word."""
+    world = tmp_path / "w.yaml"
+    world.write_text(f"sim: {{}}\n{key}:\n  - dummy: {{}}\n")
+    with pytest.raises(PluginError, match=rf"{world}: unknown key\(s\) '{key}'"):
+        load_config(world)
+
+
+def test_an_unknown_top_level_key_in_an_extended_world_is_refused(tmp_path):
+    (tmp_path / "parent.yaml").write_text("sim: {}\nplugins: []\n")
+    child = tmp_path / "child.yaml"
+    child.write_text("extends: parent.yaml\ncomponents: []\n")
+    with pytest.raises(PluginError, match=r"parent\.yaml: unknown key\(s\) 'plugins'"):
+        load_config(child)
+
+
+def test_an_override_under_an_unknown_top_level_key_is_refused():
+    with pytest.raises(PluginError, match=r"world override: unknown key\(s\) 'plugins'"):
+        load_config_from_dict(
+            {"sim": {}, "components": [{"dummy": {}}]}, overrides={"plugins": {"dummy": {}}}
+        )

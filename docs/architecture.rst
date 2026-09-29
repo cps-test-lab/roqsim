@@ -507,8 +507,6 @@ A spawn plugin's ``model:`` string is resolved by ``roqsim.models.resolve_model`
     [project.entry-points."roqsim.models"]
     roqsim_assets = "roqsim_assets.models"   # a module exposing MODELS_DIR
 
-**A retired name is refused.** A model renamed because what its numbers mean changed -- a mount frame re-seated on the frame the vendor macro's origin places -- keeps its old name in a table, so a world that still names it is refused at load with the new name, why it changed and what to re-express, rather than loading with its pose silently reinterpreted. A provider module declares its own as ``RETIRED_MODELS`` (old name to ``roqsim.models.RetiredModel``) beside ``MODELS_DIR``; ``roqsim.models.RETIRED_MODELS`` holds the core's. An entry is deleted once downstream has moved.
-
 Example: a downstream package can ship only a custom arm variant — say ``ur10e_custom.xml`` + ``ur10e_custom.manifest.yaml``, no mesh copies — whose manifest ``assets: [roqsim_manipulation_assets, roqsim_sensors]`` borrows the stock arm meshes from one package and a camera mesh from another. ``spawn_arm: {model: ur10e_custom}`` then places it even though ``spawn_arm`` lives in a third package, ``roqsim_manipulation`` — which ships no models at all.
 
 .. _5-plugin-type-catalog:

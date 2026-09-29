@@ -20,7 +20,7 @@ from .frames import parse_frames, substitute
 from .models import resolve_model
 from .registry import resolve_plugin
 
-#: Every key a manifest may carry at its top level: ``components`` (or its alias ``plugins``) and
+#: Every key a manifest may carry at its top level: ``components`` and
 #: ``extends`` read here, ``assets`` in :mod:`roqsim.models`,
 #: ``fov``/``frames``/``frame_id``/``device_name``/``license`` by the accessors below.
 #: :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would load a model with no
@@ -28,7 +28,6 @@ from .registry import resolve_plugin
 MANIFEST_KEYS = frozenset(
     {
         "components",
-        "plugins",
         "extends",
         "assets",
         "fov",
@@ -241,7 +240,7 @@ def load_manifest(
             raise PluginError(f"manifest 'extends' cycle detected: {chain}")
         base_model = resolve_model(str(ext), base_dir=base_dir or path.parent).path
         inherited = load_manifest(base_model, base_dir=base_dir, seen=seen | {path})
-    return inherited + document_entries(data, str(path))
+    return inherited + document_entries(data)
 
 
 def expand_manifest(

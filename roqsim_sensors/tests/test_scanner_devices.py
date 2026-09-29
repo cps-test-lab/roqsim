@@ -128,7 +128,7 @@ def _lidar_config(device: str) -> dict:
 def _engine(device: str, **spawn) -> Engine:
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_Room": {}},
             {
                 # A key passed as None is left out, so a test can mount without it.
@@ -317,7 +317,7 @@ def test_the_device_publishes_its_declared_too_close_and_no_return(device):
     }
     engine = Engine(
         load_config_from_dict(
-            {"sim": {}, "plugins": [{f"{__name__}:_Plate": {}}, {"lidar": lidar_cfg}]}
+            {"sim": {}, "components": [{f"{__name__}:_Plate": {}}, {"lidar": lidar_cfg}]}
         )
     )
     engine.ctx.seed = 1

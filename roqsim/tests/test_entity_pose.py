@@ -33,7 +33,7 @@ class Bridge(BridgeBase):
 
 
 def _engine(*extra):
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     return Engine(cfg, plugins=[DummyPlugin({}, name="box"), *extra], preview=True)
 
 
@@ -141,7 +141,7 @@ def test_movable_says_whether_the_pose_can_ever_change(tmp_path):
     """Welded scenery cannot move; a free body, a mocap body and a jointed link can."""
     scene = tmp_path / "scene.xml"
     scene.write_text(MOVABLE)
-    cfg = load_config_from_dict({"sim": {"world": str(scene)}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {"world": str(scene)}, "components": []})
     with Engine(cfg, plugins=[Things({}, label="things")], preview=True) as engine:
         movable = {n: _pose(engine, n).read().movable for n in ("scenery", "crate", "cart", "link")}
     assert movable == {"scenery": False, "crate": True, "cart": True, "link": True}

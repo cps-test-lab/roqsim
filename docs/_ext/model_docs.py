@@ -39,7 +39,7 @@ def _manifest_bits(model_xml: Path) -> tuple[list[str], list[str]]:
         return [], []
     data = yaml.safe_load(manifest.read_text()) or {}
     plugins = []
-    for entry in data.get("plugins", []) or []:
+    for entry in data.get("components", []) or []:
         if isinstance(entry, str):
             plugins.append(entry)
         elif isinstance(entry, dict) and entry:
