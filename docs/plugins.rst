@@ -1704,13 +1704,16 @@ stated angle and a curvature are two ways of saying the same thing and averaging
 
 Both interfaces are kept because their consumers differ. Nav2 plans for car-like vehicles perfectly
 well -- Smac Hybrid-A* and the state-lattice planner both take a minimum turning radius -- but its
-controller commands in ``TwistStamped``, so a car driven by Nav2 needs ``cmd_vel``. A stack built
-around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
+controller commands a twist (``Twist``, or ``TwistStamped`` with ``enable_stamped_cmd_vel``), so a
+car driven by Nav2 needs ``cmd_vel`` (`Choosing a drive for a new robot`_ has the configuration). A
+stack built around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
 
 Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
 is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
+
+.. _tricycle-drive:
 
 ``tricycle_drive`` is the other car-like base: **one** steered wheel on the centre line and a fixed
 axle, which is how three-wheel counterbalance forklifts, tuggers, pallet trucks and many AGVs are
@@ -1746,6 +1749,57 @@ plugin therefore declares ``kinematics="ackermann"`` on its ``RobotHandle``. Its
 speed from the driven wheels and the yaw rate from the measured steering angle; ``passive_joints``
 exist because ``robot_state_publisher`` leaves a link out of TF until every movable joint above it
 has a state. Like ``diff_drive`` it takes ``odom_rate_hz`` and ``publish_joint_states``.
+
+Choosing a drive for a new robot
+--------------------------------
+
+Pick the plugin by how the robot's wheels are steered, start from the ``roqsim_mobile`` model or
+section named beside it (a bundled model has a demo world and a ``tests/test_<model>_scene.py``), and
+give Nav2 the configuration in the last column (``ros2_ws/src/roqsim_nav2_example``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 22 20 36
+
+   * - wheels
+     - plugin
+     - start from
+     - Nav2 configuration
+   * - two driven wheels and casters (differential)
+     - ``diff_drive``
+     - ``turtlebot3_waffle``
+     - ``params/nav2_params.yaml``: it turns in place
+   * - four or more driven wheels, none steered (skid-steer)
+     - ``diff_drive`` with ``slip_factor``
+     - ``husky_a200``
+     - ``params/nav2_params.yaml``
+   * - mecanum or omni wheels
+     - ``omni_drive``
+     - ``ridgeback``
+     - ``params/nav2_params.yaml`` drives it; the example ships no holonomic controller, so the
+       sideways axis goes unused until one is configured (MPPI's ``Omni`` motion model)
+   * - independently steered wheels (swerve)
+     - ``omni_drive`` with ``steer_joints``
+     - ``mpo_700``
+     - as for mecanum
+   * - two steered front wheels, a fixed rear axle (a car)
+     - ``ackermann_drive``
+     - ``piracer``
+     - ``params/nav2_params_carlike.yaml`` + ``params/carlike_piracer.yaml``
+   * - one steered wheel, a fixed axle (a tugger, pallet truck, three-wheel forklift)
+     - ``tricycle_drive``
+     - :ref:`its section above <tricycle-drive>`; no model is bundled
+     - ``params/nav2_params_carlike.yaml`` + a ``params/carlike_<robot>.yaml`` like the PiRacer's
+
+The last two cannot turn in place, and ``nav2_params.yaml``'s rotate-to-heading controller leaves
+them standing still. ``nav2_params_carlike.yaml`` is the stack that drives them -- Smac Hybrid-A*
+over Reeds-Shepp motions and Regulated Pure Pursuit that reverses and never rotates on the spot --
+and a small per-robot file beside it holds what depends on the robot: the footprint about
+``base_link`` and the ``minimum_turning_radius``. The physical minimum comes from the geometry,
+``wheelbase / tan(max_steer_angle)`` or ``|steer_offset| / tan(max_steer_angle)``; the planning value
+is chosen above it, so the controller keeps some lock in hand. ``nav2_carlike.launch.py
+robot:=<model>`` brings one up, and ``test/test_nav2_carlike_goals.py`` drives the PiRacer to a goal
+that needs a turn and one that needs reversing (:doc:`nav2_example`).
 
 A velocity command: odometry and the watchdog
 ---------------------------------------------
