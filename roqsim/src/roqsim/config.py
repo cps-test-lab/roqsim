@@ -59,6 +59,12 @@ The parent's ``sim`` is deep-merged (the child wins per key) and the child's ``c
 appended after the parent's (minus any ``disable``\\ d). To *modify* an inherited plugin, ``disable``
 it and re-add a tweaked copy in the child's ``components``.
 
+Those keys and ``version:`` are the whole top level (:data:`WORLD_KEYS`); any other key is refused.
+A world declares no parameters and substitutes nothing into itself: a value that varies per run is
+written as its ordinary literal and changed by an *override* (below), which addresses that key in
+place. An override is rooted at ``sim`` or ``components`` (:data:`OVERRIDE_ROOTS`) and any other
+root is refused, since nothing would read it.
+
 Validation is delegated to each plugin's ``validate_config``; the engine aggregates all errors and
 fails fast with one readable report before the build phase.
 
@@ -597,6 +603,26 @@ _VERSION_KEY = "version"
 #: The top-level keys of a world document.
 WORLD_KEYS = frozenset({_VERSION_KEY, "extends", "disable", "sim", _ENTRIES_KEY})
 
+#: The roots an override may address. ``version``, ``extends`` and ``disable`` are consumed while
+#: inheritance resolves, before overrides merge, so one addressed there would be read by nothing.
+OVERRIDE_ROOTS = frozenset({"sim", _ENTRIES_KEY})
+
+#: Appended to a refused top-level key or override root: a world has no parameter block, so a key
+#: invented for one is told where a value that varies per run goes instead.
+_VARYING_VALUE_HINT = (
+    "A world declares no parameters and substitutes nothing into itself: a value that varies per "
+    "run is written as its ordinary literal and changed by an override "
+    "('sim.<key>=<value>' or 'components.<name>.<key>=<value>'), which addresses that key in place."
+)
+
+
+def _refuse_unknown_world_keys(block: dict, known: frozenset, where: str) -> None:
+    """:func:`refuse_unknown_keys` for a world's top level, with :data:`_VARYING_VALUE_HINT`."""
+    try:
+        refuse_unknown_keys(block, known, where, error=PluginError)
+    except PluginError as err:
+        raise PluginError(f"{err}\n{_VARYING_VALUE_HINT}") from None
+
 
 def _check_world_version(raw: dict, where: str) -> dict:
     """Refuse a document stating a newer or malformed version; return it without the stamp.
@@ -624,7 +650,7 @@ def _resolve_inheritance(
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
-    refuse_unknown_keys(raw, WORLD_KEYS, where, error=PluginError)
+    _refuse_unknown_world_keys(raw, WORLD_KEYS, where)
     raw = _check_world_version(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
@@ -1278,8 +1304,8 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # before it is validated, so a typo arriving by `--set` is refused exactly like one written in
     # the file.
     rest = [a for a in assignments if not _is_component(a)]
-    refuse_unknown_keys(
-        {a.path[0]: None for a in rest if a.path}, WORLD_KEYS, "world override", error=PluginError
+    _refuse_unknown_world_keys(
+        {a.path[0]: None for a in rest if a.path}, OVERRIDE_ROOTS, "world override"
     )
     apply_assignments(raw, [], rest)
     if "headless" in (raw.get("sim") or {}):
