@@ -147,14 +147,47 @@ class Plugin:
         """
         return []
 
+    # -- endpoints ----------------------------------------------------------------------------
+    @property
+    def endpoint_owner(self) -> str:
+        """The entity this plugin's decorated endpoints belong to: the one it is nested under, else
+        its own label. Override where a plugin speaks for another entity."""
+        return self.entity or self.label
+
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """The transport scope of this plugin's decorated endpoints: its ``namespace:`` config, else
+        the owning entity's (*owner*'s, for an endpoint that names its own)."""
+        entity = ctx.entities.get(owner or self.endpoint_owner)
+        return self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
+
+    def register_endpoints(self, ctx: SimContext) -> list:
+        """Add the endpoints declared with :mod:`roqsim.endpoint` to ``ctx.interface``, once per
+        context, and return them.
+
+        The engine calls it right after this plugin's ``configure``, so an option may read what
+        ``configure`` resolved, and a bridge listed later binds them. A test that calls ``configure``
+        itself calls this after it. Endpoints only known at run time are added with
+        ``ctx.interface.add`` instead.
+        """
+        if self.__dict__.get("_endpoints_ctx") is ctx:
+            return []
+        self._endpoints_ctx = ctx
+        from .endpoint import build
+
+        endpoints = build(self, ctx)
+        for ep in endpoints:
+            ctx.interface.add(ep)
+        return endpoints
+
     # -- endpoint topic hardwiring ------------------------------------------------------------
     def topic_override(self, endpoint_name: str) -> str | None:
         """Topic set for the endpoint ``endpoint_name``, or ``None`` if unset.
 
         Read from the plugin's ``topics:`` config map (``topics: {<endpoint>: <topic>}``), keyed by
-        the endpoint's role name (e.g. ``image``, ``camera_info``, ``joint_states``, ``scan``). An
-        endpoint-producing plugin uses it as ``self.topic_override("image") or <namespaced default>``
-        when filling the backend ``topic``. An absolute (leading ``/``) value is published verbatim by
+        the endpoint's role name (e.g. ``image``, ``camera_info``, ``joint_states``, ``scan``). A
+        decorated endpoint gets it as :attr:`~roqsim.context.Endpoint.topic` from the framework; a
+        hand-built one uses it as ``self.topic_override("image") or <namespaced default>`` when
+        filling the backend ``topic``. An absolute (leading ``/``) value is published verbatim by
         the bridge, overriding the endpoint's ``namespace`` -- so a producer can match external /
         hardware topic names regardless of its scope. A relative value renames the endpoint inside
         its namespace, the way a vendor description names a robot's second scanner ``scan2`` under
@@ -188,6 +221,9 @@ class Plugin:
         """
         errors = list(type(self).validate_schema(config))
         errors += self.validate_presence(config)
+        from .endpoint import validate_qos_config
+
+        errors += validate_qos_config(config)
         try:
             errors += self.validate_config(config) or []
         except Exception as exc:  # a plugin's validator itself blew up

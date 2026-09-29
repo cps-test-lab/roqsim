@@ -37,9 +37,8 @@ components:
       gripper_joint: left_dex1_finger_joint_1
       # MEASURED aperture, not inferred from the joint zero: the pads sit ~23 mm outboard of the
       # coincident finger origins, so q=0 already stands 45.9 mm open and the whole gripping range is
-      # the negative half. aperture(q) = 45.9 mm + 2q -> 5.9 mm closed, 94.9 mm open. The tendon sums
-      # both fingers with coef -1 precisely so the ctrlrange low end is the open end, which is the end
-      # arm_controller maps `gripper_open` onto.
+      # the negative half. aperture(q) = 45.9 mm + 2q -> 5.9 mm closed, 94.9 mm open: the joint's
+      # range, which the tendon's ctrlrange spans.
       gripper_open: 0.0245
       gripper_close: -0.02
       topics:
@@ -62,7 +61,7 @@ components:
       gripper_actuator: right_dex1_gripper
       gripper_joint: right_dex1_finger_joint_1
       gripper_open: 0.0245
-      gripper_close: 0.0
+      gripper_close: -0.02
       topics:
         joint_states: /joint_states
     name: right_arm_controller

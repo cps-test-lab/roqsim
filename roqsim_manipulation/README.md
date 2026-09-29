@@ -63,8 +63,10 @@ this plugin gets it; off by default.
 For a gripper-equipped arm (e.g. `gen3`), `arm_controller` additionally serves a `GripperCommand`
 action at `<ns>/<gripper_controller_name>/gripper_cmd` — a MoveIt `moveit_simple_controller_manager`
 `GripperCommand` controller executes against it to open/close the hand. The commanded position (the
-`gripper_joint` angle, 0 open .. 0.8 closed for the 2F-85) is mapped onto the tendon actuator's
-ctrlrange; the bridge reports `reached_goal`/`stalled` from the live finger state (a stall = a grasp).
+`gripper_joint` position, 0 open .. 0.8 closed for the 2F-85) is mapped onto the gripper actuator's
+ctrlrange, in whichever direction the model's actuator runs; the bridge reports `reached_goal` when the
+measured finger position is within tolerance of the command and `stalled` when the fingers stop
+anywhere else (a grasp, for one), as ros2_control's gripper action controller does.
 
 Cancelling either goal stops the motion, not just the goal: this plugin holds the last target it was
 given every tick, so the bridge commands a hold at the *measured* joint (or finger) position before

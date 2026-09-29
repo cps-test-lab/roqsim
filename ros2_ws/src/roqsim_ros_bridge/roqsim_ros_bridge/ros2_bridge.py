@@ -2,9 +2,10 @@
 
 This is the ROS 2 backend of :class:`roqsim.bridge.BridgeBase`. It owns no per-robot knowledge:
 the set of topics, their message types, frames, and rates all come from the :class:`~roqsim.
-context.Endpoint`s that the robots' plugins register. Message classes are resolved from the type
-*string* on each endpoint (via :mod:`roqsim_ros_bridge.registry`), so there are no hardcoded message
-imports here and a new topic needs zero bridge edits -- just an endpoint on the producer.
+context.Endpoint`s that the robots' plugins register. A decorated endpoint's message type comes from
+its payload type (:mod:`roqsim_ros_bridge.typemap`), a hand-built one's from the type *string* in its
+hints (:mod:`roqsim_ros_bridge.registry`), so there are no hardcoded message imports here and a new
+topic needs zero bridge edits -- just an endpoint on the producer.
 
 One bridge serves the whole world: each endpoint carries its own ``namespace`` (declared by the
 producer plugin), which this backend attaches to the endpoint's topic, TF frames, and action name.
@@ -27,8 +28,9 @@ scenario address a plugin's report by the names the world gives it (``entity_rep
 ``strip_namespace`` and a ``gt`` prefix -- see ``_advertise_endpoint_map``.
 
 Concurrency (see roqsim docs/architecture.rst §7): an ``rclpy`` MultiThreadedExecutor spins on a
-worker thread; inbound subscriptions decode to a neutral payload and marshal the write onto the
-physics thread via ``ctx.post``. Publishing happens in ``post_step`` on the physics thread (rclpy
+worker thread; inbound subscriptions decode a message to what the endpoint's write takes (its named
+parameters, see :mod:`roqsim_ros_bridge.typemap`) and hand it over, and the write queues onto the
+physics thread. Publishing happens in ``post_step`` on the physics thread (rclpy
 publish is thread-safe), so the physics thread stays the sole writer of ``data``.
 
 Config::
@@ -88,7 +90,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.context import Context
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock as ClockMsg
 from std_msgs.msg import String
 from tf2_msgs.msg import TFMessage
@@ -96,6 +98,7 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from roqsim.bridge import ENDPOINT_MAP, BridgeBase, _RateGate
 from roqsim_ros_bridge import registry as reg
+from roqsim_ros_bridge import typemap
 from roqsim_ros_bridge.actions import get_action_handler
 from roqsim_ros_bridge.extensions import load_extensions
 from roqsim_ros_bridge.services import get_service_handler
@@ -127,7 +130,7 @@ def _merge_joint_state_payloads(payloads: list[tuple]) -> tuple:
     efforts: list = []
     any_effort = False
     for payload in payloads:
-        n, p, v, *rest = payload
+        n, p, v, *rest = typemap.to_joint_tuple(payload)
         names.extend(n)
         positions.extend(p)
         velocities.extend(v)
@@ -188,6 +191,26 @@ def _foreign_types(peers, own_type: str, own_node: str) -> list[tuple[str, str]]
     ]
 
 
+def qos_of(profile: dict) -> QoSProfile:
+    """The rclpy profile of a full QoS (:func:`roqsim.endpoint.qos_profile`)."""
+    return QoSProfile(
+        depth=int(profile["depth"]),
+        history=HistoryPolicy.KEEP_ALL
+        if profile["history"] == "keep_all"
+        else HistoryPolicy.KEEP_LAST,
+        reliability=(
+            ReliabilityPolicy.BEST_EFFORT
+            if profile["reliability"] == "best_effort"
+            else ReliabilityPolicy.RELIABLE
+        ),
+        durability=(
+            DurabilityPolicy.TRANSIENT_LOCAL
+            if profile["durability"] == "transient_local"
+            else DurabilityPolicy.VOLATILE
+        ),
+    )
+
+
 def _resolve_topic(namespace: str, topic: str) -> str:
     """Resolve an endpoint's ROS topic, honouring an absolute hardwired topic.
 
@@ -208,6 +231,10 @@ class _Pub:
     hints: dict
     msg: Any  # reused message instance, or None when reuse is disabled
     emit_tf: bool
+    # A `static: true` transform endpoint: no publisher of its own, its first value goes to the
+    # static broadcaster once.
+    static: bool = False
+    sent: bool = False
 
 
 class _NamespacedTfPublisher:
@@ -310,6 +337,31 @@ class Ros2Bridge(BridgeBase):
         self._peer_checks: list[tuple[str, str, Any, str]] = []
         self._peer_gate = _RateGate(1.0)
         self._endpoint_map_pub = None
+        # id(endpoint) -> its typemap.Binding, for every endpoint this bridge binds.
+        self._bindings: dict[int, typemap.Binding] = {}
+        # id(endpoint) -> the handle of each `static: true` transform endpoint, read until sent.
+        self._static_outputs: dict[int, _Pub] = {}
+
+    def _binding(self, ep) -> typemap.Binding | None:
+        """How *ep* travels on ROS (:func:`roqsim_ros_bridge.typemap.resolve`), resolved once."""
+        key = id(ep)
+        if key not in self._bindings:
+            self._bindings[key] = typemap.resolve(ep)
+        return self._bindings[key]
+
+    def _hints_for(self, ep) -> dict | None:
+        binding = self._binding(ep)
+        if binding is None:
+            return None
+        if binding.hints is None:
+            if binding.required:
+                raise RuntimeError(f"ros2 bridge: {ep.owner}/{ep.name}: {binding.reason}")
+            if self._ctx is not None:
+                self._ctx.logger.info(
+                    "ros2 bridge: %s/%s is not on ROS: %s", ep.owner, ep.name, binding.reason
+                )
+            return None
+        return binding.hints
 
     def _eff_ns(self, ep) -> str:
         """The endpoint's effective namespace for topic/frame scoping — ``""`` if it is stripped."""
@@ -346,11 +398,13 @@ class Ros2Bridge(BridgeBase):
 
     def _describe_output(self, out) -> dict:
         """Where and how one bound output travels: its resolved topic, type and published field."""
-        hints = out.endpoint.backend[self.BACKEND]
+        hints = out.handle.hints
+        publisher = out.handle.publisher
         return {
-            "topic": out.handle.publisher.topic_name,
+            "topic": self._tf_topic(static=True) if publisher is None else publisher.topic_name,
             "type": hints["type"],
             "field": hints.get("field"),
+            "qos": hints["qos"],
         }
 
     def _snap_clock_gate(self, ctx) -> None:
@@ -375,18 +429,19 @@ class Ros2Bridge(BridgeBase):
         for ep in ctx.interface.all():
             if ep.direction != "out":
                 continue
-            hints = ep.backend.get(self.BACKEND)
-            if hints is None or hints.get("type") != _JOINT_STATE_TYPE:
-                continue
             if self._owners is not None and ep.owner not in self._owners:
+                continue
+            binding = self._binding(ep)
+            if binding is None or binding.hints is None:
+                continue
+            if binding.hints.get("type") != _JOINT_STATE_TYPE:
                 continue
             out.append(ep)
         return out
 
     def _ep_topic(self, ep) -> str:
         """The topic an endpoint publishes on by itself -- what a merged group must not duplicate."""
-        hints = ep.backend.get(self.BACKEND, {})
-        return self._gt_topic(_resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name)))
+        return self._gt_topic(_resolve_topic(self._eff_ns(ep), self._binding(ep).hints["topic"]))
 
     def _joint_state_groups(self, sources: list, logger=None) -> list[tuple[str, list]]:
         """Which joint-state endpoints belong on ONE merged topic, and what that topic is.
@@ -575,13 +630,16 @@ class Ros2Bridge(BridgeBase):
         self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
         self._spin_thread.start()
 
+    def _tf_topic(self, *, static: bool) -> str:
+        name = "tf_static" if static else "tf"
+        return f"/{self._tf_namespace}/{name}" if self._tf_namespace else f"/{name}"
+
     def _make_tf_broadcaster(self, *, static: bool):
         """A TF broadcaster whose topic is namespaced when ``tf_namespace`` is set, and the plain
         tf2_ros broadcaster (global ``/tf``) otherwise — so existing worlds are byte-for-byte
         unchanged and only a stack that opts in gets ``/<ns>/tf``."""
         if self._tf_namespace:
-            topic = f"/{self._tf_namespace}/{'tf_static' if static else 'tf'}"
-            return _NamespacedTfPublisher(self._node, topic, static=static)
+            return _NamespacedTfPublisher(self._node, self._tf_topic(static=static), static=static)
         return (StaticTransformBroadcaster if static else TransformBroadcaster)(self._node)
 
     def _gt_topic(self, topic: str) -> str:
@@ -593,13 +651,18 @@ class Ros2Bridge(BridgeBase):
         return self._gt_prefix + (topic if topic.startswith("/") else "/" + topic)
 
     def _make_output(self, ep, hints: dict) -> _Pub:
+        # The resolved hints, whatever the caller passed: the type's defaults, topic and QoS.
+        binding = self._binding(ep)
+        hints = binding.hints
         msg_type = reg.resolve_type(hints["type"])
+        binding.prepare(msg_type)
+        if hints.get("static"):
+            return self._make_static_output(ep, hints, msg_type)
         # The endpoint's own namespace scopes its topic (relative, so any global node namespace
         # still applies on top): ep.namespace="ur10e" -> /ur10e/joint_states. An absolute hardwired
         # topic (leading "/") is used verbatim, bypassing the namespace (see _resolve_topic).
-        topic = self._gt_topic(_resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name)))
-        qos = int(hints.get("qos", 10))
-        publisher = self._node.create_publisher(msg_type, topic, qos)
+        topic = self._gt_topic(_resolve_topic(self._eff_ns(ep), hints["topic"]))
+        publisher = self._node.create_publisher(msg_type, topic, qos_of(hints["qos"]))
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "out"))
         # Let an expensive producer (e.g. a rendered camera) skip work when nobody's listening --
         # generic, not camera-specific; cheap endpoints (lidar, odom) just never check it.
@@ -641,13 +704,56 @@ class Ros2Bridge(BridgeBase):
         return _Pub(
             publisher=publisher,
             msg_type=msg_type,
-            convert=reg.get_converter(hints["type"]),
+            convert=binding.fill,
             hints=hints,
             msg=msg_type() if self._reuse else None,
             emit_tf=emit_tf,
         )
 
+    def _make_static_output(self, ep, hints: dict, msg_type) -> _Pub:
+        """A ``static: true`` transform endpoint: its first value goes once to the static broadcaster,
+        as a ``static_tf`` hint's transforms do (``publish_static_tf: false`` turns both off)."""
+        if self._publish_static_tf and self._static_tf is None:
+            self._static_tf = self._make_tf_broadcaster(static=True)
+        handle = _Pub(
+            publisher=None,
+            msg_type=msg_type,
+            convert=None,
+            hints={**hints, "frame_prefix": _join_ns(self._frame_prefix, self._eff_ns(ep))},
+            msg=None,
+            emit_tf=False,
+            static=True,
+            sent=not self._publish_static_tf,
+        )
+        self._static_outputs[id(ep)] = handle
+        return handle
+
+    def _skip_unsubscribed(self, ep) -> bool:
+        """Also skip a static transform endpoint once its value is sent: it is never read again."""
+        handle = self._static_outputs.get(id(ep))
+        if handle is not None:
+            return handle.sent
+        return BridgeBase._skip_unsubscribed(ep)
+
+    def _send_static(self, handle: _Pub, payload) -> None:
+        hints, prefix = handle.hints, handle.hints["frame_prefix"]
+        self._static_tf.sendTransform(
+            [
+                reg.make_static_tf(
+                    reg.to_time_msg(0.0),
+                    reg.namespaced(prefix, t.parent or hints.get("frame_id", "map")),
+                    reg.namespaced(prefix, t.child),
+                    t.translation,
+                    t.rotation,
+                )
+                for t in typemap.transforms_of(payload)
+            ]
+        )
+        handle.sent = True
+
     def _make_input(self, ep, hints: dict, on_payload) -> None:
+        binding = self._binding(ep)
+        hints = binding.hints
         # A `service` hint means this input is a command whose OUTCOME the caller needs: serve a
         # service whose reply policy comes from the same handler registry the actions use. A topic
         # cannot say whether the command took effect, and an action's feedback and cancellation are
@@ -658,11 +764,12 @@ class Ros2Bridge(BridgeBase):
             self._services.append(
                 self._node.create_service(
                     srv_type,
-                    _join_ns(self._eff_ns(ep), hints.get("name", ep.name)),
+                    _join_ns(self._eff_ns(ep), hints["name"]),
                     # The endpoint rides along so the handler can resolve its producer's state
                     # (its `state_key` hint) without knowing which producer it is serving.
                     lambda req, resp, e=ep: handler(req, resp, self._ctx, on_payload, e),
                     callback_group=ReentrantCallbackGroup(),
+                    **({"qos_profile": qos_of(hints["qos"])} if "qos" in hints else {}),
                 )
             )
             return
@@ -675,7 +782,7 @@ class Ros2Bridge(BridgeBase):
                 ActionServer(
                     self._node,
                     action_type,
-                    _join_ns(self._eff_ns(ep), hints.get("name", ep.name)),
+                    _join_ns(self._eff_ns(ep), hints["name"]),
                     # The endpoint rides along so the handler can resolve its producer's state
                     # (e.g. ctx.blackboard.get(f"walker:{endpoint.owner}")) without a hardcoded key.
                     execute_callback=lambda gh, e=ep: handler(gh, self._ctx, on_payload, e),
@@ -686,10 +793,12 @@ class Ros2Bridge(BridgeBase):
             )
             return
         msg_type = reg.resolve_type(hints["type"])
-        topic = _resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name))
-        qos = int(hints.get("qos", 10))
-        decode = reg.get_decoder(hints["type"])
-        self._node.create_subscription(msg_type, topic, lambda m: on_payload(decode(m)), qos)
+        binding.prepare(msg_type)
+        topic = _resolve_topic(self._eff_ns(ep), hints["topic"])
+        decode = binding.decode
+        self._node.create_subscription(
+            msg_type, topic, lambda m: on_payload(decode(m)), qos_of(hints["qos"])
+        )
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "in"))
 
     def _check_peer_types(self) -> None:
@@ -732,6 +841,10 @@ class Ros2Bridge(BridgeBase):
 
     def _publish(self, handle: _Pub, payload, stamp) -> None:
         if self._shutting_down():
+            return
+        if handle.static:
+            if not handle.sent:
+                self._send_static(handle, payload)
             return
         msg = handle.msg if handle.msg is not None else handle.msg_type()
         handle.convert(msg, payload, stamp, handle.hints)

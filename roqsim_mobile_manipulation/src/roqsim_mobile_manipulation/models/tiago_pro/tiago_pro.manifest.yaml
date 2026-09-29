@@ -95,14 +95,6 @@ components:
   # open), 0.030 = 29.5 mm, 0.000 = 5.0 mm. Usable object width is therefore <~ 55 mm. Command a travel
   # just inside the object's width for a force-limited squeeze (capped at the URDF's 10 N) -- that is
   # what holds it; commanding 0 asks for the whole remaining overshoot at full force.
-  #
-  # `gripper_open: 0.0` / `gripper_close: 0.07` look inverted and are not. arm_controller maps a
-  # commanded gripper position onto the actuator ctrlrange as
-  # ctrl = lo + (pos - gripper_open)/(gripper_close - gripper_open) * (hi - lo), i.e. it assumes the
-  # ctrlrange runs open -> closed. This gripper's runs the other way (ctrl 0 = pads together,
-  # ctrl 0.07 = open), so these two values are what make the map the IDENTITY -- which is what keeps
-  # a commanded position and the position `gripper_joint` reports back mean the same number. Setting
-  # them the intuitive way round inverts the gripper: commanding "open" closes it.
   # ---------------------------------------------------------------------------------------------
   - arm_controller:
       joints: [arm_left_1_joint, arm_left_2_joint, arm_left_3_joint, arm_left_4_joint,
@@ -111,8 +103,8 @@ components:
       gripper_controller_name: gripper_left_controller
       gripper_actuator: gripper_left_finger_pos
       gripper_joint: gripper_left_finger_joint
-      gripper_open: 0.0             # see the note above: these make the command->ctrl map identity
-      gripper_close: 0.07
+      gripper_open: 0.07            # travel, metres: fully open
+      gripper_close: 0.0
       gripper_ctrl: 0.07            # raw ctrl held until commanded = fully open. Must be set: the
                                     # plugin's 255.0 default is a Robotiq tendon value.
       # PAL's `home` motion, final waypoint. Not optional: at qpos0 both arms stick straight out
@@ -137,8 +129,8 @@ components:
       gripper_controller_name: gripper_right_controller
       gripper_actuator: gripper_right_finger_pos
       gripper_joint: gripper_right_finger_joint
-      gripper_open: 0.0
-      gripper_close: 0.07
+      gripper_open: 0.07
+      gripper_close: 0.0
       gripper_ctrl: 0.07
       rest:
         arm_right_1_joint: -0.36

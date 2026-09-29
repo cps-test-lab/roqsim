@@ -150,6 +150,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -799,9 +800,10 @@ def test_e3_one_joint_states_message_carries_wheels_and_suspension(create3):
 def test_e3b_the_base_takes_a_plain_twist_and_expires_it(create3):
     """E3b: a Twist on cmd_vel as the Create 3 takes it, good for 0.5 s; odometry at 62 Hz."""
     ins = {e.name: e for e in create3.ctx.interface.all() if e.direction == "in"}
-    assert ins["cmd_vel"].backend["ros2"] == {"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"}
+    assert ins["cmd_vel"].backend["ros2"] == {"stamped": False}  # geometry_msgs/Twist on cmd_vel
+    assert ins["cmd_vel"].topic is None
     handle = create3.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
-    ins["cmd_vel"].write((0.2, 0.0, 0.0))
+    ins["cmd_vel"].write({"vx": 0.2})
     for _ in range(50):
         create3.step()
     assert handle.read_odom()[3] > 0.05
