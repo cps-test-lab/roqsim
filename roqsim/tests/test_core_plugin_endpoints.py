@@ -48,7 +48,8 @@ def test_each_endpoint_is_declared_with_its_kind_payload_and_doc(cls):
         assert row.get("payload") == payload, name
         assert row["doc"], f"{cls.__name__}.{name} has no docstring for `plugins describe`"
         if kind == "out":
-            assert row["rate_hz"] == {"from": "rate_hz"}, name
+            # A plugin with a schema also publishes the key's default beside it.
+            assert row["rate_hz"]["from"] == "rate_hz", name
 
 
 def _units(row) -> dict[str, str]:
