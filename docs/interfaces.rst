@@ -379,7 +379,12 @@ themselves ``extends`` (cycles are rejected).
 set ``enabled: false`` on it, so the entry stays in the document, addressable and in the run's
 record; a selector that matches nothing is an error, not a silent no-op. There is no separate
 "modify" key -- to change an inherited entry, override its keys, or ``disable`` it and add a tweaked
-copy under another label in the child's ``components``.
+copy in the child's ``components``, under its own label or another. A copy under the same label
+*replaces* the disabled entry: the copy is the one the label addresses and the only one expanded, so
+a re-declared ``spawn_robot`` gets exactly the components its own model's manifest supplies -- as in
+a world that declared it directly -- and nothing from the model it replaced. The replaced entry stays
+in the record, turned off, with what the documents declared for it. Declaring the same label again
+*without* disabling the inherited entry is refused: two live components cannot share one label.
 
 Drawing on a render (``roqsim.render_overlays``)
 -------------------------------------------------
