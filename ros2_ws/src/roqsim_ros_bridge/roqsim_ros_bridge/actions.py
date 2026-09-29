@@ -20,10 +20,14 @@ Handler contract (the service one is in :mod:`roqsim_ros_bridge.services`)::
 
 ``goal_handle`` is rclpy's ServerGoalHandle (runs on the executor thread, may block for the goal's
 duration); ``ctx`` is the :class:`~roqsim.context.SimContext` (use ``ctx.sim_time`` for pacing);
-``on_payload`` is the bridge's inbound callback for the endpoint -- it marshals a neutral payload
-onto the physics thread via ``ctx.post``, so handlers need no threading code; ``endpoint`` is the
+``on_payload`` is the bridge's inbound callback for the endpoint -- it queues the write onto the
+physics thread, so handlers need no threading code; ``endpoint`` is the
 :class:`~roqsim.context.Endpoint` being served, so a handler can reach its *producer's* state
-generically (``ctx.blackboard.get(f"arm:{endpoint.owner}")``) instead of hardcoding a key.
+generically (``ctx.blackboard.get(f"arm:{endpoint.owner}")``) instead of hardcoding a key. A handler
+states what it sends as named parameters and hands them on through
+:func:`roqsim_ros_bridge.params.payload_for`, as the subscriptions and services do: a typed endpoint
+takes the mapping, an untyped one the positional form. Before a goal sends anything, a typed endpoint
+that would refuse those parameters fails the goal (:func:`_refused`).
 
 A handler in another package reaches these registries through the
 ``roqsim_ros_bridge.extensions`` entry-point group -- see :mod:`roqsim_ros_bridge.extensions`.
@@ -39,7 +43,10 @@ from typing import Any
 from builtin_interfaces.msg import Duration as DurationMsg
 from control_msgs.action import FollowJointTrajectory, GripperCommand
 
+from roqsim.endpoint import ParameterError, bind
+
 from .extensions import EXTENSION_GROUP, load_extensions
+from .params import payload_for
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +72,35 @@ def get_action_handler(type_path: str) -> Callable[[Any, Any, Callable[[Any], No
             f"another package must be advertised in the {EXTENSION_GROUP!r} entry-point group)"
         )
     return fn
+
+
+def _hints(endpoint) -> dict:
+    """The producer's ``ros2`` hints (keys such as ``arm_state_key`` and ``goal_tolerance``).
+
+    Empty for a decorated endpoint that states none, and for no endpoint at all.
+    """
+    return (endpoint.backend.get("ros2") if endpoint is not None else None) or {}
+
+
+def _send(on_payload, endpoint, **params) -> None:
+    """Hand *params* to the endpoint's write, in the form it takes (see the module docstring)."""
+    on_payload(payload_for(endpoint, params))
+
+
+def _refused(endpoint, **params) -> str | None:
+    """Why a typed endpoint would refuse *params*, or ``None`` when it takes them.
+
+    A command refuses into the future it returns, which a handler that sends a stream of setpoints
+    does not wait on, so the goal would run to its end with nothing applied. Checking once, before
+    the first setpoint, turns that into a failed goal. An untyped endpoint takes what it is given.
+    """
+    if endpoint is None or getattr(endpoint, "params", None) is None:
+        return None
+    try:
+        bind(endpoint.params, payload_for(endpoint, params), f"{endpoint.owner}/{endpoint.name}")
+    except ParameterError as exc:
+        return str(exc)
+    return None
 
 
 def _sample(p0, v0, p1, v1, alpha: float, span: float) -> list[float]:
@@ -148,8 +184,9 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     """Follow a JointTrajectory by feeding each waypoint at its scheduled sim time.
 
     This is the interaction MoveIt2's ``moveit_simple_controller_manager`` drives to execute
-    plans. Each due waypoint goes through ``on_payload`` as the neutral ``(names, positions)``
-    payload the producer's ``write`` expects (e.g. ``ArmControllerPlugin.set_targets``).
+    plans. Each due waypoint goes to the producer as the parameters ``names`` and ``positions``
+    (e.g. ``ArmControllerPlugin.follow_joint_trajectory``). A typed producer that would refuse them
+    fails the goal with ``INVALID_GOAL`` before the arm is commanded.
 
     Feedback reports ``desired`` (the commanded waypoint) against ``actual`` (what the joints are
     really at, read back through the producer's state reader) and their difference as ``error``, the
@@ -183,7 +220,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     reader = None
     handle = None
     if endpoint is not None:
-        state_key = endpoint.backend.get("ros2", {}).get("arm_state_key", f"arm:{endpoint.owner}")
+        state_key = _hints(endpoint).get("arm_state_key", f"arm:{endpoint.owner}")
         handle = ctx.blackboard.get(state_key)
         reader = getattr(handle, "read_state", None)
 
@@ -200,6 +237,18 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         )
         return result
 
+    refusal = (
+        _refused(endpoint, names=names, positions=list(traj.points[0].positions))
+        if traj.points
+        else None
+    )
+    if refusal is not None:
+        goal_handle.abort()
+        result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+        result.error_string = f"the controller refuses the trajectory's waypoints: {refusal}"
+        logger.error("trajectory goal refused: %s", refusal)
+        return result
+
     def measured(commanded: list[float]) -> list[float]:
         if reader is None:
             return commanded
@@ -211,7 +260,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     # What "reached the goal" means for this arm, read before the first waypoint is fed because a
     # cancel is graded by it too (see `cancelled` below). Both are pure functions of the goal and
     # the endpoint's hints.
-    hints = (endpoint.backend.get("ros2", {}) if endpoint is not None else {}) or {}
+    hints = _hints(endpoint)
     tol = _goal_tolerances(goal_handle.request, hints, names)
     final = list(traj.points[-1].positions) if traj.points else []
 
@@ -234,7 +283,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
                 "`arm_state_key` hint to stop the arm where it is",
                 getattr(endpoint, "name", "the arm"),
             )
-        on_payload((names, here))
+        _send(on_payload, endpoint, names=names, positions=here)
         return here
 
     def cancelled(commanded: list[float]):
@@ -296,9 +345,9 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
             if span > 0.0 and now != last_fed:
                 last_fed = now
                 fed = _sample(prev_pos, prev_vel, positions, vels, (now - prev_t) / span, span)
-                on_payload((names, fed))
+                _send(on_payload, endpoint, names=names, positions=fed)
             time.sleep(0.002)
-        on_payload((names, positions))
+        _send(on_payload, endpoint, names=names, positions=positions)
         prev_t, prev_pos = target_t, positions
         prev_vel = vels or [0.0] * len(names)
         actual = measured(positions)
@@ -353,15 +402,15 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     gripper (controller ``type: GripperCommand``), but the policy is generic -- any producer with a
     single commandable position and a state reader reuses it (e.g. an automatic ``door``). The
     commanded ``position`` is sent to the producer (e.g. ``ArmControllerPlugin.set_gripper``,
-    ``DoorPlugin.set_openness``) via ``on_payload`` as the neutral scalar payload its ``write``
-    expects. We then watch the producer's state -- a ``() -> (position, velocity)`` reader on the
-    blackboard -- and succeed once it reaches the target or stops moving short of it (a gripper closed
-    on an object, a door met an obstruction). As ros2_control's gripper action controller reports
-    them, ``reached_goal`` is the measured position within tolerance of the commanded one and nothing
-    else, and ``stalled`` is a stop anywhere else -- so fingers that stopped on an object, or that
-    went the wrong way, never report the goal reached. The reader's blackboard key is the endpoint's
-    ros2 ``state_key`` hint, defaulting to ``gripper:<owner>``. Without a reader we wait a fixed
-    settle time and report the command.
+    ``DoorPlugin.set_openness``) as the parameter ``position``; a typed producer that would refuse
+    it aborts the goal. We then watch the producer's state -- a ``() -> (position, velocity)``
+    reader on the blackboard -- and succeed once it reaches the target or stops moving short of it
+    (a gripper closed on an object, a door met an obstruction). As ros2_control's gripper action
+    controller reports them, ``reached_goal`` is the measured position within tolerance of the
+    commanded one and nothing else, and ``stalled`` is a stop anywhere else -- so fingers that
+    stopped on an object, or that went the wrong way, never report the goal reached. The reader's
+    blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>``.
+    Without a reader we wait a fixed settle time and report the command.
 
     ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
     every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
@@ -379,12 +428,18 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     target = float(cmd.position)
     max_effort = float(cmd.max_effort)
     result = GripperCommand.Result()
-    hints = endpoint.backend.get("ros2", {}) if endpoint is not None else {}
+    refusal = _refused(endpoint, position=target)
+    if refusal is not None:
+        # GripperCommand's result has no error field: the goal is aborted, and the reason logged.
+        logger.error("gripper goal refused: %s", refusal)
+        goal_handle.abort()
+        return result
+    hints = _hints(endpoint)
     effort_key = hints.get("effort_key")
     effort = ctx.blackboard.get(effort_key) if effort_key else None
     if effort is not None:
         ctx.post(lambda _ctx, value=max_effort: effort.set_max_effort(value))
-    on_payload(target)
+    _send(on_payload, endpoint, position=target)
 
     reader = None
     if endpoint is not None:
@@ -409,7 +464,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             # where it is. Without a reader nothing measures the fingers, and the command stands.
             if reader is not None:
                 position, _velocity = reader()
-                on_payload(position)
+                _send(on_payload, endpoint, position=position)
                 reached = abs(position - target) <= pos_tol
             else:
                 logger.warning(

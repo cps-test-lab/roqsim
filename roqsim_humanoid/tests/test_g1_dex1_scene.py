@@ -113,7 +113,7 @@ def test_grippers_open_and_close_independently(tmp_path):
         ep = eps[("gripper_cmd", f"{side}_gripper_controller/gripper_cmd")]
         reader = engine.ctx.blackboard.require(ep.backend["ros2"]["state_key"])
         for target in (0.0245, -0.02):  # measured travel limits: 94.9 mm and 5.9 mm aperture
-            ep.write(target)
+            ep.write({"position": target})
             _run(engine, 1200)
             assert reader()[0] == pytest.approx(target, abs=0.002)
 
