@@ -328,21 +328,25 @@ knows it is finished -- the goal was reached, the episode failed -- therefore pu
 observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
 condition on, and holds the robot idle until the scenario ends the run.
 
-For an endpoint, that condition is ``osc.roqsim``'s ``entity_reports``: the plugin registers its
-outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s ``tripped``, a trial
-plugin's own ``resolved``), and the scenario waits on it, then ends the run, with a ``timeout`` as the
-bound on the trial:
+For an endpoint, ``osc.roqsim``'s ``entity_monitor`` keeps a scenario variable equal to it: the
+plugin registers its outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s
+``tripped``, a trial plugin's own ``resolved``), the monitor writes it into the variable every tick,
+and the scenario waits on the variable, then ends the run, with a ``timeout`` as the bound on the
+trial:
 
 .. code-block:: text
 
    scenario trial:
        timeout(120s)
-       do serial:
-           entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-           emit end
+       var tripped: bool = false
+       do parallel:
+           entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+           serial:
+               wait tripped == true
+               emit end
 
 The report is addressed as the world names it -- the entity and the endpoint -- and read from the
-endpoint itself in a stepped run and through the bridge's endpoint map over ROS (§13), so one
+endpoint itself in a stepped run and over the control socket (§13), so one
 scenario ends the same way on either transport.
 
 The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand says it is finished
@@ -661,7 +665,7 @@ Instead, each sensor owns its noise as plain config:
 -  **Wheel odometry** (``roqsim_mobile``): ``diff_drive``'s ``odom_noise`` puts a multiplicative bias (``linear_scale``, ``angular_scale``) and zero-mean white noise (``linear_stddev``, ``angular_stddev``) on the velocities read off the wheels, before they are integrated, so the reported pose drifts the way real odometry does while the base itself moves exactly as the physics says. One draw per physics step from ``rng_for``, under the same seed and episode rules as the lidar; omitted, nothing is drawn.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``entity_call(entity: 'robot.lidar', command: 'override')``), over the same endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the detection limits and the noise so the devices cannot drift apart on them: the far limit and the presence mask are applied there once, for every device.
 
@@ -958,8 +962,10 @@ against a scene that never moved.
 roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default
 (``--control``, ``ROQSIM_CONTROL``; ``none`` disables) together with the ``run_control`` plugin,
 which serves the driver's :class:`~roqsim.control.RunControl` as ``sim/run_control/{pause, resume,
-step, reset, state}``. It wires every endpoint under a path built from the address of the plugin
-that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
+step, reset, state}``, and ``entity_control``, which serves :mod:`roqsim.entity_control` as
+``sim/entities/{set_state, set_presence}`` -- the same functions a stepped run's scenario actions
+call, so a refusal reads the same over either. It wires every endpoint under a path built from the
+address of the plugin that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
 ``robot.lidar`` + ``scan`` is ``robot/lidar/scan``; two endpoints on one path are refused at bind
 naming both. It serves on demand and publishes on no schedule: a ROUTER answers ``describe`` /
 ``read`` / ``call`` on a background thread -- a ``read`` is the endpoint's ``read`` run on the
@@ -999,19 +1005,6 @@ namespace — how a robot manifest gives a second scanner the vendor's ``scan2``
 namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
-
-**The endpoint map.** A consumer outside the world addresses an endpoint as ``(owner, name)`` --
-``ctx.interface.find`` in-process -- while over ROS it travels on whatever topic the bridge made of
-it after namespaces, ``topics:`` renames and ``strip_namespace``. So the bridge says
-what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
-``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
-publishes by owner and name with the topic its publisher is on, the message type and the published
-``field`` and its effective QoS (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its
-``owner`` filter. The topic is
-read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
-a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
-``entity_reports`` reads over ROS; only the published field travels, so the other fields of a
-report are readable in a stepped run only.
 
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as

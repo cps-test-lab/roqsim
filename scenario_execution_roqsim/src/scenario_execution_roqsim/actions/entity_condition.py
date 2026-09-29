@@ -93,7 +93,7 @@ class EntityCondition(SimAction):
             for name in self._entities:
                 pose = self._access.entity_pose(name)
                 if pose is None:
-                    # Over ROS a pose is a round-trip. Not knowing YET is not the same as not being
+                    # Over the control socket a pose is a round-trip. Not knowing YET is not the same as not being
                     # resolvable -- that one raises.
                     return self.waiting(f"waiting for {name!r}'s pose over {self.transport}")
                 poses[name] = pose

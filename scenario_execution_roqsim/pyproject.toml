@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scenario_execution_roqsim"
 version = "0.1.0"
-description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion, read what its plugins report and inject a physical fault, from a stepped or a ROS run."
+description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion, read what its plugins report and send any command they declare, in-process or over the simulator's control socket."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ requires-python = ">=3.10"
 # workspace); an environment that does not gets an ImportError naming it, which is the loud failure the
 # repo's rules ask for rather than a silent wrong version.
 dependencies = [
-    "roqsim",                     # the entity/body resolver and SimContext (the in-process seam)
+    "roqsim[ipc]",                # the in-process seam, and the control socket's client
     "numpy>=1.24",             # the displacement arithmetic
     "py_trees>=2.2",           # action status; already a roqsim dependency via roqsim_walker
 ]
@@ -44,15 +44,14 @@ roqsim = "scenario_execution_roqsim.get_osc_library:get_osc_library"
 # action acts on.
 [project.entry-points."scenario_execution.actions"]
 entity_moved = "scenario_execution_roqsim.actions.entity_moved:EntityMoved"
-entity_reports = "scenario_execution_roqsim.actions.entity_reports:EntityReports"
+entity_monitor = "scenario_execution_roqsim.actions.entity_monitor:EntityMonitor"
 entity_rotated = "scenario_execution_roqsim.actions.entity_rotated:EntityRotated"
 entity_navigate = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigate"
 entity_navigate_start = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigateStart"
 delete_entity = "scenario_execution_roqsim.actions.delete_entity:DeleteEntity"
 set_entity_state = "scenario_execution_roqsim.actions.set_entity_state:SetEntityState"
 spawn_entity = "scenario_execution_roqsim.actions.spawn_entity:SpawnEntity"
-set_model_override = "scenario_execution_roqsim.actions.set_model_override:SetModelOverride"
-set_sensor_override = "scenario_execution_roqsim.actions.set_sensor_override:SetSensorOverride"
+entity_call = "scenario_execution_roqsim.actions.entity_call:EntityCall"
 
 [tool.setuptools.packages.find]
 where = ["src"]
