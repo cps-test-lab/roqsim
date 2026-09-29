@@ -106,7 +106,10 @@ def test_named_parameters_reach_the_method_and_its_result_the_future():
         ({"vx": 0.1, "vxx": 0.2}, "unknown parameter 'vxx' (did you mean 'vx'?)"),
         ({"vx": "fast"}, "parameter 'vx' must be float, got str ('fast')"),
         ({"vx": True}, "parameter 'vx' must be float, got bool"),
-        ((0.1, 0.2), "takes named parameters (a mapping), got tuple"),
+        (
+            (0.1, 0.2),
+            "takes 2 parameters, so a bare value names none of them: pass a mapping of vx, w",
+        ),
     ],
 )
 def test_a_misfit_is_refused_into_the_future_before_anything_is_queued(payload, message):
@@ -117,6 +120,23 @@ def test_a_misfit_is_refused_into_the_future_before_anything_is_queued(payload, 
         with pytest.raises(ParameterError, match=re.escape(message)):
             future.result(timeout=0)
         assert "It takes vx: float, m/s, w: float, rad/s = 0.0" in str(future._error)
+
+
+def test_a_bare_value_is_the_only_parameter_and_refused_otherwise():
+    engine, drive = _engine()
+    with engine:
+        # One parameter: a bare value is that parameter, on a command and on a stream.
+        assert _write(engine, "joints/left/speed", 0.5) == "left"
+        assert drive.speeds == {"left": 0.5}
+        engine.ctx.interface.find("box", "target").write([1, 2, 3])
+        engine.step()
+        assert drive.applied[-1].tolist() == [1.0, 2.0, 3.0]
+        # None: a bare value is refused.
+        with pytest.raises(ParameterError, match=re.escape("tare takes no parameters, got int")):
+            _write(engine, "tare", 1)
+        # Several: refused naming them, never guessed.
+        with pytest.raises(ParameterError, match="bare value names none of them: .* of vx, w"):
+            _write(engine, "set_speed", 0.3)
 
 
 def test_a_refused_command_is_logged_for_a_caller_that_never_reads_the_future(caplog):

@@ -141,8 +141,9 @@ class Plugin:
         others it implies -- e.g. a spawn plugin injecting a model's default controller/sensor
         plugins from its manifest (see :func:`roqsim.manifest.expand_manifest`). ``world`` is every
         spec declared or injected so far, so a plugin can skip a default the world -- or an outer
-        manifest -- already declares. What this returns is expanded in turn, depth-first (see
-        :func:`roqsim.config.expand_document`); list the config keys read here in
+        manifest -- already declares; a disabled entry that a live sibling of the same label
+        replaces is not in it, and is not expanded. What this returns is expanded in turn,
+        depth-first (see :func:`roqsim.config.expand_document`); list the config keys read here in
         :attr:`expansion_keys`. Default: none.
         """
         return []

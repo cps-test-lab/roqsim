@@ -92,7 +92,7 @@ Config::
       gyro_bias: [0, 0, 0]      # rad/s, likewise (a rate bias is what makes integrated yaw drift)
       orientation_stddev: 0.0   # rad, small-angle noise about each axis
       yaw_stddev: 0.0           # rad, EXTRA noise about the vertical axis only (see above)
-      fault: {gyro_stddev: 0.4} # optional: the values it takes while degraded (set_sensor_override)
+      fault: {gyro_stddev: 0.4} # optional: the values it takes while degraded (its `override`)
 
 Endpoint ``imu`` (out) reads a :class:`roqsim.types.Imu`, a ``sensor_msgs/Imu`` on ``imu/data`` over
 ROS -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the

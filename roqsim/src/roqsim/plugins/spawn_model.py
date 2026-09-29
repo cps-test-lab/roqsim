@@ -33,10 +33,13 @@ silently inert, and anything addressing the prop by the name you chose then reso
 
 ``mass`` and ``friction`` exist so the two properties that decide whether a grasp holds are world-YAML
 keys, and therefore ordinary campaign factors -- a sweep over payload or surface friction needs no new
-variation plugin, just ``ParameterVariationList`` against these. ``mass`` rescales the root body's geom
-masses in proportion, keeping the mass distribution of a multi-geom prop; ``friction`` accepts a single
-sliding coefficient or the full ``[sliding, torsional, rolling]`` triple. Both are refused when the prop
-has nothing to scale, rather than silently doing nothing.
+variation plugin, just ``ParameterVariationList`` against these. ``mass`` rescales what the root body
+weighs in proportion, keeping the mass distribution of a multi-geom prop: a geom that declares ``mass``
+has its mass scaled, one that states only a ``density`` has its density scaled, and a visual-only geom
+(``mass="0"`` or ``density="0"``) stays massless. A density-only prop -- the usual way a model states
+its mass -- is therefore rescaled like any other and weighs exactly what the world asked for.
+``friction`` accepts a single sliding coefficient or the full ``[sliding, torsional, rolling]``
+triple. Both are refused when the prop has nothing to scale, rather than silently doing nothing.
 
 A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
 a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
@@ -150,6 +153,8 @@ gets the frame. It has no effect on the baked web scene, which already seats the
 """
 
 from __future__ import annotations
+
+import math
 
 import mujoco
 
@@ -414,10 +419,10 @@ class SpawnModelPlugin(Plugin):
     def _apply_physics_overrides(self, child: mujoco.MjSpec, bodies, asset) -> None:
         """Rescale the prop's mass and/or set its friction, so both are campaign factors.
 
-        The mass is the root body's declared geom masses plus the explicit mass of every body a flex
-        owns (its vertex or node bodies, never a pin body), and all of it is rescaled by one factor
-        -- a soft block on a rigid base keeps its split. Friction goes to the root body's geoms and
-        to every flex, whose own ``friction`` is what its contacts use.
+        The mass is what the compiled prop weighs on its root body plus every body a flex owns (its
+        vertex or node bodies, never a pin body), and all of it is rescaled by one factor -- a soft
+        block on a rigid base keeps its split. Friction goes to the root body's geoms and to every
+        flex, whose own ``friction`` is what its contacts use.
         """
         if not bodies:
             raise ModelError(
@@ -430,20 +435,7 @@ class SpawnModelPlugin(Plugin):
             for name in dict.fromkeys(n for f in child.flexes for n in owned_bodies(child, f))
         ]
         if self.mass is not None:
-            total = sum(float(getattr(g, "mass", 0.0) or 0.0) for g in geoms)
-            total += sum(float(b.mass) for b in flex_bodies)
-            if total <= 0.0:
-                raise ModelError(
-                    f"spawn_model {self.model_ref!r}: mass override needs the prop's geoms to declare "
-                    f"mass to rescale (a density-only or massless prop has no distribution to keep). "
-                    f"Set mass on the geoms in {asset.path}, or drop the override."
-                )
-            factor = float(self.mass) / total
-            for g in geoms:
-                g.mass = float(g.mass) * factor
-            for b in flex_bodies:
-                b.mass = float(b.mass) * factor
-                b.inertia = [float(c) * factor for c in b.inertia]
+            self._rescale_mass(child, bodies[0], geoms, flex_bodies, asset)
         if self.friction is not None:
             for flex in child.flexes:
                 flex.friction = [*self.friction, *list(flex.friction)[len(self.friction) :]]
@@ -458,6 +450,65 @@ class SpawnModelPlugin(Plugin):
                 # MuJoCo's geom friction is [sliding, torsional, rolling]; keep the prop's own value
                 # for any component the world did not name.
                 g.friction = [*self.friction, *list(g.friction)[len(self.friction) :]]
+
+    def _compiled_mass(self, child: mujoco.MjSpec, flex_bodies, asset) -> float:
+        """What the prop's root body and its flex bodies weigh once MuJoCo has compiled them.
+
+        A geom that states only a density has no mass in the spec (MjSpec reports NaN) until the
+        compiler multiplies its volume by that density, so the total is read from a compiled copy.
+        The root body is the first child of the world, which is body 1 in the compiled order.
+        """
+        try:
+            model = child.copy().compile()
+        except ValueError as exc:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mass override needs the prop's own mass, but "
+                f"{asset.path} does not compile on its own ({exc})."
+            ) from exc
+        total = float(model.body_mass[1])
+        total += sum(float(model.body(b.name).mass[0]) for b in flex_bodies)
+        return total
+
+    def _rescale_mass(self, child: mujoco.MjSpec, root, geoms, flex_bodies, asset) -> None:
+        """Scale every mass the prop's root body and flexes carry by ``self.mass / total``.
+
+        A geom that declares ``mass`` has that scaled; one that states only a density (MjSpec's NaN
+        mass) has its density scaled, so it keeps its share without being handed an explicit mass.
+        A visual-only geom -- ``mass="0"`` or ``density="0"`` -- stays massless either way. A root
+        body with an ``<inertial>`` has that scaled too, since it replaces what its geoms weigh.
+        """
+        total = self._compiled_mass(child, flex_bodies, asset)
+        if not total > 0.0:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mass override needs the prop to have mass to "
+                f"rescale, but its root body and flexes weigh {total} kg (a massless prop has no "
+                f"distribution to keep). Give the geoms in {asset.path} a mass or a density, or "
+                f"drop the override."
+            )
+        factor = float(self.mass) / total
+        for g in geoms:
+            if math.isnan(g.mass):
+                g.density = float(g.density) * factor
+            else:
+                g.mass = float(g.mass) * factor
+        if root.explicitinertial:
+            root.mass = float(root.mass) * factor
+            root.inertia = [float(c) * factor for c in root.inertia]
+            # An unset fullinertia is NaN in its first component, and scaling keeps it NaN.
+            root.fullinertia = [float(c) * factor for c in root.fullinertia]
+        for b in flex_bodies:
+            b.mass = float(b.mass) * factor
+            b.inertia = [float(c) * factor for c in b.inertia]
+        # The compiler has the last word on what counts (inertiafromgeom, inertiagrouprange), so the
+        # override is checked on the result rather than trusted.
+        got = self._compiled_mass(child, flex_bodies, asset)
+        if not math.isclose(got, float(self.mass), rel_tol=1e-6):
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mass override asked for {self.mass} kg, but "
+                f"rescaling {asset.path} by {factor:.6g} compiles to {got} kg -- its compiler "
+                f"settings decide which masses count in a way the rescale does not follow. Drop the "
+                f"override, or state the prop's mass in its MJCF."
+            )
 
     @staticmethod
     def _holds_only_free_flexes(child: mujoco.MjSpec, bodies) -> bool:

@@ -56,12 +56,21 @@ ways), so a plugin writes no transport type.
 Unit("m/s")]`` directly), defaults (a parameter without one is required), and a line of
 documentation per parameter in the docstring's ``Args:`` section; a dataclass documents its fields
 in an ``Attributes:`` section. A bridge passes parameters as a mapping of names to values (``None``
-for none). ``write`` refuses a missing required parameter, an unknown one (naming the nearest known)
-and a value of the wrong type with one :class:`ParameterError` naming all of them -- into the future
-for a command, raised to the caller for a stream -- before anything is queued. An ``int`` passes for
-a ``float``, a ``bool`` for neither, and a sequence for a ``numpy`` array of the declared dtype and
-:class:`Shape`. The schema is data on the endpoint (:attr:`Endpoint.params`, :attr:`Endpoint.result`,
-:attr:`Endpoint.payload_type`), for any bridge to read.
+for none). A value that is not a mapping is shorthand for an endpoint with exactly one parameter,
+and only for one: it binds to that parameter, while an endpoint with none refuses it and one with
+several refuses it naming them, never guessing::
+
+    override.write(True)            # def override(self, data: bool) -> data=True
+    override.write({"data": True})  # the same, spelled out
+
+A mapping always means parameter names, so a single ``dict`` parameter is still passed as
+``{"name": {...}}``. ``write`` refuses a missing required parameter, an unknown one (naming the
+nearest known) and a value of the wrong type with one :class:`ParameterError` naming all of
+them -- into the future for a command, raised to the caller for a stream -- before anything is
+queued. An ``int`` passes for a ``float``, a ``bool`` for neither, and a sequence for a ``numpy``
+array of the declared dtype and :class:`Shape`. The schema is data on the endpoint
+(:attr:`Endpoint.params`, :attr:`Endpoint.result`, :attr:`Endpoint.payload_type`), for any bridge
+to read.
 
 **Options**:
 
@@ -738,10 +747,18 @@ def _bind(params: tuple[Param, ...], payload: Any, where: str) -> dict:
     if payload is None:
         payload = {}
     if not isinstance(payload, Mapping):
-        raise ParameterError(
-            f"{where} takes named parameters (a mapping), got {type(payload).__name__} "
-            f"({payload!r}). It takes {_listing(params)}."
-        )
+        if len(params) == 1:
+            payload = {params[0].name: payload}
+        elif not params:
+            raise ParameterError(
+                f"{where} takes no parameters, got {type(payload).__name__} ({payload!r})."
+            )
+        else:
+            raise ParameterError(
+                f"{where} takes {len(params)} parameters, so a bare value names none of them: "
+                f"pass a mapping of {', '.join(p.name for p in params)}, got "
+                f"{type(payload).__name__} ({payload!r}). It takes {_listing(params)}."
+            )
     known = {p.name: p for p in params}
     errors = []
     for key in payload:
@@ -779,7 +796,9 @@ def _listing(params: tuple[Param, ...]) -> str:
 def bind(params: tuple[Param, ...], payload: Any, where: str = "endpoint") -> dict:
     """Check *payload* against *params*; the keyword arguments to call the method with.
 
-    Raises :class:`ParameterError` naming every missing, unknown or mistyped parameter at once.
+    *payload* is a mapping of parameter names, ``None`` for none, or a bare value for an endpoint
+    with exactly one parameter (see the module's **Parameters**). Raises :class:`ParameterError`
+    naming every missing, unknown or mistyped parameter at once.
     """
     return _bind(params, payload, where)
 

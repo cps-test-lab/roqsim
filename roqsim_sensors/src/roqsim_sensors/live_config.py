@@ -5,8 +5,8 @@
 
 roqsim keeps faults on two channels, and :mod:`roqsim.plugins.model_override` states the split --
 that plugin changes the *physics*, while "a perturbation of a reported value is sensor noise and
-belongs in a sensor's own config". The physics channel's runtime trigger is ``set_model_override``.
-This is the report channel's, so a sensor can be degraded **during** a run instead of only for the
+belongs in a sensor's own config". The physics channel's runtime trigger is that plugin's
+``override`` command. This is the report channel's, so a sensor can be degraded **during** a run instead of only for the
 whole of it: a lidar that fails halfway down a corridor rather than one that was always noisy.
 
 It is deliberately **not** a plugin. A component belongs to the entry it is nested under, and a
@@ -26,9 +26,9 @@ sensor's own config, where the value being perturbed already lives::
                   range_stddev: 0.01
                   fault: {dropout_percent: 60.0, range_stddev: 0.35}
 
-and a scenario switches it by the sensor's **address**::
+and a scenario switches it through the ``override`` command of the sensor's **address**::
 
-    set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
+    entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'true')
 
 Three properties follow, each mirroring the physics channel rather than re-deciding it.
 
@@ -293,6 +293,8 @@ class FaultableSensorMixin:
     # a scenario fail the trial when a fault did not land.
     @endpoint.command(
         when=lambda self: self.has_fault(),
+        # Its report, verdict included, is the reply over the control socket.
+        confirm="override_verified",
         ros2=lambda self: {
             "service": "std_srvs.srv.SetBool",
             "name": f"{self._fault_scope()}/override",
