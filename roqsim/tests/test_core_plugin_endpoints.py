@@ -79,6 +79,8 @@ def test_override_takes_the_bool_a_setbool_carries():
     assert [(p["name"], p["type"], p["required"]) for p in row["params"]] == [
         ("data", "bool", True)
     ]
+    # Its reply carries the report the step after the change recorded.
+    assert row["confirm"] == "override_verified"
 
 
 def test_spawn_model_declares_the_streamed_and_the_static_pose_on_one_name():

@@ -320,6 +320,10 @@ cli.add_command(tool("roqsim.catalog", "catalog"))
 cli.add_command(tool("roqsim.health", "health"))
 cli.add_command(tool("roqsim.check", "check"))
 
+# A running simulation, reached over its control socket (roqsim.ipc).
+for _name in ("ls", "endpoints", "describe", "read", "call", "sub", "ctl"):
+    cli.add_command(tool(f"roqsim.control_cli.{_name}", _name))
+
 
 @cli.group("export")
 def export_group() -> None:
