@@ -589,8 +589,9 @@ annotated original beside the code it configures, which is the copy that cannot 
      - the owner's, ``true``, all
      - The goal interface: which actions this mover answers, and under what scope. nav2's
        ``navigate_to_pose`` and ``navigate_through_poses`` send a route; ``start_route``
-       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is served only when
-       ``goals`` is set.
+       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is a ROS action only
+       when ``goals`` is set. Each returns the route's sequence number, which ``route_status``
+       reports once applied; ``cancel_route`` stops the mover. Those two are not on ROS.
 
 Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
 ``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to

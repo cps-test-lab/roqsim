@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
+from roqsim.endpoint import hints_for
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 
@@ -268,15 +269,17 @@ def test_start_route_is_a_ros_action_only_where_there_is_a_route_to_start(tmp_pa
         assert {"navigate_to_pose", "navigate_through_poses", "start_route"} <= set(endpoints)
         assert {"route_status", "cancel_route"} <= set(endpoints)
         start = endpoints["start_route"]
-        assert ("ros2" in start.backend) is served
+        assert (hints_for(start, "ros2") is not None) is served
         if served:
             assert start.backend["ros2"] == {
                 "action": "roqsim_nav_interfaces.action.StartRoute",
                 "name": "start_route",
             }
         else:
+            refused = start.write(None)
+            engine.step()
             with pytest.raises(ValueError, match="no configured route"):
-                start.write(None)
+                refused.result(0)
     finally:
         engine.shutdown()
 
@@ -287,11 +290,15 @@ def test_a_route_is_followed_by_its_sequence_number_through_the_endpoints(tmp_pa
     engine.reset()
     try:
         endpoints = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cart"}
-        seq = endpoints["navigate_through_poses"].write([list(GOAL)])
+        sent = endpoints["navigate_through_poses"].write({"poses": [list(GOAL)]})
+        engine.step()
+        seq = sent.result(0)
         status = endpoints["route_status"].read()
-        assert status["seq"] == seq and not status["finished"]
-        cancelled = endpoints["cancel_route"].write(None)
-        assert cancelled == seq + 1 and endpoints["route_status"].read()["seq"] == cancelled
+        assert status.seq == seq and not status.finished
+        cancel = endpoints["cancel_route"].write(None)
+        engine.step()
+        cancelled = cancel.result(0)
+        assert cancelled == seq + 1 and endpoints["route_status"].read().seq == cancelled
     finally:
         engine.shutdown()
 

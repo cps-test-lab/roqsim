@@ -303,7 +303,7 @@ class IpcAccess(WorldAccess):
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
         base = self._navigator(name)
         poses = [[float(p[0]), float(p[1])] for p in goal_poses]
-        return _IpcRoute(self, base, "navigate_through_poses", poses, wait=wait)
+        return _IpcRoute(self, base, "navigate_through_poses", {"poses": poses}, wait=wait)
 
     def start_route(self, name: str, *, wait: bool) -> NavCall:
         return _IpcRoute(self, self._navigator(name), "start_route", None, wait=wait)

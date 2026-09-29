@@ -44,9 +44,11 @@ import numpy as np
 import torch
 import yaml
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
+from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 from ..policy import DEFAULT_CONFIG, DEFAULT_POLICY
 
@@ -132,7 +134,6 @@ class SpotLocomotionPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
         self._ctx = (
             ctx  # odom/joint readbacks compute from ctx.data on demand (bridge reads at rate)
@@ -202,57 +203,29 @@ class SpotLocomotionPlugin(Plugin):
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
 
-        # -- backend-neutral endpoints (identical contract to diff_drive / g1_locomotion) ------
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": "base_link",
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
+    # -- endpoints: the same contract as diff_drive's, under the robot's namespace ------------
+    @endpoint.stream(Twist)
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step and clamped to the trained range.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed, to the left
+            wz: yaw rate
+        """
+        self.drive(vx, vy, wz)
+
+    @endpoint.out(rate=50.0, ros2={"emit_tf": True})
+    def odom(self) -> Odometry:
+        """The base's pose and twist from the spawn pose; z is its height, about 0.5 m."""
+        x, y, yaw, vx, vy, w, z = self.read_odom()
+        return Odometry.planar(x, y, yaw, vx, vy, w, z=z)
+
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The twelve leg joints' positions and velocities, in the policy's order."""
+        names, positions, velocities = self.read_joint_states()
+        return JointState(list(names), positions, velocities)
 
     # -- command / readback -------------------------------------------------------------------
     def drive(self, vx: float, vy: float, w: float) -> None:
