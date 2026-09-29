@@ -11,10 +11,10 @@
 frames:
   # urdf/standard/turtlebot4.urdf.xacro:43-47: z = shell_z_offset (3 cm, :13) + base_link_z_offset
   # (6.42 cm, irobot_create_description/urdf/create3.urdf.xacro:53 @ 1fccb76).
-  - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942], rpy: [0.0, 0.0, 0.0]}
+  - {name: shell_link, parent: base_link, pose: {position: {z: 0.0942}}}
   # urdf/standard/turtlebot4.urdf.xacro:35-37 (camera_mount_*_offset) and :119-121: the camera
   # bracket on the shell, which carries the OAK-D.
-  - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257], rpy: [0.0, 0.0, 0.0]}
+  - {name: oakd_camera_bracket, parent: shell_link, pose: {position: {x: -0.118, z: 0.05257}}}
 
 components:
   # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
@@ -48,8 +48,7 @@ components:
   - spawn_sensor:
       model: rplidar_a1
       parent_frame: shell_link
-      pos: [-0.04, 0.0, 0.098715]
-      rpy: [0.0, 0.0, 1.5707963267948966]
+      pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}
       frame_id: rplidar_link
     name: rplidar
     components:
@@ -62,8 +61,7 @@ components:
   - spawn_sensor:
       model: oakd_pro
       parent_frame: oakd_camera_bracket
-      pos: [0.0584, 0.0, 0.09676]
-      rpy: [0.0, 0.0, 0.0]
+      pose: {position: {x: 0.0584, z: 0.09676}}
     name: oakd
     components:
       - oakd_camera:                             # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
@@ -149,16 +147,16 @@ components:
                    topics: {range: _internal/ir_intensity_side_left/scan}}
     name: ir_intensity_side_left
   # The IMU at the Create 3's mount (imu.urdf.xacro), on its `imu` topic at its 62 Hz.
-  - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+  - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
   # Ground truth the Create 3's simulator streams for its adapter: the base's world pose under the
   # robot's name, and the optical-flow mouse and IR receiver poses relative to the base, all on one
-  # topic at 62 Hz. `child_frame` is the name the adapter's `robot_name` parameter matches.
-  - ground_truth_pose: {child_frame: turtlebot4, rate_hz: 62, lazy: true,
-                        topics: {pose: _internal/sim_ground_truth_pose}}
-    name: gt_base
-  - ground_truth_pose: {site: mouse, relative_to: base, rate_hz: 62, lazy: true,
-                        topics: {pose: _internal/sim_ground_truth_pose}}
-    name: gt_mouse
-  - ground_truth_pose: {site: ir_omni, relative_to: base, rate_hz: 62, lazy: true,
-                        topics: {pose: _internal/sim_ground_truth_pose}}
-    name: gt_ir_omni
+  # topic at 62 Hz. `turtlebot4` is the name the adapter's `robot_name` parameter matches.
+  - pose_publisher:
+      poses:
+        - {frame: ., child: turtlebot4}
+        - {frame: mouse, relative_to: base_link}
+        - {frame: ir_omni, relative_to: base_link}
+      rate_hz: 62
+      lazy: true
+      topics: {poses: _internal/sim_ground_truth_pose}
+    name: gt

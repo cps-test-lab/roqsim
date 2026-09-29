@@ -24,6 +24,10 @@ setup(
             "ros2_bridge = roqsim_ros_bridge.ros2_bridge:Ros2Bridge",
             "sim_interfaces = roqsim_ros_bridge.sim_interfaces:SimInterfacesPlugin",
         ],
+        # How ROS carries an endpoint, for `roqsim plugins describe`.
+        "roqsim.transports": [
+            "ros2 = roqsim_ros_bridge.typemap:describe",
+        ],
         # Convenience launcher that runs a roqsim world with the ROS bridge.
         "console_scripts": [
             "roqsim_bridge = roqsim_ros_bridge.run_bridge:main",

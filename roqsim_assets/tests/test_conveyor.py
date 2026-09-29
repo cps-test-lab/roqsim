@@ -118,7 +118,8 @@ def test_placed_belt_keeps_its_package(tmp_path):
     # so a belt spawned away from the origin must still reset its package onto its own belt, not
     # onto the floor at the world origin.
     pos, yaw = [13.584, 5.779, 0.0], 0.8936
-    engine = Engine(_belt_only(tmp_path, {"pos": pos, "rpy": [0.0, 0.0, yaw], "length": 2.0}))
+    pose = {"position": dict(zip("xyz", pos, strict=True)), "orientation": {"yaw": yaw}}
+    engine = Engine(_belt_only(tmp_path, {"pose": pose, "length": 2.0}))
     engine.setup()
     engine.reset()
     belt = _geom_pos(engine, "belt_visual")  # belt centre, world

@@ -26,7 +26,7 @@ from roqsim_mcp.mcp_server import main as _serve
 
 @click.group("mcp")
 def mcp_group() -> None:
-    """Run the standalone MCP server for roqsim's plugin, model and world catalogs."""
+    """Run the standalone MCP server for roqsim's catalogs and a running simulation."""
 
 
 @mcp_group.command("serve")

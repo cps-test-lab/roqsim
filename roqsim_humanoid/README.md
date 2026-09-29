@@ -31,8 +31,10 @@ driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_sta
 
 > **Known limitation:** welding the swerve steer joints makes G2 a rigid 4-wheel skid-steer, so
 > **in-place rotation is scrub-limited** (~0.2–0.3 of commanded yaw); straight-line/arc driving is
-> clean. Precise torso-lift pose-holding also needs gravity compensation (holds home + modest
-> offsets today). Both are known follow-ups.
+> clean. The torso holds home and modest offsets but sags when bent deep: its joints declare
+> `actuatorfrcrange="-50 50"`, and that bounds the gravity term the drive supplies too (about
+> 450 N·m at `idx01_body_joint1`'s lower limit). Both are known follow-ups; raising the
+> torso's limit needs the vendor's rated torque, not a guessed one.
 
 ## LimX Oli (`oli`)
 

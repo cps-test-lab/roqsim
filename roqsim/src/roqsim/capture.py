@@ -811,9 +811,9 @@ class StateRecorder:
         One convention, stated because it is easy to get wrong and impossible to see: ``mj_step``
         integrates ``qpos`` and then leaves ``xpos`` holding the pose from *before* that integration,
         so the row is a coherent snapshot of ``sim - dt`` carrying the label ``sim``. That is
-        deliberately the same one-step lag the ``ground_truth_pose`` plugin publishes with, so this
-        table and the TF one describe the same instant and any difference between them is transport
-        rather than convention. It cancels in every derivative.
+        deliberately the same one-step lag every endpoint read in ``post_step`` has -- the core pose
+        endpoints among them -- so this table and a published pose describe the same instant and any
+        difference between them is transport rather than convention. It cancels in every derivative.
         """
         if self._pose_path is None:
             return

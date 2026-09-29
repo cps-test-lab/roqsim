@@ -32,6 +32,8 @@ import yaml
 
 from roqsim.context import Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
+from roqsim.pose import parse_pose, rpy_to_quat
+from roqsim.types import Odometry, Twist
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile" / "models"
@@ -47,7 +49,9 @@ LDS_MASS = 0.114
 #: The vendor base (robotis_tb3 @ d8344c0: 1.8 kg, scanner drawn on it) less the mounted scanner.
 BASE_MASS = 1.8 - LDS_MASS
 TOTAL_MASS = BASE_MASS + 2 * 0.0285  # the MJCF alone
-SPAWNED_MASS = 1.8 + 2 * 0.0285  # 1.857 kg: the vendor's total, once the manifest mounts the scanner
+SPAWNED_MASS = (
+    1.8 + 2 * 0.0285
+)  # 1.857 kg: the vendor's total, once the manifest mounts the scanner
 PLATE_L, PLATE_W = 0.272, 0.276  # chassis plate (the datasheet's 0.306 m width is the wheels)
 HULL_W = 2 * 0.144 + WHEEL_W  # 0.3064 m — datasheet 0.306 m
 #: base_link -> base_scan, turtlebot3_description @ 0c0be84 urdf/turtlebot3_waffle.urdf:203-207.
@@ -92,6 +96,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -355,13 +360,10 @@ def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
     manifest = yaml.safe_load(MANIFEST.read_text())
     (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
     assert mount["name"] == "lds01"
-    assert mount["spawn_sensor"] == {
-        "model": "lds01",
-        "parent_frame": "base_link",
-        "pos": [*BASE_SCAN[0]],
-        "rpy": [*BASE_SCAN[1]],
-        "frame_id": "base_scan",
-    }
+    spawn = dict(mount["spawn_sensor"])
+    pos, quat = parse_pose(spawn.pop("pose"), relative=True)
+    assert spawn == {"model": "lds01", "parent_frame": "base_link", "frame_id": "base_scan"}
+    assert tuple(pos) == BASE_SCAN[0] and quat == rpy_to_quat(*BASE_SCAN[1])
     assert "components" not in mount and "frames" not in manifest
     model, _ = _build()
     assert model.nsite == 1  # base_imu
@@ -418,8 +420,9 @@ def test_c4_odometry_tf_points_at_the_description_root():
     model, data = _build()
     ctx, _ = _plugin(model, data)
     odom = next(e for e in ctx.interface.all() if e.name == "odom")
-    assert odom.backend["ros2"]["frame_id"] == "odom"
-    assert odom.backend["ros2"]["child_frame_id"] == "base_footprint"
+    # Odometry travels from the `odom` frame by default; the child is what the platform states.
+    assert odom.payload_type.cls is Odometry
+    assert odom.backend["ros2"] == {"child_frame_id": "base_footprint", "emit_tf": True}
 
 
 def test_c5_odometry_tf_default_is_base_link():
@@ -433,6 +436,7 @@ def test_c5_odometry_tf_default_is_base_link():
     )
     plugin = DiffDrivePlugin(cfg)
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     odom = next(e for e in ctx.interface.all() if e.name == "odom")
     assert odom.backend["ros2"]["child_frame_id"] == "base_link"
 
@@ -449,12 +453,13 @@ def test_c6_cmd_vel_type_follows_the_stack():
 
     ctx, _ = _plugin(model, data)
     plain = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
-    assert plain.backend["ros2"]["type"] == "geometry_msgs.msg.Twist"
+    assert plain.payload_type.cls is Twist
+    assert plain.backend["ros2"] == {"stamped": False}  # geometry_msgs/Twist
 
     ctx, _ = _plugin(model, data, stamped_cmd_vel=True)
     stamped = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
-    assert stamped.backend["ros2"]["type"] == "geometry_msgs.msg.TwistStamped"
-    assert stamped.backend["ros2"]["topic"] == plain.backend["ros2"]["topic"]
+    assert stamped.backend["ros2"] == {"stamped": True}  # geometry_msgs/TwistStamped
+    assert stamped.topic == plain.topic is None
 
 
 # --------------------------------------------------------------------------- D. the mounted scanner
@@ -527,7 +532,7 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
     engine, _ = mounted
     scan = scan_mount.scan_endpoint(engine)
     assert scan.owner == "robot.lds01" and scan.namespace == scan_mount.NAMESPACE
-    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan_mount.topic_of(scan) == "scan"
     assert scan.backend["ros2"]["frame_id"] == "base_scan"
     assert "static_tf" not in scan.backend["ros2"]
 
