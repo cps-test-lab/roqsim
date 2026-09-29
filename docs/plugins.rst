@@ -1344,6 +1344,10 @@ level, not under ``TYPE_CHECKING``.
   is nested under (``endpoint_owner``, ``endpoint_namespace``).
 * ``lazy=True`` -- an ``out`` whose read is skipped while nobody subscribes; ``lazy="lazy"`` reads
   it per instance from that attribute (else config key), and describe names the key.
+* ``confirm="report"`` -- a ``command`` whose effect is only known after a step (a fault that landed
+  or did not) names an ``out`` endpoint of the same plugin whose value, recorded in the
+  ``post_step`` of the step that applied the command, confirms it: a caller over the control socket
+  (:doc:`control`) gets that value in the reply.
 
 Each also takes a callable of the plugin (``(plugin, item)`` in a family) for a value that has to be
 computed.
@@ -1353,7 +1357,9 @@ id (``frame_id``, ``child_frame_id``), ``stamped`` (``TwistStamped`` for a ``Twi
 rather than ``PoseStamped``), ``emit_tf``, a ``static_tf``, ``static``, a ``topic`` other than the
 endpoint's name, a ``qos``, a ``field`` of a structure to publish alone, or ``type`` naming a message the type
 maps to by field name (see below). A dict, a callable of the plugin returning one -- for a value
-``configure`` resolves -- or ``None`` to keep the endpoint off ROS.
+``configure`` resolves -- or ``None`` to keep the endpoint off ROS. The control socket
+(:doc:`control`) serves every endpoint as its payload type, with no hint; ``ipc=None`` keeps one off
+it.
 
 **A topic derived from another endpoint's.** A hint's ``topic`` (a service's ``name``) may name
 another endpoint of the same plugin in braces: it is rendered when the plugin registers, from the

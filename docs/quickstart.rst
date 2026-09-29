@@ -33,6 +33,10 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be
 — set it only to override that choice. To record a run, add ``--record`` — see
 :ref:`recording-a-run` below.
 
+A running simulation prints ``control: <uri>`` and serves its endpoints and run control there:
+``roqsim endpoints``, ``roqsim read``, ``roqsim call`` and ``roqsim ctl pause|resume|step N`` from
+another shell reach it with no ROS -- see :doc:`control`. ``--control none`` serves nothing.
+
 .. note::
 
    **Windowed GL defaults.** On many Linux + GL-driver combinations the windowed launch aborts with

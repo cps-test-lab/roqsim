@@ -548,6 +548,10 @@ SKIPPED: dict[str, str] = {
         "transport_only, holding no simulation state"
         for name in ("ros2_bridge", "sim_interfaces")
     },
+    "ipc_bridge": "a transport that binds a control socket and starts threads; it declares itself "
+    "transport_only, holding no simulation state",
+    "run_control": "the driver's pause/step/reset served as endpoints: its state is the driver's "
+    "RunControl, and a reset is one of its commands (test_ipc_bridge drives it)",
 }
 
 # -- what a plugin's state is ------------------------------------------------------------------------
