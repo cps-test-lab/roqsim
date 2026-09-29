@@ -2154,9 +2154,6 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is accepted as well and derives a ``controller_type`` when none is
-named; prefer ``controller_type``.
-
 **A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
 setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
 closes on the pose error follows it a steady distance behind: ``v / kp`` for the motion controller
@@ -2222,7 +2219,7 @@ blackboard handle. The sensor and the control law belong to the arm, so they sit
          name: ft
        - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
-   - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
+   - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, target_pos: [...]}
 
 **Read the refs, not the order.** Three are named — ``spawn_arm`` and ``cartesian_admittance`` from
 ``roqsim_manipulation``, ``force_torque`` from ``roqsim_sensors`` — and resolve through entry points because
