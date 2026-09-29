@@ -2,14 +2,6 @@
 #
 # `spawn_robot: {model: lgdxrobot2}` pulls these in automatically, so a world does not re-declare
 # the robot's intrinsic kinematics/sensors.
-
-# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
-# description, so not published (`tf: false`); a device names one as its `parent_frame`.
-frames:
-  # lidar_link_joint: its xyz less the device's 0.032 m to its scan frame, its yaw -3.14159 less the
-  # device's pi
-  - {name: rplidar, parent: base_link, pose: {position: {x: 0.06, z: 0.12441}}, tf: false}
-
 components:
   # HOLONOMIC, and the second such base in roqsim_mobile after the ridgeback. Four mecanum wheels
   # strafe, so this uses omni_drive rather than diff_drive -- and therefore carries NO slip_factor,
@@ -55,7 +47,10 @@ components:
   # a consumer reads, is the vendor's. Field, rays, range, rate and noise are the C1 data sheet's.
   - spawn_sensor:
       model: rplidar_c1
-      parent_frame: rplidar
+      parent_frame: base_link
+      # lidar_link_joint: its xyz less the device's 0.032 m to its scan frame, its yaw -3.14159 less the
+      # device's pi
+      pose: {position: {x: 0.06, z: 0.12441}}
       frame_id: lidar_link          # bringup_launch.py:81, the driver's frame_id
     name: rplidar
     components:
