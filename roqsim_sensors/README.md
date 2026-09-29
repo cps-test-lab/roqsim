@@ -156,23 +156,22 @@ new one (`roqsim.models.resolve_model`, this package's `RETIRED_MODELS`):
 | `d415`, `d435`, `d455` | `realsense_d415`, `realsense_d435`, `realsense_d455` | The mount frame became the one the vendor macro's origin places, `camera_bottom_screw_frame`. It was a display convention: the body was pre-rotated so a mount with no rotation looked along +y. |
 | `oakd` | `oakd_pro` | The mount frame became the one the vendor macro's origin places, `oakd_link`. It was a display convention: the body was turned +90° about z so a mount with no rotation looked along +y. |
 
-Re-express a mount of a retired model rather than editing its numbers by hand:
+Re-express a mount of a retired model rather than editing its numbers by hand. Each command below
+renames the model and writes each of its mounts as a `pose:` at `T_old * D`, which puts the camera
+where it was. `T_old` is the mount's `pose:`, or the `pos`/`rpy` a world of that age states it with;
+a mount it cannot read is refused, naming its line.
 
     python external/convert/build_realsense_devices.py --rewrite-mounts world.yaml [...]
 
-renames the model and writes each mount as a `pose` at `T_old * D`, reading `T_old` from its `pose`
-or from the `pos`/`rpy` a world of that age states it with (a mount it cannot read is refused,
-naming its line), with
-`D = Rq * T_link_mesh^-1 * T_screw_link^-1` (`Rq` the retired body rotation, `T_link_mesh` the vendor
-mesh-in-link pose, `T_screw_link` the screw-to-`camera_link` offset), which puts the housing and the
-camera where they were. One camera moves: the retired `d415` centred its camera on the
-housing, 5 mm in front of the glass, and `realsense_d415`'s sits at the vendor colour optical frame,
-38 mm from there. `tests/test_realsense_devices.py` holds that check.
+For the RealSense models `D = Rq * T_link_mesh^-1 * T_screw_link^-1`: `Rq` is the retired body
+rotation, `T_link_mesh` the vendor mesh-in-link pose and `T_screw_link` the screw-to-`camera_link`
+offset, so the housing stays where it was too. One camera moves: the retired `d415` centred its
+camera on the housing, 5 mm in front of the glass, and `realsense_d415`'s sits at the vendor colour
+optical frame, 38 mm from there. `tests/test_realsense_devices.py` holds that check.
 
     python external/convert/build_oakd_pro.py --rewrite-mounts world.yaml [...]
 
-does the same for `oakd` with `T_old * Rq`, which puts the camera where it was;
-`tests/test_oakd_pro_device.py` holds that check.
+For `oakd`, `D = Rq`; `tests/test_oakd_pro_device.py` holds that check.
 
 ## Demo world
 
