@@ -993,7 +993,7 @@ robot + its operator UI (at the cost of being single-arm; see the manifest note)
 
 **The endpoint map.** A consumer outside the world addresses an endpoint as ``(owner, name)`` --
 ``ctx.interface.find`` in-process -- while over ROS it travels on whatever topic the bridge made of
-it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefix. So the bridge says
+it after namespaces, ``topics:`` renames and ``strip_namespace``. So the bridge says
 what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
 ``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
 publishes by owner and name with the topic its publisher is on, the message type and the published

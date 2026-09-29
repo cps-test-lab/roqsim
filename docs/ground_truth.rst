@@ -1,24 +1,7 @@
 ground truth
 ============
 
-The simulator knows every body's exact pose. Two mechanisms expose that truth to ROS, for two
-different consumers.
-
-Ground-truth topic namespace (``ros2_bridge`` ``gt:``)
-------------------------------------------------------
-
-The :doc:`ros2_bridge <interfaces>` can divert *output* topics under a ground-truth prefix so a
-consumer can tell a true pose from real perception. Configure it on the bridge plugin::
-
-    components:
-      - ros2_bridge:
-          gt:
-            prefix: /gt              # published outputs move to /gt/... (e.g. /gt/tf)
-            exempt: [odom, scan]     # ...except these, which mirror a real topic and stay canonical
-
-The rule: **prefix** a pure ground-truth stream that has no real-sensor equivalent (an object's true
-pose); **exempt** a stream that mirrors a real topic (robot telemetry, a sensor's own message), so it
-keeps its canonical name. With no ``gt`` block every topic is canonical.
+The simulator knows every body's exact pose. The ``ground_truth_pose`` plugin publishes it to ROS.
 
 Ground-truth base pose (``ground_truth_pose`` plugin)
 -----------------------------------------------------
@@ -53,7 +36,7 @@ itself is the entry this one is nested under), ``site`` (a site of the entity in
 ``relative_to`` (``world``, the default, or ``base``), ``frame_id`` (parent, default ``map``, or the
 base body for a relative pose), ``child_frame`` (default ``<model>_base_link_gt`` for a body, the
 site's own name for a site), ``rate_hz`` (default ``30``), and the standard ``topics:`` hardwire map
-(``pose`` role; default relative ``tf`` → ``/tf``, or ``/gt/tf`` under the bridge ``gt`` prefix).
+(``pose`` role; default relative ``tf`` → ``/tf``).
 
 **A site, and a pose relative to the base.** A robot's real description hangs sensors, emitters and
 receivers off its base as links, and a stack that reproduces a device from ground truth -- an

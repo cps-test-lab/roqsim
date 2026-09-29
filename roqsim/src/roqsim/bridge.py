@@ -170,7 +170,7 @@ class BridgeBase(Plugin):
 
         A scenario addresses a plugin's report by the entity that owns it and the endpoint's name;
         the transport carries it under whatever the backend made of that -- for ROS a topic after the
-        endpoint's namespace, a ``topics:`` rename, a stripped namespace and a ground-truth prefix.
+        endpoint's namespace, a ``topics:`` rename and a stripped namespace.
         Only the bridge knows the result exactly, because it is what resolved it, so the bridge says
         it rather than a reader re-deriving it. ``describe`` is the backend's half: where and how one
         bound output travels (a ROS bridge: its topic, message type and published field).

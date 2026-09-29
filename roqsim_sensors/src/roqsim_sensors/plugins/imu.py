@@ -61,9 +61,9 @@ being handed information the hardware could not give it. Two consequences, both 
   the experiment does not turn on *how* it was imperfect.
 
 The choice is the experiment's and belongs in the world, so both are config with a documented
-default rather than a behaviour this plugin picks. Prefixing the signal as ground truth (see
-:doc:`ground_truth`) would be wrong here: a stack subscribes to ``imu/data``, and the truth-ness is a
-property of the *attitude channel*, which the covariance already states.
+default rather than a behaviour this plugin picks. Moving the signal to a ground-truth topic would
+be wrong here: a stack subscribes to ``imu/data``, and the truth-ness is a property of the *attitude
+channel*, which the covariance already states.
 
 **Where it goes.** An IMU is bolted to a link, so this plugin creates its own site on that body at a
 configured offset -- no hand-authored MJCF site needed, which is what makes it usable from a robot

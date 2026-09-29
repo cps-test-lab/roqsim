@@ -16,7 +16,7 @@ runs the scenario node under the same one, as any ROS system does.
 
 **A report is found through the bridge's endpoint map.** A scenario names a plugin's report as the
 world does -- entity and endpoint -- and the topic it travels on is whatever the bridge made of that
-after namespaces, ``topics:`` renames, ``strip_namespace`` and a ground-truth prefix. The bridge
+after namespaces, ``topics:`` renames and ``strip_namespace``. The bridge
 latches a map of exactly that at ``roqsim/endpoints`` in its namespace (``roqsim.bridge.ENDPOINT_MAP``),
 so this reads the map and subscribes to the topic it names, rather than re-deriving a name the bridge
 already resolved. Both subscriptions are made on first use, so a scenario that reads no report opens
