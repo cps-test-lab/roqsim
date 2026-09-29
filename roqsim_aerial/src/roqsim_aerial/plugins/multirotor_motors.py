@@ -33,7 +33,6 @@ being surprised is a trap:
 Config::
 
     multirotor_motors:
-      robot: drone                # entity name registered by spawn_robot
       namespace: ""               # transport scope (default: inherited from spawn_robot)
       body: x500                  # root body the reaction torque acts on (default: entity's root)
       rotors: [rotor0_thrust, rotor1_thrust, rotor2_thrust, rotor3_thrust]
