@@ -48,11 +48,11 @@ entry sits rather than a config key::
         lookahead: 1.2        # m of clear corridor needed, measured from the mover's FRONT
         width: 0.6            # m of corridor swept: the body, plus the clearance it should keep
         rays: 5               # how finely that width is sampled
-        height: 0             # m above the floor to scan; 0 -> just above obstacle_height's floor
+        height: 0.15          # m to scan at; absent -> just above obstacle_height's floor
         clear_time: 0.5       # s the way must stay open before setting off again
         yield_time: 3.0       # s a blockage reads as traffic before recovery may engage
         forget_after: 5.0     # s a remembered blockage keeps steering the planner (reroute only)
-        blockage_radius: 0    # m of the disc a blockage marks; 0 -> half the corridor width
+        blockage_radius: 0.3  # m of the disc a blockage marks; absent -> half the corridor width
         ignore: []            # entities this mover never stops for
 
       # -- output: drive ---------------------------------------------------------------------
@@ -164,7 +164,7 @@ _PROBE_FIELDS = {
     "width": Field(float, default=0.6, unit="m", doc="corridor swept: the body plus its clearance"),
     "rays": Field(int, default=5, doc="rays sampling that width"),
     "height": Field(
-        float, default=0.0, unit="m", doc="scan height; 0 -> just above obstacle_height's floor"
+        float, default=None, unit="m", doc="scan height; default: obstacle_height's floor + 5 cm"
     ),
     "clear_time": Field(float, default=0.5, unit="s", doc="the way stays open this long to go on"),
     "yield_time": Field(
@@ -174,7 +174,7 @@ _PROBE_FIELDS = {
         float, default=5.0, unit="s", doc="a remembered blockage steers the planner this long"
     ),
     "blockage_radius": Field(
-        float, default=0.0, unit="m", doc="disc a blockage marks; 0 -> half the corridor width"
+        float, default=None, unit="m", doc="disc a blockage marks; default: half the corridor width"
     ),
     "ignore": Field(list, default=[], doc="entities this mover never stops for"),
 }
