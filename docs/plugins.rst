@@ -1129,8 +1129,8 @@ turn poses back into effort, which is a fitted constant between the simulator an
 numbers; unset, the plugin reports mechanical work and nothing else. A state of charge exists only
 where a ``capacity_wh`` was given -- without one the fraction is reported as *unknown* rather than as
 a full battery. Every one of those defaults is what an absent key means, so a misspelt one would
-report an energy figure that looks measured and assumes nothing: the plugin's keys are declared with
-``STRICT_KEYS``, and ``resistive_w_per_nm`` is refused with the key it meant.
+report an energy figure that looks measured and assumes nothing: the plugin's keys are declared in
+its schema, so ``resistive_w_per_nm`` is refused with the key it meant.
 
 The per-actuator split is what makes the number usable on an arm. Each actuator's ``force *
 velocity`` is sorted into driving and driven *before* the sum, so one joint descending under gravity

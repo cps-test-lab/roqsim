@@ -392,7 +392,6 @@ class NavigatorPlugin(Plugin):
         "actions": Field(list, default=None, doc="actions served; default: all"),
         "action_names": Field(dict, default={}, doc="action -> its name; default: the action's"),
     }
-    STRICT_KEYS = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
