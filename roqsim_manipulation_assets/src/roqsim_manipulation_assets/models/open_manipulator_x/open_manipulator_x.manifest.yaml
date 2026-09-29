@@ -15,4 +15,4 @@ components:
   # renders from it, at what rate, and whether it reprojects to a point cloud are properties of the
   # experiment. A world that wants it adds:
   #
-  #     realsense_d435: {arm: omx, depth: true, points: true}
+  #     realsense_d435: {arm: omx, depth_camera: d435_color, depth: true, points: true}

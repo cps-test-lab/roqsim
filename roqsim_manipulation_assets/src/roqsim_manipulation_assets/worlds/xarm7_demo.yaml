@@ -13,7 +13,6 @@ components:
   - spawn_arm:
       model: xarm7
       prefix: "xarm7_"
-      pos: [0.0, 0.0, 0.0]
     name: xarm7
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
