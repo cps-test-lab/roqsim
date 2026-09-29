@@ -179,7 +179,9 @@ class ControllerManagerServices:
         if not run_on_physics(self._ctx, apply):
             response.ok = False
             if hasattr(response, "message"):
-                response.message = "the simulation did not apply the switch (is the physics thread stalled?)"
+                response.message = (
+                    "the simulation did not apply the switch (is the physics thread stalled?)"
+                )
             return response
 
         ok, message = outcome.get("result", (False, "the switch did not run"))

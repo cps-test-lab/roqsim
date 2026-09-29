@@ -102,8 +102,13 @@ If the arm has a non-joint (tendon) actuator -- a parallel gripper -- it also be
 plugin declares a ``control_msgs/GripperCommand`` action endpoint at
 ``<gripper_controller_name>/gripper_cmd`` and publishes a ``() -> (position, velocity)`` reader on the
 blackboard under ``gripper:<arm>`` (the bridge's GripperCommand handler watches it to report
-reached/stalled). The commanded position (the gripper joint angle, e.g. 0=open .. 0.8=closed for a
-Robotiq 2F-85) is mapped linearly onto the tendon actuator's ctrlrange.
+reached/stalled). The commanded position is the ``gripper_joint``'s position (e.g. 0=open .. 0.8=closed
+for a Robotiq 2F-85, 0.057=open .. 0.021=closed for a ViperX 300 finger slide), mapped linearly onto the
+actuator's ctrlrange. Which end of the ctrlrange is open is read from the model -- the actuator's gain
+and its signed moment on that joint -- so ``gripper_open``/``gripper_close`` are the joint's positions
+with the fingers open and closed, the two positions the ctrlrange's ends hold it at, whichever way the
+actuator runs. A gripper needs its ``gripper_joint``, driven with a constant moment; configure fails
+without one.
 
 **Grip force.** Beside the position the plugin publishes a :class:`GripperEffort` under
 ``gripper_effort:<arm>``, the key the endpoint's ``effort_key`` hint names. It takes GripperCommand's
@@ -113,14 +118,13 @@ effort, in that joint's own unit -- newtons for a slide jaw, newton-metres for a
 (``gripper_controllers/hardware_interface_adapter.hpp``). A goal is never refused for its effort: a
 request at or above the model's own limit saturates there, as a drive does, and ``max_effort <= 0``
 and every reset restore the model's own force range. The clamp reaches the actuator through the
-transmission, so it needs a constant moment -- a joint transmission or a fixed tendon, which every
-shipped gripper has. Any other keeps its range and executes the position alone, as a
-position-interface controller does. Gripper config::
+transmission's constant moment. A gripper actuator without a force limit keeps its range and executes
+the position alone, as a position-interface controller does. Gripper config::
 
       gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd
       gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
-      gripper_open: 0.0          # position value that maps to the open end of the actuator ctrlrange
-      gripper_close: 0.8         # position value that maps to the closed end
+      gripper_open: 0.0          # gripper_joint position with the fingers open
+      gripper_close: 0.8         # gripper_joint position with the fingers closed
 """
 
 from __future__ import annotations
@@ -143,16 +147,15 @@ from ._arm import (
 )
 
 
-def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
-    """The effort on ``joint_id`` per unit of the actuator's force, or 0.0 where it is not constant.
+def joint_moment(model, actuator_id: int, joint_id: int) -> float:
+    """The actuator's length change per unit of ``joint_id``'s position, signed; 0.0 where not constant.
 
     Read from the model alone, so it holds in every configuration or not at all: an actuator on the
     joint carries its gear, and one on a fixed tendon carries gear times the tendon's coefficient on
-    that joint. The unit is the joint's own -- newtons for a slide joint, newton-metres for a hinge --
-    the unit ``/joint_states`` reports its effort in. A spatial tendon, a site transmission, or a joint
-    the transmission does not reach has no constant moment, and gets 0.0.
+    that joint. A spatial tendon, a site transmission, or a joint the transmission does not reach has
+    no constant moment, and gets 0.0.
     """
-    gear = abs(float(model.actuator_gear[actuator_id][0]))
+    gear = float(model.actuator_gear[actuator_id][0])
     target = int(model.actuator_trnid[actuator_id][0])
     trn = model.actuator_trntype[actuator_id]
     if trn == mujoco.mjtTrn.mjTRN_JOINT:
@@ -165,8 +168,32 @@ def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> f
         if model.wrap_type[wrap] != mujoco.mjtWrap.mjWRAP_JOINT:
             return 0.0
         if int(model.wrap_objid[wrap]) == joint_id:
-            coef = abs(float(model.wrap_prm[wrap]))
+            coef = float(model.wrap_prm[wrap])
     return gear * coef
+
+
+def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
+    """The effort on ``joint_id`` per unit of the actuator's force, or 0.0 where it is not constant.
+
+    The magnitude of :func:`joint_moment`. The unit is the joint's own -- newtons for a slide joint,
+    newton-metres for a hinge -- the unit ``/joint_states`` reports its effort in.
+    """
+    return abs(joint_moment(model, actuator_id, joint_id))
+
+
+def ctrl_direction_on_joint(model, actuator_id: int, joint_id: int) -> int:
+    """+1 if raising the actuator's ctrl moves ``joint_id`` toward larger positions, -1 if smaller.
+
+    0 where the model does not say: no constant moment on the joint, or no gain. A servo settles where
+    ``gain * ctrl + bias0 + bias1 * length = 0``, so its length rises with ctrl as ``gain / -bias1``;
+    a motor without a position bias pushes its length the way ``gain`` points. The joint then follows
+    the length through the transmission's signed moment.
+    """
+    gain = float(model.actuator_gainprm[actuator_id][0])
+    bias = float(model.actuator_biasprm[actuator_id][1])
+    along_length = gain / -bias if bias != 0.0 else gain
+    slope = along_length * joint_moment(model, actuator_id, joint_id)
+    return (slope > 0.0) - (slope < 0.0)
 
 
 @dataclass
@@ -322,6 +349,10 @@ class ArmControllerPlugin(Plugin):
         self._grip_close = float(self.config.get("gripper_close", 0.8))
         self._grip_ctrl_lo = 0.0
         self._grip_ctrl_hi = 255.0
+        # The gripper_joint positions at the ctrlrange's low and high end: gripper_open and
+        # gripper_close in the order the actuator runs, set in configure.
+        self._grip_q_at_ctrl_lo = self._grip_open
+        self._grip_q_at_ctrl_hi = self._grip_close
         self._gripper_key = ""  # set in configure; the reader key the bridge is pointed at
         # Grip force: the model's own force range on the gripper actuator (what a reset restores), the
         # gripper joint's effort per unit of actuator force, and the joint-effort limit that range
@@ -588,23 +619,40 @@ class ArmControllerPlugin(Plugin):
         # Gripper: a non-joint (tendon) actuator makes this arm's hand commandable. Map the tendon's
         # ctrlrange to a commanded gripper position and expose a GripperCommand action + a state reader.
         if self._aux_acts:
-            lo, hi = m.actuator_ctrlrange[self._aux_acts[0]]
+            grip = self._aux_acts[0]
+            lo, hi = m.actuator_ctrlrange[grip]
             self._grip_ctrl_lo, self._grip_ctrl_hi = float(lo), float(hi)
             gjoint = self.config.get("gripper_joint")
-            if gjoint:
-                jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}{gjoint}")
-                if jid < 0:
-                    raise RuntimeError(
-                        f"arm_controller: gripper_joint {gjoint!r} not found for arm {self.arm!r}"
-                    )
-                self._grip_jid = jid
-                self._grip_qposadr = int(m.jnt_qposadr[jid])
-                self._grip_dofadr = int(m.jnt_dofadr[jid])
+            if not gjoint:
+                raise RuntimeError(
+                    f"arm_controller[{self.arm}]: the arm has a gripper actuator but no "
+                    "`gripper_joint`; name the joint whose position a GripperCommand sets and reports"
+                )
+            jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}{gjoint}")
+            if jid < 0:
+                raise RuntimeError(
+                    f"arm_controller: gripper_joint {gjoint!r} not found for arm {self.arm!r}"
+                )
+            self._grip_jid = jid
+            self._grip_qposadr = int(m.jnt_qposadr[jid])
+            self._grip_dofadr = int(m.jnt_dofadr[jid])
+            # Which end of the ctrlrange opens depends on the actuator, not on a convention: a
+            # Robotiq tendon closes as its ctrl rises, an Interbotix finger slide opens.
+            direction = ctrl_direction_on_joint(m, grip, jid)
+            if direction == 0:
+                raise RuntimeError(
+                    f"arm_controller[{self.arm}]: the gripper actuator has no constant moment on "
+                    f"gripper_joint {gjoint!r}, so the direction a command moves it is unknown; "
+                    "drive the gripper through that joint or a fixed tendon over it"
+                )
+            ends = sorted((self._grip_open, self._grip_close))
+            if direction < 0:
+                ends.reverse()
+            self._grip_q_at_ctrl_lo, self._grip_q_at_ctrl_hi = ends
             ctx.blackboard.set(self._gripper_key, self.read_gripper_state)
-            grip = self._aux_acts[0]
             self._grip_forcerange = tuple(float(v) for v in m.actuator_forcerange[grip])
-            if self._grip_jid is not None and m.actuator_forcelimited[grip]:
-                self._grip_gain = joint_effort_per_actuator_force(m, grip, self._grip_jid)
+            if m.actuator_forcelimited[grip]:
+                self._grip_gain = joint_effort_per_actuator_force(m, grip, jid)
             self._grip_limit = min(abs(v) for v in self._grip_forcerange) * self._grip_gain
             effort_key = self._gripper_key.replace("gripper:", "gripper_effort:", 1)
             ctx.blackboard.set(
@@ -730,9 +778,9 @@ class ArmControllerPlugin(Plugin):
         return (list(self._ctrl_names), desired, actual, vel)
 
     def set_gripper(self, position) -> None:
-        """Map a commanded gripper position (gripper_joint angle) onto the tendon actuator ctrl."""
-        span = self._grip_close - self._grip_open
-        frac = 0.0 if span == 0 else (float(position) - self._grip_open) / span
+        """Map a commanded gripper position (gripper_joint position) onto the gripper actuator ctrl."""
+        span = self._grip_q_at_ctrl_hi - self._grip_q_at_ctrl_lo
+        frac = 0.0 if span == 0 else (float(position) - self._grip_q_at_ctrl_lo) / span
         frac = max(0.0, min(1.0, frac))
         self._gripper_ctrl_target = self._grip_ctrl_lo + frac * (
             self._grip_ctrl_hi - self._grip_ctrl_lo
@@ -750,8 +798,8 @@ class ArmControllerPlugin(Plugin):
         if self._grip_limit <= 0.0 and effort > 0.0 and not self._grip_cap_warned:
             self._grip_cap_warned = True
             self._ctx.logger.warning(
-                "arm_controller[%s]: the gripper actuator has no constant moment on its joint, so "
-                "max_effort cannot be applied; the position runs with the model's own force range",
+                "arm_controller[%s]: the gripper actuator has no force limit, so max_effort cannot "
+                "be applied; the position runs with the model's own force range",
                 self.arm,
             )
         if effort <= 0.0 or effort >= self._grip_limit:
@@ -761,19 +809,12 @@ class ArmControllerPlugin(Plugin):
         self._ctx.model.actuator_forcerange[grip] = (-limit, limit)
 
     def read_gripper_effort(self) -> float:
-        """The gripper joint's effort now, as ``/joint_states`` reports it.
-
-        NaN when the arm has no gripper joint.
-        """
-        if self._grip_jid is None:
-            return float("nan")
+        """The gripper joint's effort now, as ``/joint_states`` reports it."""
         d = self._ctx.data
         return float(d.qfrc_actuator[self._grip_dofadr] + d.qfrc_gravcomp[self._grip_dofadr])
 
     def read_gripper_state(self):
-        # Computed on demand (see read_state); (0, 0) when the arm has no gripper joint.
-        if self._grip_jid is None:
-            return (0.0, 0.0)
+        # Computed on demand (see read_state).
         d = self._ctx.data
         return (float(d.qpos[self._grip_qposadr]), float(d.qvel[self._grip_dofadr]))
 
