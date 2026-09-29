@@ -274,6 +274,34 @@ def test_a_command_without_parameters_is_a_trigger_service(eps):
     assert typemap.resolve(eps["zero"]).hints == {"service": "std_srvs.srv.Trigger", "name": "zero"}
 
 
+class Camera(Plugin):
+    @endpoint.out(ros2={"topic": "camera/image_raw"})
+    def image(self) -> T.Image: ...
+
+    @endpoint.out(ros2={"type": "sensor_msgs.msg.CompressedImage", "topic": "{image}/compressed"})
+    def image_compressed(self) -> T.Image: ...
+
+    @endpoint.out(ros2={"topic": "{image}/../camera_info"})
+    def camera_info(self) -> T.CameraInfo: ...
+
+
+def test_a_derived_topic_follows_a_worlds_rename_of_its_sibling():
+    def topics(config):
+        built = build(Camera(config, label="cam"), SimContext(config={}))
+        return {e.name: typemap.resolve(e).hints["topic"] for e in built}
+
+    assert topics({}) == {
+        "image": "camera/image_raw",
+        "image_compressed": "camera/image_raw/compressed",
+        "camera_info": "camera/camera_info",
+    }
+    assert topics({"topics": {"image": "/drv/rgb/image"}}) == {
+        "image": "/drv/rgb/image",
+        "image_compressed": "/drv/rgb/image/compressed",
+        "camera_info": "/drv/rgb/camera_info",
+    }
+
+
 def test_a_package_maps_its_own_type_through_the_entry_point(monkeypatch, eps):
     def fill(msg, value, stamp, hints):
         msg.data = value.data * 10.0
