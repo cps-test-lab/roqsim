@@ -9,8 +9,14 @@ import math
 import mujoco
 import numpy as np
 
+from roqsim import entity_pose
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+
+
+def _plugin_endpoints(engine):
+    """The endpoints the door declares; core adds a pose endpoint per entity (owner :data:`roqsim.entity_pose.OWNER`)."""
+    return [e for e in engine.ctx.interface.all() if e.owner != entity_pose.OWNER]
 
 
 def _door(tmp_path, extra=None):
@@ -81,12 +87,12 @@ def test_passive_door_holds_open_angle(tmp_path):
     for _ in range(2000):
         engine.step()
     assert 40 < math.degrees(_hinge_angle(engine)) < 50
-    assert engine.ctx.interface.all() == []
+    assert _plugin_endpoints(engine) == []
 
 
 def test_controllable_declares_endpoints(tmp_path):
     engine = _built(tmp_path, {"controllable": True, "namespace": "foyer"})
-    eps = {e.name: e for e in engine.ctx.interface.all()}
+    eps = {e.name: e for e in _plugin_endpoints(engine)}
     assert set(eps) == {"cmd", "state", "door"}
     assert eps["cmd"].backend["ros2"]["type"] == "std_msgs.msg.Float64"
     assert eps["state"].direction == "out"
@@ -175,7 +181,7 @@ def test_leafless_door_is_a_cased_opening(tmp_path):
     # still a door entity, so anything enumerating the building's doors finds it
     ent = engine.ctx.entities.get("door")
     assert ent.kind == "door" and ent.meta["leaf"] is False
-    assert engine.ctx.interface.all() == []  # nothing to command
+    assert _plugin_endpoints(engine) == []  # nothing to command
     for _ in range(50):
         engine.step()  # the tick hooks stay quiet
 

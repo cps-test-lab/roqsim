@@ -317,6 +317,12 @@ def get_plugin_details(name: str) -> dict:
     keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
     needs and what prose cannot give it. It is authoritative where it exists, because validation
     runs on it -- unlike a docstring, it cannot drift from behaviour.
+
+    A plugin that declares endpoints with :mod:`roqsim.endpoint` also gets ``endpoints``: one row per
+    declared endpoint with its name, kind, direction, backends and first docstring line, read off the
+    class without building a world. A hint computed at configure time is not evaluated, so the rows
+    name the backends rather than their contents, and ``conditional`` marks an endpoint a config
+    may switch off. Endpoints a plugin adds by hand with ``ctx.interface.add`` are not listed.
     """
     matches = [ep for ep in _entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
@@ -346,6 +352,11 @@ def get_plugin_details(name: str) -> dict:
     if schema is not None:
         details["schema"] = schema
         details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+    from roqsim.endpoint import declared
+
+    endpoints = [spec.describe(cls) for spec in declared(cls)]
+    if endpoints:
+        details["endpoints"] = endpoints
     return details
 
 

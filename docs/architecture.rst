@@ -597,7 +597,7 @@ identical across arms.
 
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
-External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. A driver that is not stepping -- ``roqsim sim`` paused or stopped -- drains it in its idle loop instead (``Engine.idle``), and when a command ran, ``mj_forward`` brings body poses and sensor data in line with it; simulated time does not advance and no plugin hook runs. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on.
+External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. A driver that is not stepping -- ``roqsim sim`` paused or stopped -- drains it in its idle loop instead (``Engine.idle``), and when a command ran, ``mj_forward`` brings body poses and sensor data in line with it; simulated time does not advance and no plugin hook runs. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on; ``ctx.submit`` is the same queue with a :class:`~roqsim.context.CommandFuture` for a caller that needs the outcome, and the drain delivers a command's exception to the caller waiting on it (one nobody waits on is logged). The queue is a ``collections.deque``: posting and draining take no lock. After the commands the drain applies each inbound stream's latest value (§13).
 
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
 
@@ -814,20 +814,66 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 A robot's I/O is **self-describing** and transport-neutral, so it is not duplicated in a per-backend
 bridge and can be wired to any transport. It has three layers:
 
-**1. Endpoints (neutral, in the robot packages).** In ``configure`` a plugin registers
-``Endpoint``\ s on ``ctx.interface`` (see :class:`roqsim.context.Endpoint`): a ``name``,
-``direction`` (``"out"`` → provide ``read``; ``"in"`` → provide ``write``), an ``owner`` (the entity),
-a ``namespace`` (a plain scope string each backend attaches to the endpoint's topics/frames/actions),
-an optional ``rate_hz``, and a ``backend`` dict of inert per-backend hints keyed by backend name. The
-``read``/``write`` callables traffic in **neutral payloads** (numpy arrays, tuples, small dataclasses)
-and run on the physics thread. Crucially the robot packages import nothing transport-specific — the
-message *type* is named as a **string** (``"sensor_msgs.msg.LaserScan"``) under the backend hint.
+**1. Endpoints (neutral, in the robot packages).** A plugin declares its ports with decorators on
+the methods that serve them (:mod:`roqsim.endpoint`): ``@endpoint.out`` (the method returns the
+payload), ``@endpoint.command`` (a request with an outcome) and ``@endpoint.stream`` (an inbound
+stream, latest value wins). **The method is the endpoint**: its name is the endpoint's name, its
+docstring's first line the endpoint's doc, and its signature the schema -- a command's or a stream's
+parameters (types with the unit aliases of :mod:`roqsim.types`, defaults, docs from the docstring's
+``Args:`` section) and the return type become ``Endpoint.params`` and ``Endpoint.result``, data any
+bridge reads. **Payloads are neutral types**: the dataclasses of :mod:`roqsim.types` (``Twist``,
+``Pose``, ``Odometry``, ``JointState``, ``JointPositions``, ``Wrench``, ``Imu``, ``LaserScan``,
+``Image``, ``CameraInfo``, ``PointCloud``, ``Transform``, ``Transforms``) or any dataclass of the plugin's own, never positional
+tuples; an ``in`` endpoint names its type (``@endpoint.stream(Twist)``) and takes the fields it uses
+by name, and ``Endpoint.payload_type`` says what a transport carries. A bridge passes parameters by
+name, and ``write`` refuses a missing, unknown or mistyped one before queueing
+(:class:`~roqsim.endpoint.ParameterError`). Options name attributes or config keys (``rate=``,
+``when=``, ``lazy=``, ``each=``) rather than wrapping them in callables; the owner and namespace come from the
+plugin (``endpoint_owner``, ``endpoint_namespace``; ``owner=`` for one that belongs elsewhere).
+**The engine registers** a plugin's endpoints right after its ``configure``
+(``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a bridge
+listed later binds them; it then applies the plugin's ``qos:`` to every endpoint the plugin
+registered, and the framework records its ``topics:`` renames as ``Endpoint.topic`` and renders a
+hint topic that names a sibling endpoint (``"{image}/compressed"``) from where that sibling is
+carried (:func:`roqsim.endpoint.topic_of`).
+:func:`roqsim.endpoint.declared` lists a class's endpoints with that schema without a world, and
+``roqsim plugins describe`` publishes them, with how each installed transport (the
+``roqsim.transports`` entry points) carries them. A port known only at run time is added with
+``ctx.interface.add(Endpoint(...))``. Either way an endpoint is (see
+:class:`roqsim.context.Endpoint`): a ``name``, ``direction`` (``"out"`` → provide ``read``;
+``"in"`` → provide ``write``), an ``owner`` (the entity), a ``namespace`` (a plain scope string each
+backend attaches to the endpoint's topics/frames/actions), an optional ``rate_hz``, and a ``backend``
+dict of inert per-backend hints keyed by backend name, which for a decorated endpoint carries only
+its deviations from the type's mapping (a frame, ``stamped``, ``emit_tf``, a QoS), and ``None`` to
+keep it off a backend. The ``read``/``write`` callables run on the physics thread. Crucially the
+robot packages import nothing transport-specific: a hand-built endpoint names its message *type* as a
+**string** under the backend hint, and a decorated one names none.
+
+**Entity poses are the core's.** Every entity whose body is in the model has an ``out`` endpoint
+``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`): the body's world position
+and ``(w, x, y, z)`` quaternion from ``xpos``/``xquat`` and its velocity from ``cvel``, computed only
+when read, ``None`` while the entity is deleted. It carries no backend hint, so no bridge publishes
+it unasked, and it is registered even after a bridge bound, for a consumer that looks it up by name.
+
+**Marshalling is the framework's.** A decorated method runs on the physics thread and never posts
+itself. A command's ``write`` is safe from any thread: it submits the method
+(:meth:`~roqsim.context.SimContext.submit`) and returns a :class:`~roqsim.context.CommandFuture`, whose
+``result(timeout)`` gives the caller what the method returned or re-raises what it raised. A stream's
+``write`` stores the payload in the endpoint's :class:`~roqsim.context.StreamSlot`, and
+``drain_commands`` hands the newest one to the method once, after the queued commands; values
+superseded within a step are never applied. Such an endpoint is ``marshalled``, and a bridge calls
+its ``write`` directly; any other ``in`` endpoint's write is submitted to the physics thread by the
+bridge.
 
 **2. ``BridgeBase`` (backend-agnostic, in ``roqsim/bridge.py``).** Shared machinery for every
 transport: it iterates ``ctx.interface``, applies the optional owner filter, rate-gates each ``out``
 endpoint, runs the per-tick publish loop on the physics thread, and marshals inbound data onto the
-physics thread via ``ctx.post`` (single-writer rule intact, §7). A backend implements a few hooks:
-``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
+physics thread via ``ctx.submit`` unless the endpoint marshals itself (single-writer rule intact,
+§7), handing the backend a callback that returns the command's future. It binds an endpoint that
+carries a hint block for its backend, and a decorated one (``Endpoint.transport``) without one, from
+what its payload type maps to (``_hints_for``). A backend implements a few hooks:
+``_setup`` / ``_hints_for`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` /
+``_tick`` / ``_teardown``.
 
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
 ``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
@@ -854,10 +900,24 @@ its ``realised_hz`` and the ``every_steps`` behind it. So a rate quoted from the
 checked against the one the run actually published at without measuring arrival times.
 
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
-``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
-type string into a class via ``importlib`` (cached); converters keyed by that string fill an outbound
-message in place, decoders turn an inbound message into a neutral payload, and a reflective path
-(``msg.data = payload``) covers primitive ``std_msgs`` with no registered converter. One converter per
+``Ros2Bridge(BridgeBase)`` and **one table from the neutral types to ROS messages**
+(``roqsim_ros_bridge/typemap.py``, free of ROS imports): each type of :mod:`roqsim.types` and each
+scalar maps to its message (``Twist`` to ``geometry_msgs/Twist``, ``Odometry`` to
+``nav_msgs/Odometry``, ...) with a converter each way, a ``stamped`` hint choosing between a
+message and its stamped form. ``typemap.resolve`` gives an endpoint's effective hints -- the
+message ``type`` (or a ``std_srvs/Trigger`` service for a command without parameters), the
+``topic`` (:func:`roqsim.endpoint.topic_of`: the world's ``topics:`` name, else the hint's, else
+the endpoint's name), the ``qos``
+(the world's ``qos:``, else the hint's, else ``default``: reliable, depth 10) and the producer's own
+frames -- and the converters. A dataclass without a row maps **by field name** onto the message its
+hint names, checked when the bridge binds it: a field that does not fit is refused by name, never
+dropped. A package maps its own type once through the ``roqsim.ros2_types`` entry-point group; with
+neither, the endpoint is not on ROS, which ``roqsim plugins describe`` reports. A hand-built endpoint
+keeps the registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the type string into a
+class via ``importlib`` (cached); converters keyed by that string fill an outbound message in place,
+decoders turn an inbound message into the positional payload its ``write`` takes, and a reflective
+path (``msg.data = payload``, and ``data`` inbound) covers primitive ``std_msgs`` with no registered
+converter. One converter per
 *wire format*, not per producer: the same rendered frame is published as ``sensor_msgs/Image`` or as
 ``sensor_msgs/CompressedImage`` purely by which type string an endpoint names, so a camera plugin
 offers a compressed stream without importing a codec (the encoder itself is
@@ -892,7 +952,8 @@ across several transports.
 **Hardwired topics.** A producer can pin an endpoint's topic to an *absolute* name that ignores the
 namespace, so the sim matches an external / hardware topic layout exactly. Any endpoint-producing
 plugin accepts a ``topics:`` map keyed by endpoint role name — ``topics: {image:
-/camera/color/image_raw, joint_states: /joint_states}`` — read via ``Plugin.topic_override(name)``
+/camera/color/image_raw, joint_states: /joint_states}`` — which the framework records on a decorated
+endpoint (``Endpoint.topic``) and a hand-built one reads via ``Plugin.topic_override(name)``
 (``roqsim/plugin.py``) when it fills the backend ``topic``. An absolute topic (leading ``/``) is
 published verbatim by the ROS backend (``_resolve_topic`` in ``ros2_bridge.py``), bypassing
 ``ep.namespace`` (and the node namespace); a relative topic renames the endpoint inside its
@@ -907,7 +968,8 @@ it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefi
 what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
 ``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
 publishes by owner and name with the topic its publisher is on, the message type and the published
-``field`` (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its ``owner`` filter. The topic is
+``field`` and its effective QoS (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its
+``owner`` filter. The topic is
 read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
 a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
 ``entity_reports`` reads over ROS; only the published field travels, so the other fields of a
