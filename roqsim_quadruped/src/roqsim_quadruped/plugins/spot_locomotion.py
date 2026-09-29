@@ -11,8 +11,7 @@ per-step torque loop, unlike the G1). Reports the floating base as ``odom`` and 
 
 ``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
 policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
-command"). The base's true world pose is the core pose endpoint
-``sim/entities/<name>/pose``.
+command"). The base's true world pose is the core pose endpoint ``sim/entities/<name>/pose``.
 
 The observation/action convention, default pose, action scale and joint order are transcribed from
 NVIDIA's Isaac ``Isaac-Velocity-Flat-Spot-v0`` env (bundled as ``policy/spot.yaml``), so the policy
