@@ -60,6 +60,17 @@ sets the held target, so a stream of positions servos the arm. Because it mirror
 topic, one servo/controller config drives sim and hardware unchanged. Arm-agnostic — any arm using
 this plugin gets it; off by default.
 
+A single position is a step, and a stiff servo takes it as fast as its force range allows. Where
+that is wrong — a lift, a gantry, anything carrying a load that must not be thrown — set
+`max_velocity` and `max_acceleration` (a scalar, or `{joint: value}`): each command then sets the
+joint's goal, and the held target travels to it on a trapezoidal ramp, stopping exactly on it. The
+limit applies to every command path alike — a `follow_joint_trajectory` waypoint, a point on
+`joint_trajectory`, `ArmHandle.set_targets`, `test_target`, and a velocity command, whose rate is
+clipped to `max_velocity` — so a single point is a complete "go there" command. A trajectory within
+the limits is followed with a lag of `v²/(2·max_acceleration)` that closes when it stops; one faster
+than them arrives late and is graded by `goal_time_tolerance`; a cancel brakes at `max_acceleration`
+and returns to where it was cancelled. Joints without a limit behave exactly as before.
+
 For a gripper-equipped arm (e.g. `gen3`), `arm_controller` additionally serves a `GripperCommand`
 action at `<ns>/<gripper_controller_name>/gripper_cmd` — a MoveIt `moveit_simple_controller_manager`
 `GripperCommand` controller executes against it to open/close the hand. The commanded position (the
