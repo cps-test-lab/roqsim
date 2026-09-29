@@ -61,6 +61,7 @@ def _plugin(model, data, **cfg):
     plugin = BumperPlugin(dict(cfg), entity="robot")
     assert plugin.validate_config(dict(cfg)) == []
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -198,7 +199,7 @@ def test_one_endpoint_per_zone_and_a_blackboard_handle():
     names = {e.name for e in ctx.interface.all()}
     assert names == {f"bumper/{z}" for z in ZONES}
     assert all(e.lazy for e in ctx.interface.all())
-    assert all(e.backend["ros2"]["type"] == "std_msgs.msg.Bool" for e in ctx.interface.all())
+    assert all(e.result.cls is bool for e in ctx.interface.all())  # a Bool over ROS
     assert ctx.blackboard.get(f"bumper:{plugin.address}")() is plugin.read_state()
 
 

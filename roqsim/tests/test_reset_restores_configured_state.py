@@ -146,6 +146,42 @@ def _flex_world(tmp_path: Path) -> dict:
     )
 
 
+#: A three-wheel truck: a driven axle through base_link and a steered wheel 0.6 m behind it. No
+#: tricycle model is bundled, so the case brings its own.
+_TRICYCLE = """<mujoco><worldbody><body name="base_link" pos="0 0 .1">
+<freejoint name="base_free"/>
+<geom type="box" pos="-.3 0 .15" size=".4 .2 .05" mass="20"/>
+<body name="left_link" pos="0 .25 0"><joint name="left" axis="0 1 0"/>
+  <geom type="cylinder" size=".1 .03" quat=".7071 .7071 0 0" mass="1"/></body>
+<body name="right_link" pos="0 -.25 0"><joint name="right" axis="0 1 0"/>
+  <geom type="cylinder" size=".1 .03" quat=".7071 .7071 0 0" mass="1"/></body>
+<body name="steer_link" pos="-.6 0 0"><joint name="steer" axis="0 0 1" range="-75 75"/>
+  <geom type="box" size=".02 .02 .02" mass=".5"/>
+  <body name="steer_wheel_link"><joint name="steer_wheel" axis="0 1 0"/>
+    <geom type="cylinder" size=".1 .03" quat=".7071 .7071 0 0" mass="1"/></body></body>
+</body></worldbody>
+<actuator><position name="steer_motor" joint="steer" kp="500" kv="20"/>
+<velocity name="left_motor" joint="left" kv="10"/>
+<velocity name="right_motor" joint="right" kv="10"/></actuator></mujoco>"""
+
+
+def _tricycle_world(tmp_path: Path) -> dict:
+    path = tmp_path / "tricycle.xml"
+    path.write_text(_TRICYCLE, encoding="utf-8")
+    drive = {
+        "steer_offset": -0.6,
+        "wheel_radius": 0.1,
+        "track": 0.5,
+        "max_steer_angle": 1.2,
+        "steer_actuator": "steer_motor",
+        "steer_joint": "steer",
+        "drive_actuators": ["left_motor", "right_motor"],
+        "drive_joints": ["left", "right"],
+        "passive_joints": ["steer_wheel"],
+    }
+    return _world(_robot(str(path), {"tricycle_drive": drive}))
+
+
 def _trajectory_world(tmp_path: Path) -> dict:
     path = tmp_path / "square.csv"
     path.write_text("0,0\n50,0\n50,50\n0,50\n0,0\n", encoding="utf-8")
@@ -344,6 +380,7 @@ CASES: dict[str, Case] = {
         {"floorplan": {"lines": [{"id": 0, "x0_m": 2.0, "y0_m": -2.0, "x1_m": 2.0, "y1_m": 2.0}]}}
     ),
     "ackermann_drive": Case(lambda _: _world(_robot("piracer"))),
+    "tricycle_drive": Case(_tricycle_world),
     # navigation and people
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(

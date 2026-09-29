@@ -75,8 +75,8 @@ def test_frames_become_prefixed_sites_at_their_composed_pose(tmp_path):
 
 def test_frames_are_published_as_one_static_chain_in_the_robots_namespace(tmp_path):
     ep = _frames(_engine(_robot(tmp_path), namespace="rb"))
-    assert ep.namespace == "rb" and ep.owner == "robot" and ep.read() is None
-    body, cover, laser = ep.backend["ros2"]["static_tf"]
+    assert ep.namespace == "rb" and ep.owner == "robot"
+    body, cover, laser = [vars(t) for t in ep.read().transforms]
     # Bare names: the bridge applies the namespace. The chain starts at a body that is not the root,
     # so the root's link to it comes first, or the chain would be a tree of its own.
     assert (body["parent"], body["child"]) == ("base_link", "body_link")
@@ -92,7 +92,7 @@ def test_config_frames_extend_the_manifests(tmp_path):
         _robot(tmp_path),
         frames=[{"name": "mast_link", "parent": "laser", "pose": {"position": {"z": 0.3}}}],
     )
-    links = _frames(engine).backend["ros2"]["static_tf"]
+    links = [vars(t) for t in _frames(engine).read().transforms]
     assert [(link["parent"], link["child"]) for link in links][-1] == ("laser", "mast_link")
     # Hung under the upside-down laser, +0.3 in its frame is 0.3 down in the robot's.
     assert np.allclose(links[-1]["translation"], [0, 0, 0.3])
@@ -100,7 +100,9 @@ def test_config_frames_extend_the_manifests(tmp_path):
 
 def test_a_chain_from_the_root_publishes_no_extra_link(tmp_path):
     manifest = "frames:\n  - {name: mast_link, parent: base_link, pose: {position: {z: 0.3}}}\n"
-    links = _frames(_engine(_robot(tmp_path, manifest=manifest))).backend["ros2"]["static_tf"]
+    links = [
+        vars(t) for t in _frames(_engine(_robot(tmp_path, manifest=manifest))).read().transforms
+    ]
     assert [(link["parent"], link["child"]) for link in links] == [("base_link", "mast_link")]
 
 

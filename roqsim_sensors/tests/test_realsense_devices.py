@@ -301,7 +301,7 @@ def test_the_demo_world_keeps_each_realsense_where_the_retired_mount_put_it(tmp_
 def test_the_mount_publishes_the_vendor_chain(model):
     engine = _compiled(model, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tfs = {(t["parent"], t["child"]): t for t in frames.backend["ros2"]["static_tf"]}
+    tfs = {(t["parent"], t["child"]): t for t in [vars(t) for t in frames.read().transforms]}
     assert set(tfs) >= {
         ("world", "camera_bottom_screw_frame"),
         ("camera_bottom_screw_frame", "camera_link"),
@@ -343,7 +343,7 @@ def test_camera_link_sits_at_the_vendor_offset_from_the_mount(model, pos, rpy):
     assert np.allclose(d.xmat[link].reshape(3, 3), r_mount, atol=1e-9)
     # The published camera_link is that body.
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tf_pos, tf_rot = _tf_to_world(frames.backend["ros2"]["static_tf"], "camera_link")
+    tf_pos, tf_rot = _tf_to_world([vars(t) for t in frames.read().transforms], "camera_link")
     assert np.allclose(tf_pos, d.xpos[link], atol=1e-9)
     assert np.allclose(tf_rot, d.xmat[link].reshape(3, 3), atol=1e-9)
 
@@ -379,8 +379,9 @@ def test_the_published_frames_are_the_ones_the_data_is_stamped_in():
     )
     engine = Engine(cfg)
     engine.setup()
-    eps = {e.name: e.backend["ros2"] for e in engine.ctx.interface.all() if e.owner == "cam"}
-    children = {t["child"] for t in eps["frames"]["static_tf"]}
+    cam = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cam"}
+    eps = {name: e.backend["ros2"] for name, e in cam.items()}
+    children = {t.child for t in cam["frames"].read().transforms}
     assert eps["image"]["frame_id"] == "head_camera_color_optical_frame"
     assert eps["depth"]["frame_id"] == "head_camera_depth_optical_frame"
     assert eps["imu"]["frame_id"] == "head_camera_imu_optical_frame"
@@ -409,7 +410,9 @@ def test_depth_is_rendered_from_the_frame_it_is_stamped_in(model, pos, rpy):
     assert np.allclose(d.site_xpos[site], cam_pos, atol=1e-9)
     assert np.allclose(d.site_xmat[site].reshape(3, 3), optical, atol=1e-9)
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tf_pos, tf_rot = _tf_to_world(frames.backend["ros2"]["static_tf"], "camera_depth_optical_frame")
+    tf_pos, tf_rot = _tf_to_world(
+        [vars(t) for t in frames.read().transforms], "camera_depth_optical_frame"
+    )
     assert np.allclose(tf_pos, cam_pos, atol=1e-9)
     assert np.allclose(tf_rot, optical, atol=1e-9)
     # And it is not the colour camera: the two sit a baseline offset apart.
@@ -490,7 +493,7 @@ def test_a_depth_return_reprojects_onto_the_surface_through_tf(model):
     eps = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cam"}
     assert eps["points"].backend["ros2"]["frame_id"] == "camera_depth_optical_frame"
     pos, rot = _tf_to_world(
-        eps["frames"].backend["ros2"]["static_tf"], "camera_depth_optical_frame"
+        [vars(t) for t in eps["frames"].read().transforms], "camera_depth_optical_frame"
     )
     points = eps["points"].read().points.astype(float) @ rot.T + pos
     # The wall's face: the returns within a few millimetres of its plane (its side face, seen past

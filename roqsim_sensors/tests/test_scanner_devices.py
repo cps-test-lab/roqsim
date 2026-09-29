@@ -416,7 +416,9 @@ def test_scan_site_is_the_manifest_frame_at_the_declared_scan_plane_offset(devic
     framed = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, FRAME_ID)
     assert scan >= 0 and framed >= 0
     frame_rot = d.site_xmat[framed].reshape(3, 3)
-    np.testing.assert_allclose(d.site_xpos[scan], d.site_xpos[framed] + frame_rot @ offset, atol=1e-9)
+    np.testing.assert_allclose(
+        d.site_xpos[scan], d.site_xpos[framed] + frame_rot @ offset, atol=1e-9
+    )
     np.testing.assert_allclose(d.site_xmat[framed], d.site_xmat[scan], atol=1e-9)
 
     # What is published is the frame's pose, not the site's: the static chain composes to the frame
@@ -433,7 +435,7 @@ def test_scan_site_is_the_manifest_frame_at_the_declared_scan_plane_offset(devic
 
 def _frames_tf(engine: Engine, device: str) -> list[dict]:
     (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == device]
-    return frames.backend["ros2"]["static_tf"]
+    return [vars(t) for t in frames.read().transforms]
 
 
 def _chain(engine: Engine, device: str) -> list[tuple[str, str]]:

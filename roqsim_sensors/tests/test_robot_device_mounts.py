@@ -100,10 +100,7 @@ def test_every_frame_a_robot_declares_is_published(model):
     for name in frames:
         assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, f"r_{name}") >= 0, name
     children = {
-        t["child"]
-        for e in engine.ctx.interface.all()
-        if e.name == "frames"
-        for t in e.backend["ros2"]["static_tf"]
+        t.child for e in engine.ctx.interface.all() if e.name == "frames" for t in e.read().transforms
     }
     assert frames <= children, model
 
