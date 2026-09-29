@@ -347,3 +347,17 @@ def test_an_unresolved_ref_names_the_world_file_and_the_address(tmp_path):
         instantiate_plugins(load_config(world))
     assert str(exc.value).startswith(f"{world.resolve()}: robot.x: ")
     assert "not_a_plugin_xyz" in str(exc.value)
+
+
+class Buggy(Plugin):
+    @classmethod
+    def expand(cls, spec, world, base_dir):
+        raise KeyError("a bug in expand")
+
+
+def test_a_bug_in_expand_propagates_unchanged(tmp_path):
+    from roqsim.config import load_config
+
+    world = _world_file(tmp_path, [{f"{__name__}:Buggy": {}, "name": "b"}])
+    with pytest.raises(KeyError, match="a bug in expand"):
+        load_config(world)

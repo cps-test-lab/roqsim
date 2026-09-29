@@ -140,10 +140,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
     probably did not mean.
     """
-    import yaml
-
-    from roqsim.config import PluginError, load_config
-    from roqsim.models import ModelError
+    from roqsim.config import INPUT_ERRORS, PluginError, load_config
 
     overrides = overrides or {}
     report: dict = {
@@ -171,9 +168,8 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         # The aggregated one: every plugin's validation errors, in one message.
         report["problems"].append(_problem("config", str(exc)))
         return report
-    # What the loader raises for bad input: a missing or unreadable file, a document that does not
-    # parse, a model that does not resolve. Anything else is a bug here and keeps its traceback.
-    except (OSError, ValueError, yaml.YAMLError, ModelError) as exc:
+    # Only bad input is a finding; anything else is a bug here and keeps its traceback.
+    except INPUT_ERRORS as exc:
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
 
