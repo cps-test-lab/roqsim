@@ -25,7 +25,7 @@ Repository layout
    roqsim_manipulation/         arm plugins only;  roqsim_manipulation_assets/  arm + gripper models
    roqsim_mobile_manipulation/  base AND arm robots — the one package depending on both families
    roqsim_humanoid/ roqsim_quadruped/   legged families;  roqsim_walker/  pedestrians (dynamic obstacles)
-   roqsim_scene_builder/ roqsim_webctrl/   human-in-the-loop scene windows, web control UI
+   roqsim_scene_builder/          human-in-the-loop scene windows
    scenario_execution_roqsim/     OSC actions (entity_moved, entity_monitor, entity_call, ...);
                                     the ONLY package here that may import scenario_execution
    ros2_ws/src/
