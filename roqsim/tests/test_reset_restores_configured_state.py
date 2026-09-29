@@ -354,6 +354,7 @@ CASES: dict[str, Case] = {
     "upright_monitor": Case(lambda _: _mobile({"upright_monitor": {}})),
     "energy_monitor": Case(lambda _: _mobile({"energy_monitor": {}})),
     "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
+    "pose_publisher": Case(lambda _: _world(_robot("turtlebot4"))),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
     "payload": Case(lambda _: _mobile({"payload": {"mass": 0.5}})),
     "model_override": Case(
@@ -407,7 +408,6 @@ CASES: dict[str, Case] = {
     "range_sensor": Case(lambda _: _world(_robot("turtlebot4"))),
     "imu": Case(lambda _: _mobile({"imu": {}})),
     "gnss": Case(lambda _: _mobile({"gnss": {"datum": {"lat": 47.4, "lon": 8.5, "alt": 400.0}}})),
-    "create3_pose_publisher": Case(lambda _: _world(_robot("turtlebot4"))),
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
     "livox_mid360": Case(lambda _: _sensor("mid360")),
     "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),

@@ -720,11 +720,15 @@ def test_e1_the_manifest_declares_the_create3_surface():
             assert cfg["h_fov"] == pytest.approx(math.radians(10), abs=1e-6)
             assert (cfg["range_min"], cfg["max_range"]) == (0.025, 0.2)
 
-    assert _manifest_plugin("create3_pose_publisher") == {
-        "topic": "_internal/sim_ground_truth_pose",
-        "frame": "turtlebot4",
-        "sites": ["mouse", "ir_omni"],
+    assert _manifest_plugin("pose_publisher") == {
+        "poses": [
+            {"frame": ".", "child": "turtlebot4"},
+            {"frame": "mouse", "relative_to": "base_link"},
+            {"frame": "ir_omni", "relative_to": "base_link"},
+        ],
         "rate_hz": 62,
+        "lazy": True,
+        "topics": {"poses": "_internal/sim_ground_truth_pose"},
     }
 
     assert _manifest_plugin("imu")["topic"] == "imu"
@@ -914,10 +918,12 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
                 "name": "standard_dock",
                 "components": [
                     {
-                        "create3_pose_publisher": {
-                            "topic": "_internal/sim_ground_truth_dock_pose",
-                            "frame": "standard_dock",
-                            "sites": ["halo_link"],
+                        "pose_publisher": {
+                            "poses": [
+                                {"frame": "."},
+                                {"frame": "halo_link", "relative_to": "std_dock_link"},
+                            ],
+                            "topics": {"poses": "_internal/sim_ground_truth_dock_pose"},
                         },
                         "name": "gt",
                     },

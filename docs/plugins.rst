@@ -395,7 +395,10 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
      - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
-     - create3_pose_publisher: {frame: turtlebot4, sites: [mouse, ir_omni], rate_hz: 62, ...}
+     - pose_publisher:                # the base in the world, its mouse and IR receiver on it
+         poses: [{frame: ., child: turtlebot4}, {frame: mouse, relative_to: base_link}, ...]
+         rate_hz: 62
+         topics: {poses: _internal/sim_ground_truth_pose}
        name: gt
 
 The second half is the Create 3 base's own sensor surface -- bumper zones, cliff and IR proximity
@@ -1097,6 +1100,60 @@ are **body ids**, so they are stable across frames and runs rather than dependin
 were seen in; they are correspondingly not contiguous, which is why the detections name them.
 And class id **0 is background**: a declared class with id 0 would be indistinguishable from an
 unlabelled geom, so it is refused at load.
+
+.. _paths:
+
+Paths: endpoints and frames
+---------------------------
+
+Everything a world offers by name is addressed by one grammar, a path ``<component>/<name>``
+(:mod:`roqsim.paths`). The leading segments are the address of a component -- its world entry's
+dotted address, dots as slashes, so ``tb4.oakd`` is ``tb4/oakd`` -- as deep as they name one; the
+last segment, or the rest, is a name that component offers:
+
+* **An endpoint** of the plugin it names: ``tb4/diff_drive/cmd_vel``, ``ur5e/force_torque/tare``
+  (:doc:`control`). An endpoint is also named by the entity that owns it and its name
+  (``entity_call(entity: 'ur5e', command: 'force_torque/tare')``) where that entity has one of that
+  name.
+* **A frame** of the entity it names: one of its bodies, its sites, the frames its ``frames:`` block
+  declares, or a device's frame chain, each named as TF shows it, without the model prefix:
+  ``tb4/base_link``, ``tb4/mouse``, ``tb4/oakd_camera_bracket``,
+  ``tb4/oakd/oakd_rgb_camera_optical_frame``, ``ur5e/tool_site``. The entity's path alone,
+  ``tb4``, is its root: the pose of the entity itself.
+
+The caller says which kind it wants, so an endpoint and a frame of one name never collide. Within a
+kind, a path that names two things -- a body and a site of one name -- is refused naming both, and an
+unknown path is refused with the nearest known one and what its component offers. In a plugin
+nested under an entity, a frame path is relative to that entity: ``.`` is the entity itself, and a
+leading ``/`` starts at the top of the world. A plugin resolves one with
+:func:`roqsim.frames.resolve_frame` and reads its pose with :func:`roqsim.frames.frame_pose`, which
+takes both from the core pose data: an entity's root from its pose endpoint
+``sim/entities/<name>/pose``, a body from ``data.xpos``/``xquat``, a site from ``site_xpos``/``xmat``.
+
+Publishing true poses (``pose_publisher``)
+------------------------------------------
+
+A ROS stack that reads simulator ground truth off a topic -- a vendor simulator's adapter that turns
+true poses into an optical-flow reading or a dock's infrared field -- gets it from ``pose_publisher``,
+the counterpart of Gazebo's ``PosePublisher``. Each entry names a frame by its path, and optionally
+the frame it is relative to and the child name it goes out under::
+
+   components:
+     - spawn_robot: {model: turtlebot3_waffle}
+       name: robot
+     - pose_publisher:
+         poses:
+           - {frame: robot}                                     # map -> robot
+           - {frame: robot/lds01/base_scan, relative_to: robot/base_link, child: lidar}
+         rate_hz: 30
+         topics: {poses: ground_truth}
+
+Every pose is one endpoint, ``poses/<child>``, carrying a :class:`~roqsim.types.Transform` from the
+``relative_to`` frame's TF name (``world_frame``, default ``map``, for the world) to the child; all
+go out on the one topic, and ROS carries each as a one-transform ``tf2_msgs/TFMessage``. ``lazy:
+true`` skips the reads while nobody subscribes. The TurtleBot 4's manifest and the Create 3 world's
+dock carry one each for the Create 3 stack (:doc:`create3_stack`). An analysis does not need it: the
+recording holds every body's true pose (:doc:`ground_truth`).
 
 What a run cost
 ---------------

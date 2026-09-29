@@ -1,5 +1,7 @@
 """The Create 3 ground-truth streams: the topics, frames, rate and numbers its stack reads.
 
+The TurtleBot 4's manifest and the Create 3 world's dock declare them as ``pose_publisher`` entries.
+
 ``REFERENCE`` holds, for this scene after this drive, what each stream carries on the wire: the owner,
 topic, parent frame, child frame, rate, laziness, translation and rotation of its one transform. The
 TurtleBot 4 publishes its world pose under ``turtlebot4`` and its mouse and IR receiver relative to
@@ -64,11 +66,14 @@ def scene():
                 "name": "standard_dock",
                 "components": [
                     {
-                        "create3_pose_publisher": {
-                            "topic": _DOCK,
-                            "frame": "standard_dock",
-                            "sites": ["halo_link"],
+                        "pose_publisher": {
+                            "poses": [
+                                {"frame": "."},
+                                {"frame": "halo_link", "relative_to": "std_dock_link"},
+                            ],
                             "rate_hz": 62,
+                            "lazy": True,
+                            "topics": {"poses": _DOCK},
                         },
                         "name": "gt",
                     }
@@ -151,20 +156,3 @@ def test_the_world_pose_is_the_core_pose_endpoints(scene):
     assert np.array_equal(pos, core.position) and np.array_equal(quat, core.orientation)
     bid = mujoco.mj_name2id(scene.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     assert np.array_equal(pos, scene.ctx.data.xpos[bid])
-
-
-def test_a_missing_site_is_refused():
-    world = {
-        "sim": {"timestep": 0.002},
-        "components": [
-            {
-                "spawn_robot": {"model": "turtlebot3_waffle"},
-                "name": "robot",
-                "components": [{"create3_pose_publisher": {"sites": ["mouse"]}}],
-            }
-        ],
-    }
-    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
-    engine.ctx.seed = 0
-    with pytest.raises(RuntimeError, match="site 'mouse' not found"):
-        engine.setup()

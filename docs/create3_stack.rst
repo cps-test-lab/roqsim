@@ -68,8 +68,9 @@ and only the physics is roqsim's:
    * - Wheel drop from ``joint_states``, ground-truth poses of the robot, its mouse and IR receiver,
        of the dock and its halo emitter, on ``_internal/sim_ground_truth_*_pose``
      - the URDF's suspension joints; Gazebo's ``PosePublisher``
-     - the model's suspension joints; ``create3_pose_publisher`` on the robot (its manifest)
-       and on the ``create3_dock`` prop: the world pose and the sites relative to the body
+     - the model's suspension joints; a ``pose_publisher`` on the robot (its manifest) and one on
+       the ``create3_dock`` prop (the world): the entity's pose in the world, and the mouse, IR
+       receiver and halo emitter relative to the base
    * - ``hazard_detection``, ``ir_intensity``, ``wheel_vels``, ``wheel_ticks``, ``wheel_status``,
        ``kidnap_status``, ``dock_status``, ``ir_opcode``, ``mouse``, ``slip_status``, ``stop_status``,
        ``battery_state``, ``interface_buttons``; ``safety_override``, ``max_speed``; ``e_stop``,
