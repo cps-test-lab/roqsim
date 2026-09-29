@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from roqsim.bridge import BridgeBase
 from roqsim.context import Endpoint, SimContext
 
@@ -177,3 +179,26 @@ def test_eager_endpoint_publishes_to_nobody_unchanged():
     bridge.configure(ctx)
     bridge.post_step(ctx)
     assert bridge.published == ["image", "camera_info"]
+
+
+# -- finding an endpoint ---------------------------------------------------------------------------
+
+
+def test_an_endpoint_is_found_by_its_owner_and_name():
+    ctx = _ctx_with_endpoints()
+    assert ctx.interface.find("robot2", "odom").owner == "robot2"
+    assert ctx.interface.find("robot1", "cmd_vel").direction == "in"
+    assert ctx.interface.find("robot3", "odom") is None
+    assert ctx.interface.find("robot1", "imu") is None
+
+
+def test_a_pair_that_names_two_endpoints_is_refused_rather_than_guessed():
+    """A robot with two arm controllers declares `joint_states` twice, scoped by namespace; the pair
+    (entity, name) cannot say which, and returning the first would read the wrong arm."""
+    ctx = SimContext(config={})
+    for ns in ("dual/left", "dual/right"):
+        ctx.interface.add(
+            Endpoint(name="joint_states", direction="out", owner="dual", namespace=ns)
+        )
+    with pytest.raises(LookupError, match="dual/left.*dual/right"):
+        ctx.interface.find("dual", "joint_states")

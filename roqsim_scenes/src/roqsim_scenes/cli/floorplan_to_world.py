@@ -38,6 +38,12 @@ Usage::
         --world-out ../src/roqsim_scenes/worlds/myroom.yaml \\
         --markers-map markers.json          # {"1": "industrial_table",
                                             #  "2": {"model": "single_bed", "yaw_deg": 180}}
+
+Exit status (``roqsim.exit_status``): ``0`` and one line naming the world and the scene dir written;
+``2`` and one ``roqsim scenes floorplan-to-world: ...`` line on stderr when an input is wrong -- a
+floorplan or map file that is missing or is not JSON, a floorplan with no walls, a marker without a
+model, a door on a line that is not there. A caller in a loop greps that line; it does not read a
+traceback.
 """
 
 from __future__ import annotations
@@ -50,6 +56,9 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim import exit_status
+from roqsim.floorplan_geometry import check_sketch, stamp_sketch
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 # The wall/opening arithmetic is shared with the plan-view renderer (roqsim_scenes.floorplan_to_png), so it
@@ -179,7 +188,7 @@ def scene_manifest(
     }
     if floorplan_ref is not None:
         manifest["floorplan"] = floorplan_ref
-    return manifest
+    return scene_manifest_format.stamp(manifest)
 
 
 def _view(bbox: tuple[float, float, float, float]) -> dict:
@@ -268,8 +277,10 @@ def door_placements(
         label = entry.get("name", f"door_{did}")
         door = {
             "prefix": entry.get("prefix", f"door_{did}_"),
-            "pos": [round(cx, 3), round(cy, 3), 0.0],
-            "rpy": [0.0, 0.0, round(yaw, 5)],
+            "pose": {
+                "position": {"x": round(cx, 3), "y": round(cy, 3)},
+                "orientation": {"yaw": round(yaw, 5)},
+            },
             "width": round(width, 3),
             "height": round(height, 3),
             "model": entry.get("model", "door"),
@@ -432,6 +443,7 @@ def generate(
 
     import yaml
 
+    check_sketch(floorplan, "floorplan")
     lines = floorplan.get("lines") or []
     if len(lines) < 1:
         raise ValueError("floorplan has no wall lines to build")
@@ -451,7 +463,9 @@ def generate(
     _write_geometry(out_dir, bbox, wall_thickness, pieces, ceiling_h if ceiling else None)
     # The floorplan is the single source of truth: write it verbatim beside scene.json and reference
     # it (scene.json carries only the path, never a copy).
-    (out_dir / _FLOORPLAN_NAME).write_text(json.dumps(floorplan, indent=2), encoding="utf-8")
+    (out_dir / _FLOORPLAN_NAME).write_text(
+        json.dumps(stamp_sketch(floorplan), indent=2), encoding="utf-8"
+    )
     (out_dir / "scene.json").write_text(
         json.dumps(
             scene_manifest(
@@ -493,8 +507,11 @@ def generate(
     return world_out
 
 
-def main(argv: list | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Generate a roqsim world from a floorplan.")
+def main(argv: list | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Generate a roqsim world from a floorplan.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
+    )
     ap.add_argument(
         "--floorplan", required=True, help="floorplan JSON from sketch_floorplan_by_human"
     )
@@ -548,31 +565,44 @@ def main(argv: list | None = None) -> None:
     )
     args = ap.parse_args(argv)
 
-    floorplan = json.loads(Path(args.floorplan).read_text(encoding="utf-8"))
-    markers_map = (
-        json.loads(Path(args.markers_map).read_text(encoding="utf-8")) if args.markers_map else {}
-    )
-    markers_map = {str(k): v for k, v in markers_map.items()}
-    doors_map = (
-        json.loads(Path(args.doors_map).read_text(encoding="utf-8")) if args.doors_map else {}
-    )
-    doors_map = {str(k): v for k, v in doors_map.items()}
+    # Every way an input can be wrong ends here as one line and exit 2 (see the module docstring).
+    try:
+        floorplan = _read_json(args.floorplan, "floorplan")
+        markers_map = _read_json(args.markers_map, "markers map") if args.markers_map else {}
+        doors_map = _read_json(args.doors_map, "doors map") if args.doors_map else {}
+        out = generate(
+            floorplan,
+            Path(args.out_dir),
+            args.scene_name,
+            Path(args.world_out),
+            {str(k): v for k, v in markers_map.items()},
+            args.ceiling_h,
+            args.wall_thickness,
+            args.opening_h,
+            {str(k): v for k, v in doors_map.items()},
+            ceiling=args.ceiling,
+            bake_config=Path(args.bake_config) if args.bake_config else None,
+        )
+    except (KeyError, ValueError, OSError) as err:
+        # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
+        message = err.args[0] if isinstance(err, KeyError) and err.args else err
+        print(f"roqsim scenes floorplan-to-world: {message}", file=sys.stderr)
+        return exit_status.BAD_INPUT
+    print(f"wrote world {out} (scene dir {Path(args.out_dir)})")
+    return exit_status.OK
 
-    out = generate(
-        floorplan,
-        Path(args.out_dir),
-        args.scene_name,
-        Path(args.world_out),
-        markers_map,
-        args.ceiling_h,
-        args.wall_thickness,
-        args.opening_h,
-        doors_map,
-        ceiling=args.ceiling,
-        bake_config=Path(args.bake_config) if args.bake_config else None,
-    )
-    print(f"wrote world {out}")
+
+def _read_json(path: str, what: str) -> dict:
+    """A JSON document from *path*, or a ``ValueError`` saying which input is missing or not JSON."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as err:
+        raise ValueError(f"{what} {path!r} cannot be read: {err.strerror or err}") from None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"{what} {path!r} is not JSON: {err}") from None
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

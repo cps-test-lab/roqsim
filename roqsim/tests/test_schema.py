@@ -314,7 +314,7 @@ def test_the_whole_path_raises_for_a_world():
     from roqsim.config import PluginError, instantiate_plugins, load_config_from_dict
 
     cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{"ceiling": {"above_Z": 2.0}, "name": "roof"}]}
+        {"sim": {}, "components": [{"ceiling": {"above_Z": 2.0}, "name": "roof"}]}
     )
     with pytest.raises(PluginError, match="did you mean 'above_z'"):
         instantiate_plugins(cfg)

@@ -1,4 +1,4 @@
-"""Tests for the sensor-coverage subpackage: FOV membership, adapters, and the coverage engine."""
+"""Tests for the coverage subpackage: FOV membership, adapters, and the coverage engine."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
 from roqsim_sensors.models import MODELS_DIR
 
+from roqsim import exit_status
 from roqsim.manifest import manifest_fov
 from roqsim.models import resolve_model
 from roqsim.registry import resolve_plugin
@@ -619,3 +620,187 @@ def test_manifest_fov_near_matches_the_capture_plugin(name):
     if clip_near is None:
         pytest.skip(f"{name}: {ref} has no depth clip")
     assert fov["near"] == pytest.approx(clip_near)
+
+
+def _estimate_argv(tmp_path, world: str, placements: str) -> list[str]:
+    return [
+        "estimate",
+        "--world",
+        world,
+        "--placements",
+        placements,
+        "--out",
+        str(tmp_path / "run"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("world", "placements", "expect"),
+    [
+        ("/no/such/world.yaml", "p.json", "does not exist"),
+        ("no_such_pkg:world", "p.json", "no_such_pkg"),
+        ("WORLD", "/no/such/p.json", "/no/such/p.json"),
+        ("WORLD", "NOT_JSON", "p.json"),
+    ],
+)
+def test_main_reports_a_wrong_input_on_one_line_and_exits_2(
+    tmp_path, capsys, world, placements, expect
+):
+    """The agent driving propose -> evaluate -> refine greps stderr and branches on the status, so a
+    wrong input is one `roqsim sensors coverage:` line and exit 2 -- never a traceback."""
+    from roqsim_sensors.coverage import cli
+
+    if world == "WORLD":
+        world_path = tmp_path / "w.xml"
+        world_path.write_text(
+            "<mujoco><worldbody><geom type='box' size='.1 .1 .1'/></worldbody></mujoco>"
+        )
+        world = str(world_path)
+    if placements == "p.json":
+        (tmp_path / "p.json").write_text("[]")
+        placements = str(tmp_path / "p.json")
+    elif placements == "NOT_JSON":
+        (tmp_path / "p.json").write_text("{not json")
+        placements = str(tmp_path / "p.json")
+    assert cli.main(_estimate_argv(tmp_path, world, placements)) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1, err
+    assert err[0].startswith("roqsim sensors coverage: ")
+    assert expect in err[0]
+    assert not (tmp_path / "run").exists(), "nothing is written for an input that was refused"
+
+
+def test_regions_from_a_sketch_it_cannot_read_are_refused():
+    from roqsim_sensors.coverage.regions import regions_from_sketch
+
+    with pytest.raises(ValueError, match="floorplan sketch version 99"):
+        regions_from_sketch({"version": 99, "rooms": [], "lines": []})
+
+
+_BOX = "<mujoco><worldbody><body name='box'><geom type='box' size='.1 .1 .1'/></body></worldbody></mujoco>"
+
+
+@pytest.mark.parametrize("cmd", ["estimate", "greedy"])
+@pytest.mark.parametrize("form", ["set", "override"])
+def test_an_override_reaches_the_world_coverage_compiles(tmp_path, monkeypatch, cmd, form):
+    """`--set`/`--override` are `roqsim sim`'s, so coverage is measured on the world a run builds."""
+    from roqsim_sensors.coverage import cli
+
+    from roqsim.engine import Engine
+
+    class Compiled(Exception):
+        pass
+
+    seen, setup = [], Engine.setup
+
+    def spy(self, *a, **kw):
+        setup(self, *a, **kw)
+        seen.append(self.ctx.model.opt.timestep)
+        raise Compiled
+
+    monkeypatch.setattr(Engine, "setup", spy)
+    (tmp_path / "box.xml").write_text(_BOX)
+    world = tmp_path / "world.yaml"
+    world.write_text(
+        "sim: {timestep: 0.002}\ncomponents:\n"
+        "  - spawn_model: {model: box.xml, motion: static}\n    name: box\n"
+    )
+    if form == "set":
+        flags = ["--set", "sim.timestep=0.0005"]
+    else:
+        (tmp_path / "run.yaml").write_text("sim: {timestep: 0.0005}\n")
+        flags = ["--override", str(tmp_path / "run.yaml")]
+    argv = [cmd, "--world", str(world), "--out", str(tmp_path / "run"), *flags]
+    if cmd == "estimate":
+        argv += ["--placements", str(tmp_path / "p.json")]
+    with pytest.raises(Compiled):
+        cli.main(argv)
+    assert seen == [0.0005]
+
+
+@pytest.mark.parametrize("flags", [["--set", "sim.timestep=0.001"], ["--override", "run.yaml"]])
+def test_an_override_with_an_mjcf_world_is_refused_by_name(tmp_path, capsys, flags):
+    from roqsim_sensors.coverage import cli
+
+    (tmp_path / "w.xml").write_text(_BOX)
+    (tmp_path / "p.json").write_text("[]")
+    argv = _estimate_argv(tmp_path, str(tmp_path / "w.xml"), str(tmp_path / "p.json"))
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([*argv, *flags])
+    assert exit_info.value.code == exit_status.BAD_INPUT
+    assert f"{flags[0]} acts on a world YAML, and --world names a bare MJCF" in (
+        capsys.readouterr().err
+    )
+    assert not (tmp_path / "run").exists()
+
+
+def test_loading_a_world_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkeypatch):
+    """The ``dummy`` plugin counts its own shutdowns."""
+    from roqsim_sensors.coverage.cli import load_world
+
+    from roqsim.engine import Engine
+
+    seen: list[Engine] = []
+    setup = Engine.setup
+
+    def recording_setup(self):
+        seen.append(self)
+        setup(self)
+
+    def fails(*args, **kwargs):
+        raise RuntimeError("injected after setup")
+
+    monkeypatch.setattr(Engine, "setup", recording_setup)
+    monkeypatch.setattr(mujoco, "mj_forward", fails)
+    world = tmp_path / "w.yaml"
+    world.write_text("sim:\n  timestep: 0.005\ncomponents:\n  - dummy: {}\n    name: d0\n")
+    with pytest.raises(RuntimeError, match="injected"):
+        load_world(str(world))
+    assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]
+
+
+# -- target spelling ---------------------------------------------------------------------------------
+
+
+def test_probe_target_frac_is_the_value_build_report_reads():
+    """The plugin's ``target: {k, frac}`` -- the spelling coverage.rst and the CLI use -- must reach
+    ``build_report`` as its ``value``, or ``target_met`` is judged against the default 1.0."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    cls = resolve_plugin("sensor_coverage_probe", None)
+    probe = cls({"target": {"k": 2, "frac": 0.6}})
+    assert probe.target == {"metric": "fraction_covered", "k": 2, "value": 0.6}
+    assert probe.target == parse_target("k=2,frac=0.6")
+    assert cls({}).target == {}
+
+
+def test_a_target_key_nothing_reads_is_refused_on_both_front_doors():
+    """A misspelt ``frac`` would otherwise be dropped and ``target_met`` judged against 1.0."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    with pytest.raises(ValueError, match="'fraction'"):
+        parse_target("k=1,fraction=0.9")
+    with pytest.raises(ValueError, match="'fraction'"):
+        resolve_plugin("sensor_coverage_probe", None)({"target": {"fraction": 0.9}})
+
+
+@pytest.mark.parametrize(
+    "text, match",
+    [("k=1,0.95", "'0.95' is not key=value"), ("k=0,frac=0.9", "k=0"), ("frac=95", "frac=95")],
+)
+def test_a_target_that_would_be_misjudged_is_refused(text, match):
+    """A bare value would be dropped, a percentage never met, and k=0 met by every sample."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    with pytest.raises(ValueError, match=match):
+        parse_target(text)
+
+
+def test_target_met_is_judged_at_the_targets_own_k():
+    """A k above the report's fixed k1..k3 columns is judged at that k, not against k1."""
+    from roqsim_sensors.coverage.report import build_report, normalise_target
+
+    result = _synthetic_result()  # counts 0, 1, 2, 4: k1 = 0.75, k4 = 0.25
+    rep = build_report(result, target=normalise_target({"k": 4, "frac": 0.5}))
+    assert rep["achieved"]["fraction_covered_k4"] == pytest.approx(0.25)
+    assert rep["target_met"] is False

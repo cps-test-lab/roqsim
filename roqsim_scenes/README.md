@@ -31,6 +31,11 @@ sdf_to_scene.py   (Gazebo/Ignition SDF → the same)         ← venv (fetches +
 scene_to_mjcf.py  (scene.json + scene.yaml → <name>.xml)   ← venv (has mujoco)
 ```
 
+Every importer stamps its `scene.json` with `"format": "roqsim_scenes.scene_manifest"` and a
+`"version"` (`roqsim_scenes.scene_manifest`); an unstamped one is version 1. Every reader (the bake,
+`scene-to-map`, `scene-to-floorplan`) refuses another format by name — the web descriptor
+`roqsim export web` writes is also a `scene.json` — and a version newer than it reads.
+
 A world that is **generated rather than authored** takes a different route. Its input is a 2D
 occupancy grid — no source file, no meshes to convert, pin or hull — and there are two ways down from
 it, because "occupancy grid" covers two different things:
@@ -108,6 +113,40 @@ because the MJCF loads and steps happily in every case:
 Meshes keep the source's **UVs and diffuse textures** (one submesh per material, since a MuJoCo geom
 has exactly one material). Source JPEGs are re-encoded to PNG on the way in — MuJoCo reads PNG only.
 
+## Commands
+
+Every tool is `roqsim scenes <tool>`; `roqsim scenes <tool> --help` gives its options, and
+`python -m pydoc` on the module it wraps (e.g. `roqsim_scenes.cli.gridmap_to_world`) the reasoning
+behind it.
+
+| tool | what it does | where it is covered |
+|---|---|---|
+| `sdf-to-scene` | Gazebo/Ignition SDF world → static scene (`scene.json` + OBJs) | [General import path](#general-import-path-other-scenes) |
+| `usd-to-scene` | IsaacSim/USD world → static scene (runs in Blender) | [Importing another USD](#importing-another-usd) |
+| `jsonld-to-scene` | Floorplan-DSL json-ld + its mesh → `scene.json`: the mesh as the visual, one convex collider per wall with doorways left open | below |
+| `scene-to-mjcf` | static scene → a plain MuJoCo MJCF world | [General import path](#general-import-path-other-scenes) |
+| `mjcf-to-world` | an already-materialled MJCF building → a packaged roqsim world | [Regenerating the world](#regenerating-the-world) |
+| `scene-to-map` | a scene → Nav2 occupancy grid (`map.pgm` + `map.yaml`) | its `--help` |
+| `fuel-fetch` | resolve, download and pin the Fuel models an SDF world includes | below |
+| `cad-to-png`, `dxf-to-floorplan` | look at, then convert, a 2D CAD floorplan | [From a 2D CAD drawing](#from-a-2d-cad-drawing-dxf) |
+| `floorplan-to-png` | a floorplan JSON → PNG plan view with a scale bar | [Look at a floorplan](#look-at-a-floorplan-roqsim-floorplan-to-png) |
+| `mapimage-to-floorplan`, `gridmap-to-floorplan`, `gridmap-to-world` | a map picture or occupancy grid → floorplan JSON, or a grid → world + map | `docs/scene_builder.rst` |
+| `floorplan-to-world`, `scene-to-floorplan` | floorplan JSON → world, and back | `docs/scene_builder.rst` |
+| `describe`, `inputs` | what a world provides, and every file it is defined by, as JSON | `docs/interfaces.rst` |
+
+**`jsonld-to-scene`** exists because MuJoCo collides a mesh by its convex hull, so a wall with a door
+cut into it imported as a mesh is a solid slab to physics while every picture and `/scan` shows the
+doorway open. It splits a Floorplan-DSL environment by role — `roqsim scenes jsonld-to-scene --mesh
+<env>/3d-mesh/<name>.stl --out-dir <env>/mujoco`, then `scene-to-mjcf` — or use the `floorplan`
+plugin, which reads the same json-ld at load time.
+
+**`fuel-fetch`** fetches each Fuel model an SDF world `<include>`s once into a local cache and records
+version, sha256 and licence in an `assets.lock.json`, so a port rebuilds byte-identically without
+the registry: `roqsim scenes fuel-fetch --world <world.sdf> --lock <scene>/assets.lock.json`. The
+cache is `--cache DIR`, else `ROQSIM_FUEL_CACHE`, else `~/.cache/roqsim/fuel`. Only Fuel URIs are
+fetched; a `model://` include is local, and `sdf-to-scene` resolves it on `--model-path` and the
+Gazebo resource path variables, never over the network.
+
 ## What's here
 
 - `scenes/tb3_world/` — the ROS 2 `turtlebot3_world` port: `scene.json`, `assets.lock.json`,
@@ -172,10 +211,11 @@ roqsim scenes scene-to-mjcf --scene <name> \
     --prop path/to/prop.obj,12.9,10.4
 ```
 
-`--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor). Textures resolve
-via `roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
-`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on a
-UV'd mesh).
+`--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor, turned YAW
+radians about its footprint centre, as a world's `pose:` reads its `yaw`). Textures resolve via
+`roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
+`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on
+a UV'd mesh).
 
 **Collision** is convex per object by default (`collision: convex`); walls/columns/doors are near-convex
 so their hulls are exact, a concave prop collides as its filled hull. `collision: none` makes the scene
@@ -258,8 +298,8 @@ the reader onto `ezdxf`.
 
 Rooms and doors are left empty on purpose: open the result in the scene-builder's 2D window
 (`sketch_floorplan_by_human`, `initial=…`) to name rooms, add door openings and tweak walls, then run
-`floorplan_to_world.py` on the finished `floorplan.json` to bake the world (see the `scene-update`
-skill for the full human-in-the-loop flow):
+`roqsim scenes floorplan-to-world` on the finished `floorplan.json` to bake the world, then review it
+with `review_scene_by_human` (`docs/scene_builder.rst`):
 
 ```
 roqsim scenes floorplan-to-world \
@@ -292,11 +332,13 @@ building its own `scene.yaml` beside its `floorplan.json` when its surfaces diff
 — carpet instead of plaster underfoot, a raw concrete soffit — instead of repainting the look every
 other generated room inherits. It is authored, so a rebake reads it and never overwrites it. A
 `materials` entry takes `texture` / `rgba` / `physical_size` / `reflectance` / `emission` (the last is
-what keeps a soffit, which faces away from every lamp below it, from rendering near-black).
+what keeps a soffit, which faces away from every lamp below it, from rendering near-black). The bake
+refuses a key it does not read, at the top level and inside `floor`, `light` and each material, with
+the nearest known one named: a misspelt key would otherwise bake the default in its place.
 
 Each marker becomes a `spawn_model` in the world YAML. `--markers-map` maps a marker id to the model
 to place — either a bare name (`"single_bed"`) or `{"model": "single_bed", "yaw_deg": 180}` to also
-set the prop's heading (about +Z, 0 = +x, CCW → `spawn_model`'s `rpy`). A heading the human dragged in
+set the prop's heading (about +Z, 0 = +x, CCW → the yaw of `spawn_model`'s `pose`). A heading the human dragged in
 the 2D window (the marker's own `yaw_deg`) is honoured too; a `--markers-map` `yaw_deg` overrides it.
 An unmapped marker is a hard error — props are never silently dropped.
 

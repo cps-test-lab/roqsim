@@ -24,7 +24,7 @@ Parts of the world can be overridden per scenario via the ``world_overrides`` pa
 dict mirroring the world YAML, with plugins addressed by name (see :func:`roqsim.apply_overrides`).
 In OSC this is naturally a struct parameter, which scenario-execution passes as a nested dict::
 
-    world_overrides: {plugins: {floorplan: {floor: {reflectance: 0.3}}}}
+    world_overrides: {components: {floorplan: {floor: {reflectance: 0.3}}}}
 
 A scenario whose *experiment is the world* -- a study sweeping one problem instance per
 configuration -- can also declare a ``world`` parameter and select the world itself, which is what
@@ -267,13 +267,16 @@ class MujocoSim(_Base):
             return
         self._teardown_engine()
         cfg = load_config(_resolve_world(world), overrides, self._transport)
-        self._world = world
-        self._engine = Engine(cfg, logger=_wrap_logger(self._logger))
+        engine = Engine(cfg, logger=_wrap_logger(self._logger))
         # Before setup(): configure() may read the seed, and pre_step certainly does. A seed
         # resolved after this point would reach the tick-time consumers and silently miss the
         # configure-time ones.
-        self._engine.ctx.seed = self._seed_for(cfg)
-        self._engine.setup()
+        engine.ctx.seed = self._seed_for(cfg)
+        # A setup that raises has shut down what it configured; held only once it succeeded, so
+        # the next call builds afresh instead of stepping an engine that never set up.
+        engine.setup()
+        self._engine = engine
+        self._world = world
         self._built_overrides = overrides
         # A (re)built world means the browser scene descriptor (if requested) is stale; the export
         # itself runs after reset(), when mocap bodies are at their true initial pose.
@@ -303,14 +306,21 @@ class MujocoSim(_Base):
         The single point where the live model dies -- on shutdown *and* on a mid-session rebuild -- so
         it is where a recording has to be flushed. Doing it in ``shutdown`` alone would lose a
         recording whenever a scenario reset with different ``world_overrides``.
+
+        The engine is shut down whatever the flush or the viewer's close raises, so the plugins
+        release what configure opened and write their shutdown output.
         """
-        self._finish_recording()
-        if self._viewer is not None:
-            self._viewer.close()
-            self._viewer = None
-        if self._engine is not None:
-            self._engine.shutdown()
-            self._engine = None
+        try:
+            self._finish_recording()
+        finally:
+            try:
+                if self._viewer is not None:
+                    viewer, self._viewer = self._viewer, None
+                    viewer.close()
+            finally:
+                if self._engine is not None:
+                    engine, self._engine = self._engine, None
+                    engine.shutdown()
 
     def _ensure_built(self) -> Engine:
         if self._engine is None:
@@ -321,14 +331,12 @@ class MujocoSim(_Base):
         """Write the browser scene descriptor of the just-built world, when requested.
 
         Opt-in via the ``ROQSIM_SCENE_EXPORT_DIR`` environment variable: when set, the compiled
-        world is exported as ``scene.json``/``scene.bin`` (+ textures) into that directory --
-        a relative path resolves against the scenario's ``output_dir`` (passed to ``setup()`` by
-        the runner; under a run harness that is the run's result directory, so the exact simulated scene,
-        world_overrides included, ships as a run artifact for browser viewers), falling back to the
-        process cwd when the runner provides none. Called after ``engine.reset()`` so mocap-driven
-        bodies (walkers) and re-seated robot bases are captured at their true initial pose; the
-        forward pass propagates the re-posed mocap into ``data.xpos`` first (mirrors
-        ``export_web._compile_from_world``).
+        world is exported as ``scene.json``/``scene.bin`` (+ textures) into that directory -- a
+        relative path is resolved by :meth:`_resolve_out`, like the recording, so the exact simulated
+        scene, world_overrides included, ships as a run artifact for browser viewers. Called after
+        ``engine.reset()`` so mocap-driven bodies (walkers) and re-seated robot bases are captured
+        at their true initial pose; the forward pass propagates the re-posed mocap into
+        ``data.xpos`` first (mirrors ``export_web._compile_from_world``).
         """
         self._scene_export_pending = False
         out = os.environ.get("ROQSIM_SCENE_EXPORT_DIR")
@@ -338,9 +346,7 @@ class MujocoSim(_Base):
 
         from .export_web import export_scene
 
-        out_dir = Path(out)
-        if not out_dir.is_absolute() and self._output_dir:
-            out_dir = Path(self._output_dir) / out_dir
+        out_dir = self._resolve_out(out)
         mujoco.mj_forward(self._engine.ctx.model, self._engine.ctx.data)
         # NOT self._logger: the runner may hand us a non-stdlib logger (e.g. scenario-execution's
         # RosLogger), whose info() lacks %-style lazy formatting that export_scene uses.
@@ -375,10 +381,10 @@ class MujocoSim(_Base):
     def _start_recording(self) -> None:
         """Begin sampling MuJoCo state, when the run asked for it.
 
-        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path, relative to the scenario's ``output_dir``
-        like the scene export), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
-        concern rather than an experiment one -- the same footing as ``sim.headless``, which the world
-        YAML rejects on purpose -- so it is driven by the environment here and never by the world.
+        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path; a relative one is resolved by
+        :meth:`_resolve_out`), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
+        concern rather than an experiment one -- the same footing as ``sim.headless``, which a world
+        YAML ignores with a warning -- so it is driven by the environment here and never by the world.
 
         The recorder is rebuilt with the world: it holds the model whose state it packs, so a world
         rebuilt with different ``world_overrides`` needs a new one.

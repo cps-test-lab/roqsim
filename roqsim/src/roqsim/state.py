@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import fnmatch
 import io
 import json
@@ -34,16 +35,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 from .capture import decimated
 from .kinematics import body_twist, joint_dofs, joint_width
 from .motion import MotionError, motion_onset
 from .recording import RecordingError, open_recording
 
 log = logging.getLogger(__name__)
-
-EXIT_BAD_ARGS = 2
-EXIT_PROVENANCE = 4
 
 
 class StateError(RuntimeError):
@@ -162,16 +160,23 @@ def mjcf_sensor_columns(model, data, names: list[str]) -> dict:
 
 
 def contact_rows(model, data) -> list[dict]:
-    """Every current contact: the geom pair, where it is, and how hard. One row per contact."""
+    """Every current contact: its two sides, where it is, and how hard. One row per contact.
+
+    A side is a geom or a flex. ``geom1``/``geom2`` name the geom (its id where it has no name) and
+    are ``None`` on a flex side, where ``flex1``/``flex2`` name the flex and ``vert1``/``vert2`` or
+    ``elem1``/``elem2`` give the vertex or element that touched, indices local to the flex; each is
+    ``None`` where it does not apply. A flex side carries ``geom = -1`` in MuJoCo's contact, and
+    naming that id would name the model's last geom.
+    """
     rows = []
     force = np.zeros(6)
     for i in range(data.ncon):
         con = data.contact[i]
         mujoco.mj_contactForce(model, data, i, force)
-        rows.append(
+        sides = [_contact_side(model, con, k) for k in (0, 1)]
+        row = {f"{key}{k + 1}": side[key] for key in _SIDE_KEYS for k, side in enumerate(sides)}
+        row.update(
             {
-                "geom1": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom1) or con.geom1,
-                "geom2": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom2) or con.geom2,
                 "pos.x": float(con.pos[0]),
                 "pos.y": float(con.pos[1]),
                 "pos.z": float(con.pos[2]),
@@ -179,7 +184,26 @@ def contact_rows(model, data) -> list[dict]:
                 "force.normal": float(force[0]),
             }
         )
+        rows.append(row)
     return rows
+
+
+_SIDE_KEYS = ("geom", "flex", "vert", "elem")
+
+
+def _contact_side(model, con, k: int) -> dict:
+    """Side *k* of one contact as ``geom``/``flex``/``vert``/``elem``, ``None`` where it does not apply."""
+    geom = int(con.geom[k])
+    if geom >= 0:
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom)
+        return {"geom": name or geom, "flex": None, "vert": None, "elem": None}
+    flex, vert, elem = int(con.flex[k]), int(con.vert[k]), int(con.elem[k])
+    return {
+        "geom": None,
+        "flex": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_FLEX, flex) or flex,
+        "vert": vert if vert >= 0 else None,
+        "elem": elem if elem >= 0 else None,
+    }
 
 
 def _rpy(quat) -> tuple[float, float, float]:
@@ -290,9 +314,10 @@ def _numeric(payload):
 
 def sensor_columns(endpoint) -> dict:
     """A scalar/short-vector endpoint as CSV columns."""
-    values = _numeric(endpoint.read())
+    payload = endpoint.read()
+    values = _numeric(payload)
     if values is None:
-        return _flatten_object(endpoint.name, endpoint.read())
+        return _flatten_object(endpoint.name, payload)
     flat = np.asarray(values).ravel()
     if flat.size == 1:
         return {endpoint.name: float(flat[0])}
@@ -300,18 +325,43 @@ def sensor_columns(endpoint) -> dict:
 
 
 def _flatten_object(prefix: str, payload) -> dict:
-    """A small dataclass-ish payload as columns, so a pose or a wrench needs no special case."""
+    """A structured payload as columns named ``<prefix>.<field path>[.<index>]``.
+
+    A dataclass contributes its fields in declaration order and a nested dataclass its own under
+    the field's name, so an ``Odometry`` gives ``odom.position.0`` .. ``odom.angular.2``. A number
+    is one column, a numeric sequence one per element; text and ``None`` are not numbers and give
+    none. A sequence wider than :data:`_SCALAR_MAX` is refused rather than left out of the row.
+    """
     out = {}
-    for key in dir(payload):
-        if key.startswith("_"):
-            continue
-        value = getattr(payload, key, None)
-        if isinstance(value, (int, float)):
-            out[f"{prefix}.{key}"] = float(value)
-        elif isinstance(value, (list, tuple, np.ndarray)) and len(np.ravel(value)) <= 8:
-            for i, v in enumerate(np.ravel(value)):
-                out[f"{prefix}.{key}.{i}"] = float(v)
+    for key, value in _fields(payload):
+        name = f"{prefix}.{key}"
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            out.update(_flatten_object(name, value))
+        elif isinstance(value, (bool, int, float, np.number)):
+            out[name] = float(value)
+        elif isinstance(value, (list, tuple, np.ndarray)):
+            flat = np.ravel(np.asarray(value))
+            if flat.dtype.kind not in "biuf":  # joint names beside their positions
+                continue
+            if flat.size > _SCALAR_MAX:
+                raise StateError(
+                    f"{name} has {flat.size} values, more than the {_SCALAR_MAX} a row carries as "
+                    "columns. For a model's joints read --joint, which takes them from the state."
+                )
+            for i, v in enumerate(flat):
+                out[f"{name}.{i}"] = float(v)
     return out
+
+
+def _fields(payload):
+    """``(name, value)`` of a payload: a dataclass's fields in order, else its public attributes."""
+    if dataclasses.is_dataclass(payload) and not isinstance(payload, type):
+        return [(f.name, getattr(payload, f.name)) for f in dataclasses.fields(payload)]
+    return [
+        (key, getattr(payload, key, None))
+        for key in dir(payload)
+        if not key.startswith("_") and not callable(getattr(payload, key, None))
+    ]
 
 
 def check_sensor_kind(name: str, endpoint, out: Path | None) -> str:
@@ -348,6 +398,18 @@ def _selected(model, bodies, sites, joints, mjcf_sensors):
         if mjcf_sensors
         else [],
     }
+
+
+def _refuse_stale(rec, endpoints, sample) -> None:
+    """Raise when a selected sensor's plugin failed on this sample: its endpoint still holds the
+    previous sample's value, which must not be written under this sample's time."""
+    stale = rec.failed_endpoints(endpoints) if endpoints else {}
+    if stale:
+        detail = "; ".join(f"--sensor {name}: {why}" for name, why in sorted(stale.items()))
+        raise StateError(
+            f"at t={sample.sim_time:.3f} s the replay could not compute {detail}. Its value would be "
+            "the previous sample's, so nothing is written for it."
+        )
 
 
 def _row(model, sample, chosen, endpoints, twist: bool = False) -> dict:
@@ -451,7 +513,49 @@ def run_state(
     decimate: int | None = None,
 ) -> dict:
     """Pull numbers out of a recording. Returns the JSON record the CLI prints."""
-    rec = open_recording(state)
+    # Closed on every way out, so a replayed camera's renderer is released (Recording.close).
+    with open_recording(state) as rec:
+        return _state_of(
+            rec,
+            target,
+            bodies=bodies,
+            sites=sites,
+            joints=joints,
+            mjcf_sensors=mjcf_sensors,
+            sensors=sensors,
+            twist=twist,
+            contacts=contacts,
+            at=at,
+            start=start,
+            stop=stop,
+            out=out,
+            check=check,
+            onset=onset,
+            onset_select=onset_select,
+            decimate=decimate,
+        )
+
+
+def _state_of(
+    rec,
+    target: str | None,
+    *,
+    bodies,
+    sites,
+    joints,
+    mjcf_sensors,
+    sensors,
+    twist: bool,
+    contacts: bool,
+    at: float | None,
+    start: float | None,
+    stop: float | None,
+    out: str | Path | None,
+    check: bool,
+    onset: bool,
+    onset_select: str,
+    decimate: int | None,
+) -> dict:
     out_path = Path(out) if out and str(out) != "-" else None
 
     # Both of these answer from the samples alone, so they are handled before the world is rebuilt:
@@ -530,6 +634,7 @@ def run_state(
                 len(rec),
                 sample.sim_time,
             )
+        _refuse_stale(rec, endpoints, sample)
         record = {**rec.at_record(at, sample), "header": header}
         if contacts:
             record["contacts"] = contact_rows(model, sample.data)
@@ -539,6 +644,7 @@ def run_state(
     rows, times, walls = [], [], []
     array_series: dict[str, list] = {}
     for sample in rec.range(start, stop):
+        _refuse_stale(rec, endpoints, sample)
         times.append(sample.sim_time)
         walls.append(sample.wall_time)
         if any(endpoint_kind(e) == KIND_ARRAY for e in endpoints):
@@ -583,7 +689,11 @@ def run_state(
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim state", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim state",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(exit_status.BAD_INPUT, exit_status.RECORDING),
+    )
     parser.add_argument(
         "target",
         nargs="?",
@@ -673,12 +783,8 @@ def main(argv: list | None = None) -> int:
             onset_select=args.onset_select,
             decimate=args.decimate,
         )
-    except RecordingError as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_PROVENANCE
-    except (StateError, MotionError) as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+    except (RecordingError, StateError, MotionError) as err:
+        return exit_status.fail("roqsim state", err)
 
     if not (args.out and str(args.out) != "-" or args.out == "-"):
         print(json.dumps(record))

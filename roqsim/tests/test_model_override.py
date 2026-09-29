@@ -89,6 +89,7 @@ def _plugin(*overrides, scene=SCENE, **cfg):
     if errors:
         raise ValueError("; ".join(errors))
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -343,6 +344,34 @@ def test_a_configured_active_override_applies_and_survives_reset():
     assert plugin.read_state().active is True
 
 
+def test_a_configured_active_override_is_checked_in_every_trial():
+    """A campaign cell run degraded must know its fault landed, as a triggered one does."""
+    ctx, plugin = _plugin(
+        {"field": "body_mass", "select": ["crate"], "to": 20.0}, scene=FREE, active=True
+    )
+    for _ in range(2):  # the first trial, and a repetition
+        plugin.on_reset(ctx)
+        _run(ctx, plugin, 0.01)
+        assert plugin.read_state().verified == "landed"
+        assert plugin.read_state().since == 0.0, "active since the trial began"
+
+
+def test_a_reset_keeps_a_mass_another_plugin_set_after_configure():
+    """A payload adds its mass after the override has been configured; a reset must not undo it."""
+    ctx, plugin = _plugin({"field": "body_mass", "select": ["crate"], "to": 20.0}, scene=FREE)
+    crate = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "crate")
+    ctx.model.body_mass[crate] += 0.5  # what `payload` does in its configure
+    mujoco.mj_setConst(ctx.model, ctx.data)
+
+    plugin.on_reset(ctx)
+    assert float(ctx.model.body_mass[crate]) == pytest.approx(1.5)
+
+    plugin.set_active(True)
+    assert float(ctx.model.body_mass[crate]) == pytest.approx(20.0)
+    plugin.on_reset(ctx)
+    assert float(ctx.model.body_mass[crate]) == pytest.approx(1.5)
+
+
 def test_the_endpoints_and_the_handle():
     """The ROS path, exercised without ROS: the bridge only ever calls write() and read()."""
     ctx, plugin = _at_rest(*_plugin(FRICTION_OFF))
@@ -353,14 +382,12 @@ def test_the_endpoints_and_the_handle():
     assert inbound.backend["ros2"]["service"] == "std_srvs.srv.SetBool"
     assert inbound.backend["ros2"]["state_key"] == "model_override:grip_fault"
 
-    assert endpoints["override_state"].backend["ros2"] == {
-        "type": "std_msgs.msg.Bool",
-        "field": "active",
-        "topic": "override_state",
-    }
-    assert endpoints["override_verified"].backend["ros2"]["field"] == "verified"
+    assert endpoints["override_state"].backend["ros2"] == {"field": "active"}
+    assert endpoints["override_verified"].backend["ros2"] == {"field": "verified"}
 
-    inbound.write(True)  # what the bridge's service handler does, via ctx.post
+    done = inbound.write({"data": True})  # what the bridge's service handler does
+    ctx.drain_commands()
+    assert done.result(0) is None
     _run(ctx, plugin, 0.05)
     assert endpoints["override_state"].read().active is True
     assert endpoints["override_verified"].read().verified == "landed"
@@ -384,7 +411,9 @@ def test_two_faults_in_one_world_do_not_collide():
     ctx.model, ctx.data = model, data
 
     for name in ("grip_fault", "traction_fault"):
-        ModelOverridePlugin({"overrides": [FRICTION_OFF]}, name=name).configure(ctx)
+        plugin = ModelOverridePlugin({"overrides": [FRICTION_OFF]}, name=name)
+        plugin.configure(ctx)
+        plugin.register_endpoints(ctx)
 
     served = {(e.namespace, e.name) for e in ctx.interface.all()}
     assert ("grip_fault", "override") in served
@@ -399,6 +428,7 @@ def test_an_unnamed_instance_stays_unscoped(capsys):
     ctx2 = SimContext(config={})
     ctx2.model, ctx2.data = ctx.model, ctx.data
     unnamed.configure(ctx2)
+    unnamed.register_endpoints(ctx2)
     assert {e.namespace for e in ctx2.interface.all()} == {""}
 
 
@@ -407,7 +437,7 @@ def test_the_catalog_documents_every_allowlisted_field():
     catalog = {row["field"]: row for row in field_catalog()}
     assert "geom_friction" in catalog and "body_mass" in catalog
     for field, row in catalog.items():
-        assert row["namespace"] in ("geom", "body", "actuator", "joint"), field
+        assert row["namespace"] in ("geom", "body", "actuator", "joint", "flex"), field
         assert row["write"] in ("live", "needs_setconst"), field
         for key in ("does", "caveats", "measured"):
             assert row[key].strip(), f"{field} has no {key}"

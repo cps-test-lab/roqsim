@@ -1,7 +1,7 @@
 """A sensor's ``fault:`` block: what may be written at run time, and what must not be.
 
-The physics channel is switchable mid-run through ``set_model_override``; this block is the report
-channel's switch, so ``dropout_percent`` need not hold for a whole run and a lidar that fails
+The physics channel is switchable mid-run through ``model_override``'s ``override``; this block is
+the report channel's switch, so ``dropout_percent`` need not hold for a whole run and a lidar that fails
 *halfway down a corridor* can be expressed. These tests pin the three properties that make the
 switch trustworthy rather than merely present:
 
@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from roqsim_sensors.live_config import blackboard_key
+from roqsim_sensors.plugins.lidar import LidarPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugins.model_override import LANDED, NO_EFFECT, UNTESTED
-from roqsim_sensors.live_config import blackboard_key
-from roqsim_sensors.plugins.lidar import LidarPlugin
 
 _SCENE = """
 <mujoco>
