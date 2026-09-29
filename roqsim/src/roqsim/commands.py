@@ -99,6 +99,16 @@ def _sentence(err: BaseException) -> str:
     return str(err)
 
 
+def _asks_for_help(args) -> bool:
+    """``-h``/``--help`` before any ``--``: what argparse would answer with its help."""
+    for a in args:
+        if a == "--":
+            return False
+        if a in ("-h", "--help"):
+            return True
+    return False
+
+
 def _wants_traceback(args) -> bool:
     """``-v``/``--verbose`` is every tool's "show me more" switch, so it is also the traceback's."""
     return any(a in ("-v", "--verbose") for a in args)
@@ -227,6 +237,11 @@ class BlenderToolCommand(ToolCommand):
         return spec.origin
 
     def _forward(self, args):
+        # Asking how to run the tool must not need the tool's host: without Blender, the help is the
+        # docstring's. Running it still refuses loudly, in _blender().
+        if _asks_for_help(args) and not shutil.which("blender"):
+            self.get_help(click.get_current_context())
+            raise SystemExit(0)
         # Blender exits 0 when the script raises, unless told otherwise.
         cmd = [
             self._blender(),
@@ -241,10 +256,14 @@ class BlenderToolCommand(ToolCommand):
         raise SystemExit(subprocess.call(cmd))
 
     def get_help(self, ctx) -> str:
-        """Its own docstring: argparse lives on the far side of Blender and cannot be asked here."""
-        click.echo(f"Usage: {ctx.command_path} [ARGS]...\n")
-        click.echo(module_docstring(self.module).strip())
-        click.echo(f"\nRuns inside Blender: {self._script()}")
+        """Its docstring's summary: argparse lives on the far side of Blender, out of reach."""
+        click.echo(f"usage: {ctx.command_path} [ARGS]...\n")
+        click.echo(summary_line(self.module))
+        click.echo(
+            f"\nRuns inside Blender: {self._script()}\n"
+            f"With Blender on PATH, --help lists its options; `python -m pydoc {self.module}` has "
+            f"the rest."
+        )
         return ""
 
 
