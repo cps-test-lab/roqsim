@@ -334,12 +334,15 @@ class Engine:
         try:
             for plugin in self.plugins:
                 configured.append(plugin)
+                # Stamps the endpoints this plugin registers with its address.
+                self.ctx.interface.producer = plugin.address
                 before = len(self.ctx.interface.all())
                 self._timed(plugin, "configure", plugin.configure, self.ctx)
                 # After its configure, so an endpoint's options read what configure resolved, and
                 # before the next plugin's: a bridge binds the interface in its own configure, and
                 # is listed after its producers.
                 plugin.register_endpoints(self.ctx)
+                self.ctx.interface.producer = ""
                 # The world's `qos:` for what this plugin registered, hand-built endpoints included.
                 apply_world_qos(plugin, self.ctx.interface.all()[before:])
                 # Each entity the plugin registered gets its core pose endpoint, likewise before a

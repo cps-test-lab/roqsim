@@ -81,6 +81,9 @@ recording -- without them an injected fault is invisible to every downstream ana
 
 All three are scoped by the instance's ``name:``, so the world above serves
 ``/grip_fault/override``, ``/grip_fault/override_state`` and ``/grip_fault/override_verified``.
+Over the control socket ``override`` is ``grip_fault/override``, and ``override_verified`` confirms
+it: ``roqsim call grip_fault/override true`` replies with the report the step after the change
+recorded, ``verified`` included.
 
 In-process, ``ctx.blackboard`` carries a :class:`ModelOverrideHandle` under
 ``model_override:<name>``, which is how a ROS-free stepped run (an ``.osc`` action, a test) fires it --
@@ -478,6 +481,9 @@ class ModelOverridePlugin(Plugin):
                 owner=self.name,
                 namespace=ns,
                 write=lambda payload: self.set_active(bool(payload)),
+                kind="command",
+                # The verdict post_step records after a change, returned with the command's reply.
+                confirm="override_verified",
                 backend={
                     "ros2": {
                         # A service, not a topic: apply/restore is a command with an outcome, and the

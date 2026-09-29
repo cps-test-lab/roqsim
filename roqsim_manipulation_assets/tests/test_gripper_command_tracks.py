@@ -79,7 +79,7 @@ def test_a_gripper_command_puts_the_gripper_joint_there(spawn, joint, travel):
 
     for fraction in FRACTIONS:
         command = opened + fraction * (closed - opened)
-        endpoint.write(command)
+        endpoint.write({"position": command})
         for _ in range(SETTLE_STEPS):
             engine.step()
         assert float(data.qpos[adr]) == pytest.approx(

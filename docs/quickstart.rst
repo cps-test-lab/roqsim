@@ -33,6 +33,10 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be
 — set it only to override that choice. To record a run, add ``--record`` — see
 :ref:`recording-a-run` below.
 
+A running simulation prints ``control: <uri>`` and serves its endpoints and run control there:
+``roqsim endpoints``, ``roqsim read``, ``roqsim call`` and ``roqsim ctl pause|resume|step N`` from
+another shell reach it with no ROS -- see :doc:`control`. ``--control none`` serves nothing.
+
 .. note::
 
    **Windowed GL defaults.** On many Linux + GL-driver combinations the windowed launch aborts with
@@ -922,7 +926,13 @@ An ``.npz`` of array series carries them as the ``times`` and ``wall_times`` mem
 ``--sensor`` re-runs a sensor **the world declares**, configured exactly as the world configured it, so
 ``--check`` is how you see what is on offer. Its output shape decides the file: a few values become CSV
 columns, a scan becomes an ``.npz`` array, and an image is refused with a pointer to
-``roqsim render --camera``. A re-run sensor is deterministic and gets the noise that moment would have had
+``roqsim render --camera``. A sensor's columns are named ``<endpoint>.<field path>.<index>``: a number
+is ``<endpoint>`` alone, a vector ``<endpoint>.<index>``, and a payload type ``<endpoint>.<field>`` per
+field in declaration order, with a nested type's fields under its field's name and ``.<index>`` per
+element of a vector field — an odometry endpoint gives ``odom.position.0`` to ``odom.angular.2``, a
+wrench ``wrench.force.0`` to ``wrench.torque.2``. Text fields (joint names) have no column, and a
+vector field wider than 32 values is refused; ``--joint`` reads joints from the state instead.
+A re-run sensor is deterministic and gets the noise that moment would have had
 (the recording carries the run's seed), but it is not bit-identical to what the live run published at
 that timestamp — live, the sensor fires between recorded samples, so the value published then was
 computed a moment earlier.

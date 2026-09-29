@@ -232,6 +232,13 @@ def test_a_static_transform_equals_the_static_tf_hint_path(eps):
     assert typed._static_tf.sent == hinted._static_tf.sent
 
 
+def test_a_static_endpoint_is_named_by_the_tf_static_topic_it_is_sent_on(eps):
+    bridge = _bridge(tf_namespace="fleet")
+    bridge._make_output(eps["mounts"], {})
+    named = bridge._names[id(eps["mounts"])]
+    assert (named["topic"], named["type"]) == ("/fleet/tf_static", "tf2_msgs.msg.TFMessage")
+
+
 def test_publish_static_tf_false_turns_a_static_endpoint_off(eps):
     bridge = _bridge(publish_static_tf=False)
     bridge._static_tf = None
