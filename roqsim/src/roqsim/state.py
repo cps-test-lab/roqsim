@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import fnmatch
 import io
 import json
@@ -313,9 +314,10 @@ def _numeric(payload):
 
 def sensor_columns(endpoint) -> dict:
     """A scalar/short-vector endpoint as CSV columns."""
-    values = _numeric(endpoint.read())
+    payload = endpoint.read()
+    values = _numeric(payload)
     if values is None:
-        return _flatten_object(endpoint.name, endpoint.read())
+        return _flatten_object(endpoint.name, payload)
     flat = np.asarray(values).ravel()
     if flat.size == 1:
         return {endpoint.name: float(flat[0])}
@@ -323,21 +325,43 @@ def sensor_columns(endpoint) -> dict:
 
 
 def _flatten_object(prefix: str, payload) -> dict:
-    """A small dataclass-ish payload as columns, so a pose or a wrench needs no special case."""
+    """A structured payload as columns named ``<prefix>.<field path>[.<index>]``.
+
+    A dataclass contributes its fields in declaration order and a nested dataclass its own under
+    the field's name, so an ``Odometry`` gives ``odom.position.0`` .. ``odom.angular.2``. A number
+    is one column, a numeric sequence one per element; text and ``None`` are not numbers and give
+    none. A sequence wider than :data:`_SCALAR_MAX` is refused rather than left out of the row.
+    """
     out = {}
-    for key in dir(payload):
-        if key.startswith("_"):
-            continue
-        value = getattr(payload, key, None)
-        if isinstance(value, (int, float)):
-            out[f"{prefix}.{key}"] = float(value)
-        elif isinstance(value, (list, tuple, np.ndarray)) and len(np.ravel(value)) <= 8:
-            flat = np.ravel(value)
+    for key, value in _fields(payload):
+        name = f"{prefix}.{key}"
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            out.update(_flatten_object(name, value))
+        elif isinstance(value, (bool, int, float, np.number)):
+            out[name] = float(value)
+        elif isinstance(value, (list, tuple, np.ndarray)):
+            flat = np.ravel(np.asarray(value))
             if flat.dtype.kind not in "biuf":  # joint names beside their positions
                 continue
+            if flat.size > _SCALAR_MAX:
+                raise StateError(
+                    f"{name} has {flat.size} values, more than the {_SCALAR_MAX} a row carries as "
+                    "columns. For a model's joints read --joint, which takes them from the state."
+                )
             for i, v in enumerate(flat):
-                out[f"{prefix}.{key}.{i}"] = float(v)
+                out[f"{name}.{i}"] = float(v)
     return out
+
+
+def _fields(payload):
+    """``(name, value)`` of a payload: a dataclass's fields in order, else its public attributes."""
+    if dataclasses.is_dataclass(payload) and not isinstance(payload, type):
+        return [(f.name, getattr(payload, f.name)) for f in dataclasses.fields(payload)]
+    return [
+        (key, getattr(payload, key, None))
+        for key in dir(payload)
+        if not key.startswith("_") and not callable(getattr(payload, key, None))
+    ]
 
 
 def check_sensor_kind(name: str, endpoint, out: Path | None) -> str:
