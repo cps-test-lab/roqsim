@@ -101,8 +101,10 @@ force range allow. A hydraulic lift handed a step leaps, and a load standing on 
 With a limit, a command sets the joint's *goal*, and every ``pre_step`` moves the held target toward
 it no faster than ``max_velocity``, speeding up and slowing down at no more than ``max_acceleration``
 and slowing in time to stop exactly on the goal -- a trapezoidal profile, which is what a real
-drive's limiter or a proportional valve's flow limit does to a step. Joints without a limit behave
-exactly as before.
+drive's limiter or a proportional valve's flow limit does to a step. Joints without a limit take
+each command at once. Nothing is limited by default: an MJCF declares no velocity limit to take one
+from, so the values come from the robot's source (a URDF's ``<limit velocity=>``), in its manifest
+or the world, and ``null`` lifts a limit a manifest set.
 
 The limiter belongs to the drive, not to any one command path, so every way of commanding the arm
 goes through it: a ``follow_joint_trajectory`` waypoint, a streamed ``joint_trajectory`` point,
@@ -369,7 +371,10 @@ class ArmControllerPlugin(Plugin):
             for joint, v in items:
                 where = f"`{key}`" if joint is None else f"`{key}[{joint}]`"
                 if isinstance(v, bool) or not isinstance(v, int | float) or v <= 0.0:
-                    errors.append(f"arm_controller: {where} must be a positive number, got {v!r}")
+                    errors.append(
+                        f"arm_controller: {where} must be a positive number, got {v!r} "
+                        "-- leave it out (or null) for no limit"
+                    )
             if isinstance(value, dict) and isinstance(owned, list):
                 unknown = [j for j in value if j not in owned]
                 if unknown:

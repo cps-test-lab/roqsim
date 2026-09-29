@@ -69,7 +69,10 @@ limit applies to every command path alike — a `follow_joint_trajectory` waypoi
 clipped to `max_velocity` — so a single point is a complete "go there" command. A trajectory within
 the limits is followed with a lag of `v²/(2·max_acceleration)` that closes when it stops; one faster
 than them arrives late and is graded by `goal_time_tolerance`; a cancel brakes at `max_acceleration`
-and returns to where it was cancelled. Joints without a limit behave exactly as before.
+and returns to where it was cancelled. Joints without a limit take each command at once. No default
+applies, since an MJCF declares no velocity limit: take the values from the source URDF's
+`<limit velocity=>` and the vendor's `joint_limits.yaml`, put them in the model's manifest if the
+drive always limits, and lift one from a world with `max_velocity: null`.
 
 For a gripper-equipped arm (e.g. `gen3`), `arm_controller` additionally serves a `GripperCommand`
 action at `<ns>/<gripper_controller_name>/gripper_cmd` — a MoveIt `moveit_simple_controller_manager`

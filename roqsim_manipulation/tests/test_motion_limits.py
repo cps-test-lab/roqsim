@@ -183,3 +183,12 @@ def test_a_velocity_command_is_clipped_to_the_limit_and_brakes_when_it_stops(tmp
     assert speed.max() <= VMAX + 1e-9, "a command four times the limit moves no faster than it"
     assert speed.min() >= -1e-9, "it brakes onto the integrated goal rather than running back"
     assert speed[-1] == 0.0, "and then stands"
+
+
+def test_a_null_limit_is_no_limit(tmp_path):
+    """How a world lifts a limit its robot's manifest sets: the override's null wins per key."""
+    assert _errors(max_velocity=None, max_acceleration=None) == []
+    engine, arm = _arm(tmp_path, max_velocity=None, max_acceleration=None)
+    start = _desired(arm)["shoulder_pan_joint"]
+    arm.set_targets(["shoulder_pan_joint"], [start + 1.0])
+    assert _desired(arm)["shoulder_pan_joint"] == pytest.approx(start + 1.0)
