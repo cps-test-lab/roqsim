@@ -54,6 +54,10 @@ entry sits rather than a config key::
         forget_after: 5.0     # s a remembered blockage keeps steering the planner (reroute only)
         blockage_radius: 0    # m of the disc a blockage marks; 0 -> half the corridor width
         ignore: []            # entities this mover never stops for
+      radius: 0.3             # m, this mover's disc to the avoidance model (default: measured
+                              #   from its footprint) and the planner's inflation (default: 0.3)
+      max_speed: 1.0          # m/s the avoidance model may command it (default: max(1, 2*speed))
+      params: {}              # this mover's own keys for the avoidance model, passed to add_agent
 
       # -- output: drive ---------------------------------------------------------------------
       kinematics: auto        # auto | unicycle | holonomic | ackermann (auto asks the output)

@@ -18,7 +18,9 @@
 
 Gazebo's ``PosePublisher`` for roqsim. A stack that reads simulator ground truth off a topic -- a
 vendor simulator's adapter that turns true poses into an optical-flow sensor or a dock's infrared
-field -- gets it in the shape it reads, from any entity::
+field -- gets it in the shape it reads, from any entity.
+
+Config::
 
     pose_publisher:
       poses:

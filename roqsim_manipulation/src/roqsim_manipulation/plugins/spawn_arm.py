@@ -17,6 +17,7 @@ Config::
         position: {x: -0.41, z: 0.76}     #   geometry_msgs/Pose, omitted components 0
         orientation: {yaw: 3.14159}       #   (roll/pitch/yaw in rad, or a quaternion)
       home: [...]           # joint home pose (defaults per model); applied on reset
+      default_plugins: true # inject the model manifest's components (and the end effector's)
       actuators:            # OPTIONAL: what law this arm's joints run under, and their gains.
         control: impedance  #   position | velocity | effort | impedance; the model's own if unset
         stiffness: 2.0      #   N*m/rad -- see roqsim.actuators for the gain of each control
