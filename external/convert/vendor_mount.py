@@ -239,11 +239,64 @@ def _block(lines: list[str], i: int, width: int) -> tuple[int, int]:
     return start, end
 
 
+def _number(value, what: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{what} is {value!r}, not a number")
+    return float(value)
+
+
+def _mapping(value, keys, what: str) -> dict:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not set(value) <= set(keys):
+        raise ValueError(f"{what} is {value!r}, not a mapping of {', '.join(keys)}")
+    return {k: _number(v, f"{what}.{k}") for k, v in value.items()}
+
+
+def _vector(value, sizes, what: str) -> list[float]:
+    if not isinstance(value, list) or len(value) not in sizes:
+        raise ValueError(
+            f"{what} is {value!r}, not a list of {' or '.join(map(str, sizes))} numbers"
+        )
+    return [_number(v, f"{what}[{i}]") for i, v in enumerate(value)]
+
+
+def mount_pose(cfg: dict) -> tuple[list[float], list[float]]:
+    """``(pos, rpy)`` a mount states, as ``pose:`` or as ``pos``/``rpy`` (fixed-axis XYZ, radians).
+
+    A mount stating neither is at the identity. Anything else -- both spellings, a component that is
+    not a number, a key a pose does not have -- raises ``ValueError``, since a pose read wrongly would
+    load at the wrong place silently.
+    """
+    old = [k for k in ("pos", "rpy") if k in cfg]
+    if "pose" in cfg and old:
+        raise ValueError(f"states its pose both as 'pose' and as {' and '.join(old)}")
+    if old:
+        pos = _vector(cfg.get("pos", [0.0, 0.0, 0.0]), (2, 3), "pos")
+        return pos + [0.0] * (3 - len(pos)), _vector(cfg.get("rpy", [0.0, 0.0, 0.0]), (3,), "rpy")
+    raw = cfg.get("pose")
+    if raw is not None and (
+        not isinstance(raw, dict) or not set(raw) <= {"position", "orientation"}
+    ):
+        raise ValueError(f"pose is {raw!r}, not a mapping of position, orientation")
+    raw = raw or {}
+    position = _mapping(raw.get("position"), "xyz", "pose.position")
+    orientation = raw.get("orientation")
+    if isinstance(orientation, dict) and set(orientation) & {"x", "y", "z", "w"}:
+        orientation = _mapping(orientation, "xyzw", "pose.orientation")
+    else:
+        orientation = _mapping(orientation, ("roll", "pitch", "yaw"), "pose.orientation")
+    return pose_values({"position": position, "orientation": orientation})
+
+
 _FLOW = re.compile(r"spawn_sensor:\s*(\{.*\})")
 
 
 def _flow_mount(line: str, deltas: dict) -> str | None:
-    """*line* re-expressed if it is a one-line flow ``spawn_sensor: {model: <retired>, ...}``."""
+    """*line* re-expressed if it is a one-line flow ``spawn_sensor: {model: <retired>, ...}``.
+
+    Raises ``ValueError`` for such a mount whose pose it cannot read.
+    """
     import yaml
 
     fm = _FLOW.search(line)
@@ -258,13 +311,15 @@ def _flow_mount(line: str, deltas: dict) -> str | None:
     if name not in deltas:
         return None
     new_model, delta = deltas[name]
-    new_pos, new_rpy = rewrite_pose(*pose_values(cfg.get("pose")), delta)
+    new_pos, new_rpy = rewrite_pose(*mount_pose(cfg), delta)
     fields = []
     for key, value in cfg.items():
         if key == "model":
             fields.append(f"model: {str(value).replace(name, new_model)}")
-        elif key != "pose":
-            fields.append(f"{key}: {yaml.safe_dump(value, default_flow_style=True).strip()}")
+        elif key not in ("pose", "pos", "rpy"):
+            # Dumped inside a list: a bare scalar would carry the document end marker ``...``.
+            flow = yaml.safe_dump([value], default_flow_style=True, width=math.inf).strip()
+            fields.append(f"{key}: {flow[1:-1]}")
     fields.append(f"pose: {fmt_pose(new_pos, new_rpy)}")
     out = "{" + ", ".join(fields) + "}"
     if yaml.safe_load(out).get("model") is None:
@@ -276,14 +331,16 @@ def rewrite_mounts(path: Path, deltas: dict) -> int:
     """Rename and re-pose every ``spawn_sensor`` of a retired model in *path*.
 
     *deltas* maps each retired model name to ``(new name, (R, t))``: a mount of the old model at
-    ``T_old`` is written as ``T_old * (R, t)`` (:func:`rewrite_pose`).
+    ``T_old`` is written as ``T_old * (R, t)`` (:func:`rewrite_pose`), as a ``pose:``.
 
-    Line-based, so comments and layout survive. A block-style mount is named by its ``model:`` line;
-    its sibling ``pose:`` line (same indentation, a flow mapping) is rewritten in place, or added
-    after the ``model:`` line when there is none. A one-line flow mount (``spawn_sensor: {model: ...,
-    pose: {...}}``) is rewritten within its line. Anything else naming a retired model -- a pose
-    written as a block mapping, a mount split over lines some other way -- is refused, since a pose
-    left unconverted would load at the wrong place silently.
+    ``T_old`` is read from ``pose:`` or from ``pos``/``rpy`` (:func:`mount_pose`); ``pos``/``rpy``
+    are removed, since a pose is stated one way. Line-based, so comments and layout survive. A
+    block-style mount is named by its ``model:`` line; its sibling ``pose:``, ``pos:`` and ``rpy:``
+    lines (same indentation, each a flow collection on one line) give way to one ``pose:`` line where
+    the first of them was, or after the ``model:`` line when there is none. A one-line flow mount
+    (``spawn_sensor: {model: ..., pose: {...}}``) is rewritten within its line. Anything else naming
+    a retired model -- a pose written as a block mapping or list, a pose it cannot read, a mount split
+    over lines some other way -- is refused naming its line, and *path* is left as it was.
     """
     import yaml
 
@@ -293,7 +350,12 @@ def rewrite_mounts(path: Path, deltas: dict) -> int:
     changed = 0
     i = 0
     while i < len(lines):
-        flow = _flow_mount(lines[i], deltas)
+        try:
+            flow = _flow_mount(lines[i], deltas)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"{path}:{i + 1}: a retired mount's pose cannot be read: {exc}"
+            ) from exc
         if flow is not None:
             lines[i] = flow
             changed += 1
@@ -308,25 +370,40 @@ def rewrite_mounts(path: Path, deltas: dict) -> int:
             continue
         indent = m.group("indent")
         start, end = _block(lines, i, len(indent))
-        found = None
+        found = {}  # key -> (line index, value, comment)
         for j in range(start, end):
-            km = re.match(
-                rf"^{re.escape(indent)}pose:\s*(\{{.*\}})\s*(#.*)?$", lines[j].rstrip("\n")
-            )
-            if km:
-                found = (j, yaml.safe_load(km.group(1)), km.group(2) or "")
-            elif re.match(rf"^{re.escape(indent)}pose:", lines[j]):
-                raise RuntimeError(f"{path}:{j + 1}: pose must be a flow mapping to be rewritten")
-        new_pos, new_rpy = rewrite_pose(*pose_values(found[1] if found else None), deltas[name][1])
+            km = re.match(rf"^{re.escape(indent)}(pose|pos|rpy):(.*)$", lines[j].rstrip("\n"))
+            if not km:
+                continue
+            key = km.group(1)
+            vm = re.match(r"^\s*([\[{].*[\]}])\s*(#.*)?$", km.group(2))
+            try:
+                if key in found:
+                    raise ValueError(f"{key} is stated twice")
+                if not vm:
+                    raise ValueError(f"{key} is not a flow collection on its line")
+                value = yaml.safe_load(vm.group(1))
+                mount_pose({**{k: v for k, (_, v, _) in found.items()}, key: value})
+            except (ValueError, yaml.YAMLError) as exc:
+                raise RuntimeError(
+                    f"{path}:{j + 1}: a retired mount's pose cannot be read: {exc}"
+                ) from exc
+            found[key] = (j, value, vm.group(2) or "")
+        pose = mount_pose({k: v for k, (_, v, _) in found.items()})
+        new_pos, new_rpy = rewrite_pose(*pose, deltas[name][1])
         new_model = deltas[name][0]
         lines[i] = lines[i].replace(m.group("name"), m.group("name").replace(name, new_model), 1)
+        comment = "  ".join(c for _, _, c in sorted(found.values()) if c)
         pose_line = (
             f"{indent}pose: {fmt_pose(new_pos, new_rpy)}"
-            + (f"  {found[2]}" if found and found[2] else "")
+            + (f"  {comment}" if comment else "")
             + "\n"
         )
-        if found:
-            lines[found[0]] = pose_line
+        at = sorted(j for j, _, _ in found.values())
+        if at:
+            lines[at[0]] = pose_line
+            for j in reversed(at[1:]):
+                del lines[j]
             i += 1
         else:
             lines.insert(i + 1, pose_line)
