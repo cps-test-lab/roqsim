@@ -304,3 +304,23 @@ def test_a_plugin_whose_reset_fails_is_a_reset_problem(tmp_path):
     assert report["reached"] == "configure"
     assert [p["stage"] for p in report["problems"]] == ["reset"]
     assert "cannot re-home" in report["problems"][0]["message"]
+
+
+def test_an_unknown_model_in_a_nested_entry_is_a_failed_check_not_a_traceback(tmp_path, capsys):
+    pytest.importorskip("roqsim_mobile", reason="the turtlebot4 model lives in roqsim_mobile")
+    world = _world(
+        tmp_path,
+        """
+        sim: {}
+        components:
+          - spawn_robot: {model: turtlebot4}
+            name: robot
+            components:
+              - spawn_sensor: {model: no_such_model_xyz}
+                name: oakd
+        """,
+    )
+    assert main([str(world)]) == exit_status.FINDING
+    out = capsys.readouterr().out
+    assert f"FAIL  [config] {world.resolve()}: robot.oakd: model 'no_such_model_xyz'" in out
+    assert "Traceback" not in out

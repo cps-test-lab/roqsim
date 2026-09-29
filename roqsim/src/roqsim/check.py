@@ -168,7 +168,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         # The aggregated one: every plugin's validation errors, in one message.
         report["problems"].append(_problem("config", str(exc)))
         return report
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 - a load failure is a finding, not a crash
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
 
