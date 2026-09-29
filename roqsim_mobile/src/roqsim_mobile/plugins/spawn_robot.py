@@ -234,9 +234,10 @@ class SpawnRobotPlugin(Plugin):
         )
         # Per body, not per spec, because a robot that stands on the ground has both kinds of
         # body: a mobile manipulator's ARM links are held up by its own motors, while the base
-        # hangs off nothing and the wheels carry the robot. Compensating all of them would cancel
-        # the weight that presses it onto the floor -- and it would not fall over, so nothing
-        # would say so. `apply_gravity_compensation` draws that line from the actuator table.
+        # hangs off nothing and the wheels carry the robot. `apply_gravity_compensation` draws that
+        # line from the actuator table, and makes the arm's term a torque its drives supply: the
+        # engine hands the reaction to the base (`roqsim.actuators.GravityReaction`), so the wheels
+        # carry the whole robot, arm included, and a drive too weak for its load sags.
         #
         # The arm's own sag is small at a real robot's shipped gains (frankie's worst joint holds
         # to 0.4 deg without this) and it is the same defect an arm on a bench has, so it is

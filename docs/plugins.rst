@@ -1133,8 +1133,9 @@ load's energy instead of drawing it from the pack::
          - energy_monitor: {efficiency: 0.85, idle_w: 35.0, resistive_w_per_nm2: 0.012}
 
 The torque metered is the one a real drive supplies: the actuator's own force **plus its share of
-the gravity-compensation force**. MuJoCo carries a compensated arm's weight outside the actuator, so
-``actuator_force`` reads exactly zero on a joint holding a payload against gravity -- and since every
+the gravity-compensation force**. MuJoCo adds a compensated joint's gravity term to
+``qfrc_actuator`` after the actuator's own force is computed, so ``actuator_force`` reads exactly zero
+on a joint holding a payload against gravity -- and since every
 position- and impedance-driven arm is compensated, metering it alone would report an arm that is free
 to hold a load up and free to lift one. It is the same quantity ``arm_controller`` reports as a
 joint's effort, and for the same reason. Under ``control: effort``, where nothing is compensated
