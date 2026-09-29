@@ -43,7 +43,7 @@ def make_engine(prop_file):
         if present is not None:
             config["present"] = present
         return Engine(
-            load_config_from_dict({"sim": {}, "plugins": [{CRATE: config, "name": "crate"}]})
+            load_config_from_dict({"sim": {}, "components": [{CRATE: config, "name": "crate"}]})
         )
 
     return _make
@@ -87,7 +87,7 @@ def test_it_is_still_in_the_compiled_model(make_engine):
 def test_a_disabled_entry_builds_no_body_at_all(prop_file):
     """The contrast that gives the two keys separate jobs."""
     cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{CRATE: {"model": prop_file}, "name": "crate", "enabled": False}]}
+        {"sim": {}, "components": [{CRATE: {"model": prop_file}, "name": "crate", "enabled": False}]}
     )
     assert instantiate_plugins(cfg) == []
 
@@ -124,7 +124,7 @@ def test_an_absent_prop_does_not_fall_through_the_run(make_engine):
 def test_present_must_be_a_bool(prop_file):
     """``present: "false"`` is truthy, so a string would silently mean the opposite."""
     cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{CRATE: {"model": prop_file, "present": "false"}, "name": "c"}]}
+        {"sim": {}, "components": [{CRATE: {"model": prop_file, "present": "false"}, "name": "c"}]}
     )
     with pytest.raises(Exception, match="'present' must be true or false"):
         instantiate_plugins(cfg)

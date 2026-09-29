@@ -10,8 +10,10 @@ CC-BY-SA** (redistributable *with* attribution). Nothing under non-commercial (C
 no-derivatives (CC-*-ND) terms is added — the same bar as `roqsim_assets`.
 
 **Every locomotion clip in `models/anims/` is CC-BY, so attribution is a condition of
-redistribution, not a courtesy.** They derive from CARLA. Keep this file (or an equivalent notice)
-with any redistribution of the package or its assets.
+redistribution, not a courtesy.** They derive from CARLA. Each clip set's folder carries a
+`CREDITS.txt` with that attribution, and the wheel ships both those files and this one (in its
+`dist-info/licenses/`). Keep this file (or an equivalent notice) with any redistribution of the
+package or its assets.
 
 ## CARLA — *all* locomotion clips (committed, CC-BY 4.0)
 
@@ -63,10 +65,8 @@ using `FemaleVisitorWalk` still depends on CARLA attribution.
 
 ## What is this package's own (Apache-2.0)
 
-The code (`src/roqsim_walker/**.py`), the 17-joint humanoid topology, the navigation stack (A\*,
-behaviour tree, ORCA wiring), the world YAML, and the measurement pipeline that produces a
-blueprint's collision radii and sole offsets from geometry. The optional `rvo2` dependency
-(`[avoidance]`) is not vendored — it is fetched from its own upstream and carries its own licence.
+The code (`src/roqsim_walker/**.py`), the 17-joint humanoid topology, the world YAML, and the
+measurement pipeline that produces a blueprint's collision radii and sole offsets from geometry.
 
 ## Adding an actor
 

@@ -86,7 +86,7 @@ def test_view_leaves_a_malformed_lookat_to_the_one_validator():
     """Not parseable as numbers -> untouched, so sim.view's validator rejects it quoting what was typed."""
     assert render.view_overrides(["lookat=a b c"])["sim"]["view"] == {"lookat": "a b c"}
     with pytest.raises(PluginError, match="sim.view.lookat: expected 3 numbers"):
-        load_config_from_dict({"sim": {"view": {"lookat": "a b c"}}, "plugins": []})
+        load_config_from_dict({"sim": {"view": {"lookat": "a b c"}}, "components": []})
 
 
 def test_view_unknown_key_names_the_frozen_set():
@@ -150,7 +150,7 @@ def test_view_empty_is_no_override():
 def test_unknown_view_key_reaches_the_world_validator_too(tmp_path):
     """Belt and braces: even if the CLI check were bypassed, load_config still refuses the key."""
     world = tmp_path / "w.yaml"
-    world.write_text("sim: {view: {nonsense: 1}}\nplugins: []\n")
+    world.write_text("sim: {view: {nonsense: 1}}\ncomponents: []\n")
     with pytest.raises(PluginError, match="sim.view: unknown key"):
         from roqsim.config import load_config
 
@@ -277,13 +277,13 @@ def test_no_ceiling_is_a_noop_without_a_ceiling_plugin(tmp_path):
     the message lists what the document has -- several hundred names in a populated scene. That is
     right for --set (where a typo is otherwise silent) and wrong for this flag.
     """
-    cfg = _cfg("plugins:\n  - dummy: {}\n", tmp_path)
+    cfg = _cfg("components:\n  - dummy: {}\n", tmp_path)
     assert render._disable_ceiling(cfg) is False
     assert cfg.plugins[0].config == {}
 
 
 def test_no_ceiling_matches_a_named_instance(tmp_path):
-    cfg = _cfg("plugins:\n  - ceiling: {above_z: 2.0}\n    name: ceiling\n", tmp_path)
+    cfg = _cfg("components:\n  - ceiling: {above_z: 2.0}\n    name: ceiling\n", tmp_path)
     assert render._disable_ceiling(cfg) is True
 
 
@@ -1059,3 +1059,16 @@ def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
     render.render_target(None, tmp_path / "a.png", size="64x48", state=npz)
     render.render_target(None, tmp_path / "b.png", size="64x48", state=npz, view=["azimuth=10"])
     assert seen == [True, False]
+
+
+def test_help_states_the_exit_status(capsys):
+    """A caller branches on the status, so --help names each one render can return."""
+    from roqsim import exit_status
+
+    with pytest.raises(SystemExit):
+        render.main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "exit status: 0 success" in out
+    for code in (exit_status.BAD_INPUT, exit_status.NO_GL, exit_status.RECORDING):
+        assert f"; {code} {exit_status.MEANINGS[code]}" in out
+    assert "MUJOCO_GL" in out

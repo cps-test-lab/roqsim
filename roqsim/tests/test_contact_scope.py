@@ -56,6 +56,12 @@ def _gid(model, name):
     return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
 
 
+def _sides(*pairs):
+    """``(geom, flex)`` arrays shaped like ``data.contact.geom`` / ``.flex`` for geom-only contacts."""
+    geom = np.array(pairs)
+    return geom, np.full_like(geom, -1)
+
+
 def _names(model, mask):
     return {
         mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g)) for g in np.flatnonzero(mask)
@@ -76,16 +82,15 @@ def test_only_one_side_watched_qualifies():
     model, _ = _model()
     scope = resolve_contact_scope(model, _entity(), plugin="test", ignore=[])
     chassis, wheel, wall = (_gid(model, n) for n in ("chassis", "wheel_geom", "wall"))
-    geom1 = np.array([chassis, chassis, wall])
-    geom2 = np.array([wall, wheel, wall])
-    assert list(scope.qualifying(geom1, geom2)) == [True, False, False]
+    pairs = _sides((chassis, wall), (chassis, wheel), (wall, wall))
+    assert list(scope.qualifying(*pairs)) == [True, False, False]
 
 
 def test_an_ignored_geom_takes_its_contacts_out():
     model, _ = _model()
     scope = resolve_contact_scope(model, _entity(), plugin="test", ignore=["wall"])
     chassis, wall, floor = (_gid(model, n) for n in ("chassis", "wall", "floor"))
-    assert list(scope.qualifying(np.array([chassis, chassis]), np.array([wall, floor]))) == [
+    assert list(scope.qualifying(*_sides((chassis, wall), (chassis, floor)))) == [
         False,
         True,  # `floor` is only the default, and this scope was given its own list
     ]
@@ -134,6 +139,8 @@ def test_the_two_observables_resolve_the_same_scope():
     assert monitor._scope.body == impulse._scope.body
     assert np.array_equal(monitor._scope.watched, impulse._scope.watched)
     assert np.array_equal(monitor._scope.ignored, impulse._scope.ignored)
+    assert np.array_equal(monitor._scope.watched_flex, impulse._scope.watched_flex)
+    assert np.array_equal(monitor._scope.ignored_flex, impulse._scope.ignored_flex)
 
 
 # -- what it refuses to do quietly -----------------------------------------------------------------
@@ -149,7 +156,7 @@ def test_a_body_that_does_not_resolve_fails_loudly():
 def test_a_subtree_without_geoms_fails_loudly():
     """A body that resolves and carries nothing is the same blindness with a valid name."""
     model, _ = _model()
-    with pytest.raises(RuntimeError, match="carry no geoms to watch"):
+    with pytest.raises(RuntimeError, match="carry no geoms or flexes to watch"):
         resolve_contact_scope(model, _entity(body="marker"), plugin="test")
 
 
@@ -159,4 +166,4 @@ def test_an_ignore_entry_matching_nothing_is_warned_about(caplog):
     with caplog.at_level(logging.WARNING, logger="roqsim.contact_scope"):
         resolve_contact_scope(model, _entity(), plugin="test", ignore=["floor", "carpet"])
     assert "carpet" in caplog.text
-    assert "floor" not in caplog.text.split("no matching geom:")[-1]
+    assert "floor" not in caplog.text.split("no matching geom or flex:")[-1]

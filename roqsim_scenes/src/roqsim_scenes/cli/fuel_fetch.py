@@ -16,8 +16,9 @@ URI forms handled:
 
 - ``https://fuel.<host>/1.0/<Owner>/models/<Model Name>`` (with or without percent-encoding)
 - ``https://fuel.<host>/1.0/<Owner>/models/<Model Name>/<version>``
-- ``model://<name>`` -- resolved against ``--model-path`` / ``GZ_SIM_RESOURCE_PATH`` /
-  ``IGN_GAZEBO_RESOURCE_PATH`` / ``GAZEBO_MODEL_PATH``, never from the network.
+- ``model://<name>`` -- not fetched: :func:`resolve_model_uri` finds it on the model paths
+  (``sdf-to-scene``'s ``--model-path``, then ``GZ_SIM_RESOURCE_PATH`` /
+  ``IGN_GAZEBO_RESOURCE_PATH`` / ``GAZEBO_MODEL_PATH``), never on the network.
 
 ``fuel.ignitionrobotics.org`` (legacy) and ``fuel.gazebosim.org`` serve the same content; we normalise
 to the latter for fetching but record the URI as written in the world, because that string is the
@@ -27,6 +28,7 @@ paper's actual provenance claim.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -40,6 +42,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+
+from roqsim import exit_status
 
 _FUEL_HOSTS = ("fuel.gazebosim.org", "fuel.ignitionrobotics.org")
 _CANONICAL_HOST = "fuel.gazebosim.org"
@@ -164,7 +168,7 @@ def resolve_model_uri(uri: str, model_paths: list[Path]) -> Path:
             return cand / rel if rel else cand
     raise FuelError(
         f"cannot resolve {uri}: not found on model path {[str(p) for p in model_paths]}. "
-        "Do not substitute a lookalike -- record the miss as a resolution_attempt in the spec."
+        "Add the directory that holds it as a model path; do not substitute a lookalike."
     )
 
 
@@ -194,6 +198,9 @@ def write_lock(path: Path, assets: list[Asset], world: str | None = None) -> Non
 def _world_uris(world: Path) -> list[str]:
     from lxml import etree
 
+    if not world.is_file():
+        # lxml's OSError for a missing file is not a FileNotFoundError and never says so.
+        raise FileNotFoundError(errno.ENOENT, "no such SDF world", str(world))
     tree = etree.parse(str(world))
     return sorted(
         {e.text.strip() for e in tree.iter() if _tag(e) == "uri" and e.text and _is_fuel(e.text)}
@@ -210,7 +217,11 @@ def _tag(el) -> str:
 
 def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Fetch and pin Fuel models referenced by an SDF world."
+        description="Fetch and pin Fuel models referenced by an SDF world.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a world with no Fuel URI, or one that did not resolve.",
+        ),
     )
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--uri", help="a single Fuel model URI")
@@ -226,7 +237,7 @@ def main(argv: list | None = None) -> int:
             "no Fuel URIs found -- if the world has no inline geometry either, that IS the finding",
             file=sys.stderr,
         )
-        return 1
+        return exit_status.BAD_INPUT
 
     assets, failed = [], []
     for u in uris:
@@ -244,12 +255,12 @@ def main(argv: list | None = None) -> int:
 
     if failed:
         print(
-            f"\n{len(failed)} asset(s) unresolved. Each is a resolution_attempt for the spec "
-            "(status: dead_link_404 / found_but_missing_value) -- not a reason to substitute geometry.",
+            f"\n{len(failed)} asset(s) unresolved: the world cannot be built as published. "
+            "Do not substitute geometry for them.",
             file=sys.stderr,
         )
-        return 2
-    return 0
+        return exit_status.BAD_INPUT
+    return exit_status.OK
 
 
 if __name__ == "__main__":

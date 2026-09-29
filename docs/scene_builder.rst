@@ -16,7 +16,10 @@ MCP server exposes two native-window tools a *human* answers in —
   ``floorplan.json``, never an embedded copy), so ``roqsim scenes scene-to-floorplan``
   round-trips a scene back to its floorplan JSON by following that reference. The floorplan-level and
   per-room ``description``\ s ride in ``floorplan.json`` and can be edited there later with no re-bake.
-  See :ref:`sketch-floorplan-tool` below; the full authoring loop is the ``scene-update`` skill.
+  The sketch states its ``version`` (``1``; absent means 1), and every reader refuses a newer one, or
+  a key it does not read at any level, naming the nearest known key, before it builds anything.
+  See :ref:`sketch-floorplan-tool` below. The authoring loop is sketch, ``roqsim scenes
+  floorplan-to-world``, then ``review_scene_by_human``, repeated until the review passes.
 
 — and one tool that needs neither a window nor a person:
 
@@ -37,6 +40,9 @@ schema from something that already exists, leaving the generator downstream unch
   be the former rather than inventing walls through them.
 * ``roqsim scenes dxf-to-floorplan`` — when the layout exists as a CAD drawing.
 
+Every ``roqsim scenes`` tool, including the SDF/USD/json-ld importers and ``fuel-fetch``, is listed
+with where it is covered in ``roqsim_scenes/README.md`` (*Commands*).
+
 Both emit axis-aligned walls only. A hand-drawn plan, or a world with diagonal walls, still belongs
 in the sketch window — the generator itself places a wall at any angle.
 
@@ -51,8 +57,6 @@ the CLI (:func:`roqsim.config_for_input`), the shared offscreen renderer
 (:class:`roqsim.FrameRenderer`), and roqsim's shared camera navigation (first-person look/walk/fly, plus
 MuJoCo's own ``mjv_moveCamera`` for the pan). The window is plain **tkinter** + Pillow (no Qt),
 dark-themed.
-
-(The generic *image* review tool is a separate project, ``mcp-media-review`` — see below.)
 
 Install and register
 --------------------
@@ -84,7 +88,7 @@ The ``review_scene_by_human`` tool
 
     review_scene_by_human(target: str, message: str = "", settle_steps: int = 0,
                           timeout_s: float | None = None, title: str = "",
-                          focus_object: str = "") -> dict
+                          focus_object: str = "", size: str = "960x720") -> dict
 
 * **target** — world / MJCF / model reference (above). A path to a missing file fails loudly.
 * **title** — a short heading atop the panel in a larger font (the *what* under review). Optional.
@@ -99,6 +103,7 @@ The ``review_scene_by_human`` tool
   model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An
   unknown name is not an error: it warns and falls back to the automatic camera.
 * **timeout_s** — seconds to wait for a verdict before ``TimeoutError`` (default 600).
+* **size** — the 3D view in pixels, ``WxH`` (default ``960x720``), the CLI's ``--size``.
 
 Returns::
 
@@ -117,7 +122,7 @@ the yaw of a prop the dot marks.
 Each **move** is a ``spawn_model`` prop the human repositioned with **Move Objects** mode on:
 ``entity`` is the world YAML ``spawn_model`` ``name``, and ``pos`` (x, y, and z when raised) /
 ``yaw_deg`` are its new pose. The window does not touch the world itself — it reports the move as intent, exactly like a
-comment dot; the caller (the ``scene-update`` skill) writes the pose back into the sketch/markers-map
+comment dot; the caller writes the pose back into the sketch/markers-map
 and regenerates. ``moves`` is empty when nothing was dragged. Why a rebuild rather than nudging the
 live body: a ``spawn_model`` prop is welded (no free joint), and roqsim treats the compiled
 ``MjModel`` as immutable at runtime — so on release the prop's ``spawn_model`` pose is edited and the
@@ -133,7 +138,8 @@ CLI (debugging)
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
 It prints the verdict JSON and exits **0** (pass), **1** (fail), **2** (no display / load error),
-**3** (window closed without a verdict).
+**3** (window closed without a verdict). The reason for a 2 is one line on stderr, which is what the
+MCP tool relays when the window produced no result.
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
 not around a pivot in front of it), **WASD walks** — or the **arrow keys**, whichever hand is free —
@@ -168,7 +174,8 @@ The ``sketch_floorplan_by_human`` tool
 .. code-block:: text
 
     sketch_floorplan_by_human(message: str = "", initial: dict | None = None,
-                              timeout_s: float | None = None, title: str = "") -> dict
+                              timeout_s: float | None = None, title: str = "",
+                              size: str = "760x760") -> dict
 
 A 2D top-view window with five modes — **draw** a wall (either **drag** freehand, straightened into
 lines the instant the pencil lifts, or **click** a start point then **click** the end for one
@@ -213,7 +220,7 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
 * **markers** — prop points whose ``comment`` names the model to place; dropped in **mark** mode
   and/or added from 3D-review comment dots, and carried through a wall-editing round. ``in_room`` is
   the id of the room containing the marker (computed; ``null`` if outside every room). A marker also
-  carries ``yaw_deg`` (heading about +Z, 0 = +x, CCW → the prop's ``spawn_model`` ``rpy``) **only
+  carries ``yaw_deg`` (heading about +Z, 0 = +x, CCW → the yaw of the prop's ``spawn_model`` ``pose``) **only
   when the human dragged a direction** out of the point in mark mode; a plain click leaves it
   headingless (the prop is placed axis-aligned). Orientation the agent decides for a 3D-review prop
   goes in the generator's ``--markers-map`` instead (``roqsim scenes floorplan-to-world``), whose ``yaw_deg``
@@ -306,14 +313,3 @@ Roadmap
   its defaults), not the 2D sketch. Capturing hinge side + swing direction as the human draws the
   opening is future work.
 * **Play/settle controls** in the 3D review — a play/pause to watch dynamics, not only a static view.
-
-The generic image tool (``mcp-media-review``)
----------------------------------------------
-
-The browser-based *image* review tool (``review_by_human``: show an image, block for a pass/fail or
-OK verdict) ships as a **standalone, dependency-light project**, ``mcp-media-review`` — it is generic
-(nothing roqsim-specific), so it is reusable and open-sourced on its own
-(``github.com/fred-labs/mcp-media-review``). It lives in its own
-git repo, so check it out beside this one, install it with ``pip install -e mcp-media-review``, and
-register it with your MCP client as the ``media-review`` server. It is the still-image counterpart to
-this package's 3D review.

@@ -5,9 +5,10 @@ Each gripper is checked three ways, because each catches a different class of mi
 * **aperture** -- the measured travel between the jaw inner faces against the datasheet. This is what
   catches a wrong mesh scale, a wrong joint range, or an inverted tendon sign, all of which still
   compile and still move.
-* **command polarity** -- that ``gripper_open`` really opens. ``arm_controller`` maps the manifest's
-  open/close values onto the actuator's ctrlrange low/high end, so a sign error in either the tendon
-  coefficients or the manifest produces a gripper that closes when told to open. Nothing else notices.
+* **command polarity** -- that the ctrl the gripper's manifest and tests call open really opens. A
+  sign error in the tendon coefficients leaves a model that compiles and moves, the wrong way round
+  for every raw ctrl written against it. (What a GripperCommand position does is
+  test_gripper_command_tracks.py's.)
 * **hold under gravity** -- the jaws are closed on a parcel in zero g, then gravity is switched on and
   the slip is measured. A friction grasp that looks right statically can still creep out of the jaws
   (the humanoid pick measures 0.12 m/s of it with too few ``noslip_iterations``), so the assertion
@@ -114,17 +115,15 @@ def test_gripper_aperture_matches_spec(
 def test_gripper_open_command_opens(
     model, geoms, half, joints, actuator, ctrl, home, jaw_half_z, aperture_mm
 ):
-    """The ctrl value the manifest calls `gripper_open` widens the jaws, not narrows them.
+    """The ctrl value called open widens the jaws, not narrows them.
 
     Both grippers reach their open end at the LOW end of ctrlrange, which for the Schunk means
-    negative tendon coefficients. Get that backwards and every GripperCommand runs inverted.
+    negative tendon coefficients.
     """
     m = _gripper_spec(model).compile()
     d = mujoco.MjData(m)
     aid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, actuator)
-    assert m.actuator_ctrlrange[aid][0] == pytest.approx(min(ctrl)), (
-        "gripper_open must map to the low end of ctrlrange (arm_controller.set_gripper maps it there)"
-    )
+    assert m.actuator_ctrlrange[aid][0] == pytest.approx(min(ctrl))
 
     d.ctrl[aid] = ctrl[1]
     for _ in range(3000):

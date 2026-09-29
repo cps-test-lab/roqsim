@@ -31,7 +31,7 @@ error message: it is guessing a model name, getting ``ModelError``, and guessing
 Three entry points, each returning plain dicts::
 
     list_models()          # every model, by the ref that resolves it
-    get_model_details(ref) # one model: its file, its manifest's components, its provenance
+    get_model_details(ref) # one model: its file, manifest components, provenance and names
     list_worlds()          # every runnable world YAML, baked scene, and built-in definition
 
 Runnable as a module, so it works inside a runtime image whose caller parses the JSON on the host::
@@ -59,11 +59,13 @@ from __future__ import annotations
 
 import json
 import sys
+import warnings
 from importlib import import_module
 from pathlib import Path
 
 import yaml
 
+from roqsim import exit_status
 from roqsim.manifest import manifest_license, manifest_path
 from roqsim.models import ENTRY_POINT_GROUP as MODELS_GROUP
 from roqsim.models import _entry_points, _provider_dirs
@@ -185,8 +187,10 @@ def get_model_details(name: str) -> dict:
 
     Accepts anything :func:`roqsim.models.resolve_model` does -- a qualified ref, a bare short name,
     or a path -- so a caller can hand back a row's ``ref`` unchanged. Adds to the list row the
-    manifest's full component config (what a spawn actually injects, with its defaults) and the
-    ``fov`` block a sensor model publishes for coverage analysis.
+    manifest's full component config (what a spawn actually injects, with its defaults), the
+    ``fov`` block a sensor model publishes for coverage analysis, the ``frames`` a device can hang
+    from (``parent_frame``, :mod:`roqsim.frames`), and the ``names`` a world keys on
+    (:func:`_model_names`).
     """
     from roqsim.models import ModelError, resolve_model
 
@@ -212,8 +216,74 @@ def get_model_details(name: str) -> dict:
         "components": manifest.get("components") or [],
         "assets": manifest.get("assets"),
         "fov": manifest.get("fov"),
+        "frames": manifest.get("frames") or [],
         "provenance": _provenance(path),
         "thumbnail": str(thumb) if thumb.is_file() else None,
+        "names": _model_names(asset),
+    }
+
+
+#: MuJoCo's transmission types, by the key an actuator row names its target under.
+_TRANSMISSION_KEYS = {
+    "mjTRN_JOINT": ("joint", "mjOBJ_JOINT"),
+    "mjTRN_JOINTINPARENT": ("joint", "mjOBJ_JOINT"),
+    "mjTRN_SLIDERCRANK": ("site", "mjOBJ_SITE"),
+    "mjTRN_TENDON": ("tendon", "mjOBJ_TENDON"),
+    "mjTRN_SITE": ("site", "mjOBJ_SITE"),
+    "mjTRN_BODY": ("body", "mjOBJ_BODY"),
+}
+
+
+def _model_names(asset) -> dict:
+    """The names a world addresses inside a model: its bodies, sites, joints and actuators.
+
+    These are what a spawn's ``actuators: each:`` keys, a sensor's ``site`` and a controller's joint
+    list resolve against, so they are read from the compiled model rather than the MJCF text, where
+    defaults classes and includes hide them. Each actuator names what it drives, keyed by its
+    transmission (``{"name": "wrist_3", "joint": "wrist_3_joint"}``), which is what tells an
+    actuator name from a joint name. A model that does not compile answers ``{"error": ...}``.
+
+    The model is attached, unprefixed, into a host holding only a ``floor`` plane (unless the model
+    brings its own), because that is how a spawn meets it: a wheeled base's contact pairs name the
+    world's ``floor`` and do not compile on their own. The host's world body is not listed.
+    """
+    import mujoco  # pylint: disable=import-outside-toplevel
+
+    from roqsim.models import apply_assets  # pylint: disable=import-outside-toplevel
+
+    try:
+        child = mujoco.MjSpec.from_file(str(asset.path))
+        apply_assets(child, asset)
+        host = mujoco.MjSpec()
+        if not any(g.name == "floor" for g in child.geoms):
+            host.worldbody.add_geom(
+                name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1, 1, 0.05]
+            )
+        with warnings.catch_warnings():
+            # The model's <option>/<size> lose to the host's on attach; only names are read here.
+            warnings.simplefilter("ignore")
+            host.attach(child, prefix="", frame=host.worldbody.add_frame())
+            model = host.compile()
+    except Exception as exc:  # noqa: BLE001 - any compile failure is this model's answer
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def names(obj: str, count: int, first: int = 0) -> list[str]:
+        kind = getattr(mujoco.mjtObj, obj)
+        return [n for i in range(first, count) if (n := mujoco.mj_id2name(model, kind, i))]
+
+    actuators = []
+    for i in range(model.nu):
+        row = {"name": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)}
+        trn = mujoco.mjtTrn(model.actuator_trntype[i]).name
+        key, obj = _TRANSMISSION_KEYS.get(trn, (trn, None))
+        target = int(model.actuator_trnid[i, 0])
+        row[key] = mujoco.mj_id2name(model, getattr(mujoco.mjtObj, obj), target) if obj else target
+        actuators.append(row)
+    return {
+        "bodies": names("mjOBJ_BODY", model.nbody, first=1),
+        "sites": names("mjOBJ_SITE", model.nsite),
+        "joints": names("mjOBJ_JOINT", model.njnt),
+        "actuators": actuators,
     }
 
 
@@ -310,6 +380,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="roqsim catalog",
         description="What this installation can spawn and run: models and worlds, as JSON.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT, note="2 includes `model` naming no model this installation has."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
@@ -328,7 +401,12 @@ def main(argv=None):
     if args.command == "model":
         result = get_model_details(args.name)
         print(json.dumps(result, indent=2))
-        return 1 if "error" in result else 0
+        # A model whose names could not be read is not fully answered, so it does not exit 0.
+        return (
+            exit_status.BAD_INPUT
+            if "error" in result or "error" in result["names"]
+            else exit_status.OK
+        )
     result = list_models() if args.command == "models" else list_worlds()
     if args.refs:
         # Deduplicated: one name can be two kinds (`roqsim_scenes:depot` is both a world YAML and

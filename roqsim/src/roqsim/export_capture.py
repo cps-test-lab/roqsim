@@ -26,8 +26,10 @@ What travels, and what does not:
   pose says nothing a viewer can apply without its parent's).
 * **Pose tracks** -- world-frame ``(pos, wxyz quat)`` for every body whose ``xpos``/``xquat`` actually
   varies and that no joint track already explains: free-jointed bodies, mocap bodies (a walker's
-  bones), ball-jointed ones. Selected by *observation* rather than configuration, so a world that
-  gains a walker or a movable prop captures it with no config change.
+  bones), ball-jointed ones, and a flex's vertex or node bodies, whose slide joints are unnamed --
+  the tracks a flex's skin in the scene descriptor deforms from. Selected by *observation* rather
+  than configuration, so a world that gains a walker or a movable prop captures it with no config
+  change.
 * Static bodies are omitted -- the geometry already carries their rest pose, and a track per wall
   would dwarf the file.
 
@@ -45,6 +47,9 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+
+from . import exit_status
+from .capture import RecordingError
 
 log = logging.getLogger(__name__)
 
@@ -344,25 +349,25 @@ def export_from_recording(
     """
     from .recording import open_recording
 
-    rec = open_recording(state)
-    model, _ctx = rec.build(target)
+    with open_recording(state) as rec:
+        model, _ctx = rec.build(target)
 
-    def posed():
-        # `range` re-poses one MjData per step, so nothing here may keep `data` past the yield --
-        # write_capture copies what it needs out of it before asking for the next sample.
-        for sample in rec.range(*rec.span):
-            yield sample.sim_time, sample.data
+        def posed():
+            # `range` re-poses one MjData per step, so nothing here may keep `data` past the yield
+            # -- write_capture copies what it needs out of it before asking for the next sample.
+            for sample in rec.range(*rec.span):
+                yield sample.sim_time, sample.data
 
-    return write_capture(
-        model,
-        posed(),
-        out_dir,
-        world=rec.world,
-        overrides=rec.meta.get("overrides") or {},
-        packages=rec.meta.get("packages"),
-        seed=rec.meta.get("seed"),
-        logger=logger,
-    )
+        return write_capture(
+            model,
+            posed(),
+            out_dir,
+            world=rec.world,
+            overrides=rec.meta.get("overrides") or {},
+            packages=rec.meta.get("packages"),
+            seed=rec.meta.get("seed"),
+            logger=logger,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -372,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="roqsim export capture",
         description="Export a recorded run to a browser run capture (capture.json + capture.bin).",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT, exit_status.RECORDING),
     )
     ap.add_argument("--state", required=True, help="the recording (.npz) to export")
     ap.add_argument("--out", required=True, help="output directory")
@@ -385,9 +391,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         manifest = export_from_recording(args.state, args.out, target=args.world)
-    except (CaptureExportError, OSError) as err:
-        print(f"error: {err}", file=__import__("sys").stderr)
-        return 1
+    except (CaptureExportError, RecordingError, OSError) as err:
+        return exit_status.fail("roqsim export capture", err)
     # One line of JSON on stdout: a machine contract, as `roqsim render` has.
     print(
         json.dumps(

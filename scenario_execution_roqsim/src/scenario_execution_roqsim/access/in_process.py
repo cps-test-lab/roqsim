@@ -3,47 +3,166 @@
 
 """The stepped backend: the simulator is this process, so the world is an object graph.
 
-Reads are direct -- ``data.xpos`` between two ``mj_step``s is consistent by construction. Writes are
-not: only the physics thread may touch ``model``/``data``, so an apply goes through
-:meth:`~roqsim.context.SimContext.post` and is observed one step later. That is roqsim's single-writer
-rule (architecture.rst §7), and it holds here even though the stepped runner ticks the tree on the
-same thread that steps -- because the rule is the plugin's contract, not this caller's convenience,
-and the ROS bridge's own service handler takes the identical path.
+Reads are direct -- an endpoint read between two ``mj_step``s is consistent by construction. Writes are
+not: only the physics thread may touch ``model``/``data``, so a write goes through
+:meth:`~roqsim.context.SimContext.post` (or an endpoint's own marshalled ``write``) and is observed
+one step later. That is roqsim's single-writer rule (architecture.rst §7), and it holds here even
+though the stepped runner ticks the tree on the same thread that steps -- because the rule is the
+plugin's contract, not this caller's convenience, and the control socket's bridge takes the
+identical path.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from roqsim.placement import PLACEABLE_MODES_HINT, base_joint_of, place_body
-
 from . import (
     AccessError,
+    CommandCall,
+    CommandOutcome,
     NavCall,
     NavOutcome,
-    OverrideCall,
-    OverrideOutcome,
     Pose,
+    ReportCall,
+    ReportReading,
     SpawnCall,
     SpawnOutcome,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
+    find_endpoint,
+    no_entity,
+    no_navigator,
+    no_report,
+    pose_reading,
+    published_field,
+    report_value,
 )
 
 _MISSING = object()
 
 
-def _unplaceable(name, joint_name) -> str:
-    """Why a pose could not be applied, in terms of what the WORLD would have to say instead.
+def _rows(ctx) -> list[dict]:
+    """The world's endpoints as :func:`~scenario_execution_roqsim.access.find_endpoint` reads them."""
+    from roqsim.context import endpoint_kind
+    from roqsim.ipc import path_of
 
-    The advice half comes from :data:`~roqsim.placement.PLACEABLE_MODES_HINT`, so this transport
-    and the ROS bridge cannot recommend different modes for the same refusal.
+    return [
+        {
+            "path": path_of(ep),
+            "owner": ep.owner,
+            "name": ep.name,
+            "kind": endpoint_kind(ep),
+            "ep": ep,
+        }
+        for ep in ctx.interface.all()
+    ]
+
+
+class _InProcessReport(ReportCall):
+    """A report read straight from its endpoint, resolved again on every poll.
+
+    Resolved every time rather than held: a reset that rebuilds the world replaces the plugins and
+    their endpoints, and a held endpoint would go on reading the torn-down one. ``read()`` runs on
+    the physics thread, which in the stepped shape is the thread that ticks the tree.
     """
-    return (
-        f"entity {name!r} is welded scenery: it has neither a mocap body nor a free joint named "
-        f"{joint_name!r}, so no pose can be written to it. {PLACEABLE_MODES_HINT}"
-    )
+
+    def __init__(self, access: InProcessAccess, entity: str, report: str, field: str):
+        self._access = access
+        self._entity, self._report, self._field = entity, report, field
+
+    def poll(self) -> ReportReading | None:
+        ctx = self._access._ctx()
+        if ctx is None:
+            return None
+        rows = _rows(ctx)
+        try:
+            row = find_endpoint(rows, self._entity, self._report, kind="out")
+        except AccessError:
+            raise no_report(
+                rows,
+                self._entity,
+                self._report,
+                is_entity=ctx.entities.get(self._entity) is not None,
+            ) from None
+        ep = row["ep"]
+        payload = ep.read()
+        if payload is None:  # the producer has nothing to report yet
+            return None
+        return report_value(
+            f"{self._entity}.{self._report}",
+            payload,
+            self._field,
+            published_field(ep.backend),
+            "in-process",
+        )
+
+
+class _InProcessCommand(CommandCall):
+    """A command written through its endpoint, and its confirmation read after the step.
+
+    The write goes through the endpoint the way a bridge's does: a marshalled one (declared with
+    :mod:`roqsim.endpoint`) queues itself, any other is submitted to the physics thread. The
+    stepped runner ticks the tree between steps, so by the time the command's future is done the
+    step that drained it has run its ``post_step``, and a confirmation recorded there is current.
+    """
+
+    def __init__(self, ctx, row: dict, confirm, value):
+        from roqsim.context import CommandFuture
+
+        ep = row["ep"]
+        self._confirm = confirm
+        self._stream = row["kind"] == "stream"
+        self._outcome: CommandOutcome | None = None
+        self._future = None
+        try:
+            if ep.marshalled:
+                outcome = ep.write(value)
+            else:
+                outcome = ctx.submit(lambda _c, w=ep.write, v=value: w(v))
+        except Exception as exc:  # noqa: BLE001 - a stream's parameters are refused right here
+            self._outcome = CommandOutcome(ok=False, detail=str(exc))
+            return
+        if self._stream:
+            self._outcome = CommandOutcome(ok=True, detail="queued")
+        elif isinstance(outcome, CommandFuture):
+            self._future = outcome
+        else:
+            self._outcome = CommandOutcome(ok=True, result=outcome)
+
+    def poll(self) -> CommandOutcome | None:
+        from roqsim.context import CommandFuture
+
+        if self._outcome is not None:
+            return self._outcome
+        if not self._future.done():
+            return None
+        try:
+            result = self._future.result(0)
+            if isinstance(result, CommandFuture):
+                self._future = result
+                return None if not result.done() else self.poll()
+        except Exception as exc:  # noqa: BLE001 - the producer's own refusal is the outcome
+            self._outcome = CommandOutcome(ok=False, detail=str(exc))
+            return self._outcome
+        if self._confirm is None:
+            self._outcome = CommandOutcome(ok=True, result=result)
+            return self._outcome
+        confirmation = self._confirm.read()
+        self._outcome = CommandOutcome(
+            ok=True,
+            result=result,
+            confirmation=confirmation,
+            verified=_verdict(confirmation),
+        )
+        return self._outcome
+
+
+def _verdict(confirmation) -> str:
+    """A confirmation's ``verified`` field, where it has one."""
+    if isinstance(confirmation, dict):
+        return str(confirmation.get("verified") or "")
+    return str(getattr(confirmation, "verified", "") or "")
 
 
 class _PostedRoute(NavCall):
@@ -79,9 +198,6 @@ class InProcessAccess(WorldAccess):
 
     def __init__(self, sim):
         self._sim = sim
-        #: body id per (compiled model, name). The model is part of the key because a scenario that
-        #: resets with different `world_overrides` gets a NEW model, in which ids are not stable.
-        self._bids: dict[tuple[int, str], int] = {}
 
     # -- the world ------------------------------------------------------------------------------
     def _ctx(self):
@@ -97,70 +213,36 @@ class InProcessAccess(WorldAccess):
     def ready(self) -> bool:
         return self._ctx() is not None
 
-    def entity_pose(self, name: str) -> Pose | None:
+    def ground_truth_pose(self, name: str) -> Pose | None:
+        from roqsim.entity_pose import OWNER, endpoint_name
+
         ctx = self._ctx()
         if ctx is None:
             return None
-        bid = self._body_id(ctx, name)
-        return Pose(pos=np.array(ctx.data.xpos[bid]), quat=np.array(ctx.data.xquat[bid]))
+        ep = ctx.interface.find(OWNER, endpoint_name(name))
+        if ep is None:
+            raise no_entity(_rows(ctx), name)
+        return pose_reading(name, ep.read())
 
-    def _body_id(self, ctx, name: str) -> int:
-        key = (id(ctx.model), name)
-        if key not in self._bids:
-            # Imported HERE rather than at module scope: importing `roqsim.lookup` pulls in MuJoCo, and
-            # the behaviour tree is built before any world is compiled. Same reason the actions
-            # compare the plugin's verdict strings by value instead of importing its constants.
-            from roqsim.lookup import LookupError_, resolve_body_id
+    # -- reports ----------------------------------------------------------------------------------
+    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+        return _InProcessReport(self, entity, report, field)
 
-            try:
-                self._bids[key] = resolve_body_id(ctx, name, what="entity")
-            except LookupError_ as err:
-                raise AccessError(str(err)) from None
-        return self._bids[key]
-
-    # -- the fault ------------------------------------------------------------------------------
-    def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
+    # -- commands ---------------------------------------------------------------------------------
+    def call_endpoint(self, entity: str, endpoint: str, value=None) -> CommandCall:
         ctx = self._ctx()
         if ctx is None:
             raise AccessError("the world is not built yet; call ready() first")
-        prefix = self.OVERRIDE_KINDS[kind]
-        key = f"{prefix}:{instance}"
-        handle = ctx.blackboard.get(key)
-        if handle is None:
-            published_by = (
-                "a `model_override` plugin instance in the world, whose `name:` must match"
-                if kind == "model"
-                else "a sensor carrying a `fault:` block, addressed by its COMPONENT ADDRESS "
-                "(`robot.lidar`, not `lidar`) -- a sensor with no `fault:` publishes nothing"
-            )
-            offered = sorted(
-                k.split(":", 1)[1]
-                for k in getattr(ctx.blackboard, "_data", {})
-                if k.startswith(prefix + ":")
-            )
-            raise AccessError(
-                f"nothing on the blackboard under {key!r}. It is published by {published_by}. "
-                f"This world offers: {', '.join(offered) if offered else '(none)'}. "
-                "Check that the campaign's config is the world carrying the fault; "
-                "`roqsim scenes describe <world>` lists what a world offers."
-            )
-        if bool(handle.is_active()) == bool(active):
-            # Nothing to do, and nothing to WAIT for. A call that waited for a transition here would
-            # hang forever: `set_active` returns early when the state already matches, so `changes`
-            # never increments (measured in the plugin, model_override.set_active).
-            return _Settled(
-                OverrideOutcome(
-                    ok=True,
-                    verified=str(getattr(handle.read_state(), "verified", "") or ""),
-                    detail=f"already {'active' if active else 'nominal'}",
-                )
-            )
-        before = int(handle.read_state().changes)
-        ctx.post(lambda _ctx: handle.set_active(bool(active)))
-        return _PostedCall(handle, before)
+        rows = _rows(ctx)
+        row = find_endpoint(rows, entity, endpoint, kind="in")
+        confirm = None
+        if row["ep"].confirm:
+            sibling = row["path"].rpartition("/")[0] + "/" + row["ep"].confirm
+            confirm = next((r["ep"] for r in rows if r["path"] == sibling), None)
+        return _InProcessCommand(ctx, row, confirm, value)
 
     # -- navigation --------------------------------------------------------------------------------
-    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+    def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
         handle = self._nav_handle(name)
         poses = [(float(p[0]), float(p[1])) for p in goal_poses]
         try:
@@ -169,7 +251,7 @@ class InProcessAccess(WorldAccess):
             raise AccessError(str(err)) from None
         return _PostedRoute(handle, seq, wait=wait)
 
-    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+    def start_route(self, name: str, *, wait: bool) -> NavCall:
         handle = self._nav_handle(name)
         try:
             seq = handle.start()
@@ -183,136 +265,65 @@ class InProcessAccess(WorldAccess):
             raise AccessError("the world is not built yet; call ready() first")
         handle = ctx.blackboard.get(f"nav:{name}:handle")
         if handle is None:
-            offered = sorted(
+            offered = [
                 k.split(":", 1)[1].removesuffix(":handle")
                 for k in getattr(ctx.blackboard, "_data", {})
                 if k.startswith("nav:") and k.endswith(":handle")
-            )
-            raise AccessError(
-                f"entity {name!r} has no navigator, so nothing can drive it. A `navigator` component "
-                f"must be nested under the entry that provides it (spawn_robot, spawn_model with "
-                f"`mocap: true`, or walker). This world can navigate: "
-                f"{', '.join(offered) if offered else '(nothing)'}."
-            )
+            ]
+            raise no_navigator(name, offered)
         return handle
 
-    # -- teleport ---------------------------------------------------------------------------------
+    # -- placement and presence ------------------------------------------------------------------
     def set_entity_state(
         self, name: str, pos: np.ndarray, quat: np.ndarray, lin=None, ang=None
     ) -> TeleportCall:
-        # Imported HERE, not at module scope -- see the note on `_body_id`: this pulls in MuJoCo,
-        # and the behaviour tree is built before any world is compiled.
-        import mujoco
+        from roqsim import entity_control
 
         ctx = self._ctx()
         if ctx is None:
             raise AccessError("the world is not built yet; call ready() first")
-        entity = ctx.entities.get(name)
-        if entity is None:
-            raise AccessError(
-                f"the simulator has no entity called {name!r}. The name is the world's `name:` for "
-                "that spawn, not a body name and not a TF frame."
-            )
-        joint_name = base_joint_of(entity)
-        outcome_box: dict = {}
+        try:
+            entity_control.require_entity(ctx, name)
+        except entity_control.UnknownEntity as err:
+            raise AccessError(str(err)) from None
+        box: dict = {}
 
-        def _write(
-            _ctx,
-            joint_name=joint_name,
-            pos=np.asarray(pos, dtype=float),
-            quat=np.asarray(quat, dtype=float),
-            vel=np.asarray(
-                [
-                    *(lin if lin is not None else (0.0, 0.0, 0.0)),
-                    *(ang if ang is not None else (0.0, 0.0, 0.0)),
-                ],
-                dtype=float,
-            ),
-        ):
-            # The velocity the caller asked for, defaulting to zero: a body PUT somewhere is at
-            # rest unless the caller says otherwise, which is what distinguishes a placement from
-            # a launch.
-            if not place_body(_ctx, entity, pos, quat, vel):
-                outcome_box["outcome"] = TeleportOutcome(
-                    ok=False, detail=_unplaceable(name, joint_name)
+        def _write(_ctx):
+            try:
+                box["outcome"] = TeleportOutcome(
+                    ok=True, detail=entity_control.set_state(_ctx, name, pos, quat, lin, ang)
                 )
-                return
-            mujoco.mj_forward(_ctx.model, _ctx.data)
-            moving = "" if not vel.any() else f", moving at {vel.tolist()}"
-            outcome_box["outcome"] = TeleportOutcome(
-                ok=True, detail=f"placed at {pos.tolist()}{moving}"
-            )
+            except entity_control.EntityRefused as err:
+                box["outcome"] = TeleportOutcome(ok=False, detail=str(err))
 
         ctx.post(_write)
-        return _PostedTeleport(outcome_box)
+        return _PostedTeleport(box)
 
     def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
-        """Flip presence and place the entity in ONE posted callback.
-
-        One callback, not two, because that is the whole reason to spawn rather than teleport: a
-        flip and a pose applied in separate transactions leave the entity perceivable for a step at
-        wherever the world compiled it, and a free body accelerating under gravity in between.
-        """
-        import mujoco
-
-        from roqsim.presence import set_present
+        """Flip presence and place the entity in ONE posted callback
+        (:func:`roqsim.entity_control.set_presence`)."""
+        from roqsim import entity_control
 
         ctx = self._ctx()
         if ctx is None:
             raise AccessError("the world is not built yet; call ready() first")
-        entity = ctx.entities.get(name)
-        if entity is None:
-            raise AccessError(
-                f"the simulator has no entity called {name!r}. A spawn ACTIVATES what the world "
-                "already declares -- it does not create one -- so the name must be a `name:` in "
-                "the world, and a world that declares no such entity cannot be made to have it."
-            )
-        joint_name = base_joint_of(entity)
-        outcome_box: dict = {}
+        try:
+            entity_control.require_entity(ctx, name, spawning=True)
+        except entity_control.UnknownEntity as err:
+            raise AccessError(str(err)) from None
+        box: dict = {}
 
-        def _apply(
-            _ctx,
-            joint_name=joint_name,
-            pos=None if pos is None else np.asarray(pos, dtype=float),
-            quat=None if quat is None else np.asarray(quat, dtype=float),
-        ):
-            # Refused BEFORE the pose is written, and refused at all: `SpawnEntity` over ROS answers
-            # RESULT_OPERATION_FAILED for an entity that is already in the state asked for, and two
-            # transports must not answer one question differently -- a scenario is written once and
-            # does not learn which shape it is running in. Checked first because refusing after the
-            # write would leave the entity moved by a call that reported failure.
-            if bool(getattr(entity, "present", True)) == bool(present):
-                outcome_box["outcome"] = SpawnOutcome(
-                    ok=False,
-                    detail=f"entity {name!r} is already {'present' if present else 'absent'}",
+        def _apply(_ctx):
+            try:
+                box["outcome"] = SpawnOutcome(
+                    ok=True,
+                    detail=entity_control.set_presence(_ctx, name, present, pos, quat),
                 )
-                return
-            if pos is not None:
-                # The velocity is left at zero for the same reason a teleport zeroes it: an entity
-                # that has just appeared has no history, and a velocity carried over from before it
-                # was hidden is one this trial never applied.
-                if not place_body(_ctx, entity, pos, quat):
-                    outcome_box["outcome"] = SpawnOutcome(
-                        ok=False,
-                        detail=_unplaceable(name, joint_name)
-                        + " Or spawn it without a pose, to activate it where the world put it.",
-                    )
-                    return
-            # The return value is the confirmation that something changed, so it is what the
-            # outcome is built from. Ignoring it would report success for a no-op.
-            if not set_present(_ctx, entity, present):
-                outcome_box["outcome"] = SpawnOutcome(
-                    ok=False, detail=f"entity {name!r} did not change presence"
-                )
-                return
-            mujoco.mj_forward(_ctx.model, _ctx.data)
-            where = "" if pos is None else f" at {pos.tolist()}"
-            outcome_box["outcome"] = SpawnOutcome(
-                ok=True, detail=f"{'present' if present else 'absent'}{where}"
-            )
+            except entity_control.EntityRefused as err:
+                box["outcome"] = SpawnOutcome(ok=False, detail=str(err))
 
         ctx.post(_apply)
-        return _PostedSpawn(outcome_box)
+        return _PostedSpawn(box)
 
 
 class _PostedSpawn(SpawnCall):
@@ -343,41 +354,3 @@ class _PostedTeleport(TeleportCall):
 
     def poll(self) -> TeleportOutcome | None:
         return self._box.get("outcome")
-
-
-class _Settled(OverrideCall):
-    """An outcome that was known immediately (nothing to apply)."""
-
-    def __init__(self, outcome: OverrideOutcome):
-        self._outcome = outcome
-
-    def poll(self) -> OverrideOutcome | None:
-        return self._outcome
-
-
-class _PostedCall(OverrideCall):
-    """Waits for the queued write, then reports the plugin's own verdict.
-
-    Keyed on ``changes``, not on ``active``: the report's ``active`` is the state, and in the restore
-    direction it already reads the value being asked for before the queue has drained -- so a caller
-    watching ``active`` would report a restore that has not happened. ``changes`` only moves when the
-    plugin actually wrote.
-
-    One tick of latency by construction: the command is drained in the next ``pre_step``, and the
-    verdict is computed in that same step's ``post_step``, so the tick that sees ``changes`` move also
-    sees a final ``verified``.
-    """
-
-    def __init__(self, handle, changes_before: int):
-        self._handle = handle
-        self._before = changes_before
-
-    def poll(self) -> OverrideOutcome | None:
-        report = self._handle.read_state()
-        if int(report.changes) <= self._before:
-            return None
-        return OverrideOutcome(
-            ok=True,
-            verified=str(report.verified or ""),
-            detail=f"at t={float(report.since):.2f} s",
-        )

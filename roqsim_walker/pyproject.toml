@@ -12,9 +12,8 @@ requires-python = ">=3.10"
 dependencies = [
     "roqsim",
     "roqsim_nav",   # the shared navigator: plan, follow, avoid; this package supplies the body
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
-    "py_trees>=2.2",   # the navigate / stuck-recovery behaviour tree
     "trimesh>=3.20",   # loads the CARLA character OBJ per material group (skinning)
     # trimesh soft-imports scipy and re-raises the wrapped ImportError the first time the grouped
     # OBJ path touches it, so scipy is a hard dependency of our skinning use. skin.py's KD-tree
@@ -33,17 +32,6 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
-# ORCA local collision avoidance (`avoidance: true` in a world). Built from source (Cython), so it
-# is opt-in: without it walkers follow their planned path without yielding to the robot or peers.
-#
-# This is a PEP 508 direct reference, the only one in the tree, and it is a deliberate trade: rvo2
-# publishes no wheel, so the alternatives were vendoring the Cython source or having no ORCA at all.
-# Two consequences a downstream consumer has to plan for, because pip does not warn about either:
-# PyPI rejects a distribution whose metadata carries a direct URL, so this package cannot be uploaded
-# with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
-# air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
-# degrades to planned paths without local avoidance and logs why, it does not fail.
-avoidance = ["pyrvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
 # `roqsim walker import-actor` only: reads a rigged COLLADA actor to author a new blueprint offline. Not
 # needed to *run* a walker, so it stays out of the runtime deps.
 import = ["pycollada>=0.7"]
@@ -64,6 +52,10 @@ roqsim_walker = "roqsim_walker.models"
 [project.entry-points."roqsim.commands"]
 walker = "roqsim_walker.cli:walker"
 
+[tool.setuptools]
+# The CC-BY attribution the bundled assets require travels in the wheel's metadata (dist-info).
+license-files = ["THIRD_PARTY.md"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -76,6 +68,7 @@ roqsim_walker = [
     "models/people/*/*.png",
     "models/people/*/CREDITS.txt",   # the asset's licence + attribution travels with it
     "models/anims/*/*.npz",
+    "models/anims/*/CREDITS.txt",    # the CARLA CC-BY attribution travels with the clips
     "worlds/*.yaml",
 ]
 

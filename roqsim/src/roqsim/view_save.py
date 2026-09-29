@@ -220,8 +220,8 @@ def _block_extent(lines: list[str], key_line: int, indent: int) -> int:
     """One past the last line belonging to the block opened at ``key_line`` (whose key is at ``indent``).
 
     Trailing blanks and comments are left *outside* the block: a comment sitting between the end of
-    ``sim:`` and ``plugins:`` introduces what follows it far more often than it closes what precedes,
-    so swallowing it into the replaced range would move it.
+    ``sim:`` and ``components:`` introduces what follows it far more often than it closes what
+    precedes, so swallowing it into the replaced range would move it.
     """
     end = key_line + 1
     for i in range(key_line + 1, len(lines)):
@@ -286,11 +286,7 @@ def replace_sim_view(text: str, view: dict) -> str:
     if sim_line is None:
         indent = _INDENT_STEP
         block = ["sim:", *format_view(view, indent=indent, flow=False), ""]
-        # Either spelling of the entry key: a world written since the rename has no ``plugins:``
-        # at all, and looking only for that one appended the block to the end of the file.
         at = _find_key(lines, "components", 0, 0, len(lines))
-        if at is None:
-            at = _find_key(lines, "plugins", 0, 0, len(lines))
         at = len(lines) if at is None else at
         new_lines = lines[:at] + block + lines[at:]
     elif lines[sim_line].partition("sim:")[2].strip().startswith("{"):

@@ -1,9 +1,8 @@
 """Clearpath Jackal drive-test battery (port verification).
 
-Mirrors the robot-porting verification battery and `test_husky_scene.py`: static sanity (A),
-open-loop drive tests (B) and sensor checks (C). Everything is driven through the real
-``diff_drive`` plugin with the shipped manifest, so the model, its calibration and the controller
-are verified together.
+Mirrors `test_husky_scene.py`: static sanity (A), open-loop drive tests (B) and sensor checks (C).
+Everything is driven through the real ``diff_drive`` plugin with the shipped manifest, so the model,
+its calibration and the controller are verified together.
 
 Reference dimensions come from Clearpath's ``jackal_description`` (see clearpath_jackal_LICENSE):
 chassis box 0.420 x 0.310 x 0.184 m, mass 16.523 kg; wheel r=0.098 m, w=0.040 m, m=0.477 kg;
@@ -34,6 +33,7 @@ from scan_mount_utils import (
     robot_hits,
     spawn,
     static_tf,
+    topic_of,
 )
 
 from roqsim.context import Entity, SimContext
@@ -93,6 +93,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -365,7 +366,9 @@ def test_c1_the_scan_frame_is_the_vendor_chain(scan):
 
 def test_c2_the_forward_ray_reads_the_wall(scan):
     published, true = forward_range(scan, lidar(scan, f"jk.{LABEL}"))
-    assert published == pytest.approx(true, abs=1e-3), f"reads {published:.4f} m, wall at {true:.4f} m"
+    assert published == pytest.approx(true, abs=1e-3), (
+        f"reads {published:.4f} m, wall at {true:.4f} m"
+    )
 
 
 def test_c3_the_scan_skips_its_own_mount_and_nothing_else(scan):
@@ -401,8 +404,9 @@ def test_c6_the_tf_chain_and_topic(scan):
     robot = static_tf(scan, "jk", NAMESPACE)
     (mid,) = [t for t in robot if t["child"] == "mid_mount"]
     assert mid["parent"] == "base_link" and np.allclose(mid["translation"], MID_MOUNT[0])
-    hints = endpoint(scan, "scan", address).backend["ros2"]
-    assert (hints["frame_id"], hints["topic"]) == (SCAN_FRAME, "scan")
+    scan_ep = endpoint(scan, "scan", address)
+    hints = scan_ep.backend["ros2"]
+    assert (hints["frame_id"], topic_of(scan_ep)) == (SCAN_FRAME, "scan")
     assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
 
 

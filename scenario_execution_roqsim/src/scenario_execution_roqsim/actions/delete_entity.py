@@ -10,8 +10,9 @@ it. Its pose stays where it was, so a later ``spawn_entity`` can bring it back -
 frozen rather than left to fall while it is away (``roqsim.presence``).
 
 Like every action here it runs over either transport (``roqsim.access``): in a stepped run the flip
-is a posted callback on the physics thread, and in a ROS run it is ``simulation_interfaces``'
-``DeleteEntity``. The scenario is written once and does not learn which shape it is in.
+is a posted callback on the physics thread, and over the control socket it is the
+``sim/entities/set_presence`` command -- both :func:`roqsim.entity_control.set_presence`. The
+scenario is written once and does not learn which shape it is in.
 
 ``scenario_execution_sim`` declares a ``delete_entity`` too, for simulators that destroy entities.
 As with ``spawn_entity``, an invocation binds to the implementation from the library the scenario

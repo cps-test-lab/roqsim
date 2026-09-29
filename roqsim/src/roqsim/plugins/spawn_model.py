@@ -20,10 +20,9 @@ Config::
       scale: 1.0                     # uniform geometric scale factor (see below)
       motion: physics                # who owns the pose: physics (default; a movable body),
                                      #   static (welded scenery), driven (a plugin writes it)
-      mocap: false                   # make it a mocap body: moved by a plugin, not by physics
       present: true                  # false: compiled in, but absent until it is spawned
-      mass: 0.5                      # override the root body's total geom mass (kg)
-      friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
+      mass: 0.5                      # override the total mass (kg): root-body geoms + flex vertices
+      friction: [1.2, 0.005, 0.0001] # override root-body geom and flex friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
       tf_rate: 30.0                  # publish_tf: dynamic -- stream rate (Hz)
 
@@ -33,22 +32,25 @@ silently inert, and anything addressing the prop by the name you chose then reso
 
 ``mass`` and ``friction`` exist so the two properties that decide whether a grasp holds are world-YAML
 keys, and therefore ordinary campaign factors -- a sweep over payload or surface friction needs no new
-variation plugin, just ``ParameterVariationList`` against these. ``mass`` rescales the root body's geom
-masses in proportion, keeping the mass distribution of a multi-geom prop; ``friction`` accepts a single
-sliding coefficient or the full ``[sliding, torsional, rolling]`` triple. Both are refused when the prop
-has nothing to scale, rather than silently doing nothing.
+variation plugin, just ``ParameterVariationList`` against these. ``mass`` rescales what the root body
+weighs in proportion, keeping the mass distribution of a multi-geom prop: a geom that declares ``mass``
+has its mass scaled, one that states only a ``density`` has its density scaled, and a visual-only geom
+(``mass="0"`` or ``density="0"``) stays massless. A density-only prop -- the usual way a model states
+its mass -- is therefore rescaled like any other and weighs exactly what the world asked for.
+``friction`` accepts a single sliding coefficient or the full ``[sliding, torsional, rolling]``
+triple. Both are refused when the prop has nothing to scale, rather than silently doing nothing.
 
-A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
-a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
-two non-default ones.
+A prop is in one of three states, named by ``motion``: a **free** body physics moves (``physics``,
+the default), **welded** scenery (``static``), or a **mocap** body some plugin drives (``driven``).
 
 ``motion: driven`` makes the prop's root body a MuJoCo mocap body: it has **no degrees of freedom**, so
 it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
 and a robot bumps into. Its pose is written every step by whoever owns it -- a ``navigator``
 component nested under this entry, say -- rather than integrated. That is what a *controlled* obstacle
-is: it goes where the experiment says, and the robot under test cannot shove it off course. Like
-``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
-rather than a joint), so a repetition never inherits where the last one left it.
+is: it goes where the experiment says, and the robot under test cannot shove it off course. Like a
+``physics`` prop, it is re-seated at its spawn pose on ``on_reset`` (through
+``mocap_pos``/``mocap_quat`` rather than a joint), so a repetition never inherits where the last one
+left it.
 
 ``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves --
 a box a robot can pick up. It also registers the joint as the entity's
@@ -73,8 +75,9 @@ different scales stay distinct assets: the dedup key in :mod:`roqsim.assets` inc
 It is deliberately a single **uniform** factor. Non-uniform scaling is ill-defined for a sphere or a
 capsule and silently shears any child body that is rotated relative to its parent, so a prop that must
 be stretched on one axis needs a purpose-built plugin instead (as ``door`` does for its leaf).
-``scale`` is geometry only -- it does not touch mass or inertia, which is why it suits the static
-scenery this plugin places (there is no free joint) and not a dynamic body.
+``scale`` is geometry only -- it does not touch mass or inertia, so a ``motion: physics`` prop keeps
+the mass it was modelled with at every size; state ``mass`` beside ``scale`` when the two belong
+together.
 
 ``pose:`` is the mount pose, in the shape ``SpawnEntity.srv`` gives its ``initial_pose``. Its
 orientation may be a quaternion or Euler angles, so a prop turned about +Z stays short::
@@ -100,31 +103,74 @@ It is not a way to leave a prop out: ``enabled: false`` does that, and does it p
 building the body at all. An absent prop still costs its geometry in the compiled model -- that is
 what makes it spawnable.
 
+**A model with a** ``<flexcomp>`` -- a soft block, a sheet, a cable -- is a prop like any other; the
+model is MuJoCo's own MJCF, and roqsim adds what the prop needs around it:
+
+- ``motion: physics`` on a model whose root body holds nothing but free flexes (no geom, no joint,
+  no pinned vertex) means **free vertices**: every vertex already has its own slide joints, so no
+  free joint is added, and none of them is ``base_joint`` -- ``SetEntityState`` cannot re-seat such
+  a prop, and ``on_reset`` needs nothing, since ``mj_resetData`` puts every vertex back where the
+  model declared it. A flex pinned to a rigid root body is carried by that body's free joint, as
+  any part of a prop is.
+- ``motion: static`` or ``driven`` on a model with a free flex is refused: welding or driving the
+  root holds nothing that is not pinned to it. Pin the vertices that should be held (``<pin>``) to
+  a body, or use ``motion: physics``.
+- A ``<flexcomp>`` directly under ``<worldbody>`` is moved into a body named after the model file,
+  at its origin and with no joint, so the prop has a root body like any other; a vertex it pins to
+  the world is pinned to that body, which is welded where the prop is spawned.
+- ``scale`` covers the flex too: its vertex and node bodies are bodies, and its pinned or
+  interpolated vertex positions, ``radius``, ``margin``, ``gap`` and shell ``thickness`` scale with
+  them.
+- ``mass`` counts the flex: the total it sets is the root body's geoms plus every vertex body, and
+  both are rescaled in proportion. ``friction`` is written to every flex as well as to the root
+  body's geoms. A model whose only collision is a flex can rest, so ``motion: physics`` accepts it.
+- The registered entity lists its flexes by name in ``meta["flexes"]``, and ``present: false``
+  hides them with the rest of it (:mod:`roqsim.presence`).
+- A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+  model's own folder and ``<compiler meshdir>``, so that file lives beside the model: the
+  directories a manifest borrows through ``assets:`` are not searched for it (:mod:`roqsim.flex`,
+  rule 5).
+
+What a flex requires of the rest of the world -- the integrator and solver -- is
+:mod:`roqsim.flex`'s, and ``sim.integrator: auto`` (the default) already chooses it.
+
 Unlike the ``spawn_*`` plugins for robots/sensors this does **not** pull in a model manifest -- a prop
 is inert geometry with no intrinsic controller or sensors. Place several by listing the plugin
 multiple times with distinct ``prefix`` (and ``name``).
 
 ``publish_tf`` puts the spawned root body's world pose on TF so a viewer binds the scene node by name
-(``child_frame_id`` == the exported body name) and a TF-tree consumer (rviz, an rso_web_backend federation)
-gets the frame. It has no effect on the baked web scene, which already seats the body at its spawn pose.
+(``child_frame_id`` == the exported body name) and a TF-tree consumer such as rviz gets the frame. It
+has no effect on the baked web scene, which already seats the body at its spawn pose.
 
   - ``false`` (default): a static prop already seated by the baked scene needs no TF.
   - ``dynamic`` (or ``true``): stream the live world pose on the relative ``tf`` topic at ``tf_rate``.
     For a **free body** (a ``<freejoint/>`` prop the robot moves) -- nothing else publishes its pose, so
-    a name-binding viewer would otherwise freeze it at the spawn pose. The ros2_bridge's ``gt`` config
-    maps the relative topic to ``/gt/tf``; a multi-robot gateway federates it under the robot's scope.
+    a name-binding viewer would otherwise freeze it at the spawn pose. The topic is relative, so a
+    multi-robot gateway federates it under the robot's scope.
   - ``static``: publish the world pose **once** on the latched ``/tf_static`` (a welded prop's frame for
     the TF tree). The pose is model-fixed, so one ``mj_forward`` at configure resolves it.
 """
 
 from __future__ import annotations
 
+import math
+
 import mujoco
 
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim import endpoint
+from roqsim.context import Entity, SimContext
+from roqsim.flex import (
+    entity_flex_ids,
+    flex_is_free,
+    flex_label,
+    lift_top_level_flexes,
+    owned_bodies,
+    pin_bodies,
+)
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose
+from roqsim.types import Transform, Transforms
 
 _TF_MODES = (False, "dynamic", "static")
 
@@ -136,6 +182,10 @@ def _scale_spec(spec: mujoco.MjSpec, factor: float) -> None:
     rail is a ``<geom type="box">``) or from parts offset inside their body, and scaling only the
     meshes would shrink those parts while leaving their offsets and sizes untouched -- the prop would
     come apart rather than get smaller. Inertial properties are left alone; see the module docstring.
+
+    A flex's vertex and node bodies are bodies, so their positions scale above; what a flex keeps in
+    its own fields is the position of a vertex that has no body of its own (a pinned vertex, or any
+    vertex of an interpolated flex, in its parent's frame) and the sizes of its collision shell.
     """
     for mesh in spec.meshes:
         mesh.scale = [c * factor for c in mesh.scale]
@@ -152,6 +202,14 @@ def _scale_spec(spec: mujoco.MjSpec, factor: float) -> None:
         light.pos = [c * factor for c in light.pos]
     for joint in spec.joints:
         joint.pos = [c * factor for c in joint.pos]
+    for flex in spec.flexes:
+        flex.vert = [c * factor for c in flex.vert]
+        flex.node = [c * factor for c in flex.node]
+        flex.radius *= factor
+        flex.margin *= factor
+        flex.gap *= factor
+        if flex.thickness > 0:  # -1 is MuJoCo's "unset"
+            flex.thickness *= factor
 
 
 class SpawnModelPlugin(Plugin):
@@ -185,6 +243,9 @@ class SpawnModelPlugin(Plugin):
             friction = [friction]  # a bare number means the sliding coefficient
         self.friction = [float(v) for v in friction] if friction is not None else None
         self._base_joint = ""
+        #: Whether build gave the root a free joint -- not so for a model of free flexes, whose
+        #: vertices carry their own joints (module docstring).
+        self._freejoint = False
         self._spawn_qpos: list[float] = []
         self._mocapid = -1
         # publish_tf: false | "dynamic" | "static"; `true` is an alias for "dynamic".
@@ -194,6 +255,7 @@ class SpawnModelPlugin(Plugin):
         self._root_body = ""
         self._body_frame = ""
         self._body_id = -1
+        self._static_pose = Transforms()  # publish_tf: static -- the transform, set at configure
         self._ctx: SimContext | None = None
 
     def validate_config(self, config: dict) -> list[str]:
@@ -295,7 +357,7 @@ class SpawnModelPlugin(Plugin):
             (g.contype or g.conaffinity)
             for body in getattr(child, "bodies", [])
             for g in getattr(body, "geoms", [])
-        )
+        ) or any((f.contype or f.conaffinity) for f in child.flexes)
         if not collides:
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: this model has no colliding geometry, so under "
@@ -309,6 +371,16 @@ class SpawnModelPlugin(Plugin):
         try:
             child = mujoco.MjSpec.from_file(str(asset.path))
         except ValueError as exc:
+            if "flexcomp" in str(exc):
+                # A mesh/gmsh flexcomp reads its file at parse time, before apply_assets could
+                # resolve it (roqsim.flex, rule 5), so its "Error opening file" lands here.
+                raise ModelError(
+                    f"spawn_model {self.model_ref!r}: MuJoCo could not parse {asset.path}: {exc}. "
+                    f"A <flexcomp file=...> is read while the model is parsed, relative to the "
+                    f"model's own folder and its <compiler meshdir>; the directories a manifest "
+                    f"borrows through `assets:` are not searched for it. Keep the file beside the "
+                    f"model."
+                ) from exc
             # MuJoCo raises a bare "could not decode content" that names neither the file nor the
             # cause. Point at the resolved path and the likely reason (not an MJCF, or malformed XML).
             raise ModelError(
@@ -319,16 +391,21 @@ class SpawnModelPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (the prop's own
         # folder is included as a fallback), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        # A flexcomp under <worldbody> gets a body of its own, so the prop has a root to register,
+        # hide and weld (and a world pin survives the attach -- roqsim.flex, rule 4).
+        child = lift_top_level_flexes(child, asset.path.stem)
         if self.scale != 1.0:
             _scale_spec(child, self.scale)
         # Best-effort root body name (for the entity's pose lookups); props are named after their file.
         bodies = getattr(child.worldbody, "bodies", [])
         self._root_body = bodies[0].name if bodies else asset.path.stem
         if self.mass is not None or self.friction is not None:
-            self._apply_physics_overrides(bodies, asset)
+            self._apply_physics_overrides(child, bodies, asset)
+        self._refuse_a_weld_that_holds_no_flex(child)
         if self.free:
             self._refuse_a_free_body_that_cannot_rest(child)
-            self._add_freejoint(child, bodies, asset)
+            if not self._holds_only_free_flexes(child, bodies):
+                self._add_freejoint(child, bodies, asset)
         if self.mocap:
             self._make_mocap(child, bodies, asset)
         if not self.entity_name:
@@ -338,36 +415,132 @@ class SpawnModelPlugin(Plugin):
         frame.quat = self.quat
         spec.attach(child, prefix=self.prefix, frame=frame)
 
-    def _apply_physics_overrides(self, bodies, asset) -> None:
-        """Rescale root-body geom mass and/or set geom friction, so both are campaign factors."""
+    def _apply_physics_overrides(self, child: mujoco.MjSpec, bodies, asset) -> None:
+        """Rescale the prop's mass and/or set its friction, so both are campaign factors.
+
+        The mass is what the compiled prop weighs on its root body plus every body a flex owns (its
+        vertex or node bodies, never a pin body), and all of it is rescaled by one factor -- a soft
+        block on a rigid base keeps its split. Friction goes to the root body's geoms and to every
+        flex, whose own ``friction`` is what its contacts use.
+        """
         if not bodies:
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: mass/friction override needs a root body, but "
                 f"{asset.path} declares none."
             )
         geoms = list(bodies[0].geoms)
+        flex_bodies = [
+            child.body(name)
+            for name in dict.fromkeys(n for f in child.flexes for n in owned_bodies(child, f))
+        ]
         if self.mass is not None:
-            total = sum(float(getattr(g, "mass", 0.0) or 0.0) for g in geoms)
-            if total <= 0.0:
-                raise ModelError(
-                    f"spawn_model {self.model_ref!r}: mass override needs the prop's geoms to declare "
-                    f"mass to rescale (a density-only or massless prop has no distribution to keep). "
-                    f"Set mass on the geoms in {asset.path}, or drop the override."
-                )
-            factor = float(self.mass) / total
-            for g in geoms:
-                g.mass = float(g.mass) * factor
+            self._rescale_mass(child, bodies[0], geoms, flex_bodies, asset)
         if self.friction is not None:
-            if not geoms:
+            for flex in child.flexes:
+                flex.friction = [*self.friction, *list(flex.friction)[len(self.friction) :]]
+            if not geoms and not len(child.flexes):
                 raise ModelError(
                     f"spawn_model {self.model_ref!r}: friction override needs geoms on the prop's root "
-                    f"body to carry it, but {asset.path} gives that body none (its geoms sit on child "
-                    f"bodies). Put the colliding geoms on the root body, or drop the override."
+                    f"body, or a flex, to carry it, but {asset.path} gives that body none (its geoms "
+                    f"sit on child bodies). Put the colliding geoms on the root body, or drop the "
+                    f"override."
                 )
             for g in geoms:
                 # MuJoCo's geom friction is [sliding, torsional, rolling]; keep the prop's own value
                 # for any component the world did not name.
                 g.friction = [*self.friction, *list(g.friction)[len(self.friction) :]]
+
+    def _compiled_mass(self, child: mujoco.MjSpec, flex_bodies, asset) -> float:
+        """What the prop's root body and its flex bodies weigh once MuJoCo has compiled them.
+
+        A geom that states only a density has no mass in the spec (MjSpec reports NaN) until the
+        compiler multiplies its volume by that density, so the total is read from a compiled copy.
+        The root body is the first child of the world, which is body 1 in the compiled order.
+        """
+        try:
+            model = child.copy().compile()
+        except ValueError as exc:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mass override needs the prop's own mass, but "
+                f"{asset.path} does not compile on its own ({exc})."
+            ) from exc
+        total = float(model.body_mass[1])
+        total += sum(float(model.body(b.name).mass[0]) for b in flex_bodies)
+        return total
+
+    def _rescale_mass(self, child: mujoco.MjSpec, root, geoms, flex_bodies, asset) -> None:
+        """Scale every mass the prop's root body and flexes carry by ``self.mass / total``.
+
+        A geom that declares ``mass`` has that scaled; one that states only a density (MjSpec's NaN
+        mass) has its density scaled, so it keeps its share without being handed an explicit mass.
+        A visual-only geom -- ``mass="0"`` or ``density="0"`` -- stays massless either way. A root
+        body with an ``<inertial>`` has that scaled too, since it replaces what its geoms weigh.
+        """
+        total = self._compiled_mass(child, flex_bodies, asset)
+        if not total > 0.0:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mass override needs the prop to have mass to "
+                f"rescale, but its root body and flexes weigh {total} kg (a massless prop has no "
+                f"distribution to keep). Give the geoms in {asset.path} a mass or a density, or "
+                f"drop the override."
+            )
+        factor = float(self.mass) / total
+        for g in geoms:
+            if math.isnan(g.mass):
+                g.density = float(g.density) * factor
+            else:
+                g.mass = float(g.mass) * factor
+        if root.explicitinertial:
+            root.mass = float(root.mass) * factor
+            root.inertia = [float(c) * factor for c in root.inertia]
+            # An unset fullinertia is NaN in its first component, and scaling keeps it NaN.
+            root.fullinertia = [float(c) * factor for c in root.fullinertia]
+        for b in flex_bodies:
+            b.mass = float(b.mass) * factor
+            b.inertia = [float(c) * factor for c in b.inertia]
+        # The compiler has the last word on what counts (inertiafromgeom, inertiagrouprange), so the
+        # override is checked on the result rather than trusted.
+        got = self._compiled_mass(child, flex_bodies, asset)
+        if not math.isclose(got, float(self.mass), rel_tol=1e-6):
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mass override asked for {self.mass} kg, but "
+                f"rescaling {asset.path} by {factor:.6g} compiles to {got} kg -- its compiler "
+                f"settings decide which masses count in a way the rescale does not follow. Drop the "
+                f"override, or state the prop's mass in its MJCF."
+            )
+
+    @staticmethod
+    def _holds_only_free_flexes(child: mujoco.MjSpec, bodies) -> bool:
+        """Whether the root body is nothing but the place free flexes were declared in.
+
+        Such a root has no geom, no joint and no body that is not a flex's vertex (or node) body,
+        and no flex is pinned anywhere. Its vertices are the prop's degrees of freedom; a free joint
+        on it would be a massless body MuJoCo refuses to compile.
+        """
+        if not bodies or not len(child.flexes):
+            return False
+        root = bodies[0]
+        if len(root.geoms) or len(root.joints):
+            return False
+        if not all(flex_is_free(child, f) for f in child.flexes):
+            return False
+        owned = {n for f in child.flexes for n in owned_bodies(child, f)}
+        return all(b.name in owned for b in root.bodies)
+
+    def _refuse_a_weld_that_holds_no_flex(self, child: mujoco.MjSpec) -> None:
+        """Refuse ``static``/``driven`` on a model with a flex nothing holds, naming the fix."""
+        if self.motion == "physics":
+            return
+        free = [f.name or f"#{i}" for i, f in enumerate(child.flexes) if flex_is_free(child, f)]
+        if free:
+            what = "welds" if self.motion == "static" else "drives"
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: 'motion: {self.motion}' {what} the prop's root "
+                f"body, but flex {', '.join(map(repr, free))} has no vertex pinned to it or to "
+                f"anything else, so its vertices would move on their own regardless. Pin the "
+                f"vertices that should be held (<pin> in the <flexcomp>) to a body, or use "
+                f"'motion: physics'."
+            )
 
     def _add_freejoint(self, child: mujoco.MjSpec, bodies, asset) -> None:
         """Make the prop's root body a free body, refusing the cases that go silently wrong."""
@@ -382,8 +555,23 @@ class SpawnModelPlugin(Plugin):
                 f"spawn_model {self.model_ref!r}: motion: physics, but {asset.path} already gives its root "
                 f"body a joint. Spawn it without `free` -- the prop defines its own articulation."
             )
+        if not len(root.geoms) and not float(root.mass):
+            pinned = [
+                f.name or f"#{i}"
+                for i, f in enumerate(child.flexes)
+                if root.name in pin_bodies(child, f)
+            ]
+            if pinned:
+                raise ModelError(
+                    f"spawn_model {self.model_ref!r}: motion: physics gives the root body "
+                    f"{root.name!r} a free joint, but it has no mass of its own -- flex "
+                    f"{', '.join(map(repr, pinned))} is pinned to it, and pinned vertices carry "
+                    f"none. Give {asset.path} a geom on that body (a rigid core), or use "
+                    f"'motion: static' to hold the pinned vertices where the prop is spawned."
+                )
         root.add_freejoint(name="free")
         self._base_joint = f"{self.prefix}free"
+        self._freejoint = True
 
     def _make_mocap(self, child: mujoco.MjSpec, bodies, asset) -> None:
         """Make the prop's root body a mocap body, refusing the cases that go silently wrong."""
@@ -399,14 +587,18 @@ class SpawnModelPlugin(Plugin):
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: motion: driven, but {asset.path} gives its root body "
                 f"a joint. A mocap body has no degrees of freedom, so the articulation would be "
-                f"inert -- spawn it without `mocap`."
+                f"inert -- spawn it with `motion: physics` or `motion: static`."
             )
         root.mocap = True
 
     def configure(self, ctx: SimContext) -> None:
         self._body_frame = self.prefix + self._root_body
         meta = {"prefix": self.prefix, "model": self.model_ref}
-        if self.free:
+        if flexes := entity_flex_ids(ctx.model, self._body_frame):
+            # By name, which is what a flex is addressed by everywhere else (a contact scope, an
+            # override); the ids are the compiled model's and are one entity_flex_ids call away.
+            meta["flexes"] = [flex_label(ctx.model, f) for f in flexes]
+        if self._freejoint:
             # simulation_interfaces' SetEntityState only accepts an entity whose base_joint is a free
             # joint, so without this a movable prop could not be teleported or reset between episodes.
             meta["base_joint"] = self._base_joint
@@ -435,7 +627,7 @@ class SpawnModelPlugin(Plugin):
                     f"spawn_model: body {self._body_frame!r} is not a mocap body after compile"
                 )
 
-        if self.free:
+        if self._freejoint:
             jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
             if jid < 0:
                 raise RuntimeError(f"spawn_model: free joint {self._base_joint!r} not found")
@@ -449,52 +641,56 @@ class SpawnModelPlugin(Plugin):
         if self._body_id < 0:
             raise RuntimeError(f"spawn_model: body {self._body_frame!r} not found for publish_tf")
 
-        if self.publish_tf == "dynamic":
-            # Stream the live world pose as a one-entry TF payload. child_frame_id == the exported body
-            # name so a name-binding viewer animates the node; the relative `tf` topic lets the bridge's
-            # gt namespace map it to /gt/tf and a gateway federate it. Nothing else publishes a free
-            # body's pose, so without this a viewer freezes it at the baked spawn pose.
-            ctx.interface.add(
-                Endpoint(
-                    name=f"{self.entity_name}_pose",
-                    direction="out",
-                    owner=self.entity_name,
-                    read=self.read_pose,
-                    rate_hz=self.tf_rate,
-                    backend={
-                        "ros2": {
-                            "type": "tf2_msgs.msg.TFMessage",
-                            "topic": "tf",
-                            "frame_id": "world",
-                        }
-                    },
-                )
-            )
-        else:  # static: a welded prop's frame, published once on the latched /tf_static.
+        if self.publish_tf == "static":
             # A welded body's world pose is model-fixed, so one mj_forward (configure runs before the
-            # engine's) resolves data.xpos/xquat. read is a no-op -- the bridge sends the static_tf hint
-            # once at bind and never streams.
+            # engine's) resolves data.xpos/xquat.
             mujoco.mj_forward(ctx.model, ctx.data)
-            ctx.interface.add(
-                Endpoint(
-                    name=f"{self.entity_name}_pose",
-                    direction="out",
-                    owner=self.entity_name,
-                    read=lambda: None,
-                    backend={
-                        "ros2": {
-                            "type": "tf2_msgs.msg.TFMessage",
-                            "topic": "tf",
-                            "frame_id": self._body_frame,
-                            "static_tf": {
-                                "parent": "world",
-                                "translation": ctx.data.xpos[self._body_id].tolist(),
-                                "rotation": ctx.data.xquat[self._body_id].tolist(),
-                            },
-                        }
-                    },
-                )
+            self._static_pose = Transforms(
+                [
+                    Transform(
+                        "world",
+                        self._body_frame,
+                        ctx.data.xpos[self._body_id].copy(),
+                        ctx.data.xquat[self._body_id].copy(),
+                    )
+                ]
             )
+
+    # The pose endpoint belongs to the spawned entity, unscoped, and is named after it: a one-item
+    # family is how a name known only per instance is spelled.
+    #
+    # dynamic: stream the live world pose as a one-entry TF payload. child_frame_id == the exported
+    # body name so a name-binding viewer animates the node; the relative `tf` topic lets a gateway
+    # federate it. Nothing else publishes a free body's pose, so without this a viewer freezes it at
+    # the baked spawn pose.
+    @endpoint.out(
+        name="{item}_pose",
+        each=lambda self: [self.entity_name],
+        when=lambda self, item: self.publish_tf == "dynamic",
+        owner=lambda self, item: item,
+        namespace="",
+        rate="tf_rate",
+        ros2={"topic": "tf", "frame_id": "world"},
+    )
+    def published_pose(self, entity: str) -> Transforms:
+        """The root body's world pose, as a transform from world to the body's frame."""
+        d = self._ctx.data
+        return Transforms(
+            [Transform("", self._body_frame, d.xpos[self._body_id], d.xquat[self._body_id])]
+        )
+
+    # static: a welded prop's frame, sent once on the latched /tf_static.
+    @endpoint.out(
+        name="{item}_pose",
+        each=lambda self: [self.entity_name],
+        when=lambda self, item: self.publish_tf == "static",
+        owner=lambda self, item: item,
+        namespace="",
+        ros2={"static": True},
+    )
+    def published_static_pose(self, entity: str) -> Transforms:
+        """The welded body's world pose, sent once as a static transform."""
+        return self._static_pose
 
     def on_reset(self, ctx: SimContext) -> None:
         """Re-seat a free prop at its spawn pose, and stop it moving.
@@ -513,7 +709,7 @@ class SpawnModelPlugin(Plugin):
         So a driven prop is already back where it started before any ``on_reset`` runs, and an
         explicit re-seat here would be dead code asserting a false claim about MuJoCo.
         """
-        if not self.free or not self._spawn_qpos:
+        if not self._freejoint or not self._spawn_qpos:
             return
         adr, *pose = self._spawn_qpos
         adr = int(adr)
@@ -521,10 +717,3 @@ class SpawnModelPlugin(Plugin):
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
         dofadr = int(ctx.model.jnt_dofadr[jid])
         ctx.data.qvel[dofadr : dofadr + 6] = 0.0
-
-    def read_pose(self):
-        """Endpoint ``read`` (physics thread): the root body's world pose as a one-entry TF payload
-        ``[(frame, pos[3], quat_wxyz[4])]``. ``frame`` is the MuJoCo body name (== the exported scene
-        body name) so a viewer binds the transform to its node by name."""
-        d = self._ctx.data
-        return [(self._body_frame, d.xpos[self._body_id], d.xquat[self._body_id])]

@@ -282,3 +282,89 @@ def test_compute_rate_hz_decimates_the_whole_computation():
     assert r_full.in_contact is True
     assert r_dec.in_contact is True
     assert r_dec.x == pytest.approx(r_full.x, abs=0.05)
+
+
+def test_a_rate_the_timestep_divides_refreshes_on_every_period():
+    """20 Hz on a 5 ms step is every tenth step: the summed timesteps reach the period a hair
+    short of it, and the gate must still take that step rather than the next."""
+    model, data = _build(front_x=0.6)
+    model.opt.timestep = 0.005
+    ctx, plugin = _plugin(model, data, compute_rate_hz=20.0)
+    refreshed, last = [], plugin.read_state().time
+    for step in range(1, 401):
+        mujoco.mj_step(ctx.model, ctx.data)
+        plugin.post_step(ctx)
+        stamp = plugin.read_state().time
+        if stamp != last:
+            refreshed.append(step)
+        last = stamp
+    gaps = {b - a for a, b in zip(refreshed, refreshed[1:], strict=False)}
+    assert gaps == {10}, f"refresh spacing in steps: {sorted(gaps)}"
+
+
+def test_a_reset_restarts_the_decimation_phase():
+    """Each trial is evaluated on the same steps, whatever step the previous trial ended on."""
+
+    def first_refresh(ctx, plugin):
+        while True:
+            mujoco.mj_step(ctx.model, ctx.data)
+            plugin.post_step(ctx)
+            if plugin.read_state().time > 0.0:
+                return plugin.read_state().time
+
+    ctx, plugin = _plugin(*_build(), compute_rate_hz=10.0)
+    fresh = first_refresh(ctx, plugin)
+    for _ in range(round(0.03 / ctx.model.opt.timestep)):  # end the trial mid-interval
+        mujoco.mj_step(ctx.model, ctx.data)
+        plugin.post_step(ctx)
+    mujoco.mj_resetData(ctx.model, ctx.data)
+    plugin.on_reset(ctx)
+    assert first_refresh(ctx, plugin) == pytest.approx(fresh)
+
+
+# A prefixed robot turned a quarter turn left, so its base frame and the world disagree on every
+# axis, pushed into a ball: one contact, at a position the model alone determines.
+TURNED = """
+<mujoco model="contact_location_turned">
+  <worldbody>
+    <geom name="floor" type="plane" size="10 10 0.05"/>
+    <geom name="ball" type="sphere" size="0.05" pos="0 0.45 0.1"/>
+    <body name="r1_base_link" pos="0 0 0.1" quat="0.70710678 0 0 0.70710678">
+      <freejoint/>
+      <geom name="r1_chassis" type="box" size="0.2 0.15 0.1" mass="10"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.mark.parametrize("frame", ["base", "world"])
+def test_the_point_is_stamped_in_the_frame_its_coordinates_are_in(frame):
+    """The ROS header must name the frame the reported coordinates are expressed in; a base-frame
+    point stamped `world` (or the reverse) is a valid-looking message a consumer transforms wrong."""
+    model = mujoco.MjModel.from_xml_string(TURNED)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    ctx = SimContext(config={})
+    ctx.model, ctx.data = model, data
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="r1_base_link", meta={"prefix": "r1_"})
+    )
+    plugin = ContactLocationPlugin({"frame": frame}, entity="robot")
+    plugin.configure(ctx)
+    plugin.on_reset(ctx)
+    r = _drive(ctx, plugin, 1.0, vy=0.4)
+    assert r.in_contact is True and r.count == 1
+
+    ball = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball")
+    (i,) = [i for i in range(data.ncon) if ball in (data.contact[i].geom1, data.contact[i].geom2)]
+    point = data.contact[i].pos.copy()
+    root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "r1_base_link")
+    if frame == "base":
+        point = data.xmat[root].reshape(3, 3).T @ (point - data.xpos[root])
+        assert point == pytest.approx([0.2, 0.0, 0.0], abs=0.05), "the ball is dead ahead"
+    assert [r.x, r.y, r.z] == pytest.approx(point.tolist(), abs=1e-9)
+
+    plugin.register_endpoints(ctx)
+    hints = ctx.interface.find("robot", "contact_location").backend["ros2"]
+    assert hints["frame_id"] == ("base_link" if frame == "base" else "world")

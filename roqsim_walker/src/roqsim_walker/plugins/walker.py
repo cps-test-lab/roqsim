@@ -25,19 +25,13 @@ Config::
                                #   steers or does nothing; it has never looked ahead, so this
                                #   never makes it stop. Write a `navigator` with
                                #   `avoidance: {stop: true}` for one that should.
-      robot_body: base_link    # body the walker yields to (default: the robot entity's base)
-      robot_radius: 0.25
       goal_endpoint: true      # false -> patrol only; declares no goal endpoint, so a bridge needs
                                #   no handler for it (a patrol-only world drops the nav2_msgs dep)
       action_name: navigate_through_poses   # relative action name of the goal endpoint
-      orca: {neighbor_dist: 4.0, time_horizon: 3.0, radius: 0.26, max_speed: 1.6}
+      orca: {radius: 0.26, max_speed: 1.6}  # the disc it presents to avoidance; speed cap
       planner: {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion: {walk: /abs/walk.npz}         # override a resolved locomotion clip
-
-Several ``walker`` plugins may coexist: they share one :class:`~roqsim_walker.nav.controller.
-WalkerController` (so ORCA sees every walker, the robot and any mocap props in one simulation). The
-first instance to initialise owns the per-step tick; the rest only contribute their spec.
 """
 
 from __future__ import annotations
@@ -50,24 +44,23 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from roqsim import endpoint
 from roqsim.config import PluginSpec
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin, PluginError
+from roqsim.types import Transform, Transforms
 from roqsim_nav.avoidance import DEFAULT_MODEL
-from roqsim_walker.blueprint import BlueprintError, resolve_walker
-from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
-from roqsim_walker.nav.controller import (
+from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.nav.controller import (
+from roqsim_walker.animation import (
     _heading,
     make_anim_state,
     write_pose,
 )
+from roqsim_walker.blueprint import BlueprintError, resolve_walker
+from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
-
-# Blackboard keys for the state shared by every ``walker`` instance in a world.
-_SPECS_KEY = "walker:_specs"
 
 
 @dataclass
@@ -114,7 +107,6 @@ class WalkerPlugin(Plugin):
         "recovery": "recovery",
         "update_hz": "update_hz",
         "goal_endpoint": "goal_endpoint",
-        "action_name": "action_name",
         "namespace": "namespace",
     }
 
@@ -141,6 +133,9 @@ class WalkerPlugin(Plugin):
 
         nav = {dst: cfg[src] for src, dst in cls._NAV_KEYS.items() if src in cfg}
         nav["output"] = "walker"
+        if "action_name" in cfg:
+            # The walker's goal endpoint is the navigator's `navigate_through_poses`.
+            nav["action_names"] = {"navigate_through_poses": cfg["action_name"]}
         # `waypoints` become the navigator's `goals`, minus the first: a walker starts *at* its first
         # waypoint, and the navigator's route already begins wherever the body is.
         raw = cfg.get("waypoints") or []
@@ -246,37 +241,20 @@ class WalkerPlugin(Plugin):
             **kw,
         )
 
-        # The controller spec = this plugin's config + everything the blueprint resolved.
+        # What the animation state is built from: where the walker starts + what the blueprint
+        # resolved.
         self._spec = {
-            **{
-                k: cfg[k]
-                for k in (
-                    "speed",
-                    "loop",
-                    "dwell",
-                    "arrival_radius",
-                    "avoidance",
-                    "orca",
-                    "planner",
-                    "recovery",
-                    "waypoints",
-                    "pos",
-                )
-                if k in cfg
-            },
+            **{k: cfg[k] for k in ("waypoints", "pos") if k in cfg},
             "name": self.walker_name,
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
         }
-        specs = ctx.blackboard.get(_SPECS_KEY) or []
-        specs.append(self._spec)
-        ctx.blackboard.set(_SPECS_KEY, specs)
 
     def configure(self, ctx: SimContext) -> None:
         """Register the entity, build this walker's animation state, and declare its endpoints.
 
-        Navigation is not here any more: a nested ``navigator`` owns it (see :meth:`expand`), and
+        Navigation is not here: a nested ``navigator`` owns it (see :meth:`expand`), and
         this plugin owns the body it moves -- the mocap skeleton, the resolved motion clips, the
         blendspace state they are sampled into. The ``walker`` output reads that state from the
         blackboard, which is the seam that lets one navigator serve a pedestrian, a robot and a prop.
@@ -310,32 +288,10 @@ class WalkerPlugin(Plugin):
             ),
         )
 
-        # Publish the walker's live bone poses so a viewer can animate its skinned mesh. The walker is
-        # mocap-driven (no MuJoCo joints, so nothing to put on /joint_states); instead each of the 17
-        # skeleton bodies is broadcast as its own transform on /tf. A bridge with a TFMessage converter
-        # (the ROS 2 bridge has one) bundles them into one message per tick. The bones are world-frame
-        # (mocap bodies are world children), so each is a flat child of the world/map frame.
         self._body_ids = [
             (name, mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name))
             for name in (f"{self.walker_name}/{j}" for j in JOINT_NAMES)
         ]
-        ctx.interface.add(
-            Endpoint(
-                name="body_poses",
-                direction="out",
-                owner=self.walker_name,
-                namespace=ns,
-                read=self.read_body_poses,
-                rate_hz=30.0,
-                backend={
-                    "ros2": {
-                        "type": "tf2_msgs.msg.TFMessage",
-                        "topic": "/tf",  # absolute: the shared TF topic, never namespaced
-                        "frame_id": "map",
-                    }
-                },
-            )
-        )
 
         # The goal endpoint is NOT declared here: the nested `navigator` declares it, for
         # both nav2 action types, from one place. Two declarations of the same capability would mean
@@ -343,14 +299,26 @@ class WalkerPlugin(Plugin):
         # overwritten. `goal_endpoint` and `action_name` still work in this block -- `expand` passes
         # them through.
 
-    def read_body_poses(self):
-        """Endpoint ``read`` (physics thread): ``[(frame, pos[3], quat[4]), ...]`` for the 17 bones.
+    @property
+    def endpoint_owner(self) -> str:
+        """The pedestrian entity this plugin registers."""
+        return self.walker_name
 
-        World transforms straight from ``data.xpos``/``xquat`` (mocap bodies are world children).
-        ``frame`` is the body name (== the exported scene body name), so the viewer binds each
-        transform to its bone node by name. ``quat`` is MuJoCo (w, x, y, z)."""
+    # The walker is mocap-driven (no MuJoCo joints, so nothing to put on /joint_states); its 17
+    # skeleton bodies go out as transforms on the shared, never-namespaced /tf, one message per tick,
+    # so a viewer animates the skinned mesh. Mocap bodies are world children, so each bone is a flat
+    # child of the map frame.
+    @endpoint.out(rate=30.0, ros2={"topic": "/tf"})
+    def body_poses(self) -> Transforms:
+        """The 17 bones' world poses, each child frame named after its body."""
         d = self._ctx.data
-        return [(name, d.xpos[bid], d.xquat[bid]) for name, bid in self._body_ids if bid >= 0]
+        return Transforms(
+            [
+                Transform("", name, d.xpos[bid], d.xquat[bid])
+                for name, bid in self._body_ids
+                if bid >= 0
+            ]
+        )
 
     def on_reset(self, ctx: SimContext) -> None:
         """Put the body back at its start, before the navigator's own reset reads it.
@@ -390,10 +358,6 @@ class WalkerPlugin(Plugin):
     # names, the action type and the sequence-number contract are all unchanged.
     def _nav(self):
         return self._ctx.blackboard.get(f"nav:{self.walker_name}:handle") if self._ctx else None
-
-    def _write_route(self, poses) -> None:
-        """Endpoint ``write``: already marshalled onto the physics thread by the bridge."""
-        self.send_route(poses)
 
     def send_route(self, poses) -> int:
         handle = self._nav()

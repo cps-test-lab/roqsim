@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from roqsim import exit_status
 from roqsim_scenes.cli import world_describe
 
 
@@ -47,7 +48,7 @@ def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, wo
 
 def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
     path = tmp_path / "named.yaml"
-    path.write_text("plugins:\n- boxes:\n    instances: []\n  name: obstacles\n")
+    path.write_text("components:\n- boxes:\n    instances: []\n  name: obstacles\n")
     plugin = _describe(capsys, str(path))["components"][0]
     assert (plugin["address"], plugin["ref"]) == ("obstacles", "boxes")
     assert "components.obstacles.instances" in plugin["paths"]
@@ -80,12 +81,12 @@ def test_inputs_are_reported_too(capsys, world):
 
 
 def test_a_missing_world_fails_rather_than_reporting_nothing(capsys, tmp_path):
-    assert world_describe.main([str(tmp_path / "nope.yaml")]) == 1
+    assert world_describe.main([str(tmp_path / "nope.yaml")]) == exit_status.BAD_INPUT
     assert "does not exist" in capsys.readouterr().err
 
 
 def test_an_unresolvable_package_ref_names_itself(capsys):
-    assert world_describe.main(["no_such_pkg:world"]) == 1
+    assert world_describe.main(["no_such_pkg:world"]) == exit_status.BAD_INPUT
     assert "no_such_pkg:world" in capsys.readouterr().err
 
 
@@ -132,6 +133,23 @@ def test_the_glob_is_what_bounds_the_answer(capsys, world):
     assert len(everything["geom"]) > len(one["geom"])
 
 
+def test_a_flex_is_an_overridable_target(capsys, tmp_path):
+    """model_override selects a flex by name, so the names and their live values are listed."""
+    (tmp_path / "flex.xml").write_text(
+        '<mujoco><worldbody><body name="holder" pos="0 0 .5">'
+        '<flexcomp name="beam" type="grid" count="3 2 2" spacing=".02 .02 .02" dim="3" mass=".05">'
+        '<elasticity young="1e5" damping="0.01"/><pin id="0"/></flexcomp>'
+        "</body></worldbody></mujoco>"
+    )
+    path = tmp_path / "flex.yaml"
+    path.write_text("sim: {world: flex.xml}\n")
+    targets = _describe(capsys, str(path), "--overridable", "beam")["overridable"]["targets"]
+    (beam,) = targets["flex"]
+    assert beam["name"] == "beam"
+    assert beam["flex_damping"] == pytest.approx(0.01)
+    assert {"flex_friction", "flex_solref", "flex_solimp"} <= set(beam)
+
+
 def test_asking_for_both_builds_the_world_once(capsys, world, monkeypatch):
     """Compiling is the expensive part, so --entities and --overridable must share one build."""
     builds = []
@@ -160,7 +178,7 @@ def dummy_world(tmp_path):
     """
     path = tmp_path / "dummy_world.yaml"
     path.write_text(
-        "plugins:\n- dummy:\n    size: 0.3\n  name: box_a\n- dummy:\n    size: 0.2\n  name: box_b\n"
+        "components:\n- dummy:\n    size: 0.3\n  name: box_a\n- dummy:\n    size: 0.2\n  name: box_b\n"
     )
     return path
 
@@ -238,7 +256,7 @@ def ros_world(tmp_path):
     """
     path = tmp_path / "dummy_ros.yaml"
     path.write_text(
-        "plugins:\n"
+        "components:\n"
         "- dummy:\n"
         "    size: 0.3\n"
         "  name: box_a\n"
@@ -292,18 +310,21 @@ def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
 def test_an_overrides_file_that_is_not_there_is_named(capsys, tmp_path):
     """Describing the base world instead would answer a question nobody asked."""
     world = tmp_path / "w.yaml"
-    world.write_text("plugins: []\n")
-    assert world_describe.main([str(world), "--override", str(tmp_path / "nope.yaml")]) == 1
+    world.write_text("components: []\n")
+    assert (
+        world_describe.main([str(world), "--override", str(tmp_path / "nope.yaml")])
+        == exit_status.BAD_INPUT
+    )
     assert "does not exist" in capsys.readouterr().err
 
 
 def test_an_override_naming_no_plugin_is_still_refused(capsys, tmp_path):
     """The cheap mistake this command exists to catch, and applying overrides must not hide it."""
     world = tmp_path / "w.yaml"
-    world.write_text("plugins:\n- boxes: {instances: []}\n")
+    world.write_text("components:\n- boxes: {instances: []}\n")
     overrides = tmp_path / "ov.yaml"
-    overrides.write_text("plugins:\n  boxesTYPO:\n    instances: []\n")
-    assert world_describe.main([str(world), "--override", str(overrides)]) == 1
+    overrides.write_text("components:\n  boxesTYPO:\n    instances: []\n")
+    assert world_describe.main([str(world), "--override", str(overrides)]) == exit_status.BAD_INPUT
     assert "matches no component" in capsys.readouterr().err
 
 
@@ -315,8 +336,8 @@ def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
     does not have it. An unresolvable ref that is not identifiable as transport must stay fatal.
     """
     path = tmp_path / "typo.yaml"
-    path.write_text("plugins:\n- dummmy:\n    size: 0.3\n  name: box_a\n")
-    assert world_describe.main([str(path), "--entities"]) == 1
+    path.write_text("components:\n- dummmy:\n    size: 0.3\n  name: box_a\n")
+    assert world_describe.main([str(path), "--entities"]) == exit_status.BAD_INPUT
     out = capsys.readouterr()
     assert "dummmy" in out.err
     assert json.loads(out.out.splitlines()[-1])["errors"]["build"]
@@ -331,7 +352,7 @@ def test_a_build_failure_keeps_the_half_that_needed_no_build(capsys, dummy_world
         yield  # pragma: no cover - unreachable, and what makes this a context manager
 
     monkeypatch.setattr(world_describe, "_built", explode)
-    assert world_describe.main([str(dummy_world), "--entities"]) == 1, (
+    assert world_describe.main([str(dummy_world), "--entities"]) == exit_status.BAD_INPUT, (
         "a partial answer is not a success"
     )
     out = capsys.readouterr()
@@ -349,8 +370,8 @@ def test_a_world_that_cannot_load_reports_why(capsys, tmp_path):
     is what lets this answer for a world whose plugins live in another package.
     """
     bad = tmp_path / "bad.yaml"
-    bad.write_text("extends: ./nowhere.yaml\nplugins: []\n")
-    assert world_describe.main([str(bad)]) == 1
+    bad.write_text("extends: ./nowhere.yaml\ncomponents: []\n")
+    assert world_describe.main([str(bad)]) == exit_status.BAD_INPUT
     out = capsys.readouterr()
     assert "cannot load world" in out.err
     # Unlike a build failure there is no half to hand back: nothing was resolved.
@@ -402,3 +423,74 @@ def test_a_component_is_reported_under_one_name(capsys, robot_world):
     plugins = _describe(capsys, str(robot_world))["components"]
     assert all("key" not in p for p in plugins)
     assert all(p["address"] for p in plugins)
+
+
+def test_flexes_are_listed_with_the_entities(capsys, tmp_path):
+    """From the same compile as the entities, and absent without it."""
+    (tmp_path / "block.xml").write_text(
+        '<mujoco><worldbody><body name="holder" pos="0 0 .3">'
+        '<flexcomp name="blk" type="grid" count="3 3 3" spacing=".02 .02 .02" dim="3" mass=".1" '
+        'radius=".002"><elasticity young="1e5"/><pin id="0 3 6"/>'
+        '<contact selfcollide="none"/></flexcomp></body></worldbody></mujoco>'
+    )
+    world = tmp_path / "flex.yaml"
+    world.write_text("sim: {world: block.xml}\ncomponents: []\n")
+    assert _describe(capsys, str(world))["flexes"] is None
+    (flex,) = _describe(capsys, str(world), "--entities")["flexes"]
+    assert (flex["name"], flex["dim"], flex["vertices"], flex["pinned"]) == ("blk", 3, 27, 3)
+    assert (flex["parent"], flex["dof"], flex["elastic"]) == ("holder", "full", True)
+
+
+# -- warnings: the state a trial starts from ----------------------------------------------------
+
+SUNK_CRATE = """
+<mujoco><worldbody>
+  <body name="table"><geom name="table_top" type="box" size=".4 .4 .2" pos="0 0 .2"/></body>
+  <body name="crate" pos="0 0 {z}"><freejoint/>
+    <geom name="crate" type="box" size=".05 .05 .05"/></body>
+</worldbody></mujoco>
+"""
+
+
+def _crate_world(tmp_path, z: float):
+    (tmp_path / "scene.xml").write_text(SUNK_CRATE.format(z=z))
+    world = tmp_path / "crate.yaml"
+    world.write_text("sim: {world: scene.xml}\ncomponents: []\n")
+    return world
+
+
+def test_warnings_come_with_the_entities(capsys, tmp_path):
+    """The reset that produces them rides on the build --entities already pays for."""
+    world = str(_crate_world(tmp_path, 0.45))
+    assert _describe(capsys, world)["warnings"] is None, "not reset, so nothing to say"
+    assert _describe(capsys, world, "--entities")["warnings"] == []
+
+
+def test_a_start_state_with_a_body_inside_another_is_a_warning(capsys, tmp_path):
+    """The same finding `roqsim check` reports, in its shape, and still a complete answer."""
+    (warning,) = _describe(capsys, str(_crate_world(tmp_path, 0.42)), "--entities")["warnings"]
+    assert set(warning) == {"check", "message", "hint"}
+    assert warning["check"] == "interpenetration"
+    assert "'table_top'" in warning["message"] and "'crate'" in warning["message"]
+    assert "30.0 mm" in warning["message"]
+
+
+def test_a_reset_failure_keeps_what_the_build_answered(capsys, tmp_path):
+    """A plugin whose on_reset raises is a world that cannot start a trial: named, not hidden."""
+    (tmp_path / "boom.py").write_text(
+        "from roqsim.plugin import Plugin\n\n"
+        "class Boom(Plugin):\n"
+        "    def on_reset(self, ctx):\n"
+        "        raise RuntimeError('cannot re-home')\n"
+    )
+    world = tmp_path / "boom.yaml"
+    world.write_text("sim: {}\ncomponents:\n  - dummy: {size: 0.3}\n    name: box_a\n  - boom.py:Boom: {}\n")
+    assert world_describe.main([str(world), "--entities"]) == exit_status.BAD_INPUT, (
+        "a partial answer is not a success"
+    )
+    out = capsys.readouterr()
+    described = json.loads(out.out.splitlines()[-1])
+    assert described["entities"] == ["box_a"], "the build-fed half is still answered"
+    assert described["warnings"] is None
+    assert described["errors"] == {"reset": "cannot re-home"}
+    assert "cannot reset world" in out.err
