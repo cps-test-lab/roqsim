@@ -115,7 +115,8 @@ Paths and kinds
 ---------------
 
 An endpoint's path is the address of the plugin that registered it, with its dots as slashes, then
-the endpoint's name: the ``lidar`` nested under ``robot`` publishing ``scan`` is ``robot/lidar/scan``;
+the endpoint's name (the grammar frames share, :ref:`paths`): the ``lidar`` nested under ``robot``
+publishing ``scan`` is ``robot/lidar/scan``;
 a ``model_override`` named ``grip_fault`` at the top of a world is ``grip_fault/override``. Run
 control is ``sim/run_control/{pause, resume, step, reset, state}``; every entity's ground-truth
 pose is the core's ``sim/entities/<name>/pose``, and ``sim/entities/set_state`` and
