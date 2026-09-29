@@ -379,7 +379,26 @@ themselves ``extends`` (cycles are rejected).
 set ``enabled: false`` on it, so the entry stays in the document, addressable and in the run's
 record; a selector that matches nothing is an error, not a silent no-op. There is no separate
 "modify" key -- to change an inherited entry, override its keys, or ``disable`` it and add a tweaked
-copy under another label in the child's ``components``.
+copy in the child's ``components``, under its own label or another.
+
+**Reusing a world with a different robot** is that second form, under the same label:
+
+.. code-block:: yaml
+
+   extends: roqsim_mobile:husky_demo  # a world whose robot is labelled `robot`
+   disable: [robot]                   # replace the inherited robot ...
+   components:
+     - spawn_robot: {model: turtlebot3_waffle, pose: {position: {x: 1.0, y: 0.0}}}
+       name: robot                    # ... with this one, under the same label
+
+The new ``robot`` *replaces* the disabled one. It gets exactly the components a world declaring it
+directly gets -- its own model's drive, sensors and controllers from its manifest, with the same
+configs -- and nothing from the model it replaced; nest entries under it to change a default, as
+anywhere else. The label, and every override that names it (``components.robot.diff_drive.*``),
+addresses the new robot alone. The replaced entry stays in the record, turned off, with what the
+parent declared for it. Leaving out ``disable`` is refused, and the message says to add it: two live
+components cannot share one label. For a one-off run, ``--set components.robot.model=<model>``
+swaps the model without a new world, and brings in that model's manifest the same way.
 
 Drawing on a render (``roqsim.render_overlays``)
 -------------------------------------------------
