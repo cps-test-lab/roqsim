@@ -31,8 +31,10 @@ import mujoco
 import numpy as np
 
 from .context import Endpoint
+from .endpoint import value_type
 from .plugin import PluginError
 from .pose import PoseError, parse_pose, refuse_pos_rpy
+from .types import Transform, Transforms
 
 _FRAME_KEYS = frozenset({"name", "parent", "pose"})
 
@@ -211,25 +213,46 @@ def static_transforms(model, links: list[tuple[str, str, str, str]], where: str)
     return out
 
 
-def static_tf_endpoint(name: str, owner: str, namespace: str, transforms: list[dict]) -> Endpoint:
-    """An output endpoint that carries only static transforms, published once by a bridge.
+def static_transforms_of(links: list[dict]) -> Transforms:
+    """*links* -- ``{parent, child, translation, rotation}`` each -- as the value of an endpoint that
+    publishes them once as static transforms (``ros2={"static": True}``)::
 
-    The shape ``spawn_model`` uses for a welded prop's frame, generalised to a chain: ``read`` has
-    nothing to stream, and ``static_tf`` is a list of ``{parent, child, translation, rotation}``.
-    Frame names are bare; the bridge scopes them by ``namespace``.
+        @endpoint.out(ros2={"static": True})
+        def frames(self) -> Transforms:
+            return static_transforms_of(self.links)
     """
+    return Transforms(
+        [
+            Transform(
+                link["parent"],
+                link["child"],
+                np.asarray(link["translation"], dtype=float),
+                np.asarray(link["rotation"], dtype=float),
+            )
+            for link in links
+        ]
+    )
+
+
+_TRANSFORMS = value_type(Transforms)
+
+
+def static_tf_endpoint(name: str, owner: str, namespace: str, transforms: list[dict]) -> Endpoint:
+    """An output endpoint that carries only static transforms, sent once by a bridge.
+
+    The endpoint a plugin that builds its endpoints by hand adds for a chain of fixed frames:
+    :func:`static_transforms_of` of *transforms*, with the ``static`` hint. Frame names are bare; the
+    bridge scopes them by ``namespace``.
+    """
+    value = static_transforms_of(transforms)
     return Endpoint(
         name=name,
         direction="out",
         owner=owner,
         namespace=namespace,
-        read=lambda: None,
-        backend={
-            "ros2": {
-                "type": "tf2_msgs.msg.TFMessage",
-                "topic": "tf",
-                "frame_id": transforms[0]["parent"] if transforms else "",
-                "static_tf": transforms,
-            }
-        },
+        read=lambda: value,
+        backend={"ros2": {"static": True}},
+        result=_TRANSFORMS,
+        payload_type=_TRANSFORMS,
+        transport=True,
     )

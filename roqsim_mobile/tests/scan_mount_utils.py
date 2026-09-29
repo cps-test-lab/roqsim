@@ -135,7 +135,7 @@ def static_tf(engine: Engine, owner: str, namespace: str = NAMESPACE) -> list[di
     """The static transforms *owner* publishes on its ``frames`` endpoint, in the robot's namespace."""
     (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == owner]
     assert frames.namespace == namespace
-    return frames.backend["ros2"]["static_tf"]
+    return [vars(t) for t in frames.read().transforms]
 
 
 # -- rotations and poses -----------------------------------------------------------------------
