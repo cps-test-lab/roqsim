@@ -37,9 +37,8 @@ Config::
       topics: { pose: /tf }     # optional absolute-topic hardwire (default relative "tf" -> /tf)
 
 The transform is published on the relative ``tf`` topic, so it lands on the plain ``/tf`` (matching
-Gazebo). Configure the ``ros2_bridge`` ``gt: {prefix}`` block to divert it to ``/gt/tf`` instead, or
-give an instance its own ``topics: {pose: ...}`` when a stack reads ground truth from a topic of its
-own rather than from the TF tree.
+Gazebo). Give an instance its own ``topics: {pose: ...}`` when a stack reads ground truth from a
+topic of its own rather than from the TF tree.
 """
 
 from __future__ import annotations

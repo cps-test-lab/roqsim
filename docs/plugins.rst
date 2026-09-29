@@ -79,8 +79,7 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``false`` where a ``robot_state_publisher`` publishes the same mount links); ``domain_id``
        (an isolated ROS context on that domain, so several bridges can run in one process) with
        ``strip_namespace`` (a namespace, or list, removed so the robot a bridge serves keeps
-       local names on its domain); ``gt: {prefix, exempt}`` (the ground-truth topic prefix and the
-       topics exempt from it, :doc:`ground_truth`). ``clock_rate_hz: 0`` publishes no ``/clock``.
+       local names on its domain). ``clock_rate_hz: 0`` publishes no ``/clock``.
    * - ``sim_interfaces``
      - ``simulation_interfaces`` control plane. Serves ``get_simulator_features``,
        ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
