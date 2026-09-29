@@ -39,9 +39,9 @@ Config::
                              #   default: every hinge and slide joint of the entity's subtree
       rate_hz: 50.0          # endpoint publish rate
 
-Endpoint ``joint_states`` (out) reads ``(names, positions, velocities, efforts)``; the ROS 2
-backend hint publishes it as ``sensor_msgs/JointState`` on ``joint_states`` (relative, so it is
-scoped by the entity's namespace). Names are published without the spawn prefix, as every other
+Endpoint ``joint_states`` (out) reads a :class:`roqsim.types.JointState` with efforts, a
+``sensor_msgs/JointState`` on ``joint_states`` over ROS (relative, so it is scoped by the entity's
+namespace). Names are published without the spawn prefix, as every other
 producer here names joints, so a description published alongside matches them.
 
 Only hinge and slide joints are published: a ``JointState`` carries one scalar per joint, which a
@@ -56,10 +56,12 @@ import logging
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import resolve_base_body
-from ..context import Endpoint, SimContext
+from ..context import SimContext
 from ..plugin import Plugin
 from ..presence import entity_body_ids
+from ..types import JointState
 
 _log = logging.getLogger(__name__)
 
@@ -95,7 +97,6 @@ class JointStatePublisherPlugin(Plugin):
         model = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         body_name = resolve_base_body(entity)
         bodies = set(entity_body_ids(model, body_name))
         if not bodies:
@@ -139,26 +140,12 @@ class JointStatePublisherPlugin(Plugin):
         self._vel = np.zeros(len(jids))
         self._eff = np.zeros(len(jids))
 
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
         _log.info("joint_state_publisher: %d joints of %r", len(jids), body_name)
 
-    def read_joint_states(self):
-        return (self._names, self._pos, self._vel, self._eff)
+    @endpoint.out(rate="rate_hz")
+    def joint_states(self) -> JointState:
+        """Position, velocity and actuator effort of every published joint."""
+        return JointState(self._names, self._pos, self._vel, self._eff)
 
     def on_reset(self, ctx: SimContext) -> None:
         # The reset pose, not the previous episode's last one, until the first step.

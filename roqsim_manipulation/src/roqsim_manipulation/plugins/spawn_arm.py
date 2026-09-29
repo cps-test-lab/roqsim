@@ -13,8 +13,9 @@ Config::
       namespace: ur10e      # optional transport scope; the arm's endpoints inherit it (default: "")
       prefix: "ur10e_"      # MJCF name prefix (use distinct prefixes for >1 arm)
       base_body: base       # arm root body (ur10e -> 'base', panda -> 'link0')
-      pos: [-0.41, 0.0, 0.76]
-      rpy: [0.0, 0.0, 3.14159]   # mount orientation as roll/pitch/yaw (rad)
+      pose:                 # the mount, in the world or the `mount:` body's frame: a
+        position: {x: -0.41, z: 0.76}     #   geometry_msgs/Pose, omitted components 0
+        orientation: {yaw: 3.14159}       #   (roll/pitch/yaw in rad, or a quaternion)
       home: [...]           # joint home pose (defaults per model); applied on reset
       actuators:            # OPTIONAL: what law this arm's joints run under, and their gains.
         control: impedance  #   position | velocity | effort | impedance; the model's own if unset
@@ -26,12 +27,12 @@ Config::
                             #   true under position/velocity/impedance (real drives hold a pose),
                             #   false under effort (supplying the term is the controller's job).
       pedestal: false       # add a static support box under the base (floor -> mount height); only
-                            # has an effect when pos[2] > 0. Leave it off when the arm mounts on a
+                            # has an effect when pose.position.z > 0. Leave it off when the arm mounts on a
                             # table/desk that is already there (the usual case).
       pedestal_half_width: 0.1   # pedestal: half-width (m) of that box's square footprint
       rail:                 # OPTIONAL: carry the arm on a linear axis (gantry / ceiling track)
-        axis: [1, 0, 0]     #   travel direction, in the MOUNT frame (after `rpy`)
-        range: [-1.5, 1.5]  #   travel limits (m) about `pos`
+        axis: [1, 0, 0]     #   travel direction, in the MOUNT frame (after the pose's orientation)
+        range: [-1.5, 1.5]  #   travel limits (m) about the pose's position
         home: 0.0           #   carriage position at spawn/reset (m)
         joint: rail_joint   #   MJCF joint name, under the arm's prefix (default: 'rail_joint')
         kp: 20000           #   position-servo gain of the carriage drive
@@ -41,10 +42,12 @@ Config::
         body: base_link     #   that robot's body to weld to (default: base_link)
       end_effector:         # OPTIONAL: weld a gripper onto the arm's tool flange
         model: robotiq_2f85 #   a gripper model (robotiq_2f85, schunk_pg70)
-        site: attachment_site  # arm site to weld it to (default: attachment_site)
+        site: tool_site     #   arm site to weld it to. Default: the one the ARM's manifest declares
+                            #   (`end_effector: {site: ...}` -- the ur5e's `tool_site`, past its FT
+                            #   stack), else `attachment_site`, the Menagerie flange
         prefix: ""          #   MJCF name prefix for the gripper's own names
-        pos: [0, 0, 0.011]  #   offset in the SITE's frame (e.g. the UR->Robotiq adapter's 11 mm)
-        rpy: [0, 0, 0]      #   extra rotation in the site's frame (rad)
+        pose: {position: {z: 0.011}}  # offset in the SITE's frame (e.g. the UR->Robotiq adapter's
+                            #   11 mm), a geometry_msgs/Pose like the arm's own
         replaces: [ee_plate]  # bodies of the ARM model this tool supersedes, deleted before the
                             #   attach (the ur10e ships a conveyor pushing plate 60 mm past its
                             #   flange, which a gripper would be welded straight into)
@@ -110,7 +113,28 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 (``gripper_joint``/``gripper_open``/``gripper_close``), merged by :meth:`SpawnArmPlugin.expand`.
 
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
-``pos``/``rpy`` are offsets within it -- matching how a real tool adapter is specified.
+``pose`` is an offset within it -- matching how a real tool adapter is specified.
+
+**Who carries the arm's weight.** Its drives, as a torque each joint's actuator supplies
+(:func:`roqsim.actuators.apply_gravity_compensation`): bounded by the actuator's force limit, so a
+drive too weak for its load sags, and pushing on the mount, so an arm on a ``mount:`` that moves --
+a mobile base -- loads that base's wheels with its full weight (the engine's
+:class:`roqsim.actuators.GravityReaction`). On the world or a fixed table there is nothing to load.
+
+**Where a tool goes is the arm model's to say.** An arm that carries something on its flange --
+the ``ur5e``'s force/torque sensor stack, body ``tool0`` -- has its free mounting face further out,
+and its ``<model>.manifest.yaml`` names the site there::
+
+    end_effector:
+      site: tool_site     # the stack's outer face, on tool0
+
+A world's own ``end_effector.site`` still wins; an arm whose manifest declares none mounts at
+``attachment_site``, the flange in the Menagerie convention. The choice decides what a
+``force_torque`` on the arm measures: a site sensor reads the subtree of the body its site is on, so
+a tool welded at the ``ur5e``'s bare flange hangs beside ``tool0`` rather than below it, and a sensor
+at ``fts_site`` reads none of the tool's weight or load. The entity records the tool in
+``meta["end_effector"]`` -- ``site``, the mount site, and ``bodies``, the tool's root bodies, both
+as compiled names -- and ``force_torque`` refuses a sensor on this arm that cannot see the tool.
 
 **A tool that deforms.** The end effector's MJCF may carry a ``<flexcomp>`` -- a soft pad, a
 compliant finger -- pinned to one of its bodies (``<pin>``), or written under its ``<worldbody>``,
@@ -127,8 +151,10 @@ states ``flex_reaction: excluded`` -- see that plugin.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import mujoco
+import yaml
 
 from roqsim.actuators import (
     apply_gravity_compensation,
@@ -142,11 +168,12 @@ from roqsim.actuators import (
 from roqsim.config import parse_plugin_entry
 from roqsim.context import Entity, SimContext
 from roqsim.flex import entity_flex_ids, flex_label, lift_top_level_flexes
-from roqsim.manifest import expand_manifest, load_manifest
+from roqsim.manifest import expand_manifest, load_manifest, manifest_path
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import config_pose, config_pose_errors
 
-from ._arm import prefixed_joints, rpy_to_quat
+from ._arm import prefixed_joints
 
 # Per-model defaults so a world only needs `{model: ...}`. Keyed by model file stem.
 _DEFAULT_BASE_BODY = {
@@ -169,6 +196,35 @@ _DEFAULT_HOME = {
     # An experiment that needs a different start pose sets `home:` in its world YAML.
     "open_manipulator_x": [0.0, -1.0, 0.7, 0.3],
 }
+
+
+#: Where a tool is welded on an arm whose manifest names no site: the tool flange, as MuJoCo
+#: Menagerie arms call it.
+_FLANGE_SITE = "attachment_site"
+
+
+def manifest_end_effector_site(model_file: Path) -> str | None:
+    """The site an arm model's manifest declares for a tool (``end_effector: {site: ...}``), or ``None``.
+
+    The arm is what knows whether its flange is free: one that carries a sensor stack there has its
+    mounting face further out, on the stack. Read from beside the model file, like its components,
+    and not inherited through ``extends:`` -- it names a site in this model's own MJCF. A block of
+    any other shape raises ``ValueError``, since a declaration silently ignored would put every tool
+    back on the flange.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text()) or {}
+    block = data.get("end_effector") if isinstance(data, dict) else None
+    if block is None:
+        return None
+    if not isinstance(block, dict) or set(block) != {"site"} or not isinstance(block["site"], str):
+        raise ValueError(
+            f"manifest {path}: 'end_effector' takes one key, 'site' -- the arm site a tool is "
+            f"welded to when the world names none -- got {block!r}"
+        )
+    return block["site"]
 
 
 def _home_from_keyframe(model: str) -> list[float]:
@@ -253,10 +309,7 @@ class SpawnArmPlugin(Plugin):
         self.prefix = self.config.get("prefix", "")
         stem = str(self.config.get("model", "")).rsplit("/", 1)[-1].removesuffix(".xml")
         self.base_body = self.config.get("base_body", _DEFAULT_BASE_BODY.get(stem, "base"))
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.pos, self.quat = config_pose(self.config)
         self.home = list(self.config.get("home", _DEFAULT_HOME.get(stem, [])))
         if not self.home:
             # Fall back to the model's OWN `home` keyframe. `_DEFAULT_HOME` above is a name list in a
@@ -283,18 +336,19 @@ class SpawnArmPlugin(Plugin):
         mount = self.config.get("mount") or {}
         self.mount_robot = mount.get("robot")
         self.mount_body = mount.get("body", "base_link")
-        # End effector welded at the arm's tool site.
+        # End effector welded at the arm's tool site; with no `site:` the arm model's manifest
+        # decides, in `build` (the model resolves against `base_dir`, which is set after __init__).
         ee = self.config.get("end_effector") or {}
         self.ee_model = ee.get("model")
-        self.ee_site = ee.get("site", "attachment_site")
+        self.ee_site = ee.get("site")
+        #: The tool's root bodies as the arm's spec names them (before the arm's prefix), filled in
+        #: by `_attach_end_effector` and published on the entity at `configure`.
+        self.ee_roots: list[str] = []
         #: Every actuator's final law and gains, filled in :meth:`build` and published at
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
         self.ee_prefix = ee.get("prefix", "")
-        ee_pos = ee.get("pos", [0.0, 0.0, 0.0])
-        self.ee_pos = [float(v) for v in (*ee_pos, 0.0, 0.0)][:3]
-        ee_rpy = ee.get("rpy", [0.0, 0.0, 0.0])
-        self.ee_quat = rpy_to_quat(float(ee_rpy[0]), float(ee_rpy[1]), float(ee_rpy[2]))
+        self.ee_pos, self.ee_quat = config_pose(ee)
         self.ee_replaces = list(ee.get("replaces", []))
 
     def validate_config(self, config: dict) -> list[str]:
@@ -311,10 +365,7 @@ class SpawnArmPlugin(Plugin):
             config["gravity_compensation"], bool
         ):
             errors.append("'gravity_compensation' must be true or false")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, f"spawn_arm '{self.address}'")
 
         rail = config.get("rail")
         if rail is not None:
@@ -367,8 +418,14 @@ class SpawnArmPlugin(Plugin):
                     resolve_model(ee["model"], base_dir=self.base_dir)
                 except ModelError as exc:
                     errors.append(f"end_effector: {exc}")
-                if "rpy" in ee and len(ee["rpy"]) != 3:
-                    errors.append("end_effector 'rpy' must be [roll, pitch, yaw] in radians")
+                errors += config_pose_errors(ee, f"spawn_arm '{self.address}' end_effector")
+                if config.get("model"):
+                    try:
+                        manifest_end_effector_site(
+                            resolve_model(config["model"], base_dir=self.base_dir).path
+                        )
+                    except (ModelError, ValueError) as exc:
+                        errors.append(f"end_effector: {exc}")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -409,7 +466,7 @@ class SpawnArmPlugin(Plugin):
         frame.quat = self.quat
         if self.rail:
             # The carriage replaces the mount frame as the arm's parent, so the arm attaches at the
-            # carriage origin and `pos`/`rpy` keep meaning "where the axis sits, how it is oriented".
+            # carriage origin and `pose` keeps meaning "where the axis sits, how it is oriented".
             frame = self._add_carriage(spec, frame)
         spec.attach(child, prefix=self.prefix, frame=frame)
 
@@ -528,14 +585,27 @@ class SpawnArmPlugin(Plugin):
                     f"`replaces` -- silently ignoring it would hide a rename in the arm model."
                 )
             child.delete(ee_victim)
+        if self.ee_site is None:
+            declared = manifest_end_effector_site(
+                resolve_model(self.config["model"], base_dir=self.base_dir).path
+            )
+            self.ee_site = declared or _FLANGE_SITE
         site = child.site(self.ee_site)
         if site is None:
             raise RuntimeError(
                 f"spawn_arm[{self.arm_name}]: arm model {self.config['model']!r} has no site "
                 f"{self.ee_site!r} to mount an end effector on. Menagerie arms call the tool flange "
-                f"'attachment_site'; set `end_effector.site` to the right name for this model."
+                f"'attachment_site'; set `end_effector.site` to the right name for this model, or "
+                f"declare it in the model's manifest (`end_effector: {{site: ...}}`)."
             )
-        # Attaching AT A SITE makes the site's orientation the tool frame, so `pos`/`rpy` below are
+        # Named, so the entity can say which bodies are the tool: `force_torque` checks against them
+        # whether its site can see the tool at all. An unnamed root is given the tool file's name.
+        roots = list(ee.worldbody.bodies)
+        for i, body in enumerate(roots):
+            if not body.name:
+                body.name = ee_asset.path.stem + (f"_{i}" if len(roots) > 1 else "")
+        self.ee_roots = [self.ee_prefix + body.name for body in roots]
+        # Attaching AT A SITE makes the site's orientation the tool frame, so `pose` below is
         # offsets within it -- the same way a real tool adapter is specified (the UR->Robotiq adapter
         # is 11 mm along the flange normal).
         frame = child.attach(ee, prefix=self.ee_prefix, site=site)
@@ -562,6 +632,17 @@ class SpawnArmPlugin(Plugin):
                     # Inherited by the arm's endpoint-producing plugins (arm_controller), so the
                     # manifest-injected controller needs no namespace plumbing of its own.
                     "namespace": self.config.get("namespace", ""),
+                    # What a sensor on this arm must be able to see (force_torque checks it).
+                    **(
+                        {
+                            "end_effector": {
+                                "site": self.prefix + self.ee_site,
+                                "bodies": [self.prefix + b for b in self.ee_roots],
+                            }
+                        }
+                        if self.ee_model
+                        else {}
+                    ),
                 },
             )
         )

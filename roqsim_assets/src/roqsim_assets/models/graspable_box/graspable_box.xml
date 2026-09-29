@@ -3,8 +3,9 @@
 
        A prop meant to be grasped. The rest of roqsim_assets is welded scenery, and the conveyor's
        package rides a belt rather than being held. Spawn it with `spawn_model: {model:
-       graspable_box, free: true, publish_tf: dynamic}` -- `free` adds the <freejoint/>, so this
-       file deliberately declares none and the same prop can still be placed as static scenery.
+       graspable_box, publish_tf: dynamic}` -- the default `motion: physics` adds the <freejoint/>,
+       so this file deliberately declares none and the same prop can still be placed as static
+       scenery (`motion: static`).
 
        Grasp dimension is Y, 0.06 m across the jaws. Sized from the MEASURED aperture range of the
        Unitree Dex1, 5.9 mm to 94.9 mm: 60 mm sits mid-range, so the jaws have travel on both sides of

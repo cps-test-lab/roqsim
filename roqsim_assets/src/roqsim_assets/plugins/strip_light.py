@@ -9,15 +9,17 @@ The light is added to the **worldbody**, not to the fixture: the core ``ceiling`
 ceiling *geoms* by height, so opening the roof for a top-down view takes the batten out of the
 picture but leaves the room lit -- which is what a top-down view wants.
 
-Geometry (all metres). ``pos`` is the fixture's centre, ``yaw`` runs it along a direction, ``length``
-is along that direction and ``width`` across it.
+Geometry (all metres). ``pose`` places the fixture: its position is the fixture's centre, its yaw
+runs it along a direction, ``length`` is along that direction and ``width`` across it. A batten hangs
+level and lights straight down, so a pose that tilts it is refused.
 
 Config::
 
     strip_light:
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 batten)
-      pos: [x, y, z]      # fixture centre, world (z = the underside of the ceiling it hangs on)
-      yaw: 0.0            # direction of the run, rad
+      pose:               # a geometry_msgs/Pose in the world (roqsim.pose), z REQUIRED:
+        position: {x: 0.0, y: 0.0, z: 3.5}   #   the centre, z the underside of the ceiling it hangs on
+        orientation: {yaw: 0.0}              #   direction of the run, rad; no roll or pitch
       length: 2.4         # along yaw, m
       width: 0.09         # across it, m
       height: 0.06        # how deep the fixture hangs, m
@@ -39,6 +41,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import config_pose, config_pose_errors, yaw_of
 
 _FIXTURE_RGBA = [0.97, 0.97, 0.95, 1.0]
 _DIFFUSE = [0.25, 0.25, 0.25]
@@ -54,9 +57,8 @@ class StripLightPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 3.5])
-        self.pos = [float(v) for v in pos] if len(pos) == 3 else [0.0, 0.0, 3.5]
-        self.yaw = self._float(self.config.get("yaw"), 0.0)
+        self.pos, quat = config_pose(self.config)
+        self.yaw = yaw_of(quat)
         self.length = self._float(self.config.get("length"), 2.4)
         self.width = self._float(self.config.get("width"), 0.09)
         self.height = self._float(self.config.get("height"), 0.06)
@@ -87,8 +89,25 @@ class StripLightPlugin(Plugin):
 
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
-        if len(config.get("pos", [0, 0, 0])) != 3:
-            errors.append("'pos' must be [x, y, z] -- a luminaire needs its mounting height")
+        errors += config_pose_errors(config, "strip_light")
+        if "yaw" in config:
+            errors.append(
+                "strip_light: 'yaw' is not read -- the run's direction is the yaw of 'pose': "
+                "pose: {orientation: {yaw: ...}}"
+            )
+        pose = config.get("pose")
+        position = pose.get("position") if isinstance(pose, dict) else None
+        if not (isinstance(position, dict) and "z" in position):
+            errors.append(
+                "strip_light: 'pose.position.z' is required -- a luminaire needs its mounting height"
+            )
+        _, quat = config_pose(config)
+        heading = [math.cos(yaw_of(quat) / 2), 0.0, 0.0, math.sin(yaw_of(quat) / 2)]
+        if abs(abs(sum(a * b for a, b in zip(quat, heading, strict=True))) - 1.0) > 1e-9:
+            errors.append(
+                "strip_light: 'pose' tilts the batten; it hangs level and lights straight down, "
+                "so its orientation is a yaw alone"
+            )
         for key in ("length", "width", "height"):
             if key in config:
                 try:

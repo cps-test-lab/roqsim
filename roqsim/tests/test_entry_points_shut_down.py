@@ -13,7 +13,7 @@ import pytest
 from roqsim import check, export_capture, export_moveit, export_web, render, runner
 from roqsim.engine import Engine
 
-WORLD = "sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n"
+WORLD = "sim:\n  timestep: 0.005\ncomponents:\n  - dummy: {}\n    name: d0\n"
 
 
 @pytest.fixture

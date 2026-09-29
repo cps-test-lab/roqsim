@@ -10,10 +10,26 @@ reads it, and this plugin turns that pair into a first-class observable — a ra
 blackboard reader for in-process controllers, and an optional per-trial log. Nothing here is novel
 physics; it is plumbing.
 
-**Where the sensor goes matters more than it looks.** A site sensor measures the wrench transmitted
-*through* that site's body from its children, so it must sit on a body between the tool flange and
-whatever touches the world — exactly where a real FT sensor is bolted. Put it on the flange itself
-and the tool's own contacts are on the wrong side of the cut, and the sensor reads nothing.
+**Where the sensor goes matters more than it looks.** A site sensor reads the wrench the site's body
+receives from its parent: the load of that body and of every body below it in the kinematic tree,
+and of nothing else. A tool is in the reading only if it hangs from that body or below it -- where a
+real FT sensor is bolted, between the flange and the tool. A site on the flange body itself reads a
+tool mounted there, plus that body's own weight, which a tare removes. A tool on a body *beside* the
+sensor's is outside the reading altogether: the ``ur5e``'s flange carries both its sensor stack
+(``tool0``, with ``fts_site``) and its bare ``attachment_site``, and a tool welded at the latter
+reads as nothing at ``fts_site`` -- not its weight, not a push on it, not a contact -- which looks
+like a quiet trial rather than a broken world.
+
+**A tool the sensor cannot see.** So ``configure`` refuses a sensor on an entity whose mounted tool
+lies outside that subtree. The entity names its tool in ``meta["end_effector"]`` (``site``, where
+it is mounted, and ``bodies``, its root bodies; ``spawn_arm`` records both), and the tool is seen
+when the body carrying its mount site is in the sensed subtree, or when the sensor sits in the tool
+itself, as a fingertip sensor does. Measured on MuJoCo 3.14.0
+(``roqsim_manipulation/tests/test_tool_is_in_the_wrench.py``): a 0.5 kg tool on the ``ur5e``
+reads 0.000 N at ``fts_site`` when welded at ``attachment_site`` and its full 4.905 N at
+``tool_site``, the site the model's manifest declares; on every other arm with a mount site, a
+sensor at that site reads the tool's weight and a push on it. There is no key that accepts the
+first case: a sensor that reads none of its tool measures nothing a trial asks of it.
 
 Config -- a component of the entry that spawns the arm whose prefix and namespace it inherits, since ownership is where the entry
 sits rather than a config key::
@@ -39,11 +55,12 @@ sits rather than a config key::
       flex_reaction: excluded   # accept a reading blind to flex contacts (see "A flex the sensor
                                 #   cannot see" below); refused without it where one could occur
 
-Endpoint ``tare`` (in) is that zero button as a service; it takes no argument and its reply is
-what lets a scenario fail rather than measure against an offset it only assumed was applied.
+Endpoint ``tare`` (a command) is that zero button, a ``std_srvs/Trigger`` service on
+``<name>/tare`` over ROS; it takes no argument and its reply is what lets a scenario fail rather
+than measure against an offset it only assumed was applied.
 
-Endpoint ``wrench`` (out) reads ``(force[3], torque[3])`` and carries a
-``geometry_msgs/WrenchStamped`` backend hint. A ``WrenchReader`` is published on the blackboard
+Endpoint ``wrench`` (out) reads a :class:`roqsim.types.Wrench`, a ``geometry_msgs/WrenchStamped`` on
+``<name>/wrench`` over ROS, stamped in the frame ``frame`` names. A ``WrenchReader`` is published on the blackboard
 under ``ft:<entry label>`` for in-process consumers — the admittance controller is one — exposing
 ``read()`` and the resolved ``frame``.
 
@@ -125,11 +142,13 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, Controller, registry_for
 from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
 from roqsim.plugin import Plugin
 from roqsim.presence import entity_body_ids
+from roqsim.types import Wrench
 
 _FRAMES = ("sensor", "base", "world")
 
@@ -286,6 +305,7 @@ class ForceTorquePlugin(Plugin):
                     f"force_torque[{self.name}]: sensor {site_name}_{suffix!r} missing after compile"
                 )
             setattr(self, attr, int(m.sensor_adr[sid]))
+        self._refuse_a_tool_it_cannot_see(m, site_name, entity)
         self._refuse_a_flex_contact_it_cannot_see(m, site_name)
 
         if self.frame == "base":
@@ -331,36 +351,12 @@ class ForceTorquePlugin(Plugin):
             )
         )
 
-        ctx.interface.add(
-            Endpoint(
-                name="tare",
-                direction="in",
-                owner=self.owner,
-                namespace=ns,
-                # The payload is ignored: zeroing takes no argument, and the call IS the request.
-                write=lambda _payload=None: ctx.post(lambda _ctx: self.tare()),
-                backend={
-                    "ros2": {
-                        # A service, not a topic, and `Trigger` rather than `SetBool`: this is the
-                        # zero button, which a real FT driver also exposes as a service taking no
-                        # argument (`zero_ftsensor`). A caller needs the outcome -- a scenario that
-                        # tared and carried on regardless would measure against an offset it only
-                        # assumed was applied.
-                        "service": "std_srvs.srv.Trigger",
-                        "name": self.topic_override("tare") or f"{self.name}/tare",
-                    }
-                },
-            )
-        )
-
         # The frame the wrench is stated in, as TF names it: bare, like every frame a bridge
         # publishes (it applies the namespace), so never the MJCF name with the entity's prefix.
         # `sensor` is the site's own frame, which nothing else publishes, so it comes with the
-        # fixed transform from the body it is on; `base` is the entity's root body.
-        ros2 = {
-            "type": "geometry_msgs.msg.WrenchStamped",
-            "topic": self.topic_override("wrench") or f"{self.name}/wrench",
-        }
+        # fixed transform from the body it is on; `base` is the entity's root body. The topic is
+        # under the sensor's name, since one arm may carry several.
+        ros2 = {"topic": f"{self.name}/wrench"}
         if self.frame == "sensor":
             ros2["frame_id"] = site_name.removeprefix(prefix)
             body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
@@ -375,16 +371,46 @@ class ForceTorquePlugin(Plugin):
             ).removeprefix(prefix)
         else:
             ros2["frame_id"] = "world"
-        ctx.interface.add(
-            Endpoint(
-                name="wrench",
-                direction="out",
-                owner=self.owner,
-                namespace=ns,
-                read=self.read_pair,
-                rate_hz=self.rate_hz,
-                backend={"ros2": ros2},
+        self._wrench_ros2 = ros2
+
+    def _sensed_bodies(self, m) -> set[int]:
+        """The bodies whose load this sensor reads: its site's body and everything below it."""
+        body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
+        return set(entity_body_ids(m, body))
+
+    def _refuse_a_tool_it_cannot_see(self, m, site_name: str, entity) -> None:
+        """Refuse a sensor on an entity whose mounted tool hangs outside the subtree it reads.
+
+        The owning entity names its tool in ``meta["end_effector"]`` (``spawn_arm`` does). The tool
+        is seen when the body carrying its mount site is in the sensed subtree -- the tool hangs
+        below it then -- or when the sensor sits in the tool itself, a fingertip sensor.
+        """
+        tool = (entity.meta.get("end_effector") if entity else None) or {}
+        if not tool:
+            return
+        mount = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, tool["site"])
+        if mount < 0:
+            raise RuntimeError(
+                f"force_torque[{self.name}]: entity {self.owner!r} names its tool's mount site "
+                f"{tool['site']!r}, which the compiled model does not have"
             )
+        sensed = self._sensed_bodies(m)
+        in_tool = set()
+        for root in tool.get("bodies", []):
+            in_tool.update(entity_body_ids(m, root))
+        if int(m.site_bodyid[mount]) in sensed or sensed & in_tool:
+            return
+        sensor_body = mujoco.mj_id2name(
+            m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id])
+        )
+        mount_body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[mount]))
+        raise RuntimeError(
+            f"force_torque[{self.name}]: site {site_name!r} reads the subtree of body "
+            f"{sensor_body!r}, and the tool mounted at {tool['site']!r} (on body {mount_body!r}) "
+            f"is not in it -- the sensor would read none of the tool's weight, load or contacts. "
+            f"Mount the tool at a site on {sensor_body!r} or below it (spawn_arm's "
+            f"`end_effector.site`, which defaults to the site the arm model's manifest declares), "
+            f"or measure at a site the tool hangs below."
         )
 
     def _refuse_a_flex_contact_it_cannot_see(self, m, site_name: str) -> None:
@@ -394,8 +420,7 @@ class ForceTorquePlugin(Plugin):
         """
         if self.flex_reaction == _FLEX_EXCLUDED or not m.nflex:
             return
-        body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
-        sensed = set(entity_body_ids(m, body))
+        sensed = self._sensed_bodies(m)
         geoms = [g for g in range(m.ngeom) if int(m.geom_bodyid[g]) in sensed]
         carried, touchable = [], []
         for f in range(m.nflex):
@@ -463,11 +488,17 @@ class ForceTorquePlugin(Plugin):
                 torque = torque + rng.normal(0.0, self.noise_t, 3)
         return force, torque
 
-    def read_pair(self):
-        """Endpoint ``read``: the same wrench as plain lists, for a transport-neutral payload."""
+    @endpoint.out(rate="rate_hz", ros2=lambda self: self._wrench_ros2)
+    def wrench(self) -> Wrench:
+        """The wrench, in the frame ``frame`` names."""
         force, torque = self.read()
-        return (force.tolist(), torque.tolist())
+        return Wrench(force, torque)
 
+    # A command without parameters, which ROS carries as a `Trigger` service: this is the zero
+    # button, which a real FT driver also exposes as a service taking no argument
+    # (`zero_ftsensor`). A caller needs the outcome -- a scenario that tared and carried on
+    # regardless would measure against an offset it only assumed was applied.
+    @endpoint.command(ros2=lambda self: {"name": f"{self.name}/tare"})
     def tare(self) -> None:
         """Zero the sensor at the tool's CURRENT pose and load. Physics thread only.
 

@@ -42,7 +42,7 @@ def make_engine():
     """
 
     def _factory(plugins):
-        cfg = load_config_from_dict({"sim": {}, "plugins": plugins})
+        cfg = load_config_from_dict({"sim": {}, "components": plugins})
         engine = Engine(cfg)
         engine.ctx.seed = 0
         return engine

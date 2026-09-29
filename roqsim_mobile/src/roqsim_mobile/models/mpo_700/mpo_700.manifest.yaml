@@ -72,8 +72,9 @@ components:
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [0.327, 0.277, 0.2074]    # Neobotix MPO-700 Positions of Sensors; see X, Y and HEIGHT
-      rpy: [3.14, 0.0, 0.79]         # mpo_700_body.urdf.xacro:38, lidar_1_joint origin rpy
+      # position: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT);
+      # orientation: mpo_700_body.urdf.xacro:38, lidar_1_joint origin
+      pose: {position: {x: 0.327, y: 0.277, z: 0.2074}, orientation: {roll: 3.14, yaw: 0.79}}
       frame_id: lidar_1_link         # mpo_700_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
     components:
@@ -82,8 +83,9 @@ components:
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [-0.327, -0.277, 0.2074]  # Neobotix MPO-700 Positions of Sensors; see X, Y and HEIGHT
-      rpy: [3.14, 0.0, 3.93]         # mpo_700_body.urdf.xacro:65, lidar_2_joint origin rpy
+      # position: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT);
+      # orientation: mpo_700_body.urdf.xacro:65, lidar_2_joint origin
+      pose: {position: {x: -0.327, y: -0.277, z: 0.2074}, orientation: {roll: 3.14, yaw: 3.93}}
       frame_id: lidar_2_link         # mpo_700_gazebo.urdf.xacro:41
     name: scan_rear
     components:
