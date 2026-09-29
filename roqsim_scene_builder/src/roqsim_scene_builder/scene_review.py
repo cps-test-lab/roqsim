@@ -21,6 +21,7 @@ def review_scene_by_human(
     timeout_s: float | None = None,
     title: str = "",
     focus_object: str = "",
+    size: str = "960x720",
 ) -> dict:
     """Ask a human to review a 3D scene in a native window and return their verdict.
 
@@ -62,6 +63,7 @@ def review_scene_by_human(
             model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An unknown name is not
             an error: it warns and falls back to the automatic camera.
         timeout_s: Seconds to wait for a verdict before raising ``TimeoutError`` (default 600).
+        size: The 3D view's size in pixels, ``WxH`` (default ``960x720``), as the CLI's ``--size``.
 
     Returns:
         ``{"verdict": "pass" | "fail" | "comment", "comment": str, "annotations": [...],
@@ -79,7 +81,7 @@ def review_scene_by_human(
         RuntimeError: If the review window closed without a verdict or failed to start.
     """
     require_existing(target, "Scene to review")
-    extra = ["--message", message, "--settle-steps", str(int(settle_steps))]
+    extra = ["--message", message, "--settle-steps", str(int(settle_steps)), "--size", size]
     if title:
         extra += ["--title", title]
     if focus_object:

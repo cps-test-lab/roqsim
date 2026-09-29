@@ -46,6 +46,7 @@ from scan_mount_utils import (
     robot_hits,
     spawn,
     static_tf,
+    topic_of,
 )
 
 from roqsim.context import Entity, SimContext
@@ -114,6 +115,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_drive_config(), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -398,8 +400,9 @@ def test_c6_the_tf_chain_and_topic(scan):
     assert [(t["parent"], t["child"]) for t in robot] == [(p, c) for p, c, _ in want], robot
     for t, (_, _, xyz) in zip(robot, want, strict=True):
         assert np.allclose(t["translation"], xyz, atol=1e-9), t
-    hints = endpoint(scan, "scan", address).backend["ros2"]
-    assert (hints["frame_id"], hints["topic"]) == (SCAN_FRAME, TOPIC)
+    scan_ep = endpoint(scan, "scan", address)
+    hints = scan_ep.backend["ros2"]
+    assert (hints["frame_id"], topic_of(scan_ep)) == (SCAN_FRAME, TOPIC)
     assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
 
 

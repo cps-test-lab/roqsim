@@ -16,7 +16,7 @@ plugins intrinsic to it, while the plugins know nothing about any particular mod
 
 | plugin | role |
 |--------|------|
-| `spawn_arm` | Attach an arm MJCF at a mount pose (`pos`/`quat`/`yaw`, optional `pedestal`); apply its home pose; optionally weld an `end_effector:` gripper onto its flange. Use a distinct `prefix` per arm. With `rail:` the arm instead rides a prismatic carriage (gantry / ceiling track / seventh axis) — a 6-DOF arm on a rail is a redundant 7-DOF system, and the rail is joint 0 everywhere downstream. With `mount: {robot: ...}` the arm joins a mobile base's kinematic subtree and rides it. |
+| `spawn_arm` | Attach an arm MJCF at a mount `pose` (in the world, or in the `mount:` body's frame; optional `pedestal`); apply its home pose; optionally weld an `end_effector:` gripper onto its flange. Use a distinct `prefix` per arm. With `rail:` the arm instead rides a prismatic carriage (gantry / ceiling track / seventh axis) — a 6-DOF arm on a rail is a redundant 7-DOF system, and the rail is joint 0 everywhere downstream. With `mount: {robot: ...}` the arm joins a mobile base's kinematic subtree and rides it. |
 | `arm_controller` | Resolve the arm's position actuators, hold a target joint vector, and declare the arm's endpoints: a `joint_states` output and a `follow_joint_trajectory` action (plus an `ArmHandle` on the blackboard for in-process drivers), and — with `stream_commands: true` — a high-rate `<controller_name>/joint_trajectory` topic input for streaming controllers like `moveit_servo`. If the arm has a non-joint (tendon) actuator — a parallel gripper — it also declares a `GripperCommand` action at `<gripper_controller_name>/gripper_cmd` and a `gripper:<arm>` state reader on the blackboard. |
 | `cartesian_admittance` | The Cartesian layer on top of `arm_controller`'s joint servo. Two laws: `position` (a Cartesian P controller, blind to contact — the honest baseline) and `admittance` (`M ẍ = (w_d − w_a) − D ẋ − C (x − x₀)`, closing a loop around a measured wrench). Both resolve to joint velocities through a damped least-squares Jacobian inverse and write *targets* through the `ArmHandle`, never `data.ctrl`. Publishes a `CartesianHandle` at `cartesian:<arm>`. |
 
@@ -60,11 +60,27 @@ sets the held target, so a stream of positions servos the arm. Because it mirror
 topic, one servo/controller config drives sim and hardware unchanged. Arm-agnostic — any arm using
 this plugin gets it; off by default.
 
+A single position is a step, and a stiff servo takes it as fast as its force range allows. Where
+that is wrong — a lift, a gantry, anything carrying a load that must not be thrown — set
+`max_velocity` and `max_acceleration` (a scalar, or `{joint: value}`): each command then sets the
+joint's goal, and the held target travels to it on a trapezoidal ramp, stopping exactly on it. The
+limit applies to every command path alike — a `follow_joint_trajectory` waypoint, a point on
+`joint_trajectory`, `ArmHandle.set_targets`, `test_target`, and a velocity command, whose rate is
+clipped to `max_velocity` — so a single point is a complete "go there" command. A trajectory within
+the limits is followed with a lag of `v²/(2·max_acceleration)` that closes when it stops; one faster
+than them arrives late and is graded by `goal_time_tolerance`; a cancel brakes at `max_acceleration`
+and returns to where it was cancelled. Joints without a limit take each command at once. No default
+applies, since an MJCF declares no velocity limit: take the values from the source URDF's
+`<limit velocity=>` and the vendor's `joint_limits.yaml`, put them in the model's manifest if the
+drive always limits, and lift one from a world with `max_velocity: null`.
+
 For a gripper-equipped arm (e.g. `gen3`), `arm_controller` additionally serves a `GripperCommand`
 action at `<ns>/<gripper_controller_name>/gripper_cmd` — a MoveIt `moveit_simple_controller_manager`
 `GripperCommand` controller executes against it to open/close the hand. The commanded position (the
-`gripper_joint` angle, 0 open .. 0.8 closed for the 2F-85) is mapped onto the tendon actuator's
-ctrlrange; the bridge reports `reached_goal`/`stalled` from the live finger state (a stall = a grasp).
+`gripper_joint` position, 0 open .. 0.8 closed for the 2F-85) is mapped onto the gripper actuator's
+ctrlrange, in whichever direction the model's actuator runs; the bridge reports `reached_goal` when the
+measured finger position is within tolerance of the command and `stalled` when the fingers stop
+anywhere else (a grasp, for one), as ros2_control's gripper action controller does.
 
 Cancelling either goal stops the motion, not just the goal: this plugin holds the last target it was
 given every tick, so the bridge commands a hold at the *measured* joint (or finger) position before

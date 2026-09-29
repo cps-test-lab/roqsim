@@ -23,6 +23,7 @@ from roqsim_sensors.plugins.force_torque import WrenchReader
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.types import Pose, Wrench
 
 
 def _law(*, stiffness=None, axes=None, wrench=(0.0, 0.0, 0.0), pos=None, mat=None, w_d=None):
@@ -218,14 +219,13 @@ def test_the_command_endpoints_are_declared_under_the_controller_name(tmp_path):
     engine.setup()
     eps = {e.name: e for e in engine.ctx.interface.all()}
 
+    # A Pose travels as geometry_msgs/PoseStamped and a Wrench as geometry_msgs/WrenchStamped.
     frame_ep = eps["target_frame"]
-    assert frame_ep.direction == "in"
-    assert frame_ep.backend["ros2"]["type"] == "geometry_msgs.msg.PoseStamped"
-    assert frame_ep.backend["ros2"]["topic"] == "cartesian_compliance_controller/target_frame"
+    assert frame_ep.direction == "in" and frame_ep.payload_type.cls is Pose
+    assert frame_ep.backend["ros2"] == {"topic": "cartesian_compliance_controller/target_frame"}
 
     wrench_ep = eps["target_wrench"]
-    assert wrench_ep.direction == "in"
-    assert wrench_ep.backend["ros2"]["type"] == "geometry_msgs.msg.WrenchStamped"
+    assert wrench_ep.direction == "in" and wrench_ep.payload_type.cls is Wrench
 
     assert eps["current_pose"].direction == "out"
 
@@ -236,7 +236,8 @@ def test_a_commanded_wrench_reaches_the_law(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "target_wrench")
 
-    ep.write(((1.0, 2.0, -8.0), (0.0, 0.0, 0.5)))
+    ep.write({"force": (1.0, 2.0, -8.0), "torque": (0.0, 0.0, 0.5)})
+    engine.step()  # a stream is applied on the physics thread, once per step
 
     plugin = engine.ctx.blackboard.require("cartesian:ur5e")
     assert plugin.controller_name
@@ -250,7 +251,8 @@ def test_a_commanded_frame_reaches_the_law(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "target_frame")
 
-    ep.write(((0.4, 0.1, 0.3), (1.0, 0.0, 0.0, 0.0)))
+    ep.write({"position": (0.4, 0.1, 0.3), "orientation": (1.0, 0.0, 0.0, 0.0)})
+    engine.step()  # a stream is applied on the physics thread, once per step
 
     law = next(p for p in engine.plugins if isinstance(p, CartesianAdmittancePlugin))
     assert law._goal_pos == pytest.approx([0.4, 0.1, 0.3])
@@ -263,9 +265,9 @@ def test_current_pose_reads_back_as_position_and_quaternion(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "current_pose")
 
-    position, quat = ep.read()
-    assert len(position) == 3 and len(quat) == 4
-    assert np.linalg.norm(quat) == pytest.approx(1.0, abs=1e-6)
+    pose = ep.read()
+    assert len(pose.position) == 3 and len(pose.orientation) == 4
+    assert np.linalg.norm(pose.orientation) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_activating_anchors_on_the_arm_state_now(tmp_path):
