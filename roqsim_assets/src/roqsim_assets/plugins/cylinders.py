@@ -10,7 +10,7 @@ cylinder::
       - {pose: {position: {x: 0.12, y: -0.30}}, radius: 0.035, height: 0.15, mass: 0.3}
       - {pose: {position: {x: 0.31, y: 0.08}}, radius: 0.042, height: 0.15, mass: 0.3}
 
-Each entry accepts every key ``cylinder`` does (``pos``, ``radius``, ``height``, ``color``,
+Each entry accepts every key ``cylinder`` does (``pose``, ``radius``, ``height``, ``color``,
 ``collide``, ``friction``, ``free``, ``mass``, and an optional ``name``), because each one *is* a
 cylinder: this plugin owns the list, not the geometry.
 

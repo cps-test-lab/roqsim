@@ -31,6 +31,7 @@ from roqsim.context import Entity, SimContext
 from roqsim.engine import Engine
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import parse_pose
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile_manipulation" / "models"
@@ -525,7 +526,8 @@ def test_c1_the_scan_frame_is_at_omrons_plane(scan):
         if type(p).__name__ == "SpawnSensorPlugin" and p.address == f"{OWNER}.{LABEL}"
     )
     assert mount["model"] == "omron_os32c" and mount["parent_frame"] == "base_link"
-    assert np.allclose(mount["pos"], SCAN_ORIGIN - (0.0, 0.0, DEVICE_SCAN_HEIGHT), atol=1e-12)
+    pos, _ = parse_pose(mount["pose"], relative=True)
+    assert np.allclose(pos, SCAN_ORIGIN - (0.0, 0.0, DEVICE_SCAN_HEIGHT), atol=1e-12)
     for site in (f"{PREFIX}{LABEL}_scan", f"{PREFIX}{LABEL}_{SCAN_FRAME}"):
         pos, rot = _pose_in_base(scan, site)
         assert np.allclose(pos, SCAN_ORIGIN, atol=1e-6), f"{site} at {pos}"

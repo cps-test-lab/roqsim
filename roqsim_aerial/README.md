@@ -149,7 +149,7 @@ physics and sensors; that division is what makes the result mean something about
 
 ```yaml
 components:
-  - spawn_robot: {model: x500, prefix: "x500_", pos: [0.0, 0.0], namespace: drone}
+  - spawn_robot: {model: x500, prefix: "x500_", namespace: drone}
     name: drone
     components:
       - multirotor_motors: {}

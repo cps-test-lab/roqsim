@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from .seed import SeedError
 
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     import mujoco
 
     from .endpoint import Param, ValueType
+
+_log = logging.getLogger(__name__)
 
 
 class Blackboard:
@@ -233,15 +236,58 @@ class Endpoint:
     #: default mapping; a hint block of ``None`` keeps it off that backend. Set for every decorated
     #: endpoint. ``False``: served only by a backend whose hint block it carries.
     transport: bool = False
+    #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
+    #: :func:`endpoint_kind` infers from its direction and hints.
+    kind: str = ""
+    #: The address of the plugin that registered it (``robot.lidar``), stamped by the registry.
+    #: What a transport that addresses endpoints by path builds the path from.
+    producer: str = ""
+    #: For a command: the name of an ``out`` endpoint of the same producer whose value confirms it
+    #: -- a verdict its ``post_step`` records after the command applied.
+    confirm: str = ""
+    #: A stream's latest-value slot, set by :mod:`roqsim.endpoint`; its ``write`` then takes the
+    #: writing transport as ``source``, so two driving one stream are told apart.
+    slot: StreamSlot | None = None
+    #: What it is, for a reader outside the process: a decorated method's docstring.
+    doc: str = ""
+    #: Where a decorated endpoint's options come from, for a reader outside the process: ``rate``
+    #: and ``lazy`` (``{"from": <attribute or config key>, "default": ...}``, or ``lazy: true``),
+    #: ``when`` and ``family`` (the key named), each ``"computed"`` for a callable and absent where
+    #: not given. Empty on a hand-built endpoint.
+    options: dict[str, Any] = field(default_factory=dict)
 
 
-class CommandFuture:
+def endpoint_kind(ep: Endpoint) -> str:
+    """What an endpoint is to a caller: ``out``, ``command`` (an outcome to wait for) or ``stream``.
+
+    A decorated endpoint says so itself. A hand-built ``in`` endpoint is a stream when its only
+    hint is a topic ``type``, and a command otherwise -- a ``service`` or ``action`` hint, or none.
+    """
+    if ep.kind:
+        return ep.kind
+    if ep.direction == "out":
+        return "out"
+    from .endpoint import is_service
+
+    hints = [h for h in ep.backend.values() if isinstance(h, dict)]
+    if hints and all("type" in h and not is_service(ep, h) for h in hints):
+        return "stream"
+    return "command"
+
+
+_T = TypeVar("_T")
+
+
+class CommandFuture(Generic[_T]):
     """The outcome of a command submitted to the physics thread (:meth:`SimContext.submit`).
 
     A caller on another thread waits for it with a timeout. :meth:`result` returns what the command
     returned or raises what it raised; :meth:`wait` only says whether it has run. A command that
     raises while nobody is blocked in :meth:`result` is also logged, so a failure whose caller gave
     up waiting, or never asked, is not lost.
+
+    A command that answers only later returns one of its own, and declares what it resolves to:
+    ``-> CommandFuture[RunState]`` is described as a ``RunState`` result.
     """
 
     __slots__ = ("_done", "_error", "_lock", "_value", "_waiters")
@@ -283,6 +329,10 @@ class CommandFuture:
         return waited
 
 
+#: Two transports writing one stream this close together (seconds, wall clock) are both driving it.
+TWO_WRITERS_WINDOW_S = 1.0
+
+
 class StreamSlot:
     """The latest value an inbound stream delivered, applied once on the physics thread.
 
@@ -291,16 +341,43 @@ class StreamSlot:
     it, so a stream that delivers several values within one step applies only the last.
     """
 
-    __slots__ = ("_pending", "apply", "name")
+    __slots__ = ("_pending", "_source", "_since", "_warned", "apply", "name")
 
     def __init__(self, name: str, apply: Callable[[Any], None]) -> None:
         self.name = name
         self.apply = apply
         # One slot of a bounded deque: append and pop are atomic, and append drops the older value.
         self._pending: deque = deque(maxlen=1)
+        self._source: str | None = None
+        self._since = 0.0
+        self._warned = False
 
-    def put(self, payload: Any) -> None:
+    def put(self, payload: Any, source: str | None = None) -> None:
+        """Keep *payload* as the value to apply. *source* names the transport that wrote it.
+
+        Two transports writing one stream overwrite each other value by value, which reads as a
+        robot that jitters rather than as a conflict; the first time a second source writes within
+        :data:`TWO_WRITERS_WINDOW_S` of the other, this logs one WARNING naming both.
+        """
         self._pending.append(payload)
+        if source is None:
+            return
+        now = time.monotonic()
+        if (
+            self._source is not None
+            and source != self._source
+            and now - self._since < TWO_WRITERS_WINDOW_S
+            and not self._warned
+        ):
+            self._warned = True
+            _log.warning(
+                "stream %r is written by both %s and %s: the latest value wins, so each "
+                "overwrites the other's commands",
+                self.name,
+                self._source,
+                source,
+            )
+        self._source, self._since = source, now
 
     def _take(self) -> tuple[bool, Any]:
         try:
@@ -322,6 +399,11 @@ class InterfaceRegistry:
     def __init__(self) -> None:
         self._endpoints: list[Endpoint] = []
         self._bound_by: str | None = None
+        #: The address of the plugin being configured, set by the engine around ``configure``: an
+        #: endpoint added without a ``producer`` is stamped with it.
+        self.producer: str = ""
+        #: The transport plugins that bound this registry, in binding order.
+        self.bridges: list = []
 
     def add(self, endpoint: Endpoint, *, on_demand: bool = False) -> None:
         """Register *endpoint*.
@@ -336,6 +418,8 @@ class InterfaceRegistry:
                 f"{self._bound_by!r} already bound the interface, so nothing would publish it. "
                 f"List the producing plugin BEFORE {self._bound_by!r} in the world YAML."
             )
+        if not endpoint.producer:
+            endpoint.producer = self.producer
         self._endpoints.append(endpoint)
 
     def mark_bound(self, by: str) -> None:

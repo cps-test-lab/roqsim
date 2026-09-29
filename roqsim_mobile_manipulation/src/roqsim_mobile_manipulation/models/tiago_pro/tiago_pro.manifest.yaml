@@ -159,8 +159,8 @@ components:
   - spawn_sensor:
       model: sick_tim571
       parent_frame: base_link
-      pos: [0.27512, -0.18297, 0.13244]        # base_sensors.urdf.xacro:71
-      rpy: [-3.141592654, 0.0, -0.785398163]   # base_sensors.urdf.xacro:71: -180, 0, -45 deg
+      # base_sensors.urdf.xacro:71: rpy -180, 0, -45 deg
+      pose: {position: {x: 0.27512, y: -0.18297, z: 0.13244}, orientation: {roll: -3.141592654, yaw: -0.785398163}}
       frame_id: base_front_laser_link          # `${name}_link`, name base_front_laser (:70)
     name: base_front_laser
     components:
@@ -178,8 +178,8 @@ components:
   - spawn_sensor:
       model: sick_tim571
       parent_frame: base_link
-      pos: [-0.27512, 0.18297, 0.13244]        # base_sensors.urdf.xacro:66
-      rpy: [-3.141592654, 0.0, 2.356194490]    # base_sensors.urdf.xacro:66: -180, 0, 135 deg
+      # base_sensors.urdf.xacro:66: rpy -180, 0, 135 deg
+      pose: {position: {x: -0.27512, y: 0.18297, z: 0.13244}, orientation: {roll: -3.141592654, yaw: 2.356194490}}
       frame_id: base_rear_laser_link           # `${name}_link`, name base_rear_laser (:65)
     name: base_rear_laser
     components:

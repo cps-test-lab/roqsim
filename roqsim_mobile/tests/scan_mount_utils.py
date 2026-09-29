@@ -27,6 +27,7 @@ from roqsim import raycast
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.pose import parse_pose, rpy_to_quat
 
 #: Inner half-width of the square room :func:`spawn` builds around the spawn origin (m). Small enough
 #: that the shortest-range scanner mounted here (the LDS-01, 3.5 m) still reaches every corner.
@@ -321,7 +322,8 @@ def uncovered_bearings(
 def assert_mounts(engine: Engine, owner: str, mounts) -> None:
     """*owner*'s manifest mounts exactly *mounts*: device, parent frame, origin, scan frame and topic.
 
-    *mounts* is ``{label: (model, frame_id, pos, rpy, topic)}``; the parent frame is ``base_link``.
+    *mounts* is ``{label: (model, frame_id, pos, rpy, topic)}``; the parent frame is ``base_link``
+    and ``pos``/``rpy`` the device's ``pose`` on it.
     """
     found = mount_plugins(engine, owner)
     assert set(found) == set(mounts), f"mounted {sorted(found)}, the vendor ships {sorted(mounts)}"
@@ -330,8 +332,9 @@ def assert_mounts(engine: Engine, owner: str, mounts) -> None:
         assert cfg["model"] == model, f"{label}: {cfg['model']}"
         assert cfg["parent_frame"] == "base_link", f"{label}: {cfg['parent_frame']}"
         assert cfg["frame_id"] == frame, f"{label}: {cfg['frame_id']}"
-        assert [float(v) for v in cfg["pos"]] == list(pos), f"{label}: {cfg['pos']}"
-        assert [float(v) for v in cfg["rpy"]] == list(rpy), f"{label}: {cfg['rpy']}"
+        at, quat = parse_pose(cfg["pose"], relative=True)
+        assert list(at) == list(pos), f"{label}: {cfg['pose']}"
+        assert list(quat) == rpy_to_quat(*rpy), f"{label}: {cfg['pose']}"
         assert lidar(engine, f"{owner}.{label}").config["topics"] == {"scan": topic}
     topics = [spec[4] for spec in mounts.values()]
     assert len(set(topics)) == len(topics), "two scanners on one topic publish over each other"

@@ -32,6 +32,7 @@ import yaml
 
 from roqsim.context import Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
+from roqsim.pose import parse_pose, rpy_to_quat
 from roqsim.types import Odometry, Twist
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
@@ -357,13 +358,10 @@ def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
     manifest = yaml.safe_load(MANIFEST.read_text())
     (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
     assert mount["name"] == "lds01"
-    assert mount["spawn_sensor"] == {
-        "model": "lds01",
-        "parent_frame": "base_link",
-        "pos": [*BASE_SCAN[0]],
-        "rpy": [*BASE_SCAN[1]],
-        "frame_id": "base_scan",
-    }
+    spawn = dict(mount["spawn_sensor"])
+    pos, quat = parse_pose(spawn.pop("pose"), relative=True)
+    assert spawn == {"model": "lds01", "parent_frame": "base_link", "frame_id": "base_scan"}
+    assert tuple(pos) == BASE_SCAN[0] and quat == rpy_to_quat(*BASE_SCAN[1])
     assert "components" not in mount and "frames" not in manifest
     model, _ = _build()
     assert model.nsite == 1  # base_imu

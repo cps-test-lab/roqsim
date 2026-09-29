@@ -338,7 +338,7 @@ the nearest known one named: a misspelt key would otherwise bake the default in 
 
 Each marker becomes a `spawn_model` in the world YAML. `--markers-map` maps a marker id to the model
 to place — either a bare name (`"single_bed"`) or `{"model": "single_bed", "yaw_deg": 180}` to also
-set the prop's heading (about +Z, 0 = +x, CCW → `spawn_model`'s `rpy`). A heading the human dragged in
+set the prop's heading (about +Z, 0 = +x, CCW → the yaw of `spawn_model`'s `pose`). A heading the human dragged in
 the 2D window (the marker's own `yaw_deg`) is honoured too; a `--markers-map` `yaw_deg` overrides it.
 An unmapped marker is a hard error — props are never silently dropped.
 

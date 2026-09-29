@@ -84,6 +84,9 @@ a ``float``, a ``bool`` for neither, and a sequence for a ``numpy`` array of the
         @endpoint.out(name="joints/{item}/effort", each="joint_names")
         def effort(self, joint: str) -> Torque: ...
 
+``confirm``
+    For a ``command``: the name of an ``out`` endpoint of the same plugin whose value, read in the
+    ``post_step`` of the step that applied the command, confirms it.
 ``owner``, ``namespace``
     The entity an endpoint belongs to and its transport scope, where they are not the plugin's
     (:attr:`~roqsim.plugin.Plugin.endpoint_owner`, :meth:`~roqsim.plugin.Plugin.endpoint_namespace`).
@@ -394,6 +397,9 @@ def _base_type(hint: Any, where: str) -> ValueType:
         return _base_type(origin.__value__[args], where)
     if hasattr(hint, "__value__"):
         return _base_type(hint.__value__, where)
+    if origin is CommandFuture or hint is CommandFuture:
+        # A command that answers later: its result is what the future resolves to.
+        return value_type(args[0], where=where) if args else ValueType("any", "any")
     if origin is typing.Union or origin is types.UnionType:
         rest = [a for a in args if a is not type(None)]
         if len(rest) == 1 and len(rest) < len(args):
@@ -442,6 +448,24 @@ def doc_summary(obj: Any) -> str:
     """The first line of *obj*'s own docstring, or ``""``."""
     doc = inspect.cleandoc(obj.__doc__ or "") if getattr(obj, "__doc__", None) else ""
     return doc.splitlines()[0].strip() if doc else ""
+
+
+def doc_prose(obj: Any) -> str:
+    """*obj*'s docstring without its ``Args:`` and ``Attributes:`` sections, which the schema
+    carries entry by entry."""
+    lines = inspect.cleandoc(obj.__doc__ or "").splitlines()
+    kept, base = [], None
+    for line in lines:
+        if base is not None:
+            if not line.strip() or len(line) - len(line.lstrip()) > base:
+                continue
+            base = None
+        head = _SECTION.match(line)
+        if head is not None:
+            base = len(head.group(1))
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 @functools.cache
@@ -779,10 +803,28 @@ class EndpointSpec:
     owner: str | Callable[..., str] | None = None
     namespace: str | Callable[..., str] | None = None
     backend: dict[str, Any] = field(default_factory=dict)
+    confirm: str = ""
 
     @property
     def direction(self) -> str:
         return DIRECTIONS[self.kind]
+
+    def options(self, cls: type) -> dict[str, Any]:
+        """Where the ``rate``, ``lazy``, ``when`` and ``each`` options of the plugin class *cls*
+        come from, for a reader of a built endpoint (:attr:`~roqsim.context.Endpoint.options`):
+        ``rate`` and ``lazy`` as :meth:`describe` gives them, the others the key named, else
+        ``"computed"``."""
+        out: dict[str, Any] = {}
+        if self.kind == "out":
+            if not isinstance(self.rate, (int, float)):
+                out["rate"] = _describe_option(cls, self.rate, float)
+            if self.lazy is not False:
+                out["lazy"] = _describe_option(cls, self.lazy, bool)
+        if self.when is not None:
+            out["when"] = _option_name(self.when)
+        if self.each is not None:
+            out["family"] = _option_name(self.each)
+        return out
 
     def signature(self, cls: type) -> Signature:
         """The schema, read off the method on *cls*."""
@@ -836,6 +878,8 @@ class EndpointSpec:
             row["family"] = _option_name(self.each)
         if self.when is not None:
             row["when"] = _option_name(self.when)
+        if self.confirm:
+            row["confirm"] = self.confirm
         if self.kind != "out":
             row["params"] = [p.describe() for p in sig.params]
         if self.kind != "stream":
@@ -951,12 +995,14 @@ def command(
     each: _Option = None,
     owner: _Owner = None,
     namespace: _Owner = None,
+    confirm: str = "",
     **backend,
 ) -> Callable:
     """Declare the decorated method as a command (``in``, with an outcome).
 
     *msg* is the payload type, when the parameters are its fields. What the method returns is the
-    future's result.
+    future's result. ``confirm`` names an ``out`` endpoint of the same plugin whose value, read in
+    the ``post_step`` of the step that applied the command, confirms it.
     """
     method, payload = _split(msg, "command")
     return _decorator(
@@ -968,6 +1014,7 @@ def command(
         each=each,
         owner=owner,
         namespace=namespace,
+        confirm=confirm,
         backend=backend,
     )
 
@@ -1058,6 +1105,7 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 f"{type(plugin).__name__}.{spec.attr}: an instance attribute of that name hides the "
                 f"endpoint method {spec.name!r}; rename the attribute"
             )
+        options = spec.options(type(plugin))
         method = getattr(plugin, spec.attr)
         if spec.each is None:
             instances = [((plugin,), method)]
@@ -1089,6 +1137,11 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 payload_type=sig.payload,
                 topic=plugin.topic_override(name),
                 transport=True,
+                kind=spec.kind,
+                producer=plugin.address,
+                confirm=spec.confirm,
+                doc=doc_prose(method),
+                options=options,
             )
             where = f"{owner}/{name}"
             if spec.kind == "out":
@@ -1103,6 +1156,7 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 ep.params = sig.params
                 slot = ctx.stream_slot(where, lambda kwargs, _call=call: _call(**kwargs))
                 ep.write = _streamer(slot, sig.params, where)
+                ep.slot = slot
                 ep.marshalled = True
             endpoints.append(ep)
     _derive_topics(endpoints, type(plugin).__name__)
@@ -1264,7 +1318,8 @@ def _submitter(ctx: SimContext, method: Callable, params: tuple[Param, ...], whe
 def _streamer(slot, params: tuple[Param, ...], where: str):
     put = slot.put
 
-    def write(payload=None) -> None:
-        put(_bind(params, payload, where))
+    def write(payload=None, source: str | None = None) -> None:
+        # *source*: the transport writing, so two driving one stream are told apart.
+        put(_bind(params, payload, where), source)
 
     return write

@@ -463,12 +463,13 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 - **A manifest entry that itself provides an entity** (a ``spawn_sensor`` in a robot manifest) gets the spawn's prefix as ``attach_prefix`` rather than ``prefix``, and derives its own from that. Its nested ``components:`` are kept, owned by its address and merged by label like everything else. Precedence is nearer-wins all the way down: the world's value, then the robot manifest's, then the device manifest's.
 
   - A mounted device's ``prefix`` defaults to ``<carrier prefix><label>_``, and its ``namespace`` to the carrier's.
-  - A device model's ``mount`` body is the frame its vendor macro's ``origin`` places: the link the macro attaches to its ``parent``. A mount's ``pos``/``rpy`` are that origin, so a pose copied from a robot description's call of the macro places the device where ``robot_state_publisher`` would, and the manifest's ``frames:`` chain starts at that frame.
+  - A device model's ``mount`` body is the frame its vendor macro's ``origin`` places: the link the macro attaches to its ``parent``. A mount's ``pose`` is that origin, so a pose copied from a robot description's call of the macro places the device where ``robot_state_publisher`` would, and the manifest's ``frames:`` chain starts at that frame.
   - A device manifest may use ``{frame_id}``, ``{device_name}`` and ``{parent_frame}`` placeholders, and no others.
   - ``{device_name}`` is the mount's ``device_name``, else the manifest's top-level ``device_name:`` (the vendor macro's default ``name`` parameter, which prefixes every link it creates; ``roqsim.manifest.manifest_device_name``).
   - ``{frame_id}`` is the mount's ``frame_id``, else the manifest's top-level ``frame_id:`` (the vendor's default scan-frame name, ``roqsim.manifest.manifest_frame_id``), which may itself carry ``{device_name}``. A device whose vendor names none declares none, and a mount of it without a ``frame_id`` is refused rather than given a made-up name.
   - Two mounts on one carrier that would publish any one frame name -- the scan frame or any link of the chain -- are refused, since they share its namespace; each names its own ``device_name`` or ``frame_id``. A carrier mount of a device that declares no ``frames:`` is refused, naming the device: it has no vendor frame to hang from.
-  - Vendor fixed links a model flattened are a ``frames:`` block (``roqsim.frames``). It is built as sites and published as static transforms. The ``spawn_sensor`` and ``spawn_robot`` docstrings (``docs/plugins.rst``) have the details.
+  - Vendor fixed links a model flattened are a ``frames:`` block (``roqsim.frames``): ``{name, parent, pose}``, the ``pose`` an offset from ``parent`` read by ``roqsim.pose.parse_pose`` with ``relative=True`` (omitted components are zero). It is built as sites and published as static transforms. Unlike ``components``, it is not inherited through ``extends:``: frames describe a model's geometry.
+  - A carrier's devices hang from its frames: a nested ``spawn_sensor`` names as its ``parent_frame`` the link the vendor description attaches it to -- a body of the carrier or an entry of its ``frames:`` -- and its ``pose`` is that joint's origin, an offset from the frame, which is how a world or an override moves a device. ``roqsim.manifest.resolve_parent_frame`` refuses, while the document expands, a ``parent_frame`` the carrier does not have (with a did-you-mean and its frames listed), a frame whose parent is neither a body nor a frame declared before it, and two frames of one name. The ``spawn_sensor`` and ``spawn_robot`` docstrings (``docs/plugins.rst``) have the details.
 - When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 
   .. note::
@@ -598,6 +599,11 @@ identical across arms.
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
 External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. A driver that is not stepping -- ``roqsim sim`` paused or stopped -- drains it in its idle loop instead (``Engine.idle``), and when a command ran, ``mj_forward`` brings body poses and sensor data in line with it; simulated time does not advance and no plugin hook runs. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on; ``ctx.submit`` is the same queue with a :class:`~roqsim.context.CommandFuture` for a caller that needs the outcome, and the drain delivers a command's exception to the caller waiting on it (one nobody waits on is logged). The queue is a ``collections.deque``: posting and draining take no lock. After the commands the drain applies each inbound stream's latest value (§13).
+
+The control socket's threads (§13) follow the same rule: its request threads never touch ``data`` -- a
+``read`` or a ``call`` is submitted to the physics thread and waited on -- and what it publishes is
+read in ``post_step``. The runner resets its pacer on every idle loop, so the first step after a pause
+is paced from when it is taken and the pause is not counted as falling behind.
 
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
 
@@ -871,9 +877,13 @@ endpoint, runs the per-tick publish loop on the physics thread, and marshals inb
 physics thread via ``ctx.submit`` unless the endpoint marshals itself (single-writer rule intact,
 §7), handing the backend a callback that returns the command's future. It binds an endpoint that
 carries a hint block for its backend, and a decorated one (``Endpoint.transport``) without one, from
-what its payload type maps to (``_hints_for``). A backend implements a few hooks:
-``_setup`` / ``_hints_for`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` /
-``_tick`` / ``_teardown``.
+what its payload type maps to (``_hints_for``); a hint block of ``None`` keeps an endpoint off that
+backend. A backend that carries neutral payloads as they are (``ipc``) overrides ``_hints_for`` to bind
+every endpoint. A backend implements a few hooks: ``_setup`` / ``_hints_for`` / ``_make_output`` /
+``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``. Each bridge records what it made
+of an endpoint (``bound_name``: a ROS topic after namespaces and renames), so another transport can
+say what the endpoint is called there. A write into a stream is tagged with the bridge's backend, and
+two transports driving one stream within a second of each other are logged once, naming both.
 
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
 ``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
@@ -935,6 +945,25 @@ waypoint has been *fed* would make a blocked or saturated arm indistinguishable 
 that did the job, and MoveIt forwards that verdict unchanged, so the caller would see a clean execution
 against a scene that never moved.
 
+**The control socket (``ipc``).** The second backend, :class:`roqsim.ipc.bridge.IpcBridge`, is core
+roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default
+(``--control``, ``ROQSIM_CONTROL``; ``none`` disables) together with the ``run_control`` plugin,
+which serves the driver's :class:`~roqsim.control.RunControl` as ``sim/run_control/{pause, resume,
+step, reset, state}``. It wires every endpoint under a path built from the address of the plugin
+that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
+``robot.lidar`` + ``scan`` is ``robot/lidar/scan``; two endpoints on one path are refused at bind
+naming both. It serves on demand and publishes on no schedule: a ROUTER answers ``describe`` /
+``read`` / ``call`` on a background thread -- a ``read`` is the endpoint's ``read`` run on the
+physics thread through ``ctx.submit``, a ``call`` a command's future waited on, with a timeout
+that is an error and never a success -- and an XPUB publishes, from ``post_step`` at each
+endpoint's gated rate, only the outputs under a prefix some client subscribed to. With nobody
+subscribed its ``post_step`` checks two empty collections and returns. A command may name an
+``out`` endpoint of its producer that confirms it (``Endpoint.confirm``); the reply carries that
+endpoint's value read in the ``post_step`` of the step that applied the command, and while the
+run is paused it says ``verified: false`` rather than stepping. ``--no-communication`` keeps it: it
+reaches this process, not a middleware the experiment publishes on. The scenario-execution adapter
+never adds it -- a stepped run is in-process. User-facing: :doc:`control`.
+
 **Injection, not authoring.** A world does not declare its transport. ``with_transport`` appends the
 bridge at load time (``roqsim sim --ros``; ``ROQSIM_ROS`` for the scenario-execution adapter), which is
 the exact inverse of ``drop_transport_plugins`` and is what keeps a checked-in world **ROS-free** and
@@ -977,9 +1006,10 @@ report are readable in a stepped run only.
 
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as
-matching-dtype numpy buffers (one C-level copy) instead of per-element Python loops. Adding a new
-backend (zenoh, zmq) is a new ``BridgeBase`` subclass + its own registry — robots and worlds are
-unchanged.
+matching-dtype numpy buffers (one C-level copy) instead of per-element Python loops. The ``ipc``
+backend copies each array once on the physics thread, since a producer may overwrite its buffer in
+the next step, and hands that copy to ZeroMQ without another. Adding a new backend (zenoh) is a new
+``BridgeBase`` subclass + its own registry — robots and worlds are unchanged.
 
 .. _14-glossary--faq:
 
