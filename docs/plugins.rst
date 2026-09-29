@@ -1611,14 +1611,15 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
 
-Bases: three geometries, one interface
---------------------------------------
+Bases: four geometries, one interface
+-------------------------------------
 
-``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
-``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
-something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
-place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
-that command is a planner that would not move the real vehicle, and approximating a car with a
+``diff_drive``, ``omni_drive``, ``ackermann_drive`` and ``tricycle_drive`` publish the same
+endpoints -- ``cmd_vel`` in, ``odom`` and ``joint_states`` out -- so a stack does not know which it
+is driving until it asks for something the geometry cannot do. That is the point of the last two: a
+car, and a tricycle whose steered wheel stops short of 90 degrees, **cannot turn in place**, and
+``cmd_vel`` with ``v = 0`` and a yaw rate moves either nowhere at all. A planner that emits that
+command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
 **What a real base offers its stack.** Three keys on ``diff_drive`` are the base driver's
@@ -1710,12 +1711,47 @@ is left visible rather than corrected by a scrub factor: a skid-steer's scrub is
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
 
+``tricycle_drive`` is the other car-like base: **one** steered wheel on the centre line and a fixed
+axle, which is how three-wheel counterbalance forklifts, tuggers, pallet trucks and many AGVs are
+built. ``base_link`` must be the centre of the fixed axle, since that is the point such a vehicle
+always turns about, and ``steer_offset`` is the signed distance to the steering axis -- negative for
+a rear-steered forklift, positive for a front-steered tugger::
+
+   - tricycle_drive:
+       drive: axle                   # the fixed axle's two wheels are driven; or steer_wheel
+       steer_offset: -1.393          # rear wheel, 1.393 m behind the axle
+       wheel_radius: 0.229
+       track: 0.930
+       max_steer_angle: 1.396        # must be < pi/2
+       steer_actuator: steer_motor
+       steer_joint: steer_joint
+       drive_actuators: [drive_wheel_left_motor, drive_wheel_right_motor]
+       drive_joints: [drive_wheel_left_joint, drive_wheel_right_joint]
+       passive_joints: [steer_wheel_joint]   # published in joint_states, never commanded
+
+A twist ``(v, w)`` moves the steered wheel's point at ``(v, w * steer_offset)``, so the wheel is
+pointed along it, ``atan(w * steer_offset / v)``, and clamped to its lock -- a rear wheel therefore
+steers *right* for a left turn going forward. With ``drive: axle`` the two fixed wheels are split
+like a differential across ``track``, using the **measured** steering angle so that neither scrubs
+while the wheel is still slewing; near full lock the inner wheel runs backwards, as on the real
+truck, and ``max_wheel_speed`` caps the outer one. With ``drive: steer_wheel`` the steered wheel is
+driven at ``v / cos(delta)``. ``steer_offset`` and ``track`` are checked against the model's own
+joint positions at ``configure`` and a disagreement over a centimetre is refused.
+
+A zero-speed twist moves nothing and leaves the steered wheel where it is, for the reason given for
+``ackermann_drive``: a lock short of 90 degrees cannot pivot the vehicle about its axle centre, and
+at full lock it still turns about a point ``|steer_offset| / tan(max_steer_angle)`` to the side. The
+plugin therefore declares ``kinematics="ackermann"`` on its ``RobotHandle``. Its odometry takes the
+speed from the driven wheels and the yaw rate from the measured steering angle; ``passive_joints``
+exist because ``robot_state_publisher`` leaves a link out of TF until every movable joint above it
+has a state. Like ``diff_drive`` it takes ``odom_rate_hz`` and ``publish_joint_states``.
+
 A velocity command: odometry and the watchdog
 ---------------------------------------------
 
 Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
-``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion``,
-``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``tricycle_drive``, ``spot_locomotion``,
+``g1_locomotion``, ``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
 :mod:`roqsim.odometry`, for a plugin of your own to keep too.
 
 **Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
@@ -2196,6 +2232,18 @@ the base pose and no joint stance, so the arm falls back to ``qpos0``. For the P
 but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap by 0.030 m at all-zeros.
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
 trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
+
+**Motion limits.** ``arm_controller``'s ``max_velocity`` and ``max_acceleration`` (a scalar, or
+``{joint: value}``) turn every position command into a trapezoidal ramp of the held target instead
+of a step the servo takes as fast as its force range allows. Set them where a step is wrong: a lift,
+a gantry, a mast, a joint carrying a load that must not be thrown. They are off unless set, and no
+bundled model sets them, because an MJCF declares no joint velocity limit to default from; take the
+values from the source -- the URDF's ``<limit velocity=>`` and the vendor's ``joint_limits.yaml``.
+A robot whose drives always limit carries them in its manifest's ``arm_controller`` entry; a world
+overrides them per key there, and ``max_velocity: null`` lifts one. Give the planner the same
+numbers (``roqsim export moveit --max-velocity … --max-acceleration …``): a trajectory faster than
+the limits arrives late and is graded by ``goal_time_tolerance``. The module docstring of
+``roqsim_manipulation.plugins.arm_controller`` has the profile and what each command path does.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

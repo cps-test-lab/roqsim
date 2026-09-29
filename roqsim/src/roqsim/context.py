@@ -68,8 +68,10 @@ class RobotHandle:
       legged platforms, whose locomotion controllers take the same twist.
     * ``holonomic`` -- any planar velocity, including sideways. Mecanum, omni-wheel and swerve.
     * ``ackermann`` -- cannot turn in place, and a twist states a *curvature*: the steering angle is
-      derived from ``w / v``, so ``w`` with ``v == 0`` steers the wheels nowhere. A consumer that
-      commands a stop-and-pivot leaves a car sitting still with its wheels straight.
+      derived from ``w / v``, so ``w`` with ``v == 0`` steers the wheels nowhere. A car
+      (``ackermann_drive``) and a tricycle whose steered wheel stops short of 90 degrees
+      (``tricycle_drive``) both declare it. A consumer that commands a stop-and-pivot leaves a car
+      sitting still with its wheels straight.
 
     It defaults to ``unicycle`` because that is the largest family here and because a default lets
     every existing publisher stay as it is; a base that is not one declares it.
