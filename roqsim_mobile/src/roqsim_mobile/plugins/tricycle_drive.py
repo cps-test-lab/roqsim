@@ -16,53 +16,42 @@
 
 """Controller plugin: tricycle kinematics -- one steered wheel and a fixed axle -- plus odometry.
 
-The fourth base geometry, beside ``diff_drive``, ``omni_drive`` and ``ackermann_drive``: a single
-steered wheel on the centre line at a signed distance ``steer_offset`` from ``base_link``, and a
-fixed, unsteered axle through ``base_link``. It is how three-wheel counterbalance forklifts, tuggers,
-pallet trucks and many AGVs are built, and it is neither of its neighbours: unlike a car there is one
-steered wheel, not a linked pair, and it may sit at the **rear** (``steer_offset < 0``, a forklift)
-as easily as at the front (``> 0``, a tugger or a pallet truck).
+The fourth base geometry, beside ``diff_drive``, ``omni_drive`` and ``ackermann_drive``: one steered
+wheel on the centre line at a signed distance ``steer_offset`` from ``base_link``, and a fixed axle
+through ``base_link``. Three-wheel counterbalance forklifts, tuggers and pallet trucks are built this
+way. Unlike a car it has one steered wheel rather than a linked pair, and the wheel may sit behind
+the axle (``steer_offset < 0``) or in front of it (``> 0``).
 
-``base_link`` must be the centre of the fixed axle. The instantaneous centre of rotation of such a
-vehicle always lies on the line through that axle, so the axle centre is the one point whose velocity
-is always along the vehicle's heading -- which is what a twist command and a planner's footprint are
-expressed about.
+``base_link`` must be the centre of the fixed axle: the instantaneous centre of rotation always lies
+on the axle's line, so that is the one point whose velocity is always along the heading, and the
+point a twist is expressed about.
 
-**The geometry.** The steered wheel sits at ``(a, 0)`` with ``a = steer_offset``. A body twist
-``(v, w)`` moves that point at ``(v, w * a)``, so the wheel must point at ``delta = atan(w * a / v)``
-and roll at ``v / cos(delta)``. For a rear wheel ``a`` is negative, so a left turn going forward
-steers the wheel to the RIGHT -- the rear swings out, as every forklift driver knows. Reversing with
-the same yaw rate steers it the other way.
+**Geometry.** With ``a = steer_offset``, a body twist ``(v, w)`` moves the steered wheel's point at
+``(v, w * a)``, so the wheel points at ``delta = atan(w * a / v)`` and rolls at ``v / cos(delta)``.
+For a rear wheel ``a < 0``, so a left turn going forward steers the wheel right; reversing with the
+same yaw rate steers it left. A yaw rate beyond the lock is clamped to the lock at the commanded
+speed, so the vehicle follows its tightest circle.
 
-**Which wheels are driven** is the ``drive`` key, because both designs are common and they differ in
-what an actuator is asked for:
+**Which wheels are driven** is the ``drive`` key:
 
-* ``axle`` -- the two fixed wheels are driven, the steered one is passive (a three-wheel electric
-  counterbalance truck with twin drive motors). The two are split across ``track`` the way a
-  differential splits them, ``v -/+ w * track / 2`` with ``w = v * tan(delta) / a``, so neither tyre
-  scrubs. Near full lock the inner wheel of a tight turn runs **backwards**, which is what such a truck
-  does; the speed of the outer one is what ``max_wheel_speed`` caps.
-* ``steer_wheel`` -- the steered wheel is also the driven one and the axle's wheels are passive (a
-  tugger, a walkie pallet truck). The wheel is driven at ``v / cos(delta)``.
+* ``axle`` -- the two fixed wheels are driven and the steered one is passive. They are split across
+  ``track`` as a differential splits them, ``v -/+ w * track / 2`` with ``w = v * tan(delta) / a``,
+  so neither scrubs. Near full lock the inner wheel runs backwards; ``max_wheel_speed`` caps the
+  outer one, scaling both down together.
+* ``steer_wheel`` -- the steered wheel is driven, at ``v / cos(delta)``, and the axle is passive.
 
-**The split uses the MEASURED steering angle**, not the commanded one. A steered wheel slews, and while
-it does the vehicle turns about wherever the wheel actually points; a differential computed from the
-command would drive the two fixed wheels for a curve the vehicle is not yet on, and scrub all three.
-This is what a real truck's electronic differential does: it reads its steering-angle sensor.
+**The split uses the measured steering angle**, not the commanded one. While the wheel slews the
+vehicle turns about wherever the wheel points; a split computed from the command would drive the
+axle for a curve the vehicle is not yet on, and scrub all three wheels.
 
 **A zero-speed turn command moves nothing.** ``cmd_vel`` with ``v = 0`` and a yaw rate asks for a
-rotation about ``base_link``, which needs the steered wheel at 90 degrees. ``max_steer_angle`` must be
-below that (the formulation divides by ``cos(delta)``), so no configuration of this plugin can do it,
-and the real vehicle it describes cannot either: at its lock it still turns about a point off the
-axle centre, at a radius ``|a| / tan(max_steer_angle)``. Rotating the base anyway -- which counter-
-rotating the axle wheels would do, and a planner written for a differential base would be pleased
-with -- would hide exactly the failure a car-like stack must not have. The steered wheel holds the
-angle it has rather than centring, because a real one does, and the drive ramps to a stop. The robot
-therefore declares ``kinematics="ackermann"`` on its :class:`~roqsim.context.RobotHandle`: to a
-consumer shaping a twist it is a vehicle whose twist states a curvature.
-
-A yaw rate beyond the lock is clamped to the lock at the commanded speed, so the vehicle follows its
-tightest circle rather than the one asked for.
+rotation about ``base_link``, which needs the steered wheel at 90 degrees. ``max_steer_angle`` must
+be below that, since the formulation divides by ``cos(delta)``, and the vehicle it describes cannot
+pivot either: at its lock it turns about a point ``|a| / tan(max_steer_angle)`` to the side.
+Counter-rotating the axle wheels would rotate the base anyway and hide the failure a car-like stack
+must not have. The steered wheel holds its angle, as the rack of ``ackermann_drive`` does, and the
+drive ramps to a stop. The plugin declares ``kinematics="ackermann"`` on its
+:class:`~roqsim.context.RobotHandle`: a twist states a curvature.
 
 Config::
 
@@ -92,28 +81,25 @@ Config::
 
 ``steer_offset`` and ``track`` are checked against the model at ``configure``: the steering joint's
 anchor and the two axle wheels' anchors, expressed in ``base_body``, must agree with them to within a
-centimetre, and the steering axis must be vertical. A kinematic model that disagrees with the vehicle
-it drives turns about the wrong point, and the only symptom is a controller that never converges, so
-the disagreement is refused by name rather than driven.
+centimetre, and the steering axis must be vertical. A kinematic model that disagrees with its vehicle
+turns about the wrong point, so the disagreement is refused by name.
 
-``passive_joints`` are the joints nothing actuates but a URDF names -- the steered wheel's roll on an
-axle-driven truck. ``robot_state_publisher`` publishes a link's transform only once it has a state for
-the joint above it, so a joint left out here leaves that wheel's frame missing from TF.
+``passive_joints`` are joints nothing actuates but a URDF names, such as the steered wheel's roll on
+an axle-driven truck. ``robot_state_publisher`` publishes a link's transform only once it has a state
+for the joint above it, so a joint left out here leaves that wheel's frame missing from TF.
 
 Endpoints are the siblings', declared on typed methods: ``cmd_vel`` in (a ``Twist``; the ROS bridge
 carries it as ``geometry_msgs/Twist``, or ``TwistStamped`` with ``stamped_cmd_vel``), ``odom`` out
 (an ``Odometry``) with its TF to ``odom_child_frame``, and ``joint_states`` out (a ``JointState``,
-off with ``publish_joint_states: false``) at ``odom_rate_hz``, with the steering joint first, then
-the driven joints, then the passive ones -- a stack watches the
-steering angle, and a URDF whose wheel does not turn in RViz while the truck corners is how a missing
-one shows.
+off with ``publish_joint_states: false``) at ``odom_rate_hz``. ``joint_states`` carries the steering
+joint first, then the driven joints, then the passive ones.
 
 **Odometry is what the encoders say.** ``drive: axle`` takes the speed from the mean of the two
-driven wheels and the yaw rate from the *measured* steering angle, ``w = v * tan(delta) / a``;
-``drive: steer_wheel`` takes the wheel's own speed ``s`` and splits it, ``v = s * cos(delta)``,
-``w = s * sin(delta) / a``. It is dead reckoning and it drifts where the tyres slip, uncorrected for
-the reason ``ackermann_drive`` gives: a tyre's slip angle varies with speed and load, so a constant
-would make the estimate look better than the sensor it stands for.
+driven wheels and the yaw rate from the measured steering angle, ``w = v * tan(delta) / a``;
+``drive: steer_wheel`` splits the wheel's own speed ``s`` into ``v = s * cos(delta)`` and
+``w = s * sin(delta) / a``. It is dead reckoning and drifts where the tyres slip, uncorrected for the
+reason ``ackermann_drive`` gives: a tyre's slip angle varies with speed and load, so a constant would
+make the estimate look better than the sensor it stands for.
 """
 
 from __future__ import annotations
@@ -134,6 +120,11 @@ _MIN_SPEED = 1e-3
 _GEOMETRY_TOLERANCE = 0.01
 
 _DRIVES = ("axle", "steer_wheel")
+
+
+def _is_name_list(value) -> bool:
+    """A list (or tuple) of strings: what a key naming actuators or joints takes."""
+    return isinstance(value, (list, tuple)) and all(isinstance(n, str) for n in value)
 
 
 class TricycleDrivePlugin(Plugin):
@@ -231,11 +222,16 @@ class TricycleDrivePlugin(Plugin):
                 errors.append(f"'{key}' names ONE {key[6:]} (a string); a tricycle has one")
         want = 2 if drive == "axle" else 1
         which = "left then right" if drive == "axle" else "the steered wheel"
+        for key in ("drive_actuators", "drive_joints", "passive_joints"):
+            names = config.get(key)
+            if names is not None and not _is_name_list(names):
+                # Checked before the length: a bare string has a length too, its character count.
+                errors.append(f"'{key}' must be a list of names, got {type(names).__name__}")
         for key in ("drive_actuators", "drive_joints"):
             names = config.get(key)
             if not names:
                 errors.append(f"'{key}' is required: name {want} ({which})")
-            elif len(names) != want:
+            elif _is_name_list(names) and len(names) != want:
                 errors.append(f"'{key}' must name exactly {want} for drive: {drive} ({which})")
         if drive == "axle":
             for key in ("wheel_radius", "track"):
@@ -243,8 +239,14 @@ class TricycleDrivePlugin(Plugin):
                     errors.append(f"'{key}' is required for drive: axle")
         elif drive == "steer_wheel" and "steer_wheel_radius" not in config:
             errors.append("'steer_wheel_radius' is required for drive: steer_wheel")
-        if "test_cmd" in config and len(config["test_cmd"]) != 2:
-            errors.append("'test_cmd' must be [v, w]")
+        if "test_cmd" in config:
+            cmd = config["test_cmd"]
+            if (
+                not isinstance(cmd, (list, tuple))
+                or len(cmd) != 2
+                or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in cmd)
+            ):
+                errors.append("'test_cmd' must be [v, w]")
         errors += CommandWatchdog.validate(config)
         return errors
 

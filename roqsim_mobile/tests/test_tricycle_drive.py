@@ -397,6 +397,22 @@ def test_config_errors_are_reported_by_name(override, expected):
     assert any(expected in e for e in errors), errors
 
 
+@pytest.mark.parametrize("key", ["drive_joints", "drive_actuators", "passive_joints"])
+def test_a_name_list_given_as_one_string_is_refused_by_type(key):
+    """A bare string has a length too; the error names the key and the type, not a count."""
+    config = {**REAR_AXLE, key: "left"}
+    errors = TricycleDrivePlugin(config, entity="robot", label="drive").validate_config(config)
+    assert any(f"'{key}' must be a list of names, got str" in e for e in errors), errors
+    assert not any("exactly" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("cmd", ["ab", [1.0, "x"], 0.5])
+def test_a_test_cmd_that_is_not_two_numbers_is_refused(cmd):
+    config = {**REAR_AXLE, "test_cmd": cmd}
+    errors = TricycleDrivePlugin(config, entity="robot", label="drive").validate_config(config)
+    assert "'test_cmd' must be [v, w]" in errors, errors
+
+
 def test_the_geometry_and_the_names_are_required():
     errors = TricycleDrivePlugin({}, entity="robot", label="drive").validate_config({})
     for key in ("steer_offset", "steer_actuator", "steer_joint", "drive_actuators", "drive_joints"):
