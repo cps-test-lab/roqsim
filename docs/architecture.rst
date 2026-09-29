@@ -164,6 +164,14 @@ Single world YAML, two sections; ``components`` order = execution order:
 Each entry is a mapping with exactly one plugin-ref key (its value is the ``config`` map) plus an
 optional reserved ``name:`` sibling, defaulting to the ref. ``name:`` or ``components:`` found inside
 the config map is refused (``parse_plugin_entry``), because no plugin reads either from its config.
+
+Those two sections, ``extends``/``disable`` (inheritance) and ``version`` are the whole top level
+(``roqsim.config.WORLD_KEYS``), and any other key there is refused. A world declares no parameters
+and substitutes nothing into itself: a value that varies per run is written as its ordinary literal
+and changed by an **override**, which addresses the key in place. An override rooted anywhere but
+``sim`` or ``components`` is refused for the same reason: accepted, it would merge into the document
+where nothing reads it, and the run would report success against the unchanged world.
+
 Three plugin-ref resolution forms (``resolve_plugin``):
 
 1. **Short name** → ``roqsim.plugins`` entry-point group.
@@ -523,8 +531,6 @@ A spawn plugin's ``model:`` string is resolved by ``roqsim.models.resolve_model`
 
     [project.entry-points."roqsim.models"]
     roqsim_assets = "roqsim_assets.models"   # a module exposing MODELS_DIR
-
-**A retired name is refused.** A model renamed because what its numbers mean changed -- a mount frame re-seated on the frame the vendor macro's origin places -- keeps its old name in a table, so a world that still names it is refused at load with the new name, why it changed and what to re-express, rather than loading with its pose silently reinterpreted. A provider module declares its own as ``RETIRED_MODELS`` (old name to ``roqsim.models.RetiredModel``) beside ``MODELS_DIR``; ``roqsim.models.RETIRED_MODELS`` holds the core's. An entry is deleted once downstream has moved.
 
 Example: a downstream package can ship only a custom arm variant — say ``ur10e_custom.xml`` + ``ur10e_custom.manifest.yaml``, no mesh copies — whose manifest ``assets: [roqsim_manipulation_assets, roqsim_sensors]`` borrows the stock arm meshes from one package and a camera mesh from another. ``spawn_arm: {model: ur10e_custom}`` then places it even though ``spawn_arm`` lives in a third package, ``roqsim_manipulation`` — which ships no models at all.
 

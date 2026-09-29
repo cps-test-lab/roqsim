@@ -26,7 +26,7 @@ from roqsim.seed import SEED_ENV, SeedError
 WORLD = """
 sim:
   timestep: 0.005
-plugins:
+components:
   - dummy: {}
     name: d0
 """
@@ -152,7 +152,9 @@ class _ReadsSeedAtConfigure(Plugin):
 
 def test_the_seed_is_set_before_setup_so_configure_can_read_it():
     """`configure` may draw -- the navigator did -- so a seed applied later is applied too late."""
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{f"{__name__}:_ReadsSeedAtConfigure": {}}]})
+    cfg = load_config_from_dict(
+        {"sim": {}, "components": [{f"{__name__}:_ReadsSeedAtConfigure": {}}]}
+    )
     engine = Engine(cfg)
     engine.ctx.seed = 17
     engine.setup()
@@ -175,7 +177,7 @@ class _DrawsAtConfigure(Plugin):
 
 
 def _drawing_world():
-    return load_config_from_dict({"sim": {}, "plugins": [{f"{__name__}:_DrawsAtConfigure": {}}]})
+    return load_config_from_dict({"sim": {}, "components": [{f"{__name__}:_DrawsAtConfigure": {}}]})
 
 
 def test_a_driver_that_never_runs_still_cannot_forget_the_seed():
