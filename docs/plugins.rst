@@ -1461,7 +1461,8 @@ of its fields, nested ones included. On ROS it travels one of three ways:
 2. **By a converter its package registers once**: an entry in the ``roqsim.ros2_types`` entry-point
    group loading a ``roqsim_ros_bridge.typemap.RosType`` (or several) -- the type, the messages it
    travels as, and a ``fill``/``decode`` pair for each. Every endpoint of that type is then on ROS
-   with no hint.
+   with no hint. ``roqsim_sensors.ros2_types`` is one: a GNSS fix, 3D object
+   detections and 2D boxes as ``NavSatFix``, ``Detection3DArray`` and ``Detection2DArray``.
 3. **Not at all**: with neither, the endpoint is not on ROS. ``roqsim plugins describe`` says so and
    why, and the bridge logs it; an endpoint that gave ROS hints and still has no mapping fails the
    bridge instead.
@@ -1524,17 +1525,8 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
      - Plugins (endpoints)
      - Needs
    * - ``roqsim_sensors``
-     - ``camera_common`` (``image``, ``image_compressed``, ``camera_info``), ``depth_camera``
-       (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),
-       ``segmentation_camera`` (``labels``, ``instances``, ``detections``), ``lidar_common``,
-       ``imu``, ``gnss`` (``fix``), ``object_detector`` (``detections``), ``force_limit``,
-       ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
-       per fault)
-     - families: ``live_config``
-   * - ``roqsim_mobile``
-     - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
-       ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)
-     - owner: ``spawn_robot`` (the robot entity)
+     - ``ground_truth_pose`` (``pose``)
+     - --
    * - ``roqsim_manipulation``
      - ``arm_controller`` (``joint_states``, ``controller_state``; ``follow_joint_trajectory``
        action and ``joint_command`` as FIFO commands; ``joint_velocity``, ``gripper_cmd``),

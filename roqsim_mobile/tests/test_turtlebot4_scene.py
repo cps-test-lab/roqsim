@@ -660,7 +660,7 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
     engine, _ = mounted
     scan = scan_mount.scan_endpoint(engine)
     assert scan.owner == "robot.rplidar" and scan.namespace == scan_mount.NAMESPACE
-    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan_mount.topic_of(scan) == "scan"
     assert scan.backend["ros2"]["frame_id"] == "rplidar_link"
     assert "static_tf" not in scan.backend["ros2"]
 
