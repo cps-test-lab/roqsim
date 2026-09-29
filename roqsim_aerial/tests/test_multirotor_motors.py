@@ -41,6 +41,7 @@ def _harness(config=None, *, air=True):
     ctx.data = mujoco.MjData(model)
     plugin = MultirotorMotorsPlugin(config or {}, entity="drone")
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -189,9 +190,23 @@ def test_handle_and_endpoint_are_registered():
     endpoint = next(e for e in ctx.interface.all() if e.name == "motor_cmd")
     assert endpoint.direction == "in"
     assert endpoint.backend["ros2"]["type"] == "std_msgs.msg.Float32MultiArray"
-    # The bridge hands over the message; a bare sequence must work too, for in-process callers.
-    endpoint.write([1.0, 1.0, 1.0, 1.0])
+    assert [(p.name, p.type.kind) for p in endpoint.params] == [("data", "array")]
+    # The bridge hands over the message's `data`; the stream applies it on the physics thread.
+    endpoint.write({"data": [1.0, 1.0, 1.0, 1.0]})
+    ctx.drain_commands()
     assert plugin._cmd == pytest.approx(np.ones(4))
+
+
+def test_a_motor_command_of_the_wrong_length_is_refused(caplog):
+    ctx, plugin = _harness()
+    endpoint = next(e for e in ctx.interface.all() if e.name == "motor_cmd")
+    endpoint.write({"data": [0.5, 0.5, 0.5, 0.5]})
+    ctx.drain_commands()
+    endpoint.write({"data": [1.0, 1.0]})
+    with caplog.at_level(logging.ERROR):
+        ctx.drain_commands()
+    assert "expected 4 normalized commands, got 2" in caplog.text
+    assert plugin._cmd == pytest.approx(np.full(4, 0.5))
 
 
 def test_reset_clears_the_external_torque():

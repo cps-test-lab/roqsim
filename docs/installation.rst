@@ -21,7 +21,7 @@ roqsim consists of multiple packages:
 * ``roqsim_nav`` — 2D navigation (A\* over the model's walls, a behaviour tree, the ``navigator``
   plugin), shared by robots, props and walkers.
 * ``roqsim_mcp`` — an MCP server over the plugin, model and world catalogs (``roqsim mcp serve``).
-* ``roqsim_scene_builder`` / ``roqsim_webctrl`` — the human-in-the-loop scene windows and the web control UI.
+* ``roqsim_scene_builder`` — the human-in-the-loop scene windows.
 * ``scenario_execution_roqsim`` — the OpenSCENARIO 2 vocabulary (``import osc.roqsim``): what a
   scenario can ask a running simulation and what it can break in one. Named for
   scenario-execution's own convention rather than ours, because that is the project it plugs into.

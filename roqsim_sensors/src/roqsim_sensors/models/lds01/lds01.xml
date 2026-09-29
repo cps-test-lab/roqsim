@@ -16,7 +16,7 @@
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
   <asset>
-    <material name="lds_mat" rgba="0.3 0.3 0.3 1"/>
+    <material name="lds_mat" rgba="0.1 0.1 0.1 1"/>
     <mesh name="lds" file="lds.obj"/>
   </asset>
 

@@ -2,22 +2,28 @@
 
 :class:`SimContext` is the single object plugins use to cooperate. It exposes the MuJoCo model/data,
 config, a typed :class:`Blackboard`, an :class:`EntityRegistry`, the thread-safe command queue
-(``post``/``drain``), and the (currently inert) step-gate API used by the foreseen synchronous mode.
+(``post``/``submit``/``drain_commands``) with its :class:`CommandFuture` and the latest-value
+:class:`StreamSlot`, and the (currently inert) step-gate API used by the foreseen synchronous mode.
 """
 
 from __future__ import annotations
 
 import logging
-import queue
 import threading
+import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from .seed import SeedError
 
 if TYPE_CHECKING:
     import mujoco
+
+    from .endpoint import Param, ValueType
+
+_log = logging.getLogger(__name__)
 
 
 class Blackboard:
@@ -62,8 +68,10 @@ class RobotHandle:
       legged platforms, whose locomotion controllers take the same twist.
     * ``holonomic`` -- any planar velocity, including sideways. Mecanum, omni-wheel and swerve.
     * ``ackermann`` -- cannot turn in place, and a twist states a *curvature*: the steering angle is
-      derived from ``w / v``, so ``w`` with ``v == 0`` steers the wheels nowhere. A consumer that
-      commands a stop-and-pivot leaves a car sitting still with its wheels straight.
+      derived from ``w / v``, so ``w`` with ``v == 0`` steers the wheels nowhere. A car
+      (``ackermann_drive``) and a tricycle whose steered wheel stops short of 90 degrees
+      (``tricycle_drive``) both declare it. A consumer that commands a stop-and-pivot leaves a car
+      sitting still with its wheels straight.
 
     It defaults to ``unicycle`` because that is the largest family here and because a default lets
     every existing publisher stay as it is; a base that is not one declares it.
@@ -149,15 +157,28 @@ class Endpoint:
     backend-specific details -- the bridge resolves the string (e.g. via ``importlib``).
 
     ``read`` (for ``direction == "out"``) returns the current neutral payload and runs on the physics
-    thread. ``write`` (for ``direction == "in"``) receives a neutral payload; the bridge marshals it
-    onto the physics thread via :meth:`SimContext.post`, so plugins never touch ``data`` off-thread.
+    thread. ``write`` (for ``direction == "in"``) receives a neutral payload. Unless ``marshalled``
+    is set, it runs on the physics thread and the bridge marshals the call there via
+    :meth:`SimContext.submit`, so plugins never touch ``data`` off-thread. A ``marshalled`` write is
+    safe to call from any thread because it queues the work itself -- what the decorators of
+    :mod:`roqsim.endpoint` produce: a command's write returns a :class:`CommandFuture`, a stream's
+    stores the payload in a latest-value :class:`StreamSlot`. A bridge calls it directly.
+
+    ``params``, ``result`` and ``payload_type`` are the endpoint's schema, as data any bridge can
+    read (see :mod:`roqsim.endpoint`). An ``in`` endpoint with ``params`` takes a mapping of those
+    names (``None`` for none) and checks it before queueing: a command's ``write`` returns a future
+    that raises :class:`roqsim.endpoint.ParameterError` for a misfit, a stream's raises it to the
+    caller. ``result`` types the ``out`` payload or the command's outcome, and ``payload_type`` is
+    what a transport carries, which is how a bridge serves a decorated endpoint that names no wire
+    type (``transport``). ``topic`` and ``qos`` are what the world set for it.
 
     An ``in`` endpoint says what *kind* of interaction it is through its backend hints, and the choice
     is about the interaction rather than about taste: a plain ``type`` is a stream with no answer, a
     ``service`` is a command whose outcome the caller needs (so it can fail on it), and an ``action``
-    is a goal that takes time, reports feedback and can be cancelled. ``write`` returns ``None`` in
-    every case -- a reply is assembled by the backend's handler from the producer's published state,
-    not returned from here, which is what keeps this dataclass free of any backend's reply types.
+    is a goal that takes time, reports feedback and can be cancelled. The bridge's inbound callback
+    returns a :class:`CommandFuture` for the call, whose value is the producer's own and never a
+    backend's reply type; a reply is assembled by the backend's handler from that outcome and from
+    the producer's published state.
     ``rate_hz`` is the default publish rate (0 => every step / event-driven); a bridge may override it.
 
     ``namespace`` is a plain scope string declared by the producer (usually from its ``namespace:``
@@ -190,9 +211,181 @@ class Endpoint:
     read: Callable[[], Any] | None = None
     write: Callable[[Any], None] | None = None
     rate_hz: float = 0.0
-    backend: dict[str, dict] = field(default_factory=dict)
+    backend: dict[str, dict | None] = field(default_factory=dict)
     has_subscribers: Callable[[], bool] | None = None
     lazy: bool = False
+    marshalled: bool = (
+        False  # ``write`` queues onto the physics thread itself; call it from anywhere
+    )
+    #: The named parameters ``write`` takes (:class:`roqsim.endpoint.Param`), for an ``in`` endpoint
+    #: declared with :mod:`roqsim.endpoint`: its payload is a mapping of these names, checked before
+    #: anything is queued. ``None``: an untyped write, handed its payload as the bridge built it.
+    params: tuple[Param, ...] | None = None
+    #: The type of what ``read`` returns (``out``) or what a command's future resolves to, as
+    #: :class:`roqsim.endpoint.ValueType`; ``None`` when not declared.
+    result: ValueType | None = None
+    #: The type a transport carries (:class:`roqsim.endpoint.ValueType`): an ``out``'s result, or the
+    #: dataclass an ``in`` endpoint takes -- its ``params`` are that type's fields, by name, or its one
+    #: parameter is the whole value. ``None`` when not declared. A bridge maps it to its wire type.
+    payload_type: ValueType | None = None
+    #: The world's name for this endpoint on a transport (the producer's ``topics:`` config): absolute
+    #: with a leading ``/``, else under ``namespace``. ``None``: the backend's hint, else ``name``.
+    topic: str | None = None
+    #: The world's quality of service for this endpoint (the producer's ``qos:`` config), as a full
+    #: profile of :func:`roqsim.endpoint.qos_profile`; it wins over a backend hint's. ``None``: unset.
+    qos: dict[str, Any] | None = None
+    #: A bridge serves this endpoint without a hint block for its backend, from ``payload_type``'s
+    #: default mapping; a hint block of ``None`` keeps it off that backend. Set for every decorated
+    #: endpoint. ``False``: served only by a backend whose hint block it carries.
+    transport: bool = False
+    #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
+    #: :func:`endpoint_kind` infers from its direction and hints.
+    kind: str = ""
+    #: The address of the plugin that registered it (``robot.lidar``), stamped by the registry.
+    #: What a transport that addresses endpoints by path builds the path from.
+    producer: str = ""
+    #: For a command: the name of an ``out`` endpoint of the same producer whose value confirms it
+    #: -- a verdict its ``post_step`` records after the command applied.
+    confirm: str = ""
+    #: A stream's latest-value slot, set by :mod:`roqsim.endpoint`; its ``write`` then takes the
+    #: writing transport as ``source``, so two driving one stream are told apart.
+    slot: StreamSlot | None = None
+    #: What it is, for a reader outside the process: a decorated method's docstring.
+    doc: str = ""
+    #: Where a decorated endpoint's options come from, for a reader outside the process: ``rate``
+    #: and ``lazy`` (``{"from": <attribute or config key>, "default": ...}``, or ``lazy: true``),
+    #: ``when`` and ``family`` (the key named), each ``"computed"`` for a callable and absent where
+    #: not given. Empty on a hand-built endpoint.
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+def endpoint_kind(ep: Endpoint) -> str:
+    """What an endpoint is to a caller: ``out``, ``command`` (an outcome to wait for) or ``stream``.
+
+    A decorated endpoint says so itself. A hand-built ``in`` endpoint is a stream when its only
+    hint is a topic ``type``, and a command otherwise -- a ``service`` or ``action`` hint, or none.
+    """
+    if ep.kind:
+        return ep.kind
+    if ep.direction == "out":
+        return "out"
+    from .endpoint import is_service
+
+    hints = [h for h in ep.backend.values() if isinstance(h, dict)]
+    if hints and all("type" in h and not is_service(ep, h) for h in hints):
+        return "stream"
+    return "command"
+
+
+_T = TypeVar("_T")
+
+
+class CommandFuture(Generic[_T]):
+    """The outcome of a command submitted to the physics thread (:meth:`SimContext.submit`).
+
+    A caller on another thread waits for it with a timeout. :meth:`result` returns what the command
+    returned or raises what it raised; :meth:`wait` only says whether it has run. A command that
+    raises while nobody is blocked in :meth:`result` is also logged, so a failure whose caller gave
+    up waiting, or never asked, is not lost.
+
+    A command that answers only later returns one of its own, and declares what it resolves to:
+    ``-> CommandFuture[RunState]`` is described as a ``RunState`` result.
+    """
+
+    __slots__ = ("_done", "_error", "_lock", "_value", "_waiters")
+
+    def __init__(self) -> None:
+        self._done = threading.Event()
+        self._lock = threading.Lock()
+        self._value: Any = None
+        self._error: BaseException | None = None
+        self._waiters = 0
+
+    def done(self) -> bool:
+        return self._done.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Block until the command has run (returned or raised). ``False`` on timeout."""
+        return self._done.wait(timeout)
+
+    def result(self, timeout: float | None = None) -> Any:
+        """The command's return value; re-raises its exception. :class:`TimeoutError` if not run."""
+        with self._lock:
+            self._waiters += 1
+        try:
+            if not self._done.wait(timeout):
+                raise TimeoutError(f"the physics thread did not run the command within {timeout} s")
+        finally:
+            with self._lock:
+                self._waiters -= 1
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+    def _resolve(self, value: Any = None, error: BaseException | None = None) -> bool:
+        """Settle the future on the physics thread. ``True`` when a caller is waiting on it."""
+        self._value, self._error = value, error
+        with self._lock:
+            waited = self._waiters > 0
+            self._done.set()
+        return waited
+
+
+#: Two transports writing one stream this close together (seconds, wall clock) are both driving it.
+TWO_WRITERS_WINDOW_S = 1.0
+
+
+class StreamSlot:
+    """The latest value an inbound stream delivered, applied once on the physics thread.
+
+    :meth:`put` is safe from any thread and never blocks: a newer value replaces one not yet
+    applied. :meth:`SimContext.drain_commands` hands a pending value to ``apply`` once and clears
+    it, so a stream that delivers several values within one step applies only the last.
+    """
+
+    __slots__ = ("_pending", "_source", "_since", "_warned", "apply", "name")
+
+    def __init__(self, name: str, apply: Callable[[Any], None]) -> None:
+        self.name = name
+        self.apply = apply
+        # One slot of a bounded deque: append and pop are atomic, and append drops the older value.
+        self._pending: deque = deque(maxlen=1)
+        self._source: str | None = None
+        self._since = 0.0
+        self._warned = False
+
+    def put(self, payload: Any, source: str | None = None) -> None:
+        """Keep *payload* as the value to apply. *source* names the transport that wrote it.
+
+        Two transports writing one stream overwrite each other value by value, which reads as a
+        robot that jitters rather than as a conflict; the first time a second source writes within
+        :data:`TWO_WRITERS_WINDOW_S` of the other, this logs one WARNING naming both.
+        """
+        self._pending.append(payload)
+        if source is None:
+            return
+        now = time.monotonic()
+        if (
+            self._source is not None
+            and source != self._source
+            and now - self._since < TWO_WRITERS_WINDOW_S
+            and not self._warned
+        ):
+            self._warned = True
+            _log.warning(
+                "stream %r is written by both %s and %s: the latest value wins, so each "
+                "overwrites the other's commands",
+                self.name,
+                self._source,
+                source,
+            )
+        self._source, self._since = source, now
+
+    def _take(self) -> tuple[bool, Any]:
+        try:
+            return True, self._pending.pop()
+        except IndexError:
+            return False, None
 
 
 class InterfaceRegistry:
@@ -208,14 +401,27 @@ class InterfaceRegistry:
     def __init__(self) -> None:
         self._endpoints: list[Endpoint] = []
         self._bound_by: str | None = None
+        #: The address of the plugin being configured, set by the engine around ``configure``: an
+        #: endpoint added without a ``producer`` is stamped with it.
+        self.producer: str = ""
+        #: The transport plugins that bound this registry, in binding order.
+        self.bridges: list = []
 
-    def add(self, endpoint: Endpoint) -> None:
-        if self._bound_by is not None:
+    def add(self, endpoint: Endpoint, *, on_demand: bool = False) -> None:
+        """Register *endpoint*.
+
+        ``on_demand`` marks one that is only ever read when a consumer asks for it by name -- the
+        core's entity poses (:mod:`roqsim.entity_pose`) -- so registering it after a bridge bound
+        loses no publication, and is allowed.
+        """
+        if self._bound_by is not None and not on_demand:
             raise RuntimeError(
                 f"endpoint {endpoint.name!r} (owner {endpoint.owner!r}) was registered after "
                 f"{self._bound_by!r} already bound the interface, so nothing would publish it. "
                 f"List the producing plugin BEFORE {self._bound_by!r} in the world YAML."
             )
+        if not endpoint.producer:
+            endpoint.producer = self.producer
         self._endpoints.append(endpoint)
 
     def mark_bound(self, by: str) -> None:
@@ -290,6 +496,8 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
+        #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
+        self.entity_poses: set[str] = set()
         self.render = None  # lazily set to a RenderService when first needed
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of
@@ -342,8 +550,12 @@ class SimContext:
         self.stop_requested: bool = False
         self.stop_reason: str = ""
 
-        # Thread-safe command queue: external threads post, the physics thread drains.
-        self._commands: queue.Queue[Callable[[SimContext], None]] = queue.Queue()
+        # Thread-safe command queue: external threads post, the physics thread drains. A deque's
+        # append and popleft are atomic, so neither side takes a lock; the one consumer is the
+        # physics thread, so a non-empty check followed by popleft cannot race another reader.
+        self._commands: deque[tuple[Callable[[SimContext], Any], CommandFuture | None]] = deque()
+        # Latest-value slots of the inbound streams, applied once per drain.
+        self._streams: list[StreamSlot] = []
 
         # Step gates (inert until synchronous mode is enabled).
         self._gates: dict[str, Gate] = {}
@@ -430,24 +642,54 @@ class SimContext:
     def post(self, command: Callable[[SimContext], None]) -> None:
         """Enqueue a callable to run on the physics thread at the start of the next ``pre_step``.
 
+        While the run is paused the driver runs it from its idle loop (:meth:`roqsim.engine.Engine.idle`).
+
         This is the ONLY safe way for a non-physics thread (e.g. a ROS executor) to cause a change
-        to ``model``/``data``. The command receives this context when it runs.
+        to ``model``/``data``. The command receives this context when it runs. An exception it
+        raises is logged; use :meth:`submit` when the caller needs the outcome.
         """
-        self._commands.put(command)
+        self._commands.append((command, None))
+
+    def submit(self, command: Callable[[SimContext], Any]) -> CommandFuture:
+        """Like :meth:`post`, and return a :class:`CommandFuture` carrying the command's outcome."""
+        future = CommandFuture()
+        self._commands.append((command, future))
+        return future
+
+    def stream_slot(self, name: str, apply: Callable[[Any], None]) -> StreamSlot:
+        """A latest-value slot for an inbound stream; ``apply`` runs on the physics thread."""
+        slot = StreamSlot(name, apply)
+        self._streams.append(slot)
+        return slot
 
     def drain_commands(self) -> int:
-        """Run all queued commands on the calling (physics) thread. Returns the count executed."""
+        """Run queued commands in FIFO order, then apply each stream's latest value, on the
+        calling (physics) thread. Returns the number of commands run.
+
+        A command's exception goes to the caller waiting on its future; one that nobody waits on
+        is logged. Neither stops the loop.
+        """
+        commands = self._commands
         n = 0
-        while True:
-            try:
-                command = self._commands.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                command(self)
-            except Exception:  # a bad command must not kill the loop
-                self.logger.exception("posted command raised")
+        while commands:
+            command, future = commands.popleft()
             n += 1
+            try:
+                value = command(self)
+            except Exception as exc:  # a bad command must not kill the loop
+                if future is None or not future._resolve(error=exc):
+                    self.logger.exception("posted command raised")
+                continue
+            if future is not None:
+                future._resolve(value)
+        for slot in self._streams:
+            fresh, payload = slot._take()
+            if not fresh:
+                continue
+            try:
+                slot.apply(payload)
+            except Exception:
+                self.logger.exception("stream %r raised applying its latest value", slot.name)
         return n
 
     # -- snapshots ----------------------------------------------------------------------------
