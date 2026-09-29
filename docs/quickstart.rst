@@ -643,9 +643,9 @@ obstacle mid-run is described by it rather than by the world it started in.
 
 ``timestamp`` is exact simulated seconds. One convention worth knowing: ``mj_step`` integrates ``qpos``
 and leaves ``xpos`` holding the pose from *before* that integration, so a row is a coherent snapshot of
-``timestamp - dt`` carrying the label ``timestamp`` — deliberately the same one-step lag the
-``ground_truth_pose`` plugin publishes with, so the two describe the same instant. It cancels in every
-derivative.
+``timestamp - dt`` carrying the label ``timestamp`` — deliberately the same one-step lag the core
+pose endpoints (``sim/entities/<name>/pose``) read with, so the two describe the same instant. It
+cancels in every derivative.
 
 Like the clock map and unlike the ``.npz``, it is flushed per row, so a run killed outright still leaves
 everything up to the last sample.

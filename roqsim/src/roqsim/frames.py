@@ -19,6 +19,10 @@ lives in the compiled model and a device can name the frame as where it hangs (`
 At configure the chain is published as static transforms read back from that compiled model, never
 recomputed from the numbers above.
 
+Every frame of a world is also named by a path (:mod:`roqsim.paths`): :func:`resolve_frame` finds
+an entity's root, bodies, sites and declared or device frames by it, and :func:`frame_pose` reads
+one's pose, in the world or relative to another, from the core pose data.
+
 ROS-free: a transform is plain numbers, and the bridge turns it into a message.
 """
 
@@ -256,3 +260,149 @@ def static_tf_endpoint(name: str, owner: str, namespace: str, transforms: list[d
         payload_type=_TRANSFORMS,
         transport=True,
     )
+
+
+# -- frames by path ----------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Frame:
+    """A frame a path names (:func:`resolve_frame`).
+
+    Attributes:
+        path: its path (``robot/oakd/oakd_link``)
+        name: its name as TF shows it: the body's or site's without the model prefix, the entity's
+            own name for its root
+        kind: ``root``, ``body``, ``site`` or ``frame`` (a declared or device frame)
+        entity: the entity it belongs to
+        index: the body id (a root's is its entity's body) or the site id
+    """
+
+    path: str
+    name: str
+    kind: str
+    entity: str
+    index: int
+
+
+def _owners(ctx) -> dict[int, list]:
+    """Body id -> the entities it belongs to: those of the nearest body up its chain that is an
+    entity's root. MuJoCo numbers a parent before its children, so one pass in id order suffices."""
+    model = ctx.model
+    roots: dict[int, list] = {}
+    for entity in ctx.entities.all():
+        if not entity.body:
+            continue
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+        if bid > 0:
+            roots.setdefault(bid, []).append(entity)
+    owners: dict[int, list] = {}
+    for bid in range(1, model.nbody):
+        owners[bid] = roots.get(bid) or owners.get(int(model.body_parentid[bid]), [])
+    return owners
+
+
+def frame_offers(ctx) -> list:
+    """Every frame the world's entities offer, as :class:`roqsim.paths.Offer` of kind ``frame``.
+
+    An entity offers its root (its own path), and every body under it and every site on those
+    bodies -- down to where a nested entity's root takes over -- named without the entity's model
+    prefix. A site of the frame group is a frame a ``frames:`` block declared or a device's frame
+    chain, and is offered as a ``frame``.
+    """
+    from .paths import Offer, address_path
+
+    model = ctx.model
+    owners = _owners(ctx)
+
+    def offer(entity, name: str, what: str, index: int) -> Offer:
+        prefix = entity.meta.get("prefix", "")
+        bare = name[len(prefix) :] if prefix and name.startswith(prefix) else name
+        component = address_path(entity.name)
+        frame = Frame(f"{component}/{bare}", bare, what, entity.name, index)
+        return Offer(component, bare, "frame", what, target=frame)
+
+    out = []
+    for entity in ctx.entities.all():
+        if not entity.body:
+            continue
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+        if bid <= 0:
+            continue
+        component, _, last = address_path(entity.name).rpartition("/")
+        root = Frame(address_path(entity.name), entity.name, "root", entity.name, bid)
+        out.append(Offer(component, last, "frame", "root", target=root))
+    for bid in range(1, model.nbody):
+        name = model.body(bid).name
+        for entity in owners[bid] if name else ():
+            out.append(offer(entity, name, "body", bid))
+    for sid in range(model.nsite):
+        name = model.site(sid).name
+        what = "frame" if int(model.site_group[sid]) == FRAME_SITE_GROUP else "site"
+        for entity in owners.get(int(model.site_bodyid[sid]), []) if name else ():
+            out.append(offer(entity, name, what, sid))
+    return out
+
+
+def resolve_frame(ctx, path: str, *, within: str | None = None) -> Frame:
+    """The frame *path* names (:mod:`roqsim.paths`), or :class:`roqsim.paths.PathError`.
+
+    With *within* (an entity's name), *path* is relative to that entity: ``.`` is its root and
+    ``mouse`` is ``<within>/mouse``; a leading ``/`` makes it absolute again.
+    """
+    from .paths import address_path, resolve
+
+    if within is not None and not path.startswith("/"):
+        base = address_path(within)
+        path = base if path.strip() in ("", ".") else f"{base}/{path}"
+    return resolve(frame_offers(ctx), path, "frame").target
+
+
+def _world_pose(ctx, frame: Frame):
+    """``(position, quaternion, rotation matrix)`` of *frame* in the world, or ``None`` while its
+    entity is absent. A root's comes from its entity's core pose endpoint, a body's and a site's
+    from the physics state that endpoint reads."""
+    entity = ctx.entities.get(frame.entity)
+    if entity is None or not entity.present:
+        return None
+    d = ctx.data
+    if frame.kind == "root":
+        from . import entity_pose
+
+        ep = ctx.interface.find(entity_pose.OWNER, entity_pose.endpoint_name(frame.entity))
+        pose = ep.read() if ep is not None else None
+        if pose is None:
+            return None
+        return pose.position, pose.orientation, d.xmat[frame.index].reshape(3, 3)
+    if frame.kind == "body":
+        i = frame.index
+        return d.xpos[i].copy(), d.xquat[i].copy(), d.xmat[i].reshape(3, 3)
+    quat = np.empty(4)
+    mujoco.mju_mat2Quat(quat, d.site_xmat[frame.index])
+    return d.site_xpos[frame.index].copy(), quat, d.site_xmat[frame.index].reshape(3, 3)
+
+
+def frame_pose(ctx, path: str | Frame, relative_to: str | Frame | None = None) -> Transform | None:
+    """The pose of the frame *path* names, in the world or relative to *relative_to*.
+
+    A :class:`~roqsim.types.Transform` from *relative_to*'s name (``world`` for the world) to the
+    frame's, rotation ``(w, x, y, z)``; ``None`` while either frame's entity is absent. Paths are
+    resolved with :func:`resolve_frame`; a caller that reads every step resolves once and passes the
+    :class:`Frame`.
+    """
+    frame = path if isinstance(path, Frame) else resolve_frame(ctx, path)
+    world = _world_pose(ctx, frame)
+    if world is None:
+        return None
+    pos, quat, _ = world
+    if relative_to is None:
+        return Transform("world", frame.name, pos, quat)
+    ref = relative_to if isinstance(relative_to, Frame) else resolve_frame(ctx, relative_to)
+    base = _world_pose(ctx, ref)
+    if base is None:
+        return None
+    ref_pos, ref_quat, ref_mat = base
+    # pos_rel = R_ref^T (pos - ref_pos); quat_rel = ref_quat^-1 * quat.
+    inv = np.empty(4)
+    mujoco.mju_negQuat(inv, ref_quat)
+    rel_quat = np.empty(4)
+    mujoco.mju_mulQuat(rel_quat, inv, quat)
+    return Transform(ref.name, frame.name, ref_mat.T @ (pos - ref_pos), rel_quat)

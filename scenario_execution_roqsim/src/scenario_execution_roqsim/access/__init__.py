@@ -277,38 +277,48 @@ def find_endpoint(rows: list[dict], entity: str, endpoint: str, *, kind: str) ->
 
     Addressed as the world names it: the entity that owns the endpoint and its name (``grip_fault``,
     ``override``), or a component address and a name (``robot.lidar``, ``override``) -- the path
-    ``robot/lidar/override`` -- where one entity owns two endpoints of that name.
+    ``robot/lidar/override`` -- where one entity owns two endpoints of that name. Resolved by
+    :func:`roqsim.paths.resolve`, the grammar frames share.
     """
-    path = f"{entity.replace('.', '/')}/{endpoint}"
+    from roqsim.paths import Offer, PathError, address_path, resolve
+
     direction = "out" if kind == "out" else "in"
-    matches = [
-        row
-        for row in rows
-        if (row["path"] == path or (row["owner"] == entity and row["name"] == endpoint))
-        and (row["kind"] == "out") == (direction == "out")
-    ]
-    unique = {row["path"]: row for row in matches}
-    if len(unique) == 1:
-        return next(iter(unique.values()))
-    if unique:
-        raise AccessError(
-            f"{entity!r} has {len(unique)} endpoints named {endpoint!r}: "
-            f"{', '.join(sorted(unique))}. Name one by the address of the component that declares "
-            f"it (entity 'robot.lidar' for robot/lidar/{endpoint})."
+    offers = [
+        Offer(
+            component=row["path"][: -len(row["name"]) - 1] if row["path"] != row["name"] else "",
+            name=row["name"],
+            kind="out" if row["kind"] == "out" else "in",
+            what=row["kind"],
+            alias=f"{address_path(row['owner'])}/{row['name']}" if row["owner"] else "",
+            target=row,
         )
+        for row in rows
+    ]
+    try:
+        return resolve(offers, f"{address_path(entity)}/{endpoint}", direction).target
+    except PathError as err:
+        unknown = err
+        if err.reason == "ambiguous":
+            paths = sorted(o.path for o in err.matches)
+            raise AccessError(
+                f"{entity!r} has {len(paths)} endpoints named {endpoint!r}: "
+                f"{', '.join(paths)}. Name one by the address of the component that declares "
+                f"it (entity 'robot.lidar' for robot/lidar/{endpoint})."
+            ) from None
     what = "command or stream" if direction == "in" else "report"
     own = sorted(
         row["path"]
         for row in rows
-        if (row["owner"] == entity or row["path"].startswith(entity.replace(".", "/") + "/"))
+        if (row["owner"] == entity or row["path"].startswith(address_path(entity) + "/"))
         and (row["kind"] == "out") == (direction == "out")
     )
     listed = ", ".join(own) if own else "(none)"
     plural = "commands and streams" if direction == "in" else "reports"
+    near = f" Did you mean {unknown.suggestion!r}?" if unknown.suggestion else ""
     raise AccessError(
-        f"no {what} {endpoint!r} of {entity!r}. Its {plural}: {listed}. An endpoint is addressed by "
-        "the entity that owns it (the world's `name:`) or the component that declares it, and its "
-        "name."
+        f"no {what} {endpoint!r} of {entity!r}.{near} Its {plural}: {listed}. An endpoint is "
+        "addressed by the entity that owns it (the world's `name:`) or the component that declares "
+        "it, and its name."
     )
 
 

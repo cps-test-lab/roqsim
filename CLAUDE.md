@@ -31,7 +31,6 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - `roqsim_walker/` — kinematic pedestrians, a `roqsim_nav` output. `roqsim`, `roqsim_nav`; no robot package depends on it.
   Licences differ per character (`CREDITS.txt` beside each) and the clips are CC-BY: `roqsim_walker/THIRD_PARTY.md`.
 - `roqsim_mcp/`, `roqsim_scene_builder/` — MCP servers (introspection; scene windows and renders). `roqsim`.
-- `roqsim_webctrl/` — web-control plugin fragment. No roqsim dependency.
 - `scenario_execution_roqsim/` — the OSC vocabulary (`import osc.roqsim`). `roqsim`; `scenario_execution` via `[osc]`.
 - `ros2_ws/src/` (colcon): `roqsim_ros_bridge` (transport + `simulation_interfaces`, as plugins), `roqsim_nav_interfaces`,
   `roqsim_nav_ros` (nav2 goal actions for roqsim's own movers), `roqsim_walker_ros`, `roqsim_nav2_example`,
