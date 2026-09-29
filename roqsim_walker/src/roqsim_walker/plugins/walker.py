@@ -106,7 +106,6 @@ class WalkerPlugin(Plugin):
         "recovery": "recovery",
         "update_hz": "update_hz",
         "goal_endpoint": "goal_endpoint",
-        "action_name": "action_name",
         "namespace": "namespace",
     }
 
@@ -133,6 +132,9 @@ class WalkerPlugin(Plugin):
 
         nav = {dst: cfg[src] for src, dst in cls._NAV_KEYS.items() if src in cfg}
         nav["output"] = "walker"
+        if "action_name" in cfg:
+            # The walker's goal endpoint is the navigator's `navigate_through_poses`.
+            nav["action_names"] = {"navigate_through_poses": cfg["action_name"]}
         # `waypoints` become the navigator's `goals`, minus the first: a walker starts *at* its first
         # waypoint, and the navigator's route already begins wherever the body is.
         raw = cfg.get("waypoints") or []

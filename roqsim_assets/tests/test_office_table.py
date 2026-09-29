@@ -40,7 +40,7 @@ def _world(tmp_path, probe_y, probe_x=-1.5):
             "name": "probe",
         },
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     engine.reset()
     return engine
@@ -143,7 +143,7 @@ def test_the_top_is_still_a_surface(tmp_path):
             "name": "parcel",
         },
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     engine.reset()
     m, d = engine.ctx.model, engine.ctx.data

@@ -83,7 +83,7 @@ def _mobile_manipulator(tmp_path, gripper="robotiq_2f85"):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_robot": {
                         "model": "husky_a200",
@@ -260,7 +260,7 @@ def test_only_a_temporary_path_counts_as_unshippable():
 
 _ARM_WORLD = {
     "sim": {},
-    "plugins": [
+    "components": [
         {
             "spawn_arm": {
                 "model": "ur5e",
@@ -344,7 +344,7 @@ def test_round_trip_survives_a_rotated_root_body(tmp_path):
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [{"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "arm"}],
+            "components": [{"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "arm"}],
         },
         base_dir=tmp_path,
     )

@@ -21,7 +21,7 @@ _AT_2_3 = {"position": {"x": 2.0, "y": 3.0, "z": 3.5}}
 
 
 def _built(tmp_path, plugins):
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     engine.reset()
     return engine
