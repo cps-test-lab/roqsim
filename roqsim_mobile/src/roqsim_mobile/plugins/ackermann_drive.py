@@ -55,6 +55,7 @@ Config::
       max_steer_angle: 0.5          # rad; the rack's mechanical limit, and the turning circle with it
       steer_rate: 4.0               # rad/s slew on the steering angle (0 = instant)
       accel_limit: 2.0              # m/s^2 on the commanded speed (0 = instant)
+      decel_limit: 2.0              # m/s^2 taking speed off; default accel_limit
       steer_actuators: [left_steer_motor, right_steer_motor]    # POSITION servos, left then right
       steer_joints:    [left_steer_joint, right_steer_joint]
       drive_actuators: [rear_left_motor, rear_right_motor]      # VELOCITY servos, left then right
@@ -116,6 +117,7 @@ from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import Angle, AngularSpeed, JointState, Odometry, Speed, Twist
+from roqsim_mobile.speed_ramp import decel_limit_from, ramp_speed
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
 _MIN_SPEED = 1e-3
@@ -163,6 +165,8 @@ class AckermannDrivePlugin(Plugin):
         self.max_steer = float(self.config.get("max_steer_angle", 0.5))
         self.steer_rate = float(self.config.get("steer_rate", 4.0))
         self.accel_limit = float(self.config.get("accel_limit", 2.0))
+        #: Braking rate: a vehicle stops harder than it pulls away (roqsim_mobile.speed_ramp).
+        self.decel_limit = decel_limit_from(self.config, self.accel_limit)
         self.steer_actuator_names = list(self.config.get("steer_actuators") or [])
         self.steer_joint_names = list(self.config.get("steer_joints") or [])
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])
@@ -208,7 +212,7 @@ class AckermannDrivePlugin(Plugin):
         ):
             if key in config and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
-        for key in ("steer_rate", "accel_limit"):
+        for key in ("steer_rate", "accel_limit", "decel_limit"):
             if key in config and float(config[key]) < 0:
                 errors.append(f"'{key}' must be >= 0 (0 means no limit)")
         if float(config.get("max_steer_angle", 0.5)) >= np.pi / 2:
@@ -374,11 +378,9 @@ class AckermannDrivePlugin(Plugin):
             self._target_v = self._target_w = 0.0
 
         # Speed first: the steering angle a twist implies depends on the speed it is asking for.
-        if self.accel_limit > 0:
-            dv = self.accel_limit * ctx.dt
-            self._cmd_v += float(np.clip(self._target_v - self._cmd_v, -dv, dv))
-        else:
-            self._cmd_v = self._target_v
+        self._cmd_v = ramp_speed(
+            self._cmd_v, self._target_v, self.accel_limit, self.decel_limit, ctx.dt
+        )
 
         # Where the target angle comes from, and the one place the two command forms differ.
         #

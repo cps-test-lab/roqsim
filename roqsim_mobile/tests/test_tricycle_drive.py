@@ -361,6 +361,23 @@ def test_the_watchdog_stops_a_truck_whose_stack_went_quiet():
     assert plugin._cmd_v == pytest.approx(0.0)
 
 
+def test_it_brakes_at_decel_limit_and_pulls_away_at_accel_limit():
+    engine = _engine(accel_limit=0.5, decel_limit=1.5)
+    plugin = _plugin(engine)
+    plugin.drive(0.6, 0.0, 0.0)
+    steps_to_speed = 0
+    while plugin._cmd_v < 0.6 - 1e-9:
+        engine.step()
+        steps_to_speed += 1
+    plugin.drive(0.0, 0.0, 0.0)
+    steps_to_stop = 0
+    while plugin._cmd_v > 1e-9:
+        engine.step()
+        steps_to_stop += 1
+    assert steps_to_speed * engine.ctx.dt == pytest.approx(0.6 / 0.5, abs=2 * engine.ctx.dt)
+    assert steps_to_stop * engine.ctx.dt == pytest.approx(0.6 / 1.5, abs=2 * engine.ctx.dt)
+
+
 # -- refusals ----------------------------------------------------------------------------------
 
 
@@ -386,6 +403,7 @@ def test_a_track_the_model_disagrees_with_is_refused():
         ({"steer_offset": 0.0}, "must be non-zero"),
         ({"max_steer_angle": 1.6}, "must be < pi/2"),
         ({"steer_rate": -1}, "'steer_rate' must be >= 0"),
+        ({"decel_limit": -1}, "'decel_limit' must be >= 0"),
         ({"drive_joints": ["only_one"]}, "exactly 2"),
         ({"steer_joint": ["a", "b"]}, "names ONE"),
         ({"test_cmd": [1.0]}, "'test_cmd' must be [v, w]"),
