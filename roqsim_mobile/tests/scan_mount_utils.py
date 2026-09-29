@@ -63,6 +63,7 @@ def spawn(
     prefix: str = PREFIX,
     namespace: str = NAMESPACE,
     disabled: tuple[str, ...] = (),
+    components: list | None = None,
 ) -> Engine:
     """*model* spawned at the room's centre as *owner*, set up, reset and stepped once so every scanner
     has cast.
@@ -71,7 +72,8 @@ def spawn(
     each one's range noise and quantisation are switched off on the running scanner only (all three
     keys are live-writable), because the checks compare a published range with a wall's exact
     distance, while its config keeps the datasheet noise the manifest states. *disabled* are
-    component addresses switched off (a camera that would need a GL context).
+    component addresses switched off (a camera that would need a GL context). *components* are the
+    robot's own, for a model that has no manifest to bring them (a test fixture loaded by path).
     """
     world = {
         "sim": {"timestep": 0.002},
@@ -80,6 +82,7 @@ def spawn(
             {
                 "spawn_robot": {"model": model, "prefix": prefix, "namespace": namespace},
                 "name": owner,
+                **({"components": components} if components else {}),
             },
         ],
     }
