@@ -17,6 +17,7 @@ from roqsim.bridge import BridgeBase  # noqa: E402
 from roqsim.clock import Pacer  # noqa: E402
 from roqsim.config import load_config_from_dict  # noqa: E402
 from roqsim.context import Endpoint, SimContext  # noqa: E402
+from roqsim.control_cli.call import main as call_main  # noqa: E402
 from roqsim.control_client import Client, ControlError  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
 from roqsim.ipc.bridge import IpcBridge  # noqa: E402
@@ -207,6 +208,17 @@ def test_a_command_replies_with_its_confirmation_and_a_refusal_with_its_own_text
         assert err.value.kind == "bad_request"
         with pytest.raises(ControlError, match="missing parameter 'value'"):
             sim.call("box/tank/setpoint", {})
+
+
+def test_a_bare_value_is_the_only_parameter_on_the_client_and_the_cli(uri, capsys):
+    with Sim(uri), Client(uri) as sim:
+        assert sim.call("box/tank/drain", 2)["result"] == {"drained": 2.0}
+        assert sim.call("box/tank/setpoint", [1.0, 2.0]) == {"queued": True}
+        with pytest.raises(ControlError, match="pass a mapping of vx, wz") as err:
+            sim.call("box/tank/stir", 0.5)
+        assert err.value.kind == "bad_request"
+        assert call_main(["box/tank/drain", "3", "--control", uri]) == 0
+        assert '"drained": 3.0' in capsys.readouterr().out
 
 
 def test_a_paused_run_applies_a_command_and_says_it_is_unverified(uri):

@@ -16,6 +16,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.types import PointCloud
 
 
 class _OneWallScene(Plugin):
@@ -75,7 +76,7 @@ def test_cloud_endpoint_declares_pointcloud2_topic_and_frame():
     engine = Engine(_world(frame_id="seyond_lidar"))
     engine.setup()
     hints = _endpoint(engine).backend["ros2"]
-    assert hints["type"] == "sensor_msgs.msg.PointCloud2"
+    assert _endpoint(engine).result.cls is PointCloud  # a sensor_msgs/PointCloud2 over ROS
     assert hints["topic"] == "seyond/points"  # Seyond driver default, not livox/lidar
     assert hints["frame_id"] == "seyond_lidar"
 

@@ -178,3 +178,30 @@ def test_diff_drives_ros_interface_is_unchanged_and_a_twist_drives_it():
         assert odom.linear[0] == pytest.approx(0.2, abs=0.03) and odom.position[0] > 0.05
     finally:
         engine.shutdown()
+
+
+def test_an_ackermann_drive_stamped_reaches_the_car_by_field_name_and_turns_it_at_rest():
+    from ackermann_msgs.msg import AckermannDriveStamped
+
+    from roqsim_ros_bridge.registry import resolve_type
+
+    world = {"sim": {}, "components": [{"spawn_robot": {"model": "piracer"}, "name": "car"}]}
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    try:
+        ep = next(e for e in engine.ctx.interface.all() if e.name == "ackermann_cmd")
+        binding = resolve(ep)
+        assert binding.hints["type"] == "ackermann_msgs.msg.AckermannDriveStamped"
+        assert binding.hints["topic"] == "drive"
+        binding.prepare(resolve_type(binding.hints["type"]))
+        msg = AckermannDriveStamped()
+        msg.drive.steering_angle, msg.drive.speed = 0.3, 0.0
+        ep.write(binding.decode(msg))
+        for _ in range(200):
+            engine.step()
+        drive = next(p for p in engine.plugins if type(p).__name__ == "AckermannDrivePlugin")
+        assert drive._steer == pytest.approx(0.3, abs=1e-6)
+    finally:
+        engine.shutdown()

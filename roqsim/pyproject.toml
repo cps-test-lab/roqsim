@@ -81,10 +81,12 @@ energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 # four of its ported platforms are outdoor machines whose papers are about what happens when it is not.
 heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"
 
-# A running simulation's endpoints over ZeroMQ, and the driver's pause/resume/step/reset as endpoints.
+# A running simulation's endpoints over ZeroMQ, the driver's pause/resume/step/reset as endpoints, and
+# entity placement and presence as commands.
 # `roqsim sim` adds both itself (--control); a world does not declare them.
 ipc_bridge = "roqsim.ipc.bridge:IpcBridge"
 run_control = "roqsim.plugins.run_control:RunControlPlugin"
+entity_control = "roqsim.plugins.entity_control:EntityControlPlugin"
 
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of

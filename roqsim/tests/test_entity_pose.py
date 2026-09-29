@@ -114,3 +114,42 @@ def test_each_entity_has_exactly_one():
     with _engine(Late({}, label="late")) as engine:
         poses = [e.name for e in engine.ctx.interface.all() if e.owner == entity_pose.OWNER]
         assert sorted(poses) == ["entities/box/pose", "entities/late/pose"]
+
+
+MOVABLE = """
+<mujoco>
+  <worldbody>
+    <body name="scenery" pos="0 0 0.1"><geom type="box" size=".1 .1 .1"/></body>
+    <body name="crate" pos="1 0 0.1"><freejoint/><geom type="box" size=".1 .1 .1"/></body>
+    <body name="cart" pos="2 0 0.1" mocap="true"><geom type="box" size=".1 .1 .1"/></body>
+    <body name="base" pos="3 0 0.1">
+      <geom type="box" size=".1 .1 .1"/>
+      <body name="link" pos="0 0 0.3"><joint type="hinge"/><geom type="box" size=".1 .1 .1"/></body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+class Things(Plugin):
+    def configure(self, ctx) -> None:
+        for name in ("scenery", "crate", "cart", "link"):
+            ctx.entities.add(Entity(name=name, kind="object", body=name))
+
+
+def test_movable_says_whether_the_pose_can_ever_change(tmp_path):
+    """Welded scenery cannot move; a free body, a mocap body and a jointed link can."""
+    scene = tmp_path / "scene.xml"
+    scene.write_text(MOVABLE)
+    cfg = load_config_from_dict({"sim": {"world": str(scene)}, "plugins": []})
+    with Engine(cfg, plugins=[Things({}, label="things")], preview=True) as engine:
+        movable = {n: _pose(engine, n).read().movable for n in ("scenery", "crate", "cart", "link")}
+    assert movable == {"scenery": False, "crate": True, "cart": True, "link": True}
+
+
+def test_movable_is_described():
+    """What `describe` reports for the endpoint's result carries the field and what it means."""
+    with _engine() as engine:
+        fields = {f["name"]: f for f in _pose(engine).result.describe()["fields"]}
+    assert fields["movable"]["type"] == "bool"
+    assert "welded to the world" in fields["movable"]["doc"]

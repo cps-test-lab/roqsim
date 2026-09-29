@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from roqsim.config import load_config_from_dict
-from roqsim.endpoint import ParameterError
+from roqsim.endpoint import ParameterError, hints_for
 from roqsim.engine import Engine
 from roqsim.introspection import get_plugin_details
 
@@ -51,7 +51,7 @@ def test_a_goal_command_replaces_the_route_in_order():
         first = eps["navigate_to_pose"].write({"poses": [(0.5, 0.2, 0.0)]})
         second = eps["navigate_through_poses"].write({"poses": [(0.5, 0.0), (0.8, 0.4)]})
         engine.step()
-        assert first.result(0) is None and second.result(0) is None
+        assert second.result(0) == first.result(0) + 1
         assert nav.started
         assert nav._state.waypoints[1:].tolist() == [[0.5, 0.0], [0.8, 0.4]]
     finally:
@@ -79,7 +79,7 @@ def test_start_route_releases_a_held_route():
         assert not nav.started
         future = _goal_endpoints(engine)["start_route"].write(None)
         engine.step()
-        assert future.result(0) is None and nav.started
+        assert future.result(0) == nav.status()[0] and nav.started
     finally:
         engine.shutdown()
 
@@ -97,6 +97,7 @@ def test_goal_endpoint_false_declares_none_and_actions_selects():
         engine.shutdown()
     engine = _engine()
     try:
-        assert "start_route" not in _goal_endpoints(engine), "no route, nothing to release"
+        start = _goal_endpoints(engine)["start_route"]
+        assert hints_for(start, "ros2") is None, "no route, nothing to release over ROS"
     finally:
         engine.shutdown()

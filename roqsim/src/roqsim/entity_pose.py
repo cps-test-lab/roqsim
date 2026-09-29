@@ -8,7 +8,8 @@ after the plugin that registered the entity has configured, so a world needs no 
 What it reads (:class:`EntityPose`) is the entity body's true state in the world frame, from the
 physics: ``data.xpos`` and ``data.xquat`` (MuJoCo's ``(w, x, y, z)`` order), and the linear and
 angular velocity of the body origin, from ``cvel`` through ``mj_objectVelocity``. All four are
-copies, so a reader on another thread holds values that do not change under it.
+copies, so a reader on another thread holds values that do not change under it. ``movable`` says
+whether that pose can ever change (:func:`can_move`), decided once from the compiled model.
 
 **Computed only when read.** Nothing runs per step: the endpoint carries no backend hint, so no
 bridge publishes it unless asked, and its ``read`` is the whole cost, paid by whoever calls it.
@@ -51,12 +52,27 @@ class EntityPose:
         orientation: quaternion (w, x, y, z), world frame
         linear_velocity: of the body origin, world frame
         angular_velocity: world frame
+        movable: false for a body welded to the world, whose pose never changes
     """
 
     position: Point3
     orientation: Quaternion
     linear_velocity: Velocity3
     angular_velocity: AngularVelocity3
+    movable: bool
+
+
+def can_move(model: mujoco.MjModel, bid: int) -> bool:
+    """Can body *bid*'s pose ever change?
+
+    It can when a joint lies anywhere on its chain to the world (``body_weldid`` names the body it
+    is welded to, ``0`` for the world itself) -- a free joint (``spawn_model``'s ``motion:
+    physics``), a robot's links -- or when it is a mocap body, which a plugin places each step
+    (``motion: driven``, a walker). The mocap test is not redundant: up to MuJoCo 3.11 a mocap
+    body's ``weldid`` is 0, like scenery's. What is left is welded scenery (``motion: static``),
+    whose ``xpos`` is a compile-time constant.
+    """
+    return int(model.body_weldid[bid]) != 0 or int(model.body_mocapid[bid]) >= 0
 
 
 _RESULT = value_type(EntityPose)
@@ -65,11 +81,12 @@ _RESULT = value_type(EntityPose)
 class _PoseReader:
     """``read`` of one entity's pose endpoint; physics thread, like every ``read``."""
 
-    __slots__ = ("_bid", "_ctx", "_name", "_vel")
+    __slots__ = ("_bid", "_ctx", "_movable", "_name", "_vel")
 
     def __init__(self, ctx: SimContext, name: str, bid: int) -> None:
         self._ctx, self._name, self._bid = ctx, name, bid
         self._vel = np.zeros(6)
+        self._movable = can_move(ctx.model, bid)
 
     def __call__(self) -> EntityPose | None:
         ctx = self._ctx
@@ -83,6 +100,7 @@ class _PoseReader:
             orientation=d.xquat[bid].copy(),
             linear_velocity=self._vel[3:].copy(),
             angular_velocity=self._vel[:3].copy(),
+            movable=self._movable,
         )
 
 

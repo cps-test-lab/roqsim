@@ -615,8 +615,9 @@ annotated original beside the code it configures, which is the copy that cannot 
      - the owner's, ``true``, all
      - The goal interface: which actions this mover answers, and under what scope. nav2's
        ``navigate_to_pose`` and ``navigate_through_poses`` send a route; ``start_route``
-       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is served only when
-       ``goals`` is set.
+       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is a ROS action only
+       when ``goals`` is set. Each returns the route's sequence number, which ``route_status``
+       reports once applied; ``cancel_route`` stops the mover. Those two are not on ROS.
 
 Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
 ``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to
@@ -1352,11 +1353,18 @@ returns the type. Payloads are dataclasses, never positional tuples.
 a unit spelled as a config ``Field``'s. Document a parameter in the docstring's ``Args:`` section and
 a dataclass field in its ``Attributes:`` section; a doc string inside ``Annotated`` is refused, as is
 an ``Args:`` entry naming no parameter. A parameter without a default is required. A bridge passes
-parameters by name, as a mapping; ``write`` refuses a missing, unknown or mistyped one before
-anything is queued, naming each (:class:`~roqsim.endpoint.ParameterError`). ``roqsim plugins
-describe <name>`` publishes all of it, and how each installed transport carries the endpoint,
-without building a world. Annotations must resolve at run time: import a type used in one at module
-level, not under ``TYPE_CHECKING``.
+parameters by name, as a mapping. A bare value (not a mapping) is shorthand for an endpoint with
+exactly one parameter: it binds to that one. An endpoint with no parameters refuses it, and one with
+several refuses it naming them, never guessing::
+
+   override.write(True)            # def override(self, data: bool) -> data=True
+   override.write({"data": True})  # the same, spelled out
+
+A mapping always names parameters, so a single ``dict`` parameter is still passed wrapped.
+``write`` refuses a missing, unknown or mistyped parameter before anything is queued, naming each
+(:class:`~roqsim.endpoint.ParameterError`). ``roqsim plugins describe <name>`` publishes all of
+it, and how each installed transport carries the endpoint, without building a world. Annotations
+must resolve at run time: import a type used in one at module level, not under ``TYPE_CHECKING``.
 
 **Options** name attributes or config keys rather than wrapping them in lambdas:
 
@@ -1453,19 +1461,19 @@ of its fields, nested ones included. On ROS it travels one of three ways:
 2. **By a converter its package registers once**: an entry in the ``roqsim.ros2_types`` entry-point
    group loading a ``roqsim_ros_bridge.typemap.RosType`` (or several) -- the type, the messages it
    travels as, and a ``fill``/``decode`` pair for each. Every endpoint of that type is then on ROS
-   with no hint.
+   with no hint. ``roqsim_sensors.ros2_types`` is one: a GNSS fix, 3D object
+   detections and 2D boxes as ``NavSatFix``, ``Detection3DArray`` and ``Detection2DArray``.
 3. **Not at all**: with neither, the endpoint is not on ROS. ``roqsim plugins describe`` says so and
    why, and the bridge logs it; an endpoint that gave ROS hints and still has no mapping fails the
    bridge instead.
 
-**QoS.** Every topic defaults to ``default`` (reliable, volatile, keep last 10); TF and the latched
-endpoint map keep their own. A ``qos`` hint or a world's ``qos:`` entry is a preset -- ``default``,
+**QoS.** Every topic defaults to ``default`` (reliable, volatile, keep last 10); TF keeps its own. A ``qos`` hint or a world's ``qos:`` entry is a preset -- ``default``,
 ``sensor_data`` (best effort, depth 5), ``services_default``, ``latched`` (transient local, depth 1)
 -- or a mapping of ``reliability`` (``reliable``/``best_effort``), ``durability``
 (``volatile``/``transient_local``), ``history`` (``keep_last``/``keep_all``) and ``depth`` over
 ``default``. The world's wins over the hint. A ``qos:`` naming an endpoint the plugin does not
 register fails the world, naming the ones it has. ``roqsim plugins describe`` shows each endpoint's
-QoS, and the bridge's endpoint map (``roqsim/endpoints``) the effective one.
+QoS, and ``roqsim describe`` on a running simulation the effective one the ROS bridge used.
 
 Converting a plugin
 ~~~~~~~~~~~~~~~~~~~
@@ -1517,17 +1525,8 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
      - Plugins (endpoints)
      - Needs
    * - ``roqsim_sensors``
-     - ``camera_common`` (``image``, ``image_compressed``, ``camera_info``), ``depth_camera``
-       (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),
-       ``segmentation_camera`` (``labels``, ``instances``, ``detections``), ``lidar_common``,
-       ``imu``, ``gnss`` (``fix``), ``object_detector`` (``detections``), ``force_limit``,
-       ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
-       per fault)
-     - families: ``live_config``
-   * - ``roqsim_mobile``
-     - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
-       ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)
-     - owner: ``spawn_robot`` (the robot entity)
+     - ``ground_truth_pose`` (``pose``)
+     - --
    * - ``roqsim_manipulation``
      - ``arm_controller`` (``joint_states``, ``controller_state``; ``follow_joint_trajectory``
        action and ``joint_command`` as FIFO commands; ``joint_velocity``, ``gripper_cmd``),
@@ -1575,13 +1574,15 @@ there and needs no plugin of its own::
                  fault: {dropout_percent: 60.0, range_stddev: 0.35}   # held while active
 
 The sensor is nominal until the fault is switched on, so adding a ``fault:`` block changes nothing
-about a run that never fires it. A scenario switches it by the sensor's **address**::
+about a run that never fires it. A scenario switches it through the ``override`` command of the
+sensor's **address**::
 
-   set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
+   entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'true')
    wait elapsed(8s)
-   set_sensor_override(instance: 'robot.rplidar.lidar', active: false)
+   entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'false')
 
-and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
+which the control socket serves as ``robot/rplidar/lidar/override`` (confirmed by its
+``override_verified`` report), and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
 ``robot/rplidar/lidar/override_state`` and ``.../override_verified`` reporting back. The address is the dotted
 path of labels with dots as slashes, because a dot is not legal in a ROS name; a bare ``lidar`` would
 name neither of a robot's two lidars.
@@ -1594,7 +1595,7 @@ It mirrors ``model_override`` in the three ways that matter, rather than re-deci
 * **The world never decides when.** No time trigger, no condition trigger; a fault's timing is the
   experiment's independent variable.
 * **A fault that changed nothing is reported as such.** Applying a block whose values already equal
-  the nominal reports ``no_effect``, and ``set_sensor_override``'s ``require_landed`` fails the trial
+  the nominal reports ``no_effect``, and ``entity_call``'s ``require_verified`` fails the trial
   on it — an unfaulted outcome wearing a faulted label is worse than a failed run. A *restore* has
   nothing to verify and reports ``untested``.
 
@@ -2225,10 +2226,11 @@ success *rate*, it can only hang), and write the raw observable rather than the 
 force-energy definition belongs to the analysis where it can still be argued with.
 
 Publish the outcome as an ``out`` endpoint on the entity the trial is about, and the scenario
-conditions on it with ``entity_reports(entity: 'ur5e', report: 'trial.resolved', expected_value:
-'True')`` followed by ``emit end``, with a ``timeout`` as the bound. Give the endpoint a ``ros2``
-hint whose ``field`` is the outcome, as ``force_limit`` does with ``tripped``: that field is what
-travels over ROS and what a bare ``report: 'trial'`` compares, on both transports.
+keeps it in a variable with ``entity_monitor(entity: 'ur5e', value: 'trial.resolved',
+target_variable: resolved)`` and waits on it (``wait resolved == true``, then ``emit end``), with
+a ``timeout`` as the bound. Give the endpoint a ``ros2`` hint whose ``field`` is the outcome, as
+``force_limit`` does with ``tripped``: that field is what travels over ROS and what a bare
+``value: 'trial'`` reads, on both transports.
 
 Manipulation: what a grasping world needs
 -----------------------------------------
