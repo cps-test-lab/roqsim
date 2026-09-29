@@ -71,37 +71,16 @@ The lag is observable: ``tracking_error`` reports ``goal - pose`` and the veloci
 that arm's actuators.
 
 Config -- a component of the entry that spawns the arm, whose ``ArmHandle`` it drives, since
-ownership is where the entry sits rather than a config key::
+ownership is where the entry sits rather than a config key. Every key, with its type, unit and
+default, is the plugin's ``CONFIG_SCHEMA`` (``roqsim plugins describe cartesian_admittance``), and
+any other key is refused::
 
     cartesian_admittance:
-      controller_type: cartesian_compliance_controller   # which of the three above; see `law`
-      controller_name: ""      # ROS name its topics sit under; defaults to controller_type
-      initial_state: active    # active | inactive -- `inactive` is ros2_control's `spawner --inactive`
+      controller_type: cartesian_compliance_controller   # which of the three above
       site: tool_site          # site whose pose is controlled (prefixed with the arm's prefix)
-      ft: ft                   # blackboard key suffix of the force_torque sensor (`ft:<key>`);
-                               #   required by the force and compliance types, unused by motion
-      rate_hz: 100.0           # control rate; the loop runs at this, not at the physics rate
+      ft: ft                   # force_torque sensor key; unused by the motion controller
       target_wrench: [0, 0, -10, 0, 0, 0]    # w_d, what the TOOL applies, so -10 on z presses DOWN
-      mass: [1, 1, 1, 0.6, 0.6, 0.6]         # M, diagonal
-      damping: [80, 80, 80, 160, 160, 160]   # D, diagonal
-      stiffness: [0, 0, 0, 0, 0, 0]          # C, diagonal; a zero axis is pure force control
-      axes: [1, 1, 1, 1, 1, 1]               # per-axis enable mask
-      kp: [2, 2, 2, 2, 2, 2]                 # motion type only: gain on the pose error, 1/s;
-                                             #   without feedforward a goal moving at v is
-                                             #   followed v / kp behind (25 mm at 50 mm/s)
-      feedforward: auto        # auto | supplied | off -- the goal's own velocity, commanded alongside
-                               #   the correction: auto uses a twist supplied with the goal and
-                               #   otherwise estimates one from the goal stream; supplied uses only a
-                               #   supplied twist; off is the proportional-only law
-      feedforward_window_s: 0.2   # goals further apart than this are not a stream and feed nothing
-      max_linear_vel: 0.1      # m/s, clamp on the commanded twist MAGNITUDE
-      max_angular_vel: 1.0     # rad/s
-      ik_damping: 0.01         # damped-least-squares lambda
-
-``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``:
-``position`` is the motion controller, and ``admittance`` is the force controller, or the compliance
-controller where a non-zero ``stiffness`` is configured. Prefer ``controller_type`` -- a controller
-that changes its law on command is not something any real robot offers.
+      stiffness: [500, 500, 0, 0, 0, 0]      # C, diagonal; a zero axis is pure force control
 
 Endpoints, named as FZI's ``cartesian_controllers`` name them, so a node written against this runs
 unchanged against that stack: ``<controller>/target_wrench`` (in, ``geometry_msgs/WrenchStamped``),
@@ -126,13 +105,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.schema import Field
+from roqsim.types import Angle, Force3, Length, Point3, Pose, Quaternion, Torque3, Wrench
 
 #: The three ros2_control-shaped identities this implementation backs, and which terms each makes
 #: live. ``needs_ft`` is what decides whether a missing wrench sensor is an error.
@@ -149,9 +133,6 @@ _TYPE_CLASSES = {
     "cartesian_compliance_controller": "CartesianComplianceController",
 }
 
-#: Older config spelling, kept working. ``admittance`` resolves by whether a stiffness is configured.
-_LAWS = ("admittance", "position")
-
 #: Where the goal velocity fed forward comes from: a twist supplied with the goal, else the goal
 #: stream (``auto``); a supplied twist only (``supplied``); nowhere (``off``).
 _FEEDFORWARD = ("auto", "supplied", "off")
@@ -162,12 +143,8 @@ _FEEDFORWARD = ("auto", "supplied", "off")
 _HOLD_INTERVALS = 1.5
 
 
-def _type_from_law(law: str, stiffness) -> str:
-    if law == "position":
-        return "cartesian_motion_controller"
-    if any(float(v) != 0.0 for v in stiffness):
-        return "cartesian_compliance_controller"
-    return "cartesian_force_controller"
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _limit(vec: np.ndarray, limit: float) -> np.ndarray:
@@ -269,15 +246,19 @@ class _GoalStream:
 class TrackingError:
     """How far the controlled site is from the pose it tracks, in the world frame.
 
-    ``linear`` is ``goal - pose`` in metres and ``angular`` the rotation from the tool's orientation
-    to the goal's as a rotation vector in radians; ``distance`` and ``angle`` are their magnitudes.
-    ``feedforward`` is the goal velocity being commanded this instant, zeros when none is.
+    Attributes:
+        linear: goal - pose
+        angular: rotation from the tool's orientation to the goal's, as a rotation vector
+        distance: magnitude of linear
+        angle: magnitude of angular
+        feedforward: the goal velocity commanded this instant [vx, vy, vz, wx, wy, wz]; zeros
+            when none is
     """
 
-    linear: tuple[float, float, float]
-    angular: tuple[float, float, float]
-    distance: float
-    angle: float
+    linear: Annotated[tuple[float, float, float], Unit("m")]
+    angular: Annotated[tuple[float, float, float], Unit("rad")]
+    distance: Length
+    angle: Angle
     feedforward: tuple[float, ...]
 
 
@@ -290,7 +271,6 @@ class CartesianHandle:
     #: goal's own world-frame velocity ``[vx, vy, vz, wx, wy, wz]`` where the caller knows it.
     set_goal: Callable[..., None]
     read_pose: Callable[[], tuple[np.ndarray, np.ndarray]]
-    set_law: Callable[[str], None]
     set_active: Callable[[bool], None]
     #: The controller this instance is, by its ros2_control-shaped name.
     controller_name: str = ""
@@ -306,50 +286,124 @@ class CartesianAdmittancePlugin(Plugin):
     #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
     requires_owner = True
 
+    #: Every key this plugin reads. A key it does not name is refused rather than ignored.
+    CONFIG_SCHEMA = {
+        "controller_type": Field(
+            str,
+            default="cartesian_compliance_controller",
+            choices=tuple(_TYPES),
+            doc="which controller this is, and so which terms of the law are live",
+        ),
+        "controller_name": Field(
+            str, default="", doc="name its topics sit under; empty: controller_type"
+        ),
+        "initial_state": Field(
+            str,
+            default="active",
+            choices=("active", "inactive"),
+            doc="inactive: registered holding nothing, as `spawner --inactive` leaves one",
+        ),
+        "site": Field(str, default="tool_site", doc="controlled site, with the arm's prefix"),
+        "ft": Field(
+            str,
+            default="ft",
+            doc="force_torque sensor key (`ft:<key>`); required by the force and compliance types",
+        ),
+        "rate_hz": Field(float, default=100.0, unit="Hz", doc="control rate, > 0"),
+        "pose_rate_hz": Field(
+            float, default=50.0, unit="Hz", doc="publish rate of current_pose and tracking_error"
+        ),
+        "target_wrench": Field(
+            list,
+            default=[0, 0, -10, 0, 0, 0],
+            length=6,
+            unit="N, N m",
+            doc="w_d, what the TOOL applies: -10 on z presses down",
+        ),
+        "mass": Field(
+            list,
+            default=[1, 1, 1, 0.6, 0.6, 0.6],
+            length=6,
+            unit="kg, kg m^2",
+            doc="M, diagonal; every entry > 0",
+        ),
+        "damping": Field(
+            list,
+            default=[80, 80, 80, 160, 160, 160],
+            length=6,
+            unit="N s/m, N m s/rad",
+            doc="D, diagonal",
+        ),
+        "stiffness": Field(
+            list,
+            default=[0, 0, 0, 0, 0, 0],
+            length=6,
+            unit="N/m, N m/rad",
+            doc="C, diagonal; a zero axis is pure force control",
+        ),
+        "axes": Field(list, default=[1, 1, 1, 1, 1, 1], length=6, doc="per-axis enable mask"),
+        "kp": Field(
+            list,
+            default=[2, 2, 2, 2, 2, 2],
+            length=6,
+            unit="1/s",
+            doc="motion type: gain on the pose error; a goal moving at v trails v / kp without "
+            "feedforward",
+        ),
+        "feedforward": Field(
+            str,
+            default="auto",
+            choices=_FEEDFORWARD,
+            doc="goal velocity commanded alongside the correction: auto (supplied, else estimated "
+            "from the goal stream), supplied, or off",
+        ),
+        "feedforward_window_s": Field(
+            float,
+            default=0.2,
+            unit="s",
+            doc="goals further apart than this are not a stream; > 0",
+        ),
+        "max_linear_vel": Field(
+            float, default=0.1, unit="m/s", doc="clamp on the twist's magnitude"
+        ),
+        "max_angular_vel": Field(
+            float, default=1.0, unit="rad/s", doc="clamp on the twist's magnitude"
+        ),
+        "ik_damping": Field(float, default=0.01, minimum=0.0, doc="damped-least-squares lambda"),
+    }
+    STRICT_KEYS = True
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.arm = self.entity
-        self.site = self.config.get("site", "tool_site")
-        self.ft_key = self.config.get("ft", "ft")
-        self.law = self.config.get("law", "admittance")
-        self.rate_hz = float(self.config.get("rate_hz", 100.0))
-        self.w_d = np.array(self.config.get("target_wrench", [0, 0, -10, 0, 0, 0]), dtype=float)
-        self.M = np.array(self.config.get("mass", [1, 1, 1, 0.6, 0.6, 0.6]), dtype=float)
-        self.D = np.array(self.config.get("damping", [80, 80, 80, 160, 160, 160]), dtype=float)
-        self.C = np.array(self.config.get("stiffness", [0, 0, 0, 0, 0, 0]), dtype=float)
-        self.axes = np.array(self.config.get("axes", [1, 1, 1, 1, 1, 1]), dtype=float)
-        self.kp = np.array(self.config.get("kp", [2, 2, 2, 2, 2, 2]), dtype=float)
-        self.v_lin = float(self.config.get("max_linear_vel", 0.1))
-        self.v_ang = float(self.config.get("max_angular_vel", 1.0))
-        self.ik_damping = float(self.config.get("ik_damping", 0.01))
+        self.site = self._setting("site")
+        self.ft_key = self._setting("ft")
+        self.rate_hz = float(self._setting("rate_hz"))
+        self.pose_rate_hz = float(self._setting("pose_rate_hz"))
+        self.w_d = np.array(self._setting("target_wrench"), dtype=float)
+        self.M = np.array(self._setting("mass"), dtype=float)
+        self.D = np.array(self._setting("damping"), dtype=float)
+        self.C = np.array(self._setting("stiffness"), dtype=float)
+        self.axes = np.array(self._setting("axes"), dtype=float)
+        self.kp = np.array(self._setting("kp"), dtype=float)
+        self.v_lin = float(self._setting("max_linear_vel"))
+        self.v_ang = float(self._setting("max_angular_vel"))
+        self.ik_damping = float(self._setting("ik_damping"))
         self._stream = _GoalStream(
-            str(self.config.get("feedforward", "auto")),
-            float(self.config.get("feedforward_window_s", 0.2)),
+            str(self._setting("feedforward")), float(self._setting("feedforward_window_s"))
         )
 
-        # The identity is primary and the law follows from it: `controller_type` decides which terms
-        # are live, and the legacy `law` key only picks a type when no type was named.
-        self.controller_type = str(
-            self.config.get("controller_type", "")
-            or _type_from_law(self.law, self.config.get("stiffness", [0, 0, 0, 0, 0, 0]))
-        )
-        self.controller_name = str(self.config.get("controller_name", "") or self.controller_type)
+        self.controller_type = str(self._setting("controller_type"))
+        self.controller_name = str(self._setting("controller_name") or self.controller_type)
         terms = _TYPES.get(self.controller_type, _TYPES["cartesian_compliance_controller"])
         self._uses_wrench = terms["wrench"]
         self._uses_stiffness = terms["stiffness"]
         self._needs_ft = terms["needs_ft"]
         # A controller the world declares inactive comes up holding nothing, the way
-        # `spawner --inactive` leaves one. Default active, so a world that never switches is unchanged.
-        self._active = str(self.config.get("initial_state", "active")) != "inactive"
-        # What a reset returns to: a trial's `set_target_wrench`, `set_law` and switches are its own.
-        self._configured = (
-            self._active,
-            self.w_d.copy(),
-            self.law,
-            self.controller_type,
-            self._uses_wrench,
-            self._uses_stiffness,
-        )
+        # `spawner --inactive` leaves one.
+        self._active = str(self._setting("initial_state")) != "inactive"
+        # What a reset returns to: a trial's `set_target_wrench` and switches are its own.
+        self._configured = (self._active, self.w_d.copy())
         self._registered: Controller | None = None
 
         self._ctx: SimContext | None = None
@@ -371,31 +425,19 @@ class CartesianAdmittancePlugin(Plugin):
         self._next_t = 0.0
         self._q_target: np.ndarray | None = None
 
+    def _setting(self, key: str):
+        """The configured value of *key*, else its schema default."""
+        return self.config.get(key, self.CONFIG_SCHEMA[key].default)
+
     def validate_config(self, config: dict) -> list[str]:
+        # Keys, types, choices and lengths are the schema's; these are the bounds it cannot state.
         errors: list[str] = []
-        if config.get("law", "admittance") not in _LAWS:
-            errors.append(f"'law' must be one of {', '.join(_LAWS)}")
-        if config.get("controller_type") and config["controller_type"] not in _TYPES:
-            errors.append(f"'controller_type' must be one of {', '.join(sorted(_TYPES))}")
-        if str(config.get("initial_state", "active")) not in ("active", "inactive"):
-            errors.append("'initial_state' must be 'active' or 'inactive'")
-        if float(config.get("rate_hz", 100.0)) <= 0:
-            errors.append("'rate_hz' must be > 0")
-        for key, width in (
-            ("target_wrench", 6),
-            ("mass", 6),
-            ("damping", 6),
-            ("stiffness", 6),
-            ("axes", 6),
-            ("kp", 6),
-        ):
-            if key in config and len(config[key]) != width:
-                errors.append(f"'{key}' must have {width} entries (one per Cartesian axis)")
-        if str(config.get("feedforward", "auto")) not in _FEEDFORWARD:
-            errors.append(f"'feedforward' must be one of {', '.join(_FEEDFORWARD)}")
-        if float(config.get("feedforward_window_s", 0.2)) <= 0:
-            errors.append("'feedforward_window_s' must be > 0")
-        if "mass" in config and any(float(v) <= 0 for v in config["mass"]):
+        for key in ("rate_hz", "feedforward_window_s"):
+            value = config.get(key)
+            if _is_number(value) and value <= 0:
+                errors.append(f"'{key}' must be > 0")
+        mass = config.get("mass")
+        if isinstance(mass, list) and any(_is_number(v) and v <= 0 for v in mass):
             errors.append("'mass' entries must be > 0 (M is inverted in the admittance law)")
         return errors
 
@@ -442,7 +484,7 @@ class CartesianAdmittancePlugin(Plugin):
         self._qposadr = np.array(qposadr, dtype=int)
         self._kin = mujoco.MjData(m)
 
-        ns = entity.meta.get("namespace", "") if entity else ""
+        ns = self.endpoint_namespace(ctx)
 
         # Listed and switched like any other controller. It claims the SAME command interfaces as
         # the trajectory controller, which is what makes handing the arm from one to the other a
@@ -470,7 +512,6 @@ class CartesianAdmittancePlugin(Plugin):
                 arm=self.arm,
                 set_goal=self.set_goal,
                 read_pose=self.read_pose,
-                set_law=self.set_law,
                 set_active=self.set_active,
                 controller_name=self.controller_name,
                 set_target_wrench=self.set_target_wrench,
@@ -479,79 +520,59 @@ class CartesianAdmittancePlugin(Plugin):
             ),
         )
 
-        # Named as FZI's cartesian_controllers name them: a node that drives this controller drives
-        # the real one unchanged. The setpoints are topics rather than services because they are a
-        # stream -- a reference a task republishes as it moves, not a command with an outcome.
-        ctx.interface.add(
-            Endpoint(
-                name="target_frame",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda payload: self.set_goal(payload[0], payload[1]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PoseStamped",
-                        "topic": self.topic_override("target_frame")
-                        or f"{self.controller_name}/target_frame",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="target_wrench",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda payload: self.set_target_wrench(
-                    np.concatenate([payload[0], payload[1]])
-                ),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.WrenchStamped",
-                        "topic": self.topic_override("target_wrench")
-                        or f"{self.controller_name}/target_wrench",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="current_pose",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_pose_quat,
-                rate_hz=self.config.get("pose_rate_hz", 50.0),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PoseStamped",
-                        "topic": self.topic_override("current_pose")
-                        or f"{self.controller_name}/current_pose",
-                        "frame_id": "world",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="tracking_error",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_tracking_error,
-                rate_hz=self.config.get("pose_rate_hz", 50.0),
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "field": "distance",
-                        "topic": self.topic_override("tracking_error")
-                        or f"{self.controller_name}/tracking_error",
-                    }
-                },
-            )
-        )
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """The arm's namespace: this controller has no ``namespace`` of its own."""
+        entity = ctx.entities.get(owner or self.arm)
+        return entity.meta.get("namespace", "") if entity else ""
+
+    # -- endpoints -------------------------------------------------------------------------------
+    # Named as FZI's cartesian_controllers name them, under the controller's name: a node that
+    # drives this controller drives the real one unchanged. The setpoints are streams because only
+    # the latest matters -- a reference a task republishes as it moves, not a command with an
+    # outcome.
+
+    @endpoint.stream(Pose, ros2=lambda self: {"topic": f"{self.controller_name}/target_frame"})
+    def target_frame(self, position: Point3, orientation: Quaternion) -> None:
+        """The pose to track, in the world frame.
+
+        Args:
+            position: the controlled site's goal
+            orientation: its goal orientation (w, x, y, z)
+        """
+        self.set_goal(position, orientation)
+
+    @endpoint.stream(Wrench, ros2=lambda self: {"topic": f"{self.controller_name}/target_wrench"})
+    def target_wrench(self, force: Force3, torque: Torque3) -> None:
+        """The wrench the tool is to apply, overriding the configured ``target_wrench``.
+
+        Args:
+            force: force (x, y, z)
+            torque: torque (x, y, z)
+        """
+        self.set_target_wrench(np.concatenate([force, torque]))
+
+    @endpoint.out(
+        rate="pose_rate_hz",
+        ros2=lambda self: {"topic": f"{self.controller_name}/current_pose", "frame_id": "world"},
+    )
+    def current_pose(self) -> Pose:
+        """The controlled site's pose, in the world frame."""
+        pos, mat = self.read_pose()
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, mat.reshape(9))
+        return Pose(pos, quat)
+
+    # ROS carries the distance alone, the number a monitor watches.
+    @endpoint.out(
+        rate="pose_rate_hz",
+        ros2=lambda self: {
+            "field": "distance",
+            "topic": f"{self.controller_name}/tracking_error",
+        },
+    )
+    def tracking_error(self) -> TrackingError:
+        """How far the controlled site is from the pose it tracks."""
+        return self.read_tracking_error()
 
     # -- handle API ------------------------------------------------------------------------------
 
@@ -586,13 +607,6 @@ class CartesianAdmittancePlugin(Plugin):
             np.array(d.site_xmat[self._site_id], dtype=float).reshape(3, 3),
         )
 
-    def read_pose_quat(self) -> tuple[list[float], list[float]]:
-        """Endpoint ``read``: the controlled pose as transport-neutral ``(position, quaternion)``."""
-        pos, mat = self.read_pose()
-        quat = np.zeros(4)
-        mujoco.mju_mat2Quat(quat, mat.reshape(9))
-        return (pos.tolist(), quat.tolist())
-
     def read_tracking_error(self) -> TrackingError:
         """``goal - pose`` for the controlled site, and the goal velocity being fed forward.
 
@@ -612,20 +626,6 @@ class CartesianAdmittancePlugin(Plugin):
     def set_target_wrench(self, wrench) -> None:
         """Command ``w_d``: what the TOOL is to apply, the convention ``target_wrench`` config uses."""
         self.w_d = np.array(wrench, dtype=float)
-
-    def set_law(self, law: str) -> None:
-        """Deprecated: a real controller does not change its law, you switch to another controller.
-
-        Kept because worlds and task plugins call it. Prefer declaring ``controller_type`` and, where
-        a run really must change behaviour part-way, switching controllers.
-        """
-        if law not in _LAWS:
-            raise ValueError(f"cartesian_admittance: unknown law {law!r}")
-        self.law = law
-        self.controller_type = _type_from_law(law, self.C)
-        terms = _TYPES[self.controller_type]
-        self._uses_wrench, self._uses_stiffness = terms["wrench"], terms["stiffness"]
-        self._twist = np.zeros(6)
 
     def set_active(self, active: bool) -> None:
         active = bool(active)
@@ -650,9 +650,7 @@ class CartesianAdmittancePlugin(Plugin):
     # -- lifecycle -------------------------------------------------------------------------------
 
     def on_reset(self, ctx: SimContext) -> None:
-        active, w_d, self.law, self.controller_type, self._uses_wrench, self._uses_stiffness = (
-            self._configured
-        )
+        active, w_d = self._configured
         self.w_d = w_d.copy()
         self._active = active
         if self._registered is not None:

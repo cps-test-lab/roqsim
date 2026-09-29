@@ -16,9 +16,12 @@ import numpy as np
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
+#: A batten 3.5 m up at (2, 3), running along x.
+_AT_2_3 = {"position": {"x": 2.0, "y": 3.0, "z": 3.5}}
+
 
 def _built(tmp_path, plugins):
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     engine.reset()
     return engine
@@ -142,16 +145,14 @@ def test_duct_rejects_a_branch_past_the_end(tmp_path):
 
 def test_batten_is_a_fixture_and_emit_adds_a_light(tmp_path):
     # The default empty room already carries its own light, so what is tested is the difference.
-    plain = _built(
-        tmp_path, [{"strip_light": {"prefix": "s_", "pos": [2.0, 3.0, 3.5]}, "name": "s"}]
-    )
+    plain = _built(tmp_path, [{"strip_light": {"prefix": "s_", "pose": _AT_2_3}, "name": "s"}])
     fixture = next(g for n, g in _geoms(plain, "s_").items() if n.endswith("fixture"))
     assert _pos(plain, fixture)[2] < 3.5  # hangs below its mounting height
     assert _pos(plain, fixture)[2] > 2.6
 
     lit = _built(
         tmp_path,
-        [{"strip_light": {"prefix": "s_", "pos": [2.0, 3.0, 3.5], "emit": True}, "name": "s"}],
+        [{"strip_light": {"prefix": "s_", "pose": _AT_2_3, "emit": True}, "name": "s"}],
     )
     assert lit.ctx.model.nlight == plain.ctx.model.nlight + 1
     added = lit.ctx.model.light_pos[lit.ctx.model.nlight - 1]
@@ -159,11 +160,21 @@ def test_batten_is_a_fixture_and_emit_adds_a_light(tmp_path):
     assert added[2] < 3.5  # under the fixture, not inside it
 
 
-def test_batten_rejects_a_2d_position(tmp_path):
+def test_batten_rejects_a_position_without_a_height(tmp_path):
     from roqsim_assets.plugins.strip_light import StripLightPlugin
 
-    errors = StripLightPlugin({}).validate_config({"pos": [1.0, 2.0]})
+    errors = StripLightPlugin({}).validate_config({"pose": {"position": {"x": 1.0, "y": 2.0}}})
     assert any("mounting height" in e for e in errors)
+
+
+def test_batten_rejects_a_tilt(tmp_path):
+    from roqsim_assets.plugins.strip_light import StripLightPlugin
+
+    pose = {"position": {"z": 3.0}, "orientation": {"roll": 0.2, "yaw": 1.0}}
+    errors = StripLightPlugin({}).validate_config({"pose": pose})
+    assert any("tilts the batten" in e for e in errors)
+    level = {"position": {"z": 3.0}, "orientation": {"yaw": 1.0}}
+    assert StripLightPlugin({}).validate_config({"pose": level}) == []
 
 
 # --- the contract with the core `ceiling` plugin ---------------------------------------------
@@ -178,7 +189,14 @@ def test_opening_the_roof_removes_every_fitting_but_keeps_its_light(tmp_path):
     fittings = [
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 8.0, 6.0], "z": 3.5}, "name": "p"},
         {"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [7.0, 1.0], "z": 3.2}, "name": "d"},
-        {"strip_light": {"prefix": "s_", "pos": [4.0, 3.0, 3.5], "emit": True}, "name": "s"},
+        {
+            "strip_light": {
+                "prefix": "s_",
+                "pose": {"position": {"x": 4.0, "y": 3.0, "z": 3.5}},
+                "emit": True,
+            },
+            "name": "s",
+        },
     ]
     closed = _built(tmp_path, fittings)
     opened = _built(tmp_path, [*fittings, {"ceiling": {"keep": False, "above_z": 2.6}}])

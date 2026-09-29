@@ -10,7 +10,7 @@ from roqsim.engine import Engine
 
 def _dummy_engine(n=1, size=0.1, profile=False):
     plugins = [{"dummy": {"size": size}, "name": f"d{i}"} for i in range(n)]
-    return Engine(load_config_from_dict({"sim": {}, "plugins": plugins}), profile=profile)
+    return Engine(load_config_from_dict({"sim": {}, "components": plugins}), profile=profile)
 
 
 def test_dummy_builds_nonempty_model_and_counts_hooks():
@@ -111,6 +111,6 @@ def test_posted_commands_apply_on_physics_thread_in_prestep_order():
 
 def test_timestep_override():
     plugins = [{"dummy": {}, "name": "d0"}]
-    engine = Engine(load_config_from_dict({"sim": {"timestep": 0.005}, "plugins": plugins}))
+    engine = Engine(load_config_from_dict({"sim": {"timestep": 0.005}, "components": plugins}))
     engine.setup()
     assert abs(engine.dt - 0.005) < 1e-9

@@ -24,7 +24,7 @@ Parts of the world can be overridden per scenario via the ``world_overrides`` pa
 dict mirroring the world YAML, with plugins addressed by name (see :func:`roqsim.apply_overrides`).
 In OSC this is naturally a struct parameter, which scenario-execution passes as a nested dict::
 
-    world_overrides: {plugins: {floorplan: {floor: {reflectance: 0.3}}}}
+    world_overrides: {components: {floorplan: {floor: {reflectance: 0.3}}}}
 
 A scenario whose *experiment is the world* -- a study sweeping one problem instance per
 configuration -- can also declare a ``world`` parameter and select the world itself, which is what

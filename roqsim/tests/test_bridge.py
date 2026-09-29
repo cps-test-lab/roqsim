@@ -181,28 +181,7 @@ def test_eager_endpoint_publishes_to_nobody_unchanged():
     assert bridge.published == ["image", "camera_info"]
 
 
-# -- what a bridge says it publishes ----------------------------------------------------------------
-
-
-def test_the_endpoint_map_lists_each_bound_output_by_owner_and_name():
-    """Only outputs this backend bound: no input, and no endpoint without this backend's hints."""
-    bridge = FakeBridge({})
-    bridge.configure(_ctx_with_endpoints())
-    emap = bridge.endpoint_map(lambda out: {"scope": out.endpoint.namespace})
-    assert emap["owners"] is None, "no owner filter: this bridge serves every owner"
-    assert emap["endpoints"] == [
-        {"owner": "robot1", "name": "odom", "scope": "robot1"},
-        {"owner": "robot2", "name": "odom", "scope": "robot2"},
-    ]
-
-
-def test_the_endpoint_map_carries_the_owner_filter():
-    """So a reader can tell "robot1 publishes nothing" from "this bridge does not serve robot1"."""
-    bridge = FakeBridge({"owner": "robot2"})
-    bridge.configure(_ctx_with_endpoints())
-    emap = bridge.endpoint_map(lambda out: {})
-    assert emap["owners"] == ["robot2"]
-    assert [e["owner"] for e in emap["endpoints"]] == ["robot2"]
+# -- finding an endpoint ---------------------------------------------------------------------------
 
 
 def test_an_endpoint_is_found_by_its_owner_and_name():

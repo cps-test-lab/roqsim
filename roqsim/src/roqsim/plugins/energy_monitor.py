@@ -27,11 +27,12 @@ force and the velocity it acts through; their product is mechanical power, exact
 **What is measured, and what is assumed.** The measured part is mechanical and is evaluated **per
 actuator**: ``force * velocity`` for each of the actuators that move this robot, where the force is
 the one a real drive would supply -- the actuator's own force **plus its share of the
-gravity-compensation force**. MuJoCo's ``body_gravcomp`` carries a compensated arm's weight outside
-the actuator, so ``actuator_force`` reads exactly zero on a joint holding a payload against gravity;
+gravity-compensation force**. MuJoCo adds a compensated joint's gravity term to ``qfrc_actuator``
+after the actuator's own force is computed, so ``actuator_force`` reads exactly zero on a joint holding
+a payload against gravity;
 metering it alone reports an arm that costs nothing to hold a load up, and nothing to lift one. A
-real drive supplies that torque, which is why ``arm_controller`` already reports
-``qfrc_actuator + qfrc_gravcomp`` as a joint's effort. Where nothing is compensated -- ``control:
+real drive supplies that torque, which is why ``arm_controller`` reports it in a joint's effort
+(:func:`roqsim.actuators.joint_effort`). Where nothing is compensated -- ``control:
 effort``, whose controller supplies the gravity term itself -- the share is zero and nothing
 changes. The sum is taken
 after the per-actuator split, never before -- on an arm, one joint descending while another lifts is
@@ -87,8 +88,8 @@ Config::
       voltage: 0.0             # V, nominal; 0 = unknown, and the current is then not reported
       rate_hz: 5.0             # endpoint publish rate
 
-Endpoint ``battery`` (out) reads an :class:`EnergyReport` and carries a ``sensor_msgs/BatteryState``
-hint on ``battery_state`` -- the message a real platform publishes, so a stack that already watches a
+Endpoint ``battery`` (out) reads an :class:`EnergyReport`, which ROS carries as a
+``sensor_msgs/BatteryState`` on ``battery_state`` -- the message a real platform publishes, so a stack that already watches a
 battery needs no change. An :class:`EnergyReader` is published on the blackboard under
 ``energy:<address>`` for an in-process consumer, and the report carries the raw joules as well as the
 derived state of charge, because the metric a paper quotes is usually the integral, not the fraction.
@@ -107,12 +108,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.schema import Field
 
 #: Joules per watt-hour, so a datasheet number (Wh) and the integral (J) can be one quantity.
 JOULES_PER_WH = 3600.0
@@ -131,18 +136,30 @@ class EnergyReport:
     negative on a machine whose load is driving it. ``power_w`` is what reaches the pack, and
     ``resistive_w`` is the part of it that is winding loss, reported separately so a trial can say how
     much of its bill was holding rather than moving.
+
+    Attributes:
+        energy_j: electrical energy drawn since reset
+        power_w: electrical power drawn now
+        mechanical_w: net mechanical power the actuators deliver now, signed
+        resistive_w: the part of power_w that is winding loss
+        torque_integral_nms: integral of the summed absolute actuator forces since reset
+        charge_fraction: state of charge in [0, 1]; -1.0 without a capacity
+        depleted: the modelled battery is empty
+        voltage: nominal pack voltage; 0 when unknown
+        current_a: current drawn now; 0 when the voltage is unknown
+        capacity_wh: configured capacity; 0 when no battery is modelled
     """
 
-    energy_j: float = 0.0
-    power_w: float = 0.0
-    mechanical_w: float = 0.0
-    resistive_w: float = 0.0
-    torque_integral_nms: float = 0.0
+    energy_j: Annotated[float, Unit("J")] = 0.0
+    power_w: Annotated[float, Unit("W")] = 0.0
+    mechanical_w: Annotated[float, Unit("W")] = 0.0
+    resistive_w: Annotated[float, Unit("W")] = 0.0
+    torque_integral_nms: Annotated[float, Unit("N*m*s")] = 0.0
     charge_fraction: float = -1.0
     depleted: bool = False
-    voltage: float = 0.0
-    current_a: float = 0.0
-    capacity_wh: float = 0.0
+    voltage: Annotated[float, Unit("V")] = 0.0
+    current_a: Annotated[float, Unit("A")] = 0.0
+    capacity_wh: Annotated[float, Unit("W*h")] = 0.0
 
 
 @dataclass
@@ -161,6 +178,38 @@ class EnergyMonitorPlugin(Plugin):
     #: A battery belongs to the robot it powers.
     requires_owner = True
 
+    #: Every key this plugin reads, besides the transport ones every component may carry
+    #: (:data:`roqsim.schema.INJECTED_KEYS`) -- which is what makes ``STRICT_KEYS`` safe. A misspelt
+    #: coefficient would otherwise meter the robot at the default that models nothing, and report an
+    #: energy figure that looks measured.
+    CONFIG_SCHEMA = {
+        "actuators": Field(
+            list, default=[], doc="names to meter (default: every actuator driving this entity)"
+        ),
+        "efficiency": Field(
+            float, default=1.0, maximum=1.0, doc="mechanical -> electrical, in (0, 1]"
+        ),
+        "idle_w": Field(
+            float, default=0.0, minimum=0.0, unit="W", doc="drawn regardless of motion"
+        ),
+        "resistive_w_per_nm2": Field(
+            (float, dict),
+            default=0.0,
+            minimum=0.0,
+            unit="W/(N*m)^2",
+            doc="winding loss k in k*tau^2; a number, or {actuator_name: k}",
+        ),
+        "regenerative": Field(bool, default=False, doc="credit negative mechanical power back"),
+        "capacity_wh": Field(
+            float, default=0.0, minimum=0.0, unit="Wh", doc="0: no battery modelled, no charge"
+        ),
+        "voltage": Field(
+            float, default=0.0, minimum=0.0, unit="V", doc="nominal; 0: unknown, no current"
+        ),
+        "rate_hz": Field(float, default=5.0, unit="Hz", doc="endpoint publish rate, > 0"),
+    }
+    STRICT_KEYS = True
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.robot = self.entity
@@ -173,6 +222,7 @@ class EnergyMonitorPlugin(Plugin):
         self.voltage = float(self.config.get("voltage", 0.0))
         self.rate_hz = float(self.config.get("rate_hz", 5.0))
         self._ctx: SimContext | None = None
+        self._battery_frame = "base_link"  # the frame BatteryState is stamped in; see configure
         self._actuators: np.ndarray | None = None
         self._resistive_k: np.ndarray | None = None
         self._energy_j = 0.0
@@ -186,34 +236,34 @@ class EnergyMonitorPlugin(Plugin):
     # -- validation ---------------------------------------------------------------------------
 
     def validate_config(self, config: dict) -> list[str]:
+        # Types, defaults and the closed bounds are the schema's; what is left is what it has no word
+        # for: two open bounds, and the entries of a per-actuator mapping.
         errors = self.validate_topics(config)
-        efficiency = float(config.get("efficiency", 1.0))
-        if not 0.0 < efficiency <= 1.0:
-            errors.append("'efficiency' must be in (0, 1] -- it divides the mechanical power")
-        for key in ("idle_w", "capacity_wh", "voltage"):
-            if float(config.get(key, 0.0)) < 0:
-                errors.append(f"'{key}' must be >= 0")
-        if float(config.get("rate_hz", 5.0)) <= 0:
+        efficiency = config.get("efficiency", 1.0)
+        if isinstance(efficiency, (int, float)) and efficiency <= 0.0:
+            errors.append("'efficiency' must be > 0 -- it divides the mechanical power")
+        rate_hz = config.get("rate_hz", 5.0)
+        if isinstance(rate_hz, (int, float)) and rate_hz <= 0:
             errors.append("'rate_hz' must be > 0")
-        if config.get("actuators") is not None and not isinstance(config["actuators"], list):
-            errors.append("'actuators' must be a list of actuator names")
         errors.extend(self._resistive_errors(config.get("resistive_w_per_nm2", 0.0)))
         return errors
 
     @staticmethod
     def _resistive_errors(spec) -> list[str]:
-        """``resistive_w_per_nm2`` is one coefficient or one per named actuator, and never negative.
+        """Each entry of a per-actuator ``resistive_w_per_nm2`` is a number, and never negative.
 
-        A negative coefficient is a motor that is paid to produce torque, so it is refused here rather
-        than left to show up as an energy figure that falls while the arm works.
+        The schema checks the value's shape and a single coefficient's bound; a mapping's entries are
+        left to this. A negative coefficient is a motor that is paid to produce torque, so it is
+        refused here rather than left to show up as an energy figure that falls while the arm works.
         """
+        if not isinstance(spec, dict):
+            return []
         key = "'resistive_w_per_nm2'"
-        values = spec.values() if isinstance(spec, dict) else [spec]
-        for value in values:
+        for actuator, value in spec.items():
             if isinstance(value, bool) or not isinstance(value, (int, float)):
-                return [f"{key} must be a number, or a mapping of actuator name to number"]
+                return [f"{key}[{actuator!r}] must be a number, got {value!r}"]
             if value < 0:
-                return [f"{key} must be >= 0"]
+                return [f"{key}[{actuator!r}] must be >= 0, got {value}"]
         return []
 
     # -- lifecycle ----------------------------------------------------------------------------
@@ -223,7 +273,6 @@ class EnergyMonitorPlugin(Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         self._actuators = (
             self._named_actuators(m, prefix)
@@ -241,23 +290,15 @@ class EnergyMonitorPlugin(Plugin):
         self._resistive_k = self._resistive_coefficients(m, prefix)
 
         ctx.blackboard.set(f"energy:{self.address}", EnergyReader(name=self.label, read=self.read))
-        ctx.interface.add(
-            Endpoint(
-                name="battery",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.BatteryState",
-                        "topic": self.topic_override("battery") or "battery_state",
-                        "frame_id": entity.body if entity and entity.body else "base_link",
-                    }
-                },
-            )
-        )
+        self._battery_frame = entity.body if entity and entity.body else "base_link"
+
+    @endpoint.out(
+        rate="rate_hz",
+        ros2=lambda self: {"topic": "battery_state", "frame_id": self._battery_frame},
+    )
+    def battery(self) -> EnergyReport:
+        """Energy drawn since reset, the power drawn now, and the charge left."""
+        return self.read()
 
     def _resistive_coefficients(self, m, prefix: str) -> np.ndarray:
         """``k`` per metered actuator, aligned with :attr:`_actuators`.
@@ -399,7 +440,7 @@ class EnergyMonitorPlugin(Plugin):
         # into driving and driven happens BEFORE the sum -- netting first would let one joint's
         # descent pay for another's lift, which on an arm is the ordinary case.
         # The torque a real drive supplies: the actuator's own force plus the share of the
-        # weight-carrying force MuJoCo applies outside it. Without the second term a compensated
+        # weight-carrying force MuJoCo adds after it. Without the second term a compensated
         # arm reads as costing nothing to hold a payload, or to lift one.
         torque = d.actuator_force[self._actuators] + self._gravcomp_share(d)
         per_actuator = torque * d.actuator_velocity[self._actuators]

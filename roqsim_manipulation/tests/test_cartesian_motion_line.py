@@ -41,7 +41,7 @@ def test_a_straight_descent_stays_on_its_line():
                         {
                             "cartesian_admittance": {
                                 "site": "tool_site",
-                                "law": "position",
+                                "controller_type": "cartesian_motion_controller",
                                 "rate_hz": 500.0,
                                 "kp": [4.0, 4.0, 4.0, 2.0, 2.0, 2.0],
                             }

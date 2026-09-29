@@ -39,13 +39,31 @@ is the right model for a stepper-driven gantry and the wrong one for a compliant
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim import endpoint
+from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import Length
+
+
+@dataclass
+class Progress:
+    """How far the stage has run along its path.
+
+    Attributes:
+        s: arc length travelled
+        total: length of the path
+        done: whether the path is finished
+    """
+
+    s: Length
+    total: Length
+    done: bool
 
 
 class PropTrajectoryPlugin(Plugin):
@@ -213,20 +231,19 @@ class PropTrajectoryPlugin(Plugin):
                 meta={"prefix": p, "path": str(self.config["path"]), "speed": self.speed},
             )
         )
-        # Expose the stage's progress so a trial can be gated on it (and so a run's log records what
-        # the object actually did, not just what it was asked to do).
-        ctx.interface.add(
-            Endpoint(
-                name="stage_progress",
-                direction="out",
-                owner=self.entity_name,
-                namespace=self.config.get("namespace", ""),
-                read=self.read_progress,
-                rate_hz=30.0,
-                backend={"ros2": {"type": "std_msgs.msg.Float64", "topic": "stage_progress"}},
-            )
-        )
         self.on_reset(ctx)
+
+    @property
+    def endpoint_owner(self) -> str:
+        """The stage entity this plugin registers."""
+        return self.entity_name
+
+    # The stage's progress, so a trial can be gated on it and a run's log records what the object
+    # actually did. A Float64 carries one number: the arc length travelled.
+    @endpoint.out(rate=30.0, ros2={"field": "s"})
+    def stage_progress(self) -> Progress:
+        """Arc length travelled and path length, and whether the path is finished."""
+        return Progress(*self.read_progress())
 
     def read_progress(self):
         """(arc length travelled [m], total path length [m], finished?)."""
