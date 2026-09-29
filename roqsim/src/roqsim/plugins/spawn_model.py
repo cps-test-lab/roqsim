@@ -143,8 +143,8 @@ gets the frame. It has no effect on the baked web scene, which already seats the
   - ``false`` (default): a static prop already seated by the baked scene needs no TF.
   - ``dynamic`` (or ``true``): stream the live world pose on the relative ``tf`` topic at ``tf_rate``.
     For a **free body** (a ``<freejoint/>`` prop the robot moves) -- nothing else publishes its pose, so
-    a name-binding viewer would otherwise freeze it at the spawn pose. The ros2_bridge's ``gt`` config
-    maps the relative topic to ``/gt/tf``; a multi-robot gateway federates it under the robot's scope.
+    a name-binding viewer would otherwise freeze it at the spawn pose. The topic is relative, so a
+    multi-robot gateway federates it under the robot's scope.
   - ``static``: publish the world pose **once** on the latched ``/tf_static`` (a welded prop's frame for
     the TF tree). The pose is model-fixed, so one ``mj_forward`` at configure resolves it.
 """
@@ -610,9 +610,9 @@ class SpawnModelPlugin(Plugin):
     # family is how a name known only per instance is spelled.
     #
     # dynamic: stream the live world pose as a one-entry TF payload. child_frame_id == the exported
-    # body name so a name-binding viewer animates the node; the relative `tf` topic lets the bridge's
-    # gt namespace map it to /gt/tf and a gateway federate it. Nothing else publishes a free body's
-    # pose, so without this a viewer freezes it at the baked spawn pose.
+    # body name so a name-binding viewer animates the node; the relative `tf` topic lets a gateway
+    # federate it. Nothing else publishes a free body's pose, so without this a viewer freezes it at
+    # the baked spawn pose.
     @endpoint.out(
         name="{item}_pose",
         each=lambda self: [self.entity_name],
