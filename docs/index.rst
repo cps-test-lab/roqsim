@@ -20,6 +20,7 @@ If you just want to see it run, start with :doc:`getting_started`.
    installation
    quickstart
    interfaces
+   control
    plugins
    models
    textures
