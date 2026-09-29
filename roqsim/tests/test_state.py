@@ -326,6 +326,56 @@ def test_only_outward_endpoints_are_offered():
     assert set(st.replayable_sensors(_Ctx())) == {"out1"}
 
 
+def test_a_payload_type_gives_a_column_per_field_element_in_declaration_order():
+    from roqsim.context import Endpoint
+    from roqsim.types import Odometry
+
+    odom = Odometry(position=(1.0, 2.0, 0.0), linear=(0.5, 0.0, 0.0))
+    columns = st.sensor_columns(Endpoint(name="odom", direction="out", read=lambda: odom))
+    assert list(columns) == [
+        f"odom.{field}.{i}"
+        for field, width in (("position", 3), ("orientation", 4), ("linear", 3), ("angular", 3))
+        for i in range(width)
+    ]
+    assert columns["odom.position.1"] == 2.0 and columns["odom.linear.0"] == 0.5
+
+
+def test_a_nested_payload_type_is_named_by_its_field_path():
+    from dataclasses import dataclass, field
+
+    from roqsim.context import Endpoint
+    from roqsim.types import Wrench
+
+    @dataclass
+    class Contact:
+        wrench: Wrench = field(default_factory=Wrench)
+        touching: bool = True
+        link: str = "tip"
+
+    columns = st.sensor_columns(Endpoint(name="c", direction="out", read=Contact))
+    assert list(columns) == [f"c.wrench.{f}.{i}" for f in ("force", "torque") for i in range(3)] + [
+        "c.touching"
+    ]
+
+
+def test_joint_states_wider_than_a_row_are_refused_not_dropped():
+    """Every joint of a small model is a column; a humanoid's would be a row missing its joints."""
+    from roqsim.context import Endpoint
+    from roqsim.types import JointState
+
+    def joints(n):
+        names = [f"j{i}" for i in range(n)]
+        return JointState(names=names, positions=np.arange(n, dtype=float), velocities=np.zeros(n))
+
+    small = st.sensor_columns(Endpoint(name="js", direction="out", read=lambda: joints(12)))
+    assert [c for c in small if c.startswith("js.positions.")] == [
+        f"js.positions.{i}" for i in range(12)
+    ]
+    wide = Endpoint(name="js", direction="out", read=lambda: joints(st._SCALAR_MAX + 1))
+    with pytest.raises(st.StateError, match=r"js\.positions .*--joint"):
+        st.sensor_columns(wide)
+
+
 # -- what a replayed sensor promises ---------------------------------------------------------------
 
 
