@@ -73,6 +73,23 @@ is a plain ``Field(dict)``. A block's default is its keys' defaults, so it decla
 ``settings.planner.waypoint_radius`` reads 0.3 when the world wrote no ``planner:`` at all, and
 ``describe`` publishes the keys under ``fields``.
 
+**A mapping from names not known in advance** -- one entry per actuator of a model, per joint --
+declares what each value is, as a field of its own::
+
+    "each": Field(dict, values=Field(dict, schema=GAINS), doc="per actuator, by name"),
+
+Every value is checked against that field and named by its path (``'each.wrist_3.p'``); a value
+declared as a block is strict, as any block is. ``settings.each`` is a read-only mapping of the names
+the world wrote, each value read through the field (a block as a view, with its defaults filled), and
+empty when it wrote none. ``describe`` publishes the value's field under ``values``.
+
+**A word from another vocabulary** -- MuJoCo's ``kp`` where the block says ``p``, its actuator type
+``motor`` where a choice says ``effort`` -- is refused like any other unknown key or value, in one
+error that says what to write instead. The field declares the words it knows are meant for it as
+``hints``: on a block (``schema``) the words are keys, on a field with ``choices`` they are values,
+and the hint replaces the nearest-name suggestion. It is guidance on a refusal and nothing
+more: a hinted word is never read.
+
 **An unknown key is refused by default.** A plugin that declares a schema says what its config is,
 and a key outside it is a typo that would otherwise leave a setting at its default and look
 configured. What a component carries without the world's author writing it -- a manifest's
@@ -88,6 +105,7 @@ import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from types import MappingProxyType
 from typing import Any
 
 from .document import nearest
@@ -131,18 +149,24 @@ class Field:
     static: bool = dataclass_field(default=False)
     #: For a mapping of fixed keys: those keys, declared the same way. See the module docstring.
     schema: dict[str, Field] | None = None
+    #: For a mapping from names not known in advance: what each value is. See the module docstring.
+    values: Field | None = None
+    #: Words this field refuses that another vocabulary uses for it, each mapped to what to write
+    #: instead: keys of a block, or values of a field with ``choices``. See the module docstring.
+    hints: dict[str, str] | None = None
 
-    def describe(self, name: str) -> dict:
-        """The published form: JSON-friendly, and the same shape for every plugin."""
+    def describe(self, name: str | None = None) -> dict:
+        """The published form: JSON-friendly, and the same shape for every plugin.
+
+        *name* is the key the field is declared under; a mapping's ``values`` field has none.
+        """
         # A union publishes a list of names, as JSON Schema writes one, so a caller matching on a
         # single name never mistakes "float or dict" for a float.
         names = [_type_name(t) for t in _types(self.type)]
-        described = {
-            "name": name,
-            "type": names[0] if len(names) == 1 else names,
-            "required": self.required,
-        }
-        if not self.required and self.schema is None:
+        described = {} if name is None else {"name": name}
+        described["type"] = names[0] if len(names) == 1 else names
+        described["required"] = self.required
+        if not self.required and self.schema is None and self.values is None:
             described["default"] = self.default
         for key in ("minimum", "maximum", "length"):
             value = getattr(self, key)
@@ -159,6 +183,10 @@ class Field:
         if self.schema is not None:
             # In place of a default: each key carries its own.
             described["fields"] = describe(self.schema)
+        if self.values is not None:
+            described["values"] = self.values.describe()
+        if self.hints:
+            described["hints"] = dict(self.hints)
         return described
 
 
@@ -183,7 +211,8 @@ class Settings:
 
     A block declared with a ``schema`` reads as a view of the same kind, so a nested key is
     ``settings.planner.waypoint_radius``, with its default filled whether the world wrote the block
-    or not.
+    or not. A mapping declared with ``values`` reads as a read-only mapping of the names the world
+    wrote, each value read the same way: ``settings.each["wrist_3"].p``.
 
     Only declared keys are here. The keys another owner injects (:data:`INJECTED_KEYS`) stay where
     their owner reads them, on ``self.config``.
@@ -206,17 +235,9 @@ class Settings:
             raise AttributeError(
                 f"{self._owner} declares no setting {name!r}. Declared: {', '.join(self._schema)}"
             )
-        if spec.schema is not None:
-            block = self._config.get(name, {})
-            if isinstance(block, dict):
-                return Settings(spec.schema, block, owner=f"{self._owner}.{name}")
-            return block
-        if name not in self._config:
+        if name not in self._config and spec.schema is None and spec.values is None:
             return copy.deepcopy(spec.default)
-        value = self._config[name]
-        if float in _types(spec.type) and isinstance(value, int) and not isinstance(value, bool):
-            return float(value)
-        return value
+        return _read(spec, self._config.get(name, {}), f"{self._owner}.{name}")
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise AttributeError(f"{self._owner}'s settings are read-only; {name!r} was not assigned")
@@ -232,13 +253,33 @@ class Settings:
         return f"Settings({values})"
 
 
+def _read(spec: Field, value: Any, owner: str) -> Any:
+    """*value* as :class:`Settings` reads it for *spec*: a block as a view, a mapping per name."""
+    if spec.schema is not None:
+        return Settings(spec.schema, value, owner=owner) if isinstance(value, dict) else value
+    if spec.values is not None:
+        if not isinstance(value, dict):
+            return value
+        return MappingProxyType(
+            {key: _read(spec.values, item, f"{owner}.{key}") for key, item in value.items()}
+        )
+    if float in _types(spec.type) and isinstance(value, int) and not isinstance(value, bool):
+        return float(value)
+    return value
+
+
 def describe(schema: dict[str, Field]) -> list[dict]:
     """A whole schema as a list of published fields, in declaration order."""
     return [spec.describe(name) for name, spec in schema.items()]
 
 
 def validate(
-    schema: dict[str, Field], config: dict, *, strict_keys: bool = False, where: str = ""
+    schema: dict[str, Field],
+    config: dict,
+    *,
+    strict_keys: bool = False,
+    where: str = "",
+    hints: dict[str, str] | None = None,
 ) -> list[str]:
     """Config errors for *config* against *schema*, in the same voice as a hand-written check.
 
@@ -249,7 +290,9 @@ def validate(
 
     *where* is the path of the block *config* is, for a schema checked as part of a larger one: its
     keys are then named ``where.key``, and an unknown one is refused as a key of that block rather
-    than of the component. A field declaring a ``schema`` is descended into with its own path.
+    than of the component. A field declaring a ``schema`` is descended into with its own path, and
+    one declaring ``values`` into each value with the value's name on the path. *hints* are the
+    block's field's (:attr:`Field.hints`): an unknown key found there is refused with its hint.
     """
     errors: list[str] = []
     for name, spec in schema.items():
@@ -258,11 +301,7 @@ def validate(
             errors.append(
                 f"schema error: '{path}' is required AND has a default, which cannot both be true"
             )
-        if spec.schema is not None and (dict not in _types(spec.type) or spec.default is not None):
-            errors.append(
-                f"schema error: '{path}' declares its keys, so it must take a dict and declare no "
-                f"default of its own -- its keys' defaults are its default"
-            )
+        errors += _declaration_errors(path, spec)
         if name not in config:
             if spec.required:
                 doc = f" -- {spec.doc}" if spec.doc else ""
@@ -275,12 +314,38 @@ def validate(
         owner = f"a key of '{where}'" if where else "a setting of this component"
         for key in config:
             if key not in known:
-                near = nearest(key, schema)
-                suggestion = f" -- did you mean '{near}'?" if near else ""
+                if key in (hints or {}):
+                    suggestion = f" -- {hints[key]}"
+                else:
+                    near = nearest(key, schema)
+                    suggestion = f" -- did you mean '{near}'?" if near else ""
                 path = f"{where}.{key}" if where else key
                 errors.append(
                     f"'{path}' is not {owner}{suggestion}. Known: {', '.join(sorted(schema))}"
                 )
+    return errors
+
+
+def _declaration_errors(path: str, spec: Field) -> list[str]:
+    """What is wrong with the declaration itself: shapes no world could satisfy or act on."""
+    errors = []
+    if spec.schema is not None and spec.values is not None:
+        errors.append(
+            f"schema error: '{path}' declares both fixed keys and a field for every value; a "
+            f"mapping is one or the other"
+        )
+    for declared, whose in ((spec.schema, "its keys"), (spec.values, "its values")):
+        if declared is not None and (dict not in _types(spec.type) or spec.default is not None):
+            errors.append(
+                f"schema error: '{path}' declares {whose}, so it must take a dict and declare no "
+                f"default of its own -- {whose}' defaults are its default"
+            )
+    if spec.hints and spec.schema is None and spec.choices is None:
+        errors.append(
+            f"schema error: '{path}' declares hints but no keys or choices to refuse them beside"
+        )
+    if spec.values is not None:
+        errors += _declaration_errors(f"{path}.<name>", spec.values)
     return errors
 
 
@@ -299,13 +364,20 @@ def _check_value(name: str, spec: Field, value: Any) -> list[str]:
     if spec.length is not None and isinstance(value, Sequence) and len(value) != spec.length:
         errors.append(f"'{name}' must have exactly {spec.length} entries, got {len(value)}")
     if spec.choices is not None and value not in spec.choices:
-        errors.append(f"'{name}' must be one of {', '.join(map(str, spec.choices))}, got {value!r}")
+        hint = (spec.hints or {}).get(value) if isinstance(value, str) else None
+        errors.append(
+            f"'{name}' must be one of {', '.join(map(str, spec.choices))}, got {value!r}"
+            + (f" -- {hint}" if hint else "")
+        )
     if number and spec.minimum is not None and value < spec.minimum:
         errors.append(f"'{name}' must be >= {spec.minimum}{_unit(spec)}, got {value}")
     if number and spec.maximum is not None and value > spec.maximum:
         errors.append(f"'{name}' must be <= {spec.maximum}{_unit(spec)}, got {value}")
     if spec.schema is not None and isinstance(value, dict):
-        errors += validate(spec.schema, value, strict_keys=True, where=name)
+        errors += validate(spec.schema, value, strict_keys=True, where=name, hints=spec.hints)
+    if spec.values is not None and isinstance(value, dict):
+        for key, item in value.items():
+            errors += _check_value(f"{name}.{key}", spec.values, item)
     return errors
 
 

@@ -1324,6 +1324,24 @@ declares none of its own. ``describe`` publishes the keys under the block's ``fi
 ``Config::`` block on this page nests them as a world writes them. A block whose keys are open (a
 model's parameters, passed through) stays a plain ``Field(dict)``.
 
+A **mapping from names the world chooses** -- one entry per actuator of a model -- declares what each
+value is, as a field of its own::
+
+   CONFIG_SCHEMA = {"each": Field(dict, values=Field(dict, schema=GAINS), doc="by actuator name")}
+
+Every value is checked against it and named by its path (``'each.wrist_3.p' must be >= 0.0``), a
+value declared as a block strictly. ``self.settings.each`` is a read-only mapping of the names the
+world wrote, each read through the field -- ``self.settings.each["wrist_3"].p``, with the block's
+defaults filled. ``describe`` publishes the value's field under ``values``, and the ``Config::``
+block shows it as one ``<name>:`` entry. ``roqsim.actuators.ACTUATORS`` is declared this way.
+
+A word **from another vocabulary** -- MuJoCo's ``kp`` where a gain block says ``p``, its actuator
+type ``motor`` where a choice says ``effort`` -- is declared as a ``hint`` on the field that refuses
+it: ``Field(dict, schema=GAINS, hints={"kp": "use 'p'"})`` for a key of a block,
+``Field(str, choices=..., hints={"motor": "use effort"})`` for a value. It is refused like any other
+unknown key or value, in one error that carries the hint in place of the nearest-name suggestion,
+and nothing reads it.
+
 A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
 (``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
 block, and ``present``, which the base class checks for every plugin). The same guard test holds
