@@ -206,7 +206,10 @@ def test_every_out_topic_type_a_shipped_plugin_declares_has_a_converter():
         for type_path in out_types(tree):
             declared.setdefault(type_path, set()).add(entry.name)
 
-    assert declared, "the scan found no out-endpoint type hints; has the declaration shape changed?"
+    # The shipped plugins declare their endpoints with decorators, which the typemap binds; this
+    # guards a hand-built one, so the scan may find none. That it would find one is checked here.
+    probe = 'Endpoint(direction="out", backend={"ros2": {"type": "pkg.msg.Probe"}})'
+    assert list(out_types(ast.parse(probe))) == ["pkg.msg.Probe"], "the scan misses a type hint"
     # std_msgs primitives are served by the reflective fallback by design -- they have `data`.
     missing = {
         type_path: sorted(plugins)

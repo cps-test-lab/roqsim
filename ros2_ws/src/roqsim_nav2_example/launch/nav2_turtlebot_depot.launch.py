@@ -1,9 +1,8 @@
 """nav2 + roqsim TurtleBot 4 in the Depot world, with **AMCL** localization.
 
 This is the Gazebo-compatible bring-up: it mirrors nav2's ``tb4_simulation_launch.py`` (Depot world,
-AMCL, the same map), but drives the roqsim MuJoCo simulator instead of gz. Together with a ground-truth
-``<model>_base_link_gt`` TF (published by the ``ground_truth_pose`` plugin in the world), it lets
-roqsim stand in for Gazebo behind the *same* scenario: the ROS graph a nav2 client sees is the same.
+AMCL, the same map), but drives the roqsim MuJoCo simulator instead of gz, so roqsim stands in for
+Gazebo behind the *same* scenario: the ROS graph a nav2 client sees is the same.
 
 Starts: the sim + ROS bridge (``roqsim_ros_bridge``) running the Depot world, the TB4 kinematic tree,
 and nav2 itself via nav2_bringup's ``bringup_launch.py`` — the same file the Gazebo bring-up ends up

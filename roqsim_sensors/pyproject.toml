@@ -45,7 +45,6 @@ zivid = "roqsim_sensors.plugins.zivid:ZividPlugin"
 spawn_sensor = "roqsim_sensors.plugins.spawn_sensor:SpawnSensorPlugin"
 fiducial_marker = "roqsim_sensors.plugins.fiducial_marker:FiducialMarkerPlugin"
 sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCoverageProbePlugin"
-ground_truth_pose = "roqsim_sensors.plugins.ground_truth_pose:GroundTruthPosePlugin"
 object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
 # The pixel-level counterpart of object_detector: that one says WHERE an object is in the robot's
 # frame, this says WHICH PIXELS are it -- the ground truth a segmentation or detection metric is
