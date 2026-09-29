@@ -19,6 +19,7 @@ from roqsim_sensors.plugins.imu import ImuPlugin
 from roqsim.config import PluginError, load_config_from_dict
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import Imu
 
 GRAVITY = 9.81
 
@@ -151,7 +152,7 @@ def test_the_mount_orientation_rotates_the_reading_into_the_sensor_frame():
     this wrong silently puts a robot's pitch rate on its roll channel, which a filter absorbs as
     plausible motion rather than rejecting.
     """
-    reading = _plugin(_engine(rpy=[math.pi / 2, 0.0, 0.0])).read()
+    reading = _plugin(_engine(pose={"orientation": {"roll": math.pi / 2}})).read()
     accel = np.asarray(reading.linear_acceleration)
     assert accel[1] == pytest.approx(GRAVITY, rel=2e-2)
     assert abs(accel[0]) < 0.2 and abs(accel[2]) < 0.2
@@ -163,10 +164,10 @@ def test_the_mount_orientation_rotates_the_reading_into_the_sensor_frame():
 
 def test_the_mount_offset_reaches_the_published_static_transform():
     """The frame a bridge publishes comes off the same site the sensors read."""
-    engine = _engine(pos=[0.1, 0.0, 0.2], frame_id="imu_link")
+    engine = _engine(pose={"position": {"x": 0.1, "z": 0.2}}, frame_id="imu_link")
     endpoint = next(e for e in engine.ctx.interface.all() if e.name == "imu")
     hints = endpoint.backend["ros2"]
-    assert hints["type"] == "sensor_msgs.msg.Imu"
+    assert endpoint.result.cls is Imu  # a sensor_msgs/Imu over ROS
     assert hints["topic"] == "imu/data" and hints["frame_id"] == "imu_link"
     assert hints["static_tf"]["parent"] == "base_link"
     assert np.allclose(hints["static_tf"]["translation"], [0.1, 0.0, 0.2], atol=1e-9)
@@ -256,8 +257,8 @@ def test_two_imus_on_one_robot_get_their_own_sites():
                     f"{__name__}:_RobotScene": {},
                     "name": "robot",
                     "components": [
-                        {"imu": {"pos": [0.1, 0, 0]}, "name": "front_imu"},
-                        {"imu": {"pos": [-0.1, 0, 0]}, "name": "rear_imu"},
+                        {"imu": {"pose": {"position": {"x": 0.1}}}, "name": "front_imu"},
+                        {"imu": {"pose": {"position": {"x": -0.1}}}, "name": "rear_imu"},
                     ],
                 }
             ],
@@ -287,8 +288,12 @@ def test_an_imu_at_the_top_of_a_document_is_refused():
 @pytest.mark.parametrize(
     ("config", "expected"),
     [
-        ({"site": "vendor_imu", "pos": [0, 0, 1]}, "would be ignored"),
-        ({"quat": [1, 0, 0, 0], "rpy": [0, 0, 0]}, "not both"),
+        ({"site": "vendor_imu", "pose": {"position": {"z": 1}}}, "would be ignored"),
+        (
+            {"pos": [0, 0, 0.1], "rpy": [0, 0, 1]},
+            "pose: {position: {z: 0.1}, orientation: {yaw: 1.0}}",
+        ),
+        ({"quat": [1, 0, 0, 0]}, "state the orientation in 'pose'"),
         ({"seed": 7}, "not an imu setting"),
         ({"rate_hz": 0}, "must be > 0"),
         ({"accel_stddev": -1}, "must be >= 0"),
@@ -319,7 +324,9 @@ def test_a_body_welded_to_the_world_still_reads_one_g():
     assert accel[2] == pytest.approx(GRAVITY, rel=1e-6)
     assert np.linalg.norm(accel) == pytest.approx(GRAVITY, rel=1e-6)
     # The mount's rotation still applies: rolled 90 deg, the same g lands on the sensor's y.
-    rolled = _plugin(_engine(f"{__name__}:_FixedScene", steps=20, rpy=[math.pi / 2, 0, 0])).read()
+    rolled = _plugin(
+        _engine(f"{__name__}:_FixedScene", steps=20, pose={"orientation": {"roll": math.pi / 2}})
+    ).read()
     assert np.asarray(rolled.linear_acceleration)[1] == pytest.approx(GRAVITY, rel=1e-6)
 
 
@@ -379,4 +386,27 @@ def test_an_absolute_hardwire_still_wins():
         ).ctx.interface.all()
         if e.name == "imu"
     )
-    assert endpoint.backend["ros2"]["topic"] == "/hardware/imu"
+    assert endpoint.topic == "/hardware/imu"
+
+
+class _PrefixedScene(Plugin):
+    """The robot as spawn_robot attaches one: every MJCF name carries the entity's prefix."""
+
+    provides_entity = True
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        base = spec.worldbody.add_body(name="r_base_link", pos=[0, 0, 0.15])
+        base.add_freejoint()
+        base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.15, 0.15, 0.1], mass=5.0)
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(name=self.name, kind="robot", body="r_base_link", meta={"prefix": "r_"})
+        )
+
+
+def test_the_static_transform_hangs_from_the_unprefixed_body():
+    """The frame TF knows is ``base_link``; ``r_base_link`` is a name only the MJCF has."""
+    engine = _engine(f"{__name__}:_PrefixedScene", capture_only=True, body="base_link")
+    endpoint = next(e for e in engine.ctx.interface.all() if e.name == "imu")
+    assert endpoint.backend["ros2"]["static_tf"]["parent"] == "base_link"

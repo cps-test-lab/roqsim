@@ -92,16 +92,39 @@ def test_an_override_can_add_a_component_under_an_owner():
 
 
 def test_an_added_component_behaves_as_though_the_document_declared_it():
-    """It goes back through the same walk, so it is wired, checked and merged identically -- adding
-    an `oakd_camera` sets keys on the model's, exactly as declaring one in the document would, rather
-    than starting a second sensor beside it."""
-    cfg = _cfg({"components": {"r1": {"components": [{"oakd_camera": {"rate_hz": 7.0}}]}}})
+    """It goes back through the same walk, so it is wired, checked and merged identically. The
+    TurtleBot 4 mounts its camera on the `oakd_pro` device, so an `oakd_camera` added under that
+    device sets keys on the model's, exactly as declaring one there would, rather than starting a
+    second sensor beside it."""
+    cfg = _cfg(
+        {
+            "components": {
+                "r1": {
+                    "components": [
+                        {
+                            "spawn_sensor": {},
+                            "name": "oakd",
+                            "components": [{"oakd_camera": {"rate_hz": 7.0}}],
+                        }
+                    ]
+                }
+            }
+        }
+    )
     cameras = [
         (s.address, s.config["rate_hz"], s.config["camera"])
         for s in cfg.plugins
-        if s.ref == "oakd_camera" and s.entity == "r1"
+        if s.ref == "oakd_camera" and s.entity == "r1.oakd"
     ]
-    assert cameras == [("r1.oakd_camera", 7.0, "oakd_rgb")]
+    assert cameras == [("r1.oakd.oakd_camera", 7.0, "oakd_rgb")]
+
+
+def test_a_bare_camera_added_beside_the_mounted_device_is_refused():
+    """Added directly under the robot, an `oakd_camera` would merge into nothing -- the model's camera
+    is `r1.oakd.oakd_camera` -- and build as a second camera with no camera to render from. It is
+    refused naming the address it belongs under, as a document declaring it there is."""
+    with pytest.raises(PluginError, match=r"r1\.oakd\.oakd_camera -- nest it under 'r1\.oakd'"):
+        _cfg({"components": {"r1": {"components": [{"oakd_camera": {"rate_hz": 7.0}}]}}})
 
 
 def test_adding_takes_a_list_of_entries():

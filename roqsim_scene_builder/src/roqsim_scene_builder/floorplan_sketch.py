@@ -22,6 +22,7 @@ def sketch_floorplan_by_human(
     initial: dict | None = None,
     timeout_s: float | None = None,
     title: str = "",
+    size: str = "760x760",
 ) -> dict:
     """Ask a human to author a 2D floorplan in a native top-view window; return the structured sketch.
 
@@ -87,8 +88,9 @@ def sketch_floorplan_by_human(
 
     A valid ``initial``: each line has a unique integer ``id`` and numeric ``x0_m/y0_m/x1_m/y1_m``
     (metres, y up); each door's ``line_id`` matches a line and ``t`` is 0..1 along that wall; a room's
-    ``line_ids`` reference existing lines forming a closed loop. Malformed input surfaces as a
-    ``RuntimeError`` naming the field the window choked on -- fix it and call again.
+    ``line_ids`` reference existing lines forming a closed loop. ``version`` may be omitted (it means
+    1); a newer version, or any key outside the ones listed under Returns, is refused. Malformed input
+    surfaces as a ``RuntimeError`` naming the field the window choked on -- fix it and call again.
 
     Args:
         title: a short heading shown atop the panel in a larger font (e.g. "Apartment -- 3 rooms");
@@ -102,10 +104,14 @@ def sketch_floorplan_by_human(
             ``description`` seeds the scene-description box. Its top-level ``comment`` is ignored (the
             human's comment box always opens empty).
         timeout_s: seconds to wait for a sketch before raising ``TimeoutError`` (default 600).
+        size: the canvas size in pixels, ``WxH`` (default ``760x760``), as the CLI's ``--size``.
 
     Returns:
-        ``{"comment": str, "description"?: str, "rooms": [...], "lines": [...], "doors": [...],
-        "markers": [...]}`` -- ``comment`` is the human's free-text feedback typed in the window
+        ``{"version": 1, "comment": str, "description"?: str, "rooms": [...], "lines": [...],
+        "doors": [...], "markers": [...]}`` -- ``version`` is the sketch version
+        (``roqsim.floorplan_geometry.SKETCH_VERSION``); keep it when the sketch is stored, since
+        every reader refuses a newer one and any key it does not read. ``comment`` is the
+        human's free-text feedback typed in the window
         (their reply to you; may be empty); ``description`` is the floorplan-level object-placement
         intent (present only when non-empty). rooms first, then lines (no overall dimensions; the
         canvas is unbounded). Each **room** is ``{"id", "name", "line_ids", "description"?}`` (a
@@ -123,7 +129,7 @@ def sketch_floorplan_by_human(
         TimeoutError: if no sketch arrives within the timeout.
         RuntimeError: if the window closed without sending or failed to start.
     """
-    extra: list[str] = ["--message", message]
+    extra: list[str] = ["--message", message, "--size", size]
     if title:
         extra += ["--title", title]
 

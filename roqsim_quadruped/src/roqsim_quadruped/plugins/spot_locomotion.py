@@ -9,6 +9,10 @@ Spot's MuJoCo position actuators (kp=60 / kv=1.5 in ``spot.xml`` close the PD lo
 per-step torque loop, unlike the G1). Reports the floating base as ``odom`` and the leg joints as
 ``joint_states``.
 
+``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
+policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
+command"). The base's true world pose is the core pose endpoint ``sim/entities/<name>/pose``.
+
 The observation/action convention, default pose, action scale and joint order are transcribed from
 NVIDIA's Isaac ``Isaac-Velocity-Flat-Spot-v0`` env (bundled as ``policy/spot.yaml``), so the policy
 runs on exactly what it was trained on.
@@ -27,6 +31,7 @@ sits rather than a config key::
       max_linear_vel: 1.5          # |vx| clamp (m/s)
       max_lateral_vel: 0.8         # |vy| clamp (m/s)
       max_angular_vel: 1.5         # |yaw_rate| clamp (rad/s)
+      cmd_vel_timeout: 0.0         # s; > 0 stops the robot when no command arrives for this long
       test_cmd: [0.5, 0.0, 0.0]    # optional [vx, vy, w] applied every tick (standalone demo)
 """
 
@@ -39,8 +44,11 @@ import numpy as np
 import torch
 import yaml
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
+from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 from ..policy import DEFAULT_CONFIG, DEFAULT_POLICY
 
@@ -83,6 +91,8 @@ class SpotLocomotionPlugin(Plugin):
 
         # Command (body-frame [vx, vy, yaw_rate]); written by drive(), read by the policy obs.
         self._cmd = np.zeros(3, dtype=np.float32)
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self._odom_frame = SpawnFrame()
 
         # Loaded/resolved in configure().
         self._policy = None
@@ -118,12 +128,12 @@ class SpotLocomotionPlugin(Plugin):
                 errors.append(f"'{key}' must be > 0")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, w]")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
         self._ctx = (
             ctx  # odom/joint readbacks compute from ctx.data on demand (bridge reads at rate)
@@ -193,57 +203,29 @@ class SpotLocomotionPlugin(Plugin):
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
 
-        # -- backend-neutral endpoints (identical contract to diff_drive / g1_locomotion) ------
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": "base_link",
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
+    # -- endpoints: the same contract as diff_drive's, under the robot's namespace ------------
+    @endpoint.stream(Twist)
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step and clamped to the trained range.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed, to the left
+            wz: yaw rate
+        """
+        self.drive(vx, vy, wz)
+
+    @endpoint.out(rate=50.0, ros2={"emit_tf": True})
+    def odom(self) -> Odometry:
+        """The base's pose and twist from the spawn pose; z is its height, about 0.5 m."""
+        x, y, yaw, vx, vy, w, z = self.read_odom()
+        return Odometry.planar(x, y, yaw, vx, vy, w, z=z)
+
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The twelve leg joints' positions and velocities, in the policy's order."""
+        names, positions, velocities = self.read_joint_states()
+        return JointState(list(names), positions, velocities)
 
     # -- command / readback -------------------------------------------------------------------
     def drive(self, vx: float, vy: float, w: float) -> None:
@@ -251,27 +233,12 @@ class SpotLocomotionPlugin(Plugin):
         self._cmd[0] = float(np.clip(vx, -self.max_v, self.max_v))
         self._cmd[1] = float(np.clip(vy, -self.max_vy, self.max_vy))
         self._cmd[2] = float(np.clip(w, -self.max_w, self.max_w))
+        self.watchdog.stamp(self._ctx)
 
     def read_odom(self):
-        # Computed on demand: the bridge calls this only at the endpoint rate (50 Hz), not every
-        # physics step, so there is no per-step cost. Runs on the physics thread inside the bridge's
-        # post_step, reading the same post-mj_step data. Returns (x, y, yaw, vx, vy, w, z); trailing z
-        # is the true base height (Spot stands ~0.5 m up; the bridge tf/odom carry it, nav2 stays 2D).
-        d = self._ctx.data
-        x, y, z = d.xpos[self._base_bid]
-        qw, qx, qy, qz = d.xquat[self._base_bid]
-        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        vgx, vgy = d.qvel[self._base_dadr : self._base_dadr + 2]
-        c, s = np.cos(yaw), np.sin(yaw)
-        return (
-            float(x),
-            float(y),
-            float(yaw),
-            float(c * vgx + s * vgy),
-            float(-s * vgx + c * vgy),
-            float(d.qvel[self._base_dadr + 5]),
-            float(z),
-        )
+        # Computed on demand at the endpoint rate, from the post-mj_step data. Returns
+        # (x, y, yaw, vx, vy, w, z); z is the base height (Spot stands ~0.5 m up), nav2 stays 2D.
+        return planar_odom(self._odom_frame, self._ctx.data, self._base_bid, self._base_dadr)
 
     def read_joint_states(self):
         # Computed on demand (see read_odom). Fancy-indexing qpos/qvel returns fresh arrays.
@@ -287,7 +254,9 @@ class SpotLocomotionPlugin(Plugin):
             d.qvel[self._leg_dadr] = 0.0
             d.ctrl[self._leg_aid] = self._default_angles
             mujoco.mj_forward(ctx.model, d)
+        self._odom_frame.capture(d.xpos[self._base_bid], d.xquat[self._base_bid])
         self._cmd[:] = 0.0
+        self.watchdog.clear()
         self._action[:] = 0.0
         self._target_q = self._default_angles.copy()
         self._counter = 0
@@ -302,6 +271,8 @@ class SpotLocomotionPlugin(Plugin):
         if "test_cmd" in self.config:
             vx, vy, w = self.config["test_cmd"]
             self.drive(float(vx), float(vy), float(w))
+        if self.watchdog.expired(ctx):
+            self._cmd[:] = 0.0
 
         d = ctx.data
         qj = d.qpos[self._leg_qadr]

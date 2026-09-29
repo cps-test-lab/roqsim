@@ -329,7 +329,7 @@ def test_the_whole_path_raises_for_a_world(config, expected):
     """Through instantiate_plugins, which is what a world actually meets."""
     from roqsim.config import PluginError, instantiate_plugins, load_config_from_dict
 
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{"ceiling": config, "name": "roof"}]})
+    cfg = load_config_from_dict({"sim": {}, "components": [{"ceiling": config, "name": "roof"}]})
     with pytest.raises(PluginError, match=expected):
         instantiate_plugins(cfg)
 

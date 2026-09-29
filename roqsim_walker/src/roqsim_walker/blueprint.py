@@ -120,7 +120,7 @@ class BlueprintError(Exception):
 
 def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = None) -> dict:
     """Resolve blueprint ``name`` into a spec dict for :func:`~roqsim_walker.humanoid.build_humanoid`
-    and :class:`~roqsim_walker.nav.controller.WalkerController`.
+    and :func:`~roqsim_walker.animation.make_anim_state`.
 
     Returns keys: ``mesh``, ``materials``, ``tpose``, ``flip``, ``skeleton``, ``collision``,
     ``sole``, ``motion`` (clip kind -> absolute ``.npz`` path). ``motion`` entries passed in override

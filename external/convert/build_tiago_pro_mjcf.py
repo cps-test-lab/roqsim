@@ -336,8 +336,8 @@ def postprocess(base: Path, out: Path) -> None:
     # Explicit attrs beat class defaults in MJCF, so pop them first. rgba is KEPT on visuals: it
     # is the real URDF colour, which is why this port needs no material-recovery step.
     #
-    # density="0" is deliberately kept on visual geoms rather than stripped. robot-porting warns
-    # that a zero-density mesh geom renders as its bounding sphere; that does NOT reproduce here
+    # density="0" is deliberately kept on visual geoms rather than stripped. A zero-density mesh
+    # geom is said to render as its bounding sphere; that does NOT reproduce here
     # (checked by rendering base_link with and without it under MuJoCo 3.11 -- identical mesh), and
     # stripping it instead corrupts the mass: 14 of the 72 source links carry no <inertial>, so
     # MuJoCo derives their inertia from geometry and the visual meshes then contribute ~20 kg of
@@ -503,7 +503,7 @@ def postprocess(base: Path, out: Path) -> None:
     )
 
     # Head RGB-D camera on the source's camera link. fovy 42.5 deg / 640x480 matches roqsim_sensors'
-    # d435 model (the D435 colour stream's vertical FOV), so the two agree on one sensor.
+    # realsense_d435 model (the D435 colour stream's vertical FOV), so the two agree on one sensor.
     # xyaxes puts -z (MuJoCo's view direction) along the link's +x, i.e. looking where the head faces.
     bodies["head_front_camera_link"].insert(
         0,

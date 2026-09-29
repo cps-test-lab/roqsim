@@ -42,6 +42,7 @@ import json
 import re
 import sys
 
+from roqsim import exit_status
 from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
 # Some plugins qualify the header ("Config (in addition to camera_common.CameraPlugin's)::",
@@ -439,6 +440,12 @@ def get_plugin_details(name: str) -> dict:
     defaults, units and bounds, which is what a caller generating a world needs and what prose
     cannot give it. Both come from the declaration validation runs on, so neither can drift from
     behaviour the way a docstring can.
+
+    A plugin that declares endpoints with :mod:`roqsim.endpoint` also gets ``endpoints``: one row per
+    declared endpoint with its name, kind, direction, backends and first docstring line, read off the
+    class without building a world. A hint computed at configure time is not evaluated, so the rows
+    name the backends rather than their contents, and ``conditional`` marks an endpoint a config
+    may switch off. Endpoints a plugin adds by hand with ``ctx.interface.add`` are not listed.
     """
     matches = [ep for ep in _entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
@@ -471,6 +478,11 @@ def get_plugin_details(name: str) -> dict:
         details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", True))
         if not details["strict_keys"] and getattr(cls, "OPEN_KEYS", ""):
             details["open_keys"] = cls.OPEN_KEYS
+    from roqsim.endpoint import declared
+
+    endpoints = [spec.describe(cls) for spec in declared(cls)]
+    if endpoints:
+        details["endpoints"] = endpoints
     return details
 
 
@@ -481,8 +493,11 @@ def main(argv=None):
     import argparse  # pylint: disable=import-outside-toplevel
 
     parser = argparse.ArgumentParser(
-        prog="python -m roqsim.introspection",
+        prog="roqsim plugins",
         description="JSON introspection of the roqsim.plugins registry.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT, note="2 includes `describe` naming no registered plugin."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -497,7 +512,7 @@ def main(argv=None):
     else:  # describe
         result = get_plugin_details(args.name)
         print(json.dumps(result, indent=2))
-        sys.exit(1 if "error" in result else 0)
+        sys.exit(exit_status.BAD_INPUT if "error" in result else exit_status.OK)
 
 
 if __name__ == "__main__":

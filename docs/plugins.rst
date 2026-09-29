@@ -74,10 +74,21 @@ catalog above once ROS is sourced and the workspace is on the path.
        warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides, snapped onto the
        physics grid like every other publish rate — see the note below), ``owner``
        (optional endpoint filter for multi-transport splits), ``merged_joint_states``
-       (see the note below).
+       (see the note below). Also: ``node_name`` (default ``roqsim_bridge``); ``frame_prefix``
+       (prefix for frame ids, default the ``namespace``); ``publish_static_tf`` (default ``true``;
+       ``false`` where a ``robot_state_publisher`` publishes the same mount links); ``domain_id``
+       (an isolated ROS context on that domain, so several bridges can run in one process) with
+       ``strip_namespace`` (a namespace, or list, removed so the robot a bridge serves keeps
+       local names on its domain). ``clock_rate_hz: 0`` publishes no ``/clock``.
    * - ``sim_interfaces``
-     - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
-       required config; reuses the bridge's node when co-loaded.
+     - ``simulation_interfaces`` control plane. Serves ``get_simulator_features``,
+       ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
+       ``get_entity_state``, ``set_entity_state``, ``get_simulation_state``,
+       ``set_simulation_state``, ``step_simulation`` and ``reset_simulation`` (relative names).
+       Listed after a ``ros2_bridge`` they live on the bridge's node, and so in its ``namespace``
+       (plugins configure in world order, and the bridge shares its node when it configures);
+       otherwise on a node of their own named by ``node_name`` (default ``roqsim_interfaces``). No
+       required config. What each does is in :doc:`interfaces`.
 
 .. note::
 
@@ -145,7 +156,8 @@ catalog above once ROS is sourced and the workspace is on the path.
 
    It must match the namespace the consuming stack uses, and it is **all or nothing**: every publisher
    of a link in the chain has to agree on one topic. Note this scopes the TF *topics* only — frame ids
-   (``map``, ``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed.
+   (``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed. The
+   global frames ``world`` and ``map`` are never namespaced.
    Setting the bridge's ``namespace`` does **not** do this: tf2_ros's broadcasters hardwire the
    absolute ``/tf``, which is exactly why this option exists.
 
@@ -200,9 +212,9 @@ Model plugin manifests
 A robot's controller and sensors are intrinsic to the *model*, not the *world*, so they ship with
 the model in a ``<model>.manifest.yaml`` manifest next to its MJCF. A spawn plugin pulls them in
 automatically, so a world just spawns the robot -- and the same applies to a *device* with more than
-one sensor in it: the bundled ``d435`` is a D435i, so its manifest carries the ``imu`` component with
-the inertial module's own extrinsic, and ``spawn_sensor: {model: d435}`` yields both ``camera/imu``
-and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
+one sensor in it: the bundled ``realsense_d435`` is a D435i, so its manifest carries the ``imu``
+component at the inertial module's own frame, and ``spawn_sensor: {model: realsense_d435}`` yields
+both ``camera/imu`` and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
 component (which is also how "does this device have an IMU" becomes a campaign factor):
 
 .. code:: yaml
@@ -210,7 +222,7 @@ component (which is also how "does this device have an IMU" becomes a campaign f
    components:
      - spawn_robot:
          model: turtlebot4
-         pose: {position: {x: 0, y: 0}}   # diff_drive + lidar + oakd_camera come with it
+         pose: {position: {x: 0, y: 0}}   # diff_drive, the RPLIDAR and the OAK-D come with it
      - ros2_bridge: {}
 
 An arm's manifest can also carry an **eye-in-hand sensor**: a camera among the arm's components rides
@@ -221,13 +233,22 @@ but deliberately leaves ``realsense_d435`` OUT of its manifest -- the arm provid
 decides whether anything renders from it, at what rate, and whether it reprojects to a point cloud.
 
 The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` pulls in that
-arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
-in its ``realsense_d435`` capture plugin.
+arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: realsense_d435}``
+pulls in its ``realsense_d435`` capture plugin.
+
+**Where a spawn puts things is checked at every reset.** An arm's ``home``, a model's keyframe, a
+robot's or a prop's ``pose`` -- once every plugin's ``on_reset`` has applied them, the engine reports
+any two bodies that start inside one another deeper than the contact's tolerance: one WARNING in the
+run's log naming both sides, the entity each belongs to and the depth, and the same finding as a
+``roqsim check`` warning. Left alone, the contact solver separates them on the first steps with
+forces that fling them, and the run fails later looking like a controller fault. Nothing is refused;
+an overlap that is meant is excluded from collision and is then not reported
+(:ref:`architecture §2 <2-lifecycle-reference>`).
 
 An **eye-in-hand** camera, or any sensor that rides something that moves, is
 ``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
 ``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the
-document, with ``pos``/``rpy`` then read relative to that body -- which is what a datasheet or a
+document, with ``pose`` then read relative to that body -- which is what a datasheet or a
 CAD drawing states, and what a world-frame pose cannot be once the carrier moves. An arm whose own
 MODEL ships a camera needs none of this (three do, and their manifests offer the capture plugin);
 this is how every other arm gets one, without a per-trial MJCF edit that travels badly and is
@@ -235,14 +256,47 @@ invisible to anyone reading the world. It is mutually exclusive with ``motion:``
 rides a body has its pose from that body, so moving the sensor means moving what carries it.
 
 A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
-in the robot's own manifest. It is mounted at the vendor's ``parent_frame`` (a body, or a link the
-robot declares in its manifest's ``frames:``) with the vendor joint origin as ``pos``/``rpy``. It
-inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
-are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
-the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
-else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
-none needs one on every mount. The ``spawn_sensor`` and
+in the robot's own manifest. It hangs from a real **frame** of the robot, the link the vendor
+description attaches it to: ``parent_frame`` names a body of the robot or an entry of its manifest's
+``frames:`` block, and ``pose`` is the ``origin`` the robot description passes the device's vendor
+macro, verbatim. A device model's ``mount`` body is the frame that origin places, so the device sits
+where ``robot_state_publisher`` would put it, and its chain is published from that frame, as the
+description's is. A ``parent_frame`` that is neither a body nor a frame of the robot is refused when
+the document expands, with a did-you-mean and the robot's frames listed; ``roqsim catalog model
+<robot>`` lists the frames too.
+
+The ``pose`` is an offset from ``parent_frame``: a ``geometry_msgs/Pose`` in the shape
+``roqsim.pose`` reads everywhere, whose omitted components are **zero** -- there is no resting
+height to fall back on as there is for a world spawn of a robot, and no ``pose`` puts the device
+at the frame itself. That is also how a world or a campaign moves a device: it overrides the
+device's ``pose`` (``robot.rplidar.pose.position.z=0.1``), and the record states the frame and the
+offset. ``pos``/``rpy`` keys are refused with the ``pose:`` they mean.
+
+A mounted device inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace.
+Its components are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by
+nesting it under the device. The device publishes its frame chain as static TF. Its scan frame is
+the mount's ``frame_id``, else the vendor default the device manifest declares as ``frame_id:``; a
+device whose vendor names none needs one on every mount. A device whose vendor macro prefixes its
+links with a ``name`` parameter declares that default as ``device_name:``, and a second mount of it
+on one robot sets its own, as a second instance of the macro would: two mounts that would publish
+any one frame name are refused. A device that declares no ``frames:`` chain has no vendor frame to
+hang from, and a robot mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
+
+A world puts another device on a spawned robot's frame the way the robot's manifest does, by
+nesting it in that robot's ``components:`` -- in the document, or added under the robot's address
+from an override -- with ``parent_frame`` naming the frame and ``pose`` the origin on it. To
+replace the robot's own device there rather than add beside it, switch that one off by its label::
+
+   - spawn_robot: {model: turtlebot4}
+     name: tb4
+     components:
+       - spawn_sensor: {model: realsense_d435, parent_frame: oakd_camera_bracket,
+                        pose: {position: {x: 0.0584, z: 0.09676}}}
+         name: d435
+       - spawn_sensor: {}
+         name: oakd
+         enabled: false
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
 is what a trial needs to place a sensor at run time -- a viewpoint the campaign varies, a camera a
@@ -268,7 +322,7 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   with ``default_plugins: false`` and declare the plugin fully.
 - **Switch one off** with ``enabled: false`` -- as a sibling in the document, or from an override::
 
-     roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+     roqsim sim world.yaml --set components.robot.oakd.oakd_camera.enabled=false
 
   The component is not deleted: it stays addressable, stays in the run's record saying it was turned
   off, and a later override can turn it back on. Disabling an entry disables everything it owns.
@@ -289,11 +343,16 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   being run rather than to something included in it.
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
-  plugins (same shape as a world's ``components:``); the entity name is filled in for you, and each
+  plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
+  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name``, ``license`` and, on an arm,
+  ``end_effector`` (where ``spawn_arm`` mounts a tool) and nothing else: a key outside that set is
+  refused with the nearest known one named, since nothing reads it and a manifest loaded
+  without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
-  prefixed body name without the world having to know it. ``ur10e_custom.manifest.yaml`` ships an
-  ``arm_controller``, an eye-in-hand ``realsense_d415``, and a ``fiducial_marker`` on the wrist.
+  prefixed body name without the world having to know it. A downstream ``ur10e_custom.manifest.yaml``
+  could, for instance, ship an ``arm_controller``, an eye-in-hand ``realsense_d415``, and a
+  ``fiducial_marker`` on the wrist (:doc:`architecture` §4, *Model discovery*).
 
 A ``model:`` name is resolved across **all** installed packages, so a world can spawn a model that
 lives in a different package from the spawn plugin. Register a package's models once::
@@ -310,26 +369,37 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 .. code:: yaml
 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
+   frames:
+     # vendor fixed links this MJCF flattens into base_link, published as static TF
+     - {name: shell_link, parent: base_link, pose: {position: {z: 0.0942}}}
+     - {name: oakd_camera_bracket, parent: shell_link, pose: {position: {x: -0.118, z: 0.05257}}}
    components:
      - diff_drive: {max_linear_vel: 0.46, max_angular_vel: 1.9, wheel_accel_limit: 0.9,
                     cmd_vel_timeout: 0.5, odom_rate_hz: 62.0, publish_joint_states: false}
      - joint_state_publisher: {rate_hz: 62}   # every joint, wheels and suspension, in one message
-     - spawn_sensor:                  # the RPLIDAR A1 device model, at the vendor joint origin
+     - spawn_sensor:                  # the RPLIDAR A1 device model, at its vendor joint
          model: rplidar_a1
          parent_frame: shell_link
-         pos: [-0.04, 0.0, 0.098715]
-         rpy: [0.0, 0.0, 1.5707963267948966]
+         pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}
          frame_id: rplidar_link
        name: rplidar
-     - oakd_camera:                   # renders: needs a GL backend (roqsim selects one on import)
-         camera: oakd_rgb
-         topics: {image: oakd/rgb/preview/image_raw, ...}   # the TurtleBot 4's names
+     - spawn_sensor:                  # the OAK-D Pro device model, at its vendor joint
+         model: oakd_pro
+         parent_frame: oakd_camera_bracket
+         pose: {position: {x: 0.0584, z: 0.09676}}
+       name: oakd
+       components:
+         - oakd_camera:               # renders: needs a GL backend (roqsim selects one on import)
+             topics: {image: oakd/rgb/preview/image_raw, ...}   # the TurtleBot 4's names
      - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
-     - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
-     - ground_truth_pose: {site: mouse, relative_to: base, lazy: true, ...}
-       name: gt_mouse
+     - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
+     - pose_publisher:                # the base in the world, its mouse and IR receiver on it
+         poses: [{frame: ., child: turtlebot4}, {frame: mouse, relative_to: base_link}, ...]
+         rate_hz: 62
+         topics: {poses: _internal/sim_ground_truth_pose}
+       name: gt
 
 The second half is the Create 3 base's own sensor surface -- bumper zones, cliff and IR proximity
 sensors, IMU, and the ground-truth streams its vendor's simulator adapter reads -- declared on the
@@ -488,72 +558,20 @@ steers, because opting out of yielding is not opting out of existing: a mover th
 is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
 whose state is overwritten from ground truth, so the others go round it and it is never pushed.
 
-**Every key, and its default.** ``python -m pydoc roqsim_nav.plugins.navigator`` prints the
-annotated original beside the code it configures, which is the copy that cannot go stale.
+**Every key, and its default.** ``roqsim plugins describe navigator`` publishes the navigator's
+schema: each key with its type, unit and default, and for the ``avoidance``, ``planner``,
+``recovery`` and ``action_names`` blocks the keys each accepts. A key it does not name is refused at
+load, at the top level and inside a block alike, with the nearest key it knows. The ``drive``
+output's keys (``kinematics``, ``heading_gain``, ``max_angular_vel``, ``turn_in_place``,
+``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema;
+``kinematics`` is refused under ``output: mocap``.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 14 62
-
-   * - key
-     - default
-     - what it does
-   * - ``speed``
-     - *required*
-     - m/s the route is followed at.
-   * - ``goals``
-     - ``[]``
-     - The route, world metres: ``[x, y]`` or ``[x, y, yaw]``. Empty means "wait to be told".
-   * - ``output``
-     - ``auto``
-     - ``drive`` | ``mocap`` | ``walker`` | ``module:Class``. ``auto`` probes in a fixed order.
-   * - ``route_mode``
-     - ``plan``
-     - ``plan`` runs A\* between the points; ``exact`` makes the polyline *be* the path.
-   * - ``tracker``
-     - ``waypoint``
-     - ``waypoint`` steers at the goal; ``pure_pursuit`` steers at a carrot along the route, which
-       bounds cross-track error by ``lookahead`` rather than by ``arrival_radius``.
-   * - ``autostart``
-     - ``true``
-     - ``false`` plans at load and holds at the first point until something starts it.
-   * - ``loop``
-     - ``false``
-     - Cycle the route forever rather than stopping at the last point.
-   * - ``arrival_radius``
-     - ``0.25``
-     - m within which a goal counts as reached.
-   * - ``avoidance``
-     - ``{stop: true}``
-     - The block above: ``stop``, ``steer``, ``reroute``, ``params``, and the probe's tuning
-       (``lookahead``, ``width``, ``rays``, ``height``, ``clear_time``, ``yield_time``,
-       ``forget_after``, ``blockage_radius``, ``ignore``).
-   * - ``recovery``
-     - ``{enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}``
-     - For a mover that is wedged rather than merely blocked: it backs away from what stopped it and
-       re-plans. Refused with ``route_mode: exact``, which by definition cannot leave its path.
-   * - ``obstacle_height``
-     - ``[0.1, 1.8]``
-     - The z band a geom must span to be a wall **for this mover**, and the band its probe scans in.
-   * - ``resolution``
-     - ``0.05``
-     - m per planner grid cell. Movers agreeing on this and on ``obstacle_height`` share one raster.
-   * - ``planner``
-     - ``{inflation_radius: <measured>, waypoint_radius: 0.3}``
-     - Inflation defaults to the mover's own measured footprint, so it plans a path it fits through.
-   * - ``update_hz``
-     - ``20`` (``60`` for ``walker``)
-     - The nav pipeline's rate. Physics steps far faster; the output declares what it needs.
-   * - ``namespace``, ``goal_endpoint``, ``actions``
-     - the owner's, ``true``, all
-     - The goal interface: which actions this mover answers, and under what scope. nav2's
-       ``navigate_to_pose`` and ``navigate_through_poses`` send a route; ``start_route``
-       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is served only when
-       ``goals`` is set.
-
-Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
-``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to
-``drive``; ``yaw_rate`` to ``mocap`` and ``walker``.
+**The goal interface.** ``goal_endpoint``, ``actions`` and ``action_names`` say which actions a
+mover answers and under what name, in the owner's ``namespace``. nav2's ``navigate_to_pose`` and
+``navigate_through_poses`` send a route; ``start_route`` (``roqsim_nav_interfaces/StartRoute``) runs
+the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
+number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
+not on ROS.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
@@ -572,7 +590,7 @@ contact against a geom outside its ``ignore`` list::
      components:
        - contact_monitor: {ignore: [floor], min_force: 1.0}
 
-Two things are worth knowing before reaching for a proximity check instead:
+Three things are worth knowing before reaching for a proximity check instead:
 
 * **Define the exception, not the rule.** A wheeled robot is in permanent, intended contact with the
   ground, so the plugin's contract is "everything counts except what you list". Listing what a robot
@@ -582,11 +600,36 @@ Two things are worth knowing before reaching for a proximity check instead:
 * **A latched report is a failed trial.** With ``latch: true`` (the default) the report stays true
   after the robot bounces off, because a trial that hit something does not become clean again. Set
   ``latch: false`` for a live "am I touching anything right now" signal.
+* **A flex is a side like a geom.** A MuJoCo ``<flexcomp>`` touches things through its vertices and
+  elements, not through geoms, and MuJoCo reports its side of a contact with geom id ``-1``. The
+  watched set holds the flexes the entity owns -- those whose vertex (or node) bodies all lie in its
+  subtree, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
+  watchable, ``ignore`` may name a flex, and the report names a flex side ``flex:<name>[v<i>]`` (or
+  ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
+  flex contact a collision of the model's last geom.
 
-**Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
-*controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
-replaced every step and reports the region being touched — its centre in the robot's own frame, and
-whether that region is a point or a line::
+The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
+failure is attributable rather than merely flagged.
+
+Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
+contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
+unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
+with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
+to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
+"did anything hit something" signal but tells you nothing about which robot — and one monitor's
+``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
+
+.. note::
+
+   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
+   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
+   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
+   contact makes "wait for any message" look correct; it is not portable.
+
+**Where is it touching me?** ``contact_location`` is the one a *controller* reads.
+``contact_monitor`` latches a verdict for the end of a trial; this one is replaced every step and
+reports the region being touched — its centre in the robot's own frame, and whether that region is a
+point or a line::
 
    - spawn_robot: {model: ridgeback}
      name: robot
@@ -607,10 +650,11 @@ Three things about it:
   there for logging against a map.
 * **Read it through the blackboard inside a control loop.** The endpoint is rate-limited for
   logging; ``ctx.blackboard.get(f"contact_location:{address}")`` hands back a callable giving the
-  current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
-  use, and the one a per-step control law needs.
+  current reading at full step rate — the same convention ``contact_monitor``
+  (``contact:{address}``) and ``force_torque`` (``ft:{label}``) use, and the one a per-step control
+  law needs.
 
-**Which switch?** ``bumper`` is the fourth, and the one a base's *safety stack* reads. A real bumper
+**Which switch?** ``bumper`` is the one a base's *safety stack* reads. A real bumper
 is a shell with a few switches behind it: it reports which zone is depressed, not where. Each zone is
 a range of bearings of the base frame, a contact whose bearing falls in it presses it, and every
 zone is its own ``bool`` endpoint under ``bumper/<zone>``::
@@ -657,17 +701,29 @@ contact it takes part in and never a statement about one of them. Two consequenc
   value is a floor on both.
 
 An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
-answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
-or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
-is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
-subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
-asking a world to enumerate them is how a pair silently misses the one that actually touches.
+answer and what this plugin declares. Its ``solref``, like every contact's, is subject to MuJoCo's
+floor for the integrator the world runs under (:func:`roqsim.solref.solref_floor`: two steps, or
+about one under ``discrete``, depending on the damping ratio and ``solimp``). ``sim.contact_override``
+refuses a time constant below it and ``roqsim check`` warns about a flex's; a pair's is passed
+through as stated, because the plugin builds before the integrator is resolved. Each side is named
+independently as an ``entity``, a ``body`` or a ``geom``, because a real pair mixes kinds -- the
+floor is a geom while the thing sliding on it is an entity, as in the second line above. An
+``entity`` or ``body`` pairs every geom of that subtree: a robot base with twenty collision geoms
+against a five-geom crate is a hundred pairs, and asking a world to enumerate them is how a pair
+silently misses the one that actually touches.
 
 One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
 contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
 two geoms that were deliberately non-colliding *makes them collide*. Two boxes with
 ``contype="0" conaffinity="0"`` generate no contacts between them, and four the moment a pair is
 declared. Point this at a sensor-only or decorative geom and that geom becomes solid.
+
+**A side cannot be a flex.** A ``<pair>`` names two geoms and MuJoCo has none for a flex, so a
+flex's contacts keep the combination rule whatever is declared. A side that is one -- a ``geom:``
+naming a flex, or an ``entity`` / ``body`` whose subtree owns a collidable flex -- is refused rather
+than paired geom by geom, since the flex is often the very part that touches. Set a flex's contact
+on the flex itself instead: ``<contact friction="..." priority="..."/>`` in its ``<flexcomp>``, where
+a higher ``priority`` than the other side makes its friction the contact's outright.
 
 Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
 sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather
@@ -706,6 +762,12 @@ Three things about it:
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
 
+``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
+distance query per geom pair, a real share of the step budget if done every physics step, while
+200 Hz resolves ~1.5 mm at walking pace — finer than anything downstream consumes. Beyond
+``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
+rather than offering a number that looks measured.
+
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
 integrates the normal force of the very same contacts at the physics step, and reports the impulse,
@@ -729,8 +791,9 @@ Four things about it:
   samples it would decimate are the integral.
 * **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
   implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
-  every contact with exactly one side in the watched subtree and neither side in ``ignore`` /
-  ``ignore_prefixes`` -- so they cannot disagree about which contacts they describe. Their
+  every contact with exactly one side in the watched subtree (a geom, or a flex the entity owns) and
+  neither side in ``ignore`` / ``ignore_prefixes`` -- so they cannot disagree about which contacts
+  they describe. ``contact_location`` and ``bumper`` resolve it too. Their
   ``ignore`` lists should agree for the same reason clearance's should.
 * **There is no force threshold, and configuring one is refused.** ``contact_monitor``'s
   ``min_force`` rejects numerical grazing for a plugin that must answer yes or no; an integral
@@ -754,9 +817,9 @@ neither plugin keeps a contact the other has forgotten). A trial that touched no
 ``impulse_ns`` as a ``std_msgs/Float64``; the peak, the contact time and the geoms the peak was
 against are read in-process.
 
-**Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
-guards an assumption the other two take for granted. A trial that drives something around a floor
-assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
+**Is it still standing on the floor at all?** ``upright_monitor`` guards an assumption the other
+observation plugins take for granted. A trial that drives something around a floor assumes
+throughout that the thing is on the floor -- and when that breaks, the run does not. It keeps
 producing positions, distances and clearances about a body lying on its side or airborne, all of
 them plausible, none of them about the trial anyone designed::
 
@@ -771,7 +834,7 @@ model that was wrong, and fixing the model is the experiment's job -- ``roqsim_w
 pedestrian is the answer for pedestrians, a low centre of mass or a planar joint for anything
 hand-rolled. What the substrate owes is that nobody finds out from the results.
 
-Three things about it:
+Four things about it:
 
 * **Both thresholds are departures, not limits.** ``max_rise_m`` is symmetric, because a body
   sinking through the floor has left the plane exactly as much as one taking off. ``max_tilt_deg``
@@ -789,30 +852,6 @@ Three things about it:
   driven prop and a walker, and nothing that moves them needs to know it exists.
 * **Nothing infers that an entity should be upright.** A quadruped mid-gait, a banking drone and an
   arm's wrist all leave the plane on purpose. It watches what somebody nested it under.
-
-``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
-distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
-world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
-pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
-``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
-
-The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
-failure is attributable rather than merely flagged.
-
-Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
-contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
-unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
-with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
-to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
-"did anything hit something" signal but tells you nothing about which robot — and one monitor's
-``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
-
-.. note::
-
-   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
-   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
-   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
-   contact makes "wait for any message" look correct; it is not portable.
 
 What a robot carries
 --------------------
@@ -911,21 +950,64 @@ Three things to know before writing one:
   nothing either — select the geoms that *own* the contact, or select both sides. Use
   ``roqsim scenes describe <world> --overridable 'gripper_right*'`` to see the names, their current
   friction and their priority, rather than guessing.
-* **A fault that did nothing says so.** One step after the change the plugin compares the *applied*
-  contact against what it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed
-  service reply) or ``untested`` — the last meaning nothing was touching the selected geoms, which is
-  not a failure. It is published as ``override_verified`` too, because a service call leaves no trace
-  in a rosbag and ``mjModel`` is in neither the bag nor the state recording.
-* **A reset returns the world to the configured state**, exactly, from the values read at startup.
-  Without that, repetition 2 of a sweep cell would start already faulted and report a plausible
-  wrong number — ``Engine.reset`` resets ``MjData`` and never touches ``MjModel``.
+* **A fault that did nothing says so.** One step after the change — or after a trial begins, for
+  an override configured ``active: true`` — the plugin compares the *applied* contact against what
+  it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed service reply) or
+  ``untested`` — the last meaning nothing was touching the selected geoms, which is not a failure.
+  It is published as ``override_verified`` too, because a service call leaves no trace in a rosbag
+  and ``mjModel`` is in neither the bag nor the state recording.
+* **A reset returns the world to the configured state**, exactly, from the values read when the
+  override was applied. Without that, repetition 2 of a sweep cell would start already faulted and
+  report a plausible wrong number — ``Engine.reset`` resets ``MjData`` and never touches
+  ``MjModel``. An override the trial left as configured writes nothing, so a value another plugin
+  set on the same rows (a ``payload``'s mass) is kept.
 
 Not every model value can be written at runtime; ``geom_size`` and the ``opt.*`` globals are refused
 by name, with the reason and with what to use instead (for the globals, ``sim.contact_override``,
 which is *global* and applies *before compile* — a different tool for a different job). The full
 allowlist, with what each field does and how it can silently do nothing, is in the plugin's own
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
-measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
+measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
+``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
+flex name; its Young's modulus is not, for the reason in the next section.
+
+A flex's material as a campaign factor
+--------------------------------------
+
+A deformable body is MuJoCo's own ``<flexcomp>``, written in whichever MJCF owns it -- a spawned
+asset, an arm's ``end_effector``, the world MJCF. What an experiment on it varies is its material,
+and ``flex_material`` states that in the world instead::
+
+   components:
+     - spawn_arm: {model: ur5e, prefix: ur5e_, end_effector: {model: soft_tool.xml}}
+       name: ur5e
+     - flex_material: {flex: ur5e_pad, young: 5.0e+5, poisson: 0.45, damping: 0.002,
+                       friction: 1.5, priority: 1}
+       name: pad_material
+
+Each key is then a sweep axis: ``--set components.pad_material.young=2.0e+5``, or a campaign's
+parameter variation over ``components.pad_material.young``. Three things to know:
+
+* **It works on the spec, before compile, because it has to.** MuJoCo bakes ``young`` and
+  ``poisson`` into the compiled element stiffness and keeps neither, so there is no model field a
+  run-time write could reach -- which is why the modulus is a build-time component and not a
+  ``model_override`` row. The contact values and the damping are compiled fields; setting them here
+  keeps one material in one block, and ``model_override`` can still change the four live ones
+  during a run.
+* **The flex is named as it compiles**, with the prefix of the model that brought it in
+  (``ur5e_pad`` above). A name that matches nothing is refused with the list of the model's flexes,
+  so the first run tells you the right one. Plugins build in YAML order, so it is declared after
+  the component that brings the flex in -- below the arm, as here.
+* **A key the flex would not read is refused.** MuJoCo integrates elasticity only for a solid
+  (``dim=3``) or for a shell whose ``elastic2d`` is not ``none``; a modulus on a rope, on a shell left
+  at ``none``, or on a rigid flex would run exactly as without it. ``elastic2d`` and ``thickness`` can
+  be set in the same block, so a shell can be made elastic here.
+
+Write an exponent as ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string -- refused,
+with that fix. A flex made elastic here is integrated under ``discrete`` when ``sim.integrator`` is
+``auto``, because the integrator is chosen after every plugin has built. The integrator's rules are
+in :mod:`roqsim.flex`; the material's, and the MuJoCo version they were measured on, are in
+:mod:`roqsim.plugins._flex_material`.
 
 Perception ground truth
 -----------------------
@@ -940,7 +1022,7 @@ reports which PIXELS an object covers -- what an IoU, a mask AP or a training se
        name: robot
        components:
          - segmentation_camera:
-             camera: oakd_rgb
+             camera: oakd_oakd_rgb      # the OAK-D's camera, behind its mount's `oakd_` prefix
              classes:
                - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
                - {class_id: 2, name: person, entities: [walker_1]}
@@ -971,10 +1053,64 @@ were seen in; they are correspondingly not contiguous, which is why the detectio
 And class id **0 is background**: a declared class with id 0 would be indistinguishable from an
 unlabelled geom, so it is refused at load.
 
+.. _paths:
+
+Paths: endpoints and frames
+---------------------------
+
+Everything a world offers by name is addressed by one grammar, a path ``<component>/<name>``
+(:mod:`roqsim.paths`). The leading segments are the address of a component -- its world entry's
+dotted address, dots as slashes, so ``tb4.oakd`` is ``tb4/oakd`` -- as deep as they name one; the
+last segment, or the rest, is a name that component offers:
+
+* **An endpoint** of the plugin it names: ``tb4/diff_drive/cmd_vel``, ``ur5e/force_torque/tare``
+  (:doc:`control`). An endpoint is also named by the entity that owns it and its name
+  (``entity_call(entity: 'ur5e', command: 'force_torque/tare')``) where that entity has one of that
+  name.
+* **A frame** of the entity it names: one of its bodies, its sites, the frames its ``frames:`` block
+  declares, or a device's frame chain, each named as TF shows it, without the model prefix:
+  ``tb4/base_link``, ``tb4/mouse``, ``tb4/oakd_camera_bracket``,
+  ``tb4/oakd/oakd_rgb_camera_optical_frame``, ``ur5e/tool_site``. The entity's path alone,
+  ``tb4``, is its root: the pose of the entity itself.
+
+The caller says which kind it wants, so an endpoint and a frame of one name never collide. Within a
+kind, a path that names two things -- a body and a site of one name -- is refused naming both, and an
+unknown path is refused with the nearest known one and what its component offers. In a plugin
+nested under an entity, a frame path is relative to that entity: ``.`` is the entity itself, and a
+leading ``/`` starts at the top of the world. A plugin resolves one with
+:func:`roqsim.frames.resolve_frame` and reads its pose with :func:`roqsim.frames.frame_pose`, which
+takes both from the core pose data: an entity's root from its pose endpoint
+``sim/entities/<name>/pose``, a body from ``data.xpos``/``xquat``, a site from ``site_xpos``/``xmat``.
+
+Publishing true poses (``pose_publisher``)
+------------------------------------------
+
+A ROS stack that reads simulator ground truth off a topic -- a vendor simulator's adapter that turns
+true poses into an optical-flow reading or a dock's infrared field -- gets it from ``pose_publisher``,
+the counterpart of Gazebo's ``PosePublisher``. Each entry names a frame by its path, and optionally
+the frame it is relative to and the child name it goes out under::
+
+   components:
+     - spawn_robot: {model: turtlebot3_waffle}
+       name: robot
+     - pose_publisher:
+         poses:
+           - {frame: robot}                                     # map -> robot
+           - {frame: robot/lds01/base_scan, relative_to: robot/base_link, child: lidar}
+         rate_hz: 30
+         topics: {poses: ground_truth}
+
+Every pose is one endpoint, ``poses/<child>``, carrying a :class:`~roqsim.types.Transform` from the
+``relative_to`` frame's TF name (``world_frame``, default ``map``, for the world) to the child; all
+go out on the one topic, and ROS carries each as a one-transform ``tf2_msgs/TFMessage``. ``lazy:
+true`` skips the reads while nobody subscribes. The TurtleBot 4's manifest and the Create 3 world's
+dock carry one each for the Create 3 stack (:doc:`create3_stack`). An analysis does not need it: the
+recording holds every body's true pose (:doc:`ground_truth`).
+
 What a run cost
 ---------------
 
-``energy_monitor`` is the third observation plugin, beside the two that watch geometry: it meters the
+``energy_monitor`` is the observation plugin that watches effort rather than geometry: it meters the
 actuators that move a robot and integrates their mechanical power, so "energy per metre", "how far on
 a charge" and "which planner is cheaper" become numbers a run produces rather than numbers an
 analysis fits::
@@ -1009,8 +1145,9 @@ load's energy instead of drawing it from the pack::
          - energy_monitor: {efficiency: 0.85, idle_w: 35.0, resistive_w_per_nm2: 0.012}
 
 The torque metered is the one a real drive supplies: the actuator's own force **plus its share of
-the gravity-compensation force**. MuJoCo carries a compensated arm's weight outside the actuator, so
-``actuator_force`` reads exactly zero on a joint holding a payload against gravity -- and since every
+the gravity-compensation force**. MuJoCo adds a compensated joint's gravity term to
+``qfrc_actuator`` after the actuator's own force is computed, so ``actuator_force`` reads exactly zero
+on a joint holding a payload against gravity -- and since every
 position- and impedance-driven arm is compensated, metering it alone would report an arm that is free
 to hold a load up and free to lift one. It is the same quantity ``arm_controller`` reports as a
 joint's effort, and for the same reason. Under ``control: effort``, where nothing is compensated
@@ -1027,10 +1164,11 @@ forces -- the effort metric a paper falls back on where its platform's electrica
 published, accumulated here at the physics rate rather than at whatever rate ``/joint_states`` was
 published at.
 
-Which actuators count is derived, not configured: every actuator driving a body of the robot's
-kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
-joint does not need the world edited. An entity with no actuators is an error, because a meter
-reading zero forever looks exactly like a robot that costs nothing to drive.
+Which actuators count is derived by default (``actuators:`` narrows it to named ones): every
+actuator driving a body of the robot's kinematic subtree, so a world's other machines are not on
+this robot's bill and a model that gains a joint does not need the world edited. An entity with no
+actuators is an error, because a meter reading zero forever looks exactly like a robot that costs
+nothing to drive.
 
 **It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
@@ -1187,6 +1325,284 @@ it does not own -- opts out and says why::
 ``describe`` publishes the reason beside ``strict_keys: false``, and the guard test refuses an open
 schema without one.
 
+Declaring a plugin's endpoints
+------------------------------
+
+A plugin marks the methods that are its I/O ports (see :doc:`interfaces` for what an endpoint is).
+The method is the endpoint: its name is the endpoint's name, its docstring's first line the
+endpoint's documentation, its signature the endpoint's schema, and its payload one of the neutral
+types of ``roqsim.types`` or a dataclass of the plugin's own. A complete plugin:
+
+.. code-block:: python
+
+   import numpy as np
+
+   from roqsim import endpoint
+   from roqsim.plugin import Plugin
+   from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
+
+   class Base(Plugin):
+       requires_owner = True
+
+       def __init__(self, config=None, **kw):
+           super().__init__(config, **kw)
+           self.odom_rate_hz = float(self.config.get("odom_rate_hz", 50.0))
+           self.publish_joint_states = bool(self.config.get("publish_joint_states", True))
+           self.pose = [0.0, 0.0, 0.0]
+           self.twist = (0.0, 0.0)
+
+       @endpoint.stream(Twist)
+       def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+           """Body-frame velocity command, applied once per step.
+
+           Args:
+               vx: forward speed
+               vy: sideways speed; this base drops it
+               wz: yaw rate
+           """
+           self.twist = (vx, wz)
+
+       @endpoint.out(rate="odom_rate_hz", ros2={"emit_tf": True})
+       def odom(self) -> Odometry:
+           """Odometry of the base."""
+           x, y, yaw = self.pose
+           return Odometry.planar(x, y, yaw, vx=self.twist[0], wz=self.twist[1])
+
+       @endpoint.out(rate="odom_rate_hz", when="publish_joint_states")
+       def joint_states(self) -> JointState:
+           """The wheels' positions and velocities."""
+           return JointState(["left", "right"], np.zeros(2), np.zeros(2))
+
+       @endpoint.command
+       def stop(self) -> None:
+           """Stop the base now."""
+           self.twist = (0.0, 0.0)
+
+Over ROS this is ``geometry_msgs/Twist`` on ``cmd_vel``, ``nav_msgs/Odometry`` on ``odom`` with its
+``odom -> base_link`` transform, ``sensor_msgs/JointState`` on ``joint_states`` and a
+``std_srvs/Trigger`` service ``stop``, each under the namespace of the entity the plugin is nested
+in. The plugin names no ROS type: the bridge maps each payload type to its message.
+
+**Kinds.**
+
+* ``endpoint.out`` -- the method takes no parameters and returns the payload, on the physics thread
+  when a bridge reads it. The return annotation is the payload's type.
+* ``endpoint.command`` -- a request with an outcome. ``write`` can be called from any thread and
+  returns a future holding what the method returned or raised; the method runs on the physics
+  thread. A command without parameters is a ``Trigger`` service over ROS.
+* ``endpoint.stream`` -- an inbound stream. ``write`` keeps the latest parameters, and the method is
+  called with the newest once per step; values superseded within a step are never applied.
+
+**Payloads.** A ``stream`` or ``command`` names its payload type as the decorator's argument
+(``@endpoint.stream(Twist)``), and its parameters are the fields of that type it uses, by name and
+unit -- a parameter that is not a field, or is in another unit, is refused when the class is read.
+Or it takes one parameter annotated with the type, which receives the whole value. An ``out``
+returns the type. Payloads are dataclasses, never positional tuples.
+
+**Parameters and fields.** Annotate with the unit aliases of ``roqsim.types`` (``Speed``,
+``AngularSpeed``, ``Angle``, ``Degrees``, ``Length``, ``Force``, ``Torque``, ``Mass``, ``Duration``,
+``Frequency``, ``Acceleration``; ``Point3``, ``Quaternion``, ``Velocity3``, ``AngularVelocity3``,
+``Force3``, ``Torque3``, ``Acceleration3`` for vectors), or ``Annotated[float, Unit("...")]`` with
+a unit spelled as a config ``Field``'s. Document a parameter in the docstring's ``Args:`` section and
+a dataclass field in its ``Attributes:`` section; a doc string inside ``Annotated`` is refused, as is
+an ``Args:`` entry naming no parameter. A parameter without a default is required. A bridge passes
+parameters by name, as a mapping. A bare value (not a mapping) is shorthand for an endpoint with
+exactly one parameter: it binds to that one. An endpoint with no parameters refuses it, and one with
+several refuses it naming them, never guessing::
+
+   override.write(True)            # def override(self, data: bool) -> data=True
+   override.write({"data": True})  # the same, spelled out
+
+A mapping always names parameters, so a single ``dict`` parameter is still passed wrapped.
+``write`` refuses a missing, unknown or mistyped parameter before anything is queued, naming each
+(:class:`~roqsim.endpoint.ParameterError`). ``roqsim plugins describe <name>`` publishes all of
+it, and how each installed transport carries the endpoint, without building a world. Annotations
+must resolve at run time: import a type used in one at module level, not under ``TYPE_CHECKING``.
+
+**Options** name attributes or config keys rather than wrapping them in lambdas:
+
+* ``rate="odom_rate_hz"`` -- an ``out``'s publish rate, from the plugin attribute of that name, else
+  the config key; a number is a fixed rate.
+* ``when="publish_joint_states"`` -- the endpoint exists only when that attribute (else config key)
+  is true.
+* ``name=`` -- where the endpoint's name is not the method's.
+* ``each="joint_names"`` -- a family, one endpoint per item, named ``<name>/<item>`` (or ``name``
+  with ``{item}`` substituted); the method gets the item as its first argument.
+* ``owner=`` / ``namespace=`` -- an endpoint that belongs to another entity than the one the plugin
+  is nested under (``endpoint_owner``, ``endpoint_namespace``).
+* ``lazy=True`` -- an ``out`` whose read is skipped while nobody subscribes; ``lazy="lazy"`` reads
+  it per instance from that attribute (else config key), and describe names the key.
+* ``confirm="report"`` -- a ``command`` whose effect is only known after a step (a fault that landed
+  or did not) names an ``out`` endpoint of the same plugin whose value, recorded in the
+  ``post_step`` of the step that applied the command, confirms it: a caller over the control socket
+  (:doc:`control`) gets that value in the reply.
+
+Each also takes a callable of the plugin (``(plugin, item)`` in a family) for a value that has to be
+computed.
+
+**Transport hints are deviations.** ``ros2=`` gives only what the type's mapping does not: a frame
+id (``frame_id``, ``child_frame_id``), ``stamped`` (``TwistStamped`` for a ``Twist``, ``Pose``
+rather than ``PoseStamped``), ``emit_tf``, a ``static_tf``, ``static``, a ``topic`` other than the
+endpoint's name, a ``qos``, a ``field`` of a structure to publish alone, or ``type`` naming a message the type
+maps to by field name (see below). A dict, a callable of the plugin returning one -- for a value
+``configure`` resolves -- or ``None`` to keep the endpoint off ROS. The control socket
+(:doc:`control`) serves every endpoint as its payload type, with no hint; ``ipc=None`` keeps one off
+it.
+
+**A topic derived from another endpoint's.** A hint's ``topic`` (a service's ``name``) may name
+another endpoint of the same plugin in braces: it is rendered when the plugin registers, from the
+topic that endpoint is carried on after the world's ``topics:``, so renaming the one moves the other
+with it. ``..`` steps out of that topic's last segment, as in a path. A name the plugin does not
+register fails the world::
+
+   @endpoint.out(ros2={"type": "sensor_msgs.msg.CompressedImage", "topic": "{image}/compressed"})
+   def image_compressed(self) -> Image: ...        # topics: {image: /cam/rgb} -> /cam/rgb/compressed
+
+   @endpoint.out(ros2={"topic": "{depth}/../camera_info"})
+   def depth_camera_info(self) -> CameraInfo: ...  # beside the depth image
+
+**Transforms.** An endpoint returning a ``Transform`` (``parent``, ``child``, ``translation`` in m,
+``rotation`` as ``(w, x, y, z)``) or a ``Transforms`` (a list of them) publishes a
+``tf2_msgs/TFMessage`` stamped with sim time: the parent is the value's, or the ``frame_id`` hint
+(default ``map``) where the value leaves it empty, namespaced as every frame id is; the child is
+published as given. On ``/tf`` it takes ``topic: /tf``. With ``static: true`` the endpoint's first
+value is sent once on the latched ``/tf_static`` instead, parent and child namespaced, as a
+``static_tf`` hint's transforms are::
+
+   @endpoint.out(ros2={"static": True, "frame_id": "base_link"})
+   def mounts(self) -> Transforms:
+       """The fixed links of the sensor mount."""
+
+**Registration is the engine's.** After a plugin's ``configure`` returns, the engine registers its
+endpoints (``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a
+bridge listed later binds them. A test that calls ``configure`` itself calls
+``plugin.register_endpoints(ctx)`` after it. A port whose name or number is only known during the run
+is added with ``ctx.interface.add(Endpoint(...))``. The method never posts to the physics thread
+itself: marshalling is the framework's.
+
+**The world renames and tunes.** A plugin's ``topics:`` renames an endpoint (absolute with a leading
+``/``, else under its namespace) and its ``qos:`` sets its quality of service; both are keyed by
+endpoint name and applied by the bridge, so no plugin reads them::
+
+   diff_drive:
+     topics: {cmd_vel: /teleop/cmd_vel}
+     qos: {odom: sensor_data, cmd_vel: {reliability: best_effort, depth: 1}}
+
+Custom types and QoS
+~~~~~~~~~~~~~~~~~~~~
+
+**Any dataclass is a payload.** Fields annotated with unit aliases, nested dataclasses, and numpy
+arrays with a ``Shape`` (``Annotated[NDArray[np.float64], Shape(None, 3), Unit("m")]``) are
+described, documented and checked like a core type's -- a ``command`` taking one checks a mapping
+of its fields, nested ones included. On ROS it travels one of three ways:
+
+1. **By field name**, onto the message its hint names::
+
+      @dataclass
+      class Push:
+          linear: Vec    # a dataclass with x, y, z
+          angular: Vec
+
+      @endpoint.out(ros2={"type": "geometry_msgs.msg.Accel"})
+      def push(self) -> Push: ...
+
+   Each field must be a field of the message of a fitting kind -- a float to a float or integer, a
+   sequence to a sequence or array, a nested dataclass to a nested message. A message's ``header``
+   the payload does not carry is stamped by the bridge. When the bridge binds the endpoint it
+   refuses a field that does not fit, naming it and the message's fields; nothing is dropped
+   silently. An ``in`` endpoint with plain parameters maps its parameters the same way.
+2. **By a converter its package registers once**: an entry in the ``roqsim.ros2_types`` entry-point
+   group loading a ``roqsim_ros_bridge.typemap.RosType`` (or several) -- the type, the messages it
+   travels as, and a ``fill``/``decode`` pair for each. Every endpoint of that type is then on ROS
+   with no hint. ``roqsim_sensors.ros2_types`` is one: a GNSS fix, 3D object
+   detections and 2D boxes as ``NavSatFix``, ``Detection3DArray`` and ``Detection2DArray``.
+3. **Not at all**: with neither, the endpoint is not on ROS. ``roqsim plugins describe`` says so and
+   why, and the bridge logs it; an endpoint that gave ROS hints and still has no mapping fails the
+   bridge instead.
+
+**QoS.** Every topic defaults to ``default`` (reliable, volatile, keep last 10); TF keeps its own. A ``qos`` hint or a world's ``qos:`` entry is a preset -- ``default``,
+``sensor_data`` (best effort, depth 5), ``services_default``, ``latched`` (transient local, depth 1)
+-- or a mapping of ``reliability`` (``reliable``/``best_effort``), ``durability``
+(``volatile``/``transient_local``), ``history`` (``keep_last``/``keep_all``) and ``depth`` over
+``default``. The world's wins over the hint. A ``qos:`` naming an endpoint the plugin does not
+register fails the world, naming the ones it has. ``roqsim plugins describe`` shows each endpoint's
+QoS, and ``roqsim describe`` on a running simulation the effective one the ROS bridge used.
+
+Converting a plugin
+~~~~~~~~~~~~~~~~~~~
+
+A plugin that still builds ``Endpoint(...)`` in ``configure`` is converted one endpoint at a time,
+and its ROS interface -- topic, type, service, action, frames, rate, QoS -- stays exactly as it was:
+
+1. **The method.** The ``read`` or ``write`` becomes the decorated method, named as the endpoint.
+   A method the plugin also calls in process under its old name (a ``RobotHandle``'s ``read_odom``)
+   stays beside it, plain.
+2. **The payload.** A positional tuple becomes a type of ``roqsim.types`` (``Odometry.planar(...)``
+   for a planar odometry, ``Wrench(force, torque)``, ``JointState(names, positions, velocities)``)
+   or a dataclass of the plugin's. An ``in`` endpoint's parameters become that type's fields by name
+   (``vx``, ``vy``, ``wz`` of a ``Twist``).
+3. **The hints.** Delete ``type`` (the payload's mapping gives it), ``topic`` where it is the
+   endpoint's name, ``self.topic_override(...)`` (the framework applies ``topics:``; a topic built
+   from another endpoint's becomes a ``{name}`` template), and any value the mapping defaults to
+   (``frame_id: odom`` on odometry). What stays is a real deviation. A ``rate_hz=lambda self:
+   self.x`` becomes ``rate="x"``, a surrounding ``if`` becomes ``when="x"``, and a per-instance
+   ``lazy`` becomes ``lazy="x"``.
+4. **Owner and namespace.** Delete them where they are the entity the plugin is nested under;
+   otherwise override ``endpoint_owner`` or pass ``owner=`` / ``namespace=``.
+5. **The kind.** A setpoint topic is a ``stream``, a service a ``command``, and an input that must
+   see every value in order (a trajectory, a queue of goals) a ``command`` too, since a stream keeps
+   only the latest. Any ``ctx.post`` in the write goes: the framework queues it. A loop becomes a
+   family (``each=``).
+6. **Prove it.** Record every endpoint (owner, namespace, name, direction, rate, lazy) and what the
+   bridge resolves for it (``roqsim_ros_bridge.typemap.resolve``: type, topic, QoS, frames) across the
+   worlds that use the plugin, before and after, together with the messages its outputs fill; both
+   must be equal. A test that called ``write(payload)`` passes the mapping of parameters.
+
+An endpoint that only carries a model's fixed frames returns them with ``static: true``
+(``roqsim.frames.static_transforms_of`` turns the frame dicts into ``Transforms``); a plugin that
+still builds its endpoints by hand adds ``roqsim.frames.static_tf_endpoint``, which does the same.
+Where a ``static_tf`` hint on an endpoint with nothing else to publish becomes such an endpoint, its
+transforms are unchanged: they are sent once on the latched ``/tf_static`` on the first step, and the
+idle ``tf`` publisher the hint's endpoint held goes.
+
+What stays hand-built: a port whose name or number is only known *during* the run, and a plugin's
+own transport thread (``px4_sitl``'s socket reader posts what it received; that is not an endpoint).
+
+**The follow-ups.** One pull request per package, each leaving every ROS interface unchanged:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 50 28
+
+   * - Package
+     - Plugins (endpoints)
+     - Needs
+   * - ``roqsim_manipulation``
+     - ``arm_controller`` (``joint_states``, ``controller_state``; ``follow_joint_trajectory``
+       action and ``joint_command`` as FIFO commands; ``joint_velocity``, ``gripper_cmd``),
+       ``cartesian_admittance`` (``target_frame``, ``target_wrench``; ``current_pose``,
+       ``tracking_error``)
+     - --
+   * - ``roqsim_humanoid``, ``roqsim_quadruped``, ``roqsim_aerial``, ``roqsim_walker``,
+       ``roqsim_nav``, ``roqsim_assets``
+     - ``g1_locomotion``, ``oli_locomotion``, ``spot_locomotion`` (``cmd_vel``; ``odom``,
+       ``joint_states``), ``agibot_g2_controller`` (``joint_states``; ``joint_command``),
+       ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
+       ``walker`` (``body_poses``), ``navigator`` (its route commands), ``conveyor`` (``speed``;
+       ``package_pose``), ``door`` (``cmd``, ``door``; ``state``), ``prop_trajectory``
+       (``stage_progress``)
+     - families: ``navigator`` (one command per configured route endpoint); owner: ``conveyor``,
+       ``door``, ``prop_trajectory``, ``walker`` (the entity each registers), and ``conveyor``'s
+       ``package_pose`` (``owner=`` the package entity, ``namespace=""``)
+   * - ``roqsim_ros_bridge`` (bridge side)
+     - the action handlers (``actions.py``) hand a typed endpoint its named parameters, as
+       ``services.py`` and the subscriptions already do through ``params.payload_for``
+     - --
+
+A last pull request removes the old way: no installed plugin calls ``ctx.interface.add(Endpoint(...))``
+or posts from an endpoint's write, a test enforces it over every entry point in ``roqsim.plugins``,
+and ``payload_for``'s positional form for an untyped endpoint goes.
+
 Degrading a sensor mid-run
 --------------------------
 
@@ -1208,13 +1624,15 @@ there and needs no plugin of its own::
                  fault: {dropout_percent: 60.0, range_stddev: 0.35}   # held while active
 
 The sensor is nominal until the fault is switched on, so adding a ``fault:`` block changes nothing
-about a run that never fires it. A scenario switches it by the sensor's **address**::
+about a run that never fires it. A scenario switches it through the ``override`` command of the
+sensor's **address**::
 
-   set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
+   entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'true')
    wait elapsed(8s)
-   set_sensor_override(instance: 'robot.rplidar.lidar', active: false)
+   entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'false')
 
-and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
+which the control socket serves as ``robot/rplidar/lidar/override`` (confirmed by its
+``override_verified`` report), and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
 ``robot/rplidar/lidar/override_state`` and ``.../override_verified`` reporting back. The address is the dotted
 path of labels with dots as slashes, because a dot is not legal in a ROS name; a bare ``lidar`` would
 name neither of a robot's two lidars.
@@ -1227,7 +1645,7 @@ It mirrors ``model_override`` in the three ways that matter, rather than re-deci
 * **The world never decides when.** No time trigger, no condition trigger; a fault's timing is the
   experiment's independent variable.
 * **A fault that changed nothing is reported as such.** Applying a block whose values already equal
-  the nominal reports ``no_effect``, and ``set_sensor_override``'s ``require_landed`` fails the trial
+  the nominal reports ``no_effect``, and ``entity_call``'s ``require_verified`` fails the trial
   on it — an unfaulted outcome wearing a faulted label is worse than a failed run. A *restore* has
   nothing to verify and reports ``untested``.
 
@@ -1245,19 +1663,22 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
 
-Bases: three geometries, one interface
---------------------------------------
+Bases: four geometries, one interface
+-------------------------------------
 
-``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
-``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
-something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
-place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
-that command is a planner that would not move the real vehicle, and approximating a car with a
+``diff_drive``, ``omni_drive``, ``ackermann_drive`` and ``tricycle_drive`` publish the same
+endpoints -- ``cmd_vel`` in, ``odom`` and ``joint_states`` out -- so a stack does not know which it
+is driving until it asks for something the geometry cannot do. That is the point of the last two: a
+car, and a tricycle whose steered wheel stops short of 90 degrees, **cannot turn in place**, and
+``cmd_vel`` with ``v = 0`` and a yaw rate moves either nowhere at all. A planner that emits that
+command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
-**What a real base offers its stack.** Three keys on ``diff_drive`` (and ``omni_drive``) are the
-base driver's behaviour rather than the kinematics', and a model that states its robot's interface
-states them in its manifest -- the TurtleBot 4's does::
+**What a real base offers its stack.** Three keys on ``diff_drive`` are the base driver's
+behaviour rather than the kinematics', and a model that states its robot's interface states them in
+its manifest -- the TurtleBot 4's does. ``cmd_vel_timeout`` is on every plugin that takes a
+``cmd_vel`` (see `A velocity command: odometry and the watchdog`_); the other two are
+``diff_drive``'s alone::
 
    - diff_drive:
        cmd_vel_timeout: 0.5          # the watchdog every base driver has; 0 (default) holds a command
@@ -1334,13 +1755,134 @@ stated angle and a curvature are two ways of saying the same thing and averaging
 
 Both interfaces are kept because their consumers differ. Nav2 plans for car-like vehicles perfectly
 well -- Smac Hybrid-A* and the state-lattice planner both take a minimum turning radius -- but its
-controller commands in ``TwistStamped``, so a car driven by Nav2 needs ``cmd_vel``. A stack built
-around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
+controller commands a twist (``Twist``, or ``TwistStamped`` with ``enable_stamped_cmd_vel``), so a
+car driven by Nav2 needs ``cmd_vel`` (`Choosing a drive for a new robot`_ has the configuration). A
+stack built around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
 
 Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
 is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
+
+.. _tricycle-drive:
+
+``tricycle_drive`` is the other car-like base: **one** steered wheel on the centre line and a fixed
+axle, which is how three-wheel counterbalance forklifts, tuggers, pallet trucks and many AGVs are
+built. ``base_link`` must be the centre of the fixed axle, since that is the point such a vehicle
+always turns about, and ``steer_offset`` is the signed distance to the steering axis -- negative for
+a rear-steered forklift, positive for a front-steered tugger::
+
+   - tricycle_drive:
+       drive: axle                   # the fixed axle's two wheels are driven; or steer_wheel
+       steer_offset: -1.393          # rear wheel, 1.393 m behind the axle
+       wheel_radius: 0.229
+       track: 0.930
+       max_steer_angle: 1.396        # must be < pi/2
+       steer_actuator: steer_motor
+       steer_joint: steer_joint
+       drive_actuators: [drive_wheel_left_motor, drive_wheel_right_motor]
+       drive_joints: [drive_wheel_left_joint, drive_wheel_right_joint]
+       passive_joints: [steer_wheel_joint]   # published in joint_states, never commanded
+
+A twist ``(v, w)`` moves the steered wheel's point at ``(v, w * steer_offset)``, so the wheel is
+pointed along it, ``atan(w * steer_offset / v)``, and clamped to its lock -- a rear wheel therefore
+steers *right* for a left turn going forward. With ``drive: axle`` the two fixed wheels are split
+like a differential across ``track``, using the **measured** steering angle so that neither scrubs
+while the wheel is still slewing; near full lock the inner wheel runs backwards, as on the real
+truck, and ``max_wheel_speed`` caps the outer one. With ``drive: steer_wheel`` the steered wheel is
+driven at ``v / cos(delta)``. ``steer_offset`` and ``track`` are checked against the model's own
+joint positions at ``configure`` and a disagreement over a centimetre is refused.
+
+A zero-speed twist moves nothing and leaves the steered wheel where it is, for the reason given for
+``ackermann_drive``: a lock short of 90 degrees cannot pivot the vehicle about its axle centre, and
+at full lock it still turns about a point ``|steer_offset| / tan(max_steer_angle)`` to the side. The
+plugin therefore declares ``kinematics="ackermann"`` on its ``RobotHandle``. Its odometry takes the
+speed from the driven wheels and the yaw rate from the measured steering angle; ``passive_joints``
+exist because ``robot_state_publisher`` leaves a link out of TF until every movable joint above it
+has a state. Like ``diff_drive`` it takes ``odom_rate_hz`` and ``publish_joint_states``.
+
+Choosing a drive for a new robot
+--------------------------------
+
+Pick the plugin by how the robot's wheels are steered, start from the ``roqsim_mobile`` model or
+section named beside it (a bundled model has a demo world and a ``tests/test_<model>_scene.py``), and
+give Nav2 the configuration in the last column (``ros2_ws/src/roqsim_nav2_example``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 22 20 36
+
+   * - wheels
+     - plugin
+     - start from
+     - Nav2 configuration
+   * - two driven wheels and casters (differential)
+     - ``diff_drive``
+     - ``turtlebot3_waffle``
+     - ``params/nav2_params.yaml``: it turns in place
+   * - four or more driven wheels, none steered (skid-steer)
+     - ``diff_drive`` with ``slip_factor``
+     - ``husky_a200``
+     - ``params/nav2_params.yaml``
+   * - mecanum or omni wheels
+     - ``omni_drive``
+     - ``ridgeback``
+     - ``params/nav2_params.yaml`` drives it; the example ships no holonomic controller, so the
+       sideways axis goes unused until one is configured (MPPI's ``Omni`` motion model)
+   * - independently steered wheels (swerve)
+     - ``omni_drive`` with ``steer_joints``
+     - ``mpo_700``
+     - as for mecanum
+   * - two steered front wheels, a fixed rear axle (a car)
+     - ``ackermann_drive``
+     - ``piracer``
+     - ``params/nav2_params_carlike.yaml`` + ``params/carlike_piracer.yaml``
+   * - one steered wheel, a fixed axle (a tugger, pallet truck, three-wheel forklift)
+     - ``tricycle_drive``
+     - :ref:`its section above <tricycle-drive>`; no model is bundled
+     - ``params/nav2_params_carlike.yaml`` + a ``params/carlike_<robot>.yaml`` like the PiRacer's
+
+The last two cannot turn in place, and ``nav2_params.yaml``'s rotate-to-heading controller leaves
+them standing still. ``nav2_params_carlike.yaml`` is the stack that drives them -- Smac Hybrid-A*
+over Reeds-Shepp motions and Regulated Pure Pursuit that reverses and never rotates on the spot --
+and a small per-robot file beside it holds what depends on the robot: the footprint about
+``base_link`` and the ``minimum_turning_radius``. The physical minimum comes from the geometry,
+``wheelbase / tan(max_steer_angle)`` or ``|steer_offset| / tan(max_steer_angle)``; the planning value
+is chosen above it, so the controller keeps some lock in hand. ``nav2_carlike.launch.py
+robot:=<model>`` brings one up, and ``test/test_nav2_carlike_goals.py`` drives the PiRacer to a goal
+that needs a turn and one that needs reversing (:doc:`nav2_example`).
+
+A velocity command: odometry and the watchdog
+---------------------------------------------
+
+Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``tricycle_drive``, ``spot_locomotion``,
+``g1_locomotion``, ``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
+:mod:`roqsim.odometry`, for a plugin of your own to keep too.
+
+**Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
+first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
+as ``+x`` whatever the spawn heading. A wheeled base integrates its wheels from zero, so its
+odometry drifts as wheel odometry does. A legged controller reads its base pose from the simulator
+and states it relative to the spawn pose, so its odometry is exact, and its ``z`` stays the base
+height, so ``base_link`` stands where the robot does. The true pose is not in ``odom``: it is the
+core pose endpoint ``sim/entities/<name>/pose`` and the run's recording (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
+only for a robot spawned at the map origin facing ``+x``.
+
+**A command expires.** ``cmd_vel_timeout`` (seconds of sim time) is how long a command holds; once
+the last one is older, the robot stops, through the same limits as any command to zero; a
+locomotion policy is given a zero command and walks to a stop. ``0``, the default, holds a command
+until the next one, because an in-process driver sets a twist once and steps; a world that runs a
+real stack sets the stack's value (``ros2_control``'s ``diff_drive_controller`` ships 0.5 s). Reset
+clears the command and its stamp, so no trial starts with the last one's.
+
+**A quadrotor, in three dimensions.** ``quadrotor_controller``'s ``odom`` is 6-DOF in the same frame:
+x and y from the spawn point along the spawn heading, ``z`` the altitude, tilt kept, and the twist
+in the body frame. A stale velocity command brakes the drone at its altitude setpoint and then holds
+where it stopped: a hover. A position setpoint (``target``, ``cmd_pos``) does not expire, since
+holding one already is a hover. ``cmd_pos`` is read in the frame its header names: ``odom`` is this
+spawn frame, ``world`` or ``map`` (or no frame) the world, and any other frame is refused. The
+configured ``target`` is a world position.
 
 Manipulation: an arm on a linear axis
 -------------------------------------
@@ -1352,11 +1894,12 @@ arm to a body that already exists, while a rail has to introduce the moving carr
    components:
      - spawn_arm:
          model: ur10e
-         name: ur10e
          prefix: "ur10e_"
-         pos: [0.0, 0.0, 2.6]              # where the axis sits
-         rpy: [3.14159265, 0.0, 0.0]       # rolled 180 deg: the arm hangs from the ceiling
+         pose:                             # where the axis sits, rolled 180 deg: the arm
+           position: {z: 2.6}              #   hangs from the ceiling
+           orientation: {roll: 3.14159265}
          rail: {axis: [1, 0, 0], range: [-2.0, 2.0], home: 0.0}
+       name: ur10e
 
 What this buys is **kinematic redundancy**: a 6-DOF arm on a rail is a 7-DOF system, so a task pose
 has a one-parameter family of solutions and a planner can trade base travel against arm posture.
@@ -1607,12 +2150,48 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
+**A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
+setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
+closes on the pose error follows it a steady distance behind: ``v / kp`` for the motion controller
+(25 mm at 50 mm/s and the default ``kp`` of 2 /s), ``D v / C`` on a stiff axis of the compliance
+controller. ``feedforward`` (default ``auto``) commands the goal's own velocity alongside the
+correction, ``twist = v_goal + kp (x_goal - x)``, and damps the compliance law on velocity *relative*
+to the goal's; a zero-stiffness axis is under force control and is given nothing to follow.
+
+.. code:: yaml
+
+   - cartesian_admittance:
+       controller_type: cartesian_motion_controller
+       feedforward: auto          # auto | supplied | off
+       feedforward_window_s: 0.2  # goals further apart than this are not a stream
+
+``v_goal`` comes from one of two places, and which one is a choice about the caller:
+
+* **Supplied with the goal**, by an in-process caller that knows it:
+  ``CartesianHandle.set_goal(pos, quat, twist=[vx, vy, vz, wx, wy, wz])``, world frame. Used under
+  ``auto`` and ``supplied``. ``target_frame`` is a ``PoseStamped``, as on the real controller, so a
+  ROS client cannot supply one.
+* **Estimated from the stream**, under ``auto``, by differencing successive goals over sim time. Per
+  axis it takes the smaller of the last two arrival-to-arrival velocities where they agree in sign,
+  and zero where they do not, so a goal that *jumps* -- a new stationary goal, or one displaced goal
+  in a stream -- feeds nothing forward while a steady stream is fed forward in full. Goals further
+  apart than ``feedforward_window_s`` are waypoints rather than a stream and feed nothing forward;
+  a feedforward lapses once the next goal is half an interval overdue, so a stream that stops leaves
+  the arm to settle on its last goal.
+
+A goal commanded once, or re-sent unchanged, commands exactly what it did without a feedforward;
+``feedforward: off`` is the proportional-only law for a stream too. The twist is clamped to
+``max_linear_vel`` / ``max_angular_vel`` either way.
+
+**The lag is observable.** ``<controller>/tracking_error`` (``std_msgs/Float64``, metres) is how far
+the controlled site is from the pose it tracks -- the commanded ``target_frame`` or, before one, the
+pose the controller took the arm at. An in-process caller reads the full error, rotation included,
+and the feedforward in use through ``CartesianHandle.read_tracking_error()``.
 
 **Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
 weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
 anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
-Tare through the service (see "Taring" above) before commanding anything.
+Tare through the service (see "Gravity and tool mass" below) before commanding anything.
 
 **A limit that stops the trial** is ``force_limit``: a measured wrench magnitude above a threshold
 latches, reports, releases whatever was driving the arm and asks the driver to stop. Named for the
@@ -1624,15 +2203,19 @@ controller switch would put a fiction in a results table's failure-mode column.
 
 ``contact_monitor`` (above) treats contact as the failure, and ``model_override`` (above) can take a
 contact away on command. A contact-rich manipulation task inverts both: contact *is* the task, and the
-measurement is the wrench, not the trajectory. Four plugins make
+measurement is the wrench, not the trajectory. Five plugins make
 that chain, and they are listed in a world in this order because each needs the previous one's
-blackboard handle::
+blackboard handle. The sensor and the control law belong to the arm, so they sit in its
+``components:`` and need no key naming it::
 
-   - spawn_arm:            {model: ur5e, name: ur5e, prefix: "ur5e_"}
-   - force_torque:         {name: ft, arm: ur5e, site: fts_site, frame: world}
+   - spawn_arm: {model: ur5e, prefix: "ur5e_"}
+     name: ur5e
+     components:
+       - force_torque: {site: fts_site, frame: world}
+         name: ft
+       - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
-   - cartesian_admittance: {arm: ur5e, ft: ft, law: admittance, site: tool_site}
-   - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
+   - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, target_pos: [...]}
 
 **Read the refs, not the order.** Three are named — ``spawn_arm`` and ``cartesian_admittance`` from
 ``roqsim_manipulation``, ``force_torque`` from ``roqsim_sensors`` — and resolve through entry points because
@@ -1643,13 +2226,18 @@ That division is the general one. The substrate owes a cell the *mechanism* — 
 wrench, close a Cartesian loop. What is being inserted into what, and what counts as having inserted
 it, is the experiment's to state.
 
-Three things decide whether such a world measures anything at all:
+Four things decide whether such a world measures anything at all:
 
-* **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
-  from the body's children, so the tool must hang **below** it. A peg attached above the measurement
-  site produces a wrench that is identically zero — which looks like a well-behaved controller, not
-  like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut) and ``tool_site`` (the attach
-  point, further out) so the two cannot be confused.
+* **Where the sensor cuts.** A site force sensor reads the wrench the site's body receives from its
+  parent -- that body and everything below it -- so the tool must hang **below** it. A tool on any
+  other branch contributes nothing: no weight, no push, no contact, which looks like a well-behaved
+  controller, not like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut, on its
+  sensor stack ``tool0``) and ``tool_site`` (the stack's outer face, further out), and its manifest
+  declares ``tool_site`` as where ``spawn_arm``'s ``end_effector:`` mounts a tool by default -- its
+  bare ``attachment_site`` is on the flange *beside* the stack, where a tool reads as 0 N at
+  ``fts_site``. Every arm model with a free mount declares its site the same way
+  (``end_effector: {site: ...}`` in its manifest), and ``force_torque`` refuses a sensor on an arm
+  whose mounted tool is outside the subtree it reads -- see that plugin's docstring.
 * **Gravity and tool mass.** With gravity on and a realistically-massed tool, any metric that
   integrates force is dominated by the tool's own weight. Zeroing is a command, as it is on real
   hardware: ``force_torque`` exposes a ``tare`` service (``std_srvs/Trigger``, the analogue of a
@@ -1673,13 +2261,28 @@ Three things decide whether such a world measures anything at all:
   than of the arm, so it belongs in the world and not in the shared MJCF — see :ref:`architecture`,
   "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
   ``impedance`` and ``position``.
+* **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
+  probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
+  the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
+  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
+  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
+  docstring.
 
-A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
-``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
-padded to a guessed ``--seconds``. Two rules are worth copying from a trial-protocol plugin: give it
+A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
+outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
+standalone under ``roqsim sim`` it also calls ``ctx.request_stop()``, so a hand-run trial ends when
+it resolves instead of being padded to a guessed ``--seconds`` (see :ref:`architecture`, "Who ends a
+run"). Two rules are worth copying from a trial-protocol plugin: give it
 an explicit failure condition as well as a success one (a trial that can only succeed cannot produce a
 success *rate*, it can only hang), and write the raw observable rather than the metric, because a
 force-energy definition belongs to the analysis where it can still be argued with.
+
+Publish the outcome as an ``out`` endpoint on the entity the trial is about, and the scenario
+keeps it in a variable with ``entity_monitor(entity: 'ur5e', value: 'trial.resolved',
+target_variable: resolved)`` and waits on it (``wait resolved == true``, then ``emit end``), with
+a ``timeout`` as the bound. Give the endpoint a ``ros2`` hint whose ``field`` is the outcome, as
+``force_limit`` does with ``tripped``: that field is what travels over ROS and what a bare
+``value: 'trial'`` reads, on both transports.
 
 Manipulation: what a grasping world needs
 -----------------------------------------
@@ -1693,7 +2296,10 @@ they cost something a navigation world should not pay:
    repetitions. Pair it with ``publish_tf: dynamic`` — nothing else publishes a movable body's pose.
    ``graspable_box`` is the reference prop, sized and contact-tuned for a parallel gripper.
 2. **Solver effort.** ``sim: {noslip_iterations: 10}``. Without it a firmly held object creeps out of
-   the jaws; see "Solver options" in ``architecture.rst`` for the measurements.
+   the jaws; see "Solver options" in ``architecture.rst`` for the measurements. A world with a flex
+   that has elasticity or passive contact cannot have it: such a flex runs under the ``discrete``
+   integrator, where MuJoCo supports no noslip pass, so roqsim refuses the combination before
+   compile (same section).
 3. **Scoped actuator ownership**, if the arm shares its entity with anything else. ``arm_controller``
    claims every joint actuator matching the entity prefix by default, which is right for a standalone
    arm and wrong for a humanoid or a mobile manipulator — it then also claims the legs or the wheels and
@@ -1702,11 +2308,17 @@ they cost something a navigation world should not pay:
    controller also reports only its own joints, so several can share one ``/joint_states`` topic.
 4. **``mass`` / ``friction``** on the spawn, if either is a factor you want to vary — they are ordinary
    world-YAML keys, so an ordinary parameter sweep varies them and needs no new
-   variation plugin.
+   variation plugin. ``mass`` works whichever way the prop's MJCF states its mass: geoms with a
+   ``mass``, geoms with only a ``density`` (MuJoCo's 1000 kg/m³ when neither is given), or an
+   ``<inertial>`` on the root body. It scales them all by one factor, so the split between geoms
+   stays, and a visual geom with ``mass="0"`` or ``density="0"`` stays massless. The rescaled prop
+   is compiled and must weigh what was asked, or the spawn is refused; so is a prop that weighs
+   nothing. What is scaled is the root body (plus any flex it owns), not bodies hinged below it.
 
-``unitree_g1_dex1``'s manifest is a worked example of (3): two ``arm_controller`` instances on one
-entity, each owning its seven arm joints and its own Dex1 gripper, alongside ``g1_locomotion`` on the
-twelve leg motors.
+``unitree_g1_dex1``'s manifest is a worked example of (3): three ``arm_controller`` instances on one
+entity -- one per arm, each owning its seven arm joints and its own Dex1 gripper, and a
+``waist_controller`` on the three waist joints -- alongside ``g1_locomotion`` on the twelve leg
+motors.
 
 Two more if the target **moves** (dynamic grasping):
 
@@ -1728,7 +2340,19 @@ An arm carried by ``spawn_robot`` also needs ``arm_controller``'s ``rest`` stanc
 the base pose and no joint stance, so the arm falls back to ``qpos0``. For the Panda that is not neutral
 but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap by 0.030 m at all-zeros.
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
-trials start identically. ``frankie``'s manifest is the worked example of (5), (6) and ``rest``.
+trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
+
+**Motion limits.** ``arm_controller``'s ``max_velocity`` and ``max_acceleration`` (a scalar, or
+``{joint: value}``) turn every position command into a trapezoidal ramp of the held target instead
+of a step the servo takes as fast as its force range allows. Set them where a step is wrong: a lift,
+a gantry, a mast, a joint carrying a load that must not be thrown. They are off unless set, and no
+bundled model sets them, because an MJCF declares no joint velocity limit to default from; take the
+values from the source -- the URDF's ``<limit velocity=>`` and the vendor's ``joint_limits.yaml``.
+A robot whose drives always limit carries them in its manifest's ``arm_controller`` entry; a world
+overrides them per key there, and ``max_velocity: null`` lifts one. Give the planner the same
+numbers (``roqsim export moveit --max-velocity … --max-acceleration …``): a trajectory faster than
+the limits arrives late and is graded by ``goal_time_tolerance``. The module docstring of
+``roqsim_manipulation.plugins.arm_controller`` has the profile and what each command path does.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1786,6 +2410,34 @@ special mechanism for that — it uses the two doors any downstream package uses
 What the substrate owes such a cell is the arm, the sensing, the control law and the trial
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
+
+Manipulation: a prop or a tool that deforms
+-------------------------------------------
+
+A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
+model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
+``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto``
+picks the integrator the flex needs (:mod:`roqsim.flex`). What the spawn adds around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
+  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
+  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, whose own value its contacts use.
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
+  under its own weight, as a real one on a still arm does.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
 
 Writing your own
 ----------------

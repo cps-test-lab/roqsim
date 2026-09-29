@@ -11,8 +11,7 @@
 # The walker leaves its patrol, walks the goal poses, then resumes patrolling. Drop `waypoints:` to
 # make it goal-driven only (it stands at `pos` until commanded).
 #
-# To have the walker yield to a robot, add a `spawn_robot` plugin and set `avoidance: true`
-# (needs the extra: pip install -e 'roqsim_walker[avoidance]').
+# To have the walker steer round a robot, add a `spawn_robot` plugin and set `avoidance: true`.
 
 sim:
   pacing: realtime

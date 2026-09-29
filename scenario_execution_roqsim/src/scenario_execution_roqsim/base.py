@@ -18,8 +18,8 @@ last tree snapshot attached.
 re-``reset()`` with different overrides replaces the model, the blackboard handles and the body ids. A
 handle looked up in ``setup()`` would be a stale pointer into a torn-down world.
 
-**These actions cannot run under ``remote()``.** The remote server is handed neither ``simulation`` nor
-``node``, so there is nothing to reach; the modifier re-instantiates an action by entry-point name on
+**These actions cannot run under ``remote()``.** The remote server is handed no ``simulation`` and
+no clock, so there is nothing to reach; the modifier re-instantiates an action by entry-point name on
 another machine, which is exactly what a simulation-reading action cannot survive.
 """
 
@@ -34,8 +34,8 @@ from .access import AccessError, clock_of, select
 class SimAction(BaseAction):
     """Base for an action that reads or drives an roqsim simulation over either transport."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, resolve_variable_reference_arguments_in_execute=True):
+        super().__init__(resolve_variable_reference_arguments_in_execute)
         self._access = None
         self._clock = None
 
@@ -72,7 +72,7 @@ class SimAction(BaseAction):
     def waiting(self, message: str, call=None) -> py_trees.common.Status:
         """RUNNING, with what it is waiting FOR when the call can say.
 
-        A tree that reads `-- setting 'robot''s state (ROS)` for the whole run says the action is
+        A tree that reads `-- setting 'robot''s state (control socket)` for the whole run says the action is
         waiting; it does not say whether the write is queued or whether nothing will ever answer.
         Passing the call lets the second case name itself while it is still happening, instead of
         arriving as a timeout after the trial has spent its budget.

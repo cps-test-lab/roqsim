@@ -62,6 +62,7 @@ Config::
       base_body: base_link
       odom_child_frame: base_link   # link the odometry TF points at (see below)
       stamped_cmd_vel: false        # true when the stack publishes TwistStamped (see below)
+      cmd_vel_timeout: 0.0          # s; > 0 stops the car when no command arrives for this long
       test_cmd: [1.0, 0.4]          # optional [v, w] applied every tick (standalone demo)
 
 ``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
@@ -70,6 +71,12 @@ the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the Turtl
 configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
 so a mismatch is not a degradation but silence -- the robot receives no command at all, and the
 only symptom is a controller reporting that it cannot make progress.
+
+``cmd_vel_timeout`` is the watchdog every real base driver has, as on ``diff_drive``: a command is
+good for this long and then the car stops, so a stack that dies mid-run leaves a stationary car
+rather than one driving at its last velocity into a wall. Off (0) by default, because an in-process
+driver that sets a twist once and steps expects it to hold. The stop goes through the same
+acceleration ramp as any command, and the rack holds its angle, as it does on any stop.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
 whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
@@ -93,20 +100,50 @@ under-reports the turn -- measured, a car that came round 1.1 rad believes it ca
 scrub factor is offered to hide it: unlike a skid-steer's, whose scrub is systematic enough for
 ``diff_drive``'s ``slip_factor`` to correct, a tyre's slip angle varies with speed and load, so a
 single constant would be a fudge that makes the odometry look better than the sensor it stands for.
-:mod:`roqsim_sensors.plugins.ground_truth_pose` is what a grader compares against, and the gap
-between the two is what a localisation experiment is about.
+The true pose (:mod:`roqsim.entity_pose`, and the run's recording) is what a grader compares
+against, and the gap between the two is what a localisation experiment is about.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
+from roqsim.types import Angle, AngularSpeed, JointState, Odometry, Speed, Twist
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
 _MIN_SPEED = 1e-3
+
+
+@dataclass
+class AckermannDrive:
+    """A steering angle and a speed.
+
+    Attributes:
+        steering_angle: angle of a virtual wheel at the centre of the front axle, left positive
+        speed: forward speed
+    """
+
+    steering_angle: Angle = 0.0
+    speed: Speed = 0.0
+
+
+@dataclass
+class AckermannCommand:
+    """The ``ackermann_cmd`` payload, shaped as ``ackermann_msgs/AckermannDriveStamped`` so the ROS
+    bridge maps it by field name.
+
+    Attributes:
+        drive: the steering angle and speed
+    """
+
+    drive: AckermannDrive = field(default_factory=AckermannDrive)
 
 
 class AckermannDrivePlugin(Plugin):
@@ -134,13 +171,16 @@ class AckermannDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
+        #: ``cmd_vel_timeout``: a command older than this stops the car; 0 holds it forever.
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self._ctx: SimContext | None = None
 
         self._target_v = 0.0
         self._target_w = 0.0
         self._cmd_v = 0.0  # ramped speed
         self._steer = 0.0  # slewed centre (bicycle) steering angle
         #: Centre angle commanded directly (Ackermann), or None when the last command was a twist.
-        #: Which of the two arrived last decides where the angle comes from; they are not merged,
+        #: Which of the two was applied last decides where the angle comes from; they are not merged,
         #: because a twist's curvature and a stated angle are two ways of saying the same thing and
         #: averaging them would obey neither.
         self._steer_cmd: float | None = None
@@ -187,14 +227,15 @@ class AckermannDrivePlugin(Plugin):
                 errors.append(f"'{key}' is required: name the model's two, left then right")
         if "test_cmd" in config and len(config["test_cmd"]) != 2:
             errors.append("'test_cmd' must be [v, w]")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     # -- lifecycle ----------------------------------------------------------------------------
 
     def configure(self, ctx: SimContext) -> None:
+        self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
 
         def resolve(kind, names):
@@ -243,88 +284,45 @@ class AckermannDrivePlugin(Plugin):
                 kinematics="ackermann",
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.TwistStamped"
-                        if self.stamped_cmd_vel
-                        else "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="ackermann_cmd",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda cmd: self.steer(cmd[0], cmd[1]),
-                backend={
-                    "ros2": {
-                        # The message's own steering_angle is documented as "the yaw of a virtual
-                        # wheel located at the center of the front axle", which is exactly the angle
-                        # this plugin splits into two. The representations line up field for field,
-                        # so nothing is converted on the way in.
-                        "type": "ackermann_msgs.msg.AckermannDriveStamped",
-                        # `drive` rather than the endpoint's own name: this interface exists to be
-                        # spoken to by stacks that already emit AckermannDriveStamped, and they emit
-                        # it there. A world that wants another topic says so with a topic override.
-                        "topic": self.topic_override("ackermann_cmd") or "drive",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": self.odom_child_frame,
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
 
     # -- commands -----------------------------------------------------------------------------
+    # Both inputs are streams, applied once per step in this order: when a twist and an Ackermann
+    # command arrive within one step, the Ackermann command is the one in force.
+
+    @endpoint.stream(Twist, ros2=lambda self: {"stamped": self.stamped_cmd_vel})
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed; a car drops it
+            wz: yaw rate, steered through the bicycle relation
+        """
+        self.drive(vx, vy, wz)
+
+    # The message's own steering_angle is documented as "the yaw of a virtual wheel located at the
+    # center of the front axle", which is exactly the angle this plugin splits into two, so nothing
+    # is converted on the way in. On `drive` rather than the endpoint's own name: this interface
+    # exists to be spoken to by stacks that already emit AckermannDriveStamped, and they emit it
+    # there.
+    @endpoint.stream(
+        AckermannCommand,
+        ros2={"type": "ackermann_msgs.msg.AckermannDriveStamped", "topic": "drive"},
+    )
+    def ackermann_cmd(self, drive: AckermannDrive) -> None:
+        """Steering angle and speed, applied once per step; turns the wheels at rest too.
+
+        Args:
+            drive: the centre steering angle and the speed (see :meth:`steer`)
+        """
+        self.steer(drive.steering_angle, drive.speed)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (``vy`` dropped: a car cannot strafe either)."""
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(w)
         self._steer_cmd = None  # a twist states a curvature; the angle is derived from it again
+        self.watchdog.stamp(self._ctx)
 
     def steer(self, delta: float, speed: float) -> None:
         """Ackermann target: the centre (bicycle) steering angle, and a speed.
@@ -342,6 +340,7 @@ class AckermannDrivePlugin(Plugin):
         self._steer_cmd = float(np.clip(delta, -self.max_steer, self.max_steer))
         self._target_v = float(np.clip(speed, -self.max_v, self.max_v))
         self._target_w = 0.0
+        self.watchdog.stamp(self._ctx)
 
     def steer_angles(self, delta: float) -> tuple[float, float]:
         """(left, right) wheel angles for a centre (bicycle) angle -- the geometry the linkage does.
@@ -370,6 +369,9 @@ class AckermannDrivePlugin(Plugin):
         if "test_cmd" in self.config:
             v, w = self.config["test_cmd"]
             self.drive(float(v), 0.0, float(w))
+        if self.watchdog.expired(ctx):
+            # The watchdog: the last command has expired, so the car ramps to a stop.
+            self._target_v = self._target_w = 0.0
 
         # Speed first: the steering angle a twist implies depends on the speed it is asking for.
         if self.accel_limit > 0:
@@ -432,19 +434,39 @@ class AckermannDrivePlugin(Plugin):
         o[2] = (o[2] + w * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4] = v, w
 
-        for k, jid in enumerate(self._steer_jid + self._drive_jid):
-            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
-            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
+        self._read_joints(m, d)
 
-    def read_odom(self):
+    @endpoint.out(
+        rate=50.0, ros2=lambda self: {"child_frame_id": self.odom_child_frame, "emit_tf": True}
+    )
+    def odom(self) -> Odometry:
+        """Dead reckoning from the driven wheels and the measured steering angle."""
+        x, y, yaw, v, w = self._odom
+        return Odometry.planar(x, y, yaw, v, 0.0, w)
+
+    def read_odom(self) -> tuple[float, float, float, float, float, float]:
+        """The latest ``(x, y, yaw, vx, vy, w)``, what the :class:`RobotHandle` reads."""
         x, y, yaw, v, w = self._odom
         return (x, y, yaw, v, 0.0, w)
 
-    def read_joint_states(self):
-        return (self._jnames, self._jpos, self._jvel)
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The steer joints, then the driven wheels."""
+        return JointState(self._jnames, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._target_v = self._target_w = 0.0
         self._cmd_v = 0.0
         self._steer = 0.0
+        self.watchdog.clear()
+        # An Ackermann command belongs to the episode that sent it, as a twist does.
+        self._steer_cmd = None
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read_joints(ctx.model, ctx.data)
+
+    def _read_joints(self, m, d) -> None:
+        """The joint_states payload, written in place so ``joint_states`` is zero-copy."""
+        for k, jid in enumerate(self._steer_jid + self._drive_jid):
+            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
+            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]

@@ -11,7 +11,7 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "roqsim",
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
 ]
 
@@ -45,7 +45,6 @@ zivid = "roqsim_sensors.plugins.zivid:ZividPlugin"
 spawn_sensor = "roqsim_sensors.plugins.spawn_sensor:SpawnSensorPlugin"
 fiducial_marker = "roqsim_sensors.plugins.fiducial_marker:FiducialMarkerPlugin"
 sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCoverageProbePlugin"
-ground_truth_pose = "roqsim_sensors.plugins.ground_truth_pose:GroundTruthPosePlugin"
 object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
 # The pixel-level counterpart of object_detector: that one says WHERE an object is in the robot's
 # frame, this says WHICH PIXELS are it -- the ground truth a segmentation or detection metric is
@@ -57,6 +56,7 @@ force_limit = "roqsim_sensors.plugins.force_limit:ForceLimitPlugin"
 # Sits beside force_torque as another MJCF-sensor reader -- MuJoCo computes rate, proper acceleration
 # and attitude already; this makes them an observable with covariances, TF and a fault switch.
 imu = "roqsim_sensors.plugins.imu:ImuPlugin"
+gnss = "roqsim_sensors.plugins.gnss:GnssPlugin"
 
 # Bundled sensor models (e.g. d435), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]
@@ -64,6 +64,11 @@ roqsim_sensors = "roqsim_sensors.models"
 
 [project.entry-points."roqsim.commands"]
 sensors = "roqsim_sensors.commands:sensors"
+
+# How the ROS 2 bridge carries this package's own payloads (NavSatFix, Detection3DArray,
+# Detection2DArray); loaded by the bridge only.
+[project.entry-points."roqsim.ros2_types"]
+roqsim_sensors = "roqsim_sensors.ros2_types:TYPES"
 
 [tool.setuptools.packages.find]
 where = ["src"]

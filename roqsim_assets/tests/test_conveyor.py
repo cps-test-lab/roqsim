@@ -16,7 +16,7 @@ def _belt_only(tmp_path, conv_extra=None):
     plugins = [
         {"conveyor": dict(conv_extra or {}), "name": "conveyor"},
     ]
-    return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path)
 
 
 def _run(engine, steps):
@@ -74,6 +74,24 @@ def test_speed_handle_reverses_belt(tmp_path):
     assert _package_x(engine) > x0 + 0.05
 
 
+def test_reset_returns_the_belt_to_its_configured_speed(tmp_path):
+    """Trial 2 runs the belt at the world's speed, not at the one trial 1 was switched to."""
+    engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
+    engine.setup()
+    engine.reset()
+    handle = engine.ctx.blackboard.require("conveyor:conveyor")
+    handle.set_speed(-0.2)
+    engine.step()
+    engine.reset()
+    assert handle.get_speed() == pytest.approx(0.2)
+    for _ in range(5):
+        engine.step()
+    x0 = _package_x(engine)
+    for _ in range(1000):
+        engine.step()
+    assert _package_x(engine) < x0 - 0.05
+
+
 def test_belt_resizes_to_configured_length_and_width(tmp_path):
     # A custom 3.5 m x 0.8 m belt: half-extents L=1.75, W=0.4. Belt surfaces recompute exactly,
     # the drive slab keeps its fixed overhang, and rollers sit at the new belt ends.
@@ -100,7 +118,8 @@ def test_placed_belt_keeps_its_package(tmp_path):
     # so a belt spawned away from the origin must still reset its package onto its own belt, not
     # onto the floor at the world origin.
     pos, yaw = [13.584, 5.779, 0.0], 0.8936
-    engine = Engine(_belt_only(tmp_path, {"pos": pos, "rpy": [0.0, 0.0, yaw], "length": 2.0}))
+    pose = {"position": dict(zip("xyz", pos, strict=True)), "orientation": {"yaw": yaw}}
+    engine = Engine(_belt_only(tmp_path, {"pose": pose, "length": 2.0}))
     engine.setup()
     engine.reset()
     belt = _geom_pos(engine, "belt_visual")  # belt centre, world
@@ -151,7 +170,7 @@ def test_industrial_table_top_carries_the_belt(tmp_path):
         },
         {"conveyor": {}, "name": "conveyor"},
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     top = _geom_pos(engine, "industrial_table_top")
     assert top[2] + _geom_size(engine, "industrial_table_top")[2] == pytest.approx(0.76, abs=1e-6)

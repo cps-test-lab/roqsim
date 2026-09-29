@@ -12,7 +12,8 @@ about where the footprint ends.
 What counts as a collision is defined by exclusion, not by enumeration: every contact involving one
 of the watched entity's bodies counts, EXCEPT contacts against a geom in ``ignore`` (by default the
 ground plane, which a wheeled robot touches continuously by design). Listing what a robot may touch
-is short and stable; listing what it may not is neither.
+is short and stable; listing what it may not is neither. A MuJoCo flex is a side like a geom: one the
+entity owns is watched, and ``ignore`` may name one (see :mod:`roqsim.contact_scope`).
 
 Config::
 
@@ -21,8 +22,8 @@ Config::
       # declaring it at the top of a document is refused (`requires_owner`).
       body: ""               # base body override; default: the entity's registered base body
       namespace: ""          # transport scope for the endpoint
-      ignore: [floor]        # geom NAMES that never count as a collision (default: ['floor'])
-      ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
+      ignore: [floor]        # geom or flex NAMES that never count as a collision (default: ['floor'])
+      ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       latch: true            # once true, stay true until on_reset (a trial is failed, not un-failed)
       reset_on_spawn: true   # spawning the watched entity restarts the report (see below)
@@ -30,14 +31,16 @@ Config::
 
 Endpoint ``contact`` (out) reads a :class:`ContactReport`:
 ``(in_contact, first_time, count, geom_a, geom_b)`` -- ``first_time`` is the simulation time of the
-first qualifying contact since reset (``-1.0`` if none), and ``geom_a``/``geom_b`` name the geoms of
-that first contact, so a failure is attributable rather than just flagged. The ROS 2 backend hint
-publishes ``in_contact`` as a ``std_msgs/Bool`` on ``collision`` (relative, so it is scoped by the
+first qualifying contact since reset (``-1.0`` if none), and ``geom_a``/``geom_b`` name the two sides
+of that first contact, so a failure is attributable rather than just flagged -- a geom by its name, a
+flex as ``flex:<name>[v<i>]`` with the vertex that touched. ROS carries ``in_contact`` alone, a
+``std_msgs/Bool`` on ``collision`` (relative, so it is scoped by the
 entity's namespace: two namespaced robots get ``/a/collision`` and ``/b/collision``); a bridge that
 wants the detail reads the fields directly.
 
 The watched set is the entity's **kinematic subtree**: for a mobile base that is the chassis plus its
-wheels, so a wheel clipping a box counts exactly as much as the bumper does.
+wheels, so a wheel clipping a box counts exactly as much as the bumper does -- and a flex whose
+vertices all hang in that subtree, such as a soft pad on an arm's end effector.
 
 **When the trial spawns the watched entity.** ``reset_on_spawn`` (default true) restarts the
 report when the watched entity GAINS PRESENCE. An entity that has just been spawned has no
@@ -69,21 +72,31 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from ..contact_scope import ContactScope, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from .. import endpoint
+from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
+from ..context import SimContext
 from ..plugin import Plugin
+from ..types import Duration
 
 _log = logging.getLogger(__name__)
 
 
 @dataclass
 class ContactReport:
-    """Neutral payload for the ``contact`` endpoint."""
+    """What the ``contact`` endpoint reads.
+
+    Attributes:
+        in_contact: the verdict
+        first_time: sim time of the first qualifying contact since reset; -1.0 if none
+        count: qualifying contacts in the most recent step
+        geom_a: one side of the first qualifying contact; "" until one happens
+        geom_b: the other side of that contact
+    """
 
     in_contact: bool
-    first_time: float  # sim time of the first qualifying contact since reset; -1.0 if none
-    count: int  # qualifying contacts in the most recent step
-    geom_a: str  # geoms of the FIRST qualifying contact ("" until one happens)
+    first_time: Duration
+    count: int
+    geom_a: str
     geom_b: str
 
 
@@ -130,7 +143,6 @@ class ContactMonitorPlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
         # severity of the very contacts this reports, and a rule restated in each would be two.
@@ -152,26 +164,13 @@ class ContactMonitorPlugin(Plugin):
         # first -- one robot's collisions reported as another's.
         ctx.blackboard.set(f"contact:{self.address}", self.read_state)
 
-        ctx.interface.add(
-            Endpoint(
-                name="contact",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Bool",
-                        # The report is a structure and Bool carries one field, so the endpoint says
-                        # WHICH -- rather than the bridge holding a converter that knows this
-                        # plugin's attribute names. The other fields stay readable in-process.
-                        "field": "in_contact",
-                        "topic": self.topic_override("contact") or "collision",
-                    }
-                },
-            )
-        )
+    # The report is a structure and Bool carries one field, so the endpoint says WHICH -- rather
+    # than the bridge holding a converter that knows this plugin's attribute names. The other fields
+    # stay readable in-process.
+    @endpoint.out(rate="rate_hz", ros2={"field": "in_contact", "topic": "collision"})
+    def contact(self) -> ContactReport:
+        """Whether the entity has touched anything it may not, and what, since reset."""
+        return self._report
 
     def read_state(self) -> ContactReport:
         """The latest report. What the blackboard handle hands an in-process consumer.
@@ -210,18 +209,13 @@ class ContactMonitorPlugin(Plugin):
         # must reject numerical grazing, an integral must not.
         for index in self._scope.indices(data):
             i = int(index)
-            c = data.contact[i]
-            g1, g2 = int(c.geom1), int(c.geom2)
             if self.min_force > 0:
                 mujoco.mj_contactForce(model, data, i, force)
                 if abs(float(force[0])) < self.min_force:
                     continue
             hits += 1
             if first is None:
-                first = (
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g1) or f"geom{g1}",
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g2) or f"geom{g2}",
-                )
+                first = contact_side_names(model, data.contact[i])
 
         if hits and self._report.first_time < 0.0:
             self._report = ContactReport(True, float(data.time), hits, first[0], first[1])

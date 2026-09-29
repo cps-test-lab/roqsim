@@ -50,8 +50,8 @@ from roqsim.models import resolve_model
 HEADLINE = "Frankie - a Franka Emika Panda on an Omron LD-60 differential-drive base - for MuJoCo."
 
 HERE = Path(__file__).resolve()
-# external/ is a sibling of the family packages, so anchor back through parents[2] (see robot-porting
-# Step 7: build scripts never live inside the package they build into).
+# external/ is a sibling of the family packages, so anchor back through parents[2] (build scripts
+# never live inside the package they build into; see external/convert/README.md).
 ROOT = HERE.parents[2]
 # Output package: `roqsim_mobile_manipulation`, the sibling family for robots that are a base AND an arm.
 # Frankie first landed in `roqsim_mobile`, which forced that package to depend on `roqsim_manipulation` --
@@ -305,8 +305,7 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
     <!-- Explicit wheel and caster contacts against the world's ground geom, which by substrate
          convention is named `floor` (every baked scene and roqsim_mobile/models/floor/floor.xml use that name;
          husky_a200 and turtlebot4 do the same). CONSEQUENCE: this model does not compile standalone --
-         it must be spawned into a world that provides `floor`, which is also what robot-porting
-         Step 6.5 requires anyway.
+         it must be spawned into a world that provides `floor`.
          Wheels: condim=3 isotropic friction 1.0, softened solref for stable stepping (husky pattern).
          Casters: condim=1 -- normal force only, a true frictionless ball caster (turtlebot4 pattern). -->
     <pair geom1="left_wheel" geom2="floor" condim="3" solref="0.02 1"

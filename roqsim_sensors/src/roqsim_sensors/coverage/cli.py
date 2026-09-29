@@ -14,6 +14,13 @@ Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Exampl
 
     roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
+
+Exit status (``roqsim.exit_status``): ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the
+report written; ``2`` and one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong
+-- a world that does not exist or does not load, a placements file that is missing, not JSON or not
+a list, an unknown sensor type or region -- or ``roqsim sensors coverage <cmd>: error: ...`` for a
+usage error such as ``--set``/``--override`` with an MJCF ``--world``. The agent driving the
+propose -> evaluate -> refine loop greps that line; a traceback means a crash, not a refused input.
 """
 
 from __future__ import annotations
@@ -25,20 +32,35 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim import exit_status
+from roqsim.override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
+
 from . import catalog as catalog_mod
 from .adapters import build_fov
 from .engine import coverage
-from .report import build_report
+from .report import build_report, normalise_target
 
 # -- world loading -----------------------------------------------------------------------------------
 
 
-def load_world(world: str):
-    """Compile ``world`` (an MJCF path, or an roqsim world YAML / package ref) -> (model, data)."""
+def _is_mjcf(world: str) -> bool:
+    p = Path(world)
+    return p.suffix.lower() in (".xml", ".mjcf") and p.exists()
+
+
+def load_world(world: str, overrides: dict | None = None):
+    """Compile ``world`` (an MJCF path, or an roqsim world YAML / package ref) -> (model, data).
+
+    ``overrides`` (the nested ``--set``/``--override`` dict) apply to a world YAML only.
+    """
     import mujoco
 
     p = Path(world)
-    if p.suffix.lower() in (".xml", ".mjcf") and p.exists():
+    if _is_mjcf(world):
         model = mujoco.MjModel.from_xml_path(str(p))
         data = mujoco.MjData(model)
         mujoco.mj_forward(model, data)
@@ -56,12 +78,12 @@ def load_world(world: str):
     # load_config only takes paths/built-in names, so without this a ref like `pkg:world` is mistaken
     # for a filename and errors.
     ref = resolve_world_yaml_ref(world) if (not p.exists() and ":" in world) else None
-    cfg = load_config(ref or (str(p) if p.exists() else world))
-    engine = Engine(cfg, preview=True)
-    engine.setup()
-    ctx = engine.ctx
-    mujoco.mj_forward(ctx.model, ctx.data)
-    return ctx.model, ctx.data
+    cfg = load_config(ref or (str(p) if p.exists() else world), overrides or None)
+    # The model and data outlive the plugins: coverage reads only them.
+    with Engine(cfg, preview=True) as engine:
+        ctx = engine.ctx
+        mujoco.mj_forward(ctx.model, ctx.data)
+        return ctx.model, ctx.data
 
 
 # -- shared helpers ----------------------------------------------------------------------------------
@@ -71,19 +93,29 @@ def parse_target(text: str | None) -> dict:
     """Parse ``k=1,frac=0.95`` -> {'metric','k','value'}. Empty -> no target."""
     if not text:
         return {}
-    parts = dict(kv.split("=", 1) for kv in text.split(",") if "=" in kv)
-    return {
-        "metric": "fraction_covered",
-        "k": int(parts.get("k", 1)),
-        "value": float(parts.get("frac", parts.get("value", 1.0))),
-    }
+    parts = [kv.strip() for kv in text.split(",")]
+    bare = [kv for kv in parts if "=" not in kv]
+    if bare:
+        raise ValueError(
+            f"coverage target: {', '.join(map(repr, bare))} is not key=value; "
+            "give k and frac, e.g. k=1,frac=0.95"
+        )
+    return normalise_target(dict(kv.split("=", 1) for kv in parts))
 
 
 def _read_placements(path: str) -> list[dict]:
-    obj = json.loads(Path(path).read_text())
+    """The placements file, or a ``ValueError`` naming it when it is missing, not JSON or not a list."""
+    try:
+        text = Path(path).read_text()
+    except OSError as err:
+        raise ValueError(f"placements {path!r} cannot be read: {err.strerror or err}") from None
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"placements {path!r} is not JSON: {err}") from None
     placements = obj["placements"] if isinstance(obj, dict) else obj
     if not isinstance(placements, list):
-        raise SystemExit(f"{path}: expected a list of placements or {{'placements': [...]}}")
+        raise ValueError(f"{path}: expected a list of placements or {{'placements': [...]}}")
     return placements
 
 
@@ -185,7 +217,7 @@ def cmd_catalog(args) -> int:
 
 
 def cmd_estimate(args) -> int:
-    model, data = load_world(args.world)
+    model, data = load_world(args.world, overrides_from_options(args))
     points, labels, names = _build_samples(model, data, args)
     regions = _resolve_regions(args)
     if regions and args.restrict:
@@ -229,7 +261,7 @@ def cmd_estimate(args) -> int:
 def cmd_greedy(args) -> int:
     from .optimize import generate_candidates, greedy_baseline
 
-    model, data = load_world(args.world)
+    model, data = load_world(args.world, overrides_from_options(args))
     points, labels, names = _build_samples(model, data, args)
     regions = _resolve_regions(args)
     if regions and args.restrict:
@@ -286,7 +318,7 @@ def cmd_greedy(args) -> int:
         _render_outputs(model, data, result, out_dir, args.render, args.palette)
     a = report["achieved"]
     k = int(target.get("k", 1))
-    frac = a.get(f"fraction_covered_k{k}", a["fraction_covered_k1"])
+    frac = a[f"fraction_covered_k{k}"]
     print(
         f"GREEDY_OK chose={len(chosen)} sensors k{k}={frac:.3f} target_met={report['target_met']} "
         f"-> {out_dir / 'placements.json'}"
@@ -296,7 +328,13 @@ def cmd_greedy(args) -> int:
 
 
 def _add_common_sampling(sp):
-    sp.add_argument("--world", required=True, help="MJCF path, world YAML, or roqsim world ref")
+    sp.add_argument(
+        "--world",
+        required=True,
+        help="MJCF path, world YAML, or roqsim world ref (--set and --override apply to a world "
+        "YAML or ref and are refused with an MJCF)",
+    )
+    add_override_options(sp)
     sp.add_argument("--out", required=True, help="output directory")
     sp.add_argument("--sample", choices=("volume", "objects", "both"), default="both")
     sp.add_argument(
@@ -334,7 +372,9 @@ def _add_common_sampling(sp):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0], epilog=exit_status.epilog(exit_status.BAD_INPUT)
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("catalog", help="print the sensor catalog as JSON")
@@ -347,7 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--placements", required=True, help="JSON: list of placements or {'placements': [...]}"
     )
-    sp.set_defaults(func=cmd_estimate)
+    sp.set_defaults(func=cmd_estimate, parser=sp)
 
     sp = sub.add_parser("greedy", help="deterministic max-coverage baseline over candidate mounts")
     _add_common_sampling(sp)
@@ -360,14 +400,30 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--spacing", type=float, default=3.0, help="auto-candidate grid spacing [m]")
     sp.add_argument("--mount-z", type=float, default=3.0, help="auto-candidate mount height [m]")
     sp.add_argument("--max-sensors", type=int, default=10, help="stop after this many sensors")
-    sp.set_defaults(func=cmd_greedy)
+    sp.set_defaults(func=cmd_greedy, parser=sp)
 
     return ap
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    if getattr(args, "world", None) and _is_mjcf(args.world):
+        refuse_world_options(
+            args.parser,
+            args,
+            "--world names a bare MJCF, compiled with no plugins -- pass a world YAML instead",
+        )
+    # A wrong input ends here as one line and exit 2 (see the module docstring).
+    from roqsim.models import ModelError
+    from roqsim.plugin import PluginError
+
+    try:
+        return args.func(args)
+    except (PluginError, ModelError, KeyError, ValueError, OSError) as err:
+        # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
+        message = err.args[0] if isinstance(err, KeyError) and err.args else err
+        print(f"roqsim sensors coverage: {message}", file=sys.stderr)
+        return exit_status.BAD_INPUT
 
 
 if __name__ == "__main__":

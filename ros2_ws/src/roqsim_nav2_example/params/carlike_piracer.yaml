@@ -1,0 +1,60 @@
+# Per-robot values for nav2_params_carlike.yaml: roqsim_mobile's piracer.
+#
+# The launch file loads this after the shared file, so each value here replaces the shared one.
+# Copy this file to bring up another car-like robot, and change every value below from that
+# robot's manifest and MJCF. One that carries a scanner drops the two `plugins:` lines below, which
+# keeps the shared file's obstacle layer on /scan.
+#
+# Geometry (piracer.manifest.yaml): ackermann_drive, wheelbase 0.155 m, lock max_steer_angle 0.5 rad.
+# base_link is the chassis origin, 0.024 m behind the rear axle; see the shared file's header.
+#
+# Turning radius:
+#   physical minimum  wheelbase / tan(max_steer_angle) = 0.155 / tan(0.5) = 0.284 m;
+#   planning value    0.5 m, the radius at which the bicycle angle is atan(0.155 / 0.5) = 0.30 rad,
+#                     which leaves the controller 0.2 rad of lock to correct a tracking error with.
+#
+# Footprint about base_link: the chassis box x 0 .. 0.236, |y| <= 0.065, and the tyres, the rear
+# pair out to |y| = 0.099 and x = -0.010; rounded out to x -0.02 .. 0.24, |y| <= 0.10.
+# Circumscribed radius 0.26 m.
+#
+# The car carries no scanner (its manifest mounts none), so both costmaps are the map alone: the
+# obstacle layer is left out rather than left waiting on a /scan nothing publishes.
+
+controller_server:
+  ros__parameters:
+    progress_checker:
+      required_movement_radius: 0.1
+    general_goal_checker:
+      xy_goal_tolerance: 0.15
+    FollowPath:
+      desired_linear_vel: 0.4
+      lookahead_dist: 0.4
+      min_lookahead_dist: 0.25
+      max_lookahead_dist: 0.8
+      curvature_lookahead_dist: 0.3
+      regulated_linear_scaling_min_radius: 0.6
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      width: 3
+      height: 3
+      footprint: "[[0.24, 0.10], [-0.02, 0.10], [-0.02, -0.10], [0.24, -0.10]]"
+      plugins: ["static_layer", "inflation_layer"]
+      inflation_layer:
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.35         # beyond the 0.26 m circumscribed radius
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      footprint: "[[0.24, 0.10], [-0.02, 0.10], [-0.02, -0.10], [0.24, -0.10]]"
+      plugins: ["static_layer", "inflation_layer"]
+      inflation_layer:
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.35
+
+planner_server:
+  ros__parameters:
+    GridBased:
+      minimum_turning_radius: 0.5      # physical minimum 0.284 m; see the header

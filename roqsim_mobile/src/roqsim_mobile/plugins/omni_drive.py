@@ -34,6 +34,7 @@ sits rather than a config key::
       steer_actuators: [...]
       odom_child_frame: base_footprint   # link the odometry TF points at (see below)
       stamped_cmd_vel: false             # true when the stack publishes TwistStamped (see below)
+      cmd_vel_timeout: 0.0               # s; > 0 stops the base when no command arrives for this long
       test_cmd: [0.2, 0.1, 0.0]     # optional [vx, vy, wz] applied every tick (standalone demo)
 
 ``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
@@ -43,6 +44,12 @@ configuration sets it), and ROS 2 is moving towards the stamped form. A subscrip
 so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
 which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
 naming the topic, both types and both sides.
+
+``cmd_vel_timeout`` is the watchdog every real base driver has, as on ``diff_drive``: a command is
+good for this long and then the base stops, so a stack that dies mid-run leaves a stationary robot
+rather than one driving at its last velocity into a wall. Off (0) by default, because an in-process
+driver that sets a twist once and steps expects it to hold. The stop goes through the same
+acceleration ramp as any command.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
 whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
@@ -88,7 +95,8 @@ the motive force: at the model's wheel friction they transmit almost nothing. Ea
 is derived from its joint axis in the base frame at configure time rather than hardcoded, because
 which way "positive" spins depends on how the source URDF mirrored that wheel.
 
-**Odometry.** Integrated from the base's **achieved** twist, so a base held against a wall reports no progress.
+**Odometry.** Integrated from the base's **achieved** twist, in the odom frame -- the pose the base
+was spawned at, as ``diff_drive`` reports it -- so a base held against a wall reports no progress.
 Note the consequence: with no wheel slip in the model, wheel-encoder odometry and ground truth
 coincide by construction. This port therefore cannot be used to study odometry drift -- a
 skid-steer's characteristic error source is absent here by design, not by accident.
@@ -101,8 +109,11 @@ import math
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
+from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 WHEEL_ORDER = ("front_left", "front_right", "rear_left", "rear_right")
 
@@ -123,6 +134,9 @@ class OmniDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_footprint")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
+        #: ``cmd_vel_timeout``: a command older than this stops the base; 0 holds it forever.
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self._ctx: SimContext | None = None
         self._act_names = (
             self.config.get("vx_actuator", "base_vx"),
             self.config.get("vy_actuator", "base_vy"),
@@ -153,14 +167,16 @@ class OmniDrivePlugin(Plugin):
         self._sjid: list[int] = []
         #: What `joint_states` reports, in the order `post_step` fills the buffers: the rolls, then
         #: the steers. A swerve base's steer joints are ACTUATED, so leaving them out published a
-        #: robot whose wheels never turn -- see read_joint_states.
+        #: robot whose wheels never turn -- see joint_states.
         self._js_names = self._wj_names + self._steer
+        #: A base without modelled wheels has no joints to publish, and no ``joint_states``.
+        self.has_wheel_joints = bool(self._js_names)
         #: Corner offsets (x, y) in WHEEL_ORDER, for the swerve twist -> per-wheel velocity map.
         self._corner: list[tuple[float, float]] = []
 
         self._target = np.zeros(3)  # commanded body-frame [vx, vy, wz], clipped
         self._cmd = np.zeros(3)  # ramped body-frame command actually written
-        self._odom = np.zeros(6)  # x, y, yaw, vx, vy, wz  (pose world, twist body)
+        self._odom = np.zeros(6)  # x, y, yaw, vx, vy, wz  (pose in the odom frame, twist body)
         self._jpos = np.zeros(len(self._js_names))
         self._jvel = np.zeros(len(self._js_names))
         # resolved in configure()
@@ -200,12 +216,13 @@ class OmniDrivePlugin(Plugin):
             errors.append("'steer_actuators' without 'steer_joints' -- give both or neither")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, wz]")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     def configure(self, ctx: SimContext) -> None:
+        self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
 
         def act(n):
@@ -299,59 +316,17 @@ class OmniDrivePlugin(Plugin):
                 kinematics="holonomic",
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.TwistStamped"
-                        if self.stamped_cmd_vel
-                        else "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": self.odom_child_frame,
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        if self._js_names:
-            ctx.interface.add(
-                Endpoint(
-                    name="joint_states",
-                    direction="out",
-                    owner=self.robot,
-                    namespace=ns,
-                    read=self.read_joint_states,
-                    rate_hz=50.0,
-                    backend={
-                        "ros2": {
-                            "type": "sensor_msgs.msg.JointState",
-                            "topic": self.topic_override("joint_states") or "joint_states",
-                        }
-                    },
-                )
-            )
+
+    @endpoint.stream(Twist, ros2=lambda self: {"stamped": self.stamped_cmd_vel})
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed
+            wz: yaw rate
+        """
+        self.drive(vx, vy, wz)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target. Unlike a differential drive, ``vy`` is honoured."""
@@ -364,13 +339,24 @@ class OmniDrivePlugin(Plugin):
                 vx *= self.max_combined / speed
                 vy *= self.max_combined / speed
         self._target[:] = (vx, vy, float(np.clip(w, -self.max_w, self.max_w)))
+        self.watchdog.stamp(self._ctx)
 
-    def read_odom(self):
+    @endpoint.out(
+        rate=50.0, ros2=lambda self: {"child_frame_id": self.odom_child_frame, "emit_tf": True}
+    )
+    def odom(self) -> Odometry:
+        """Odometry integrated from the base's achieved twist."""
+        x, y, yaw, vx, vy, w = self._odom
+        return Odometry.planar(x, y, yaw, vx, vy, w)
+
+    def read_odom(self) -> tuple[float, float, float, float, float, float]:
+        """The latest ``(x, y, yaw, vx, vy, w)``, what the :class:`RobotHandle` reads."""
         x, y, yaw, vx, vy, w = self._odom
         return (x, y, yaw, vx, vy, w)
 
-    def read_joint_states(self):
-        """``(names, positions, velocities)`` for every joint this plugin drives.
+    @endpoint.out(rate=50.0, when="has_wheel_joints")
+    def joint_states(self) -> JointState:
+        """Every joint this plugin drives: the wheels' rolls, then their steers.
 
         The steer joints are in here as well as the rolls, and on a swerve base that is the half
         that matters: they are position-actuated, so a consumer left without them (a
@@ -378,12 +364,21 @@ class OmniDrivePlugin(Plugin):
         link at zero and shows a base that strafes with its wheels pointing straight ahead. The
         rolls alone are what a mecanum base has; a swerve base also aims.
         """
-        return (self._js_names, self._jpos, self._jvel)
+        return JointState(self._js_names, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._target[:] = 0.0
         self._cmd[:] = 0.0
         self._odom[:] = 0.0
+        self.watchdog.clear()
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read_joints(ctx.model, ctx.data)
+
+    def _read_joints(self, m, d) -> None:
+        """The joint_states payload, written in place so ``joint_states`` is zero-copy."""
+        for k, jid in enumerate(self._wjid + self._sjid):
+            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
+            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
 
     def _yaw(self, d) -> float:
         qw, qx, qy, qz = d.qpos[self._qadr + 3 : self._qadr + 7]
@@ -394,6 +389,10 @@ class OmniDrivePlugin(Plugin):
             return  # the viewer's sliders own the actuators this run
         if "test_cmd" in self.config:
             self.drive(*(float(v) for v in self.config["test_cmd"]))
+        if self.watchdog.expired(ctx):
+            # The watchdog: the last command has expired, so the target is a stop, reached
+            # through the ramp below like any other command.
+            self._target[:] = 0.0
 
         # Ramp the body-frame command toward the target under the acceleration limits.
         lim = np.array([self.accel, self.accel, self.ang_accel]) * ctx.dt
@@ -465,12 +464,12 @@ class OmniDrivePlugin(Plugin):
         vx_b = c * vx_w + s * vy_w
         vy_b = -s * vx_w + c * vy_w
 
+        # The odom frame is the spawn pose, so the body twist is integrated through the odom yaw.
         o = self._odom
-        o[0] += vx_w * ctx.dt
-        o[1] += vy_w * ctx.dt
+        co, so = np.cos(o[2]), np.sin(o[2])
+        o[0] += (co * vx_b - so * vy_b) * ctx.dt
+        o[1] += (so * vx_b + co * vy_b) * ctx.dt
         o[2] = (o[2] + wz * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4], o[5] = vx_b, vy_b, wz
 
-        for k, jid in enumerate(self._wjid + self._sjid):
-            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
-            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
+        self._read_joints(m, d)

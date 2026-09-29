@@ -48,8 +48,9 @@ components:
   - spawn_sensor:
       model: rplidar_c1
       parent_frame: base_link
-      pos: [0.06, 0.0, 0.12441]     # lidar_link_joint xyz, less the device's 0.032 m to its scan frame
-      rpy: [0.0, 0.0, 0.0]          # lidar_link_joint yaw -3.14159, less the device's pi
+      # lidar_link_joint: its xyz less the device's 0.032 m to its scan frame, its yaw -3.14159 less the
+      # device's pi
+      pose: {position: {x: 0.06, z: 0.12441}}
       frame_id: lidar_link          # bringup_launch.py:81, the driver's frame_id
     name: rplidar
     components:

@@ -4,7 +4,8 @@ The ROS 2 bridge for **roqsim**, provided as roqsim plugins:
 
 - `ros2_bridge` — `cmd_vel` in; `odom` + dynamic `tf` (odom→base_link), `scan`, `clock`,
   `joint_states` out. This node is the time source (publishes `/clock`); run every other node with
-  `use_sim_time:=true`.
+  `use_sim_time:=true`. What it made of each endpoint (the resolved topic, service or action) is
+  reported beside the endpoint by `roqsim describe <path>`, over the simulator's control socket.
 - `sim_interfaces` — a subset of [`simulation_interfaces`](https://github.com/ros-simulation/simulation_interfaces):
   `GetSimulatorFeatures`, `GetEntities`, `Get/SetEntityState`, `Get/SetSimulationState`,
   `StepSimulation`, `ResetSimulation`.

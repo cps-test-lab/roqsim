@@ -40,7 +40,8 @@ Config -- a component of the entity whose wrench is watched::
       max_torque: 0.0          # Nm; magnitude of the measured torque, 0 disables
       settle_s: 0.0            # ignore the first seconds, while a reset transient decays
       latch: true              # once tripped, stay tripped until reset (a trial is failed, not un-failed)
-      stop_run: true           # ask the driver to end the run, as a real stop ends the motion
+      stop_run: true           # end a standalone `roqsim sim` run, as a real stop ends the motion;
+                               #   a scenario ends its own run, on this plugin's `tripped`
       release_controllers: true  # deactivate the controllers driving the arm, the way a stop does
       reports_as: protective_stop  # the word this robot's own interface uses
       rate_hz: 30.0
@@ -48,7 +49,8 @@ Config -- a component of the entity whose wrench is watched::
 Endpoint ``force_limit`` (out) reads a :class:`LimitReport`:
 ``(tripped, reason, at_time, force, torque)`` -- ``at_time`` is the simulation time of the first
 trip (``-1.0`` if none) and ``force``/``torque`` are the magnitudes that caused it, so a failure is
-attributable rather than merely flagged.
+attributable rather than merely flagged. ROS carries ``tripped`` alone, a ``std_msgs/Bool`` on
+``force_limit``.
 """
 
 from __future__ import annotations
@@ -57,20 +59,30 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.controllers import registry_for
 from roqsim.plugin import Plugin
+from roqsim.types import Duration, Force, Torque
 
 
 @dataclass
 class LimitReport:
-    """What the monitor saw. ``reason`` is empty until it trips."""
+    """What the monitor saw.
+
+    Attributes:
+        tripped: whether a limit was exceeded
+        reason: which limit, and by how much; empty until it trips
+        at_time: sim time it tripped; -1.0 until then
+        force: the force magnitude it tripped on
+        torque: the torque magnitude it tripped on
+    """
 
     tripped: bool = False
     reason: str = ""
-    at_time: float = -1.0
-    force: float = 0.0
-    torque: float = 0.0
+    at_time: Duration = -1.0
+    force: Force = 0.0
+    torque: Torque = 0.0
 
 
 class ForceLimitPlugin(Plugin):
@@ -113,8 +125,6 @@ class ForceLimitPlugin(Plugin):
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        entity = ctx.entities.get(self.watched)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         self._ft = ctx.blackboard.get(f"ft:{self.ft_key}")
         if self._ft is None:
@@ -125,23 +135,12 @@ class ForceLimitPlugin(Plugin):
             )
 
         ctx.blackboard.set(f"force_limit:{self.address}", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="force_limit",
-                direction="out",
-                owner=self.watched,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Bool",
-                        "field": "tripped",
-                        "topic": self.topic_override("force_limit") or "force_limit",
-                    }
-                },
-            )
-        )
+
+    # The report is a structure and Bool carries one field, so the endpoint says which.
+    @endpoint.out(rate="rate_hz", ros2={"field": "tripped"})
+    def force_limit(self) -> LimitReport:
+        """Whether the measured wrench exceeded a limit, which one, and when."""
+        return self._report
 
     def read_state(self) -> LimitReport:
         return self._report

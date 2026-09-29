@@ -76,13 +76,17 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
 
+from .document import nearest
+
 #: Config keys a component may carry without its own schema mentioning them, because something other
-#: than the plugin owns them: the spawn plugins' ``prefix``, the transport scope, the topic hardwire
-#: map, a sensor's runtime fault block, and ``present``, which the base class reads and checks for
-#: every plugin (:meth:`roqsim.plugin.Plugin.validate_presence` refuses it, with the reason, on one
-#: that registers no entity). A plugin that declares one of these in its own schema (with a type or
-#: a default) overrides the entry here.
-INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "fault", "robot", "arm", "present"})
+#: than the world's author put them there: the spawn plugins' ``prefix``, the transport scope, the
+#: topic hardwire map, the per-endpoint QoS, a sensor's runtime fault block, and ``present``, which
+#: the base class reads and checks for every plugin (:meth:`roqsim.plugin.Plugin.validate_presence`
+#: refuses it, with the reason, on one that registers no entity). A plugin that declares one of these
+#: in its own schema (with a type or a default) overrides the entry here.
+INJECTED_KEYS = frozenset(
+    {"prefix", "namespace", "topics", "qos", "fault", "robot", "arm", "present"}
+)
 
 #: How a type is named in the published schema -- the vocabulary a caller matches on, not Python's.
 _TYPE_NAMES = {bool: "bool", int: "int", float: "float", str: "str", list: "list", dict: "dict"}
@@ -230,7 +234,7 @@ def validate(schema: dict[str, Field], config: dict, *, strict_keys: bool = Fals
         known = set(schema) | INJECTED_KEYS
         for key in config:
             if key not in known:
-                near = _nearest(key, schema)
+                near = nearest(key, schema)
                 suggestion = f" -- did you mean '{near}'?" if near else ""
                 errors.append(
                     f"'{key}' is not a setting of this component{suggestion}. Known: "
@@ -290,15 +294,3 @@ def _has_type(value: Any, wanted: type) -> bool:
     if wanted is float:
         return isinstance(value, (int, float))
     return isinstance(value, wanted)
-
-
-def _nearest(key: str, schema: dict[str, Field]) -> str | None:
-    """The closest declared key to a typo, or None when nothing is close.
-
-    A typo suggestion is worth having only when it is nearly certain: 'radius' for 'radius_m' helps,
-    while 'body' for 'mass' sends someone to the wrong line. The cutoff is deliberately tight.
-    """
-    from difflib import get_close_matches
-
-    matches = get_close_matches(key, list(schema), n=1, cutoff=0.8)
-    return matches[0] if matches else None
