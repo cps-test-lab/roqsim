@@ -79,6 +79,25 @@ a soft stiffness holds a pose instead of folding; at zero gravity it is identica
 Which law and gains every joint ended up with is written into the run's recording, so a result can
 state what its joints ran under. See :ref:`architecture` for the full mechanism.
 
+Every ``sim:`` key is checked
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``sim:`` takes ``world``, ``name``, ``timestep``, ``pacing``, ``sync``, ``seed``, ``integrator``,
+``cone``, ``gravity``, ``wind``, ``contact_override``, ``dedup_assets``, ``view``, and the MuJoCo
+``opt.*`` fields set by their own names: ``solver``, ``iterations``, ``ls_iterations``,
+``noslip_iterations``, ``impratio``, ``density``, ``viscosity`` (``roqsim.config.SIM_KEYS``).
+
+**Any other key is refused, not ignored**, and the message names the nearest known one::
+
+   sim: unknown key(s) 'timstep' (did you mean 'timestep'?); it takes cone, contact_override, ...
+
+Ignored, ``timstep: 0.004`` would run at the model's step, and the run would still finish and
+report, with every number measuring something its author did not write. The check runs after
+``extends:`` resolves and after overrides merge, so a key is refused whether it came from the file,
+a parent world or ``--set``. Headless is a run switch (``--headless``), not a ``sim:`` key. The
+``opt.*`` keys are one tuple, ``roqsim.config.SIM_OPTION_KEYS``, which both this check and the
+engine read.
+
 Overriding the world
 --------------------
 

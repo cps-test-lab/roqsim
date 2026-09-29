@@ -1169,6 +1169,19 @@ def overrides_from_dotlist(dotlist: list[str]) -> dict:
     return overrides
 
 
+#: The ``sim:`` keys the engine sets straight onto MuJoCo's ``opt.*`` field of the same name. The
+#: engine's loop and :data:`SIM_KEYS` both read this tuple, so a key applied there is a key a world
+#: may carry, and neither can gain one without the other.
+SIM_OPTION_KEYS = (
+    "solver",
+    "iterations",
+    "ls_iterations",
+    "noslip_iterations",
+    "impratio",
+    "density",
+    "viscosity",
+)
+
 #: The keys of a world's ``sim:`` block: what :class:`SimConfig` and :mod:`roqsim.engine` read.
 #: A key read anywhere is listed here; any other is refused at load.
 SIM_KEYS = frozenset(
@@ -1176,23 +1189,17 @@ SIM_KEYS = frozenset(
         "cone",
         "contact_override",
         "dedup_assets",
-        "density",
         "gravity",
-        "impratio",
         "integrator",
-        "iterations",
-        "ls_iterations",
         "name",
-        "noslip_iterations",
         "pacing",
         "seed",
-        "solver",
         "sync",
         "timestep",
         "view",
-        "viscosity",
         "wind",
         "world",
+        *SIM_OPTION_KEYS,
     }
 )
 

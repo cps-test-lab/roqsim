@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from roqsim.config import SIM_KEYS, instantiate_plugins, load_config_from_dict
+from roqsim.config import SIM_KEYS, SIM_OPTION_KEYS, instantiate_plugins, load_config_from_dict
 from roqsim.plugin import Plugin, PluginError
 
 
@@ -155,6 +155,15 @@ _SIM_SAMPLES = {
 
 def test_sim_samples_cover_the_keys():
     assert set(_SIM_SAMPLES) == SIM_KEYS
+
+
+def test_each_option_key_is_a_sim_key_and_a_mujoco_option_field():
+    """The engine sets these on ``spec.option`` by their own names, and the loader admits them."""
+    import mujoco
+
+    option = mujoco.MjSpec().option
+    assert set(SIM_OPTION_KEYS) <= SIM_KEYS
+    assert [k for k in SIM_OPTION_KEYS if not hasattr(option, k)] == []
 
 
 @pytest.mark.parametrize("key", sorted(SIM_KEYS))
