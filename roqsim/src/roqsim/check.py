@@ -290,11 +290,13 @@ def _inventory(engine) -> dict:
     """What the loaded world turned out to be -- the half of this that is not about failure."""
     import mujoco
 
+    from roqsim.endpoint import topic_of
+
     ctx = engine.ctx
     model = ctx.model
     endpoints = []
     for endpoint in ctx.interface.all():
-        hints = endpoint.backend.get("ros2", {})
+        hints = endpoint.backend.get("ros2") or {}
         endpoints.append(
             {
                 "name": endpoint.name,
@@ -302,7 +304,8 @@ def _inventory(engine) -> dict:
                 "owner": endpoint.owner,
                 "namespace": endpoint.namespace,
                 "type": hints.get("type") or hints.get("service"),
-                "topic": hints.get("topic") or hints.get("name"),
+                "payload": endpoint.payload_type.name if endpoint.payload_type else None,
+                "topic": topic_of(endpoint, "ros2"),
                 "rate_hz": endpoint.rate_hz,
             }
         )

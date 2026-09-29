@@ -18,9 +18,10 @@ Config::
         d: 40               #   N*m*s/rad -- see roqsim.actuators for the gain of each control
         each:               #   per-actuator, on top of the shared keys above
           front_left_wheel_motor: {d: 25}
+      gravity_compensation: true  # false: no drive supplies a gravity term (see below)
       present: true         # false: compiled in, but absent until it is spawned
       frames:               # OPTIONAL: fixed links beyond the manifest's own (see below)
-        - {name: cover_link, parent: body_link, pos: [0, 0, 0.05], rpy: [0, 0, 0]}
+        - {name: cover_link, parent: body_link, pose: {position: {z: 0.05}}}
 
 **Vendor frames.** A top-level ``frames:`` block in the model's manifest -- plus any in this config,
 after it -- names the fixed links the vendor description chains and the MJCF flattens
@@ -59,6 +60,17 @@ The rotation is a full quaternion, because the service's is: a robot can be spaw
 here refuses that -- the base has a free joint and MuJoCo holds whatever orientation it is given --
 so a rotation that is not a heading is taken at its word.
 
+**Gravity compensation.** A ``position`` or ``impedance`` drive holds up what hangs below it -- a
+mobile manipulator's arm, a lift mast, a steered wheel's carrier -- so those bodies get their gravity
+term as a torque the drive supplies, clamped by the joint's ``actuatorfrcrange`` (else the drive's
+``forcerange`` times gear), and the reaction goes into the base: the wheels carry the whole robot
+and a drive too weak for its load sags (:func:`roqsim.actuators.apply_gravity_compensation`). A
+model's ``forcerange`` is therefore the drive's total rating, holding torque included: state the
+vendor's rated torque or force, never one net of the weight it holds. ``gravity_compensation: false`` leaves every body uncompensated, for drives that
+genuinely supply no gravity term (a hobby servo, a backdrivable joint); each servo then trades
+position error for holding torque. There is no whole-mechanism form, unlike ``spawn_arm``'s
+``true``: it would compensate the base and lift the robot off its wheels.
+
 ``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
 the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
 states (see :mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so what one
@@ -76,6 +88,7 @@ from dataclasses import replace
 
 import mujoco
 
+from roqsim import endpoint
 from roqsim.actuators import (
     apply_gravity_compensation,
 )
@@ -86,12 +99,18 @@ from roqsim.actuators import (
     validate_override as validate_actuators,
 )
 from roqsim.context import Entity, SimContext
-from roqsim.frames import add_frame_sites, parse_frames, static_tf_endpoint, static_transforms
+from roqsim.frames import (
+    add_frame_sites,
+    parse_frames,
+    static_transforms,
+    static_transforms_of,
+)
 from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import PoseError, parse_pose, yaw_of
 from roqsim.schema import Field
+from roqsim.types import Transforms
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -154,6 +173,9 @@ class SpawnRobotPlugin(Plugin):
         "pose": Field(dict, doc="spawn pose, as SpawnEntity's initial_pose (roqsim.pose)"),
         "base_joint": Field(str, default="base_free", doc="free joint used to place the base"),
         "actuators": Field(dict, doc="control law and gains override (roqsim.actuators)"),
+        "gravity_compensation": Field(
+            bool, default=True, doc="false: no drive supplies a gravity term (roqsim.actuators)"
+        ),
         "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
         "frames": Field(list, doc="fixed links beyond the manifest's own (roqsim.frames)"),
         "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
@@ -197,7 +219,9 @@ class SpawnRobotPlugin(Plugin):
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
         #: The manifest's and this config's fixed frames, read in :meth:`build`.
-        self.frames: list = []
+        self.frame_decls: list = []
+        #: Their static transforms, and those joining them to the root, read at :meth:`configure`.
+        self.frame_links: list[dict] = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -234,24 +258,26 @@ class SpawnRobotPlugin(Plugin):
         )
         # Per body, not per spec, because a robot that stands on the ground has both kinds of
         # body: a mobile manipulator's ARM links are held up by its own motors, while the base
-        # hangs off nothing and the wheels carry the robot. Compensating all of them would cancel
-        # the weight that presses it onto the floor -- and it would not fall over, so nothing
-        # would say so. `apply_gravity_compensation` draws that line from the actuator table.
+        # hangs off nothing and the wheels carry the robot. `apply_gravity_compensation` draws that
+        # line from the actuator table, and makes the arm's term a torque its drives supply: the
+        # engine hands the reaction to the base (`roqsim.actuators.GravityReaction`), so the wheels
+        # carry the whole robot, arm included, and a drive too weak for its load sags.
         #
         # The arm's own sag is small at a real robot's shipped gains (frankie's worst joint holds
         # to 0.4 deg without this) and it is the same defect an arm on a bench has, so it is
         # closed the same way rather than left as the one place a drive carries its own weight
         # and is not modelled doing it.
-        apply_gravity_compensation(child, self.actuator_table)
+        if self.config.get("gravity_compensation", True):
+            apply_gravity_compensation(child, self.actuator_table)
         self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
         # Added to the MODEL before attach, so each site takes the robot's prefix like every other
         # name in it, and a mount declared after this robot can hang from it.
         where = f"spawn_robot {self.robot_name} ({self.config['model']})"
-        self.frames = parse_frames(
+        self.frame_decls = parse_frames(
             manifest_frames(asset.path) + list(self.config.get("frames") or []), where
         )
-        add_frame_sites(child, self.frames, where)
+        add_frame_sites(child, self.frame_decls, where)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
 
@@ -306,22 +332,27 @@ class SpawnRobotPlugin(Plugin):
             )
             for row in self.actuator_table
         ]
-        if self.frames:
-            transforms = static_transforms(
+        if self.frame_decls:
+            self.frame_links = static_transforms(
                 ctx.model,
                 self._root_links(ctx, base_body)
                 + [
                     (f.parent, self.prefix + f.parent, f.name, self.prefix + f.name)
-                    for f in self.frames
+                    for f in self.frame_decls
                 ],
                 f"spawn_robot {self.robot_name}",
             )
-            ctx.interface.add(
-                static_tf_endpoint(
-                    "frames", self.robot_name, self.config.get("namespace", ""), transforms
-                )
-            )
         self._apply_initial_pose(ctx)
+
+    @property
+    def endpoint_owner(self) -> str:
+        """The robot entity this spawn registers."""
+        return self.robot_name
+
+    @endpoint.out(when="frame_links", ros2={"static": True})
+    def frames(self) -> Transforms:
+        """The robot's fixed frames, with bare names, sent once as static transforms."""
+        return static_transforms_of(self.frame_links)
 
     def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
         """``root -> body`` for each body other than the root that a frame chain hangs from.
@@ -335,9 +366,9 @@ class SpawnRobotPlugin(Plugin):
         m = ctx.model
         root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, base_body)
         root_name = base_body.removeprefix(self.prefix)
-        declared = {f.name for f in self.frames}
+        declared = {f.name for f in self.frame_decls}
         links: list[tuple[str, str, str, str]] = []
-        for frame in self.frames:
+        for frame in self.frame_decls:
             if frame.parent in declared or any(link[2] == frame.parent for link in links):
                 continue
             body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, self.prefix + frame.parent)
