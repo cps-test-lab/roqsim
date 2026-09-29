@@ -133,18 +133,3 @@ def test_a_robot_without_frames_publishes_no_frames_endpoint(tmp_path):
 def test_a_bad_frame_is_refused_by_name(tmp_path, frames, match):
     with pytest.raises(Exception, match=match):
         _engine(_robot(tmp_path), frames=frames)
-
-
-def test_an_unpublished_frame_is_a_site_and_what_hangs_below_it_is_published_across_it(tmp_path):
-    manifest = MANIFEST + (
-        "  - {name: place, parent: cover_link, pose: {position: {x: 0.1}}, tf: false}\n"
-        "  - {name: tip, parent: place, pose: {position: {z: 0.2}}}\n"
-    )
-    engine = _engine(_robot(tmp_path, manifest=manifest))
-    assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, "r_place") >= 0
-    links = _frames(engine).read().transforms
-    pairs = [(link.parent, link.child) for link in links]
-    assert not any("place" in pair for pair in pairs)
-    tip = links[pairs.index(("cover_link", "tip"))]
-    assert np.allclose(tip.translation, [0.1, 0, 0.2])
-    assert engine.ctx.entities.get("robot").meta["frame_anchors"] == {"place": "cover_link"}

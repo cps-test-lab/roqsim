@@ -31,9 +31,8 @@ import scan_mount_utils as scan_mount
 import yaml
 
 from roqsim.context import Entity, SimContext
-from roqsim.frames import parse_frames
 from roqsim.models import apply_assets, resolve_model
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import parse_pose, rpy_to_quat
 from roqsim.types import Odometry, Twist
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
@@ -361,18 +360,11 @@ def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
     manifest = yaml.safe_load(MANIFEST.read_text())
     (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
     assert mount["name"] == "lds01"
-    assert mount["spawn_sensor"] == {
-        "model": "lds01",
-        "parent_frame": "lds01",
-        "frame_id": "base_scan",
-    }
-    # The robot's one frame is where the scanner goes: the scan joint's origin, not published.
-    ((name, parent, pos, quat, tf),) = [
-        (f.name, f.parent, f.pos, f.quat, f.tf) for f in parse_frames(manifest["frames"], "tb3")
-    ]
-    assert (name, parent, pos, tf) == ("lds01", "base_link", BASE_SCAN[0], False)
-    assert quat == tuple(rpy_to_quat(*BASE_SCAN[1]))
-    assert "components" not in mount
+    spawn = dict(mount["spawn_sensor"])
+    pos, quat = parse_pose(spawn.pop("pose"), relative=True)
+    assert spawn == {"model": "lds01", "parent_frame": "base_link", "frame_id": "base_scan"}
+    assert tuple(pos) == BASE_SCAN[0] and quat == rpy_to_quat(*BASE_SCAN[1])
+    assert "components" not in mount and "frames" not in manifest
     model, _ = _build()
     assert model.nsite == 1  # base_imu
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "tb3_lds") < 0

@@ -79,7 +79,7 @@ def manifest_frames(model_file: Path) -> list:
     data = yaml.safe_load(path.read_text()) or {}
     frames = data.get("frames")
     if frames is not None and not isinstance(frames, list):
-        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pose, tf}}")
+        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pose}}")
     return list(frames or [])
 
 
@@ -110,7 +110,7 @@ def resolve_parent_frame(model_file: Path, name: str, frames=None, where: str = 
         return
     guess = nearest(name, seen | bodies)
     hint = f" Did you mean {guess!r}?" if guess else ""
-    listed = ", ".join(f.name + ("" if f.tf else " (tf: false)") for f in declared) or "none"
+    listed = ", ".join(f.name for f in declared) or "none"
     raise PluginError(
         f"{at}parent_frame {name!r} is neither a body nor a frame of {model_file.stem}.{hint} "
         f"Its frames: {listed} (the 'frames:' block of {path.name})."

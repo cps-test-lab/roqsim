@@ -19,21 +19,20 @@ license: LICENSE.unitree_rl_gym
 # torso_link is a jointed body.
 frames:
   - {name: torso_link, parent: base_link, pose: {position: {x: -0.0039635, z: 0.044}}}
-  # Where the Mid-360 goes (see its entry below): a place, not a link, so not published.
-  - {name: mid360, parent: torso_link, pose: {position: {x: 0.0002835, y: 0.00003, z: 0.428434}, orientation: {roll: 3.141592653589793, pitch: 0.05112069379091391}}, tf: false}
 
 components:
   - g1_locomotion: {}                              # RL walking policy + PD; gains/config bundled
   # The Livox Mid-360 device model at the vendor joint origin: mid360_joint on torso_link,
   # g1_29dof_rev_1_0.urdf:572-576 (the same origin in g1_23dof_rev_1_0.urdf:530-534 and
   # g1_29dof_mode_15_with_dex1_1.urdf:548-552), upside down and pitched 2.9 deg. The URDF link is
-  # the point-cloud frame, which is the device's mount origin, so the frame's pose is verbatim; the scan is
+  # the point-cloud frame, which is the device's mount origin, so its pose is verbatim; the scan is
   # stamped in that link's name so it joins the robot's TF tree. Scan values are the device's: no
   # Unitree source configures the G1's Mid-360 differently. The head mesh carries the opening the
   # real head has for the sensor (external/convert/g1_head_window.py). Addressed as
   # `<robot>.mid360.livox_mid360`; the cloud is `livox/lidar` in the robot's namespace.
   - spawn_sensor:
       model: mid360
-      parent_frame: mid360
+      parent_frame: torso_link
+      pose: {position: {x: 0.0002835, y: 0.00003, z: 0.428434}, orientation: {roll: 3.141592653589793, pitch: 0.05112069379091391}}
       frame_id: mid360_link
     name: mid360

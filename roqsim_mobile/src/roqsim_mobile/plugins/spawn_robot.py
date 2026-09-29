@@ -25,15 +25,10 @@ Config::
 **Vendor frames.** A top-level ``frames:`` block in the model's manifest -- plus any in this config,
 after it -- names the fixed links the vendor description chains and the MJCF flattens
 (:mod:`roqsim.frames`). Each becomes a site ``<prefix><name>`` on its parent's body at build, so a
-mounted device can hang from it (``spawn_sensor``'s ``parent_frame``), and each published one is
-sent at configure as a static transform ``parent -> name`` read from the compiled model, in the
-robot's namespace. Where a chain starts at a body other than the robot's root, ``root -> body`` is
-published with it, so the chain joins the robot's tree; that body must be welded to the root.
-
-A frame with ``tf: false`` is where a device goes and nothing more: it is built, so a device names
-it as its ``parent_frame``, but not published, so the TF tree stays the robot description's. A
-published frame below it, and a device on it, is published from its nearest published ancestor;
-the entity's ``meta`` carries that ancestor per unpublished frame (``frame_anchors``).
+mounted device can hang from it (``spawn_sensor``'s ``parent_frame``), and is published at configure
+as a static transform ``parent -> name`` read from the compiled model, in the robot's namespace.
+Where a chain starts at a body other than the robot's root, ``root -> body`` is published with it,
+so the chain joins the robot's tree; that body must be welded to the root.
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
@@ -97,7 +92,6 @@ from roqsim.frames import (
     parse_frames,
     static_transforms,
     static_transforms_of,
-    tf_anchors,
 )
 from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.models import ModelError, apply_assets, resolve_model
@@ -296,7 +290,6 @@ class SpawnRobotPlugin(Plugin):
 
     def configure(self, ctx: SimContext) -> None:
         base_body = self._resolve_base_body(ctx)
-        anchors = tf_anchors(self.frame_decls)
         ctx.entities.add(
             Entity(
                 name=self.robot_name,
@@ -310,10 +303,6 @@ class SpawnRobotPlugin(Plugin):
                     # Inherited by the robot's endpoint-producing plugins (diff_drive, lidar), so
                     # the manifest-injected defaults need no namespace plumbing of their own.
                     "namespace": self.config.get("namespace", ""),
-                    # Where a device on an unpublished frame is published from.
-                    "frame_anchors": {
-                        f.name: anchors[f.name] for f in self.frame_decls if not f.tf
-                    },
                 },
             )
         )
@@ -326,14 +315,13 @@ class SpawnRobotPlugin(Plugin):
             )
             for row in self.actuator_table
         ]
-        published = [f for f in self.frame_decls if f.tf]
-        if published:
+        if self.frame_decls:
             self.frame_links = static_transforms(
                 ctx.model,
-                self._root_links(ctx, base_body, anchors)
+                self._root_links(ctx, base_body)
                 + [
-                    (anchors[f.name], self.prefix + anchors[f.name], f.name, self.prefix + f.name)
-                    for f in published
+                    (f.parent, self.prefix + f.parent, f.name, self.prefix + f.name)
+                    for f in self.frame_decls
                 ],
                 f"spawn_robot {self.robot_name}",
             )
@@ -349,10 +337,8 @@ class SpawnRobotPlugin(Plugin):
         """The robot's fixed frames, with bare names, sent once as static transforms."""
         return static_transforms_of(self.frame_links)
 
-    def _root_links(
-        self, ctx: SimContext, base_body: str, anchors: dict[str, str]
-    ) -> list[tuple[str, str, str, str]]:
-        """``root -> body`` for each body other than the root that a published frame hangs from.
+    def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
+        """``root -> body`` for each body other than the root that a frame chain hangs from.
 
         A frame is measured from its parent body, and nothing else publishes where that body sits:
         without this link the chain is a TF tree of its own, and a consumer asking for the scan in
@@ -366,28 +352,27 @@ class SpawnRobotPlugin(Plugin):
         declared = {f.name for f in self.frame_decls}
         links: list[tuple[str, str, str, str]] = []
         for frame in self.frame_decls:
-            anchor = anchors[frame.name]
-            if not frame.tf or anchor in declared or any(link[2] == anchor for link in links):
+            if frame.parent in declared or any(link[2] == frame.parent for link in links):
                 continue
-            body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, self.prefix + anchor)
+            body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, self.prefix + frame.parent)
             walk = body
             while walk != root:
                 if walk <= 0:
                     raise RuntimeError(
                         f"spawn_robot {self.robot_name}: frame {frame.name!r} hangs from "
-                        f"{anchor!r}, which is not a body under the root {root_name!r}"
+                        f"{frame.parent!r}, which is not a body under the root {root_name!r}"
                     )
                 if m.body_jntnum[walk]:
                     moving = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, walk)
                     raise RuntimeError(
                         f"spawn_robot {self.robot_name}: frame {frame.name!r} hangs from "
-                        f"{anchor!r}, which a joint on {moving!r} moves relative to "
+                        f"{frame.parent!r}, which a joint on {moving!r} moves relative to "
                         f"{root_name!r}. Its transform from the root is not static; hang the frame "
                         f"from a body welded to the root."
                     )
                 walk = int(m.body_parentid[walk])
             if body != root:
-                links.append((root_name, base_body, anchor, self.prefix + anchor))
+                links.append((root_name, base_body, frame.parent, self.prefix + frame.parent))
         return links
 
     def on_reset(self, ctx: SimContext) -> None:
