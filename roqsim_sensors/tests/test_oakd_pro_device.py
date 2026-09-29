@@ -22,6 +22,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.models import ModelError, resolve_model
+from roqsim.pose import pose_mapping
 
 OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
 BASELINE = 0.075
@@ -76,8 +77,7 @@ def _compiled(model, pos, rpy):
                     "spawn_sensor": {
                         "model": model,
                         "prefix": "cam_",
-                        "pos": list(pos),
-                        "rpy": list(rpy),
+                        "pose": pose_mapping(pos, rpy),
                         "default_plugins": False,
                     },
                     "name": "cam",
@@ -120,7 +120,7 @@ def test_a_re_expressed_mount_puts_the_camera_where_the_retired_one_did(tmp_path
 def test_the_mount_publishes_the_vendor_chain():
     engine = _compiled("oakd_pro", [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tfs = {(t["parent"], t["child"]): t for t in frames.backend["ros2"]["static_tf"]}
+    tfs = {(t["parent"], t["child"]): t for t in [vars(t) for t in frames.read().transforms]}
     assert set(tfs) == {
         ("world", "oakd_link"),
         ("oakd_link", "oakd_rgb_camera_frame"),
@@ -177,6 +177,6 @@ def test_the_retired_name_is_refused_naming_the_new_one():
     assert str(exc.value) == (
         "spawn_sensor: model 'oakd' — renamed to 'oakd_pro' when its mount frame became the one "
         "its vendor macro places (it was a display convention pointing the lens along +y). Update "
-        "the name, and re-express this mount's pos/rpy as the vendor macro's origin; see "
+        "the name, and re-express this mount's pose as the vendor macro's origin; see "
         "roqsim_sensors/README.md."
     )

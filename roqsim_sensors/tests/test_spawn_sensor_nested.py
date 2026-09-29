@@ -39,7 +39,9 @@ components:
             rays: 4, max_range: 4.0, range_min: 0.0}
 frames:
   - {name: "{frame_id}", parent: mount}
-  - {name: "{frame_id}_optical", parent: "{frame_id}", pos: [0, 0, 0.01], rpy: [0, 0, 1.5707963267948966]}
+  - name: "{frame_id}_optical"
+    parent: "{frame_id}"
+    pose: {position: {z: 0.01}, orientation: {yaw: 1.5707963267948966}}
 """
 
 CARRIER_XML = """
@@ -57,7 +59,9 @@ CARRIER_XML = """
 
 CARRIER_FRAMES = """
 frames:
-  - {name: shell_link, parent: base_link, pos: [-0.1, 0, 0.2], rpy: [0, 0, 1.5707963267948966]}
+  - name: shell_link
+    parent: base_link
+    pose: {position: {x: -0.1, z: 0.2}, orientation: {yaw: 1.5707963267948966}}
 """
 
 
@@ -107,10 +111,12 @@ def _device(tmp_path, frame_id: str | None = "scanner_link") -> str:
     return str(tmp_path / "scanner.xml")
 
 
-def _carrier(tmp_path, mounts: str) -> str:
+def _carrier(tmp_path, mounts: str, frames: str = "") -> str:
+    """The carrier model; *mounts* are its devices, *frames* more entries of its ``frames:``."""
     (tmp_path / "carrier.xml").write_text(CARRIER_XML)
     (tmp_path / "carrier.manifest.yaml").write_text(
         textwrap.dedent(CARRIER_FRAMES)
+        + textwrap.indent(textwrap.dedent(frames), "  ")
         + "components:\n"
         + textwrap.indent(textwrap.dedent(mounts), "  ")
     )
@@ -119,7 +125,7 @@ def _carrier(tmp_path, mounts: str) -> str:
 
 def _front(device, extra=""):
     return f"""
-    - spawn_sensor: {{model: {device}, parent_frame: cover_link, pos: [0, 0, 0.05]}}
+    - spawn_sensor: {{model: {device}, parent_frame: cover_link, pose: {{position: {{z: 0.05}}}}}}
       name: scan_front{extra}
     """
 
@@ -193,7 +199,7 @@ def test_the_device_chain_is_published_from_its_parent_frame(tmp_path):
     engine = _engine(_world(_carrier(tmp_path, _front(_device(tmp_path)))))
     ep = _endpoint(engine, "frames", "robot.scan_front")
     assert ep.namespace == "tb"
-    root, optical = ep.backend["ros2"]["static_tf"]
+    root, optical = [vars(t) for t in ep.read().transforms]
     assert (root["parent"], root["child"]) == ("cover_link", "scanner_link")
     assert np.allclose(root["translation"], [0, 0, 0.05])
     assert (optical["parent"], optical["child"]) == ("scanner_link", "scanner_link_optical")
@@ -203,7 +209,7 @@ def test_the_device_chain_is_published_from_its_parent_frame(tmp_path):
 
 def test_parent_frame_may_be_a_frame_the_carrier_declares(tmp_path):
     mounts = f"""
-    - spawn_sensor: {{model: {_device(tmp_path)}, parent_frame: shell_link, pos: [0.1, 0, 0]}}
+    - spawn_sensor: {{model: {_device(tmp_path)}, parent_frame: shell_link, pose: {{position: {{x: 0.1}}}}}}
       name: scan_front
     """
     engine = _engine(_world(_carrier(tmp_path, mounts)))
@@ -211,7 +217,7 @@ def test_parent_frame_may_be_a_frame_the_carrier_declares(tmp_path):
     # shell_link is (-0.1, 0, 0.2) yawed 90 deg; 0.1 along ITS x is +y in the carrier's frame.
     assert np.allclose(pos, [-0.1, 0.1, 0.2], atol=1e-9)
     assert np.allclose(mat[:, 0], [0, 1, 0], atol=1e-9)
-    root = _endpoint(engine, "frames", "robot.scan_front").backend["ros2"]["static_tf"][0]
+    root = vars(_endpoint(engine, "frames", "robot.scan_front").read().transforms[0])
     assert root["parent"] == "shell_link" and np.allclose(root["translation"], [0.1, 0, 0])
 
 
@@ -224,7 +230,7 @@ def test_parent_frame_as_a_body_places_the_mount_at_the_composed_pose(tmp_path):
 def _rear(device, frame_id=None):
     explicit = f", frame_id: {frame_id}" if frame_id else ""
     return f"""
-    - spawn_sensor: {{model: {device}, parent_frame: base_link, pos: [-0.25, 0, 0.1], rpy: [0, 0, 3.141592653589793]{explicit}}}
+    - spawn_sensor: {{model: {device}, parent_frame: base_link, pose: {{position: {{x: -0.25, z: 0.1}}, orientation: {{yaw: 3.141592653589793}}}}{explicit}}}
       name: scan_rear
     """
 
@@ -237,7 +243,7 @@ def test_two_identical_devices_on_one_carrier_resolve_distinct_names(tmp_path):
     rear = _plugin(engine, "robot.scan_rear.lidar")
     assert front._bodyexclude != rear._bodyexclude and front._site_id != rear._site_id
     frames = {
-        e.owner: e.backend["ros2"]["static_tf"][0]["child"]
+        e.owner: e.read().transforms[0].child
         for e in engine.ctx.interface.all()
         if e.name == "frames"
     }
@@ -296,7 +302,7 @@ def test_a_world_declared_mount_sets_frame_id_before_the_device_expands(tmp_path
     # frame_id reached the device's templated components; namespace is read at configure, so an
     # override of it on the mount is fine either way.
     assert scan.namespace == "other" and scan.backend["ros2"]["frame_id"] == "laser"
-    root = _endpoint(engine, "frames", "robot.scan_front").backend["ros2"]["static_tf"][0]
+    root = vars(_endpoint(engine, "frames", "robot.scan_front").read().transforms[0])
     assert root["child"] == "laser"
 
 
@@ -313,7 +319,7 @@ def test_overriding_an_expansion_input_of_an_injected_mount_is_refused(tmp_path)
 @pytest.mark.parametrize(
     "mount, match",
     [
-        ("{model: DEVICE, pos: [0, 0, 0.05]}", "says nowhere to hang from"),
+        ("{model: DEVICE, pose: {position: {z: 0.05}}}", "says nowhere to hang from"),
         ("{model: DEVICE, parent_frame: cover_link, motion: driven}", "welded"),
         ("{model: DEVICE, parent_frame: cover_link, attach_to: cover_link}", "both say where"),
     ],
@@ -332,8 +338,12 @@ def test_a_parent_frame_the_carrier_does_not_have_is_named(tmp_path):
     - spawn_sensor: {{model: {_device(tmp_path)}, parent_frame: mast_link}}
       name: scan_front
     """
-    with pytest.raises(Exception, match="r_mast_link"):
-        _engine(_world(_carrier(tmp_path, mounts)))
+    with pytest.raises(
+        PluginError,
+        match=r"parent_frame 'mast_link' is neither a body nor a frame of carrier\. .*"
+        r"Its frames: shell_link",
+    ):
+        _world(_carrier(tmp_path, mounts))
 
 
 def test_a_world_level_device_hangs_its_chain_off_the_world(tmp_path):
@@ -343,7 +353,7 @@ def test_a_world_level_device_hangs_its_chain_off_the_world(tmp_path):
                 {
                     "spawn_sensor": {
                         "model": _device(tmp_path),
-                        "pos": [0, 0, 1.0],
+                        "pose": {"position": {"z": 1.0}},
                         "frame_id": "laser",
                     },
                     "name": "tripod",
@@ -352,7 +362,7 @@ def test_a_world_level_device_hangs_its_chain_off_the_world(tmp_path):
         }
     )
     engine = _engine(cfg)
-    root = _endpoint(engine, "frames", "tripod").backend["ros2"]["static_tf"][0]
+    root = vars(_endpoint(engine, "frames", "tripod").read().transforms[0])
     assert (root["parent"], root["child"]) == ("world", "laser")
     assert np.allclose(root["translation"], [0, 0, 1.0])
 
@@ -367,7 +377,7 @@ components:
             rays: 4, max_range: 4.0, range_min: 0.0}
 frames:
   - {name: "{device_name}_link", parent: mount}
-  - {name: "{frame_id}", parent: "{device_name}_link", pos: [0, 0, 0.01]}
+  - {name: "{frame_id}", parent: "{device_name}_link", pose: {position: {z: 0.01}}}
 """
 
 
@@ -385,7 +395,7 @@ def _mount(device, name, parent="cover_link", extra=""):
 
 
 def _chain(engine, owner):
-    tfs = _endpoint(engine, "frames", owner).backend["ros2"]["static_tf"]
+    tfs = [vars(t) for t in _endpoint(engine, "frames", owner).read().transforms]
     return [(t["parent"], t["child"]) for t in tfs]
 
 
@@ -450,3 +460,135 @@ def test_a_carrier_mount_of_a_device_without_a_frame_chain_is_refused(tmp_path):
         {"components": [{"spawn_sensor": {"model": str(tmp_path / "bare.xml")}, "name": "cam"}]}
     )
     _engine(cfg)
+
+
+# -- frames a device hangs from ------------------------------------------------------------------
+
+CARRIER_PLACES = """
+  - {name: front, parent: shell_link, pose: {position: {x: 0.1}}}
+  - name: rear
+    parent: base_link
+    pose: {position: {x: -0.25, z: 0.1}, orientation: {yaw: 3.141592653589793}}
+"""
+
+
+def _on(device, frame, label="scan_front", extra=""):
+    return f"""
+    - spawn_sensor: {{model: {device}, parent_frame: {frame}{extra}}}
+      name: {label}
+    """
+
+
+def _world_with(carrier, *children, overrides=None):
+    return load_config_from_dict(
+        {
+            "components": [
+                {
+                    CARRIER: {"model": carrier, "prefix": "r_", "namespace": "tb"},
+                    "name": "robot",
+                    "components": list(children),
+                },
+            ]
+        },
+        overrides=overrides,
+    )
+
+
+def test_a_device_on_a_declared_frame_sits_where_its_parent_and_pose_would(tmp_path):
+    device = _device(tmp_path)
+    on_frame = _engine(_world(_carrier(tmp_path, _on(device, "front"), CARRIER_PLACES)))
+    explicit = f"""
+    - spawn_sensor: {{model: {device}, parent_frame: shell_link, pose: {{position: {{x: 0.1}}}}}}
+      name: scan_front
+    """
+    by_pose = _engine(_world(_carrier(tmp_path, explicit, CARRIER_PLACES)))
+    for a, b in zip(
+        _body_pose(on_frame, "r_scan_front_mount"),
+        _body_pose(by_pose, "r_scan_front_mount"),
+        strict=True,
+    ):
+        assert np.allclose(a, b, atol=1e-12)
+    root = vars(_endpoint(on_frame, "frames", "robot.scan_front").read().transforms[0])
+    assert root["parent"] == "front" and np.allclose(root["translation"], [0, 0, 0])
+    root = vars(_endpoint(by_pose, "frames", "robot.scan_front").read().transforms[0])
+    assert root["parent"] == "shell_link" and np.allclose(root["translation"], [0.1, 0, 0])
+
+
+def test_a_pose_beside_parent_frame_is_an_offset_from_that_frame(tmp_path):
+    device = _device(tmp_path)
+    at = _engine(_world(_carrier(tmp_path, _on(device, "rear"), CARRIER_PLACES)))
+    offset = _on(device, "rear", extra=", pose: {position: {x: 0.05}}")
+    moved = _engine(_world(_carrier(tmp_path, offset, CARRIER_PLACES)))
+    pos, mat = _body_pose(at, "r_scan_front_mount")
+    assert np.allclose(pos, [-0.25, 0, 0.1], atol=1e-9)
+    # `rear` faces -x, so 0.05 along its x is 0.05 further back.
+    assert np.allclose(_body_pose(moved, "r_scan_front_mount")[0], pos + 0.05 * mat[:, 0])
+
+
+def test_an_override_moves_a_device_by_its_pose_and_the_record_states_it(tmp_path):
+    from roqsim.config import overrides_from_dotlist
+
+    mount = _on(_device(tmp_path), "shell_link", extra=", pose: {position: {x: 0.1}}")
+    carrier = _carrier(tmp_path, mount, CARRIER_PLACES)
+    cfg = _world_with(
+        carrier,
+        overrides=overrides_from_dotlist(["components.robot.scan_front.pose.position.z=0.2"]),
+    )
+    spec = next(s for s in cfg.plugins if s.address == "robot.scan_front")
+    assert spec.config["parent_frame"] == "shell_link"
+    assert spec.config["pose"] == {"position": {"x": 0.1, "z": 0.2}}
+    pos, _ = _body_pose(_engine(cfg), "r_scan_front_mount")
+    assert np.allclose(pos, [-0.1, 0.1, 0.4], atol=1e-9)
+
+
+def test_a_world_puts_a_device_on_a_robots_frame_by_nesting_it_under_the_robot(tmp_path):
+    """The carrier's own device is on `front`; a world adds a second one on `rear` with no offset."""
+    device = _device(tmp_path)
+    carrier = _carrier(tmp_path, _on(device, "front"), CARRIER_PLACES)
+    extra = {
+        "spawn_sensor": {"model": device, "parent_frame": "rear", "frame_id": "rear_link"},
+        "name": "added",
+    }
+    pos, _ = _body_pose(_engine(_world_with(carrier, extra)), "r_added_mount")
+    assert np.allclose(pos, [-0.25, 0, 0.1], atol=1e-9)
+
+
+def test_a_frame_the_carrier_does_not_declare_is_refused_listing_its_frames(tmp_path):
+    with pytest.raises(
+        PluginError,
+        match=r"parent_frame 'fron' .*Did you mean 'front'\?.*"
+        r"Its frames: shell_link, front, rear",
+    ):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "fron"), CARRIER_PLACES))
+
+
+def test_a_frame_whose_parent_the_carrier_lacks_is_refused(tmp_path):
+    bad = """
+      - {name: front, parent: nowhere_link}
+    """
+    with pytest.raises(
+        PluginError, match=r"frame 'front' hangs from 'nowhere_link', which is neither"
+    ):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "front"), bad))
+
+
+def test_two_frames_of_one_name_are_refused(tmp_path):
+    dup = """
+      - {name: shell_link, parent: cover_link}
+    """
+    with pytest.raises(PluginError, match=r"frames\[1\]: frame 'shell_link' is declared twice"):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "shell_link"), dup))
+
+
+@pytest.mark.parametrize(
+    "extra, spelling",
+    [
+        (", pos: [0, 0, 1]", r"pose: \{position: \{z: 1\.0\}\}"),
+        (", rpy: [0, 0, 1]", r"pose: \{orientation: \{yaw: 1\.0\}\}"),
+    ],
+)
+def test_pos_and_rpy_are_refused_with_the_pose_they_mean(tmp_path, extra, spelling):
+    with pytest.raises(PluginError, match=spelling):
+        Engine(
+            _world(_carrier(tmp_path, _on(_device(tmp_path), "front", extra=extra), CARRIER_PLACES))
+        )

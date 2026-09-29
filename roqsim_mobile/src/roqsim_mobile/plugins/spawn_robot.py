@@ -20,7 +20,7 @@ Config::
           front_left_wheel_motor: {d: 25}
       present: true         # false: compiled in, but absent until it is spawned
       frames:               # OPTIONAL: fixed links beyond the manifest's own (see below)
-        - {name: cover_link, parent: body_link, pos: [0, 0, 0.05], rpy: [0, 0, 0]}
+        - {name: cover_link, parent: body_link, pose: {position: {z: 0.05}}}
 
 **Vendor frames.** A top-level ``frames:`` block in the model's manifest -- plus any in this config,
 after it -- names the fixed links the vendor description chains and the MJCF flattens

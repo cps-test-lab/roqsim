@@ -15,8 +15,8 @@ from pathlib import Path
 import yaml
 
 from .config import PluginError, PluginSpec, document_entries, parse_plugin_entry
-from .document import refuse_unknown_keys
-from .frames import substitute
+from .document import nearest, refuse_unknown_keys
+from .frames import parse_frames, substitute
 from .models import resolve_model
 from .registry import resolve_plugin
 
@@ -79,8 +79,42 @@ def manifest_frames(model_file: Path) -> list:
     data = yaml.safe_load(path.read_text()) or {}
     frames = data.get("frames")
     if frames is not None and not isinstance(frames, list):
-        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pos, rpy}}")
+        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pose}}")
     return list(frames or [])
+
+
+def resolve_parent_frame(model_file: Path, name: str, frames=None, where: str = "") -> None:
+    """Refuse a ``parent_frame`` that is neither a body nor a declared frame of a carrier model.
+
+    *frames* are frames the carrier's spawn declares beside its manifest's (``spawn_robot``'s
+    ``frames:``). An unknown name is refused with a did-you-mean and the carrier's frames listed,
+    so a device is not left to fail at build with a missing site. Every declared frame is checked
+    too: two of one name, or a ``parent`` that is neither a body of the model nor a frame declared
+    before it, is refused.
+    """
+    import mujoco
+
+    path = manifest_path(model_file)
+    at = f"{where}: " if where else ""
+    declared = parse_frames(manifest_frames(model_file) + list(frames or []), f"manifest {path}")
+    bodies = {b.name for b in mujoco.MjSpec.from_file(str(model_file)).bodies if b.name}
+    seen: set[str] = set()
+    for frame in declared:
+        if frame.parent not in seen and frame.parent not in bodies:
+            raise PluginError(
+                f"manifest {path}: frame {frame.name!r} hangs from {frame.parent!r}, which is "
+                f"neither a body of {model_file.stem} nor a frame declared before it."
+            )
+        seen.add(frame.name)
+    if name in seen or name in bodies:
+        return
+    guess = nearest(name, seen | bodies)
+    hint = f" Did you mean {guess!r}?" if guess else ""
+    listed = ", ".join(f.name for f in declared) or "none"
+    raise PluginError(
+        f"{at}parent_frame {name!r} is neither a body nor a frame of {model_file.stem}.{hint} "
+        f"Its frames: {listed} (the 'frames:' block of {path.name})."
+    )
 
 
 def manifest_frame_id(model_file: Path) -> str | None:

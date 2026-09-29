@@ -107,6 +107,7 @@ def _override(ctx, select=("crate",), name="grip_fault"):
         {"overrides": [{"field": "geom_friction", "select": list(select), "to": 0.0}]}, name=name
     )
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return plugin
 
@@ -1385,6 +1386,7 @@ def ramp_contact(world):
     ctx, clock, sim = world
     monitor = ContactMonitorPlugin({"ignore": [], "rate_hz": 500.0}, entity="parcel")
     monitor.configure(ctx)
+    monitor.register_endpoints(ctx)
     monitor.on_reset(ctx)
     return ctx, clock, sim, monitor
 

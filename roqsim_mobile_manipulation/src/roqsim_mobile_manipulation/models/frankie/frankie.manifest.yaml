@@ -75,8 +75,7 @@ components:
   - spawn_sensor:
       model: omron_os32c
       parent_frame: base_link
-      pos: [0.265, 0.0, 0.123]
-      rpy: [0.0, 0.0, 0.0]
+      pose: {position: {x: 0.265, z: 0.123}}
     name: lidar
     components:
       # Omron's setting for this robot, over the OS32C's own 270 deg: I611 p. 1-6 and p. 2-13, "a 240 deg

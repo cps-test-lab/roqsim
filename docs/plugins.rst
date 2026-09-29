@@ -79,8 +79,7 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``false`` where a ``robot_state_publisher`` publishes the same mount links); ``domain_id``
        (an isolated ROS context on that domain, so several bridges can run in one process) with
        ``strip_namespace`` (a namespace, or list, removed so the robot a bridge serves keeps
-       local names on its domain); ``gt: {prefix, exempt}`` (the ground-truth topic prefix and the
-       topics exempt from it, :doc:`ground_truth`). ``clock_rate_hz: 0`` publishes no ``/clock``.
+       local names on its domain). ``clock_rate_hz: 0`` publishes no ``/clock``.
    * - ``sim_interfaces``
      - ``simulation_interfaces`` control plane. Serves ``get_simulator_features``,
        ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
@@ -249,7 +248,7 @@ an overlap that is meant is excluded from collision and is then not reported
 An **eye-in-hand** camera, or any sensor that rides something that moves, is
 ``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
 ``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the
-document, with ``pos``/``rpy`` then read relative to that body -- which is what a datasheet or a
+document, with ``pose`` then read relative to that body -- which is what a datasheet or a
 CAD drawing states, and what a world-frame pose cannot be once the carrier moves. An arm whose own
 MODEL ships a camera needs none of this (three do, and their manifests offer the capture plugin);
 this is how every other arm gets one, without a per-trial MJCF edit that travels badly and is
@@ -257,20 +256,47 @@ invisible to anyone reading the world. It is mutually exclusive with ``motion:``
 rides a body has its pose from that body, so moving the sensor means moving what carries it.
 
 A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
-in the robot's own manifest. It is mounted at the vendor's ``parent_frame`` (a body, or a link the
-robot declares in its manifest's ``frames:``) with the ``origin`` the robot description passes the
-device's vendor macro as ``pos``/``rpy``: a device model's ``mount`` is the frame that origin places,
-so the device sits where ``robot_state_publisher`` would put it. It
-inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
-are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
-the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
-else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
-none needs one on every mount. A device whose vendor macro prefixes its links with a ``name``
-parameter declares that default as ``device_name:``, and a second mount of it on one robot sets its
-own, as a second instance of the macro would: two mounts that would publish any one frame name are
-refused. A device that declares no ``frames:`` chain has no vendor frame to hang from, and a robot
-mount of it is refused naming the device. The ``spawn_sensor`` and
+in the robot's own manifest. It hangs from a real **frame** of the robot, the link the vendor
+description attaches it to: ``parent_frame`` names a body of the robot or an entry of its manifest's
+``frames:`` block, and ``pose`` is the ``origin`` the robot description passes the device's vendor
+macro, verbatim. A device model's ``mount`` body is the frame that origin places, so the device sits
+where ``robot_state_publisher`` would put it, and its chain is published from that frame, as the
+description's is. A ``parent_frame`` that is neither a body nor a frame of the robot is refused when
+the document expands, with a did-you-mean and the robot's frames listed; ``roqsim catalog model
+<robot>`` lists the frames too.
+
+The ``pose`` is an offset from ``parent_frame``: a ``geometry_msgs/Pose`` in the shape
+``roqsim.pose`` reads everywhere, whose omitted components are **zero** -- there is no resting
+height to fall back on as there is for a world spawn of a robot, and no ``pose`` puts the device
+at the frame itself. That is also how a world or a campaign moves a device: it overrides the
+device's ``pose`` (``robot.rplidar.pose.position.z=0.1``), and the record states the frame and the
+offset. ``pos``/``rpy`` keys are refused with the ``pose:`` they mean.
+
+A mounted device inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace.
+Its components are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by
+nesting it under the device. The device publishes its frame chain as static TF. Its scan frame is
+the mount's ``frame_id``, else the vendor default the device manifest declares as ``frame_id:``; a
+device whose vendor names none needs one on every mount. A device whose vendor macro prefixes its
+links with a ``name`` parameter declares that default as ``device_name:``, and a second mount of it
+on one robot sets its own, as a second instance of the macro would: two mounts that would publish
+any one frame name are refused. A device that declares no ``frames:`` chain has no vendor frame to
+hang from, and a robot mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
+
+A world puts another device on a spawned robot's frame the way the robot's manifest does, by
+nesting it in that robot's ``components:`` -- in the document, or added under the robot's address
+from an override -- with ``parent_frame`` naming the frame and ``pose`` the origin on it. To
+replace the robot's own device there rather than add beside it, switch that one off by its label::
+
+   - spawn_robot: {model: turtlebot4}
+     name: tb4
+     components:
+       - spawn_sensor: {model: realsense_d435, parent_frame: oakd_camera_bracket,
+                        pose: {position: {x: 0.0584, z: 0.09676}}}
+         name: d435
+       - spawn_sensor: {}
+         name: oakd
+         enabled: false
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
 is what a trial needs to place a sensor at run time -- a viewpoint the campaign varies, a camera a
@@ -318,7 +344,8 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
   plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
-  ``assets``, ``fov``, ``frames``, ``frame_id`` and ``license`` and nothing else: a key outside that
+  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name`` and ``license`` and
+  nothing else: a key outside that
   set is refused with the nearest known one named, since nothing reads it and a manifest loaded
   without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
@@ -342,25 +369,24 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 .. code:: yaml
 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
-   frames:                            # vendor fixed links this MJCF flattens into base_link
-     - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942]}
-     - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257]}
+   frames:
+     # vendor fixed links this MJCF flattens into base_link, published as static TF
+     - {name: shell_link, parent: base_link, pose: {position: {z: 0.0942}}}
+     - {name: oakd_camera_bracket, parent: shell_link, pose: {position: {x: -0.118, z: 0.05257}}}
    components:
      - diff_drive: {max_linear_vel: 0.46, max_angular_vel: 1.9, wheel_accel_limit: 0.9,
                     cmd_vel_timeout: 0.5, odom_rate_hz: 62.0, publish_joint_states: false}
      - joint_state_publisher: {rate_hz: 62}   # every joint, wheels and suspension, in one message
-     - spawn_sensor:                  # the RPLIDAR A1 device model, at the vendor joint origin
+     - spawn_sensor:                  # the RPLIDAR A1 device model, at its vendor joint
          model: rplidar_a1
          parent_frame: shell_link
-         pos: [-0.04, 0.0, 0.098715]
-         rpy: [0.0, 0.0, 1.5707963267948966]
+         pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}
          frame_id: rplidar_link
        name: rplidar
-     - spawn_sensor:                  # the OAK-D Pro device model, at the vendor joint origin
+     - spawn_sensor:                  # the OAK-D Pro device model, at its vendor joint
          model: oakd_pro
          parent_frame: oakd_camera_bracket
-         pos: [0.0584, 0.0, 0.09676]
-         rpy: [0.0, 0.0, 0.0]
+         pose: {position: {x: 0.0584, z: 0.09676}}
        name: oakd
        components:
          - oakd_camera:               # renders: needs a GL backend (roqsim selects one on import)
@@ -368,7 +394,7 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
      - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
-     - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+     - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
      - ground_truth_pose: {site: mouse, relative_to: base, lazy: true, ...}
        name: gt_mouse
 
@@ -1470,6 +1496,13 @@ and its ROS interface -- topic, type, service, action, frames, rate, QoS -- stay
    worlds that use the plugin, before and after, together with the messages its outputs fill; both
    must be equal. A test that called ``write(payload)`` passes the mapping of parameters.
 
+An endpoint that only carries a model's fixed frames returns them with ``static: true``
+(``roqsim.frames.static_transforms_of`` turns the frame dicts into ``Transforms``); a plugin that
+still builds its endpoints by hand adds ``roqsim.frames.static_tf_endpoint``, which does the same.
+Where a ``static_tf`` hint on an endpoint with nothing else to publish becomes such an endpoint, its
+transforms are unchanged: they are sent once on the latched ``/tf_static`` on the first step, and the
+idle ``tf`` publisher the hint's endpoint held goes.
+
 What stays hand-built: a port whose name or number is only known *during* the run, and a plugin's
 own transport thread (``px4_sitl``'s socket reader posts what it received; that is not an endpoint).
 
@@ -1482,22 +1515,14 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
    * - Package
      - Plugins (endpoints)
      - Needs
-   * - ``roqsim`` (core plugins and helpers)
-     - ``bumper`` (``bumper/<zone>``), ``clearance_monitor``, ``contact_impulse``,
-       ``contact_location``, ``contact_monitor``, ``energy_monitor`` (``battery``),
-       ``joint_state_publisher``, ``model_override`` (``override`` command, one ``out`` per
-       target), ``spawn_model`` (``<entity>_pose``), and ``roqsim.frames.static_tf_endpoint``
-       (``frames``, used by ``spawn_robot`` and ``spawn_sensor``)
-     - families: ``bumper``, ``model_override``; owner: ``model_override`` (its own name),
-       ``spawn_model`` (the entity it spawns)
    * - ``roqsim_sensors``
      - ``camera_common`` (``image``, ``image_compressed``, ``camera_info``), ``depth_camera``
        (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),
        ``segmentation_camera`` (``labels``, ``instances``, ``detections``), ``lidar_common``,
        ``imu``, ``gnss`` (``fix``), ``object_detector`` (``detections``), ``force_limit``,
        ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
-       per fault), ``spawn_sensor`` (``frames``)
-     - families: ``live_config``; owner: ``spawn_sensor`` (the sensor entity)
+       per fault)
+     - families: ``live_config``
    * - ``roqsim_mobile``
      - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
        ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)
@@ -1588,14 +1613,15 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
 
-Bases: three geometries, one interface
---------------------------------------
+Bases: four geometries, one interface
+-------------------------------------
 
-``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
-``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
-something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
-place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
-that command is a planner that would not move the real vehicle, and approximating a car with a
+``diff_drive``, ``omni_drive``, ``ackermann_drive`` and ``tricycle_drive`` publish the same
+endpoints -- ``cmd_vel`` in, ``odom`` and ``joint_states`` out -- so a stack does not know which it
+is driving until it asks for something the geometry cannot do. That is the point of the last two: a
+car, and a tricycle whose steered wheel stops short of 90 degrees, **cannot turn in place**, and
+``cmd_vel`` with ``v = 0`` and a yaw rate moves either nowhere at all. A planner that emits that
+command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
 **What a real base offers its stack.** Three keys on ``diff_drive`` are the base driver's
@@ -1687,12 +1713,47 @@ is left visible rather than corrected by a scrub factor: a skid-steer's scrub is
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
 
+``tricycle_drive`` is the other car-like base: **one** steered wheel on the centre line and a fixed
+axle, which is how three-wheel counterbalance forklifts, tuggers, pallet trucks and many AGVs are
+built. ``base_link`` must be the centre of the fixed axle, since that is the point such a vehicle
+always turns about, and ``steer_offset`` is the signed distance to the steering axis -- negative for
+a rear-steered forklift, positive for a front-steered tugger::
+
+   - tricycle_drive:
+       drive: axle                   # the fixed axle's two wheels are driven; or steer_wheel
+       steer_offset: -1.393          # rear wheel, 1.393 m behind the axle
+       wheel_radius: 0.229
+       track: 0.930
+       max_steer_angle: 1.396        # must be < pi/2
+       steer_actuator: steer_motor
+       steer_joint: steer_joint
+       drive_actuators: [drive_wheel_left_motor, drive_wheel_right_motor]
+       drive_joints: [drive_wheel_left_joint, drive_wheel_right_joint]
+       passive_joints: [steer_wheel_joint]   # published in joint_states, never commanded
+
+A twist ``(v, w)`` moves the steered wheel's point at ``(v, w * steer_offset)``, so the wheel is
+pointed along it, ``atan(w * steer_offset / v)``, and clamped to its lock -- a rear wheel therefore
+steers *right* for a left turn going forward. With ``drive: axle`` the two fixed wheels are split
+like a differential across ``track``, using the **measured** steering angle so that neither scrubs
+while the wheel is still slewing; near full lock the inner wheel runs backwards, as on the real
+truck, and ``max_wheel_speed`` caps the outer one. With ``drive: steer_wheel`` the steered wheel is
+driven at ``v / cos(delta)``. ``steer_offset`` and ``track`` are checked against the model's own
+joint positions at ``configure`` and a disagreement over a centimetre is refused.
+
+A zero-speed twist moves nothing and leaves the steered wheel where it is, for the reason given for
+``ackermann_drive``: a lock short of 90 degrees cannot pivot the vehicle about its axle centre, and
+at full lock it still turns about a point ``|steer_offset| / tan(max_steer_angle)`` to the side. The
+plugin therefore declares ``kinematics="ackermann"`` on its ``RobotHandle``. Its odometry takes the
+speed from the driven wheels and the yaw rate from the measured steering angle; ``passive_joints``
+exist because ``robot_state_publisher`` leaves a link out of TF until every movable joint above it
+has a state. Like ``diff_drive`` it takes ``odom_rate_hz`` and ``publish_joint_states``.
+
 A velocity command: odometry and the watchdog
 ---------------------------------------------
 
 Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
-``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion``,
-``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``tricycle_drive``, ``spot_locomotion``,
+``g1_locomotion``, ``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
 :mod:`roqsim.odometry`, for a plugin of your own to keep too.
 
 **Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
@@ -1730,8 +1791,9 @@ arm to a body that already exists, while a rail has to introduce the moving carr
      - spawn_arm:
          model: ur10e
          prefix: "ur10e_"
-         pos: [0.0, 0.0, 2.6]              # where the axis sits
-         rpy: [3.14159265, 0.0, 0.0]       # rolled 180 deg: the arm hangs from the ceiling
+         pose:                             # where the axis sits, rolled 180 deg: the arm
+           position: {z: 2.6}              #   hangs from the ceiling
+           orientation: {roll: 3.14159265}
          rail: {axis: [1, 0, 0], range: [-2.0, 2.0], home: 0.0}
        name: ur10e
 

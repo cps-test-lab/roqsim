@@ -89,6 +89,7 @@ def _plugin(*overrides, scene=SCENE, **cfg):
     if errors:
         raise ValueError("; ".join(errors))
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -381,14 +382,12 @@ def test_the_endpoints_and_the_handle():
     assert inbound.backend["ros2"]["service"] == "std_srvs.srv.SetBool"
     assert inbound.backend["ros2"]["state_key"] == "model_override:grip_fault"
 
-    assert endpoints["override_state"].backend["ros2"] == {
-        "type": "std_msgs.msg.Bool",
-        "field": "active",
-        "topic": "override_state",
-    }
-    assert endpoints["override_verified"].backend["ros2"]["field"] == "verified"
+    assert endpoints["override_state"].backend["ros2"] == {"field": "active"}
+    assert endpoints["override_verified"].backend["ros2"] == {"field": "verified"}
 
-    inbound.write(True)  # what the bridge's service handler does, via ctx.post
+    done = inbound.write({"data": True})  # what the bridge's service handler does
+    ctx.drain_commands()
+    assert done.result(0) is None
     _run(ctx, plugin, 0.05)
     assert endpoints["override_state"].read().active is True
     assert endpoints["override_verified"].read().verified == "landed"
@@ -412,7 +411,9 @@ def test_two_faults_in_one_world_do_not_collide():
     ctx.model, ctx.data = model, data
 
     for name in ("grip_fault", "traction_fault"):
-        ModelOverridePlugin({"overrides": [FRICTION_OFF]}, name=name).configure(ctx)
+        plugin = ModelOverridePlugin({"overrides": [FRICTION_OFF]}, name=name)
+        plugin.configure(ctx)
+        plugin.register_endpoints(ctx)
 
     served = {(e.namespace, e.name) for e in ctx.interface.all()}
     assert ("grip_fault", "override") in served
@@ -427,6 +428,7 @@ def test_an_unnamed_instance_stays_unscoped(capsys):
     ctx2 = SimContext(config={})
     ctx2.model, ctx2.data = ctx.model, ctx.data
     unnamed.configure(ctx2)
+    unnamed.register_endpoints(ctx2)
     assert {e.namespace for e in ctx2.interface.all()} == {""}
 
 
