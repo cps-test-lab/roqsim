@@ -56,7 +56,8 @@ contact it did not look at -- one shorter than the interval is simply missed.
 
 Frames. ``frame: base`` (the default) rotates the position into the watched body's own frame, which
 is what a controller reasoning about "contact on my left" wants and what makes a reading independent
-of where the robot happens to be standing. ``frame: world`` leaves it in world coordinates.
+of where the robot happens to be standing. ``frame: world`` leaves it in world coordinates. The
+PointStamped header names that frame: the watched body without the entity's prefix, or ``world``.
 """
 
 from __future__ import annotations
@@ -158,6 +159,10 @@ class ContactLocationPlugin(Plugin):
             ignore_prefixes=self.ignore_prefixes,
         )
         self._root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, self._scope.body)
+        # The frame the point is stamped in is the one its coordinates are in: the watched body as
+        # TF names it (without the entity's MJCF prefix; the bridge applies the namespace), or world.
+        prefix = entity.meta.get("prefix", "") if entity else ""
+        self._frame_id = self._scope.body.removeprefix(prefix) if self.frame == "base" else "world"
 
         ctx.blackboard.set(f"contact_location:{self.address}", self.read_state)
         ctx.interface.add(
@@ -172,6 +177,7 @@ class ContactLocationPlugin(Plugin):
                     "ros2": {
                         "type": "geometry_msgs.msg.PointStamped",
                         "topic": self.topic_override("contact_location") or "contact_location",
+                        "frame_id": self._frame_id,
                     }
                 },
             )

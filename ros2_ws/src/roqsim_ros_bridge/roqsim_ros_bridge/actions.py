@@ -404,10 +404,13 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     commanded ``position`` is sent to the producer (e.g. ``ArmControllerPlugin.set_gripper``,
     ``DoorPlugin.set_openness``) as the parameter ``position``; a typed producer that would refuse
     it aborts the goal. We then watch the producer's state -- a ``() -> (position, velocity)``
-    reader on the blackboard -- and succeed once it reaches the target (``reached_goal``) or stops moving short of
-    it (``stalled``, i.e. a gripper closed on an object / a door met an obstruction). The reader's
-    blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>`` so
-    existing arms are unchanged. Without a reader we wait a fixed settle time and report the command.
+    reader on the blackboard -- and succeed once it reaches the target or stops moving short of it
+    (a gripper closed on an object, a door met an obstruction). As ros2_control's gripper action
+    controller reports them, ``reached_goal`` is the measured position within tolerance of the
+    commanded one and nothing else, and ``stalled`` is a stop anywhere else -- so fingers that
+    stopped on an object, or that went the wrong way, never report the goal reached. The reader's
+    blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>``.
+    Without a reader we wait a fixed settle time and report the command.
 
     ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
     every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
@@ -501,5 +504,5 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     if effort is not None:
         result.effort = effort.read_effort()
     result.stalled = stalled
-    result.reached_goal = reached or stalled  # a stall on the object is a successful grasp
+    result.reached_goal = reached
     return result

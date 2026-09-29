@@ -19,9 +19,18 @@ ROS.
 ``Image``              ``sensor_msgs/Image`` (or ``type: sensor_msgs.msg.CompressedImage``)
 ``CameraInfo``         ``sensor_msgs/CameraInfo``
 ``PointCloud``         ``sensor_msgs/PointCloud2`` (x, y, z float32)
+``Transform``          ``tf2_msgs/TFMessage`` (one transform; inbound, exactly one)
+``Transforms``         ``tf2_msgs/TFMessage`` (one transform per entry)
 ``bool`` ``float``     ``std_msgs/Bool``, ``std_msgs/Float64``,
 ``int`` ``str``        ``std_msgs/Int64``, ``std_msgs/String``
 =====================  =================================================================
+
+**Transforms** are stamped with the step's sim time like every other message. A transform's parent
+is its ``parent``, or the endpoint's ``frame_id`` hint (default ``map``) when it leaves ``parent``
+empty, namespaced as every frame id is; its ``child`` is published verbatim, so a consumer matches it
+by the name the producer gave. With the hint ``static: true`` the endpoint's first value is instead
+sent once through the bridge's static broadcaster -- latched (transient-local) ``/tf_static``, parent
+and child both namespaced, stamp zero -- exactly as a ``static_tf`` hint's transforms are.
 
 A package adds its own type once through the ``roqsim.ros2_types`` entry-point group
 (:data:`ENTRY_POINT_GROUP`): the entry loads a :class:`RosType`, or an iterable of them.
@@ -31,7 +40,7 @@ A package adds its own type once through the ``roqsim.ros2_types`` entry-point g
 producer's own hints -- and the converters. For a decorated endpoint:
 
 * the payload type's row decides the message, and the producer's hints only deviate from it: a
-  frame id, ``stamped``, ``emit_tf``, a ``static_tf``, a ``qos``, a ``field`` of a structure to
+  frame id, ``stamped``, ``emit_tf``, a ``static_tf``, ``static``, a ``qos``, a ``field`` of a structure to
   publish alone (whose type then decides), or a ``type`` naming one of the row's messages;
 * a payload type with no row is mapped **by field name** onto the message its ``type`` hint names:
   each dataclass field (or each parameter, for an endpoint taking plain parameters) must be a field
@@ -40,7 +49,7 @@ producer's own hints -- and the converters. For a decorated endpoint:
 * with neither, the endpoint is not on ROS: :func:`describe` says so and the bridge logs it;
 * a command without parameters is a ``std_srvs/Trigger`` service;
 * the topic is the world's ``topics:`` name (``Endpoint.topic``), else the hint's, else the
-  endpoint's name; the QoS is the world's ``qos:`` (``Endpoint.qos``), else the hint's, else
+  endpoint's name (:func:`roqsim.endpoint.topic_of`); the QoS is the world's ``qos:`` (``Endpoint.qos``), else the hint's, else
   ``default``.
 
 A hand-built endpoint without a schema keeps its hint block as it is, with the per-message-type
@@ -59,7 +68,7 @@ from typing import Any
 import numpy as np
 
 from roqsim import types as T
-from roqsim.endpoint import ValueType, qos_profile
+from roqsim.endpoint import ValueType, hints_for, is_service, qos_profile, topic_of
 
 from .frames import namespaced
 
@@ -370,6 +379,55 @@ def _decode_pointcloud(msg) -> T.PointCloud:
     return T.PointCloud(np.stack(cols, axis=1))
 
 
+def _transform_parent(v: T.Transform, hints) -> str:
+    return namespaced(hints.get("frame_prefix", ""), v.parent or hints.get("frame_id", "map"))
+
+
+def _transform_stamped(v: T.Transform, stamp, hints):
+    from geometry_msgs.msg import TransformStamped
+
+    tf = TransformStamped()
+    _header(tf, stamp, _transform_parent(v, hints))
+    tf.child_frame_id = v.child
+    _set_xyz(tf.transform.translation, v.translation)
+    _set_quat(tf.transform.rotation, v.rotation)
+    return tf
+
+
+def _decode_transform_stamped(tf) -> T.Transform:
+    return T.Transform(
+        tf.header.frame_id,
+        tf.child_frame_id,
+        _xyz(tf.transform.translation),
+        _wxyz(tf.transform.rotation),
+    )
+
+
+def _fill_transform(msg, v: T.Transform, stamp, hints) -> None:
+    msg.transforms = [_transform_stamped(v, stamp, hints)]
+
+
+def _decode_transform(msg) -> T.Transform:
+    if len(msg.transforms) != 1:
+        raise ValueError(
+            f"a Transform travels as a TFMessage of one transform, got {len(msg.transforms)}"
+        )
+    return _decode_transform_stamped(msg.transforms[0])
+
+
+def _fill_transforms(msg, v: T.Transforms, stamp, hints) -> None:
+    msg.transforms = [_transform_stamped(t, stamp, hints) for t in v.transforms]
+
+
+def _decode_transforms(msg) -> T.Transforms:
+    return T.Transforms([_decode_transform_stamped(tf) for tf in msg.transforms])
+
+
+def transforms_of(value) -> list[T.Transform]:
+    """The transforms a :class:`~roqsim.types.Transform` or :class:`~roqsim.types.Transforms` carries."""
+    return list(value.transforms) if isinstance(value, T.Transforms) else [value]
+
+
 def _scalar(cls: type, msg: str) -> RosType:
     def fill(m, v, stamp, hints):
         m.data = cls(v)
@@ -454,6 +512,16 @@ for _rostype in (
     ),
     RosType(
         T.PointCloud, (Wire("sensor_msgs.msg.PointCloud2", _fill_pointcloud, _decode_pointcloud),)
+    ),
+    RosType(
+        T.Transform,
+        (Wire("tf2_msgs.msg.TFMessage", _fill_transform, _decode_transform),),
+        hints={"frame_id": "map"},
+    ),
+    RosType(
+        T.Transforms,
+        (Wire("tf2_msgs.msg.TFMessage", _fill_transforms, _decode_transforms),),
+        hints={"frame_id": "map"},
     ),
     _scalar(bool, "std_msgs.msg.Bool"),
     _scalar(float, "std_msgs.msg.Float64"),
@@ -590,7 +658,9 @@ def _fill_by_name(msg, value, fields, stamp, hints) -> None:
         else:
             setattr(msg, f.name, v)
     if hasattr(msg, "header") and "header" not in {f.name for f in fields}:
-        _header(msg, stamp, frame(hints, "frame_id", "") or None)
+        # A frame only where the hints state one: namespacing an empty frame id would publish the
+        # bare namespace ("ns/") as a frame nobody broadcasts.
+        _header(msg, stamp, frame(hints, "frame_id", "") if hints.get("frame_id") else None)
 
 
 def _decode_by_name(msg, fields, cls) -> Any:
@@ -653,9 +723,6 @@ class Binding:
         self.decode = lambda msg: to_write(_decode_by_name(msg, fields, cls))
 
 
-_MISSING = object()
-
-
 def _is_typed(ep) -> bool:
     return bool(ep.transport) or ep.params is not None or ep.payload_type is not None
 
@@ -688,20 +755,15 @@ def _qos(ep, hints: dict) -> dict:
 def resolve(ep) -> Binding | None:
     """How *ep* is carried on ROS, or ``None`` when it is not meant to be (no hint block for ROS and
     not a decorated endpoint, or a hint block of ``None``)."""
-    raw = ep.backend.get("ros2", _MISSING)
-    if raw is None:
+    hints = hints_for(ep, "ros2")
+    if hints is None:
         return None
-    if raw is _MISSING:
-        if not ep.transport:
-            return None
-        raw = {}
-    hints = dict(raw)
+    required = bool(hints)  # the endpoint asked for ROS
     if not _is_typed(ep):
         return _legacy(ep, hints)
-    if "service" in hints or "action" in hints:
-        return _service(ep, hints)
-    if ep.direction == "in" and ep.params == () and "type" not in hints:
-        hints["service"] = "std_srvs.srv.Trigger"
+    if is_service(ep, hints):
+        if "service" not in hints and "action" not in hints:
+            hints["service"] = "std_srvs.srv.Trigger"
         return _service(ep, hints)
 
     carried = ep.payload_type if ep.payload_type is not None else ep.result
@@ -711,7 +773,7 @@ def resolve(ep) -> Binding | None:
     rostype = lookup(carried.cls if carried is not None else None)
     stamped = hints.pop("stamped", None)
     msg = hints.get("type")
-    binding = Binding(hints=None, required=bool(raw))
+    binding = Binding(hints=None, required=required)
     if rostype is not None and (msg is None or rostype.wire(msg) is not None):
         if msg is None:
             if stamped is not None:
@@ -755,14 +817,36 @@ def resolve(ep) -> Binding | None:
             f"field name, or register a converter in the {ENTRY_POINT_GROUP} entry-point group"
         )
         return binding
-    hints["topic"] = ep.topic or hints.get("topic") or ep.name
-    hints["qos"] = _qos(ep, hints)
+    if hints.get("static"):
+        _static(ep, carried, hints)
+    else:
+        hints["topic"] = topic_of(ep, "ros2")
+        hints["qos"] = _qos(ep, hints)
     binding.hints = hints
     return binding
 
 
+_TF_TYPES = (T.Transform, T.Transforms)
+
+
+def _static(ep, carried: ValueType | None, hints: dict) -> None:
+    """A ``static: true`` endpoint goes to the bridge's static broadcaster, not to a topic of its own."""
+    if ep.direction != "out" or carried is None or carried.cls not in _TF_TYPES:
+        raise ValueError(
+            f"{ep.owner}/{ep.name}: ros2 hint static=true publishes transforms on /tf_static; "
+            f"it needs an out endpoint returning Transform or Transforms"
+        )
+    if ep.topic or "topic" in hints or ep.qos is not None or "qos" in hints:
+        raise ValueError(
+            f"{ep.owner}/{ep.name}: a static endpoint is published on the latched /tf_static; "
+            f"it takes no topic or qos of its own"
+        )
+    hints["topic"] = "/tf_static"
+    hints["qos"] = qos_profile("latched")
+
+
 def _service(ep, hints: dict) -> Binding:
-    hints["name"] = ep.topic or hints.get("name") or ep.name
+    hints["name"] = topic_of(ep, "ros2")
     if ep.qos is not None or "qos" in hints:
         hints["qos"] = _qos(ep, hints)
     return Binding(hints=hints)
@@ -770,12 +854,12 @@ def _service(ep, hints: dict) -> Binding:
 
 def _legacy(ep, hints: dict) -> Binding:
     """A hand-built endpoint's hint block, with the bridge's defaults and the registry's converters."""
-    if "service" in hints or "action" in hints:
-        hints.setdefault("name", ep.name)
+    if is_service(ep, hints):
+        hints["name"] = topic_of(ep, "ros2")
         if ep.qos is not None or "qos" in hints:
             hints["qos"] = _qos(ep, hints)
         return Binding(hints=hints)
-    hints.setdefault("topic", ep.name)
+    hints["topic"] = topic_of(ep, "ros2")
     hints["qos"] = _qos(ep, hints)
     msg = hints.get("type")
 

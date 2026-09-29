@@ -74,7 +74,8 @@ a ``float``, a ``bool`` for neither, and a sequence for a ``numpy`` array of the
     Whether this instance has the endpoint at all: the name of a boolean attribute or config key --
     ``when="publish_joint_states"``.
 ``lazy``
-    An ``out`` whose read is skipped while nobody subscribes.
+    Whether an ``out``'s read is skipped while nobody subscribes: ``True``, or the name of the
+    plugin attribute (else config key) that says so per instance -- ``lazy="lazy"``.
 ``each``
     A family: one endpoint per item of the named attribute (or of what a callable returns), named
     ``<name>/<item>`` or ``name`` with ``{item}`` substituted; the method gets the item as its first
@@ -91,8 +92,19 @@ a ``float``, a ``bool`` for neither, and a sequence for a ``numpy`` array of the
     variant, a QoS, a TF to emit. A dict, a callable of the plugin returning one, or ``None`` to keep
     the endpoint off that backend.
 
-``rate``, ``when``, ``each``, ``owner``, ``namespace`` and the hints also take a callable of the
-plugin (``(plugin, item)`` in a family) for a value that has to be computed.
+``rate``, ``when``, ``lazy``, ``each``, ``owner``, ``namespace`` and the hints also take a callable
+of the plugin (``(plugin, item)`` in a family) for a value that has to be computed.
+
+**A topic derived from a sibling's**: a hint's ``topic`` (or a service's ``name``) may name another
+endpoint of the same plugin in braces. It is rendered when the plugin registers, from where that
+endpoint is carried after the world's renames, so a world that renames the one moves the other with
+it; ``..`` steps out of the sibling's last segment, as in a path::
+
+    @endpoint.out(ros2={"type": "sensor_msgs.msg.CompressedImage", "topic": "{image}/compressed"})
+    def image_compressed(self) -> Image: ...
+
+    @endpoint.out(ros2={"topic": "{depth}/../camera_info"})
+    def depth_camera_info(self) -> CameraInfo: ...
 
 **The world renames and tunes**: a plugin's ``topics:`` config renames an endpoint on every
 transport (:attr:`Endpoint.topic`) and its ``qos:`` config sets the endpoint's quality of service
@@ -761,7 +773,7 @@ class EndpointSpec:
     attr: str
     msg: type | None = None
     rate: _Option = 0.0
-    lazy: bool = False
+    lazy: _Option = False
     when: _Option = None
     each: _Option = None
     owner: str | Callable[..., str] | None = None
@@ -805,7 +817,7 @@ class EndpointSpec:
             payload_type=sig.payload,
             transport=True,
             rate_hz=float(self.rate) if isinstance(self.rate, (int, float)) else 0.0,
-            lazy=self.lazy,
+            lazy=self.lazy if isinstance(self.lazy, bool) else False,
         )
 
     def describe(self, cls: type) -> dict:
@@ -831,9 +843,9 @@ class EndpointSpec:
         if sig.payload is not None:
             row["payload"] = sig.payload.name
         if self.kind == "out":
-            row["rate_hz"] = _describe_rate(cls, self.rate)
-            if self.lazy:
-                row["lazy"] = True
+            row["rate_hz"] = _describe_option(cls, self.rate, float)
+            if self.lazy is not False:
+                row["lazy"] = _describe_option(cls, self.lazy, bool)
         computed = sorted(k for k, v in self.backend.items() if v is not None and callable(v))
         if computed:
             row["hints_at_configure"] = computed
@@ -847,12 +859,14 @@ def _option_name(option: _Option) -> str:
     return option if isinstance(option, str) else "computed"
 
 
-def _describe_rate(cls: type, rate: _Option):
-    if isinstance(rate, (int, float)):
-        return float(rate)
-    if isinstance(rate, str):
-        field_spec = (getattr(cls, "CONFIG_SCHEMA", None) or {}).get(rate)
-        row: dict[str, Any] = {"from": rate}
+def _describe_option(cls: type, value: _Option, literal: type):
+    """A value option as describe shows it: the value, the key it is read from (with the config
+    default), or ``"computed"``."""
+    if isinstance(value, (bool, int, float)):
+        return literal(value)
+    if isinstance(value, str):
+        field_spec = (getattr(cls, "CONFIG_SCHEMA", None) or {}).get(value)
+        row: dict[str, Any] = {"from": value}
         if field_spec is not None and field_spec.default is not None:
             row["default"] = field_spec.default
         return row
@@ -905,7 +919,7 @@ def out(
     *,
     name: str | None = None,
     rate: _Option = 0.0,
-    lazy: bool = False,
+    lazy: _Option = False,
     when: _Option = None,
     each: _Option = None,
     owner: _Owner = None,
@@ -1039,6 +1053,11 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
     default_namespace = plugin.endpoint_namespace(ctx)
     for spec in specs:
         sig = spec.signature(type(plugin))
+        if spec.attr in vars(plugin):
+            raise TypeError(
+                f"{type(plugin).__name__}.{spec.attr}: an instance attribute of that name hides the "
+                f"endpoint method {spec.name!r}; rename the attribute"
+            )
         method = getattr(plugin, spec.attr)
         if spec.each is None:
             instances = [((plugin,), method)]
@@ -1075,7 +1094,7 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
             if spec.kind == "out":
                 ep.read = call
                 ep.rate_hz = float(option(plugin, spec.rate, *args))
-                ep.lazy = spec.lazy
+                ep.lazy = bool(option(plugin, spec.lazy, *args))
             elif spec.kind == "command":
                 ep.params = sig.params
                 ep.write = _submitter(ctx, call, sig.params, where)
@@ -1086,11 +1105,115 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 ep.write = _streamer(slot, sig.params, where)
                 ep.marshalled = True
             endpoints.append(ep)
+    _derive_topics(endpoints, type(plugin).__name__)
     return endpoints
 
 
 def _value(value, *args):
     return value(*args) if callable(value) else value
+
+
+# -- where a transport carries it ------------------------------------------------------------------
+_OFF = object()
+
+
+def hints_for(ep: Endpoint, backend: str) -> dict | None:
+    """A copy of *ep*'s hint block for *backend*: ``{}`` for a decorated endpoint that gave none, and
+    ``None`` when the endpoint is not on that backend (a hint block of ``None``, or a hand-built
+    endpoint without one)."""
+    raw = ep.backend.get(backend, _OFF)
+    if raw is None:
+        return None
+    if raw is _OFF:
+        return {} if ep.transport else None
+    return dict(raw)
+
+
+def is_service(ep: Endpoint, hints: Mapping) -> bool:
+    """Whether a transport binds *ep* as a request with a reply rather than a topic: its hints name a
+    ``service`` or an ``action``, or it is a command without parameters and without a message
+    ``type``."""
+    if "service" in hints or "action" in hints:
+        return True
+    return ep.direction == "in" and ep.params == () and "type" not in hints
+
+
+def topic_of(ep: Endpoint, backend: str) -> str | None:
+    """The topic (a service's name, for a service) *backend* carries *ep* on, before its namespace.
+
+    The world's ``topics:`` rename (:attr:`Endpoint.topic`), else the hint's ``topic`` (``name``
+    for a service), else the endpoint's name. ``None`` when the endpoint is not on that backend, or
+    is a ``static`` one, which has no topic of its own.
+    """
+    hints = hints_for(ep, backend)
+    if hints is None or hints.get("static"):
+        return None
+    key = "name" if is_service(ep, hints) else "topic"
+    return ep.topic or hints.get(key) or ep.name
+
+
+_SIBLING = re.compile(r"\{([^{}]+)\}")
+
+
+def _derive_topics(endpoints: Sequence[Endpoint], where: str) -> None:
+    """Render every hint ``topic`` (or ``name``) that names a sibling endpoint in braces.
+
+    ``{image}`` is the sibling's :func:`topic_of` on the same backend, after the world's renames;
+    ``..`` then steps out of its last segment, as in a path -- ``{depth}/../camera_info`` is the
+    ``camera_info`` beside the depth image. The sibling must be one of *endpoints* (the plugin's own)
+    and in the same namespace, unless its topic is absolute.
+    """
+    by_name: dict[str, list[Endpoint]] = {}
+    for ep in endpoints:
+        by_name.setdefault(ep.name, []).append(ep)
+
+    def render(ep: Endpoint, stack: tuple) -> None:
+        for backend, hints in ep.backend.items():
+            if not isinstance(hints, dict):
+                continue
+            for key in ("topic", "name"):
+                value = hints.get(key)
+                if isinstance(value, str) and "{" in value:
+                    hints[key] = derive(ep, backend, key, value, stack + (ep,))
+
+    def derive(ep: Endpoint, backend: str, key: str, value: str, stack: tuple) -> str:
+        label = f"{where}: {ep.name}'s {backend} {key} {value!r}"
+
+        def sibling_topic(match) -> str:
+            name = match.group(1)
+            found = by_name.get(name, [])
+            if len(found) != 1:
+                has = ", ".join(sorted(by_name)) or "none"
+                how = "registers more than once" if found else "does not register"
+                raise ValueError(f"{label} names {name!r}, which this plugin {how}; it has {has}")
+            sibling = found[0]
+            if sibling in stack:
+                raise ValueError(f"{label} names {name!r}, whose topic is derived from it in turn")
+            render(sibling, stack)
+            topic = topic_of(sibling, backend)
+            if topic is None:
+                raise ValueError(f"{label} names {name!r}, which has no {backend} topic")
+            if sibling.namespace != ep.namespace and not topic.startswith("/"):
+                raise ValueError(
+                    f"{label} names {name!r}, whose relative topic is in another namespace "
+                    f"({sibling.namespace!r}, not {ep.namespace!r})"
+                )
+            return topic
+
+        text = _SIBLING.sub(sibling_topic, value)
+        absolute = text.startswith("/")
+        parts: list[str] = []
+        for part in text.split("/"):
+            if part == "..":
+                if not parts:
+                    raise ValueError(f"{label} steps out of {text!r}'s first segment")
+                parts.pop()
+            elif part:
+                parts.append(part)
+        return ("/" if absolute else "") + "/".join(parts)
+
+    for ep in endpoints:
+        render(ep, ())
 
 
 def apply_world_qos(plugin: Plugin, endpoints: Sequence[Endpoint]) -> None:
