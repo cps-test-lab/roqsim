@@ -160,7 +160,9 @@ Re-express a mount of a retired model rather than editing its numbers by hand:
 
     python external/convert/build_realsense_devices.py --rewrite-mounts world.yaml [...]
 
-renames the model and rewrites each mount's `pose` to `T_old * D` with
+renames the model and writes each mount as a `pose` at `T_old * D`, reading `T_old` from its `pose`
+or from the `pos`/`rpy` a world of that age states it with (a mount it cannot read is refused,
+naming its line), with
 `D = Rq * T_link_mesh^-1 * T_screw_link^-1` (`Rq` the retired body rotation, `T_link_mesh` the vendor
 mesh-in-link pose, `T_screw_link` the screw-to-`camera_link` offset), which puts the housing and the
 camera where they were. One camera moves: the retired `d415` centred its camera on the

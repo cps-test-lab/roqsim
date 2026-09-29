@@ -14,10 +14,14 @@
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
+from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
+import yaml
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
@@ -115,6 +119,57 @@ def test_a_re_expressed_mount_puts_the_camera_where_the_retired_one_did(tmp_path
         (p_old, r_old), (p_new, r_new) = _pose(old, objtype, name), _pose(new, objtype, name)
         assert np.allclose(p_old, p_new, atol=1e-9), name
         assert np.allclose(r_old, r_new, atol=1e-7), name  # the retired quat is 8 digits
+
+
+def test_the_builder_rewrites_a_pos_rpy_mount_to_a_pose_where_the_retired_one_was(tmp_path, capsys):
+    """A world naming ``oakd`` is old enough to state its mounts as ``pos``/``rpy``;
+    ``build_oakd_pro.py --rewrite-mounts`` writes each as a ``pose:`` alone, and the world loads."""
+    from roqsim.check import main as check
+
+    mounts = POSES[1:]
+    lines = ["sim: {}", "components:"]
+    for i, (pos, rpy) in enumerate(mounts):
+        if i % 2:
+            lines.append(
+                f"  - spawn_sensor: {{model: oakd, pos: {pos}, rpy: {rpy}, prefix: m{i}_}}"
+            )
+        else:
+            lines += [
+                "  - spawn_sensor:",
+                "      model: oakd",
+                f"      pos: {pos}",
+                f"      rpy: {rpy}",
+                f"      prefix: m{i}_",
+            ]
+        lines.append(f"    name: m{i}")
+    world = tmp_path / "world.yaml"
+    world.write_text("\n".join(lines) + "\n")
+    builder = Path(__file__).resolve().parents[2] / "external/convert/build_oakd_pro.py"
+    subprocess.run([sys.executable, str(builder), "--rewrite-mounts", str(world)], check=True)
+    text = world.read_text()
+    assert "pos:" not in text and "rpy:" not in text
+    assert check([str(world), "--json"]) == 0, capsys.readouterr().out
+
+    retired = tmp_path / "retired_oakd.xml"
+    retired.write_text(RETIRED_MJCF)
+    rewritten = yaml.safe_load(text)["components"]
+    for (pos, rpy), entry in zip(mounts, rewritten, strict=True):
+        spec = entry["spawn_sensor"]
+        assert spec["model"] == "oakd_pro"
+        old = _compiled(str(retired), pos, rpy)
+        new = _compiled(spec["model"], *_pose_of(spec["pose"]))
+        for objtype, name in (
+            (mujoco.mjtObj.mjOBJ_CAMERA, "cam_oakd_rgb"),
+            (mujoco.mjtObj.mjOBJ_GEOM, "cam_oakd_visual"),
+        ):
+            (p_old, r_old), (p_new, r_new) = _pose(old, objtype, name), _pose(new, objtype, name)
+            assert np.allclose(p_old, p_new, atol=1e-9), name
+            assert np.allclose(r_old, r_new, atol=1e-7), name
+
+
+def _pose_of(pose: dict) -> tuple[list[float], list[float]]:
+    position, orientation = pose["position"], pose["orientation"]
+    return [position[a] for a in "xyz"], [orientation[a] for a in ("roll", "pitch", "yaw")]
 
 
 def test_the_mount_publishes_the_vendor_chain():
