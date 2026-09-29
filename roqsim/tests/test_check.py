@@ -324,3 +324,22 @@ def test_an_unknown_model_in_a_nested_entry_is_a_failed_check_not_a_traceback(tm
     out = capsys.readouterr().out
     assert f"FAIL  [config] {world.resolve()}: robot.oakd: model 'no_such_model_xyz'" in out
     assert "Traceback" not in out
+
+
+def test_a_yaml_syntax_error_is_a_config_problem(tmp_path, capsys):
+    world = _world(tmp_path, "sim: {}\ncomponents: [\n")
+    assert main([str(world)]) == exit_status.FINDING
+    out = capsys.readouterr().out
+    assert "FAIL  [config] " in out and "Error" in out
+    assert "Traceback" not in out
+
+
+def test_a_bug_in_the_loader_is_not_reported_as_a_config_problem(tmp_path, monkeypatch):
+    import roqsim.config
+
+    def broken(*_args, **_kwargs):
+        raise KeyError("a bug, not bad input")
+
+    monkeypatch.setattr(roqsim.config, "load_config", broken)
+    with pytest.raises(KeyError, match="a bug"):
+        check_world(str(_world(tmp_path, "sim: {}\ncomponents: []\n")))
