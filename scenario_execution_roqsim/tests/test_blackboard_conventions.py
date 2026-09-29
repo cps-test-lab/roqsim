@@ -7,7 +7,7 @@ This package depends on ``roqsim`` and nothing else, deliberately: importing a p
 would pull MuJoCo into the behaviour-tree build, which happens before any world is compiled, and
 it would not stop at one -- every package whose plugins a scenario can address would follow.
 
-So the coupling is conventional. ``OVERRIDE_KINDS`` names a key prefix as a literal, and the
+So the coupling is conventional. A ``blackboard.get`` names a key prefix as a literal, and the
 plugin that publishes under it lives in another package with nothing between them. Rename one side
 and nothing complains: no import to fail, no collection error, just an action that raises at run
 time in a campaign cell.
@@ -52,40 +52,6 @@ def _world():
     return ctx
 
 
-def test_the_sensor_fault_prefix_is_the_one_the_publisher_spells():
-    """``roqsim_sensors`` owns the spelling and exports the function that makes it.
-
-    This package cannot call that function -- it would be the dependency the contract forbids --
-    so it repeats the prefix as a literal. Repeating a string is fine; repeating it with nothing
-    checking that the two agree is what leaves a rename silent.
-    """
-    live_config = pytest.importorskip("roqsim_sensors.live_config")
-
-    address = "robot.lidar"
-    expected = live_config.blackboard_key(address)
-
-    assert f"{WorldAccess.OVERRIDE_KINDS['sensor']}:{address}" == expected
-
-
-def test_a_model_override_is_reachable_under_the_key_this_package_computes():
-    """Behavioural, not textual: the plugin is built and the access layer finds it.
-
-    Stronger than comparing two strings, because it also pins the shape of the address -- an
-    instance named by its ``name:``, with no prefix and no namespace folded in.
-    """
-    from roqsim.plugins.model_override import ModelOverridePlugin
-
-    ctx = _world()
-    plugin = ModelOverridePlugin(
-        {"overrides": [{"field": "geom_friction", "select": ["crate_geom"], "to": 0.0}]},
-        name="grip_fault",
-    )
-    plugin.configure(ctx)
-
-    access = InProcessAccess(_Sim(ctx))
-    access.apply_override("grip_fault", True, kind="model")  # raises if the key is wrong
-
-
 def test_a_navigator_handle_is_reachable_under_the_key_this_package_computes():
     """The third convention, and the one with a suffix as well as a prefix.
 
@@ -106,32 +72,36 @@ def test_a_navigator_handle_is_reachable_under_the_key_this_package_computes():
     access.navigate("cart", [(1.0, 0.0)], wait=False)
 
 
-def test_the_refusal_names_the_key_it_looked_for():
-    """When the convention does break, the message has to carry the key.
+def test_the_refusal_names_what_the_world_can_navigate():
+    """When the convention does break, the message has to carry what DOES exist.
 
-    A refusal that says only "not found" leaves the reader comparing two packages by eye; the key
-    is what turns it into a diff.
+    A refusal that says only "not found" leaves the reader comparing two packages by eye; the names
+    this world offers are what turn it into a diff.
     """
+    navigator = pytest.importorskip("roqsim_nav.plugins.navigator")
     from scenario_execution_roqsim.access import AccessError
 
-    access = InProcessAccess(_Sim(_world()))
+    ctx = _world()
+    navigator.NavigatorPlugin(
+        {"goals": [[1.0, 0.0]], "autostart": False, "output": "mocap"}, entity="cart"
+    ).configure(ctx)
+    access = InProcessAccess(_Sim(ctx))
     with pytest.raises(AccessError) as caught:
-        access.apply_override("nobody", True, kind="sensor")
+        access.navigate("nobody", [(1.0, 0.0)], wait=False)
 
-    assert "sensor_fault:nobody" in str(caught.value)
+    assert "This world can navigate: cart" in str(caught.value)
 
 
 #: The prefixes the cases above actually exercise. Compared against what the source reaches for,
 #: so this list cannot quietly fall behind the code.
-COVERED = {"model_override", "sensor_fault", "nav"}
+COVERED = {"nav"}
 
 
 def _consumed_prefixes() -> set:
     """Every blackboard prefix this package reads, taken from its own source.
 
-    Two shapes, and both are here because both are how a key gets written: a literal in the
-    ``get`` call, and a value from :attr:`WorldAccess.OVERRIDE_KINDS` for the channels that share
-    one method. A third shape would need adding -- which the test below is what makes noticeable.
+    A literal in the ``get`` call is how a key gets written here; another shape would need adding --
+    which the test below is what makes noticeable.
     """
     import importlib
     import re
@@ -140,7 +110,7 @@ def _consumed_prefixes() -> set:
     # From the imported module, so the scan follows the code wherever it is installed from
     # rather than guessing a layout.
     root = Path(importlib.import_module(WorldAccess.__module__).__file__).parent
-    found = set(WorldAccess.OVERRIDE_KINDS.values())
+    found = set()
     for path in sorted(root.glob("*.py")):
         for literal in re.findall(r'blackboard\.get\(\s*f?"([a-z_]+):', path.read_text()):
             found.add(literal)

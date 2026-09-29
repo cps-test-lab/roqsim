@@ -200,7 +200,7 @@ def test_the_g1_mid360_is_at_the_vendor_joint_origin_and_publishes_that_chain(mo
             t
             for e in engine.ctx.interface.all()
             if e.name == "frames"
-            for t in e.backend["ros2"]["static_tf"]
+            for t in [vars(x) for x in e.read().transforms]
         ]
         assert [(t["parent"], t["child"]) for t in published] == [
             (p, c) for p, c, _, _ in G1_TRANSFORMS[model]

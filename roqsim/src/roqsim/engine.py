@@ -9,6 +9,7 @@ Lifecycle::
                  plugin.configure(ctx)
     reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
+                 (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base)
     idle()    -> drain posted commands; mj_forward if any ran (a paused driver, no time advance)
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
@@ -45,9 +46,12 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
         "MUJOCO_GL=egl only after installing libegl1/libglvnd0."
     ) from err
 
+from . import entity_pose
+from .actuators import GravityReaction
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
+from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
 from .interpenetration import Interpenetration, interpenetrations, summary
 from .plugin import Plugin, PluginError
@@ -151,6 +155,10 @@ class Engine:
         #: What the last :meth:`reset` left interpenetrating beyond tolerance, deepest first
         #: (:mod:`roqsim.interpenetration`). Empty until a reset has run.
         self.interpenetrations: list[Interpenetration] = []
+        #: Takes the weight a drive holds off the degrees of freedom above it -- a mobile base's free
+        #: joint -- between ``mj_step1`` and ``mj_step2`` (:class:`roqsim.actuators.GravityReaction`).
+        #: ``None`` when the model has no such mechanism, and then :meth:`step` is one ``mj_step``.
+        self._gravity_reaction: GravityReaction | None = None
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
         # perf_counter call (pre_step/post_step run once per plugin per physics step).
         self._profile = profile
@@ -324,6 +332,17 @@ class Engine:
             self.ctx.model = spec.compile()
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
+        self._gravity_reaction = GravityReaction.of(self.ctx.model)
+        if self._gravity_reaction is not None and self.integrator.resolved == "rk4":
+            # mj_step2 integrates RK4 as Euler, so stepping in two halves would run a different
+            # integrator than the one the world names -- and nothing would say so.
+            raise PluginError(
+                f"sim.integrator: rk4 cannot step this world: drives on the moving robot(s) rooted "
+                f"at {self._gravity_reaction.robots} hold a mechanism up, and the reaction that "
+                "keeps its weight on the ground runs between mj_step1 and mj_step2, which integrate "
+                "RK4 as Euler -- set sim.integrator: auto (implicitfast), implicit or euler, or "
+                "gravity_compensation: false on that robot's spawn if its drives really hold nothing"
+            )
 
         # A failed setup is never handed to a driver, so it shuts down what configure opened itself:
         # every plugin configured so far, the failing one included (it may have opened something
@@ -332,7 +351,20 @@ class Engine:
         try:
             for plugin in self.plugins:
                 configured.append(plugin)
+                # Stamps the endpoints this plugin registers with its address.
+                self.ctx.interface.producer = plugin.address
+                before = len(self.ctx.interface.all())
                 self._timed(plugin, "configure", plugin.configure, self.ctx)
+                # After its configure, so an endpoint's options read what configure resolved, and
+                # before the next plugin's: a bridge binds the interface in its own configure, and
+                # is listed after its producers.
+                plugin.register_endpoints(self.ctx)
+                self.ctx.interface.producer = ""
+                # The world's `qos:` for what this plugin registered, hand-built endpoints included.
+                apply_world_qos(plugin, self.ctx.interface.all()[before:])
+                # Each entity the plugin registered gets its core pose endpoint, likewise before a
+                # bridge listed next binds.
+                entity_pose.register(self.ctx)
                 # After configure, because the entity has to be registered before its presence can
                 # be set; here rather than inside each plugin so that a plugin registering an entity
                 # gets the world's `present:` honoured by declaring that it registers one.
@@ -448,8 +480,14 @@ class Engine:
         # 2) controllers write actuators.
         for plugin in self.plugins:
             self._timed(plugin, "pre_step", plugin.pre_step, self.ctx)
-        # 3) physics.
-        mujoco.mj_step(self.ctx.model, self.ctx.data)
+        # 3) physics. In two halves when a drive holds a mechanism on a moving base, so its weight
+        # reaches the ground through that base (roqsim.actuators.GravityReaction).
+        if self._gravity_reaction is None:
+            mujoco.mj_step(self.ctx.model, self.ctx.data)
+        else:
+            mujoco.mj_step1(self.ctx.model, self.ctx.data)
+            self._gravity_reaction.apply(self.ctx.model, self.ctx.data)
+            mujoco.mj_step2(self.ctx.model, self.ctx.data)
         # 4) sensors/transport/recording read state.
         for plugin in self.plugins:
             self._timed(plugin, "post_step", plugin.post_step, self.ctx)

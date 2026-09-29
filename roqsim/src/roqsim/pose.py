@@ -41,6 +41,14 @@ cannot:
     zero, except the quaternion's ``w``, which is 1 -- the default ``geometry_msgs/Quaternion``
     itself declares, and what keeps an empty orientation the identity rather than a zero-length
     quaternion.
+
+**A pose relative to a frame** -- a frame's origin in its ``parent``, a device's offset from the
+``parent_frame`` it hangs from, a site on a body -- is read by the same function with
+``relative=True``, and differs in one deliberate way: every omitted component is zero, ``x`` and
+``y`` included. The key beside it already names the frame, so there is no ``header``, and a frame
+has no resting height to fall back on, so an unstated ``z`` is simply zero. An absent or empty
+``pose`` is the frame itself. A ``pos``/``rpy`` pair of lists is refused, with the ``pose:`` it
+means (:func:`refuse_pos_rpy`).
 """
 
 from __future__ import annotations
@@ -71,7 +79,7 @@ def _mapping(value, where: str) -> dict:
     return value
 
 
-def parse_pose(value) -> tuple[list[float | None], list[float]]:
+def parse_pose(value, *, relative: bool = False) -> tuple[list[float | None], list[float]]:
     """``(position, quaternion)`` from a ``geometry_msgs/PoseStamped``-shaped mapping.
 
     *position* is ``[x, y, z]`` with ``z`` **None** when the document did not state one, which is
@@ -80,9 +88,21 @@ def parse_pose(value) -> tuple[list[float | None], list[float]]:
 
     A ``PoseStamped`` (``header``/``pose``) and the bare ``Pose`` inside it are both accepted, so
     the value can be pasted from either level of the service request.
+
+    ``relative=True`` reads a pose **in a frame the key beside it names** (a ``parent``, a
+    ``parent_frame``, a body to attach to) -- an offset, where the world spawn's rules do not
+    apply: there is no resting height to fall back on, so every omitted position component is
+    **0.0**, ``x``/``y`` included, and no ``header`` is accepted, because the frame is already
+    stated. The empty mapping is the frame itself.
     """
     outer = _mapping(value, "'pose'")
-    if "pose" in outer or "header" in outer:
+    if relative:
+        if "pose" in outer or "header" in outer:
+            raise PoseError(
+                "this 'pose' is relative to the frame stated beside it, so it is a bare "
+                "geometry_msgs/Pose -- 'position' and 'orientation' -- with no 'header'/'pose'."
+            )
+    elif "pose" in outer or "header" in outer:
         frame = str(_mapping(outer.get("header", {}), "'pose.header'").get("frame_id", "") or "")
         if frame not in _WORLD_FRAMES:
             raise PoseError(
@@ -102,6 +122,9 @@ def parse_pose(value) -> tuple[list[float | None], list[float]]:
     position = _mapping(outer.get("position", {}), "'pose.position'")
     if extra := set(position) - {"x", "y", "z"}:
         raise PoseError(f"'pose.position' has no key(s) {sorted(extra)!r}; it is x, y and z")
+    if relative:
+        pos = [_number(position.get(a, 0.0), f"'pose.position.{a}'") for a in ("x", "y", "z")]
+        return pos, _parse_orientation(outer.get("orientation"))
     for axis in ("x", "y"):
         if axis not in position:
             raise PoseError(f"'pose.position.{axis}' is required")
@@ -195,3 +218,78 @@ def yaw_of(quat) -> float:
     """
     w, x, y, z = (float(c) for c in quat)
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def pose_spelling(pos=None, rpy=None) -> str:
+    """The ``pose:`` a ``pos``/``rpy`` pair means, written inline for a refusal message.
+
+    Components that are zero are left out, since a relative pose reads an omitted one as zero.
+    """
+
+    def _fmt(v) -> str:
+        return repr(float(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
+
+    parts = []
+    if isinstance(pos, (list, tuple)) and pos:
+        axes = [f"{a}: {_fmt(v)}" for a, v in zip("xyz", pos, strict=False) if v != 0]
+        parts.append("position: {" + ", ".join(axes) + "}")
+    if isinstance(rpy, (list, tuple)) and rpy:
+        angles = [
+            f"{a}: {_fmt(v)}" for a, v in zip(("roll", "pitch", "yaw"), rpy, strict=False) if v != 0
+        ]
+        if angles:
+            parts.append("orientation: {" + ", ".join(angles) + "}")
+    return "pose: {" + ", ".join(parts) + "}"
+
+
+def refuse_pos_rpy(config: dict, where: str, keys=("pos", "rpy")) -> str | None:
+    """A refusal for a ``pos``/``rpy`` spelling of a pose, showing the ``pose:`` that replaces it.
+
+    ``None`` when *config* carries none of *keys*. A pose is stated one way, as ``pose:``; these
+    keys are refused rather than read, so a document has one spelling for it.
+    """
+    given = [k for k in keys if k in config]
+    if not given:
+        return None
+    pos = config.get(keys[0]) if len(keys) > 0 else None
+    rpy = config.get(keys[1]) if len(keys) > 1 else None
+    return (
+        f"{where}: {' and '.join(repr(k) for k in given)} {'is' if len(given) == 1 else 'are'} "
+        f"not read -- a pose is stated as "
+        f"'pose', a geometry_msgs/Pose relative to its frame (omitted components are 0): "
+        f"{pose_spelling(pos, rpy)}"
+    )
+
+
+def pose_mapping(position=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0)) -> dict:
+    """The ``pose:`` mapping for *position* and roll/pitch/yaw *rpy*, as a document writes one.
+
+    For a program that writes documents (a converter, an editor, a test): the one spelling
+    :func:`parse_pose` reads, with every component stated.
+    """
+    return {
+        "position": dict(zip("xyz", (float(v) for v in position), strict=True)),
+        "orientation": dict(zip(("roll", "pitch", "yaw"), (float(v) for v in rpy), strict=True)),
+    }
+
+
+def config_pose(config: dict) -> tuple[list[float], list[float]]:
+    """``(position, quaternion)`` of a plugin config's relative ``pose``, for its constructor.
+
+    A plugin is constructed before its config is validated, so a ``pose`` that is not one reads as
+    the identity here and is refused by :func:`config_pose_errors` before anything is built.
+    """
+    try:
+        return parse_pose(config.get("pose") or {}, relative=True)
+    except PoseError:
+        return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+def config_pose_errors(config: dict, where: str) -> list[str]:
+    """What is wrong with a plugin config's relative ``pose``: not a pose, or given as ``pos``/``rpy``."""
+    errors = [refusal] if (refusal := refuse_pos_rpy(config, where)) else []
+    try:
+        parse_pose(config.get("pose") or {}, relative=True)
+    except PoseError as exc:
+        errors.append(f"{where}: {exc}")
+    return errors

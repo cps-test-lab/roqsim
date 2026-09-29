@@ -68,11 +68,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.types import PointCloud
 
 from .camera_common import join_topic
 from .depth_camera import DepthCameraPlugin
-from .payloads import PointCloud
 
 #: realsense-ros publishes depth and the coloured cloud under `depth/`, and colour under `color/`,
 #: so the two share no prefix -- the base class's single DEFAULT_TOPIC_PREFIX cannot express that.
@@ -102,40 +103,28 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         self.depth = bool(self.config.get("depth", False)) or self.points
         self.depth_frame_id = self.config.get("depth_frame_id", self.DEFAULT_DEPTH_FRAME_ID)
         self._cloud: PointCloud | None = None
-        self._points_ep: Endpoint | None = None
         self._uv: tuple[np.ndarray, np.ndarray] | None = None
 
-    def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
-        if not self.depth:
-            return
-        self._add_depth_endpoints(
-            ctx,
-            ns,
-            self.topic_override("depth") or join_topic(DEPTH_PREFIX, "image_rect_raw"),
-            self.depth_frame_id,
-        )
+    def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
+        if self.depth:
+            self._add_depth_endpoints(
+                ctx, join_topic(DEPTH_PREFIX, "image_rect_raw"), self.depth_frame_id
+            )
 
-        if not self.points:
-            return
-        self._points_ep = Endpoint(
-            name="points",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._cloud,
-            rate_hz=self.rate_hz,
-            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.PointCloud2",
-                    "topic": self.topic_override("points")
-                    or join_topic(DEPTH_PREFIX, "color/points"),
-                    "frame_id": self.depth_frame_id,
-                }
-            },
-        )
-        ctx.interface.add(self._points_ep)
-        self._extra_outputs.append(self._points_ep)
+    # As expensive to serialise as the colour frame; see camera_common's `image`.
+    @endpoint.out(
+        name="points",
+        rate="rate_hz",
+        lazy=True,
+        when="points",
+        ros2=lambda self: {
+            "topic": join_topic(DEPTH_PREFIX, "color/points"),
+            "frame_id": self.depth_frame_id,
+        },
+    )
+    def point_cloud(self) -> PointCloud | None:
+        """The depth frame reprojected to points in the depth optical frame."""
+        return self._cloud
 
     def _capture_extra(self, ctx: SimContext, renderer) -> None:
         if not self.depth:

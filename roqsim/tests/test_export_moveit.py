@@ -32,19 +32,20 @@ from roqsim.export_moveit import (
     ompl_planning_yaml,
     wrapped_joints,
 )
+from roqsim.pose import pose_mapping
 
 
 def _cell(tmp_path, model="ur5e", *, gripper="robotiq_2f85", name="ur5e", namespace=None):
     arm = {
         "model": model,
         "prefix": f"{model}_",
-        "pos": [0.0, 0.0, 0.76],
+        "pose": pose_mapping([0.0, 0.0, 0.76]),
     }
     if gripper:
         arm["end_effector"] = {
             "model": gripper,
             "site": "attachment_site",
-            "pos": [0.0, 0.0, 0.011],
+            "pose": pose_mapping([0.0, 0.0, 0.011]),
         }
     if namespace:
         arm["namespace"] = namespace
@@ -260,11 +261,11 @@ _WORLD = {
             "spawn_arm": {
                 "model": "ur5e",
                 "prefix": "ur5e_",
-                "pos": [0.0, 0.0, 0.76],
+                "pose": pose_mapping([0.0, 0.0, 0.76]),
                 "end_effector": {
                     "model": "robotiq_2f85",
                     "site": "attachment_site",
-                    "pos": [0.0, 0.0, 0.011],
+                    "pose": pose_mapping([0.0, 0.0, 0.011]),
                 },
             },
             "name": "ur5e",
@@ -369,8 +370,14 @@ def test_two_arms_must_be_disambiguated(tmp_path, capsys):
     world = {
         "sim": {},
         "plugins": [
-            {"spawn_arm": {"model": "ur5e", "prefix": "a_", "pos": [0, 0, 0]}, "name": "a"},
-            {"spawn_arm": {"model": "ur5e", "prefix": "b_", "pos": [1, 0, 0]}, "name": "b"},
+            {
+                "spawn_arm": {"model": "ur5e", "prefix": "a_", "pose": pose_mapping([0, 0, 0])},
+                "name": "a",
+            },
+            {
+                "spawn_arm": {"model": "ur5e", "prefix": "b_", "pose": pose_mapping([1, 0, 0])},
+                "name": "b",
+            },
         ],
     }
     assert "--arm" in _refused(capsys, tmp_path, world)
@@ -390,11 +397,11 @@ def _dual_world(joint_prefix: bool = True) -> dict:
                 "model": "ur5e",
                 "prefix": f"{name}_",
                 "namespace": name,
-                "pos": [0.0, y, 0.76],
+                "pose": pose_mapping([0.0, y, 0.76]),
                 "end_effector": {
                     "model": "robotiq_2f85",
                     "site": "attachment_site",
-                    "pos": [0.0, 0.0, 0.011],
+                    "pose": pose_mapping([0.0, 0.0, 0.011]),
                 },
             },
             "name": name,

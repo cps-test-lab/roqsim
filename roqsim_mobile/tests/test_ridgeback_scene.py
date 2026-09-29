@@ -31,6 +31,7 @@ from scan_mount_utils import (
     robot_hits,
     spawn,
     static_tf,
+    topic_of,
 )
 
 from roqsim.config import load_config_from_dict
@@ -247,8 +248,9 @@ def test_the_tf_chain_and_topic_are_clearpaths(scan):
     want_pos, _ = chain((MOUNT_XYZ, MOUNT_RPY), (LASER_XYZ, LASER_RPY))
     assert np.allclose(tf[0]["translation"], want_pos, atol=1e-6)
     assert np.allclose(tf[0]["rotation"], (1.0, 0.0, 0.0, 0.0), atol=1e-9)
-    hints = endpoint(scan, "scan", address).backend["ros2"]
-    assert (hints["frame_id"], hints["topic"]) == (SCAN_FRAME, SCAN_TOPIC)
+    scan_ep = endpoint(scan, "scan", address)
+    hints = scan_ep.backend["ros2"]
+    assert (hints["frame_id"], topic_of(scan_ep)) == (SCAN_FRAME, SCAN_TOPIC)
     assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
 
 

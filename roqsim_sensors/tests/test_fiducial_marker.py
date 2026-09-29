@@ -39,7 +39,7 @@ def _detect_ids(rgb: np.ndarray, family: str) -> list[int]:
 
 @pytest.mark.parametrize("family,mid", [("apriltag_36h11", 7), ("aruco_4x4_50", 3)])
 def test_generated_marker_decodes_directly(family, mid):
-    plugin = FiducialMarkerPlugin({"family": family, "id": mid, "pose": [0, 0, 0]})
+    plugin = FiducialMarkerPlugin({"family": family, "id": mid})
     rgb = plugin._render_marker()
     assert rgb.ndim == 3 and rgb.shape[2] == 3 and rgb.dtype == np.uint8
     assert _detect_ids(rgb, family) == [mid]
@@ -56,16 +56,19 @@ def test_dict_name_maps_friendly_families():
 
 def test_validate_config_rejects_bad_input():
     p = FiducialMarkerPlugin()
-    assert p.validate_config({"family": "apriltag_36h11", "id": 0}) == [
-        "provide exactly one of 'pose' (world) or 'attach_to' (body)"
-    ]
+    assert "'pose' is a mapping" in " ".join(
+        p.validate_config({"family": "apriltag_36h11", "id": 0, "pose": [0, 0, 0.5]})
+    )
+    assert "'rel_quat' is not read" in " ".join(
+        p.validate_config({"family": "apriltag_36h11", "attach_to": "b", "rel_quat": [1, 0, 0, 0]})
+    )
     assert "out of range" in " ".join(
-        p.validate_config({"family": "apriltag_36h11", "id": 99999, "pose": [0, 0, 0]})
+        p.validate_config({"family": "apriltag_36h11", "id": 99999})
     )
-    assert "unknown fiducial family" in " ".join(
-        p.validate_config({"family": "nope_1x1", "pose": [0, 0, 0]})
-    )
-    assert p.validate_config({"family": "aruco_4x4_50", "id": 0, "pose": [0, 0, 0]}) == []
+    assert "unknown fiducial family" in " ".join(p.validate_config({"family": "nope_1x1"}))
+    assert p.validate_config({"family": "aruco_4x4_50", "id": 0}) == []
+    pose = {"position": {"z": 0.5}, "orientation": {"roll": 1.5708}}
+    assert p.validate_config({"family": "aruco_4x4_50", "id": 0, "pose": pose}) == []
 
 
 # -- body attachment (compiles; no GL) ------------------------------------------------------
@@ -92,7 +95,7 @@ def test_marker_attaches_to_named_body():
                         "size": 0.04,
                         "attach_to": "link",
                         "prefix": "rob_",
-                        "rel_pose": [0, 0, 0.06],
+                        "pose": {"position": {"z": 0.06}},
                     },
                     "name": "wristtag",
                 },
@@ -163,7 +166,8 @@ def test_world_marker_renders_and_decodes():
                         "family": family,
                         "id": mid,
                         "size": 0.1,
-                        "pose": [0, 0, 0.001],  # flat on the backdrop, facing +Z up at the camera
+                        # flat on the backdrop, facing +Z up at the camera
+                        "pose": {"position": {"z": 0.001}},
                     },
                 },
             ],
