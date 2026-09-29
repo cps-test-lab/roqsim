@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import re
 from pathlib import Path
 
 import mujoco
@@ -267,6 +268,97 @@ def test_rewritten_mounts_keep_each_camera_where_it_was(tmp_path):
         _assert_where_the_retired_mount_put_it(
             tmp_path, model, (pos, rpy), vendor_mount.pose_values(spec["pose"])
         )
+
+
+def _checks(capsys, world: Path) -> None:
+    """``roqsim check`` loads *world*."""
+    from roqsim.check import main as check
+
+    code = check([str(world), "--json"])
+    assert code == 0, capsys.readouterr().out
+
+
+def test_rewritten_pos_rpy_mounts_are_poses_and_keep_each_camera_where_it_was(tmp_path, capsys):
+    """A world old enough to name a retired model states its mounts as ``pos``/``rpy``: rewritten,
+    each is a ``pose:`` alone, the world loads, and the camera is where the retired mount put it."""
+    retired = {"realsense_d415": "d415", "realsense_d435": "d435", "realsense_d455": "d455"}
+    mounts = [(model, pos, rpy) for model in sorted(VENDOR) for pos, rpy in POSES[1:4]]
+    lines = ["sim: {}", "components:"]
+    for i, (model, pos, rpy) in enumerate(mounts):
+        if i % 2:
+            lines += [
+                f"  - spawn_sensor: {{model: {retired[model]}, pos: {pos}, rpy: {rpy}, "
+                f"prefix: m{i}_, default_plugins: false}}",
+                f"    name: m{i}",
+            ]
+        else:
+            lines += [
+                "  - spawn_sensor:",
+                f"      model: {retired[model]}",
+                f"      pos: {pos}  # kept",
+                f"      rpy: {rpy}",
+                f"      prefix: m{i}_",
+                "      default_plugins: false",
+                f"    name: m{i}",
+            ]
+    world = tmp_path / "world.yaml"
+    world.write_text("\n".join(lines) + "\n")
+    vendor_mount = _vendor_mount()
+    deltas = {retired[m]: (m, _delta(m)) for m in VENDOR}
+    assert vendor_mount.rewrite_mounts(world, deltas) == len(mounts)
+    text = world.read_text()
+    assert "pos:" not in text and "rpy:" not in text and "  # kept" in text
+    _checks(capsys, world)
+    rewritten = yaml.safe_load(text)["components"]
+    for (model, pos, rpy), entry in zip(mounts, rewritten, strict=True):
+        spec = entry["spawn_sensor"]
+        assert spec["model"] == model and spec["default_plugins"] is False
+        _assert_where_the_retired_mount_put_it(
+            tmp_path, model, (pos, rpy), vendor_mount.pose_values(spec["pose"])
+        )
+
+
+@pytest.mark.parametrize(
+    "mount, line",
+    [
+        # A pose stated twice: which one the retired model read is not the rewrite's to guess.
+        (["      model: d435", "      pos: [1, 0, 0]", "      pose: {position: {x: 1}}"], 6),
+        (["      model: d435", "      pos:", "        - 1", "        - 0"], 5),
+        (["      model: d435", "      rpy: [0, 0]"], 5),
+        (["      model: d435", "      pos: [1, a, 0]"], 5),
+        (["      model: d435", "      pose: {position: {x: 1, q: 2}}"], 5),
+        (["      model: d435", "      pose: {position: [1, 0, 0]}"], 5),
+        (["      model: d435", "      pose: {position: {x: 1}"], 5),
+        (["      model: d435", "      pose:", "        position: {x: 1}"], 5),
+    ],
+)
+def test_a_retired_mount_the_rewrite_cannot_read_is_refused_naming_its_line(tmp_path, mount, line):
+    world = tmp_path / "world.yaml"
+    body = "\n".join(["sim: {}", "components:", "  - spawn_sensor:", *mount, "    name: m"]) + "\n"
+    world.write_text(body)
+    deltas = {"d435": ("realsense_d435", _delta("realsense_d435"))}
+    with pytest.raises(RuntimeError, match=rf"^{re.escape(str(world))}:{line}: "):
+        _vendor_mount().rewrite_mounts(world, deltas)
+    assert world.read_text() == body
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "{model: d435, pos: [1, 0, 0], pose: {position: {x: 1}}}",
+        "{model: d435, rpy: [0, 0, oops]}",
+        "{model: d435, pose: {orientation: {yaw: 1, w: 1}}}",
+        "{model: d435, pose: {position: {x: 1}}",
+    ],
+)
+def test_a_flow_retired_mount_the_rewrite_cannot_read_is_refused_naming_its_line(tmp_path, mount):
+    world = tmp_path / "world.yaml"
+    body = f"sim: {{}}\ncomponents:\n  - spawn_sensor: {mount}\n    name: m\n"
+    world.write_text(body)
+    deltas = {"d435": ("realsense_d435", _delta("realsense_d435"))}
+    with pytest.raises(RuntimeError, match=rf"^{re.escape(str(world))}:3: "):
+        _vendor_mount().rewrite_mounts(world, deltas)
+    assert world.read_text() == body
 
 
 #: The demo world's RealSense mounts as they were written for the retired models.
