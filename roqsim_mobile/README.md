@@ -47,15 +47,17 @@ floor and the caster drags — worth 48% of the robot's yaw rate). The comment b
 | `diff_drive` | Differential **and** skid-steer kinematics + wheel odometry. Any number of driven wheels per side; `slip_factor` inflates the commanded yaw term and divides back out of odometry, as vendor skid-steer drivers do. `odom_noise` adds a scale bias and white noise to the odometry, not to the motion. Declares `cmd_vel` in, `odom` / `joint_states` out. |
 | `omni_drive` | Holonomic (mecanum) kinematics + odometry — a body-frame `vx, vy, wz` twist, with a cap on the resultant planar speed as real holonomic controllers have. Rollers are not modelled: the twist goes through three velocity actuators on the base's free joint, so contacts still win and a wall still stops the robot. Wheel spin is observational. |
 | `ackermann_drive` | Car-like (**Ackermann**) kinematics + odometry — the geometry whose *constraint* is the point: a car cannot turn in place, so `cmd_vel` with `v = 0` and a yaw rate moves it nowhere. The two front wheels are steered by *different* angles and the two rear wheels driven at *different* speeds, both from the same curve; a shared value would scrub the tyres. No `slip_factor` and none wanted — a car turns by steering, not by scrubbing sideways. Declares `cmd_vel` **and** `ackermann_cmd` in (`ackermann_msgs/AckermannDriveStamped`, which states the steering angle rather than a curvature, so a stopped car can still turn its wheels), `odom` / `joint_states` out. |
+| `tricycle_drive` | **Tricycle** kinematics + odometry — one steered wheel on the centre line, front or rear (`steer_offset` signed), and a fixed axle through `base_link`; `drive: axle` drives the axle's two wheels split like a differential on the *measured* steering angle, `drive: steer_wheel` drives the steered wheel itself. For forklifts, tuggers, pallet trucks and AGVs. Like `ackermann_drive` it cannot turn in place: its lock must stay short of 90°, so `cmd_vel` with `v = 0` moves nothing. `steer_offset` and `track` are checked against the model at configure. Declares `cmd_vel` in, `odom` / `joint_states` out (steering, driven, then `passive_joints`). |
 | `floorplan` | Build the environment from walls: a room, corridors, obstacles, with textured floor/walls. Provides its own ground and overrides `sim.world`. |
 
-All three drive plugins integrate odometry from the **achieved** twist, so a robot held against a
+All the drive plugins integrate odometry from the **achieved** twist, so a robot held against a
 wall reports no progress. Note the consequence for experiment design: `omni_drive` has no wheel slip
 in the model at all, so encoder odometry and ground truth coincide by construction — it cannot be
 used to study odometry drift. `diff_drive`'s skid-steer models do drift (~0.3 m over a 5 s arc), and
-`ackermann_drive` drifts on a curve where the tyres slip, deliberately uncorrected: a skid-steer's
-scrub is systematic enough for a `slip_factor`, while a tyre's slip angle varies with speed and load,
-so a constant would only make the estimate look better than the sensor it stands for.
+`ackermann_drive` and `tricycle_drive` drift on a curve where the tyres slip, deliberately
+uncorrected: a skid-steer's scrub is systematic enough for a `slip_factor`, while a tyre's slip angle
+varies with speed and load, so a constant would only make the estimate look better than the sensor
+it stands for.
 
 ## Layering
 
