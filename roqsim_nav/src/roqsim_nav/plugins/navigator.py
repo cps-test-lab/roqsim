@@ -12,8 +12,10 @@ drive plugin published (so ``diff_drive`` still does its own inverse kinematics,
 and odometry -- the wheels really turn), a mocap prop takes a written pose. Outputs are resolved from
 an entry-point group, so nothing here knows what embodiments exist.
 
-Config -- a component of the entry that provides the entity it moves, since ownership is where the
-entry sits rather than a config key::
+It is a component of the entry that provides the entity it moves, since ownership is where the entry
+sits rather than a config key. Every key, with its type, unit and default, is
+:data:`NavigatorPlugin.CONFIG_SCHEMA`, which ``roqsim plugins describe navigator`` publishes, and a
+key it does not name is refused. The keys grouped by what reads them, the nested blocks included::
 
     navigator:
       output: auto            # auto | drive | mocap | ... | module:Class | file.py:Class
@@ -71,14 +73,11 @@ entry sits rather than a config key::
       yaw_rate: 3.0           # rad/s the body is re-faced at (0 = snap)
 
       # -- planning --------------------------------------------------------------------------
-      obstacle_height: [0.05, 0.6]  # z band a geom must span to be a wall FOR THIS MOVER
+      obstacle_height: [0.1, 1.8]   # z band a geom must span to be a wall FOR THIS MOVER
       resolution: 0.05              # m per planner grid cell
       planner:  {inflation_radius: 0.35, waypoint_radius: 0.3}
       recovery: {enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       update_hz: 20.0               # nav pipeline rate; physics steps far faster
-
-Every key, with its type, unit and default, is :data:`NavigatorPlugin.CONFIG_SCHEMA`, which
-``roqsim plugins describe navigator`` publishes. A key it does not name is refused.
 
 ``obstacle_height`` is per mover on purpose: a 0.4 m pallet is not stopped by a ceiling beam that
 blocks a walker, so "what counts as a wall" is a property of the thing navigating, not of the world.
