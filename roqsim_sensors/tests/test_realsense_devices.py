@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import re
 from pathlib import Path
 
 import mujoco
@@ -147,6 +148,13 @@ def _retired_mjcf(tmp_path, model) -> str:
     return str(path)
 
 
+def _pose(pos, rpy) -> dict:
+    return {
+        "position": dict(zip("xyz", map(float, pos), strict=True)),
+        "orientation": dict(zip(("roll", "pitch", "yaw"), map(float, rpy), strict=True)),
+    }
+
+
 def _compiled(model, pos, rpy, prefix="cam_"):
     cfg = load_config_from_dict(
         {
@@ -156,8 +164,7 @@ def _compiled(model, pos, rpy, prefix="cam_"):
                     "spawn_sensor": {
                         "model": model,
                         "prefix": prefix,
-                        "pos": list(pos),
-                        "rpy": list(rpy),
+                        "pose": _pose(pos, rpy),
                         "default_plugins": False,
                     },
                     "name": "cam",
@@ -233,11 +240,55 @@ def test_rewritten_mounts_keep_each_camera_where_it_was(tmp_path):
     """Block- and flow-style mounts of each retired model, rewritten, load where they were."""
     retired = {"realsense_d415": "d415", "realsense_d435": "d435", "realsense_d455": "d455"}
     mounts = [(model, pos, rpy) for model in sorted(VENDOR) for pos, rpy in POSES[1:3]]
+    vendor_mount = _vendor_mount()
     lines = ["components:"]
     for i, (model, pos, rpy) in enumerate(mounts):
         if i % 2:
             lines += [
-                f"  - spawn_sensor: {{model: {retired[model]}, pos: {pos}, rpy: {rpy}}}",
+                f"  - spawn_sensor: {{model: {retired[model]}, "
+                f"pose: {vendor_mount.fmt_pose(pos, rpy)}}}",
+                f"    name: m{i}",
+            ]
+        else:
+            lines += [
+                "  - spawn_sensor:",
+                f"      model: {retired[model]}",
+                f"      pose: {vendor_mount.fmt_pose(pos, rpy)}  # kept",
+                f"    name: m{i}",
+            ]
+    world = tmp_path / "world.yaml"
+    world.write_text("\n".join(lines) + "\n")
+    deltas = {retired[m]: (m, _delta(m)) for m in VENDOR}
+    assert vendor_mount.rewrite_mounts(world, deltas) == len(mounts)
+    assert "pose: {position: {" in world.read_text() and "  # kept" in world.read_text()
+    rewritten = yaml.safe_load(world.read_text())["components"]
+    for (model, pos, rpy), entry in zip(mounts, rewritten, strict=True):
+        spec = entry["spawn_sensor"]
+        assert spec["model"] == model
+        _assert_where_the_retired_mount_put_it(
+            tmp_path, model, (pos, rpy), vendor_mount.pose_values(spec["pose"])
+        )
+
+
+def _checks(capsys, world: Path) -> None:
+    """``roqsim check`` loads *world*."""
+    from roqsim.check import main as check
+
+    code = check([str(world), "--json"])
+    assert code == 0, capsys.readouterr().out
+
+
+def test_rewritten_pos_rpy_mounts_are_poses_and_keep_each_camera_where_it_was(tmp_path, capsys):
+    """A world old enough to name a retired model states its mounts as ``pos``/``rpy``: rewritten,
+    each is a ``pose:`` alone, the world loads, and the camera is where the retired mount put it."""
+    retired = {"realsense_d415": "d415", "realsense_d435": "d435", "realsense_d455": "d455"}
+    mounts = [(model, pos, rpy) for model in sorted(VENDOR) for pos, rpy in POSES[1:4]]
+    lines = ["sim: {}", "components:"]
+    for i, (model, pos, rpy) in enumerate(mounts):
+        if i % 2:
+            lines += [
+                f"  - spawn_sensor: {{model: {retired[model]}, pos: {pos}, rpy: {rpy}, "
+                f"prefix: m{i}_, default_plugins: false}}",
                 f"    name: m{i}",
             ]
         else:
@@ -246,20 +297,68 @@ def test_rewritten_mounts_keep_each_camera_where_it_was(tmp_path):
                 f"      model: {retired[model]}",
                 f"      pos: {pos}  # kept",
                 f"      rpy: {rpy}",
+                f"      prefix: m{i}_",
+                "      default_plugins: false",
                 f"    name: m{i}",
             ]
     world = tmp_path / "world.yaml"
     world.write_text("\n".join(lines) + "\n")
+    vendor_mount = _vendor_mount()
     deltas = {retired[m]: (m, _delta(m)) for m in VENDOR}
-    assert _vendor_mount().rewrite_mounts(world, deltas) == len(mounts)
-    assert "pos: [" in world.read_text() and "  # kept" in world.read_text()
-    rewritten = yaml.safe_load(world.read_text())["components"]
+    assert vendor_mount.rewrite_mounts(world, deltas) == len(mounts)
+    text = world.read_text()
+    assert "pos:" not in text and "rpy:" not in text and "  # kept" in text
+    _checks(capsys, world)
+    rewritten = yaml.safe_load(text)["components"]
     for (model, pos, rpy), entry in zip(mounts, rewritten, strict=True):
         spec = entry["spawn_sensor"]
-        assert spec["model"] == model
+        assert spec["model"] == model and spec["default_plugins"] is False
         _assert_where_the_retired_mount_put_it(
-            tmp_path, model, (pos, rpy), (spec["pos"], spec["rpy"])
+            tmp_path, model, (pos, rpy), vendor_mount.pose_values(spec["pose"])
         )
+
+
+@pytest.mark.parametrize(
+    "mount, line",
+    [
+        # A pose stated twice: which one the retired model read is not the rewrite's to guess.
+        (["      model: d435", "      pos: [1, 0, 0]", "      pose: {position: {x: 1}}"], 6),
+        (["      model: d435", "      pos:", "        - 1", "        - 0"], 5),
+        (["      model: d435", "      rpy: [0, 0]"], 5),
+        (["      model: d435", "      pos: [1, a, 0]"], 5),
+        (["      model: d435", "      pose: {position: {x: 1, q: 2}}"], 5),
+        (["      model: d435", "      pose: {position: [1, 0, 0]}"], 5),
+        (["      model: d435", "      pose: {position: {x: 1}"], 5),
+        (["      model: d435", "      pose:", "        position: {x: 1}"], 5),
+    ],
+)
+def test_a_retired_mount_the_rewrite_cannot_read_is_refused_naming_its_line(tmp_path, mount, line):
+    world = tmp_path / "world.yaml"
+    body = "\n".join(["sim: {}", "components:", "  - spawn_sensor:", *mount, "    name: m"]) + "\n"
+    world.write_text(body)
+    deltas = {"d435": ("realsense_d435", _delta("realsense_d435"))}
+    with pytest.raises(RuntimeError, match=rf"^{re.escape(str(world))}:{line}: "):
+        _vendor_mount().rewrite_mounts(world, deltas)
+    assert world.read_text() == body
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "{model: d435, pos: [1, 0, 0], pose: {position: {x: 1}}}",
+        "{model: d435, rpy: [0, 0, oops]}",
+        "{model: d435, pose: {orientation: {yaw: 1, w: 1}}}",
+        "{model: d435, pose: {position: {x: 1}}",
+    ],
+)
+def test_a_flow_retired_mount_the_rewrite_cannot_read_is_refused_naming_its_line(tmp_path, mount):
+    world = tmp_path / "world.yaml"
+    body = f"sim: {{}}\ncomponents:\n  - spawn_sensor: {mount}\n    name: m\n"
+    world.write_text(body)
+    deltas = {"d435": ("realsense_d435", _delta("realsense_d435"))}
+    with pytest.raises(RuntimeError, match=rf"^{re.escape(str(world))}:3: "):
+        _vendor_mount().rewrite_mounts(world, deltas)
+    assert world.read_text() == body
 
 
 #: The demo world's RealSense mounts as they were written for the retired models.
@@ -283,7 +382,7 @@ def test_the_demo_world_keeps_each_realsense_where_the_retired_mount_put_it(tmp_
         spec = mounts[model]
         # The world writes a pose to ten decimals.
         _assert_where_the_retired_mount_put_it(
-            tmp_path, model, retired, (spec["pos"], spec["rpy"]), atol=1e-8
+            tmp_path, model, retired, _vendor_mount().pose_values(spec["pose"]), atol=1e-8
         )
 
 
@@ -294,7 +393,7 @@ def test_the_demo_world_keeps_each_realsense_where_the_retired_mount_put_it(tmp_
 def test_the_mount_publishes_the_vendor_chain(model):
     engine = _compiled(model, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tfs = {(t["parent"], t["child"]): t for t in frames.backend["ros2"]["static_tf"]}
+    tfs = {(t["parent"], t["child"]): t for t in [vars(t) for t in frames.read().transforms]}
     assert set(tfs) >= {
         ("world", "camera_bottom_screw_frame"),
         ("camera_bottom_screw_frame", "camera_link"),
@@ -336,7 +435,7 @@ def test_camera_link_sits_at_the_vendor_offset_from_the_mount(model, pos, rpy):
     assert np.allclose(d.xmat[link].reshape(3, 3), r_mount, atol=1e-9)
     # The published camera_link is that body.
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tf_pos, tf_rot = _tf_to_world(frames.backend["ros2"]["static_tf"], "camera_link")
+    tf_pos, tf_rot = _tf_to_world([vars(t) for t in frames.read().transforms], "camera_link")
     assert np.allclose(tf_pos, d.xpos[link], atol=1e-9)
     assert np.allclose(tf_rot, d.xmat[link].reshape(3, 3), atol=1e-9)
 
@@ -372,8 +471,9 @@ def test_the_published_frames_are_the_ones_the_data_is_stamped_in():
     )
     engine = Engine(cfg)
     engine.setup()
-    eps = {e.name: e.backend["ros2"] for e in engine.ctx.interface.all() if e.owner == "cam"}
-    children = {t["child"] for t in eps["frames"]["static_tf"]}
+    cam = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cam"}
+    eps = {name: e.backend["ros2"] for name, e in cam.items()}
+    children = {t.child for t in cam["frames"].read().transforms}
     assert eps["image"]["frame_id"] == "head_camera_color_optical_frame"
     assert eps["depth"]["frame_id"] == "head_camera_depth_optical_frame"
     assert eps["imu"]["frame_id"] == "head_camera_imu_optical_frame"
@@ -402,7 +502,9 @@ def test_depth_is_rendered_from_the_frame_it_is_stamped_in(model, pos, rpy):
     assert np.allclose(d.site_xpos[site], cam_pos, atol=1e-9)
     assert np.allclose(d.site_xmat[site].reshape(3, 3), optical, atol=1e-9)
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tf_pos, tf_rot = _tf_to_world(frames.backend["ros2"]["static_tf"], "camera_depth_optical_frame")
+    tf_pos, tf_rot = _tf_to_world(
+        [vars(t) for t in frames.read().transforms], "camera_depth_optical_frame"
+    )
     assert np.allclose(tf_pos, cam_pos, atol=1e-9)
     assert np.allclose(tf_rot, optical, atol=1e-9)
     # And it is not the colour camera: the two sit a baseline offset apart.
@@ -469,7 +571,7 @@ def test_a_depth_return_reprojects_onto_the_surface_through_tf(model):
                     "name": "wall",
                 },
                 {
-                    "spawn_sensor": {"model": model, "pos": [0.0, 0.0, 1.0]},
+                    "spawn_sensor": {"model": model, "pose": {"position": {"z": 1.0}}},
                     "name": "cam",
                     "components": [{model: {"points": True}}],
                 },
@@ -483,7 +585,7 @@ def test_a_depth_return_reprojects_onto_the_surface_through_tf(model):
     eps = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cam"}
     assert eps["points"].backend["ros2"]["frame_id"] == "camera_depth_optical_frame"
     pos, rot = _tf_to_world(
-        eps["frames"].backend["ros2"]["static_tf"], "camera_depth_optical_frame"
+        [vars(t) for t in eps["frames"].read().transforms], "camera_depth_optical_frame"
     )
     points = eps["points"].read().points.astype(float) @ rot.T + pos
     # The wall's face: the returns within a few millimetres of its plane (its side face, seen past
@@ -512,7 +614,7 @@ def test_a_retired_name_is_refused_naming_the_new_one(old, new):
     assert str(exc.value) == (
         f"spawn_sensor: model {old!r} — renamed to {new!r} when its mount frame became the one its "
         f"vendor macro places (it was a display convention pointing the lens along +y). Update the "
-        f"name, and re-express this mount's pos/rpy as the vendor macro's origin; see "
+        f"name, and re-express this mount's pose as the vendor macro's origin; see "
         f"roqsim_sensors/README.md."
     )
     with pytest.raises(ModelError, match=f"renamed to '{new}'"):

@@ -19,6 +19,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_moveit import SCENE_FILE, main
 from roqsim.planning_scene import BOX, CYLINDER, SPHERE, scene_objects, touching
+from roqsim.pose import pose_mapping
 
 # A world built by hand, so every case below is one geom and the model says exactly what it is.
 _SHAPES = """
@@ -179,11 +180,11 @@ def _arm(**extra) -> dict:
     arm = {
         "model": "ur5e",
         "prefix": "ur5e_",
-        "pos": [0.0, 0.0, 0.76],
+        "pose": pose_mapping([0.0, 0.0, 0.76]),
         "end_effector": {
             "model": "robotiq_2f85",
             "site": "attachment_site",
-            "pos": [0.0, 0.0, 0.011],
+            "pose": pose_mapping([0.0, 0.0, 0.011]),
         },
     }
     arm.update(extra)
@@ -318,7 +319,7 @@ def test_two_arms_in_one_description_write_the_scene_in_their_common_root(tmp_pa
                 "model": "ur5e",
                 "prefix": f"{name}_",
                 "namespace": name,
-                "pos": [0.0, y, 0.76],
+                "pose": pose_mapping([0.0, y, 0.76]),
             },
             "name": name,
             "components": [{"arm_controller": {"joint_prefix": f"{name}_"}}],
@@ -364,7 +365,7 @@ def test_a_robot_that_is_not_welded_down_is_refused(tmp_path, capsys):
                     "model": "ur10e",
                     "prefix": "ur10e_",
                     "mount": {"robot": "h", "body": "base_link"},
-                    "pos": [0.25, 0.0, 0.2587],
+                    "pose": pose_mapping([0.25, 0.0, 0.2587]),
                 },
                 "name": "arm",
             },

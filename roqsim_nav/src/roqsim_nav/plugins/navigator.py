@@ -81,13 +81,16 @@ Movers that agree on it share one rasterized grid (see :mod:`roqsim_nav.grid`).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
+from roqsim.types import Length
 
 from .._resolve import RegistryError
 from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
@@ -250,6 +253,28 @@ def _dwell_list(spec, n: int) -> list[tuple[float, float]]:
             raise ValueError(f"one dwell per route point: expected {n}, got {len(spec)}")
         return [_dwell_pair(e) for e in spec]
     return [_dwell_pair(spec)] * n
+
+
+#: The refusals of a route request, one text whichever route it came by.
+_NO_ROUTE = "{entity!r} has no configured route to start; send it goals instead"
+_NO_GOALS = "{entity!r}: a goal needs at least one pose"
+
+
+@dataclass
+class RouteStatus:
+    """The route a navigator has in hand, as :meth:`NavigatorPlugin.status` reports it.
+
+    Attributes:
+        seq: sequence number of the last route request applied
+        finished: whether that route has finished
+        goals_left: goals of it not yet reached
+        distance_left: path length still to drive
+    """
+
+    seq: int
+    finished: bool
+    goals_left: int
+    distance_left: Length
 
 
 class NavigatorPlugin(Plugin):
@@ -486,7 +511,7 @@ class NavigatorPlugin(Plugin):
         # `st.waypoints`, so every route rebuild below has to resize it too.
         self._dwell_spec = cfg.get("dwell", 0.0)
         self._ctx = ctx
-        self._declare_endpoints(ctx, entity)
+        self._select_goal_endpoints()
         ctx.blackboard.set(f"nav:{self.entity}", self)
         ctx.blackboard.set(
             f"nav:{self.entity}:handle",
@@ -598,9 +623,6 @@ class NavigatorPlugin(Plugin):
         self._state.waypoints[0] = (x, y)
         # Built again on the first tick, against this episode's world.
         self._core.planner = None
-        self._core.reset()
-        # What `status()` and the handle's `pose` answer before the first tick.
-        self._core.observe(ctx.sim_time, (x, y), None)
         self._pose_snapshot = (x, y, yaw)
         # First point at which every entity in the document has registered, so `caution.ignore` can
         # name one declared after this mover.
@@ -614,6 +636,11 @@ class NavigatorPlugin(Plugin):
         st.waypoints = np.asarray([(x, y), *self._configured_goals], dtype=float)
         st.dwell = _dwell_list(self._dwell_spec, len(st.waypoints))
         st.loop = bool(self.config.get("loop", False))
+        # After the route is rebuilt: the goal index is set against it, and a route a cancel left
+        # at one point would otherwise leave the first goal skipped.
+        self._core.reset()
+        # What `status()` and the handle's `pose` answer before the first tick.
+        self._core.observe(ctx.sim_time, (x, y), None)
         self._seq.apply(0)
         # Re-plan next tick: an episode may make a different set of obstacles present, and a grid
         # carried over from the last one would route around whichever were present then.
@@ -762,60 +789,93 @@ class NavigatorPlugin(Plugin):
         "start_route": "roqsim_nav_interfaces.action.StartRoute",
     }
 
-    def _declare_endpoints(self, ctx: SimContext, entity) -> None:
-        """Declare the goal interface as backend-neutral ``in`` endpoints.
+    def _select_goal_endpoints(self) -> None:
+        """Which goal endpoints this mover declares, and each one's action name.
 
-        The two nav2 endpoints share one ``write``: the neutral payload is a list of points either
-        way, and a single goal is a one-element list. They exist as separate endpoints only because
-        a ROS client picks an action type, and nav2 has two.
+        The two nav2 endpoints take one list of points either way, and a single goal is a one-element
+        list; they exist as separate endpoints only because a ROS client picks an action type, and
+        nav2 has two.
 
         ``start_route`` releases the configured route, and is its own endpoint with its own type
         rather than an empty nav2 goal: an empty ``NavigateThroughPoses`` is a malformed goal to
         every nav2 client, and giving it a meaning here alone would make the same message mean two
-        things. It is declared only for a mover that has a configured route, since without one there
-        is nothing it could release.
+        things. Its ROS action is served only for a mover that has a configured route, since without
+        one there is nothing it could release; a transport that wires every endpoint gets the
+        endpoint anyway, and the refusal from :meth:`start`.
+
+        Each command returns the sequence number of what it queued, and ``route_status`` (``out``)
+        and ``cancel_route`` (a command) carry what :meth:`status` and :meth:`cancel` do, off ROS: a
+        client over the control socket follows a route by its sequence number, as an in-process
+        caller does.
 
         ``goal_endpoint: false`` declares none, so a bridge needs no handler -- and therefore no
         nav2_msgs -- for a mover that is only ever commanded in-process. Declaring an endpoint no
         handler serves is a hard error at bridge start-up, by design, so this is not a formality.
         """
         cfg = self.config
-        if not cfg.get("goal_endpoint", True):
-            return
-        namespace = cfg.get("namespace") or (entity.meta or {}).get("namespace", "")
+        wanted = cfg.get("actions") or self.ACTIONS
+        served = [a for a in self.ACTIONS if cfg.get("goal_endpoint", True) and a in wanted]
+        self.goal_actions = [a for a in served if a != "start_route"]
+        self.serves_start_route = "start_route" in served
+        self.serves_goals = bool(cfg.get("goal_endpoint", True))
         names = cfg.get("action_names") or {}
         # `action_name` (singular) is the walker's own spelling for the through-poses name.
         legacy = cfg.get("action_name")
-        for endpoint, action_type in self.ACTIONS.items():
-            if endpoint not in (cfg.get("actions") or self.ACTIONS):
-                continue
-            if endpoint == "start_route" and not self._configured_goals:
-                continue
-            name = names.get(endpoint) or (
-                legacy if legacy and endpoint == "navigate_through_poses" else endpoint
-            )
-            ctx.interface.add(
-                Endpoint(
-                    name=endpoint,
-                    direction="in",
-                    owner=self.entity,
-                    namespace=namespace,
-                    write=self._write_start if endpoint == "start_route" else self._write_goals,
-                    backend={"ros2": {"action": action_type, "name": name}},
-                )
-            )
+        self._action_hints = {
+            a: {
+                "action": self.ACTIONS[a],
+                "name": names.get(a) or (legacy if legacy and a == "navigate_through_poses" else a),
+            }
+            for a in served
+        }
 
-    def _write_goals(self, poses) -> None:
-        """Endpoint ``write``: the bridge has already marshalled this onto the physics thread."""
+    # Commands, so every goal is applied, in order. The navigation action handlers go through the
+    # thread-safe NavHandle instead (send_goals, start, cancel below), which returns the route's
+    # sequence number at once.
+    @endpoint.command(
+        name="{item}",
+        each="goal_actions",
+        ros2=lambda self, action: self._action_hints[action],
+    )
+    def goal(self, action: str, poses: list[tuple[float, ...]]) -> int:
+        """Replace the route with these points and run it; returns its sequence number.
+
+        Args:
+            poses: the route, each point (x, y) in world metres; a trailing yaw is accepted and
+                not used
+        """
         route = [(float(p[0]), float(p[1])) for p in poses]
         if not route:
-            raise ValueError(f"{self.entity!r}: a goal needs at least one pose")
-        self._apply_goals(route, self._seq.next())
+            raise ValueError(_NO_GOALS.format(entity=self.entity))
+        seq = self._seq.next()
+        self._apply_goals(route, seq)
+        return seq
 
-    def _write_start(self, _payload=None) -> None:
-        """Endpoint ``write`` for ``start_route``: the payload is ignored, the call is the request."""
-        if not self._started:
-            self._apply_start(self._seq.next())
+    @endpoint.command(
+        when="serves_start_route",
+        ros2=lambda self: self._action_hints["start_route"] if self._configured_goals else None,
+    )
+    def start_route(self) -> int:
+        """Release the configured route; returns its sequence number, the live one once it runs."""
+        if not self._configured_goals:
+            raise ValueError(_NO_ROUTE.format(entity=self.entity))
+        if self._started:
+            return self._seq.applied
+        seq = self._seq.next()
+        self._apply_start(seq)
+        return seq
+
+    @endpoint.out(when="serves_goals", ros2=None)
+    def route_status(self) -> RouteStatus:
+        """The route in hand: sequence applied, finished, goals and distance left."""
+        return RouteStatus(*self.status())
+
+    @endpoint.command(when="serves_goals", ros2=None)
+    def cancel_route(self) -> int:
+        """Stop where it stands; returns the cancel's sequence number."""
+        seq = self._seq.next()
+        self._apply_cancel(seq)
+        return seq
 
     def radius(self, ctx) -> float:
         """This mover's footprint radius: configured, or MEASURED from its own geometry.
@@ -909,9 +969,7 @@ class NavigatorPlugin(Plugin):
         ``send_goals``: returning the live sequence would read as an arrival that never happened.
         """
         if not self._configured_goals:
-            raise ValueError(
-                f"{self.entity!r} has no configured route to start; send it goals instead"
-            )
+            raise ValueError(_NO_ROUTE.format(entity=self.entity))
         if self._started:
             return self._seq.applied
         seq = self._seq.next()
@@ -922,7 +980,7 @@ class NavigatorPlugin(Plugin):
         """Replace the route with ``goals`` and run it. Returns its sequence number immediately."""
         route = [tuple(float(v) for v in g)[:2] for g in goals]
         if not route:
-            raise ValueError("send_goals needs at least one goal")
+            raise ValueError(_NO_GOALS.format(entity=self.entity))
         seq = self._seq.next()
         self._ctx.post(lambda ctx: self._apply_goals(route, seq))
         return seq

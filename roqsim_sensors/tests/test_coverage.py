@@ -757,3 +757,50 @@ def test_loading_a_world_that_fails_after_setup_leaves_no_engine_running(tmp_pat
     with pytest.raises(RuntimeError, match="injected"):
         load_world(str(world))
     assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]
+
+
+# -- target spelling ---------------------------------------------------------------------------------
+
+
+def test_probe_target_frac_is_the_value_build_report_reads():
+    """The plugin's ``target: {k, frac}`` -- the spelling coverage.rst and the CLI use -- must reach
+    ``build_report`` as its ``value``, or ``target_met`` is judged against the default 1.0."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    cls = resolve_plugin("sensor_coverage_probe", None)
+    probe = cls({"target": {"k": 2, "frac": 0.6}})
+    assert probe.target == {"metric": "fraction_covered", "k": 2, "value": 0.6}
+    assert probe.target == parse_target("k=2,frac=0.6")
+    assert cls({}).target == {}
+
+
+def test_a_target_key_nothing_reads_is_refused_on_both_front_doors():
+    """A misspelt ``frac`` would otherwise be dropped and ``target_met`` judged against 1.0."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    with pytest.raises(ValueError, match="'fraction'"):
+        parse_target("k=1,fraction=0.9")
+    with pytest.raises(ValueError, match="'fraction'"):
+        resolve_plugin("sensor_coverage_probe", None)({"target": {"fraction": 0.9}})
+
+
+@pytest.mark.parametrize(
+    "text, match",
+    [("k=1,0.95", "'0.95' is not key=value"), ("k=0,frac=0.9", "k=0"), ("frac=95", "frac=95")],
+)
+def test_a_target_that_would_be_misjudged_is_refused(text, match):
+    """A bare value would be dropped, a percentage never met, and k=0 met by every sample."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    with pytest.raises(ValueError, match=match):
+        parse_target(text)
+
+
+def test_target_met_is_judged_at_the_targets_own_k():
+    """A k above the report's fixed k1..k3 columns is judged at that k, not against k1."""
+    from roqsim_sensors.coverage.report import build_report, normalise_target
+
+    result = _synthetic_result()  # counts 0, 1, 2, 4: k1 = 0.75, k4 = 0.25
+    rep = build_report(result, target=normalise_target({"k": 4, "frac": 0.5}))
+    assert rep["achieved"]["fraction_covered_k4"] == pytest.approx(0.25)
+    assert rep["target_met"] is False
