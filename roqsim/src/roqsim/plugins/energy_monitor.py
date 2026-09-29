@@ -27,11 +27,12 @@ force and the velocity it acts through; their product is mechanical power, exact
 **What is measured, and what is assumed.** The measured part is mechanical and is evaluated **per
 actuator**: ``force * velocity`` for each of the actuators that move this robot, where the force is
 the one a real drive would supply -- the actuator's own force **plus its share of the
-gravity-compensation force**. MuJoCo's ``body_gravcomp`` carries a compensated arm's weight outside
-the actuator, so ``actuator_force`` reads exactly zero on a joint holding a payload against gravity;
+gravity-compensation force**. MuJoCo adds a compensated joint's gravity term to ``qfrc_actuator``
+after the actuator's own force is computed, so ``actuator_force`` reads exactly zero on a joint holding
+a payload against gravity;
 metering it alone reports an arm that costs nothing to hold a load up, and nothing to lift one. A
-real drive supplies that torque, which is why ``arm_controller`` already reports
-``qfrc_actuator + qfrc_gravcomp`` as a joint's effort. Where nothing is compensated -- ``control:
+real drive supplies that torque, which is why ``arm_controller`` reports it in a joint's effort
+(:func:`roqsim.actuators.joint_effort`). Where nothing is compensated -- ``control:
 effort``, whose controller supplies the gravity term itself -- the share is zero and nothing
 changes. The sum is taken
 after the per-actuator split, never before -- on an arm, one joint descending while another lifts is
@@ -406,7 +407,7 @@ class EnergyMonitorPlugin(Plugin):
         # into driving and driven happens BEFORE the sum -- netting first would let one joint's
         # descent pay for another's lift, which on an arm is the ordinary case.
         # The torque a real drive supplies: the actuator's own force plus the share of the
-        # weight-carrying force MuJoCo applies outside it. Without the second term a compensated
+        # weight-carrying force MuJoCo adds after it. Without the second term a compensated
         # arm reads as costing nothing to hold a payload, or to lift one.
         torque = d.actuator_force[self._actuators] + self._gravcomp_share(d)
         per_actuator = torque * d.actuator_velocity[self._actuators]

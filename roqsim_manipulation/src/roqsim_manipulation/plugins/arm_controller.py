@@ -171,6 +171,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from roqsim import endpoint
+from roqsim.actuators import joint_effort
 from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
@@ -964,18 +965,15 @@ class ArmControllerPlugin(Plugin):
         # already projected onto the joint's DOF, so it is the per-joint effort even for a gripper
         # finger driven through a tendon.
         #
-        # ``qfrc_gravcomp`` is added because a compensated arm splits one physical quantity across
-        # two fields. A real drive that holds its own weight delivers that torque and its sensor
-        # reads it; MuJoCo's ``body_gravcomp`` supplies the same torque outside the actuator, so
-        # ``qfrc_actuator`` alone reports a motor doing nothing while the arm hangs off it. The sum
-        # is what the joint carries, and it matches an uncompensated arm's reading in the same pose.
+        # A real drive that holds its own weight delivers that torque and its sensor reads it.
+        # ``joint_effort`` is ``qfrc_actuator``, which carries the gravity term of a joint whose drive
+        # supplies it (``actuatorgravcomp``), plus ``qfrc_gravcomp`` on a joint where MuJoCo applies
+        # the term passively -- a finger held through a tendon. Either way the reading is what the
+        # joint carries, and it matches an uncompensated arm's reading in the same pose.
         m, d = self._ctx.model, self._ctx.data
         pos = [float(d.qpos[m.jnt_qposadr[jid]]) for jid in self._report_jids]
         vel = [float(d.qvel[m.jnt_dofadr[jid]]) for jid in self._report_jids]
-        eff = [
-            float(d.qfrc_actuator[m.jnt_dofadr[jid]] + d.qfrc_gravcomp[m.jnt_dofadr[jid]])
-            for jid in self._report_jids
-        ]
+        eff = [joint_effort(m, d, int(m.jnt_dofadr[jid])) for jid in self._report_jids]
         return (self._report_names, pos, vel, eff)
 
     def set_gripper(self, position) -> None:
@@ -1011,8 +1009,7 @@ class ArmControllerPlugin(Plugin):
 
     def read_gripper_effort(self) -> float:
         """The gripper joint's effort now, as ``/joint_states`` reports it."""
-        d = self._ctx.data
-        return float(d.qfrc_actuator[self._grip_dofadr] + d.qfrc_gravcomp[self._grip_dofadr])
+        return joint_effort(self._ctx.model, self._ctx.data, self._grip_dofadr)
 
     def read_gripper_state(self):
         # Computed on demand (see read_state).

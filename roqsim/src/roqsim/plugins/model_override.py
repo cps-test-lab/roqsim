@@ -212,7 +212,10 @@ _ALLOWED: dict[str, FieldSpec] = {
             ),
             caveats=(
                 "A position servo keeps commanding its target; only the achievable force changes. "
-                "The row is (min, max) and both are usually needed."
+                "The row is (min, max) and both are usually needed. On a joint whose drive supplies "
+                "its gravity term (roqsim.actuators.apply_gravity_compensation) the term bypasses "
+                "this row and is clamped by the joint's actuatorfrcrange, fixed at build, so a "
+                "lowered value weakens the servo's correction but not what holds the arm up."
             ),
             measured="a saturating position servo went from 50.0 N to 0.5 N on the next step",
         ),
