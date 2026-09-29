@@ -83,7 +83,7 @@ from typing import Any
 
 import yaml
 
-from .document import check_version
+from .document import check_version, refuse_unknown_keys
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -1169,6 +1169,33 @@ def overrides_from_dotlist(dotlist: list[str]) -> dict:
     return overrides
 
 
+#: The keys of a world's ``sim:`` block: what :class:`SimConfig` and :mod:`roqsim.engine` read.
+#: A key read anywhere is listed here; any other is refused at load.
+SIM_KEYS = frozenset(
+    {
+        "cone",
+        "contact_override",
+        "dedup_assets",
+        "density",
+        "gravity",
+        "impratio",
+        "integrator",
+        "iterations",
+        "ls_iterations",
+        "name",
+        "noslip_iterations",
+        "pacing",
+        "seed",
+        "solver",
+        "sync",
+        "timestep",
+        "view",
+        "viscosity",
+        "wind",
+        "world",
+    }
+)
+
 #: The complete ``sim.view`` schema -- the camera, and nothing else. Anything else there is a typo or
 #: a run-level switch that does not belong in a world, and is rejected rather than silently dropped.
 _VIEW_KEYS = frozenset({"lookat", "distance", "azimuth", "elevation", "track", "follow_heading"})
@@ -1282,12 +1309,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # before it is validated, so a typo arriving by `--set` is refused exactly like one written in
     # the file.
     apply_assignments(raw, [], [a for a in assignments if not _is_component(a)])
-    if "headless" in (raw.get("sim") or {}):
-        _logger.warning(
-            "\u26a0\ufe0f  sim.headless is IGNORED: the viewer is windowed by default; run with "
-            "--headless (standalone) or the headless scenario parameter to suppress the window. "
-            "Remove the key from the world YAML to silence this."
-        )
+    refuse_unknown_keys(raw.get("sim") or {}, SIM_KEYS, "sim", error=PluginError)
     unknown = sorted(set((raw.get("sim") or {}).get("view") or {}) - _VIEW_KEYS)
     if unknown:
         raise PluginError(

@@ -655,7 +655,7 @@ A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directo
 wherever the launch left the working directory; otherwise it resolves against the working directory as
 usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the root shared by every run of a batch, so
 anchoring a per-run file there gives one path that each run of a sweep overwrites in turn. Recording stays a *session*
-concern either way — the same footing as ``sim.headless``, which a world YAML ignores with a warning — so
+concern either way — the same footing as ``--headless``, which a world YAML has no key for — so
 there is no route to it through the world.
 
 A recording also converts to a **browser run capture** — the motion half of replaying a run in a web

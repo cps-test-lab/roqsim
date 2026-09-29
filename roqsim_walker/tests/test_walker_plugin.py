@@ -31,7 +31,7 @@ def _world(*, name="pedestrian", **walker_overrides):
     walker.update(walker_overrides)
     return load_config_from_dict(
         {
-            "sim": {"headless": True, "pacing": "asap"},
+            "sim": {"pacing": "asap"},
             "components": [{"walker": walker, "name": name}],
         }
     )
