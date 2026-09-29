@@ -21,7 +21,7 @@ It works out cleanly because both transports speak the same vocabulary -- the wo
 ===========================  ==================================  ====================================
 need                         in-process                          over the control socket
 ===========================  ==================================  ====================================
-pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``sim/entities/X/pose``
+pose of entity ``X``         ``sim/entities/X/pose``, read        the same endpoint, over the socket
 call command ``C`` of ``X``  ``ctx.interface``, its ``write``     ``call``, which waits for it
 did it land                  its confirming endpoint, read       the same, in the reply
                              after the step that applied it
@@ -44,9 +44,7 @@ action takes the clock it is handed and never knows which.
 
 What DOES differ, and is stated rather than hidden: over the socket a read is a round-trip, so the
 instant a threshold is crossed is resolved at the tick period rather than at the physics step. A
-dwell shorter than one tick means "the first tick past the threshold" on both paths. And a pose over
-the socket is an entity's (``sim/entities/<name>/pose``), where in-process a raw body name is
-accepted as well.
+dwell shorter than one tick means "the first tick past the threshold" on both paths.
 """
 
 from __future__ import annotations
@@ -66,6 +64,14 @@ class AccessError(RuntimeError):
     """
 
 
+class EntityAbsent(AccessError):
+    """The entity exists and is absent (deleted, or not spawned yet): it has no pose now, and may.
+
+    A fact about the trial rather than about the scenario, so a condition waits for the entity to
+    be present; any other caller lets it reach the scenario as an AccessError.
+    """
+
+
 @dataclass(frozen=True)
 class Pose:
     """A body's world pose. ``quat`` is ``(w, x, y, z)``.
@@ -73,10 +79,12 @@ class Pose:
     MuJoCo's ``xquat`` order, which is also the order the bridge fills
     ``geometry_msgs/Quaternion`` in (``sim_interfaces._get_entity_state``), so the two transports
     hand back the same numbers in the same order and the caller never asks which it is talking to.
+    ``movable`` is false for a body welded to the world, whose pose never changes.
     """
 
     pos: np.ndarray
     quat: np.ndarray
+    movable: bool = True
 
 
 @dataclass(frozen=True)
@@ -406,6 +414,61 @@ def no_navigator(name: str, offered: list[str]) -> AccessError:
     )
 
 
+#: Where the core serves an entity's ground-truth pose (:mod:`roqsim.entity_pose`).
+POSE_PATH = "sim/entities/{name}/pose"
+
+
+def posed_entities(rows: list[dict]) -> list[str]:
+    """The entities the core serves a pose for, by their endpoint rows."""
+    prefix, suffix = POSE_PATH.split("{name}")
+    return sorted(
+        row["path"][len(prefix) : -len(suffix)]
+        for row in rows
+        if row["path"].startswith(prefix) and row["path"].endswith(suffix)
+    )
+
+
+def no_entity(rows: list[dict], name: str) -> AccessError:
+    """Why *name* has no pose: the closest entity names, or the ones there are."""
+    import difflib
+
+    known = posed_entities(rows)
+    close = difflib.get_close_matches(name, known, n=3, cutoff=0.6)
+    hint = (
+        f"Did you mean {', '.join(repr(c) for c in close)}?"
+        if close
+        else f"Known entities: {', '.join(known) or '(none)'}."
+    )
+    return AccessError(
+        f"the simulator has no entity called {name!r} with a body, so it has no pose. The name is "
+        f"the world's `name:` for that entity, not a body name and not a TF frame. {hint}"
+    )
+
+
+def pose_reading(name: str, payload) -> Pose:
+    """A core pose endpoint's value as a :class:`Pose`; ``None`` is an absent entity."""
+    if payload is None:
+        raise EntityAbsent(
+            f"entity {name!r} is absent (deleted, or not spawned yet): nothing can see or touch it, "
+            "so it has no pose until it is spawned."
+        )
+    get = payload.get if isinstance(payload, dict) else lambda k: getattr(payload, k)
+    return Pose(
+        pos=np.asarray(get("position"), dtype=float),
+        quat=np.asarray(get("orientation"), dtype=float),
+        movable=bool(get("movable")),
+    )
+
+
+def immovable(name: str) -> AccessError:
+    """Why a condition on *name*'s motion can never be met: it is welded to the world."""
+    return AccessError(
+        f"entity {name!r} is welded to the world: its pose never changes, so waiting for it to "
+        "move or turn never ends. Give it a free joint (`motion: physics` on a spawn_model) or "
+        "drive it (`motion: driven`), or name something that can move."
+    )
+
+
 class WorldAccess(ABC):
     """The seam. See the module docstring."""
 
@@ -422,11 +485,13 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def entity_pose(self, name: str) -> Pose | None:
-        """The entity's world pose, or ``None`` if it is not known YET (a reply in flight).
+    def ground_truth_pose(self, name: str) -> Pose | None:
+        """Entity *name*'s pose as the core's ``sim/entities/<name>/pose`` endpoint reads it.
 
-        Raises :class:`AccessError` when the name can never resolve, which is a different thing from
-        not knowing yet and must not be confused with it.
+        The same endpoint on both transports, so an entity welded to the world (a shelf) has a
+        pose here too, and a name the core serves no pose for is refused with the same text
+        (:func:`no_entity`) -- at once, since the world never had it. ``None`` while a reply is in
+        flight; :class:`EntityAbsent` while the entity exists and is absent.
         """
 
     @abstractmethod

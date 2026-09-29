@@ -8,6 +8,9 @@ in [`lib_osc/roqsim.osc`](src/scenario_execution_roqsim/lib_osc/roqsim.osc)):
 | --- | --- |
 | `entity_moved(entities, threshold, mode, dwell, require)` | succeeds once the named entities have been **displaced** from where they were when the action started |
 | `entity_rotated(entities, angle, dwell, require)` | ...once they have **turned** by an angle (geodesic, so axis-free) |
+| `entity_near(entity, target, distance, mode)` | succeeds once the entity is **within a distance** of another entity |
+| `entity_near_position(entity, position, distance, mode)` | ...of a point |
+| `entity_in_region(entity, region, outside)` | succeeds once the entity is **inside** a box or polygon of the floor plan (or, with `outside`, outside it) |
 | `entity_monitor(entity, value, target_variable)` | keeps a scenario variable equal to a value a **plugin publishes** about the entity, every tick; never succeeds on its own |
 | `entity_call(entity, command, value, require_verified)` | sends a command a plugin declares -- a `model_override` fault, a sensor's `fault:` block, a tare -- and succeeds once it has applied **and, where the command names a confirmation, it says the command landed** |
 
@@ -87,13 +90,83 @@ field its ROS publication carries (`tripped`), so the short form reads one value
 - In a stepped run the variable is written on every tick. Over the control socket a read is a
   round-trip, so it follows at the rate replies arrive.
 
+## Conditions on where an entity is
+
+Whether an entity is near something, or inside an area, is geometry, which an OpenSCENARIO
+expression cannot compute; so these two are actions that succeed once their condition holds, rather
+than monitors.
+
+```
+import osc.helpers
+import osc.roqsim
+
+scenario delivery:
+    timeout(120s)
+    event door_open
+    do parallel:
+        serial:
+            entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+            entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+            emit end
+        serial:
+            entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m),
+                                                       position_3d(x: 3m, y: 1m)])
+            emit fail
+        with:
+            until @door_open
+        serial:
+            entity_near(entity: 'person', target: 'robot', distance: 1.0)
+            emit fail
+```
+
+| pattern | how it reads |
+| --- | --- |
+| reached a place | `entity_near(entity: 'robot', target: 'shelf', distance: 0.6)` |
+| reached a point | `entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)` |
+| came within reach, in 3D | `entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)` |
+| entered an area | `entity_in_region(entity: 'robot', region: [<corner>, <corner>])` |
+| left an area | `entity_in_region(entity: 'robot', region: [...], outside: true)` |
+| must never enter | a parallel branch: `entity_in_region(...)` then `emit fail` |
+| ...only for a while | that branch `with: until @door_open` (or `until elapsed(20s)`) |
+| must arrive in time | `entity_near(...) with: timeout(60s)`, or the scenario's `timeout()` |
+
+- **Reference points.** The distance is between the entities' reference points, and a region
+  contains an entity when its reference point is inside: the origin of the entity's body, as the
+  core's `sim/entities/<name>/pose` reports it, not the nearest point of its geometry. A robot
+  "within 0.6 m of a shelf" has its base origin within 0.6 m of the shelf's origin.
+- **Planar by default.** `entity_near` and `entity_near_position` measure in the floor plane (`distance_mode!planar`), because
+  "the robot reached the shelf" and "a person came within 1 m" are statements about the floor plan,
+  and the reference points of two entities of different heights never share a z. `distance_mode!spatial`
+  measures in 3D.
+- **Another entity or a point**: `entity_near` takes the other entity's name in `target`,
+  `entity_near_position` a `position_3d` in `position` (world frame).
+- **A region is an area of the floor plan.** Two points are an axis-aligned box's opposite corners,
+  three or more a polygon's vertices in order (concave is fine); z is ignored, and a point on the
+  boundary is inside.
+- **Checked every tick, ends on success.** The ground truth is read on every tick, as `entity_moved`
+  reads a pose; the action succeeds on the first tick the condition holds and never fails on its own.
+  Bounding it is the scenario's: `timeout()` fails the trial when it never holds; `until` ends the
+  wait as a success, so it bounds a watch (a "must never enter" branch), not a goal.
+- **Absent is not unknown**, for every `entity_*` condition (`entity_moved`, `entity_rotated`,
+  `entity_near`, `entity_near_position`, `entity_in_region`). An entity that exists but is absent
+  (deleted, or not spawned yet) is nowhere: the condition does not hold, and the action waits,
+  saying so in its feedback, until it is spawned. A name the world never had is refused at once
+  (on the first tick), naming the closest entity names, with the same text on both transports.
+- **Entities, not bodies.** Every condition reads the core's `sim/entities/<name>/pose`, the same
+  endpoint on both routes, so it names entities (the world's `name:`), and a welded entity (a
+  shelf) is a valid target on both.
+- **Waiting for a welded entity to move is refused.** `entity_moved` and `entity_rotated` refuse an
+  entity welded to the world at once, with the same text on both routes: the pose endpoint reports
+  `movable: false`, its pose never changes, and a condition that can never be met must not look
+  like a slow timeout.
+
 ## One action, two transports
 
 An roqsim simulation is driven two ways and these actions work in both, unedited:
 
 - **stepped, in-process** — scenario-execution's own runner owns the loop (`--simulation`). The
-  action is handed the adapter and reads `MujocoSim.context`: entity poses from `data.xpos`, commands
-  and reports through the world's endpoints, writes queued on the physics thread because only it may
+  action is handed the adapter and reads `MujocoSim.context`: entity poses, commands and reports
+  through the world's endpoints, writes queued on the physics thread because only it may
   touch `model`/`data`.
 - **over the control socket** — the simulator is another process (`roqsim sim`, under the ROS runner
   or any other). Every action reaches the same endpoints over the socket it serves: a pose is
@@ -108,12 +181,11 @@ resolve a name against the same list of endpoints, and placement goes through th
 functions (`roqsim.entity_control`), so **a refusal reads the same on both** (tested in
 `tests/test_ipc_access.py`). Time comes from the runner's `Clock` on either path.
 
-Two consequences, stated rather than hidden:
+One consequence, stated rather than hidden:
 
 - Over the socket a pose is a round-trip, so a threshold crossing is resolved at the **tick period**,
   not at the physics step. A dwell shorter than one tick means "the first tick past the threshold"
   either way.
-- Over the socket a pose is an **entity's**; in-process a raw body name is accepted as well.
 
 ## Things that will bite
 

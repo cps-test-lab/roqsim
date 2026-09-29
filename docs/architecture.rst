@@ -871,7 +871,8 @@ robot packages import nothing transport-specific: a hand-built endpoint names it
 **Entity poses are the core's.** Every entity whose body is in the model has an ``out`` endpoint
 ``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`): the body's world position
 and ``(w, x, y, z)`` quaternion from ``xpos``/``xquat`` and its velocity from ``cvel``, computed only
-when read, ``None`` while the entity is deleted. It carries no backend hint, so no bridge publishes
+when read, ``None`` while the entity is deleted, and ``movable``, false for a body welded to the
+world (no joint on its chain to the world and not mocap), whose pose never changes. It carries no backend hint, so no bridge publishes
 it unasked, and it is registered even after a bridge bound, for a consumer that looks it up by name.
 
 **Marshalling is the framework's.** A decorated method runs on the physics thread and never posts
