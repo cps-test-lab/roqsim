@@ -344,9 +344,9 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
   plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
-  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name`` and ``license`` and
-  nothing else: a key outside that
-  set is refused with the nearest known one named, since nothing reads it and a manifest loaded
+  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name``, ``license`` and, on an arm,
+  ``end_effector`` (where ``spawn_arm`` mounts a tool) and nothing else: a key outside that set is
+  refused with the nearest known one named, since nothing reads it and a manifest loaded
   without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
@@ -701,11 +701,16 @@ contact it takes part in and never a statement about one of them. Two consequenc
   value is a floor on both.
 
 An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
-answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
-or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
-is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
-subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
-asking a world to enumerate them is how a pair silently misses the one that actually touches.
+answer and what this plugin declares. Its ``solref``, like every contact's, is subject to MuJoCo's
+floor for the integrator the world runs under (:func:`roqsim.solref.solref_floor`: two steps, or
+about one under ``discrete``, depending on the damping ratio and ``solimp``). ``sim.contact_override``
+refuses a time constant below it and ``roqsim check`` warns about a flex's; a pair's is passed
+through as stated, because the plugin builds before the integrator is resolved. Each side is named
+independently as an ``entity``, a ``body`` or a ``geom``, because a real pair mixes kinds -- the
+floor is a geom while the thing sliding on it is an entity, as in the second line above. An
+``entity`` or ``body`` pairs every geom of that subtree: a robot base with twenty collision geoms
+against a five-geom crate is a hundred pairs, and asking a world to enumerate them is how a pair
+silently misses the one that actually touches.
 
 One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
 contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
@@ -2182,11 +2187,16 @@ it, is the experiment's to state.
 
 Four things decide whether such a world measures anything at all:
 
-* **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
-  from the body's children, so the tool must hang **below** it. A peg attached above the measurement
-  site produces a wrench that is identically zero — which looks like a well-behaved controller, not
-  like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut) and ``tool_site`` (the attach
-  point, further out) so the two cannot be confused.
+* **Where the sensor cuts.** A site force sensor reads the wrench the site's body receives from its
+  parent -- that body and everything below it -- so the tool must hang **below** it. A tool on any
+  other branch contributes nothing: no weight, no push, no contact, which looks like a well-behaved
+  controller, not like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut, on its
+  sensor stack ``tool0``) and ``tool_site`` (the stack's outer face, further out), and its manifest
+  declares ``tool_site`` as where ``spawn_arm``'s ``end_effector:`` mounts a tool by default -- its
+  bare ``attachment_site`` is on the flange *beside* the stack, where a tool reads as 0 N at
+  ``fts_site``. Every arm model with a free mount declares its site the same way
+  (``end_effector: {site: ...}`` in its manifest), and ``force_torque`` refuses a sensor on an arm
+  whose mounted tool is outside the subtree it reads -- see that plugin's docstring.
 * **Gravity and tool mass.** With gravity on and a realistically-massed tool, any metric that
   integrates force is dominated by the tool's own weight. Zeroing is a command, as it is on real
   hardware: ``force_torque`` exposes a ``tare`` service (``std_srvs/Trigger``, the analogue of a
@@ -2365,8 +2375,8 @@ Manipulation: a prop or a tool that deforms
 
 A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
 model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
-``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
-needs (:mod:`roqsim.flex`). What the spawn adds around it:
+``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto``
+picks the integrator the flex needs (:mod:`roqsim.flex`). What the spawn adds around it:
 
 * **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
   ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
