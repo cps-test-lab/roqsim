@@ -24,7 +24,8 @@ def normalise_target(target: dict | None) -> dict:
     ``frac`` is the spelling the CLI's ``--target k=1,frac=0.95`` and the plugin's ``target:`` both
     take; ``value`` is accepted too. Empty -> no target. Both front doors go through here, so a
     ``frac`` is never dropped on one of them and ``target_met`` judged against the default 1.0. A key
-    it does not read is refused for the same reason: a misspelt ``frac`` would be judged against 1.0.
+    it does not read, a ``k`` below 1 and a ``frac`` outside [0, 1] are refused for the same reason:
+    each would be judged against a target nobody asked for.
     """
     if not target:
         return {}
@@ -34,11 +35,13 @@ def normalise_target(target: dict | None) -> dict:
             f"coverage target: unknown key(s) {', '.join(map(repr, unknown))}; "
             "give k and frac, e.g. k=1,frac=0.95"
         )
-    return {
-        "metric": "fraction_covered",
-        "k": int(target.get("k", 1)),
-        "value": float(target.get("frac", target.get("value", 1.0))),
-    }
+    k = int(target.get("k", 1))
+    value = float(target.get("frac", target.get("value", 1.0)))
+    if k < 1:
+        raise ValueError(f"coverage target: k={k}; k counts sensors and must be at least 1")
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"coverage target: frac={value:g}; a fraction lies in [0, 1], e.g. 0.95")
+    return {"metric": "fraction_covered", "k": k, "value": value}
 
 
 def build_report(
@@ -105,7 +108,8 @@ def build_report(
     target = target or {}
     k = int(target.get("k", 1))
     metric_key = f"fraction_covered_k{k}"
-    achieved_value = achieved.get(metric_key, achieved["fraction_covered_k1"])
+    achieved[metric_key] = result.coverage_fraction(k)
+    achieved_value = achieved[metric_key]
     report = {
         "world": world,
         "target": target,
