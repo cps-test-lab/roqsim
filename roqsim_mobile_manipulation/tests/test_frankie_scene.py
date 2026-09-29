@@ -611,7 +611,7 @@ def test_c5_the_tf_chain_and_topic(scan):
     address = f"{OWNER}.{LABEL}"
     (frames,) = [e for e in scan.ctx.interface.all() if e.name == "frames" and e.owner == address]
     assert frames.namespace == NAMESPACE
-    tf = frames.backend["ros2"]["static_tf"]
+    tf = [vars(t) for t in frames.read().transforms]
     assert [(t["parent"], t["child"]) for t in tf] == [("base_link", SCAN_FRAME)], tf
     assert np.allclose(tf[0]["translation"], SCAN_ORIGIN, atol=1e-6)
     (endpoint,) = [e for e in scan.ctx.interface.all() if e.name == "scan" and e.owner == address]

@@ -143,7 +143,7 @@ def test_the_static_tf_chain_is_published_in_the_robots_namespace():
         robot = endpoints[("rb", "frames")]
         device = endpoints[("rb.rplidar", "frames")]
         assert robot.namespace == device.namespace == NAMESPACE
-        links = robot.backend["ros2"]["static_tf"] + device.backend["ros2"]["static_tf"]
+        links = [vars(t) for ep in (robot, device) for t in ep.read().transforms]
         # One tree from base_link to laser: a consumer asks for the scan in base_link.
         assert [(t["parent"], t["child"]) for t in links] == [
             ("base_link", "body_link"),

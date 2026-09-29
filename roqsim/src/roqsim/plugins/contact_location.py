@@ -34,8 +34,8 @@ Config::
 Endpoint ``contact_location`` (out) reads a :class:`ContactLocation`:
 ``(in_contact, kind, x, y, z, extent, count, time)``. ``kind`` is ``"none"``, ``"point"`` or
 ``"line"``; ``x/y/z`` is the region's centre and ``extent`` the distance between its two furthest
-members (0.0 for a point), so a consumer gets both the location and how spread out it is. The ROS 2
-backend hint publishes the centre as a ``geometry_msgs/PointStamped`` on ``contact_location``.
+members (0.0 for a point), so a consumer gets both the location and how spread out it is. ROS
+carries the centre, a ``geometry_msgs/PointStamped`` on ``contact_location``.
 
 **Read it through the blackboard, not the endpoint, inside a control loop.** The endpoint is
 rate-limited for logging; ``ctx.blackboard.get(f"contact_location:{address}")`` returns a callable
@@ -69,25 +69,38 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
 from ..plugin import Plugin
+from ..types import Duration, Length
 
 _log = logging.getLogger(__name__)
 
 
 @dataclass
 class ContactLocation:
-    """Neutral payload for the ``contact_location`` endpoint."""
+    """What the ``contact_location`` endpoint reads.
+
+    Attributes:
+        in_contact: whether anything qualifying touches this step
+        kind: 'none', 'point' or 'line'
+        x: region centre, in the configured frame
+        y: region centre, in the configured frame
+        z: region centre, in the configured frame
+        extent: between the two furthest members; 0.0 for a point contact
+        count: distinct sensing areas in contact this step, after merge_radius
+        time: sim time of this reading
+    """
 
     in_contact: bool
-    kind: str  # "none" | "point" | "line"
-    x: float  # region centre, in the configured frame
-    y: float
-    z: float
-    extent: float  # m between the two furthest members; 0.0 for a point contact
-    count: int  # distinct sensing areas in contact this step (after merge_radius)
-    time: float  # sim time of this reading
+    kind: str
+    x: Length
+    y: Length
+    z: Length
+    extent: Length
+    count: int
+    time: Duration
 
 
 class ContactLocationPlugin(Plugin):
@@ -144,7 +157,6 @@ class ContactLocationPlugin(Plugin):
         self._ctx = ctx
         model = ctx.model
         entity = ctx.entities.get(self.robot)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # Which contacts are this entity's: contact_monitor's rule, resolved by the same code, so
         # "where" and "whether" are about the same contacts. It fails loudly on a body that does not
@@ -165,24 +177,12 @@ class ContactLocationPlugin(Plugin):
         self._frame_id = self._scope.body.removeprefix(prefix) if self.frame == "base" else "world"
 
         ctx.blackboard.set(f"contact_location:{self.address}", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="contact_location",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._reading,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PointStamped",
-                        "topic": self.topic_override("contact_location") or "contact_location",
-                        "frame_id": self._frame_id,
-                    }
-                },
-            )
-        )
         _log.info("contact_location: reporting in the %s frame", self.frame)
+
+    @endpoint.out(rate="rate_hz", ros2=lambda self: {"frame_id": self._frame_id})
+    def contact_location(self) -> ContactLocation:
+        """Where the entity is touched this step, and how spread out the contact is."""
+        return self._reading
 
     def read_state(self) -> ContactLocation:
         """The current reading. A callable, not the dataclass: ``post_step`` REPLACES it each step,

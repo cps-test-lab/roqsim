@@ -101,10 +101,10 @@ def test_unpublished_frames_are_in_no_transform(model):
     for name in hidden:
         assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, f"r_{name}") >= 0, name
     transforms = [
-        (t["parent"], t["child"])
+        (t.parent, t.child)
         for e in engine.ctx.interface.all()
         if e.name == "frames"
-        for t in e.backend["ros2"]["static_tf"]
+        for t in e.read().transforms
     ]
     published = {f.name for f in frames if f.tf}
     assert published <= {child for _, child in transforms}

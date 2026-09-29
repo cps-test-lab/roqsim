@@ -61,6 +61,7 @@ def _world():
     ]
     for monitor in monitors:
         monitor.configure(ctx)
+        monitor.register_endpoints(ctx)
         monitor.on_reset(ctx)
     # The renamed report travels best effort, as a world's `qos:` would set it.
     ctx.interface.find("spare", "contact").qos = qos_profile("sensor_data")

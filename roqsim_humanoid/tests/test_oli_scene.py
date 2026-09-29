@@ -351,9 +351,7 @@ def test_c1d_each_camera_publishes_its_own_frames_and_topics(spawned):
     eps = {(e.owner, e.name): e for e in spawned.ctx.interface.all()}
     for label in ("head_camera", "chest_camera"):
         owner = f"robot.{label}"
-        tfs = {
-            (t["parent"], t["child"]) for t in eps[(owner, "frames")].backend["ros2"]["static_tf"]
-        }
+        tfs = {(t.parent, t.child) for t in eps[(owner, "frames")].read().transforms}
         assert (f"{label}_color_frame", f"{label}_color_optical_frame") in tfs
         imu = eps[(owner, "imu")]
         assert imu.namespace == label and imu.lazy

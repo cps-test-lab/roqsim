@@ -352,7 +352,7 @@ def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_convent
     assert cloud["frame_id"] == "livox_frame" and cloud["topic"] == "livox/lidar"
     assert "static_tf" not in cloud  # the mount publishes the frames: chain instead
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    (tf,) = frames.backend["ros2"]["static_tf"]
+    (tf,) = [vars(t) for t in frames.read().transforms]
     assert (tf["parent"], tf["child"]) == ("world", "livox_frame")
     np.testing.assert_allclose(tf["translation"], [0.0, 0.0, 1.0], atol=1e-9)
     m, d = engine.ctx.model, engine.ctx.data

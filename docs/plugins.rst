@@ -1500,6 +1500,13 @@ and its ROS interface -- topic, type, service, action, frames, rate, QoS -- stay
    worlds that use the plugin, before and after, together with the messages its outputs fill; both
    must be equal. A test that called ``write(payload)`` passes the mapping of parameters.
 
+An endpoint that only carries a model's fixed frames returns them with ``static: true``
+(``roqsim.frames.static_transforms_of`` turns the frame dicts into ``Transforms``); a plugin that
+still builds its endpoints by hand adds ``roqsim.frames.static_tf_endpoint``, which does the same.
+Where a ``static_tf`` hint on an endpoint with nothing else to publish becomes such an endpoint, its
+transforms are unchanged: they are sent once on the latched ``/tf_static`` on the first step, and the
+idle ``tf`` publisher the hint's endpoint held goes.
+
 What stays hand-built: a port whose name or number is only known *during* the run, and a plugin's
 own transport thread (``px4_sitl``'s socket reader posts what it received; that is not an endpoint).
 
@@ -1512,21 +1519,9 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
    * - Package
      - Plugins (endpoints)
      - Needs
-   * - ``roqsim`` (core plugins and helpers)
-     - ``bumper`` (``bumper/<zone>``), ``clearance_monitor``, ``contact_impulse``,
-       ``contact_location``, ``contact_monitor``, ``energy_monitor`` (``battery``),
-       ``joint_state_publisher``, ``model_override`` (``override`` command, one ``out`` per
-       target), ``spawn_model`` (``<entity>_pose``), and ``roqsim.frames.static_tf_endpoint``
-       (``frames``, used by ``spawn_robot`` and ``spawn_sensor``)
-     - families: ``bumper``, ``model_override``; owner: ``model_override`` (its own name),
-       ``spawn_model`` (the entity it spawns)
    * - ``roqsim_sensors``
-     - ``ground_truth_pose`` (``pose``), ``spawn_sensor`` (``frames``)
-     - owner: ``spawn_sensor`` (the sensor entity)
-   * - ``roqsim_mobile``
-     - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
-       ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)
-     - owner: ``spawn_robot`` (the robot entity)
+     - ``ground_truth_pose`` (``pose``)
+     - --
    * - ``roqsim_manipulation``
      - ``arm_controller`` (``joint_states``, ``controller_state``; ``follow_joint_trajectory``
        action and ``joint_command`` as FIFO commands; ``joint_velocity``, ``gripper_cmd``),

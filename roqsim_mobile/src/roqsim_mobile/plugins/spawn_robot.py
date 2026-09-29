@@ -81,6 +81,7 @@ from dataclasses import replace
 
 import mujoco
 
+from roqsim import endpoint
 from roqsim.actuators import (
     apply_gravity_compensation,
 )
@@ -94,8 +95,8 @@ from roqsim.context import Entity, SimContext
 from roqsim.frames import (
     add_frame_sites,
     parse_frames,
-    static_tf_endpoint,
     static_transforms,
+    static_transforms_of,
     tf_anchors,
 )
 from roqsim.manifest import expand_manifest, manifest_frames
@@ -103,6 +104,7 @@ from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import PoseError, parse_pose, yaw_of
 from roqsim.schema import Field
+from roqsim.types import Transforms
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -208,7 +210,9 @@ class SpawnRobotPlugin(Plugin):
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
         #: The manifest's and this config's fixed frames, read in :meth:`build`.
-        self.frames: list = []
+        self.frame_decls: list = []
+        #: Their static transforms, and those joining them to the root, read at :meth:`configure`.
+        self.frame_links: list[dict] = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -259,10 +263,10 @@ class SpawnRobotPlugin(Plugin):
         # Added to the MODEL before attach, so each site takes the robot's prefix like every other
         # name in it, and a mount declared after this robot can hang from it.
         where = f"spawn_robot {self.robot_name} ({self.config['model']})"
-        self.frames = parse_frames(
+        self.frame_decls = parse_frames(
             manifest_frames(asset.path) + list(self.config.get("frames") or []), where
         )
-        add_frame_sites(child, self.frames, where)
+        add_frame_sites(child, self.frame_decls, where)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
 
@@ -292,7 +296,7 @@ class SpawnRobotPlugin(Plugin):
 
     def configure(self, ctx: SimContext) -> None:
         base_body = self._resolve_base_body(ctx)
-        anchors = tf_anchors(self.frames)
+        anchors = tf_anchors(self.frame_decls)
         ctx.entities.add(
             Entity(
                 name=self.robot_name,
@@ -307,7 +311,9 @@ class SpawnRobotPlugin(Plugin):
                     # the manifest-injected defaults need no namespace plumbing of their own.
                     "namespace": self.config.get("namespace", ""),
                     # Where a device on an unpublished frame is published from.
-                    "frame_anchors": {f.name: anchors[f.name] for f in self.frames if not f.tf},
+                    "frame_anchors": {
+                        f.name: anchors[f.name] for f in self.frame_decls if not f.tf
+                    },
                 },
             )
         )
@@ -320,9 +326,9 @@ class SpawnRobotPlugin(Plugin):
             )
             for row in self.actuator_table
         ]
-        published = [f for f in self.frames if f.tf]
+        published = [f for f in self.frame_decls if f.tf]
         if published:
-            transforms = static_transforms(
+            self.frame_links = static_transforms(
                 ctx.model,
                 self._root_links(ctx, base_body, anchors)
                 + [
@@ -331,12 +337,17 @@ class SpawnRobotPlugin(Plugin):
                 ],
                 f"spawn_robot {self.robot_name}",
             )
-            ctx.interface.add(
-                static_tf_endpoint(
-                    "frames", self.robot_name, self.config.get("namespace", ""), transforms
-                )
-            )
         self._apply_initial_pose(ctx)
+
+    @property
+    def endpoint_owner(self) -> str:
+        """The robot entity this spawn registers."""
+        return self.robot_name
+
+    @endpoint.out(when="frame_links", ros2={"static": True})
+    def frames(self) -> Transforms:
+        """The robot's fixed frames, with bare names, sent once as static transforms."""
+        return static_transforms_of(self.frame_links)
 
     def _root_links(
         self, ctx: SimContext, base_body: str, anchors: dict[str, str]
@@ -352,9 +363,9 @@ class SpawnRobotPlugin(Plugin):
         m = ctx.model
         root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, base_body)
         root_name = base_body.removeprefix(self.prefix)
-        declared = {f.name for f in self.frames}
+        declared = {f.name for f in self.frame_decls}
         links: list[tuple[str, str, str, str]] = []
-        for frame in self.frames:
+        for frame in self.frame_decls:
             anchor = anchors[frame.name]
             if not frame.tf or anchor in declared or any(link[2] == anchor for link in links):
                 continue

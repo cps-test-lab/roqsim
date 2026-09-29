@@ -75,16 +75,17 @@ def test_frames_become_prefixed_sites_at_their_composed_pose(tmp_path):
 
 def test_frames_are_published_as_one_static_chain_in_the_robots_namespace(tmp_path):
     ep = _frames(_engine(_robot(tmp_path), namespace="rb"))
-    assert ep.namespace == "rb" and ep.owner == "robot" and ep.read() is None
-    body, cover, laser = ep.backend["ros2"]["static_tf"]
+    assert ep.namespace == "rb" and ep.owner == "robot"
+    assert ep.backend["ros2"] == {"static": True}  # sent once, on /tf_static
+    body, cover, laser = ep.read().transforms
     # Bare names: the bridge applies the namespace. The chain starts at a body that is not the root,
     # so the root's link to it comes first, or the chain would be a tree of its own.
-    assert (body["parent"], body["child"]) == ("base_link", "body_link")
-    assert np.allclose(body["translation"], [0, 0, 0.1])
-    assert (cover["parent"], cover["child"]) == ("body_link", "cover_link")
-    assert np.allclose(cover["translation"], [0.02, 0, 0.05])
-    assert (laser["parent"], laser["child"]) == ("cover_link", "laser")
-    assert np.allclose(np.abs(laser["rotation"]), [0, 1, 0, 0], atol=1e-9)  # roll pi
+    assert (body.parent, body.child) == ("base_link", "body_link")
+    assert np.allclose(body.translation, [0, 0, 0.1])
+    assert (cover.parent, cover.child) == ("body_link", "cover_link")
+    assert np.allclose(cover.translation, [0.02, 0, 0.05])
+    assert (laser.parent, laser.child) == ("cover_link", "laser")
+    assert np.allclose(np.abs(laser.rotation), [0, 1, 0, 0], atol=1e-9)  # roll pi
 
 
 def test_config_frames_extend_the_manifests(tmp_path):
@@ -92,16 +93,16 @@ def test_config_frames_extend_the_manifests(tmp_path):
         _robot(tmp_path),
         frames=[{"name": "mast_link", "parent": "laser", "pose": {"position": {"z": 0.3}}}],
     )
-    links = _frames(engine).backend["ros2"]["static_tf"]
-    assert [(link["parent"], link["child"]) for link in links][-1] == ("laser", "mast_link")
+    links = _frames(engine).read().transforms
+    assert [(link.parent, link.child) for link in links][-1] == ("laser", "mast_link")
     # Hung under the upside-down laser, +0.3 in its frame is 0.3 down in the robot's.
-    assert np.allclose(links[-1]["translation"], [0, 0, 0.3])
+    assert np.allclose(links[-1].translation, [0, 0, 0.3])
 
 
 def test_a_chain_from_the_root_publishes_no_extra_link(tmp_path):
     manifest = "frames:\n  - {name: mast_link, parent: base_link, pose: {position: {z: 0.3}}}\n"
-    links = _frames(_engine(_robot(tmp_path, manifest=manifest))).backend["ros2"]["static_tf"]
-    assert [(link["parent"], link["child"]) for link in links] == [("base_link", "mast_link")]
+    links = _frames(_engine(_robot(tmp_path, manifest=manifest))).read().transforms
+    assert [(link.parent, link.child) for link in links] == [("base_link", "mast_link")]
 
 
 def test_a_frame_on_a_jointed_body_is_refused(tmp_path):
@@ -141,9 +142,9 @@ def test_an_unpublished_frame_is_a_site_and_what_hangs_below_it_is_published_acr
     )
     engine = _engine(_robot(tmp_path, manifest=manifest))
     assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, "r_place") >= 0
-    links = _frames(engine).backend["ros2"]["static_tf"]
-    pairs = [(link["parent"], link["child"]) for link in links]
+    links = _frames(engine).read().transforms
+    pairs = [(link.parent, link.child) for link in links]
     assert not any("place" in pair for pair in pairs)
     tip = links[pairs.index(("cover_link", "tip"))]
-    assert np.allclose(tip["translation"], [0.1, 0, 0.2])
+    assert np.allclose(tip.translation, [0.1, 0, 0.2])
     assert engine.ctx.entities.get("robot").meta["frame_anchors"] == {"place": "cover_link"}
