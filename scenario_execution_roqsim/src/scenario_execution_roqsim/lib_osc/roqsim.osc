@@ -184,5 +184,8 @@ action entity_call:
     # refuses, or one with no outcome in time, fails with the producer's own text.
     entity: string                                    # the owning entity, or the declaring component
     command: string                                   # the command's name, e.g. 'override'
-    value: string = ''                                # JSON: 'true', '{"vx": 0.2}'; empty = none
+    value: string = ''                                # JSON: 'true', '{"vx": 0.2}'; empty = none.
+                                                      # A command with typed parameters takes a
+                                                      # mapping of them, or a bare value for its
+                                                      # only one
     require_verified: bool = true                     # fail on 'no_effect' or no confirmation

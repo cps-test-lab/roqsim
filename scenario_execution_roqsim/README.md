@@ -23,9 +23,11 @@ do parallel:
         entity_call(entity: 'grip_fault', command: 'override', value: 'true')
 ```
 
-`entity_call` fails the trial (FAILURE, not an exception) when the producer refuses the command,
-when no outcome arrives in time, and with `require_verified` (the default) when the confirmation
-reports `no_effect` or could not be read. `command` is the command's name, or
+`value` is JSON; a command declared with typed parameters takes a mapping of them, or a bare value
+for its only one (`value: 'true'` for `override(data: bool)`). `entity_call` fails the trial
+(FAILURE, not an exception) when the producer refuses the command, when no outcome arrives in time,
+and with `require_verified` (the default) when the confirmation reports `no_effect` or could not be
+read. `command` is the command's name, or
 `'<component>/<name>'` to pick one of two with that name (`entity_call(entity: 'ur5e', command:
 'force_torque/tare')`); the parameter is not called `call` because that is an OpenSCENARIO keyword.
 

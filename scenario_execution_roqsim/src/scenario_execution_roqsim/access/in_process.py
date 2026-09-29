@@ -30,6 +30,7 @@ from . import (
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
+    command_payload,
     find_endpoint,
     no_navigator,
     no_report,
@@ -253,7 +254,9 @@ class InProcessAccess(WorldAccess):
         if row["ep"].confirm:
             sibling = row["path"].rpartition("/")[0] + "/" + row["ep"].confirm
             confirm = next((r["ep"] for r in rows if r["path"] == sibling), None)
-        return _InProcessCommand(ctx, row, confirm, value)
+        params = row["ep"].params
+        payload = command_payload(None if params is None else [p.name for p in params], value)
+        return _InProcessCommand(ctx, row, confirm, payload)
 
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:

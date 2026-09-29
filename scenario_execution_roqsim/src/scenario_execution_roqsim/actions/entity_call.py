@@ -13,7 +13,8 @@ declares it (``robot.lidar``) where one entity has two of that name::
     entity_call(entity: 'ur5e', command: 'force_torque/tare')
 
 ``value`` is JSON (a bare word is a string); an endpoint declared with typed parameters takes a
-mapping of their names. The world owns what a command does and how much -- a fault's ``to:``, a
+mapping of their names, or, where it declares exactly one, a bare value for it (``'true'`` for
+``override(data: bool)``). The world owns what a command does and how much -- a fault's ``to:``, a
 sensor's ``fault:`` values -- so those stay campaign factors, and this owns only WHEN.
 
 **A command that did not land fails the trial** (``require_verified``). Where the endpoint names one

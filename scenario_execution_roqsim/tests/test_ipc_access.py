@@ -76,6 +76,10 @@ class Things(Plugin):
     def arm(self) -> None:
         raise ValueError("the gripper is not armed")
 
+    @endpoint.command
+    def fill(self, litres: float, rate: float) -> None:
+        pass
+
     @endpoint.out
     def level(self) -> dict:
         return {"litres": 3.5, "full": False}
@@ -198,6 +202,7 @@ def _refusal(route, make) -> str:
 REFUSALS = {
     "an unknown command": lambda a: a.call_endpoint("parcel", "arn"),
     "a producer's refusal": lambda a: a.call_endpoint("parcel", "arm"),
+    "a bare value for two parameters": lambda a: a.call_endpoint("parcel", "fill", 1.0),
     "welded scenery placed": lambda a: a.set_entity_state("prop", [0, 0, 1], [1, 0, 0, 0]),
     "an unknown entity placed": lambda a: a.set_entity_state("ghost", [0, 0, 1], [1, 0, 0, 0]),
     "a present entity spawned": lambda a: a.set_entity_presence("parcel", True, [0, 0, 1]),
