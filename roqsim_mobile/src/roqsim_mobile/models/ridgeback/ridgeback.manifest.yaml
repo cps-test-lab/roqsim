@@ -1,13 +1,6 @@
 # Default controller + sensors shipped with the Clearpath Ridgeback description.
 #
 # `spawn_robot: {model: ridgeback}` pulls these in automatically.
-
-# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
-# description, so not published (`tf: false`); a device names one as its `parent_frame`.
-frames:
-  # r100_default.yaml:15-16; no rpy there, so the Accessory default (0, 0, 0)
-  - {name: lidar2d_0, parent: chassis_link, pose: {position: {x: 0.3922, z: 0.1856}}, tf: false}
-
 components:
   # HOLONOMIC, and the only base in roqsim_mobile that is. Four mecanum wheels strafe, so this uses
   # omni_drive rather than diff_drive -- and therefore carries NO slip_factor, because the platform
@@ -45,7 +38,9 @@ components:
   # device's UST-10LX specification values, not Clearpath's noise-free simulation.
   - spawn_sensor:
       model: hokuyo_ust
-      parent_frame: lidar2d_0
+      parent_frame: chassis_link
+      # r100_default.yaml:15-16; no rpy there, so the Accessory default (0, 0, 0)
+      pose: {position: {x: 0.3922, z: 0.1856}}
       frame_id: lidar2d_0_laser      # clearpath_config sensors/types/lidars_2d.py get_frame_id_from_idx
     name: lidar2d_0
     components:

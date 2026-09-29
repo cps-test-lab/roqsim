@@ -16,7 +16,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.context import Entity, SimContext
 from roqsim.engine import Engine
-from roqsim.frames import add_frame_sites, parse_frames, tf_anchors
+from roqsim.frames import add_frame_sites, parse_frames
 from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.plugin import Plugin, PluginError
 
@@ -77,8 +77,7 @@ class _Carrier(Plugin):
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         path = Path(self.config["model"])
         child = mujoco.MjSpec.from_file(str(path))
-        self.frames = parse_frames(manifest_frames(path), "carrier")
-        add_frame_sites(child, self.frames, "carrier")
+        add_frame_sites(child, parse_frames(manifest_frames(path), "carrier"), "carrier")
         spec.attach(child, prefix=self.config.get("prefix", ""), frame=spec.worldbody.add_frame())
 
     def configure(self, ctx: SimContext) -> None:
@@ -88,16 +87,7 @@ class _Carrier(Plugin):
                 name=self.address,
                 kind="robot",
                 body=prefix + "base_link",
-                meta={
-                    "prefix": prefix,
-                    "namespace": self.config.get("namespace", ""),
-                    "frame_anchors": {
-                        f.name: a
-                        for f in self.frames
-                        if not f.tf
-                        for a in [tf_anchors(self.frames)[f.name]]
-                    },
-                },
+                meta={"prefix": prefix, "namespace": self.config.get("namespace", "")},
             )
         )
 
@@ -475,11 +465,10 @@ def test_a_carrier_mount_of_a_device_without_a_frame_chain_is_refused(tmp_path):
 # -- frames a device hangs from ------------------------------------------------------------------
 
 CARRIER_PLACES = """
-  - {name: front, parent: shell_link, pose: {position: {x: 0.1}}, tf: false}
+  - {name: front, parent: shell_link, pose: {position: {x: 0.1}}}
   - name: rear
     parent: base_link
     pose: {position: {x: -0.25, z: 0.1}, orientation: {yaw: 3.141592653589793}}
-    tf: false
 """
 
 
@@ -505,16 +494,7 @@ def _world_with(carrier, *children, overrides=None):
     )
 
 
-def _published(engine):
-    return {
-        (t.parent, t.child)
-        for e in engine.ctx.interface.all()
-        if e.name == "frames"
-        for t in e.read().transforms
-    }
-
-
-def test_a_device_on_an_unpublished_frame_sits_where_its_parent_and_pose_would(tmp_path):
+def test_a_device_on_a_declared_frame_sits_where_its_parent_and_pose_would(tmp_path):
     device = _device(tmp_path)
     on_frame = _engine(_world(_carrier(tmp_path, _on(device, "front"), CARRIER_PLACES)))
     explicit = f"""
@@ -528,18 +508,10 @@ def test_a_device_on_an_unpublished_frame_sits_where_its_parent_and_pose_would(t
         strict=True,
     ):
         assert np.allclose(a, b, atol=1e-12)
-    spec = next(s for s in on_frame.config.plugins if s.address == "robot.scan_front")
-    assert spec.config["parent_frame"] == "front" and "pose" not in spec.config
     root = vars(_endpoint(on_frame, "frames", "robot.scan_front").read().transforms[0])
+    assert root["parent"] == "front" and np.allclose(root["translation"], [0, 0, 0])
+    root = vars(_endpoint(by_pose, "frames", "robot.scan_front").read().transforms[0])
     assert root["parent"] == "shell_link" and np.allclose(root["translation"], [0.1, 0, 0])
-
-
-def test_an_unpublished_frame_is_a_site_and_never_in_tf(tmp_path):
-    engine = _engine(_world(_carrier(tmp_path, _on(_device(tmp_path), "front"), CARRIER_PLACES)))
-    assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, "r_front") >= 0
-    published = _published(engine)
-    assert ("shell_link", "scanner_link") in published
-    assert not any("front" in pair for pair in published)
 
 
 def test_a_pose_beside_parent_frame_is_an_offset_from_that_frame(tmp_path):
@@ -556,14 +528,15 @@ def test_a_pose_beside_parent_frame_is_an_offset_from_that_frame(tmp_path):
 def test_an_override_moves_a_device_by_its_pose_and_the_record_states_it(tmp_path):
     from roqsim.config import overrides_from_dotlist
 
-    carrier = _carrier(tmp_path, _on(_device(tmp_path), "front"), CARRIER_PLACES)
+    mount = _on(_device(tmp_path), "shell_link", extra=", pose: {position: {x: 0.1}}")
+    carrier = _carrier(tmp_path, mount, CARRIER_PLACES)
     cfg = _world_with(
         carrier,
         overrides=overrides_from_dotlist(["components.robot.scan_front.pose.position.z=0.2"]),
     )
     spec = next(s for s in cfg.plugins if s.address == "robot.scan_front")
-    assert spec.config["parent_frame"] == "front"
-    assert spec.config["pose"] == {"position": {"z": 0.2}}
+    assert spec.config["parent_frame"] == "shell_link"
+    assert spec.config["pose"] == {"position": {"x": 0.1, "z": 0.2}}
     pos, _ = _body_pose(_engine(cfg), "r_scan_front_mount")
     assert np.allclose(pos, [-0.1, 0.1, 0.4], atol=1e-9)
 
@@ -584,14 +557,14 @@ def test_a_frame_the_carrier_does_not_declare_is_refused_listing_its_frames(tmp_
     with pytest.raises(
         PluginError,
         match=r"parent_frame 'fron' .*Did you mean 'front'\?.*"
-        r"shell_link, front \(tf: false\), rear \(tf: false\)",
+        r"Its frames: shell_link, front, rear",
     ):
         _world(_carrier(tmp_path, _on(_device(tmp_path), "fron"), CARRIER_PLACES))
 
 
 def test_a_frame_whose_parent_the_carrier_lacks_is_refused(tmp_path):
     bad = """
-      - {name: front, parent: nowhere_link, tf: false}
+      - {name: front, parent: nowhere_link}
     """
     with pytest.raises(
         PluginError, match=r"frame 'front' hangs from 'nowhere_link', which is neither"
@@ -601,7 +574,7 @@ def test_a_frame_whose_parent_the_carrier_lacks_is_refused(tmp_path):
 
 def test_two_frames_of_one_name_are_refused(tmp_path):
     dup = """
-      - {name: shell_link, parent: cover_link, tf: false}
+      - {name: shell_link, parent: cover_link}
     """
     with pytest.raises(PluginError, match=r"frames\[1\]: frame 'shell_link' is declared twice"):
         _world(_carrier(tmp_path, _on(_device(tmp_path), "shell_link"), dup))
@@ -619,11 +592,3 @@ def test_pos_and_rpy_are_refused_with_the_pose_they_mean(tmp_path, extra, spelli
         Engine(
             _world(_carrier(tmp_path, _on(_device(tmp_path), "front", extra=extra), CARRIER_PLACES))
         )
-
-
-def test_tf_false_in_a_device_manifest_is_refused(tmp_path):
-    manifest = DEVICE_MANIFEST.replace("parent: mount}", "parent: mount, tf: false}")
-    (tmp_path / "scanner.xml").write_text(DEVICE_XML)
-    (tmp_path / "scanner.manifest.yaml").write_text("frame_id: scanner_link\n" + manifest)
-    with pytest.raises(Exception, match=r"a device's frames are its vendor links"):
-        _engine(_world(_carrier(tmp_path, _front(str(tmp_path / "scanner.xml")))))

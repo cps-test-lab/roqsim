@@ -2,14 +2,6 @@
 #
 # `spawn_robot: {model: mp_400}` pulls these in automatically, so a world does not re-declare the
 # robot's intrinsic kinematics/sensors.
-
-# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
-# description, so not published (`tf: false`); a device names one as its `parent_frame`.
-frames:
-  # position: Neobotix MP-400 Positions of Sensors, LS1 (HEIGHT and X);
-  # orientation: mp_400_body.urdf.xacro:38, lidar_1_joint origin
-  - {name: scan_front, parent: base_link, pose: {position: {x: 0.230, z: 0.1049}, orientation: {roll: 3.14}}, tf: false}
-
 components:
   # A TRUE two-wheel differential drive with four passive casters -- so NO slip_factor, because it
   # does not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw, and
@@ -50,7 +42,10 @@ components:
   # above the pocket roof stands in the cover's open interior.
   - spawn_sensor:
       model: sick_s300
-      parent_frame: scan_front
+      parent_frame: base_link
+      # position: Neobotix MP-400 Positions of Sensors, LS1 (HEIGHT and X);
+      # orientation: mp_400_body.urdf.xacro:38, lidar_1_joint origin
+      pose: {position: {x: 0.230, z: 0.1049}, orientation: {roll: 3.14}}
       frame_id: lidar_1_link         # mp_400_gazebo.urdf.xacro:41, the link the scan is stamped in
     name: scan_front
     components:

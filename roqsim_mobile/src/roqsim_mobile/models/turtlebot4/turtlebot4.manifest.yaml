@@ -7,9 +7,7 @@
 # spawned entity because it is nested under it -- there is no ownership key to fill in.
 
 # Fixed links of turtlebot4_description @ 7fd29fb that this MJCF flattens into base_link; spawn_robot
-# makes each a site and publishes it as static TF. The last two, `tf: false`, are where the devices
-# below go (each vendor joint's parent link and origin): not links of the description, so they are
-# sites only; a device names one as its `parent_frame` and states no pose of its own.
+# makes each a site and publishes it as static TF.
 frames:
   # urdf/standard/turtlebot4.urdf.xacro:43-47: z = shell_z_offset (3 cm, :13) + base_link_z_offset
   # (6.42 cm, irobot_create_description/urdf/create3.urdf.xacro:53 @ 1fccb76).
@@ -17,8 +15,6 @@ frames:
   # urdf/standard/turtlebot4.urdf.xacro:35-37 (camera_mount_*_offset) and :119-121: the camera
   # bracket on the shell, which carries the OAK-D.
   - {name: oakd_camera_bracket, parent: shell_link, pose: {position: {x: -0.118, z: 0.05257}}}
-  - {name: rplidar, parent: shell_link, pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}, tf: false}
-  - {name: oakd, parent: oakd_camera_bracket, pose: {position: {x: 0.0584, z: 0.09676}}, tf: false}
 
 components:
   # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
@@ -51,7 +47,8 @@ components:
   # in the robot's namespace, stamped `rplidar_link`.
   - spawn_sensor:
       model: rplidar_a1
-      parent_frame: rplidar
+      parent_frame: shell_link
+      pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}
       frame_id: rplidar_link
     name: rplidar
     components:
@@ -63,7 +60,8 @@ components:
   # and the mount publishes oakd_camera_bracket -> oakd_link -> ... as static TF.
   - spawn_sensor:
       model: oakd_pro
-      parent_frame: oakd
+      parent_frame: oakd_camera_bracket
+      pose: {position: {x: 0.0584, z: 0.09676}}
     name: oakd
     components:
       - oakd_camera:                             # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);

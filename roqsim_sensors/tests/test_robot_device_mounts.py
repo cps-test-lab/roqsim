@@ -74,21 +74,20 @@ def _manifest(model: str):
 
 
 @pytest.mark.parametrize("model", sorted(POSES))
-def test_each_device_hangs_from_a_frame_of_its_robot_with_no_pose_of_its_own(model):
+def test_each_device_hangs_from_a_frame_of_its_robot(model):
     path = _manifest(model)
     devices = [e["spawn_sensor"] for e in load_manifest(path) if "spawn_sensor" in e]
     assert devices
     for device in devices:
-        assert "parent_frame" in device and "pose" not in device, device
+        assert "parent_frame" in device, device
         resolve_parent_frame(path, device["parent_frame"])
 
 
 @pytest.mark.parametrize("model", sorted(POSES))
-def test_unpublished_frames_are_in_no_transform(model):
-    """A ``tf: false`` frame is a site of the robot, but neither a parent nor a child in TF."""
+def test_every_frame_a_robot_declares_is_published(model):
+    """A frame is a link of the robot description: a site, and the child of a static transform."""
     path = _manifest(model)
-    frames = parse_frames(manifest_frames(path), model)
-    hidden = {f.name for f in frames if not f.tf}
+    frames = {f.name for f in parse_frames(manifest_frames(path), model)}
     engine = Engine(
         load_config_from_dict(
             {
@@ -98,24 +97,20 @@ def test_unpublished_frames_are_in_no_transform(model):
         )
     )
     engine.setup()
-    for name in hidden:
+    for name in frames:
         assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, f"r_{name}") >= 0, name
-    transforms = [
-        (t.parent, t.child)
-        for e in engine.ctx.interface.all()
-        if e.name == "frames"
-        for t in e.read().transforms
-    ]
-    published = {f.name for f in frames if f.tf}
-    assert published <= {child for _, child in transforms}
-    assert not hidden & {name for pair in transforms for name in pair}, model
+    children = {
+        t.child for e in engine.ctx.interface.all() if e.name == "frames" for t in e.read().transforms
+    }
+    assert frames <= children, model
 
 
-def test_a_world_puts_another_device_on_a_robots_frame_without_its_offset():
-    """The TurtleBot 4's OAK-D swapped for a D435 on the same frame: the D435 sits where the OAK-D did."""
+def test_a_world_puts_another_device_on_a_robots_frame():
+    """The TurtleBot 4's OAK-D swapped for a D435 at its joint: the D435 sits where the OAK-D did."""
+    at = {"parent_frame": "oakd_camera_bracket", "pose": {"position": {"x": 0.0584, "z": 0.09676}}}
     m = _compiled(
         "turtlebot4",
-        {"spawn_sensor": {"model": "realsense_d435", "parent_frame": "oakd"}, "name": "d435"},
+        {"spawn_sensor": {"model": "realsense_d435", **at}, "name": "d435"},
         {"spawn_sensor": {}, "name": "oakd", "enabled": False},
     )
     b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_d435_mount")
