@@ -33,6 +33,10 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be
 — set it only to override that choice. To record a run, add ``--record`` — see
 :ref:`recording-a-run` below.
 
+A running simulation prints ``control: <uri>`` and serves its endpoints and run control there:
+``roqsim endpoints``, ``roqsim read``, ``roqsim call`` and ``roqsim ctl pause|resume|step N`` from
+another shell reach it with no ROS -- see :doc:`control`. ``--control none`` serves nothing.
+
 .. note::
 
    **Windowed GL defaults.** On many Linux + GL-driver combinations the windowed launch aborts with
@@ -584,6 +588,13 @@ computations over a run, use :mod:`roqsim.recording`:
 The ``with`` closes the rebuilt world's plugins on the way out (``rec.close()`` does the same): a
 replayed camera holds an offscreen renderer exactly as a live one does, and only its shutdown releases it.
 
+Beside it the recorder streams ``run.clock_map.csv`` (the recording's stem plus
+``.clock_map.csv``): a ``wall_ts,sim_ts`` header and one row per sample, flushed per row while the run
+proceeds. ``sim_ts`` is ``t``; ``wall_ts``, unlike ``w``, is a Unix timestamp, because the file's
+readers are outside the process and relate it to calendar stamps of their own. It is the clock record
+:ref:`roqsim health <checking-a-run>` reads, and it survives a run killed outright, which the ``.npz``
+does not.
+
 ``--record`` is for a run you launch yourself. A run launched *for* you — an orchestrator starting this
 world through a ROS launch file, where the command line belongs to that file — asks for the same thing
 through the environment, which both drivers honour:
@@ -756,6 +767,8 @@ need a repair pass before ``mesh -> solid``. So the summary counts boundary and 
 geom rather than asserting a solid, and ``--weld`` (default 1e-6 m) first merges vertices that are
 merely duplicated, which is the common reason a mesh that looks closed is not.
 
+.. _checking-a-run:
+
 Checking a run is healthy
 -------------------------
 
@@ -913,7 +926,13 @@ An ``.npz`` of array series carries them as the ``times`` and ``wall_times`` mem
 ``--sensor`` re-runs a sensor **the world declares**, configured exactly as the world configured it, so
 ``--check`` is how you see what is on offer. Its output shape decides the file: a few values become CSV
 columns, a scan becomes an ``.npz`` array, and an image is refused with a pointer to
-``roqsim render --camera``. A re-run sensor is deterministic and gets the noise that moment would have had
+``roqsim render --camera``. A sensor's columns are named ``<endpoint>.<field path>.<index>``: a number
+is ``<endpoint>`` alone, a vector ``<endpoint>.<index>``, and a payload type ``<endpoint>.<field>`` per
+field in declaration order, with a nested type's fields under its field's name and ``.<index>`` per
+element of a vector field — an odometry endpoint gives ``odom.position.0`` to ``odom.angular.2``, a
+wrench ``wrench.force.0`` to ``wrench.torque.2``. Text fields (joint names) have no column, and a
+vector field wider than 32 values is refused; ``--joint`` reads joints from the state instead.
+A re-run sensor is deterministic and gets the noise that moment would have had
 (the recording carries the run's seed), but it is not bit-identical to what the live run published at
 that timestamp — live, the sensor fires between recorded samples, so the value published then was
 computed a moment earlier.
@@ -1005,26 +1024,112 @@ What a scenario can ask the simulation
 
    entity_moved(entities: ['parcel'], threshold: 0.05, mode: displacement_mode!z, dwell: 8.0)
    entity_rotated(entities: ['crate'], angle: 0.5)
-   entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-   set_model_override(instance: 'grip_fault')            # ...and `active: false` restores it
+   entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+   entity_call(entity: 'grip_fault', command: 'override', value: 'true')   # 'false' restores it
+   entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+   entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
 
 ``entity_moved`` / ``entity_rotated`` succeed once the named entities have been displaced (or turned)
 from where they were **when the action started** — net displacement, not path length, unlike
-``osc.ros``'s ``odometry_distance_traveled``. ``set_model_override`` applies or restores a
-``model_override`` fault (§9.2) and **fails the trial when the plugin reports the write changed
-nothing**, so a run cannot record an unfaulted outcome under a faulted label. ``entity_reports``
-succeeds once a value a plugin publishes about an entity -- ``<report>.<field>``, as the world names
-it -- compares as expected; it is how a scenario ends a run on a trial's outcome, with ``emit end``
-after it.
+``osc.ros``'s ``odometry_distance_traveled``. ``entity_call`` sends any command a plugin declares --
+here a ``model_override`` fault (§9.2) -- and **fails the trial when the command's confirmation reports
+that it changed nothing**, so a run cannot record an unfaulted outcome under a faulted label.
 
-Each works in a stepped run *and* in a ROS run, unedited: the transport is chosen from what the
-runner offered. In-process they read ``MujocoSim.context`` (entity poses from ``data.xpos``, the fault
-through the ``model_override:<name>`` blackboard handle, a report from its endpoint, writes queued with
-``ctx.post``); over ROS they use ``simulation_interfaces/GetEntityState``, ``<instance>/override`` and
-the endpoint map the bridge latches at ``roqsim/endpoints``. Both are keyed on the same
-**entity and instance names**, which is what makes one scenario serve both — see the package's README
-for why TF is deliberately not the ROS pose source. None of them can run under ``remote()``: a remote
-server is handed no simulation.
+``entity_monitor`` keeps a scenario variable equal to a value a plugin publishes about an entity --
+``<endpoint>.<field>``, as the world names it -- on every tick, as ``osc.ros``'s ``topic_monitor``
+does for a topic. It never succeeds on its own, so it runs in a ``parallel`` branch, and every
+condition is plain OpenSCENARIO over the variable:
+
+.. code-block:: text
+
+   scenario trial:
+       timeout(120s)
+       min_clearance: float = 0.3
+       var tripped: bool = false
+       var clearance: float = 10.0
+       do parallel:
+           entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+           entity_monitor(entity: 'robot', value: 'clearance.current', target_variable: clearance)
+           serial:
+               wait tripped == true
+               emit end
+           serial:
+               wait clearance < 0.2
+               emit fail
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - pattern
+     - how it reads
+   * - end the run on an outcome
+     - ``wait tripped == true`` then ``emit end``
+   * - threshold
+     - ``wait clearance < 0.3``
+   * - assertion: fail if it ever goes bad
+     - a parallel branch: ``wait clearance < 0.2`` then ``emit fail``
+   * - bound an action
+     - ``entity_navigate(...) with:`` then ``until docked == true``
+   * - combined conditions
+     - ``wait tripped or clearance < 0.1``
+   * - comparison with a parameter
+     - ``wait clearance < min_clearance``
+   * - event and condition
+     - ``wait @fault_on if clearance < 0.3``
+
+A flag is compared explicitly (``tripped == true``): a condition is a comparison or a logical
+expression, not a bare variable. Until the first reading arrives the variable keeps its declared
+default, so declare one the condition does not hold for. A condition that must hold for a length of
+time is composed in the language itself; scenario-execution's language documentation describes that
+pattern. An entity, endpoint or field that does not exist, and a field that is not a single number,
+flag or string, are refused with the same text on both transports.
+
+Where an entity is -- near something, inside an area -- is geometry, which an expression cannot
+compute, so actions state it; each succeeds on the first tick its condition holds:
+
+.. code-block:: text
+
+   entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+   entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+   entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)
+   entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
+   entity_in_region(entity: 'person', outside: true, region: [p1, p2, p3, p4])   # a polygon
+
+The distance is between reference points -- the origins of the entities' bodies, from the core's
+``sim/entities/<name>/pose`` -- and measured in the floor plane unless ``distance_mode!spatial`` asks
+for 3D, since "the robot reached the shelf" is a statement about the floor plan. A region is an area
+of the floor plan: two points are a box's opposite corners, three or more a polygon's vertices; z is
+ignored and the boundary counts as inside. Neither action fails on its own: ``timeout()`` bounds one
+that must hold in time, and "must never enter" is a branch that fails the trial, bounded by ``until``
+for as long as the rule applies:
+
+.. code-block:: text
+
+   do parallel:
+       serial:
+           entity_navigate(entity: 'robot', goal_poses: [...])
+           emit end
+       serial:
+           entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m),
+                                                      position_3d(x: 3m, y: 1m)])
+           emit fail
+       with:
+           until @door_open
+
+Every ``entity_*`` condition (``entity_moved``, ``entity_rotated`` and these) reads the core's
+``sim/entities/<name>/pose`` on both transports, so it names entities, not bodies. An entity that
+exists but is absent (deleted, or not spawned yet) is nowhere, so the condition waits for it and says
+so; a name the world never had is refused at once, naming the closest names, with the same text on
+both transports. ``entity_moved`` and ``entity_rotated`` also refuse an entity welded to the world
+(the pose endpoint's ``movable: false``), whose pose can never change.
+
+Each works in a stepped run *and* against a simulator in another process, unedited: the transport is
+chosen from what the runner offered. In-process they read ``MujocoSim.context`` (entity poses,
+commands and reports through the world's endpoints, writes queued on the physics
+thread); otherwise they reach ``roqsim sim``'s control socket (:doc:`control`) -- the same endpoints,
+found by the same entity and endpoint names, which is what makes one scenario serve both. None of them
+can run under ``remote()``: a remote server is handed no simulation.
 
 ROS 2 bridge
 ------------
@@ -1044,3 +1149,11 @@ ROS 2 bridge
 
 The bridge publishes ``/clock``; run other nodes with ``use_sim_time:=true``. See
 :doc:`nav2_example` for a full navigation stack.
+
+Log lines for an aggregator
+---------------------------
+
+``roqsim``'s commands log ``LEVEL logger: message``, which suits a terminal. Where roqsim is one
+producer in an aggregated log, ``ROQSIM_LOG_FORMAT=stamped`` switches to
+``[LEVEL] [epoch] [logger]: message`` -- the shape ROS tooling writes, stamped with the time the
+event happened. ``plain`` is the default; any other value is an error rather than a fallback.

@@ -22,6 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+# The control socket `roqsim sim` serves (roqsim.ipc): a running simulation's endpoints over ZeroMQ.
+ipc = ["pyzmq>=22"]
 
 # Built-in core plugins. Robot-family plugins live in sibling packages (e.g. roqsim_mobile).
 [project.entry-points."roqsim.plugins"]
@@ -78,6 +80,13 @@ energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 # Ground that is not flat. Without it everything this substrate can stand a robot on is a plane, while
 # four of its ported platforms are outdoor machines whose papers are about what happens when it is not.
 heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"
+
+# A running simulation's endpoints over ZeroMQ, the driver's pause/resume/step/reset as endpoints, and
+# entity placement and presence as commands.
+# `roqsim sim` adds both itself (--control); a world does not declare them.
+ipc_bridge = "roqsim.ipc.bridge:IpcBridge"
+run_control = "roqsim.plugins.run_control:RunControlPlugin"
+entity_control = "roqsim.plugins.entity_control:EntityControlPlugin"
 
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of

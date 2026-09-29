@@ -11,7 +11,10 @@
 frames:
   # urdf/standard/turtlebot4.urdf.xacro:43-47: z = shell_z_offset (3 cm, :13) + base_link_z_offset
   # (6.42 cm, irobot_create_description/urdf/create3.urdf.xacro:53 @ 1fccb76).
-  - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942], rpy: [0.0, 0.0, 0.0]}
+  - {name: shell_link, parent: base_link, pose: {position: {z: 0.0942}}}
+  # urdf/standard/turtlebot4.urdf.xacro:35-37 (camera_mount_*_offset) and :119-121: the camera
+  # bracket on the shell, which carries the OAK-D.
+  - {name: oakd_camera_bracket, parent: shell_link, pose: {position: {x: -0.118, z: 0.05257}}}
 
 components:
   # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
@@ -45,23 +48,33 @@ components:
   - spawn_sensor:
       model: rplidar_a1
       parent_frame: shell_link
-      pos: [-0.04, 0.0, 0.098715]
-      rpy: [0.0, 0.0, 1.5707963267948966]
+      pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}
       frame_id: rplidar_link
     name: rplidar
     components:
       - lidar:
           rays: 360                              # TurtleBot 4 datasheet: 1 deg angular resolution
-  - oakd_camera:                                # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
-      camera: oakd_rgb                           # skips rendering when nobody subscribes (see
+  # The OAK-D Pro device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:39-41,
+  # 123-125 @ 7fd29fb (the macro's default name `oakd`, which is the device's default device_name).
+  # Addressed as `<robot>.oakd.oakd_camera`; the images are stamped oakd_rgb_camera_optical_frame,
+  # and the mount publishes oakd_camera_bracket -> oakd_link -> ... as static TF.
+  - spawn_sensor:
+      model: oakd_pro
+      parent_frame: oakd_camera_bracket
+      pose: {position: {x: 0.0584, z: 0.09676}}
+    name: oakd
+    components:
+      - oakd_camera:                             # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
+                                                 # skips rendering when nobody subscribes (see
                                                  # Endpoint.has_subscribers in roqsim core).
-      # The TurtleBot 4's topic names, as its depthai driver and its Gazebo simulator publish them.
-      topics:
-        image: oakd/rgb/preview/image_raw
-        image_compressed: oakd/rgb/preview/image_raw/compressed
-        camera_info: oakd/rgb/preview/camera_info
-        depth: oakd/rgb/preview/depth
-        depth_camera_info: oakd/rgb/preview/depth/camera_info
+          # The TurtleBot 4's topic names, as its depthai driver and its Gazebo simulator publish
+          # them.
+          topics:
+            image: oakd/rgb/preview/image_raw
+            image_compressed: oakd/rgb/preview/image_raw/compressed
+            camera_info: oakd/rgb/preview/camera_info
+            depth: oakd/rgb/preview/depth
+            depth_camera_info: oakd/rgb/preview/depth/camera_info
 
   # ---- The Create 3 base's own sensors, as the reference description carries them ------------
   #
@@ -134,7 +147,7 @@ components:
                    topics: {range: _internal/ir_intensity_side_left/scan}}
     name: ir_intensity_side_left
   # The IMU at the Create 3's mount (imu.urdf.xacro), on its `imu` topic at its 62 Hz.
-  - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+  - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
   # Ground truth the Create 3's simulator streams for its adapter: the base's world pose under the
   # robot's name, and the optical-flow mouse and IR receiver poses relative to the base, all on one
   # topic at 62 Hz. `child_frame` is the name the adapter's `robot_name` parameter matches.

@@ -10,7 +10,7 @@ cylinder::
       - {pose: {position: {x: 0.12, y: -0.30}}, radius: 0.035, height: 0.15, mass: 0.3}
       - {pose: {position: {x: 0.31, y: 0.08}}, radius: 0.042, height: 0.15, mass: 0.3}
 
-Each entry accepts every key ``cylinder`` does (``pos``, ``radius``, ``height``, ``color``,
+Each entry accepts every key ``cylinder`` does (``pose``, ``radius``, ``height``, ``color``,
 ``collide``, ``friction``, ``free``, ``mass``, and an optional ``name``), because each one *is* a
 cylinder: this plugin owns the list, not the geometry.
 
@@ -126,8 +126,10 @@ class CylindersPlugin(Plugin):
             child.build(spec, ctx)
 
     def configure(self, ctx: SimContext) -> None:
+        # The engine registers endpoints of the plugins it lists; a child's are this plugin's to add.
         for child in self._children:
             child.configure(ctx)
+            child.register_endpoints(ctx)
 
     def on_reset(self, ctx: SimContext) -> None:
         for child in self._children:

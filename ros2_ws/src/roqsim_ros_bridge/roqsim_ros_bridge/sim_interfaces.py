@@ -14,7 +14,7 @@ Concurrency: services run on the bridge/executor thread. State changes go throug
 :class:`roqsim.control.RunControl`; anything touching ``data`` goes through
 :func:`roqsim_ros_bridge.physics.run_on_physics`, which posts to the physics thread and waits (see
 docs/architecture.rst §7). Every mutating service *waits*: answering ``RESULT_OK`` before the change
-has run makes a paused simulator indistinguishable from a working one.
+has run makes a stalled simulator indistinguishable from a working one.
 
 Reuses the ``rclpy`` node created by :class:`~roqsim_ros_bridge.ros2_bridge.Ros2Bridge` when present
 (looked up on the blackboard under ``ros2_node``); otherwise creates and spins its own.
@@ -385,7 +385,7 @@ class SimInterfacesPlugin(Plugin):
             return resp
         # Physics-thread only, like every other write to model/data -- and WAITED FOR, so RESULT_OK
         # means the entity really has appeared. Posting and answering OK immediately would report
-        # success before the flip has run, so a paused or stalled simulator accepts spawns
+        # success before the flip has run, so a stalled simulator accepts spawns
         # that never happen and the caller has no way to tell.
         #
         # Pose first, then presence, in ONE transaction: placing an entity that is already
@@ -410,7 +410,7 @@ class SimInterfacesPlugin(Plugin):
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not apply {verb} {name!r} within "
-                f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+                f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
             )
             return resp
         if "welded_at" in outcome:
@@ -500,7 +500,7 @@ class SimInterfacesPlugin(Plugin):
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not place {req.entity!r} within "
-                f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+                f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
             )
             return resp
         if "welded_at" in outcome:
