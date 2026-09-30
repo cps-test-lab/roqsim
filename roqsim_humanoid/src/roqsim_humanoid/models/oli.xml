@@ -140,7 +140,6 @@
             <geom size="0.11 0.055" pos="-0.006 0 0.25681" quat="0.707388 0.706825 0 0" type="capsule" group="3" friction="1 0.3 0.3" rgba="0.6 0.3 0.3 0.3"/>
             <geom size="0.06 0.06" pos="-0.03 0 0.07" quat="0.707388 0.706825 0 0" type="capsule" group="3" friction="1 0.3 0.3" rgba="0.6 0.3 0.3 0.3"/>
             <geom size="0.03 0.05" pos="0.065 0 0.1" quat="0.707388 0.706825 0 0" type="capsule" group="3" friction="1 0.3 0.3" rgba="0.6 0.3 0.3 0.3"/>
-            <camera name="chest_camera" pos="0.092 0.0175 0.2751" quat="-0.5 -0.5 0.5 0.5" fovy="58"/>
             <body name="left_shoulder_pitch_link" pos="0 0.1589 0.2822">
               <inertial pos="0.003151 0.031104 -2.2e-05" quat="-0.0676949 0.703859 0.0676949 0.703859" mass="0.244765" diaginertia="0.000429 0.000371465 0.000248535"/>
               <joint name="left_shoulder_pitch_joint" pos="0 0 0" axis="0 1 0" range="-2.792 2.792" actuatorfrcrange="-42 42" armature="0.0407638" damping="0.2" frictionloss="0.1"/>
@@ -236,7 +235,6 @@
                 <joint name="head_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.524 0.785" actuatorfrcrange="-19 19" armature="0.0165852" damping="0.2" frictionloss="0.1"/>
                 <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.75294 0.75294 0.75294 1" mesh="neck_pitch_link"/>
                 <geom size="0.05 0.075 0.04" pos="0.0077 0 0.072" quat="0.99639 0 0.0848977 0" type="box" group="3" friction="1 0.3 0.3" rgba="0.6 0.3 0.3 0.3"/>
-                <camera name="head_camera" pos="0.07453 0.0175 0.065" quat="-0.5 -0.5 0.5 0.5" fovy="58"/>
               </body>
             </body>
           </body>

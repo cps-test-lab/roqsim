@@ -6,8 +6,7 @@
 components:
   - arm_controller:
       # The PG+70's ctrl is a target TENDON LENGTH in metres, not a 0..255 command like the Robotiq's
-      # -- and its low end is the open end (the tendon's coefficients are negative for exactly that
-      # reason). Start open.
+      # -- and its low end is the open end (the tendon's coefficients are negative). Start open.
       gripper_ctrl: -0.0301
       # Prismatic jaw, so the "gripper position" arm_controller reports is a displacement in METRES,
       # not an angle. Name matches PILZ's URDF joint (minus its `${name}_` prefix).

@@ -5,8 +5,8 @@ until the physics thread has actually run it, and turn a timeout into a failed r
 rather than on one plugin because the reason it exists is a contract, not a convenience:
 
 **A post that timed out must never be reported as success.** A service that answers ``RESULT_OK``
-before its change has run is indistinguishable, to its caller, from one that worked -- so a paused or
-stalled simulator silently accepts commands and a scenario proceeds on the belief that the world
+before its change has run is indistinguishable, to its caller, from one that worked -- so a stalled
+simulator silently accepts commands and a scenario proceeds on the belief that the world
 changed. The caller turns ``False`` into a failure; there is no optimistic branch.
 
 Only for a *cross-thread* caller. Code already on the physics thread (a plugin hook) mutates
@@ -16,31 +16,24 @@ Only for a *cross-thread* caller. Code already on the physics thread (a plugin h
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from typing import Any
 
 #: Wall-clock seconds to wait for the physics thread. Generous enough for a slow step, short enough
-#: that a paused simulator answers rather than hanging the caller's executor.
+#: that a stalled simulator answers rather than hanging the caller's executor. A paused run is not
+#: stalled: the driver's idle loop runs posted commands (:meth:`roqsim.engine.Engine.idle`).
 DEFAULT_TIMEOUT_S = 2.0
 
 
 def run_on_physics(ctx, fn: Callable[[Any], None], timeout: float | None = None) -> bool:
     """Post *fn* to the physics thread and block until it has run. ``False`` on timeout.
 
-    ``timeout`` defaults to :data:`DEFAULT_TIMEOUT_S`, read at call time so the module constant is
-    actually the knob it looks like.
+    ``True`` means it ran, whether it returned or raised; a raise is logged by the physics thread,
+    and a caller that needs it waits on :meth:`roqsim.context.SimContext.submit`'s future with
+    ``result`` instead. ``timeout`` defaults to :data:`DEFAULT_TIMEOUT_S`, read at call time so the
+    module constant is actually the knob it looks like.
     """
-    done = threading.Event()
-
-    def wrapped(c):
-        try:
-            fn(c)
-        finally:
-            done.set()
-
-    ctx.post(wrapped)
-    return done.wait(DEFAULT_TIMEOUT_S if timeout is None else timeout)
+    return ctx.submit(fn).wait(DEFAULT_TIMEOUT_S if timeout is None else timeout)
 
 
 def barrier(ctx, timeout: float | None = None) -> bool:

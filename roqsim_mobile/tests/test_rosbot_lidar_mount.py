@@ -143,7 +143,7 @@ def test_the_static_tf_chain_is_published_in_the_robots_namespace():
         robot = endpoints[("rb", "frames")]
         device = endpoints[("rb.rplidar", "frames")]
         assert robot.namespace == device.namespace == NAMESPACE
-        links = robot.backend["ros2"]["static_tf"] + device.backend["ros2"]["static_tf"]
+        links = [vars(t) for ep in (robot, device) for t in ep.read().transforms]
         # One tree from base_link to laser: a consumer asks for the scan in base_link.
         assert [(t["parent"], t["child"]) for t in links] == [
             ("base_link", "body_link"),
@@ -168,7 +168,7 @@ def test_topic_frame_and_scan_values():
             e for e in engine.ctx.interface.all() if e.name == "scan" and e.owner == "rb.rplidar"
         )
         assert scan.namespace == NAMESPACE
-        assert scan.backend["ros2"]["topic"] == "scan"  # relative: <ns>/scan
+        assert (scan.topic or scan.backend["ros2"].get("topic", scan.name)) == "scan"  # <ns>/scan
         assert scan.backend["ros2"]["frame_id"] == "laser"
         assert "static_tf" not in scan.backend["ros2"]
         lidar = _lidar(engine)

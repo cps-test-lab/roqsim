@@ -23,8 +23,7 @@ frame_id: laser             # driver src/os32c_node.cpp:66
 frames:
   - name: "{frame_id}"      # data sheet p. 5 "Laser Scan Plane Height 67 mm from the bottom"
     parent: mount
-    pos: [0.0, 0.0, 0.067]
-    rpy: [0.0, 0.0, 0.0]
+    pose: {position: {z: 0.067}}
 
 components:
   - lidar:

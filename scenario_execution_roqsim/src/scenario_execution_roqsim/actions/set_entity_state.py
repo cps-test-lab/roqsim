@@ -15,11 +15,12 @@ world's own YAML is resolved once per configuration, before any run of it starts
 `sim: plugins.spawn_robot.pos` overrides that vary by configuration -- but nothing before compile
 knows a value that is drawn once per repetition, and the substrate does not recompile mid-run
 (architecture.rst). This action is the other half: it moves an already-spawned entity, over either
-transport, exactly like ``simulation_interfaces/SetEntityState`` does for the ROS path -- whose name and
-shape this takes, because it is the same operation and there is no reason for two vocabularies.
+transport, through :func:`roqsim.entity_control.set_state` -- and takes the name and shape of
+``simulation_interfaces/SetEntityState``, because it is the same operation and there is no reason for
+two vocabularies.
 
 Not a condition (contrast ``entity_moved``/``entity_rotated``): it is a WRITE with a verdict, same
-shape as ``set_model_override``. **A write that did not land fails the trial**, because the
+shape as ``entity_call``. **A write that did not land fails the trial**, because the
 alternative is a row that claims the robot started somewhere the physics never put it -- exactly the
 localisation-vs-physical-pose mismatch this action exists to prevent (a scenario that seeds nav2's
 initial pose estimate at a point the robot's body never reached spends the whole trial recovering
