@@ -2,11 +2,12 @@
 
 :class:`RayCastSensorPlugin` owns everything the devices have in common --
 config keys and their validation, site/``exclude_body`` resolution, the reusable ray buffers, the
-static mount TF, the ``rate_hz`` gate, the range window, the noise model, and endpoint registration.
+static mount TF, the ``rate_hz`` gate, the range window, the noise model, and the endpoint's hints.
 A device then declares only what actually distinguishes it:
 
 * :meth:`~RayCastSensorPlugin._build_directions` -- its ray pattern, in the site frame.
-* :meth:`~RayCastSensorPlugin._payload` -- its wire type (``LaserScan`` vs ``PointCloud``).
+* :meth:`~RayCastSensorPlugin._payload` -- its wire type (``LaserScan`` vs ``PointCloud``), and the
+  endpoint that carries it.
 * a handful of ``DEFAULT_*`` class attributes -- its datasheet.
 
 This mirrors how :mod:`camera_common` + :mod:`depth_camera` already layer the cameras, and it exists
@@ -26,6 +27,26 @@ is not a point. For a point cloud the detection limits are ``range_min`` and ``m
 **``max_range`` is enforced here, for everyone.** ``mj_multiRay``'s ``cutoff`` is a culling hint and
 not a clamp -- it can still report a hit beyond it. Without the
 window, a Mid-360 with a 40 m range would emit points from further away.
+
+Config (every ray-cast device; each device's module adds its ray pattern and datasheet defaults)::
+
+    <plugin short name>:
+      site: lidar                # site the rays are cast from (default: the device's DEFAULT_SITE)
+      frame_id: lidar            # frame the payload is stamped in, and the static TF's child
+                                 #   (default: site)
+      range_min: 0.164           # m; the nearest distance the device reports
+      max_range: 20.0            # m; the farthest, enforced here rather than left to the cast
+      rate_hz: 10.0              # cast and publish rate, not the physics rate
+      exclude_body: ""           # body the rays skip -- the device's own housing (default: none)
+      range_stddev: 0.0          # Gaussian range sigma (m)
+      range_stddev_relative: 0.0 # sigma as a fraction of the distance, at and beyond
+                                 #   range_stddev_relative_from (0 = constant sigma)
+      range_stddev_relative_from: 0.0   # m; nearer than this the sigma is range_stddev
+      range_resolution: 0.0      # quantisation step of a published distance (m); 0 = continuous
+      dropout_percent: 0.0       # percent of returns dropped, drawn per cast
+      emit_static_tf: true       # publish tf_parent -> frame_id; false where the mount publishes it
+      tf_parent: ""              # body the static TF hangs from (default: the carrier's root body)
+      lazy: false                # cast and publish only while something subscribes
 """
 
 from __future__ import annotations
@@ -49,10 +70,8 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
 
     parallel_safe = True  # post_step only reads data + writes its own payload buffer
 
-    #: Endpoint role name, and the key a world's ``topics:`` map overrides it by.
+    #: Name of the endpoint the device declares, and the key a world's ``topics:`` map renames it by.
     ENDPOINT_NAME = "scan"
-    #: Backend-neutral payload type the bridge resolves. No ROS import here.
-    ROS_TYPE = "sensor_msgs.msg.LaserScan"
     #: Topic used when the world declares no ``topics:`` override.
     DEFAULT_TOPIC = "scan"
     #: Name this plugin reports itself under in errors, so a subclass says its own.
@@ -133,6 +152,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         self._endpoint: Endpoint | None = None
         self._site_id = -1
         self._bodyexclude = -1
+        self._static_tf: dict | None = None  # the mount transform, when emit_static_tf
         self._local_dirs: np.ndarray | None = None  # (nray, 3) unit directions, site frame
         self._hits: raycast.RayHits | None = None
         self._payload_value = None  # latest payload, read by the endpoint
@@ -211,8 +231,6 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        # Transport scope for the endpoint: own config wins, else inherited from the spawn.
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
         self._site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, prefix + self.site)
         if self._site_id < 0:
@@ -224,32 +242,30 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # life of the run, and for a 3D lidar it is 20k+ rays a frame.
         self._hits = raycast.buffers(self.num_rays)
 
-        ros2_hints = {
-            "type": self.ROS_TYPE,
-            "topic": self.topic_override(self.ENDPOINT_NAME) or self.DEFAULT_TOPIC,
-            "frame_id": self.frame_id,
-            **self._ros2_hints_extra(),
-        }
         if self.emit_static_tf:
-            ros2_hints["static_tf"] = self._mount_tf(m, prefix, entity)
+            self._static_tf = self._mount_tf(m, prefix, entity)
 
-        # The fault switch, if this sensor declares one. Registered here, beside the scan endpoint,
-        # so both are in ctx.interface before a bridge binds it.
-        self.register_fault_endpoints(ctx, ns)
+        # The fault switch, if this sensor declares one.
+        self.register_fault(ctx)
 
-        # Declared as a backend-neutral output endpoint (no ROS import here). The bridge resolves the
-        # type string and publishes at rate; ``namespace`` scopes topic and frames.
-        self._endpoint = Endpoint(
-            name=self.ENDPOINT_NAME,
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._payload_value,
-            rate_hz=self.rate_hz,
-            backend={"ros2": ros2_hints},
-            lazy=self.lazy,
-        )
-        ctx.interface.add(self._endpoint)
+    def register_endpoints(self, ctx: SimContext) -> list[Endpoint]:
+        endpoints = super().register_endpoints(ctx)
+        for ep in endpoints:
+            if ep.name == self.ENDPOINT_NAME:
+                self._endpoint = ep
+        return endpoints
+
+    def _ros2_hints(self) -> dict:
+        """The device's endpoint on ROS: its frame, its default topic and its mount transform.
+
+        The payload's type decides the message; ``namespace`` scopes topic and frames.
+        """
+        hints = {"frame_id": self.frame_id, **self._ros2_hints_extra()}
+        if self.DEFAULT_TOPIC != self.ENDPOINT_NAME:
+            hints["topic"] = self.DEFAULT_TOPIC
+        if self._static_tf is not None:
+            hints["static_tf"] = self._static_tf
+        return hints
 
     def _resolve_exclude_body(self, m, prefix: str) -> int:
         """Body id whose geoms the rays skip, or ``-1`` for "exclude nothing".

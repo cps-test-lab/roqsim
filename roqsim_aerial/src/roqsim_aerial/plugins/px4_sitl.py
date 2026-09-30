@@ -59,7 +59,7 @@ goes straight through ``MotorsHandle.set_normalized``; what a 1.0 is worth in ne
 here would be one that could disagree with the airframe being flown.
 
 **``imu_rate`` must divide sensibly into the sim rate.** Sensors are sent on whole ticks, so the
-achieved rate is ``1 / (ceil(1 / (imu_rate * dt)) * dt)``: at the usual ``dt = 0.002`` s an
+achieved rate is ``1 / (round(1 / (imu_rate * dt)) * dt)``: at the usual ``dt = 0.002`` s an
 ``imu_rate`` of 250 Hz lands exactly (every 2nd tick), 300 Hz silently becomes 250. The plugin logs
 the rate it will actually achieve rather than the one that was asked for.
 
@@ -99,8 +99,8 @@ with the timeout and the deadlock diagnostic section 10 requires, naming the gat
 It is not a second concurrency scheme: the command queue is still the substrate, and this only adds
 the wait. **Blocking inside ``post_step`` is listed as an anti-pattern "except deliberately in sync
 mode"** -- this is that exception, taken deliberately, and it is the reason the block is confined to
-one clearly named place. When the engine grows its own gate wait, this method becomes a
-``gate.satisfy`` and nothing else changes.
+one clearly named place. Were the engine to wait on gates itself, this method would become a
+``gate.satisfy`` and nothing else would change.
 
 **Lockstep arms only after PX4's first answer, and that is not a convenience.** PX4 SITL runs on a
 ``lockstep_scheduler`` whose clock is set from the timestamps in the ``HIL_SENSOR`` messages we

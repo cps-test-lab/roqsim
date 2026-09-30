@@ -27,8 +27,7 @@ frame_id: lidar2d_0_laser   # Clearpath's first 2D lidar (lidars_2d.py get_frame
 frames:
   - name: "{frame_id}"      # the vendor scan frame (hokuyo_ust.urdf.xacro:39-44 @ b0f6d92)
     parent: mount
-    pos: [0.0, 0.0, 0.0474]
-    rpy: [0.0, 0.0, 0.0]
+    pose: {position: {z: 0.0474}}
 
 components:
   - lidar:

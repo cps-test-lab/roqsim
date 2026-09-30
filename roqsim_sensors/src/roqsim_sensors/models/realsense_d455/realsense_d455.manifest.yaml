@@ -19,11 +19,11 @@ device_name: camera
 frame_id: "{device_name}_color_optical_frame"
 frames:
   - {name: "{device_name}_bottom_screw_frame", parent: mount}
-  - {name: "{device_name}_link", parent: "{device_name}_bottom_screw_frame", pos: [0.01115, 0.0475, 0.0145]}
-  - {name: "{device_name}_color_frame", parent: "{device_name}_link", pos: [0, -0.059, 0]}
-  - {name: "{frame_id}", parent: "{device_name}_color_frame", rpy: [-1.5707963268, 0, -1.5707963268]}
-  - {name: "{device_name}_depth_frame", parent: "{device_name}_link", pos: [0, 0, 0]}
-  - {name: "{device_name}_depth_optical_frame", parent: "{device_name}_depth_frame", rpy: [-1.5707963268, 0, -1.5707963268]}
+  - {name: "{device_name}_link", parent: "{device_name}_bottom_screw_frame", pose: {position: {x: 0.01115, y: 0.0475, z: 0.0145}}}
+  - {name: "{device_name}_color_frame", parent: "{device_name}_link", pose: {position: {y: -0.059}}}
+  - {name: "{frame_id}", parent: "{device_name}_color_frame", pose: {orientation: {roll: -1.5707963268, yaw: -1.5707963268}}}
+  - {name: "{device_name}_depth_frame", parent: "{device_name}_link"}
+  - {name: "{device_name}_depth_optical_frame", parent: "{device_name}_depth_frame", pose: {orientation: {roll: -1.5707963268, yaw: -1.5707963268}}}
 # --- end of generated block
 
 components:

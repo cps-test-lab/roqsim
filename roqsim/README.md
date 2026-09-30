@@ -88,11 +88,8 @@ which is how an experiment loads its own plugin without registering anything.
 
 > **Two rules of the world format.**
 >
-> The entry list is **`components:`**. `plugins:` is accepted as an alias, so worlds and model
-> manifests spelled that way keep working; a document carrying *both* keys is refused, because two
-> spellings of one key in one file is a merge nobody can predict. Anything that reads a loaded world
-> back — `roqsim scenes describe`, the exporters, `roqsim scenes floorplan-to-world` — emits
-> `components:`.
+> The entry list is **`components:`**, in a world and in a model manifest. A top-level key a world
+> does not have is refused, naming it.
 >
 > **Ownership is nesting, and `name:` is a sibling.** A sensor or controller belongs to the entry it
 > is nested under, so there are no per-family `robot:` / `arm:` config keys. An entry's `name:` sits

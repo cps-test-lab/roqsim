@@ -6,8 +6,9 @@ integrator, and the frequency and decay it actually shows are read off its free 
 also where :mod:`roqsim.flex_modes`' numerical damping under ``discrete`` is pinned -- the
 integrator's own damping is one timestep's worth of Rayleigh damping -- and its resolution limit,
 the ``omega * timestep`` past which neither that damping ratio nor the frequency is the one a run
-shows. The contact ``solref`` floor is measured on a resting contact under two integrators. The last part is ``roqsim check`` and ``roqsim scenes describe`` on a
-world with a flex.
+shows. The contact ``solref`` floor is measured in ``tests/test_solref_floor.py``; here it is only
+the warning a flex below it gets. The last part is ``roqsim check`` and ``roqsim scenes describe``
+on a world with a flex.
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ from roqsim.flex_modes import (
     explain_flex,
     first_modes,
     is_elastic,
-    solref_floor,
 )
 
 #: The bottom face of a 3x3x5 grid: MuJoCo numbers a grid's vertices z fastest.
@@ -273,50 +273,20 @@ def test_a_flex_above_the_dof_cap_is_refused_with_a_way_out(monkeypatch):
 
 
 # -- the contact floor ----------------------------------------------------------------------------
-def _penetration(timeconst: float, integrator: str, timestep: float = 0.001) -> float:
-    """How deep a resting sphere sits in a plane, both at solref *timeconst*."""
-    model = mujoco.MjModel.from_xml_string(
-        f"""
-        <mujoco>
-          <option integrator="{integrator}" timestep="{timestep}"/>
-          <worldbody>
-            <geom type="plane" size="1 1 .1" solref="{timeconst} 1"/>
-            <body name="ball" pos="0 0 .03">
-              <freejoint/>
-              <geom type="sphere" size=".01" mass=".1" solref="{timeconst} 1"/>
-            </body>
-          </worldbody>
-        </mujoco>
-        """
-    )
-    data = mujoco.MjData(model)
-    for _ in range(int(1.0 / timestep)):
-        mujoco.mj_step(model, data)
-    return float(-data.efc_pos[: data.ncon].min())
-
-
-@pytest.mark.parametrize("integrator", ["discrete", "implicitfast"])
-def test_the_solref_floor_is_the_one_mujoco_applies(integrator):
-    """The solref floor: below it every time constant rests alike; above it the contact softens."""
-    model = mujoco.MjModel.from_xml_string(
-        f'<mujoco><option integrator="{integrator}" timestep="0.001"/></mujoco>'
-    )
-    floor = solref_floor(model)
-    assert floor == (0.001 if integrator == "discrete" else 0.002)
-    at_floor = _penetration(floor, integrator)
-    assert _penetration(0.5 * floor, integrator) == pytest.approx(at_floor, rel=0.01)
-    assert _penetration(1.5 * floor, integrator) > 1.5 * at_floor
-
-
 def test_a_solref_below_the_floor_is_a_warning():
     model = mujoco.MjModel.from_xml_string(_block(timestep=0.001, solref="0.0005 1"))
     derived, warnings = explain_flex(model, 0)
-    assert derived["below_floor"] is True and derived["solref_floor"] == 0.001
+    # Under discrete the floor is timestep * sqrt(solimp[1]) / (solimp[1] * dampratio) at the
+    # flex's default solimp (0.9, 0.95) and damping ratio 1 (roqsim.solref).
+    assert derived["below_floor"] is True
+    assert derived["solref_floor"] == pytest.approx(0.001 / math.sqrt(0.95), rel=1e-12)
     floor_warnings = [w for w in warnings if w["check"] == "flex-solref"]
     assert len(floor_warnings) == 1
     assert set(floor_warnings[0]) == {"check", "message", "hint", "flex"}
     assert floor_warnings[0]["message"].startswith("flex 'blk': contact solref")
-    assert "one timestep under discrete" in floor_warnings[0]["message"]
+    assert "floor of 0.00102598 s" in floor_warnings[0]["message"]
+    assert "under discrete" in floor_warnings[0]["message"]
+    assert "at least 0.00102598 s" in floor_warnings[0]["hint"]
 
 
 # -- the inventory --------------------------------------------------------------------------------
@@ -421,6 +391,27 @@ def test_check_marks_an_under_resolved_mode(tmp_path):
     assert "WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved" in text
     assert "modes 11.4, 13*, 22.4* Hz; damping ratio 0.288, 0.326*, 0.562*" in text
     assert "* under-resolved (omega * timestep above 0.3): a run damps" in text
+
+
+def test_an_under_resolved_mode_and_a_solref_below_the_floor_are_both_reported(tmp_path):
+    """The resolution limit and the solref floor are separate rules; one flex can break both."""
+    xml = _block(damping=0.004, solref="0.004 1")
+    report = check_world(_world(tmp_path, xml, ", timestep: 0.004"))
+    assert report["ok"] is True
+    (derived,) = report["derived"]["flexes"]
+    assert derived["solref_floor"] == pytest.approx(0.004 / math.sqrt(0.95), rel=1e-12)
+    assert [(w["check"], w["flex"]) for w in report["warnings"]] == [
+        ("flex-timestep", "blk"),
+        ("flex-solref", "blk"),
+    ]
+    assert (
+        "floor of 0.00410392 s (timestep * sqrt(max(solimp[0], solimp[1]))"
+        in (report["warnings"][1]["message"])
+    )
+    text = _render_text(report)
+    assert "WARN  [flex-timestep] flex 'blk'" in text
+    assert "WARN  [flex-solref] flex 'blk': contact solref time constant 0.004 s" in text
+    assert "contact solref 0.004 1 (flex), floor 0.00410392 s" in text
 
 
 def test_a_stated_timestep_changes_the_verdict(tmp_path):
