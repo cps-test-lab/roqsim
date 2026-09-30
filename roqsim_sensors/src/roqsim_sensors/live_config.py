@@ -5,8 +5,8 @@
 
 roqsim keeps faults on two channels, and :mod:`roqsim.plugins.model_override` states the split --
 that plugin changes the *physics*, while "a perturbation of a reported value is sensor noise and
-belongs in a sensor's own config". The physics channel's runtime trigger is ``set_model_override``.
-This is the report channel's, so a sensor can be degraded **during** a run instead of only for the
+belongs in a sensor's own config". The physics channel's runtime trigger is that plugin's
+``override`` command. This is the report channel's, so a sensor can be degraded **during** a run instead of only for the
 whole of it: a lidar that fails halfway down a corridor rather than one that was always noisy.
 
 It is deliberately **not** a plugin. A component belongs to the entry it is nested under, and a
@@ -26,9 +26,9 @@ sensor's own config, where the value being perturbed already lives::
                   range_stddev: 0.01
                   fault: {dropout_percent: 60.0, range_stddev: 0.35}
 
-and a scenario switches it by the sensor's **address**::
+and a scenario switches it through the ``override`` command of the sensor's **address**::
 
-    set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
+    entity_call(entity: 'robot.rplidar.lidar', command: 'override', value: 'true')
 
 Three properties follow, each mirroring the physics channel rather than re-deciding it.
 
@@ -58,11 +58,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from roqsim.context import Endpoint
+from roqsim import endpoint
 
 # The verdict vocabulary is IMPORTED rather than restated. A grader reads both channels, and two
 # spellings of "it did not land" would be two columns meaning one thing.
 from roqsim.plugins.model_override import LANDED, NO_EFFECT, UNTESTED
+from roqsim.types import Duration
 
 #: Config key holding the faulted values.
 FAULT_KEY = "fault"
@@ -75,12 +76,19 @@ def blackboard_key(address: str) -> str:
 
 @dataclass
 class FaultReport:
-    """What the two out endpoints carry, and what the service reply is built from."""
+    """What the two out endpoints carry, and what the service reply is built from.
+
+    Attributes:
+        active: whether the fault is applied
+        since: sim time the fault last became active; -1.0 if it never has
+        changes: how many times the state actually changed since reset
+        verified: 'landed', 'no_effect' or 'untested'
+    """
 
     active: bool
-    since: float  # sim time the fault last became active; -1.0 if it never has
-    changes: int  # how many times the state actually changed since reset
-    verified: str  # LANDED | NO_EFFECT | UNTESTED
+    since: Duration
+    changes: int
+    verified: str
 
 
 @dataclass
@@ -196,8 +204,7 @@ class FaultableSensorMixin:
     def set_fault_active(self, on: bool, sim_time: float = 0.0) -> None:
         """Apply the configured faulted values, or restore nominal. Physics thread only.
 
-        The ROS side reaches this through the bridge, which marshals every inbound payload through
-        ``ctx.post``, so this always runs on the physics thread and the single-writer rule holds
+        The ``override`` command reaches this on the physics thread, so the single-writer rule holds
         without this mixin doing anything about it.
         """
         on = bool(on)
@@ -255,21 +262,17 @@ class FaultableSensorMixin:
         self._fault_report = FaultReport(False, -1.0, 0, UNTESTED)
 
     # -- wiring --------------------------------------------------------------------------------
-    def register_fault_endpoints(self, ctx, namespace: str) -> None:
-        """Publish the blackboard handle and the three endpoints. Call from ``configure``.
+    def register_fault(self, ctx) -> None:
+        """Publish the blackboard handle. Call from ``configure``.
 
-        Endpoint-for-endpoint what ``model_override`` serves, so the bridge needs no new handler and
-        a scenario drives either channel the same way. Scoped by the sensor's **address** with dots
-        as slashes (``robot.lidar`` -> ``robot/lidar/override``): the address is what identifies a
-        component now, and a dot is not legal in a ROS name.
+        The three endpoints are declared below: endpoint-for-endpoint what ``model_override`` serves,
+        so the bridge needs no new handler and a scenario drives either channel the same way. A
+        sensor with no ``fault:`` block has neither, rather than a service that always replies
+        "nothing configured", which would make a scenario's typo look like a working call.
         """
+        self._fault_ctx = ctx
         if not self.has_fault():
-            # A sensor with no `fault:` block advertises no service. The alternative -- a service
-            # that always replies "nothing configured" -- would make a scenario's typo look like a
-            # working call.
             return
-        scope = self.address.replace(".", "/")
-
         ctx.blackboard.set(
             blackboard_key(self.address),
             SensorFaultHandle(
@@ -279,45 +282,52 @@ class FaultableSensorMixin:
                 read_state=self.read_fault_state,
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="override",
-                direction="in",
-                owner=self.entity or self.label,
-                namespace=namespace,
-                write=lambda payload: self.set_fault_active(bool(payload), ctx.sim_time),
-                backend={
-                    "ros2": {
-                        # A service, not a topic: apply/restore is a command with an outcome, and
-                        # the reply is what lets a scenario fail the trial when a fault did not land.
-                        "service": "std_srvs.srv.SetBool",
-                        "name": f"{scope}/override",
-                        "state_key": blackboard_key(self.address),
-                    }
-                },
-            )
-        )
-        for endpoint_name, field, msg in (
-            ("override_state", "active", "std_msgs.msg.Bool"),
-            ("override_verified", "verified", "std_msgs.msg.String"),
-        ):
-            ctx.interface.add(
-                Endpoint(
-                    name=endpoint_name,
-                    direction="out",
-                    owner=self.entity or self.label,
-                    namespace=namespace,
-                    read=self.read_fault_state,
-                    rate_hz=10.0,
-                    backend={
-                        "ros2": {
-                            "type": msg,
-                            # The report is a structure and these types carry one value, so the
-                            # endpoint says WHICH field rather than the bridge holding a converter
-                            # that knows this mixin's attribute names.
-                            "field": field,
-                            "topic": f"{scope}/{endpoint_name}",
-                        }
-                    },
-                )
-            )
+
+    def _fault_scope(self) -> str:
+        """The endpoints' ROS names are scoped by the sensor's **address** with dots as slashes
+        (``robot.lidar`` -> ``robot/lidar/override``): the address is what identifies a component,
+        and a dot is not legal in a ROS name."""
+        return self.address.replace(".", "/")
+
+    # A service, not a topic: apply/restore is a command with an outcome, and the reply is what lets
+    # a scenario fail the trial when a fault did not land.
+    @endpoint.command(
+        when=lambda self: self.has_fault(),
+        # Its report, verdict included, is the reply over the control socket.
+        confirm="override_verified",
+        ros2=lambda self: {
+            "service": "std_srvs.srv.SetBool",
+            "name": f"{self._fault_scope()}/override",
+            "state_key": blackboard_key(self.address),
+        },
+    )
+    def override(self, data: bool) -> None:
+        """Apply the configured fault, or restore nominal.
+
+        Args:
+            data: true applies, false restores
+        """
+        self.set_fault_active(data, self._fault_ctx.sim_time)
+
+    # The report is a structure and each topic carries one value of it, so each endpoint says WHICH
+    # field rather than the bridge holding a converter that knows this mixin's attribute names.
+    @endpoint.out(
+        rate=10.0,
+        when=lambda self: self.has_fault(),
+        ros2=lambda self: {"field": "active", "topic": f"{self._fault_scope()}/override_state"},
+    )
+    def override_state(self) -> FaultReport:
+        """The fault's state; ROS carries whether it is applied."""
+        return self._fault_report
+
+    @endpoint.out(
+        rate=10.0,
+        when=lambda self: self.has_fault(),
+        ros2=lambda self: {
+            "field": "verified",
+            "topic": f"{self._fault_scope()}/override_verified",
+        },
+    )
+    def override_verified(self) -> FaultReport:
+        """The fault's state; ROS carries whether the last change landed."""
+        return self._fault_report

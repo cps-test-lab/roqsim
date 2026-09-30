@@ -6,3 +6,8 @@
 # spawn_arm `name`.
 components:
   - arm_controller: {}   # gripper_ctrl and the home target keep the plugin/model defaults
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. The flange; the
+# conveyor plate it ships there is removed with `end_effector.replaces: [ee_plate]`.
+end_effector:
+  site: attachment_site

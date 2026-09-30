@@ -42,7 +42,7 @@ def test_package_qualified_ref():
 
 
 def test_filename_form_resolves():
-    assert resolve_model("d435.xml").path.name == "d435.xml"
+    assert resolve_model("realsense_d435.xml").path.name == "realsense_d435.xml"
 
 
 def test_filesystem_path(tmp_path):
@@ -79,7 +79,7 @@ def test_unknown_provider_raises():
 def test_manifest_assets_borrows_provider(tmp_path):
     model = tmp_path / "myarm.xml"
     model.write_text("<mujoco/>")
-    (tmp_path / "myarm.manifest.yaml").write_text("assets: roqsim_manipulation_assets\nplugins: []\n")
+    (tmp_path / "myarm.manifest.yaml").write_text("assets: roqsim_manipulation_assets\ncomponents: []\n")
     a = resolve_model(str(model))
     # Meshes come from the borrowed provider, not the model's own (empty) directory.
     assert "roqsim_manipulation_assets" in str(a.meshdir)
@@ -99,7 +99,7 @@ def test_manifest_assets_multiple_providers(tmp_path):
     model = tmp_path / "myarm.xml"
     model.write_text("<mujoco/>")
     (tmp_path / "myarm.manifest.yaml").write_text(
-        "assets: [roqsim_manipulation_assets, roqsim_sensors]\nplugins: []\n"
+        "assets: [roqsim_manipulation_assets, roqsim_sensors]\ncomponents: []\n"
     )
     a = resolve_model(str(model))
     joined = " ".join(str(d) for d in a.meshdirs)

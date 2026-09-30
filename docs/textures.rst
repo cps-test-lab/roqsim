@@ -45,10 +45,12 @@ set meaningful values: matte raw concrete ``0.05``, sealed concrete ``0.10``, va
 Floor and wall appearance
 -------------------------
 
-The mobile ``floorplan`` plugin loads a **floorplan mesh** as the world: a ground plane fitted to the
-mesh footprint, a light, the mesh as visual/lidar walls, and exact convex wall colliders taken from the
-mesh's json-ld (**required**). It needs a ``mesh``; a scene that only wants a bare floor and light should
-omit the plugin entirely and use the engine's default world (``sim.world`` unset → ``empty_room``).
+The mobile ``floorplan`` plugin builds the world from exactly one source: a **floorplan mesh** (the
+mesh as visual/lidar walls, with exact convex wall colliders from the json-ld beside it, which a mesh
+source requires), or the wall segments of a floorplan JSON (``floorplan:`` or inline ``lines:``, built
+as boxes). Either way it adds a ground plane fitted to the footprint and a light. A scene that only
+wants a bare floor and light should omit the plugin entirely and use the engine's default world
+(``sim.world`` unset → ``empty_room``).
 
 The ground plane is a light-gray checker by default. Override the look **and physics** of the floor and
 of the walls through the optional ``floor`` / ``wall`` blocks:
@@ -56,7 +58,7 @@ of the walls through the optional ``floor`` / ``wall`` blocks:
 .. code-block:: yaml
 
    floorplan:
-     mesh: path/to/floorplan.stl       # required; json-ld must sit next to it at <env>/json-ld/
+     mesh: path/to/floorplan.stl       # or floorplan:/lines:; a mesh's json-ld sits at <env>/json-ld/
      floor:
        rgb1: [0.85, 0.85, 0.85]        # builtin-checker colours (0..1 RGB); omit for the default
        rgb2: [0.78, 0.78, 0.79]
@@ -67,14 +69,15 @@ of the walls through the optional ``floor`` / ``wall`` blocks:
      wall:                             # same keys as `floor` minus `friction` (walls have no contacts)
        texture: roqsim_assets:Concrete046    # default is solid gray (rgb1 == rgb2)
        rgba: [1.0, 1.0, 1.0, 1.0]      # optional tint multiplied over the texture; RGB >1 brightens
-     light:                            # one overhead light per room + a dim global fill
-       height: 2.5                     # metres above the floor for the per-room lights
-       diffuse: [0.6, 0.6, 0.6]        # per-room light intensity
-       fill: [0.2, 0.2, 0.2]           # dim global fill so shadowed corners aren't black
+     light:                            # one overhead light at the centre + a global fill (defaults shown)
+       height: 2.5                     # metres above the floor
+       diffuse: [0.35, 0.35, 0.35]     # light intensity
+       cutoff: 90.0                    # spot half-angle (deg); 90 = hemisphere, no visible cone edge
+       fill: [0.3, 0.3, 0.3]           # uniform global ambient so shadowed corners aren't black
 
-**Lighting** places one downward light at each room's centroid, read from the json-ld ``Space`` entities
-(via ``room_centroids`` in ``floorplan_collision.py``), so a multi-room floorplan is not dark away from
-the centre. If the json-ld defines no rooms it falls back to a single central light.
+**Lighting** is one downward spotlight over the centre of the floor, flat across its cone
+(``exponent = 0``) so it leaves no hotspot, plus ``fill`` as the scene's global ambient rather than a
+second positional light.
 
 Adding a texture
 ----------------

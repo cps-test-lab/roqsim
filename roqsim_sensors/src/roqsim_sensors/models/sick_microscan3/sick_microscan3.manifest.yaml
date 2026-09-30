@@ -17,8 +17,6 @@ frame_id: lidar_1_link      # the Neobotix link name of a robot's first scanner
 frames:
   - name: "{frame_id}"      # the vendor scan frame: the mount itself
     parent: mount
-    pos: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
 
 components:
   - lidar:

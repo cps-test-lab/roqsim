@@ -1,0 +1,30 @@
+# roqsim_mobile's piracer (an Ackermann car) in the empty 10 m room, wired for Nav2's car-like stack.
+#
+#   ros2 launch roqsim_nav2_example nav2_carlike.launch.py robot:=piracer
+#
+# The room is the built-in empty_room (walls at +-5 m), which maps/empty_room.yaml covers with its
+# origin in world coordinates, so map == world and the static map -> odom identity in the launch
+# file holds from the spawn pose (0, 0, 0). The car carries no scanner, so it navigates on the map
+# alone (params/carlike_piracer.yaml).
+
+sim:
+  pacing: realtime
+  # 34 mm tyres carrying a 1.5 kg car on four small contact patches, as in piracer_demo.
+  timestep: 0.001
+  view:
+    track: robot
+    distance: 1.5
+    elevation: -45.0
+
+components:
+  # ackermann_drive comes from the model manifest.
+  - spawn_robot:
+      model: piracer
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
+    name: robot
+  # Publishes /clock, /odom with odom -> base_link and /joint_states; subscribes /cmd_vel.
+  - ros2_bridge: {}
+  # simulation_interfaces services; get_entity_state is the robot's true pose, for judging a run.
+  - sim_interfaces: {}
