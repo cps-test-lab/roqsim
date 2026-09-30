@@ -8,10 +8,10 @@ covers both ArUco ``DICT_*`` dictionaries and the AprilTag families) and injecte
 
     pip install 'roqsim_sensors[markers]'
 
-Placement is fixed (a static, non-colliding geom): either free-standing in the world (``pose``) or
-welded to a named body of an already-spawned robot/arm (``attach_to`` + ``prefix``). For the
-body-attached form this plugin must be listed *after* the spawn plugin in the world YAML, so the
-prefixed body already exists in the spec when ``build`` runs.
+Placement is fixed (a static, non-colliding geom): either free-standing in the world or welded to a
+named body of an already-spawned robot/arm (``attach_to`` + ``prefix``), at ``pose`` in that frame.
+For the body-attached form this plugin must be listed *after* the spawn plugin in the world YAML, so
+the prefixed body already exists in the spec when ``build`` runs.
 
 **``emission`` trades detectability for pose accuracy, and defaults to 0 for that reason.** A raised
 emission does keep a tag legible in a dim scene, but it also lifts the *black* texels toward grey and
@@ -36,16 +36,12 @@ Config::
       thickness: 0.002         # box half-thickness behind the marker face (m)
       vflip: false             # flip the texture rows / cols if the render comes out mirrored
       hflip: false             #   (a mirrored tag will NOT decode)
-      # --- placement: EXACTLY ONE of the following two forms ---
-      # (a) free-standing in the world:
-      pose: [x, y, z]          # world position of the marker centre
-      quat: [w, x, y, z]       # world orientation (or `rpy: [r, p, y]`); default: marker faces +Z (up)
-      # (b) welded to a robot/arm body:
-      attach_to: wrist_3_link  # body name (without prefix)
+      pose:                    # the marker centre, in the world or in the `attach_to` body's frame:
+        position: {x: 0.0, y: 0.0, z: 0.0}     #   a geometry_msgs/Pose, omitted components 0
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   # or a quaternion; none faces +Z (up)
+      attach_to: wrist_3_link  # OPTIONAL: weld to this body (without prefix) instead of the world
       prefix: "ur10e_"         # target robot/arm MJCF prefix (matches spawn_robot/spawn_arm `prefix`);
                                #   inherited automatically when this plugin ships in a model manifest
-      rel_pose: [x, y, z]      # marker position in that body's frame (default [0, 0, 0])
-      rel_quat: [w, x, y, z]   # marker orientation in that body's frame (or `rel_rpy`); default identity
 
 The texture, material and geom this builds are named after the entry's label (its ``name:``
 sibling, else ``fiducial_marker``), so a world carrying several markers gives each entry a label.
@@ -53,14 +49,33 @@ sibling, else ``fiducial_marker``), so a world carrying several markers gives ea
 
 from __future__ import annotations
 
-import math
-
 import mujoco
 import numpy as np
 
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors, pose_spelling
+
+#: Keys that would split a pose into a position and an orientation, per frame.
+_SPLIT_POSE = ("quat", "rel_pose", "rel_quat", "rel_rpy")
+
+
+def _pose_errors(config: dict) -> list[str]:
+    """``pose`` as a mapping, and none of the keys that would split it in two."""
+    pose = config.get("pose")
+    if isinstance(pose, (list, tuple)):
+        return [
+            "'pose' is a mapping, a geometry_msgs/Pose relative to the world or the 'attach_to' "
+            f"body: {pose_spelling(pose, config.get('rpy') or config.get('rel_rpy'))}"
+        ]
+    errors = [
+        f"'{key}' is not read -- state the whole placement as 'pose', a geometry_msgs/Pose relative "
+        "to the world or the 'attach_to' body: pose: {position: {x, y, z}, orientation: "
+        "{roll, pitch, yaw} or {x, y, z, w}}, omitted components 0"
+        for key in _SPLIT_POSE
+        if key in config
+    ]
+    return errors + config_pose_errors(config, "fiducial_marker")
 
 
 def _dict_name(family: str) -> str:
@@ -113,12 +128,7 @@ class FiducialMarkerPlugin(Plugin):
             errors.append("'size' must be > 0")
         if float(config.get("quiet_zone", 0.15)) < 0:
             errors.append("'quiet_zone' must be >= 0")
-        has_pose = "pose" in config
-        has_attach = "attach_to" in config
-        if has_pose == has_attach:
-            errors.append("provide exactly one of 'pose' (world) or 'attach_to' (body)")
-        if has_pose and len(config["pose"]) != 3:
-            errors.append("'pose' must be [x, y, z]")
+        errors += _pose_errors(config)
         # Validate the family/id against the actual OpenCV dictionary (also surfaces a missing cv2).
         try:
             cv2 = _import_cv2()
@@ -174,12 +184,9 @@ class FiducialMarkerPlugin(Plugin):
                     f"spawn plugin, and check 'prefix'"
                 )
             g = parent.add_geom()
-            pos = self.config.get("rel_pose", [0.0, 0.0, 0.0])
-            quat = self._orientation("rel_quat", "rel_rpy")
         else:
             g = spec.worldbody.add_geom()
-            pos = self.config["pose"]
-            quat = self._orientation("quat", "rpy")
+        pos, quat = config_pose(self.config)
 
         g.name = f"{self.base_name}_geom"
         g.type = mujoco.mjtGeom.mjGEOM_BOX
@@ -190,16 +197,6 @@ class FiducialMarkerPlugin(Plugin):
         g.contype = 0  # a marker is purely visual: no collisions
         g.conaffinity = 0
         g.group = 2  # visual group, like the model meshes
-
-    def _orientation(self, quat_key: str, rpy_key: str) -> list[float]:
-        if quat_key in self.config:
-            q = [float(v) for v in self.config[quat_key]]
-            n = math.sqrt(sum(v * v for v in q)) or 1.0
-            return [v / n for v in q]
-        if rpy_key in self.config:
-            r, p, y = (float(v) for v in self.config[rpy_key])
-            return rpy_to_quat(r, p, y)
-        return [1.0, 0.0, 0.0, 0.0]
 
     def _render_marker(self) -> np.ndarray:
         """Generate the marker as an (H, W, 3) uint8 RGB array: black tag on white + quiet zone."""

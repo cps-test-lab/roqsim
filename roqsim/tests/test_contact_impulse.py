@@ -94,6 +94,7 @@ def _plugin(model, data, **cfg):
     ctx = _ctx(model, data)
     plugin = ContactImpulsePlugin(dict(cfg), entity="robot")
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -265,6 +266,7 @@ def test_it_counts_exactly_what_the_contact_monitor_counts():
     monitor = ContactMonitorPlugin({"min_force": 0.0, "latch": False}, entity="robot")
     for plugin in (impulse, monitor):
         plugin.configure(ctx)
+        plugin.register_endpoints(ctx)
         plugin.on_reset(ctx)
 
     for _ in range(int(3.0 / model.opt.timestep)):

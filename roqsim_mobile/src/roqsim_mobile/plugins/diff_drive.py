@@ -18,6 +18,12 @@ sits rather than a config key::
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
+      left_actuators: []           # skid-steer: every left wheel's actuator, instead of left_actuator
+      right_actuators: []          #   likewise for the right side (see below)
+      left_joints: []              # skid-steer: every left wheel's joint, instead of left_joint
+      right_joints: []             #   likewise for the right side
+      slip_factor: 1.0             # skid-steer ICR slip compensation (1.0 = ideal diff-drive)
+      base_body: base_link         # body the wheel axes are expressed in to derive their roll signs
       odom_child_frame: base_link   # frame the odometry TF points at (see below)
       odom_rate_hz: 50.0           # publish rate of odom (and its TF) and joint_states
       stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)
@@ -95,9 +101,11 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
+from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 
 class DiffDrivePlugin(Plugin):
@@ -219,8 +227,6 @@ class DiffDrivePlugin(Plugin):
         self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        # Transport scope for this robot's endpoints: own config wins, else inherited from the spawn.
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
 
         def act(n):
@@ -281,78 +287,45 @@ class DiffDrivePlugin(Plugin):
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
 
-        # Declare this robot's I/O as backend-neutral endpoints. A bridge (ROS 2, zenoh, ...) reads
-        # ctx.interface and wires them up; nothing ROS-specific is imported here -- the message type
-        # is named as a string under a backend hint block, resolved by the bridge. ``namespace``
-        # scopes topics/frames per robot so one bridge can serve a many-robot world.
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.TwistStamped"
-                        if self.stamped_cmd_vel
-                        else "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=self.odom_rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": self.odom_child_frame,
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        if self.publish_joint_states:
-            ctx.interface.add(
-                Endpoint(
-                    name="joint_states",
-                    direction="out",
-                    owner=self.robot,
-                    namespace=ns,
-                    read=self.read_joint_states,
-                    rate_hz=self.odom_rate_hz,
-                    backend={
-                        "ros2": {
-                            "type": "sensor_msgs.msg.JointState",
-                            "topic": self.topic_override("joint_states") or "joint_states",
-                        }
-                    },
-                )
-            )
+    # This robot's I/O as backend-neutral endpoints; a bridge carries each by its payload type, under
+    # the namespace (own config, else the spawn's) that scopes one robot's topics and frames.
+    @endpoint.stream(Twist, ros2=lambda self: {"stamped": self.stamped_cmd_vel})
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed; a differential drive drops it
+            wz: yaw rate
+        """
+        self.drive(vx, vy, wz)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vy dropped: differential drive cannot strafe)."""
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(np.clip(w, -self.max_w, self.max_w))
-        # Physics thread by construction: a bridge posts the command onto it, and an in-process
+        # Physics thread by construction: the cmd_vel stream is applied there, and an in-process
         # driver calls this between steps.
         self.watchdog.stamp(self._ctx)
 
-    def read_odom(self):
+    @endpoint.out(
+        rate="odom_rate_hz",
+        ros2=lambda self: {"child_frame_id": self.odom_child_frame, "emit_tf": True},
+    )
+    def odom(self) -> Odometry:
+        """Wheel odometry, integrated from the wheels' own motion."""
+        x, y, yaw, v, w = self._odom
+        return Odometry.planar(x, y, yaw, v, 0.0, w)
+
+    def read_odom(self) -> tuple[float, float, float, float, float, float]:
+        """The latest ``(x, y, yaw, vx, vy, w)``, what the :class:`RobotHandle` reads."""
         x, y, yaw, v, w = self._odom
         return (x, y, yaw, v, 0.0, w)
 
-    def read_joint_states(self):
-        return (self._jnames, self._jpos, self._jvel)
+    @endpoint.out(rate="odom_rate_hz", when="publish_joint_states")
+    def joint_states(self) -> JointState:
+        """The wheels' positions and velocities."""
+        return JointState(self._jnames, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._target_v = self._target_w = 0.0
@@ -363,7 +336,7 @@ class DiffDrivePlugin(Plugin):
         self._read_joints(ctx.model, ctx.data)
 
     def _read_joints(self, m, d) -> None:
-        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        """The joint_states payload, written in place so ``joint_states`` is zero-copy."""
         for k, jid in enumerate(self._jid_l + self._jid_r):
             self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
             self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
