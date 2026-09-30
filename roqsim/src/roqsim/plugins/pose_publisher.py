@@ -32,8 +32,9 @@ Config::
       world_frame: map      # the parent frame of a pose in the world
       topics: {poses: ground_truth}   # the one topic every pose goes out on (default "poses")
 
-Each pose is a frame path (:mod:`roqsim.paths`): an entity (its root), or a body, site, declared
-frame or device frame of an entity or a component nested in one, named as TF shows it.
+Each pose is a frame path (:mod:`roqsim.paths`): an entity (its root), or a body, site, camera,
+declared frame or device frame of an entity or a component nested in one, named as TF shows it; or
+a body, site or camera of the world's own MJCF that no entity owns, by its MuJoCo name (``gantry``).
 ``relative_to`` is another frame path, or ``world`` (the default). Nested under an entity, the
 paths are relative to it: ``.`` is the entity itself, ``mouse`` its ``mouse``, and a leading ``/``
 starts at the top of the world; at the top of a world they start with an entity's name, and the
@@ -41,10 +42,10 @@ entry is declared after the entries that spawn what it names.
 
 One endpoint per pose, ``poses/<child>``: a :class:`~roqsim.types.Transform` from the
 ``relative_to`` frame's TF name (``world_frame`` for the world) to ``child`` (default the frame's
-own name: its body's, site's or frame's, or the entity's name for a root). ROS carries each as a
-one-transform ``tf2_msgs/TFMessage``, as ``PosePublisher`` publishes one pose per message. The
-poses are read from the core pose data (:func:`roqsim.frames.frame_pose`); a frame of an entity
-that is absent publishes nothing.
+own name: its body's, site's, camera's or frame's, or the entity's name for a root). ROS carries
+each as a one-transform ``tf2_msgs/TFMessage``, as ``PosePublisher`` publishes one pose per
+message. The poses are read from the core pose data (:func:`roqsim.frames.frame_pose`); a frame of
+an entity that is absent publishes nothing, and an unowned frame always publishes.
 """
 
 from __future__ import annotations
