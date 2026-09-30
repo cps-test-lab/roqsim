@@ -23,7 +23,7 @@ being surprised is a trap:
   change hover, station-keeping or the low-speed manoeuvres this substrate is used for.
 * **rotor drag / induced-drag terms** -- the lateral force proportional to rotor speed times body
   velocity that makes a real quad's velocity dynamics first-order rather than pure double
-  integrator. MuJoCo's medium drag (``sim.physics`` density/viscosity) supplies body drag, but it
+  integrator. MuJoCo's medium drag (``sim.density``/``sim.viscosity``) supplies body drag, but it
   is not the same term.
 * **ground effect** -- the thrust increase within roughly one rotor diameter of the floor. An
   experiment about landing or low hover would notice.
@@ -33,7 +33,6 @@ being surprised is a trap:
 Config::
 
     multirotor_motors:
-      robot: drone                # entity name registered by spawn_robot
       namespace: ""               # transport scope (default: inherited from spawn_robot)
       body: x500                  # root body the reaction torque acts on (default: entity's root)
       rotors: [rotor0_thrust, rotor1_thrust, rotor2_thrust, rotor3_thrust]
@@ -68,7 +67,10 @@ the pair of the other, which is also why yaw authority is the weakest axis on a 
 force/torque about the body CoM expressed in world coordinates, so the body-z torque is rotated by
 the body's rotation before it is written. Writing a body-frame torque straight in is correct only
 while the drone is level -- and it is wrong precisely when the drone is tilted, which is when yaw
-control is being exercised.
+control is being exercised. It is ADDED to what the airframe's entry already holds, replacing only
+this plugin's own contribution from the step before, so another plugin's external force on the same
+body survives. It acts on the entity's root body (``body:`` names another), which is the airframe
+whether the rotor sites sit on it or on rotor bodies of their own.
 
 **Air matters.** ``density``/``viscosity`` default to 0 in MuJoCo, so a world that does not set
 them flies this drone through a vacuum: full rotor authority, no aerodynamic damping, and a
@@ -83,8 +85,10 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.plugin import Plugin
 
 logger = logging.getLogger(__name__)
@@ -129,6 +133,9 @@ class MultirotorMotorsPlugin(Plugin):
         self._spin = np.array(self.cfg("spin"), dtype=float)
         self._cmd = np.zeros(len(self.cfg("rotors")))
         self._state = np.zeros(len(self.cfg("rotors")))
+        #: The world-frame torque this plugin added to the airframe last step, so the next write
+        #: replaces it without discarding anyone else's.
+        self._applied = np.zeros(3)
 
     def cfg(self, key):
         return self.config.get(key, _DEFAULTS[key])
@@ -157,7 +164,6 @@ class MultirotorMotorsPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         model = ctx.model
 
         rotors = list(self.cfg("rotors"))
@@ -178,13 +184,16 @@ class MultirotorMotorsPlugin(Plugin):
                 f"The model must expose one force actuator per rotor, in PX4 motor order."
             )
 
-        body = self.config.get("body") or (entity.meta.get("root_body") if entity else None)
-        self._bid = (
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + body) if body else -1
-        )
-        if self._bid < 0:
-            # Fall back to the body owning rotor 0's site: that is where the thrust is applied and
-            # therefore the body being flown, by construction.
+        # The airframe: a configured `body:` (a name in the model's own namespace, so it takes the
+        # prefix), else the entity's root body, which is already the compiled name. Only with no
+        # entity at all is it the body owning rotor 0's site -- right when the sites sit on the
+        # airframe, wrong when a rotor is a body of its own, so an entity's root always wins.
+        body = self.config.get("body")
+        if body:
+            self._bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + body)
+        elif entity is not None and entity.body:
+            self._bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+        else:
             site = model.actuator_trnid[self._aids[0], 0]
             self._bid = int(model.site_bodyid[site]) if site >= 0 else -1
         if self._bid < 0:
@@ -230,18 +239,20 @@ class MultirotorMotorsPlugin(Plugin):
                 read_normalized=self.read_normalized,
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="motor_cmd",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda msg: self.set_normalized(getattr(msg, "data", msg)),
-                backend={"ros2": {"type": "std_msgs.msg.Float32MultiArray", "topic": "motor_cmd"}},
-            )
-        )
 
     # -- commands --------------------------------------------------------------------------------
+
+    # No neutral type carries it, so the rotor outputs map by name onto the message a flight stack's
+    # mixer publishes.
+    @endpoint.stream(ros2={"type": "std_msgs.msg.Float32MultiArray"})
+    def motor_cmd(self, data: NDArray[np.float64]) -> None:
+        """Normalized rotor outputs, applied once per step through the motor lag.
+
+        Args:
+            data: one output per rotor, 0..1, in rotor order; clipped to 0..1, and a command of
+                another length is refused and the previous one kept
+        """
+        self.set_normalized(data)
 
     def set_normalized(self, values) -> None:
         """Command the rotors with normalized 0..1 outputs, in the model's rotor order.
@@ -272,6 +283,7 @@ class MultirotorMotorsPlugin(Plugin):
             # with a torque nobody commanded, and it looks like a physics difference between
             # repetitions rather than like leftover state.
             ctx.data.xfrc_applied[self._bid] = 0.0
+            self._applied = np.zeros(3)
             for aid in self._aids:
                 ctx.data.ctrl[aid] = 0.0
 
@@ -299,4 +311,6 @@ class MultirotorMotorsPlugin(Plugin):
         # xfrc_applied is expressed there (see the module docstring).
         tau_z = float(-np.sum(self._spin * float(self.cfg("moment_constant")) * thrust))
         rot = np.array(data.xmat[self._bid]).reshape(3, 3)
-        data.xfrc_applied[self._bid, 3:6] = rot @ np.array([0.0, 0.0, tau_z])
+        torque = rot @ np.array([0.0, 0.0, tau_z])
+        data.xfrc_applied[self._bid, 3:6] += torque - self._applied
+        self._applied = torque

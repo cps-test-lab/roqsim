@@ -42,7 +42,8 @@ import mujoco
 import numpy as np
 from numpy.lib import format as npy_format
 
-from . import keys
+from . import flex_skin, keys
+from .exit_status import BAD_INPUT, RECORDING
 from .kinematics import body_twist
 from .rates import (
     SNAP_NOTABLE,
@@ -294,6 +295,14 @@ _PROVENANCE_PACKAGES = ("roqsim", "mujoco", "numpy")
 class RecordingError(RuntimeError):
     """A recording cannot be written or read (see the message)."""
 
+    exit_status = RECORDING
+
+
+class RecordingNotFoundError(RecordingError):
+    """The recording named does not exist: a wrong input, not an unreadable recording."""
+
+    exit_status = BAD_INPUT
+
 
 def env_flag(name: str) -> bool:
     """Read a capture on/off switch from the environment.
@@ -306,8 +315,8 @@ def env_flag(name: str) -> bool:
     return value is not None and value.strip().lower() not in ("", "0", "false", "no", "off")
 
 
-def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
-    """Every named body, in body order, and the parents of the unnamed ones left out.
+def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str], list[tuple[str, int]]]:
+    """Every named body, in body order; the parents of the unnamed ones left out; and the flexes'.
 
     All of them rather than only those parented to the world: what a trial's success rule reads is
     often welded below a robot -- a tool on a flange, a workpiece in a gripper -- and a consumer
@@ -317,16 +326,26 @@ def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
 
     An unnamed body has no value for the ``frame`` column, so it is left out and reported instead:
     a tool missing from the record then shows up in the run log rather than as an absent row.
+
+    A flex's own bodies -- one per vertex or node, named by the ``<flexcomp>`` (``block_17``) -- are
+    left out too, as ``(flex name, count)`` per flex: hundreds of rows per sample that no success
+    rule reads by name. They stay in the ``.npz`` and in the run capture, whose pose tracks are what
+    a replay deforms the flex from. The body a flex is declared in is not one of them.
     """
+    owned = flex_skin.owned_bodies(model)
+    flex_owned = {b for bodies in owned.values() for b in bodies}
+    flexes = [(flex_skin.flex_name(model, f), len(bodies)) for f, bodies in owned.items()]
     out, skipped = [], []
     for bid in range(1, model.nbody):  # 0 is the world body itself
+        if bid in flex_owned:
+            continue
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid)
         if name:
             out.append((bid, name))
         else:
             parent = int(model.body_parentid[bid])
             skipped.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, parent) or "world")
-    return out, skipped
+    return out, skipped, flexes
 
 
 def package_versions() -> dict:
@@ -564,10 +583,10 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
 class StateRecorder:
     """Sample MuJoCo state into a ``.npz`` while a run proceeds. A **driver** object, not a plugin.
 
-    Capture is a session concern, not an experiment one -- the same footing as ``sim.headless`` (which
-    the world YAML explicitly rejects), ``--left-ui`` and ``--manual-control``. So this is constructed by
-    a driver and ``sample``\\ d from the loop the driver already runs: no lifecycle hooks, nothing
-    injected into a parsed world, and no second route through the world YAML.
+    Capture is a session concern, not an experiment one -- the same footing as ``--headless``,
+    ``--left-ui`` and ``--manual-control``. So this is constructed by a driver and ``sample``\\ d
+    from the loop the driver already runs: no lifecycle hooks, nothing injected into a parsed world,
+    and no second route through the world YAML.
 
     Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step) plus a copy
     into a write buffer. Everything expensive -- rebuilding the world, rendering, encoding -- happens
@@ -624,6 +643,10 @@ class StateRecorder:
         self._first_t = self._last_t = 0.0
         self._first_w = self._last_w = 0.0
         self._next_due = 0.0
+        #: How far ``sim_time`` may fall short of the due time and still be due: half a step.
+        #: ``data.time`` sums dt per step and the due time sums the period per sample, so the step
+        #: that lands on the due time can read a few ulp below it; the step before is a whole dt away.
+        self._half_step = 0.5 * float(ctx.model.opt.timestep)
         self._closed = False
         # Origin for the wall column, taken before any sample so the series starts at ~0. A *take*
         # started by F9 mid-session gets its own origin, which is what makes each take's real-time
@@ -642,7 +665,9 @@ class StateRecorder:
         # asks for it, because it is a second file per run and only a campaign wants one.
         self._pose_path = (self.path.parent / SIM_POSE_FILENAME) if sim_poses else None
         self._pose_file = None
-        self._pose_bodies, self._pose_skipped = _named_bodies(ctx.model) if sim_poses else ([], [])
+        self._pose_bodies, self._pose_skipped, self._pose_flexes = (
+            _named_bodies(ctx.model) if sim_poses else ([], [], [])
+        )
         # The roster that says what those rows are. Held as a live reference to the registry, not a
         # copy: an entity spawned or removed mid-run changes the answer, and a snapshot taken at
         # construction would describe a world the trial has since left.
@@ -719,9 +744,11 @@ class StateRecorder:
         1x sim time whatever wall-clock pacing the run used. The wall clock is *recorded* rather than
         gated on, which is what makes the pacing itself a measurable property of the run instead of a
         thing the sample schedule hides.
+
+        Due means within half a step of the due time (see ``_half_step``).
         """
         now = ctx.sim_time
-        if now + 1e-12 < self._next_due:
+        if now + self._half_step < self._next_due:
             return False
         # Absolute schedule, so a long step cannot drag the whole series late; resynchronise after a
         # gap (a reset, a paused window) rather than firing a burst of catch-up samples.
@@ -784,9 +811,9 @@ class StateRecorder:
         One convention, stated because it is easy to get wrong and impossible to see: ``mj_step``
         integrates ``qpos`` and then leaves ``xpos`` holding the pose from *before* that integration,
         so the row is a coherent snapshot of ``sim - dt`` carrying the label ``sim``. That is
-        deliberately the same one-step lag the ``ground_truth_pose`` plugin publishes with, so this
-        table and the TF one describe the same instant and any difference between them is transport
-        rather than convention. It cancels in every derivative.
+        deliberately the same one-step lag every endpoint read in ``post_step`` has -- the core pose
+        endpoints among them -- so this table and a published pose describe the same instant and any
+        difference between them is transport rather than convention. It cancels in every derivative.
         """
         if self._pose_path is None:
             return
@@ -805,6 +832,14 @@ class StateRecorder:
                     len(self._pose_skipped),
                     f" (under {', '.join(skipped)})" if skipped else "",
                 )
+                for flex, count in self._pose_flexes:
+                    self.log.info(
+                        "recording: %s omits the %d bodies of flex %r (its vertices or nodes; "
+                        "the recording and the run capture carry them)",
+                        SIM_POSE_FILENAME,
+                        count,
+                        flex,
+                    )
             data = ctx.data
             for bid, name in self._pose_bodies:
                 pos, quat = data.xpos[bid], data.xquat[bid]

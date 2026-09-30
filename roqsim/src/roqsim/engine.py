@@ -7,9 +7,20 @@ Lifecycle::
 
     setup()   -> build phase: plugin.build(spec) for all; spec.compile(); make data;
                  plugin.configure(ctx)
-    reset()   -> mj_resetData; plugin.on_reset(ctx)
+    reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
+                 (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base)
+    idle()    -> drain posted commands; mj_forward if any ran (a paused driver, no time advance)
     shutdown()-> plugin.shutdown(ctx) in reverse order
+
+A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leaving runs
+:meth:`shutdown`, whether the body returned or raised::
+
+    engine = Engine(cfg)
+    engine.ctx.seed = seed      # before setup: configure may read it
+    with engine:
+        engine.reset()
+        ...
 
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
 wall-time) and the one-shot load phases — plugin resolution, world load, compile, data creation —
@@ -35,12 +46,18 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
         "MUJOCO_GL=egl only after installing libegl1/libglvnd0."
     ) from err
 
+from . import entity_pose
+from .actuators import GravityReaction
 from .assets import deduplicate_assets
-from .config import SimConfig, instantiate_plugins
+from .config import SIM_OPTION_KEYS, SimConfig, instantiate_plugins
 from .context import SimContext
+from .endpoint import apply_world_qos
+from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
+from .interpenetration import Interpenetration, interpenetrations, summary
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
+from .solref import floor_rule, floor_text, solref_floor
 from .world import build_world, world_file
 
 _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
@@ -54,6 +71,9 @@ _INTEGRATORS = {
     "rk4": mujoco.mjtIntegrator.mjINT_RK4,
     "implicit": mujoco.mjtIntegrator.mjINT_IMPLICIT,
     "implicitfast": mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
+    # What a flex with elasticity or passive contact requires; ``sim.integrator: auto`` picks it for
+    # such a model (see :mod:`roqsim.flex`).
+    "discrete": mujoco.mjtIntegrator.mjINT_DISCRETE,
 }
 
 #: Constraint solvers, for ``sim.solver``. Newton converges in far fewer iterations than PGS/CG and is
@@ -80,9 +100,8 @@ _CONES = {
 #:
 #: They are here for FIDELITY first. A published model that enables MuJoCo's global override has to be
 #: reproducible as published, and these three are the values such a model states — and often the ones
-#: it randomizes, since the flag makes them the only contact parameters in play. One corpus
-#: reconstruction turns on exactly that, and its spec records the flag as REQUIRED for the three to
-#: have any effect at all. That a sweep over them is then an ordinary campaign factor, needing no
+#: it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+#: three have no effect at all. That a sweep over them is then an ordinary campaign factor, needing no
 #: bespoke plugin and no hand-edited MJCF per cell, is the second reason rather than the first.
 #:
 #: GLOBAL, and BEFORE COMPILE — both halves load-bearing. Per-geom ``solref``/``solimp`` stay where
@@ -131,6 +150,16 @@ class Engine:
             self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
         self._setup_done = False
+        #: The integrator the model was compiled with and why (:class:`roqsim.flex.IntegratorChoice`);
+        #: set by :meth:`setup`, before compile.
+        self.integrator: IntegratorChoice | None = None
+        #: What the last :meth:`reset` left interpenetrating beyond tolerance, deepest first
+        #: (:mod:`roqsim.interpenetration`). Empty until a reset has run.
+        self.interpenetrations: list[Interpenetration] = []
+        #: Takes the weight a drive holds off the degrees of freedom above it -- a mobile base's free
+        #: joint -- between ``mj_step1`` and ``mj_step2`` (:class:`roqsim.actuators.GravityReaction`).
+        #: ``None`` when the model has no such mechanism, and then :meth:`step` is one ``mj_step``.
+        self._gravity_reaction: GravityReaction | None = None
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
         # perf_counter call (pre_step/post_step run once per plugin per physics step).
         self._profile = profile
@@ -153,6 +182,14 @@ class Engine:
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
+
+    def __enter__(self) -> Engine:
+        """Run :meth:`setup`. A setup that raises has shut down what it configured."""
+        self.setup()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.shutdown()
 
     def _world_plugins(self) -> list[Plugin]:
         """The plugins that build their own ground + lighting, in declaration order."""
@@ -223,12 +260,19 @@ class Engine:
                     removed["textures_removed"],
                 )
 
-        # Apply configured physics options before compile. Default to implicitfast, which the
-        # velocity-servo wheel drives need for stability (Euler blows them up).
+        # Apply configured physics options before compile, and after every build hook: a stated
+        # `sim.timestep` wins over whatever a plugin or the world MJCF wrote, and the integrator is
+        # always `sim.integrator`'s.
         if self.config.timestep is not None:
             spec.option.timestep = self.config.timestep
-        integrator = self.config.sim.get("integrator", "implicitfast")
-        spec.option.integrator = _INTEGRATORS[integrator]
+        # After the builds because a plugin may be what adds the flex that decides it. `auto` (the
+        # default) is implicitfast for a model without a flex that needs discrete -- what the
+        # velocity-servo wheel drives need for stability (Euler blows them up) -- and discrete for
+        # one with such a flex, which MuJoCo refuses to compile under anything implicit.
+        self.integrator = resolve_integrator(self.config.sim.get("integrator", AUTO), spec)
+        spec.option.integrator = _INTEGRATORS[self.integrator.resolved]
+        self.config.resolved["integrator"] = self.integrator.resolved
+        self.logger.info("integrator: %s (%s)", self.integrator.resolved, self.integrator.reason)
 
         # Solver effort, left at MuJoCo's defaults unless a world asks for more. A contact-rich world
         # needs more than a navigation world: a grasped object held between two pads creeps out of the
@@ -236,25 +280,17 @@ class Engine:
         # solver/constraint hardness rather than to friction, so it reads as a friction problem and is
         # not one -- so a world that needs a tighter solve asks for one here, in the document, rather
         # than in whatever code happens to build it.
-        for key, attr in (
-            ("solver", "solver"),
-            ("iterations", "iterations"),
-            ("ls_iterations", "ls_iterations"),
-            ("noslip_iterations", "noslip_iterations"),
-            ("impratio", "impratio"),
-            # The medium. MuJoCo defaults both to 0 -- a vacuum -- which is right for a ground robot
-            # and wrong for anything that flies: a quadrotor still hovers there, but nothing damps
-            # it, so a lateral step rings forever and reads as bad gains rather than as missing air.
-            # Before these existed an aerial model had no honest option but to pin <option> itself,
-            # and thereby reconfigure every world it was spawned into.
-            ("density", "density"),
-            ("viscosity", "viscosity"),
-        ):
+        # SIM_OPTION_KEYS is also what the loader admits, so every key applied here is one a world
+        # may carry. Among them the medium, `density`/`viscosity`: MuJoCo defaults both to 0 -- a
+        # vacuum -- which is right for a ground robot and wrong for anything that flies, where
+        # nothing damps a lateral step, so it rings forever and reads as bad gains rather than as
+        # missing air.
+        for key in SIM_OPTION_KEYS:
             if (value := self.config.sim.get(key)) is not None:
                 setattr(
                     spec.option,
-                    attr,
-                    _SOLVERS[value] if key == "solver" else type(getattr(spec.option, attr))(value),
+                    key,
+                    _SOLVERS[value] if key == "solver" else type(getattr(spec.option, key))(value),
                 )
         if (cone := self.config.sim.get("cone")) is not None:
             spec.option.cone = _CONES[cone]
@@ -268,6 +304,9 @@ class Engine:
             # world key rather than something baked into every model that might be used that way.
             spec.option.gravity = [float(v) for v in gravity]
         self._apply_contact_override(spec)
+        # Last, once every option it reads is final: the solver rule depends on the solver and
+        # noslip settings, whichever of the world MJCF or `sim` stated them.
+        check_flex_options(spec, self.integrator)
 
         # Name the model so the viewer never shows MuJoCo's default "MuJoCo Model" title: prefer the
         # world's `sim.name`, else keep a meaningful baked name, else "Roqsim".
@@ -286,13 +325,46 @@ class Engine:
             self.ctx.model = spec.compile()
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
+        self._gravity_reaction = GravityReaction.of(self.ctx.model)
+        if self._gravity_reaction is not None and self.integrator.resolved == "rk4":
+            # mj_step2 integrates RK4 as Euler, so stepping in two halves would run a different
+            # integrator than the one the world names -- and nothing would say so.
+            raise PluginError(
+                f"sim.integrator: rk4 cannot step this world: drives on the moving robot(s) rooted "
+                f"at {self._gravity_reaction.robots} hold a mechanism up, and the reaction that "
+                "keeps its weight on the ground runs between mj_step1 and mj_step2, which integrate "
+                "RK4 as Euler -- set sim.integrator: auto (implicitfast), implicit or euler, or "
+                "gravity_compensation: false on that robot's spawn if its drives really hold nothing"
+            )
 
-        for plugin in self.plugins:
-            self._timed(plugin, "configure", plugin.configure, self.ctx)
-            # After configure, because the entity has to be registered before its presence can
-            # be set; here rather than inside each plugin so that a plugin registering an entity
-            # gets the world's `present:` honoured by declaring that it registers one.
-            plugin.apply_declared_presence(self.ctx)
+        # A failed setup is never handed to a driver, so it shuts down what configure opened itself:
+        # every plugin configured so far, the failing one included (it may have opened something
+        # before it raised). Build opens nothing, so the build loop needs no such guard.
+        configured: list[Plugin] = []
+        try:
+            for plugin in self.plugins:
+                configured.append(plugin)
+                # Stamps the endpoints this plugin registers with its address.
+                self.ctx.interface.producer = plugin.address
+                before = len(self.ctx.interface.all())
+                self._timed(plugin, "configure", plugin.configure, self.ctx)
+                # After its configure, so an endpoint's options read what configure resolved, and
+                # before the next plugin's: a bridge binds the interface in its own configure, and
+                # is listed after its producers.
+                plugin.register_endpoints(self.ctx)
+                self.ctx.interface.producer = ""
+                # The world's `qos:` for what this plugin registered, hand-built endpoints included.
+                apply_world_qos(plugin, self.ctx.interface.all()[before:])
+                # Each entity the plugin registered gets its core pose endpoint, likewise before a
+                # bridge listed next binds.
+                entity_pose.register(self.ctx)
+                # After configure, because the entity has to be registered before its presence can
+                # be set; here rather than inside each plugin so that a plugin registering an entity
+                # gets the world's `present:` honoured by declaring that it registers one.
+                plugin.apply_declared_presence(self.ctx)
+        except BaseException:
+            self._shutdown_plugins(configured, " after a configure failed")
+            raise
 
     def _apply_contact_override(self, spec) -> None:
         """Apply ``sim.contact_override`` — MuJoCo's global ``o_solref``/``o_solimp``/``o_friction``.
@@ -306,12 +378,15 @@ class Engine:
         ``{solref: [0.05]}`` varies the contact time constant and leaves the damping ratio alone —
         which is what a sweep over one element means.
 
-        A contact time constant below ``2 * timestep`` is refused, because MuJoCo clamps it there
-        and says nothing: asked for 0.5 ms at a 2 ms step, a world gets 4 ms and a penetration
-        bit-identical to the one it was trying to tighten away from. That is the same invisibility
-        this key's unknown-name check exists for, one level down — a value rather than a spelling.
-        The floor moves with the step, so the fix is a smaller ``sim.timestep``, and the error says
-        so. It is checked here rather than at load because the step may come from the model.
+        A contact time constant below MuJoCo's floor (:func:`roqsim.solref.solref_floor`) is
+        refused, because MuJoCo raises it to the floor and says nothing: asked for 0.5 ms at a 2 ms
+        step under ``implicitfast``, a world gets 4 ms and a penetration bit-identical to the one it
+        was trying to tighten away from. That is the same invisibility this key's unknown-name check
+        exists for, one level down -- a value rather than a spelling. The floor is the one for the
+        integrator this model compiles with (two steps, or under ``discrete`` about one, depending on
+        the damping ratio and ``solimp``), so it is checked here, after the integrator is resolved
+        and before compile, rather than at load. It judges the ``o_solref`` the override puts in
+        force against the ``o_solimp`` it puts in force, stated or kept from the model.
         """
         override = self.config.sim.get("contact_override")
         if not override:
@@ -321,37 +396,47 @@ class Engine:
             if value is None:
                 continue
             values = [float(v) for v in (value if isinstance(value, (list, tuple)) else [value])]
-            if key == "solref":
-                self._check_solref_floor(values, float(spec.option.timestep))
             current = list(getattr(spec.option, attr))
             setattr(spec.option, attr, values + current[len(values) :])
+        self._check_solref_floor(spec.option, stated="solref" in override)
         spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_OVERRIDE
         self.logger.info("contact_override active: %s", dict(override))
 
     @staticmethod
-    def _check_solref_floor(values: list[float], timestep: float) -> None:
-        """Refuse a contact time constant MuJoCo would silently clamp to ``2 * timestep``.
+    def _check_solref_floor(option, stated: bool) -> None:
+        """Refuse an override time constant MuJoCo would silently raise to its floor.
 
-        Only the POSITIVE form is a time constant. A negative ``solref[0]`` is MuJoCo's direct
+        Only the standard form is a time constant. A negative ``solref`` is MuJoCo's direct
         parameterisation, where the pair is ``(-stiffness, -damping)`` and no floor applies; refusing
         it would reject a world that is not asking for a time constant at all.
         """
-        if not values or values[0] <= 0.0:
+        solref = [float(v) for v in option.o_solref]
+        if solref[0] <= 0.0 or solref[1] <= 0.0:
             return
-        floor = 2.0 * timestep
-        if values[0] < floor:
-            raise PluginError(
-                f"sim.contact_override.solref: a contact time constant of {values[0]} s is below "
-                f"MuJoCo's floor of 2 * timestep = {floor} s, which it would silently use instead — "
-                f"the run would report the tighter value and behave as though {floor} s had been "
-                f"asked for. Lower sim.timestep to reach it, or state {floor} s or more."
-            )
+        floor = solref_floor(option, solref, [float(v) for v in option.o_solimp])
+        if floor is None or solref[0] >= floor:
+            return
+        source = "" if stated else ", the model's o_solref that the override puts in force,"
+        shown = floor_text(floor)
+        raise PluginError(
+            f"sim.contact_override.solref: a contact time constant of {solref[0]:.6g} s{source} is "
+            f"below MuJoCo's floor of {shown} s ({floor_rule(option)}), which it would silently "
+            f"use instead -- the run would report the tighter value and behave as though {shown} s "
+            f"had been asked for. Lower sim.timestep to reach it (the floor scales with the step), "
+            f"or state {shown} s or more."
+        )
 
     def reset(self, **params) -> None:
-        """Reset physics and let plugins restore initial state. ``params`` are forwarded via config.
+        """Reset physics and let plugins restore initial state.
 
-        (The scenario-execution adapter maps injected scenario parameters onto ``params``; plugins
-        read them from ``ctx`` / their own config. Kept simple here.)
+        ``params`` describe the trial being started: they are set on the blackboard as
+        ``reset_params`` before any plugin's ``on_reset``, an empty mapping when none are given.
+        The scenario-execution adapter forwards the scenario parameters it does not consume here.
+
+        The state it leaves is checked for bodies placed inside one another
+        (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
+        :attr:`interpenetrations` and logged as one WARNING naming the deepest pairs. Nothing is
+        refused, and the state is not touched.
         """
         self._require_setup()
         # Flush any pending commands so nothing targets the pre-reset state.
@@ -362,10 +447,13 @@ class Engine:
         # `rng_for` is keyed on simulated time, so without this every trial after the first
         # would replay the first one's noise exactly.
         self.ctx.episode += 1
+        # A stop request ends the trial that made it, not the next one.
+        self.ctx.stop_requested = False
+        self.ctx.stop_reason = ""
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
-        if params:
-            self.ctx.blackboard.set("reset_params", params)
+        # Set on every reset, so no trial reads the previous one's parameters.
+        self.ctx.blackboard.set("reset_params", dict(params))
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
@@ -375,6 +463,12 @@ class Engine:
         # command, a presence: until the next step, the derived quantities (site poses, sensor data,
         # contacts) must describe that state and not the one before the plugins ran.
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
+        # That state is what the trial starts from, so it is where an overlap the solver will blow
+        # apart on the first steps is visible -- and the run's own log is where it must be said,
+        # since what follows looks like a controller or protocol fault. Reported, never refused.
+        self.interpenetrations = interpenetrations(self.ctx.model, self.ctx.data, self.ctx.entities)
+        if self.interpenetrations:
+            self.logger.warning("%s", summary(self.interpenetrations))
         for gate in self.ctx.gates():
             gate.reset()
 
@@ -386,24 +480,52 @@ class Engine:
         # 2) controllers write actuators.
         for plugin in self.plugins:
             self._timed(plugin, "pre_step", plugin.pre_step, self.ctx)
-        # 3) physics.
-        mujoco.mj_step(self.ctx.model, self.ctx.data)
+        # 3) physics. In two halves when a drive holds a mechanism on a moving base, so its weight
+        # reaches the ground through that base (roqsim.actuators.GravityReaction).
+        if self._gravity_reaction is None:
+            mujoco.mj_step(self.ctx.model, self.ctx.data)
+        else:
+            mujoco.mj_step1(self.ctx.model, self.ctx.data)
+            self._gravity_reaction.apply(self.ctx.model, self.ctx.data)
+            mujoco.mj_step2(self.ctx.model, self.ctx.data)
         # 4) sensors/transport/recording read state.
         for plugin in self.plugins:
             self._timed(plugin, "post_step", plugin.post_step, self.ctx)
         # 5) snapshot for cross-thread readers.
         self.ctx.publish_snapshot({"time": self.ctx.sim_time})
 
+    def idle(self) -> int:
+        """Run posted commands without advancing time; the driver calls it while not stepping.
+
+        A paused run still owes its callers their commands: a service that posts a change and waits
+        for it would otherwise time out for as long as the pause lasts. When any command ran,
+        ``mj_forward`` brings the derived quantities (body poses, sensor data, contacts) in line
+        with what it wrote, so a read before the next step sees the change. ``data.time`` does not
+        move and no plugin hook runs. Returns the number of commands run.
+        """
+        self._require_setup()
+        ran = self.ctx.drain_commands()
+        if ran:
+            mujoco.mj_forward(self.ctx.model, self.ctx.data)
+        return ran
+
     def shutdown(self) -> None:
-        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest)."""
+        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest).
+
+        A no-op before :meth:`setup` completed and after a shutdown: a setup that failed in
+        configure has already shut down what it configured, and nothing else is open.
+        """
         if not self._setup_done:
             return
-        for plugin in reversed(self.plugins):
+        self._shutdown_plugins(self.plugins, "")
+        self._setup_done = False
+
+    def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
+        for plugin in reversed(plugins):
             try:
                 self._timed(plugin, "shutdown", plugin.shutdown, self.ctx)
             except Exception:
-                self.logger.exception("plugin %s shutdown failed", plugin.name)
-        self._setup_done = False
+                self.logger.exception("plugin %s shutdown failed%s", plugin.name, why)
 
     # -- introspection ------------------------------------------------------------------------
     @property

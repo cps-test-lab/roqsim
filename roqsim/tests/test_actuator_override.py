@@ -17,12 +17,14 @@ import numpy as np
 import pytest
 
 from roqsim.actuators import (
+    ACTUATORS,
     apply_gravity_compensation,
     resolve,
+    unread_gain_errors,
     uses_impedance,
-    validate_override,
 )
 from roqsim.plugin import PluginError
+from roqsim.schema import Settings, validate
 
 #: A two-joint arm with a position servo, in the shape the real models use: gains on a `<default>`
 #: class rather than the actuator, which is where every shipped arm actually keeps them.
@@ -233,40 +235,78 @@ def test_a_gain_the_models_own_law_does_not_read_is_refused():
 # -- the shape, checked before anything is compiled ----------------------------------------------
 
 
+def _config_errors(block) -> list[str]:
+    """Every config-stage error a spawn plugin reports for *block*: its declaration, then the rule
+    between two keys -- what ``config_errors`` runs for a plugin that declares ``ACTUATORS``."""
+    return validate({"actuators": ACTUATORS}, {"actuators": block}) + unread_gain_errors(block)
+
+
 def test_nothing_declared_is_no_error():
-    assert validate_override(None) == []
+    assert validate({"actuators": ACTUATORS}, {}) == []
+    assert unread_gain_errors(None) == []
 
 
 @pytest.mark.parametrize(
     "key, replacement",
     [("kp", "'p'"), ("kv", "'d'"), ("kd", "'d'"), ("forcerange", "'effort_limit'")],
 )
-def test_a_mujoco_spelling_is_refused_naming_its_replacement(key, replacement):
-    errors = validate_override({key: 1.0})
-    assert errors and replacement in errors[0]
+def test_a_mujoco_spelling_is_refused_once_naming_its_replacement(key, replacement):
+    (shared,) = _config_errors({key: 1.0})
+    assert shared.startswith(f"'actuators.{key}' is not a key of 'actuators' -- that is MuJoCo's")
+    assert replacement in shared
+    (entry,) = _config_errors({"each": {"a_act": {key: 1.0}}})
+    assert entry.startswith(f"'actuators.each.a_act.{key}' is not a key of")
+    assert replacement in entry
 
 
 @pytest.mark.parametrize("control, replacement", [("motor", "effort"), ("pd", "impedance")])
-def test_a_mujoco_actuator_type_is_refused_naming_the_command_interface(control, replacement):
-    assert any(replacement in e for e in validate_override({"control": control}))
+def test_a_mujoco_actuator_type_is_refused_once_naming_the_command_interface(control, replacement):
+    (error,) = _config_errors({"control": control})
+    assert error.startswith("'actuators.control' must be one of position, velocity, effort")
+    assert error.endswith(f"the command interface is {replacement}")
 
 
 def test_a_gain_meaningless_for_the_control_is_refused():
-    assert any("not a gain of control: effort" in e for e in validate_override(
+    assert any("not a gain of control: effort" in e for e in _config_errors(
         {"control": "effort", "stiffness": 5.0}))
 
 
 def test_an_each_entry_is_judged_against_the_law_it_inherits():
-    errors = validate_override({"control": "effort", "each": {"a_act": {"stiffness": 5.0}}})
+    errors = _config_errors({"control": "effort", "each": {"a_act": {"stiffness": 5.0}}})
     assert any("not a gain of control: effort" in e for e in errors)
 
 
-def test_an_unknown_key_is_refused():
-    assert any("not a setting" in e for e in validate_override({"stifness": 5.0}))
+def test_an_unknown_key_is_refused_by_its_path():
+    (shared,) = _config_errors({"stifness": 5.0})
+    assert shared.startswith("'actuators.stifness' is not a key of 'actuators' -- did you mean")
+    (entry,) = _config_errors({"each": {"a_act": {"stifness": 5.0}}})
+    assert entry.startswith(
+        "'actuators.each.a_act.stifness' is not a key of 'actuators.each.a_act' -- did you mean "
+        "'stiffness'?"
+    )
 
 
-def test_a_gain_of_the_wrong_type_is_refused():
-    assert any("must be float" in e for e in validate_override({"control": "position", "p": "soft"}))
+def test_an_each_entry_that_is_not_a_mapping_is_refused_by_its_path():
+    assert _config_errors({"each": {"a_act": 5.0}}) == [
+        "'actuators.each.a_act' must be dict, got float (5.0)"
+    ]
+    assert _config_errors({"each": [1]}) == ["'actuators.each' must be dict, got list ([1])"]
+
+
+def test_a_gain_of_the_wrong_type_is_refused_by_its_path():
+    errors = _config_errors({"control": "position", "p": "soft"})
+    assert any(e.startswith("'actuators.p' must be float") for e in errors)
+    errors = _config_errors({"each": {"a_act": {"p": -1.0}}})
+    assert errors == ["'actuators.each.a_act.p' must be >= 0.0 N*m/rad, got -1.0"]
+
+
+def test_each_entry_reads_with_every_gain_it_left_out_at_its_default():
+    """What a plugin reads through its settings: one view per actuator the world named."""
+    view = Settings({"actuators": ACTUATORS}, {"actuators": {"each": {"a_act": {"p": 3}}}})
+    entry = view.actuators.each["a_act"]
+    assert (entry.p, entry.control, entry.stiffness) == (3.0, None, None)
+    assert list(view.actuators.each) == ["a_act"]
+    assert dict(Settings({"actuators": ACTUATORS}, {}).actuators.each) == {}
 
 
 def test_every_gain_declares_its_unit():
@@ -276,6 +316,88 @@ def test_every_gain_declares_its_unit():
 
     for name in ("p", "d", "stiffness", "damping", "effort_limit"):
         assert GAIN_SCHEMA[name].unit, name
+
+
+# -- limits the override does not state ----------------------------------------------------------
+
+#: A lift: a position servo on a vertical slide whose drive can only push, and a symmetric one
+#: beside it. The one-sided range is the model's statement that the drive cannot pull.
+_LIFT = """
+<mujoco model="lift">
+  <worldbody>
+    <body name="carriage">
+      <joint name="lift_joint" type="slide" axis="0 0 1"/><geom size="0.1" mass="150"/>
+      <body name="side" pos="0.3 0 0">
+        <joint name="side_joint" type="slide" axis="1 0 0"/><geom size="0.1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <general name="lift" joint="lift_joint" gaintype="fixed" biastype="affine"
+             gainprm="20000" biasprm="0 -20000 -4000" forcerange="0 25000" ctrlrange="-0.9 0.9"/>
+    <general name="side" joint="side_joint" gaintype="fixed" biastype="affine"
+             gainprm="500" biasprm="0 -500 -50" forcerange="-120 120" ctrlrange="-0.5 0.5"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def _forcerange(spec, name):
+    m = spec.compile()
+    return list(m.actuator_forcerange[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, name)])
+
+
+def test_a_gains_only_override_keeps_a_single_acting_drives_one_sided_range():
+    spec = _spec(_LIFT)
+    resolve(spec, {"control": "position", "p": 30000.0, "d": 5000.0}, model_name="lift")
+    assert _forcerange(spec, "lift") == [0.0, 25000.0]
+
+
+def test_effort_limit_on_a_single_acting_drive_scales_it_and_keeps_its_side():
+    spec = _spec(_LIFT)
+    rows = _by_name(
+        resolve(spec, {"each": {"lift": {"effort_limit": 30000.0}}}, model_name="lift")
+    )
+    assert _forcerange(spec, "lift") == [0.0, 30000.0]
+    assert rows["lift"].effort_limit == 30000.0
+
+
+def test_a_symmetric_drive_is_unchanged_by_a_gains_only_override_and_symmetric_under_a_limit():
+    spec = _spec(_LIFT)
+    resolve(spec, {"control": "position", "p": 800.0}, model_name="lift")
+    assert _forcerange(spec, "side") == [-120.0, 120.0]
+    spec = _spec(_LIFT)
+    resolve(spec, {"each": {"side": {"effort_limit": 60.0}}}, model_name="lift")
+    assert _forcerange(spec, "side") == [-60.0, 60.0]
+
+
+def test_effort_limit_on_an_unlimited_drive_is_symmetric():
+    spec = _spec(_LIFT.replace('forcerange="-120 120" ', ""))
+    resolve(spec, {"each": {"side": {"effort_limit": 60.0}}}, model_name="lift")
+    assert _forcerange(spec, "side") == [-60.0, 60.0]
+
+
+def test_limits_the_model_leaves_off_stay_off_under_a_gains_only_override():
+    """A range with its flag set false is not in force; stating gains must not switch it on."""
+    xml = _LIFT.replace('forcerange="-120 120" ctrlrange="-0.5 0.5"',
+                        'forcerange="-120 120" forcelimited="false" '
+                        'ctrlrange="-0.5 0.5" ctrllimited="false"')
+    spec = _spec(xml)
+    rows = _by_name(resolve(spec, {"control": "position", "p": 800.0}, model_name="lift"))
+    m = spec.compile()
+    side = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "side")
+    assert not m.actuator_forcelimited[side] and not m.actuator_ctrllimited[side]
+    assert rows["side"].effort_limit is None and rows["side"].ctrlrange is None
+
+
+def test_gravity_compensation_bounds_a_single_acting_joint_by_its_one_sided_drive():
+    """The joint limit the compensation derives is read from the drive after the override."""
+    spec = _spec(_LIFT)
+    rows = resolve(spec, {"control": "position", "p": 30000.0}, model_name="lift")
+    apply_gravity_compensation(spec, rows)
+    m = spec.compile()
+    lift = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")
+    assert list(m.jnt_actfrcrange[lift]) == [0.0, 25000.0]
 
 
 # -- the body-level half of impedance ------------------------------------------------------------

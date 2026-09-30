@@ -15,6 +15,8 @@ from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.pose import pose_mapping
+from roqsim.types import PointCloud
 
 
 class _OneWallScene(Plugin):
@@ -34,7 +36,7 @@ class _OneWallScene(Plugin):
 def _world(**cfg):
     config = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_OneWallScene": {}},
             {"roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin": cfg},
         ],
@@ -66,7 +68,7 @@ def test_cloud_endpoint_declares_pointcloud2_and_frame():
     engine = Engine(_world(site="lidar", frame_id="livox_frame"))
     engine.setup()
     hints = _endpoint(engine).backend["ros2"]
-    assert hints["type"] == "sensor_msgs.msg.PointCloud2"
+    assert _endpoint(engine).result.cls is PointCloud  # a sensor_msgs/PointCloud2 over ROS
     assert hints["frame_id"] == "livox_frame"
     # The child is that frame_id, applied by the bridge. The parent is the world: this scene has no
     # base_link, and the transform is measured from the world -- see test_lidar's mount-TF tests.
@@ -144,7 +146,7 @@ def _single_ray_world(wall_x: float, **cfg):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_SingleWallScene": {}},
                 {
                     "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin": {
@@ -213,7 +215,7 @@ def _grazing_world(**cfg):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_GroundPlaneScene": {}},
                 {
                     "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin": {
@@ -300,7 +302,7 @@ def _device_world(**spawn):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [{"spawn_sensor": {"model": "mid360", **spawn}, "name": "lidar"}],
+            "components": [{"spawn_sensor": {"model": "mid360", **spawn}, "name": "lidar"}],
         }
     )
 
@@ -337,7 +339,7 @@ def test_the_scan_site_is_the_manual_origin_above_the_housing():
 
 
 def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_conventions():
-    engine = Engine(_device_world(pos=[0.0, 0.0, 1.0]))
+    engine = Engine(_device_world(pose=pose_mapping([0.0, 0.0, 1.0])))
     engine.setup()
     (plugin,) = [p for p in engine.plugins if isinstance(p, LivoxMid360Plugin)]
     assert (plugin.frame_id, plugin.too_close, plugin.no_return) == (
@@ -350,7 +352,7 @@ def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_convent
     assert cloud["frame_id"] == "livox_frame" and cloud["topic"] == "livox/lidar"
     assert "static_tf" not in cloud  # the mount publishes the frames: chain instead
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    (tf,) = frames.backend["ros2"]["static_tf"]
+    (tf,) = [vars(t) for t in frames.read().transforms]
     assert (tf["parent"], tf["child"]) == ("world", "livox_frame")
     np.testing.assert_allclose(tf["translation"], [0.0, 0.0, 1.0], atol=1e-9)
     m, d = engine.ctx.model, engine.ctx.data
@@ -360,7 +362,7 @@ def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_convent
 
 def test_the_device_publishes_one_point_per_ray_with_nothing_in_range():
     # The default world is a walled room, so point the dome at the open sky: every ray is no return.
-    engine = Engine(_device_world(pos=[0.0, 0.0, 50.0]))
+    engine = Engine(_device_world(pose=pose_mapping([0.0, 0.0, 50.0])))
     engine.ctx.seed = (
         1  # the manifest's range noise draws, and a test driving an Engine owns the seed
     )

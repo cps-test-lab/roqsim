@@ -5,10 +5,10 @@ roll actuators); this plugin owns everything *above* the base -- the 5-DoF torso
 two 7-DoF arms and the two single-DoF omnipicker grippers. It is the manipulation analogue of
 ``diff_drive``: it resolves the robot's *position* actuators (named ``<prefix>p_*`` by the port,
 which excludes the ``<prefix>m_*`` wheel velocity servos ``diff_drive`` owns), holds a target joint
-vector every ``pre_step``, and declares backend-neutral :class:`~roqsim.context.Endpoint`s a
-bridge serves: a ``joint_states`` output and a ``joint_command`` input (a single-point
-``JointTrajectory`` that sets the held targets -- the same interface a ros2_control
-JointTrajectoryController exposes, so one config drives sim and hardware alike).
+vector every ``pre_step``, and declares the endpoints a bridge serves: a ``joint_states`` output and
+a ``joint_command`` input (a single-point ``JointTrajectory`` that sets the held targets -- the same
+interface a ros2_control JointTrajectoryController exposes, so one config drives sim and hardware
+alike).
 
 It also registers a handle on the blackboard under ``robot_body:<name>`` exposing ``joint_names``,
 ``set_targets(names, positions)`` and ``read_state()`` for in-process consumers (tests, teleop).
@@ -26,9 +26,12 @@ from __future__ import annotations
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import JointPositions, JointState
 
 
 class AgibotG2ControllerPlugin(Plugin):
@@ -51,7 +54,6 @@ class AgibotG2ControllerPlugin(Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         tag = prefix + self.POS_TAG
 
         for aid in range(m.nu):
@@ -78,38 +80,6 @@ class AgibotG2ControllerPlugin(Plugin):
         self._apply_stance(ctx)
 
         ctx.blackboard.set(f"robot_body:{self.robot}", _G2BodyHandle(self))
-
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_command",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=self._on_command,
-                backend={
-                    "ros2": {
-                        "type": "trajectory_msgs.msg.JointTrajectory",
-                        "topic": self.topic_override("joint_command") or "joint_command",
-                    }
-                },
-            )
-        )
 
     def _apply_stance(self, ctx: SimContext) -> None:
         """Seed reset qpos + held target from the model's qpos0, then overlay the `rest` stance.
@@ -139,9 +109,22 @@ class AgibotG2ControllerPlugin(Plugin):
             if n in idx:
                 self._target[idx[n]] = float(p)
 
-    def _on_command(self, traj) -> None:
-        """Single-point JointTrajectory (names, points[-1].positions) -> held targets."""
-        names, positions = traj
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The driven joints' positions and velocities."""
+        names, positions, velocities = self.read_joint_states()
+        return JointState(names, positions, velocities)
+
+    # A command rather than a stream: a single-point trajectory may name only some joints, so every
+    # one must be applied, in order, where a stream would keep only the last of a step.
+    @endpoint.command(JointPositions)
+    def joint_command(self, names: list[str], positions: NDArray[np.float64]) -> None:
+        """Hold the named joints at these positions; joints not named keep their targets.
+
+        Args:
+            names: joint names, unprefixed
+            positions: one target per name
+        """
         self.set_targets(names, positions)
 
     def read_joint_states(self):

@@ -66,8 +66,11 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
+from roqsim.types import Degrees, Length, Speed
 
 #: WGS84 semi-major axis, m. The single constant the tangent-plane projection uses.
 R_EARTH = 6378137.0
@@ -82,6 +85,41 @@ _DEFAULTS = {
     "fix_type": 3,
     "denied": False,
 }
+
+
+@dataclass
+class GnssFix:
+    """What the receiver reports at one update; a ``sensor_msgs/NavSatFix`` over ROS.
+
+    Attributes:
+        lat: latitude, WGS84
+        lon: longitude, WGS84
+        alt: altitude
+        eph: horizontal position error, 1 sigma
+        epv: vertical position error, 1 sigma
+        vel_n: velocity north
+        vel_e: velocity east
+        vel_d: velocity down
+        vel: ground speed
+        cog: course over ground, clockwise from north
+        fix_type: 0 no fix, 2 a 2D fix, 3 a 3D fix
+        satellites: satellites used
+        valid: whether the receiver has a fix; with none, the position fields are zero
+    """
+
+    lat: Degrees
+    lon: Degrees
+    alt: Length
+    eph: Length
+    epv: Length
+    vel_n: Speed
+    vel_e: Speed
+    vel_d: Speed
+    vel: Speed
+    cog: Degrees
+    fix_type: int
+    satellites: int
+    valid: bool
 
 
 @dataclass
@@ -173,7 +211,6 @@ class GnssPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         body = self._resolve_body(entity, prefix)
         self._bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body)
@@ -200,22 +237,6 @@ class GnssPlugin(Plugin):
                 datum=dict(self._datum),
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="fix",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_fix,
-                rate_hz=float(self.cfg("rate")),
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.NavSatFix",
-                        "topic": self.topic_override("fix") or "fix",
-                    }
-                },
-            )
-        )
 
     def on_reset(self, ctx: SimContext) -> None:
         self._bias = np.zeros(3)
@@ -228,6 +249,11 @@ class GnssPlugin(Plugin):
             return
         self._next_update = ctx.sim_time + 1.0 / float(self.cfg("rate"))
         self._fix = self._sample(ctx)
+
+    @endpoint.out(rate=lambda self: float(self.cfg("rate")))
+    def fix(self) -> GnssFix:
+        """The last fix the receiver produced, held between updates."""
+        return GnssFix(**self.read_fix())
 
     # -- the measurement -------------------------------------------------------------------------
     def read_fix(self) -> dict:
@@ -265,7 +291,8 @@ class GnssPlugin(Plugin):
             return self._no_fix()
 
         pos = np.array(ctx.data.xpos[self._bid], dtype=float)  # world ENU, m
-        vel = np.array(ctx.data.cvel[self._bid][3:6], dtype=float)  # world ENU, m/s
+        # The antenna body's own velocity; `cvel` is taken at the subtree centre of mass.
+        vel = np.array(body_twist(ctx.model, ctx.data, self._bid).linear)  # world ENU, m/s
 
         sigma_h = float(self.cfg("horizontal_noise"))
         sigma_v = float(self.cfg("vertical_noise"))

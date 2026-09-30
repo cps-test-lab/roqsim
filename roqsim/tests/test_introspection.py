@@ -11,15 +11,10 @@ from __future__ import annotations
 from roqsim.introspection import (
     _config_header_span,
     _own_or_module_doc,
-    _parameters,
     _parse_config_block,
-    config_reads,
     get_plugin_details,
     list_plugins,
-    undeclared_config_reads,
 )
-from roqsim.plugin import Plugin
-from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
 
 def test_list_plugins_includes_dummy_with_a_doc():
@@ -177,7 +172,7 @@ def test_a_block_written_as_a_components_list_entry_parses_too():
         "Spawn a sensor.\n\n"
         "Config::\n\n"
         "    - spawn_sensor:\n"
-        "        model: d435            # bundled model name\n"
+        "        model: realsense_d435  # bundled model name\n"
         "        prefix: \"\"\n"
     )
     assert set(_fields(doc)) == {"model", "prefix"}
@@ -252,139 +247,56 @@ def test_a_base_class_block_keyed_by_a_placeholder_still_parses():
     assert set(_fields(doc)) == {"clip_near", "clip_far"}
 
 
-def test_a_nested_key_with_a_trailing_comment_still_opens_a_mapping():
-    """``floor:   # appearance`` also fits the field pattern, with its comment as the value."""
+def test_a_block_whose_first_key_opens_a_mapping_still_anchors():
+    """``overrides:  # one or more`` opens a mapping; its comment is not an example value."""
     doc = (
-        "Scene plugin.\n\n"
         "Config::\n\n"
-        "    floorplan:\n"
-        "      mesh: <path>         # the walls\n"
-        "      floor:               # ground-plane appearance\n"
-        "        rgb1: [0.8, 0.8, 0.8]\n"
-        "      wall:                # wall appearance\n"
-        "        rgb1: [0.8, 0.8, 0.8]\n"
+        "    model_override:\n"
+        "      overrides:           # one or more\n"
+        "        - field: geom_friction   # on the allowlist\n"
+        "          to: 0.0\n"
+        "        - field: body_mass\n"
+        "          to: 2.0\n"
+        "      active: false        # initial state\n"
     )
     fields = _fields(doc)
-    assert set(fields) == {"mesh", "floor", "floor.rgb1", "wall", "wall.rgb1"}
-    assert fields["floor"]["example"] is None
-    assert fields["floor"]["doc"] == "ground-plane appearance"
+    assert list(fields) == ["overrides", "overrides.field", "overrides.to", "active"]
+    assert fields["overrides"]["example"] is None
+    assert fields["overrides"]["doc"] == "one or more"
 
 
-def test_a_list_example_under_a_key_does_not_end_the_block():
-    """A key that takes a list shows an item; the keys after it are still the plugin's."""
-    for item_indent in ("        ", "      "):  # indented under the key, and YAML's indentless form
-        doc = (
-            "Scene plugin.\n\n"
-            "Config::\n\n"
-            "    floorplan:\n"
-            "      lines:                 # the segments inline\n"
-            f"{item_indent}- {{id: 0, x0_m: 0.0, y0_m: 0.0, x1_m: 6.0, y1_m: 0.0}}\n"
-            "      floor:\n"
-            "        rgb1: [0.8, 0.8, 0.8]\n"
-            "      height: 2.5\n"
-        )
-        assert set(_fields(doc)) == {"lines", "floor", "floor.rgb1", "height"}, item_indent
-
-
-def test_a_blank_line_between_sections_does_not_end_the_block():
+def test_a_list_of_values_is_an_example_and_does_not_end_the_block():
     doc = (
-        "Mover.\n\n"
         "Config::\n\n"
-        "    mover:\n"
-        "      speed: 0.1\n"
-        "\n"
-        "      # -- mode A --\n"
-        "      waypoints: [[2.0, 1.0]]\n"
-        "\n"
-        "Prose after the block, at the docstring's margin.\n"
-        "\n"
-        "    not_a_key: 1\n"
+        "    navigator:\n"
+        "      goals:               # the route\n"
+        "        - [4.0, 3.0]\n"
+        "        - [0.0, 3.0]\n"
+        "      dwell: 0.0\n"
     )
-    assert set(_fields(doc)) == {"speed", "waypoints"}
+    assert list(_fields(doc)) == ["goals", "dwell"]
 
 
-# -- what a plugin publishes beyond its own block --------------------------------------
+def test_a_blank_line_between_groups_of_keys_stays_in_the_block():
+    """A heading comment after the gap heads the next group; it is not the last key's doc."""
+    doc = (
+        "Config::\n\n"
+        "    navigator:\n"
+        "      arrival_radius: 0.25\n"
+        "\n"
+        "      # -- planning ----\n"
+        "      resolution: 0.05     # m per cell\n"
+        "\n"
+        "Prose after the block, at the margin.\n"
+        "    indented: prose\n"
+    )
+    fields = _fields(doc)
+    assert list(fields) == ["arrival_radius", "resolution"]
+    assert fields["arrival_radius"]["doc"] is None
 
 
-class _Base(Plugin):
-    """A base documenting the keys every subclass reads.
-
-    Config::
-
-        <plugin short name>:
-          rate_hz: 10.0          # the base's default
-          frame_id: base_frame
-    """
-
-    def __init__(self, config=None, *, name=None, entity=None, label=None):
-        super().__init__(config, name=name, entity=entity, label=label)
-        self.rate_hz = float(self.config.get("rate_hz", 10.0))
-        self.frame_id = self.config["frame_id"] if "frame_id" in self.config else "base_frame"
-
-
-class _Device(_Base):
-    """A device adding one key and restating a default.
-
-    Config (in addition to ``_Base``'s)::
-
-        device:
-          rays: 360
-          rate_hz: 20.0          # the device's default
-    """
-
-    def __init__(self, config=None, *, name=None, entity=None, label=None):
-        config = dict(config or {})
-        self.early = config.get("early_key")
-        super().__init__(config, name=name, entity=entity, label=label)
-        self.rays = int(self.config.get("rays", 360))
-
-    def validate_config(self, config):
-        return ["'seed' is not a setting"] if "seed" in config else []
-
-
-def test_keys_a_plugin_base_documents_are_published_for_its_subclasses():
-    """A subclass reads what its base reads, so a catalog stopping at its own block omits keys."""
-    fields = {f["name"]: f for f in _parameters(_Device)}
-    assert set(fields) == {"rays", "rate_hz", "frame_id"}
-    # The subclass's own statement of a shared key wins over the base's.
-    assert fields["rate_hz"]["example"] == "20.0"
-
-
-def test_present_is_published_for_a_plugin_that_registers_an_entity():
-    class Prop(Plugin):
-        """A prop.
-
-        Config::
-
-            prop:
-              size: 0.1
-        """
-
-        provides_entity = True
-
-    assert {f["name"] for f in _parameters(Prop)} == {"size", "present"}
-    assert {f["name"] for f in _parameters(_Device)} == {"rays", "rate_hz", "frame_id"}
-
-
-def test_config_reads_finds_what_a_plugin_and_its_bases_read_but_not_what_it_refuses():
-    assert config_reads(_Device) == {"rate_hz", "frame_id", "rays", "early_key"}
-    # `early_key` is read but documented nowhere, and that is exactly what is reported.
-    assert undeclared_config_reads(_Device) == ["early_key"]
-
-
-def test_every_installed_plugin_publishes_every_key_it_reads():
-    """A key a plugin reads but does not publish looks, to a caller, like a key it ignores.
-
-    That caller (a campaign checking its world against an image's catalog) then warns that a
-    working key does nothing -- or, trusting the catalog, drops the key from a world it writes.
-    """
-    undeclared = {}
-    for ep in _entry_points(ENTRY_POINT_GROUP):
-        try:
-            cls = ep.load()
-        except Exception:  # noqa: BLE001 - an unloadable entry is reported by list_plugins
-            continue
-        missing = undeclared_config_reads(cls)
-        if missing:
-            undeclared[ep.name] = missing
-    assert not undeclared, f"read but not in the plugin's Config:: block: {undeclared}"
+def test_a_plugin_publishes_the_keys_it_inherits_from_a_base_plugin():
+    """A lidar documents its fan; the rate gate and the mount TF are its base's, and it reads both."""
+    lidar = {p["name"] for p in get_plugin_details("lidar")["parameters"]}
+    assert {"rays", "angle_min"} <= lidar, "its own block"
+    assert {"rate_hz", "emit_static_tf", "dropout_percent"} <= lidar, "its base's block"

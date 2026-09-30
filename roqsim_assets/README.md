@@ -95,8 +95,8 @@ reusing prop's `CREDITS.txt` (point at the donor's `CREDITS.txt`; don't duplicat
 
 For borrowing meshes across *packages*, the core offers an `assets:` key in a model's
 `.manifest.yaml` (see `roqsim/models.py` docstring) — but note it only resolves through the
-spawn/loader path, **not** in a standalone compile (thumbnails, opening the XML directly), so prefer
-relative sibling refs whenever donor and reuser live in the same package.
+spawn/loader path and the thumbnail tool, **not** in a standalone compile (opening the XML
+directly), so prefer relative sibling refs whenever donor and reuser live in the same package.
 
 ## Plugins
 
@@ -106,14 +106,14 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 - **`box`** / **`cylinder`** — the two **anonymous** obstacles: a rectangular box (`size`, full
   extents) and a post (`radius` + full `height`). Every other prop here is a specific object; these
   two are shape and position and nothing else, which is what a navigation experiment's scenery
-  usually is. Both take `pos` as `[x, y]` to sit on the floor or `[x, y, z]` for an explicit centre,
-  plus `color` / `collide` / `friction` / `prefix`; `box` additionally takes `yaw` (a cylinder is
-  rotationally symmetric, so it has none), and `cylinder` additionally takes `mass` (kg — unset means
+  usually is. Both take a `pose` as `spawn_model` does -- `position` without `z` to sit on the floor,
+  with `z` for an explicit centre, and an `orientation` that may tip them over -- plus `color` /
+  `collide` / `friction` / `prefix`, and `cylinder` additionally takes `mass` (kg — unset means
   MuJoCo's default 1000 kg/m³ density, several times too heavy for anything hollow). Declared in the world YAML rather than baked into a scene,
   deliberately: a scene is what an occupancy grid gets generated *from*, so a baked obstacle lands in
   the map — and an experiment about *unknown* obstacles then has none. Round vs square is not
   cosmetic where clearance is the subject: two diagonally adjacent boxes of the cell pitch seal the
-  diagonal, two tangent cylinders leave a gap. `box` also takes `free: true`, which adds a free joint
+  diagonal, two tangent cylinders leave a gap. `box` defaults to `motion: physics`, which adds a free joint
   and registers it as the entity's `base_joint` — the prerequisite for `simulation_interfaces`'
   `SetEntityState`. That is how an obstacle *appears* mid-trial: roqsim never recompiles the model at
   runtime, so a box that must show up on cue is compiled in up front, parked out of the way, and
@@ -133,13 +133,15 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   *diameter* at a shared height, and a modelled asset scaled uniformly cannot change one without the
   other — so a family of radii is only expressible as a list of parametric entries.
 - **`moving_box`** — the same anonymous box, but **moving**: a mocap body the plugin drives at a
-  constant `speed`, either along `waypoints` (fixed route, `loop` / `ping_pong`) or as a seeded
+  constant `speed`, either along `waypoints` (fixed route, `loop` / `ping_pong`) or as a
   `random_walk` that ray-casts the compiled model ahead of itself and picks a new heading before it
   hits anything — no map file, no wall list, works in whatever geometry the world contains. Mocap
   rather than free-jointed on purpose: physics must not shove aside the obstacle that exists to
   obstruct, and a commanded motion should define the experiment rather than fight the solver. The
-  `random_walk` seed is **required** (an unseeded obstacle is not reproducible) and `on_reset`
-  re-seats the box *and* re-seeds it, so repetition N of a campaign cell never inherits N-1's state.
+  walk follows the run's seed (`sim.seed` / `roqsim sim --seed`) through `ctx.rng_for`, keyed on
+  the mover's address, so it has no seed of its own: one run seed replays one walk, and two movers
+  in a run walk differently. `on_reset` re-seats the box, so repetition N of a campaign cell never
+  inherits N-1's state.
   Use `walker` (in `roqsim_walker`) when the mover should be a pedestrian; use this when the paper says
   "a box crosses the corridor at v m/s".
 - **`prop_trajectory`** — an XY **stage** that carries a prop along a path read from a 2-column CSV

@@ -19,6 +19,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.types import LaserScan
 
 #: Wall face along +x in front of the level sensor, and the level sensor's height over the floor.
 WALL_FACE = 0.10
@@ -62,7 +63,7 @@ class _Scene(Plugin):
 def _engine(*sensors: dict) -> Engine:
     cfg = {
         "sim": {},
-        "plugins": [{f"{__name__}:_Scene": {}}]
+        "components": [{f"{__name__}:_Scene": {}}]
         + [{"roqsim_sensors.plugins.range_sensor:RangeSensorPlugin": s} for s in sensors],
     }
     engine = Engine(load_config_from_dict(cfg))
@@ -139,15 +140,15 @@ def test_rows_are_top_first_and_columns_sweep_left_to_right():
 def test_the_grid_is_lazy_free_and_named_by_its_site():
     engine = _engine({"site": "front"})
     ep = next(e for e in engine.ctx.interface.all() if e.name == "range")
-    assert ep.backend["ros2"]["type"] == "sensor_msgs.msg.LaserScan"
+    assert ep.result.cls is LaserScan  # a sensor_msgs/LaserScan over ROS, on its name
     assert ep.backend["ros2"]["frame_id"] == "front"
-    assert ep.backend["ros2"]["topic"] == "range"
+    assert "topic" not in ep.backend["ros2"]
 
 
 def test_a_topic_override_names_the_scan():
     engine = _engine({"site": "front", "topics": {"range": "_internal/cliff_front_left/scan"}})
     ep = next(e for e in engine.ctx.interface.all() if e.name == "range")
-    assert ep.backend["ros2"]["topic"] == "_internal/cliff_front_left/scan"
+    assert ep.topic == "_internal/cliff_front_left/scan"
 
 
 @pytest.mark.parametrize(

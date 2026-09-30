@@ -2,10 +2,10 @@
 # what it can break in one. `import osc.roqsim`.
 #
 # Every action here works in BOTH shapes -- a stepped in-process run (scenario-execution's own runner
-# with `--simulation`) and a ROS run (the simulator in its own container,
-# reached over simulation_interfaces). The transport is chosen from what the runner offers, not
-# declared here, so a scenario moves between the two unedited. None of them can run under `remote()`:
-# a remote server is handed no simulation and no node.
+# with `--simulation`) and a simulator in another process (`roqsim sim`, under the ROS runner or any
+# other), reached over the control socket it serves. The transport is chosen from what the runner
+# offers, not declared here, so a scenario moves between the two unedited. None of them can run under
+# `remote()`: a remote server is handed no simulation.
 
 import osc.types  # pose_3d / velocity_6d, for set_entity_state
 
@@ -23,6 +23,15 @@ enum displacement_mode: [ distance, planar, x, y, z ]
 # instrument -- "did anything on this table get knocked over".
 enum entity_quantifier: [ all, any ]
 
+# The entity_* CONDITIONS (entity_moved, entity_rotated, entity_near, entity_near_position,
+# entity_in_region) read an entity's pose from the core's `sim/entities/<name>/pose`, in-process
+# and over the control socket alike, so they name ENTITIES (the world's `name:`), not bodies or TF
+# frames. A name the world never had is refused at once, naming the closest ones. An entity that
+# exists but is absent (deleted, or not spawned yet) is nowhere: the condition waits for it, and
+# its feedback says so. entity_moved and entity_rotated also refuse, at once, an entity welded to
+# the world: its pose never changes, so the condition could never be met. A welded entity (a shelf)
+# is a valid subject for the others.
+
 action entity_moved:
     # Succeed once the named entities have been DISPLACED from where they were when this action
     # started. Net displacement, NOT path length: an entity that goes out and comes back has moved
@@ -30,8 +39,8 @@ action entity_moved:
     # number on any curve.) The baseline is taken on this action's first tick, so "since when" is the
     # point in the scenario where it sits.
     #
-    # Over ROS the pose is a service round-trip, so a crossing is resolved at the tick period rather
-    # than at the physics step; a dwell shorter than one tick means "the first tick past it" either way.
+    # Over the control socket the pose is a round-trip, so a crossing is resolved at the tick period
+    # rather than at the physics step; a dwell shorter than one tick means "the first tick past it" either way.
     entities: list of string                          # roqsim entity names -- the world's `name:`, not a
                                                       # body or a TF frame. One object is a 1-element
                                                       # list; OSC has no union type.
@@ -52,6 +61,97 @@ action entity_rotated:
     dwell: float = 0.0
     require: entity_quantifier = entity_quantifier!all
 
+# How entity_near and entity_near_position measure a distance. `planar` ignores z: "the robot reached the shelf" and "a
+# person came within 1 m" are statements about the floor plan, and two entities of different heights
+# never share a z. `spatial` is the full 3D distance.
+enum distance_mode: [ planar, spatial ]
+
+# entity_near, entity_near_position and entity_in_region are conditions on WHERE an entity is --
+# geometry, which an OpenSCENARIO expression cannot compute, so they are actions rather than
+# monitors. Each reads the entity's pose on every tick and succeeds on the first tick the condition
+# holds; it never fails on its own. The point measured is the entity's REFERENCE POINT, the origin
+# of its body, not the nearest point of its geometry. Bounding the wait is the scenario's:
+# `timeout(60s)` on the action or the scenario fails the trial when it never holds, and `until`
+# ends the wait as a success, so it bounds a watch rather than a goal.
+#
+#     entity_near(entity: 'robot', target: 'shelf', distance: 0.6) with:
+#         timeout(60s)
+#
+# "Must never enter" is the condition in a branch that fails the trial, and `until` on that branch
+# says for how long the rule holds:
+#
+#     do parallel:
+#         serial:
+#             entity_navigate(entity: 'robot', goal_poses: [...])
+#             emit end
+#         serial:
+#             entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m),
+#                                                        position_3d(x: 3m, y: 1m)])
+#             emit fail
+#         with:
+#             until door_open == true
+
+action entity_near:
+    # Succeed once `entity` is within `distance` of another entity, `target`.
+    #
+    #     entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+    #     entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)
+    entity: string                                    # roqsim entity name -- the world's `name:`
+    target: string                                    # the other entity, by its `name:`
+    distance: float                                   # metres, > 0; within means <= distance
+    mode: distance_mode = distance_mode!planar
+
+action entity_near_position:
+    # Succeed once `entity` is within `distance` of the point `position` (world frame).
+    #
+    #     entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+    entity: string                                    # roqsim entity name -- the world's `name:`
+    position: position_3d                             # world frame; z is read only by `spatial`
+    distance: float                                   # metres, > 0; within means <= distance
+    mode: distance_mode = distance_mode!planar
+
+action entity_in_region:
+    # Succeed once `entity`'s reference point is inside `region` (or, with `outside: true`, outside
+    # it). A region is an area of the floor plan: TWO points are an axis-aligned box's opposite
+    # corners, THREE OR MORE a polygon's vertices in order. z is ignored; a point on the boundary is
+    # inside.
+    #
+    #     entity_in_region(entity: 'robot', region: [position_3d(x: 0m, y: 0m),
+    #                                                position_3d(x: 2m, y: 3m)])
+    #     entity_in_region(entity: 'person', outside: true,
+    #                      region: [position_3d(x: 0m, y: 0m), position_3d(x: 4m, y: 0m),
+    #                               position_3d(x: 0m, y: 3m)])
+    entity: string                                    # roqsim entity name -- the world's `name:`
+    region: list of position_3d                       # 2 points: a box; 3 or more: a polygon
+    outside: bool = false                             # true -> succeed once it is outside
+
+action entity_monitor:
+    # Keep a scenario variable equal to a value a PLUGIN publishes about an entity, every tick -- the
+    # simulator's counterpart of `osc.ros`'s `topic_monitor`. The condition is then plain
+    # OpenSCENARIO over the variable, so a scenario reads a trial's outcome and ends a run on it:
+    #
+    #     var tripped: bool = false
+    #     do parallel:
+    #         entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+    #         serial:
+    #             wait tripped == true
+    #             emit end
+    #
+    # A report is an endpoint the plugin declares on the entity it watches (`force_limit`, `contact`,
+    # `clearance`, a trial plugin's own), addressed as the world names it -- never as a topic. `value`
+    # is '<report>.<field>'; a bare '<report>' means the field its ROS publication carries
+    # (`force_limit` -> `tripped`). Every field of a report is readable on both transports.
+    #
+    # It never succeeds: put it in a `parallel` branch beside the ones that decide, as any monitor.
+    # Until the first reading arrives the variable keeps its declared default, so declare one the
+    # condition does not hold for. A name that does not exist, and a field that is not a single
+    # number, flag or string, are refused with the same text in-process and over the socket.
+    entity: string                                    # the entity that owns the report -- the world's
+                                                      # `name:` for it
+    value: string                                     # '<report>.<field>', or '<report>' for the
+                                                      # field it publishes
+    target_variable: string                           # the variable to keep current, e.g. `tripped`
+
 action entity_navigate:
     # Send an entity somewhere, and succeed when it gets there. The mover is the SIMULATOR's -- a
     # `navigator` component on that entity plans and drives it internally -- so this drives the
@@ -67,17 +167,12 @@ action entity_navigate:
     # resumes when it finishes, if it had one. A branch that is abandoned cancels the route rather
     # than leaving the mover driving to a goal the scenario has given up on.
     #
-    # Over ROS this is the simulator's own NavigateThroughPoses server, reached at
-    # `<entity>/navigate_through_poses` by the same convention `set_model_override` uses for
-    # `<instance>/override`. `action_name` is the escape hatch for a deployment that scoped it
-    # differently; leaving it empty is what keeps a scenario identical on both transports.
     entity: string                        # roqsim entity name -- the world's `name:`, not a body
                                           #   and not a TF frame
     goal_poses: list of pose_3d           # world-frame. One goal is a 1-element list; OSC has no
                                           #   union type, the same rule the rest of this file follows
     success_on_acceptance: bool = false   # true -> succeed once the route is accepted, without
                                           #   waiting for arrival (fire-and-forget traffic)
-    action_name: string = ''              # ROS only; empty = `<entity>/navigate_through_poses`
 
 action entity_navigate_start:
     # Run the route the entity was CONFIGURED with, and succeed when it finishes.
@@ -90,13 +185,10 @@ action entity_navigate_start:
     # route from the scenario instead puts both in the scenario. Both are legitimate; they answer
     # different questions.
     #
-    # An entity with no configured route is refused rather than reported as arrived. Over ROS this
-    # is the simulator's own `roqsim_nav_interfaces/StartRoute` action at `<entity>/start_route`,
-    # which the navigator serves only when it has a configured route. Stopping it early is the
-    # scenario's, as for any action: `until`, `one_of` or `timeout` cancel the route.
+    # An entity with no configured route is refused rather than reported as arrived. Stopping it
+    # early is the scenario's, as for any action: `until`, `one_of` or `timeout` cancel the route.
     entity: string
     success_on_acceptance: bool = false
-    action_name: string = ''              # ROS only; empty = `<entity>/start_route`
 
 action spawn_entity:
     # Make an entity the world DECLARED perceivable, at the pose it appears at. Activation, not
@@ -135,41 +227,38 @@ action set_entity_state:
     # and `simulation_interfaces/SetEntityState` go through, so one orientation means one thing
     # everywhere. What a body cannot take, the simulator refuses (see below).
     #
-    # Fails the trial when the write does not land (Result != RESULT_OK, or the entity has no free
-    # joint) -- a teleport that did not happen must not leave a row whose recorded start_pose the
+    # Fails the trial when the write does not land (the simulator refused it: the entity has neither
+    # a free joint nor a mocap body) -- a teleport that did not happen must not leave a row whose recorded start_pose the
     # robot's body never reached.
     entity: string                                    # roqsim entity name -- the world's `name:`, not
                                                       # a body or a TF frame
     pose: pose_3d
     twist: velocity_6d = velocity_6d()                # zero unless stated
 
-action set_sensor_override:
-    # Degrade a SENSOR mid-run: apply (or restore) the `fault:` block the sensor carries in its own
-    # config. The report twin of set_model_override -- that one changes the physics, this one changes
-    # what a sensor reports, and roqsim keeps the two on separate channels on purpose.
+action entity_call:
+    # Send any command a world's plugins declare, and fail the trial when it did not land. A fault
+    # switched on (a `model_override`'s `override`, a sensor `fault:` block's `override`), a tare, a
+    # gripper -- addressed as the world names it: the entity that owns the command (the world's
+    # `name:`) or the component that declares it ('robot.lidar'), and the command's name. `command`
+    # may also carry the component's path ('force_torque/tare'). `roqsim endpoints` lists a running
+    # world's. (The parameter is not called `call`: that is an OpenSCENARIO keyword.)
     #
-    # The WORLD owns how bad the fault is (the sensor's `fault:` values, so severity is an ordinary
-    # campaign factor: components.robot.lidar.fault.dropout_percent); this owns only WHEN.
+    #     entity_call(entity: 'ur5e', command: 'force_torque/tare')
+    #     entity_call(entity: 'grip_fault', command: 'override', value: 'true', require_verified: true)
     #
-    # Fails the trial when the fault did not land -- either the simulator refused it, or every key in
-    # the block already held the value it sets, which would leave a row claiming a fault that never
-    # happened. Restoring is the same action with `active: false`, so a transient fault is two calls
-    # with a `wait` between them.
-    instance: string                                  # COMPONENT ADDRESS of the sensor -- the dotted
-                                                      # path of labels, e.g. 'robot.lidar'. Not the
-                                                      # bare ref: a robot may carry two lidars.
-    active: bool = true                               # true = apply the configured fault, false = nominal
-    require_landed: bool = true                       # fail the trial on a verdict of 'no_effect'
-
-action set_model_override:
-    # Apply (or restore) a world's `model_override` instance: the runtime physical fault. The WORLD
-    # owns where the fault acts and how bad it is (`field:`, `select:`, `to:`); this owns only WHEN,
-    # which is the experiment's independent variable. Restoring is the same action with
-    # `active: false`, so a transient fault is two calls with a `wait` between them.
+    # The WORLD owns what the command does and how much (a fault's `to:`, a sensor's `fault:`
+    # values), so severity stays a campaign factor; this owns only WHEN. Restoring a fault is the
+    # same call with value 'false', so a transient fault is two calls with a `wait` between them.
     #
-    # Fails the trial when the plugin reports the write changed nothing -- a run whose fault silently
-    # did not happen must not leave a row claiming it did. `untested` (nothing was touching the
-    # selected geoms) is not that, and neither is a restore.
-    instance: string                                  # the world's instance, by its `name:`
-    active: bool = true                               # true = apply the configured target, false = nominal
-    require_landed: bool = true                       # fail the trial on a verdict of 'no_effect'
+    # Where the command names an endpoint that confirms it, the outcome carries that verdict,
+    # recorded in the step that applied it, and `require_verified` fails the trial on 'no_effect' --
+    # a row that claims a fault which never happened -- and on a confirmation that could not be read
+    # (a paused simulator). 'untested' (nothing to verify, a restore) passes. A command the producer
+    # refuses, or one with no outcome in time, fails with the producer's own text.
+    entity: string                                    # the owning entity, or the declaring component
+    command: string                                   # the command's name, e.g. 'override'
+    value: string = ''                                # JSON: 'true', '{"vx": 0.2}'; empty = none.
+                                                      # A command with typed parameters takes a
+                                                      # mapping of them, or a bare value for its
+                                                      # only one
+    require_verified: bool = true                     # fail on 'no_effect' or no confirmation

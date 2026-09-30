@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
     "pyyaml>=6.0",
     "click>=8.1",   # the `roqsim` command tree (roqsim/commands.py); tools keep their own argparse
@@ -22,6 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+# The control socket `roqsim sim` serves (roqsim.ipc): a running simulation's endpoints over ZeroMQ.
+ipc = ["pyzmq>=22"]
 
 # Built-in core plugins. Robot-family plugins live in sibling packages (e.g. roqsim_mobile).
 [project.entry-points."roqsim.plugins"]
@@ -43,6 +45,9 @@ bumper = "roqsim.plugins.bumper:BumperPlugin"
 # drives; a consumer that needs a suspension travel or a caster swivel in the same message as the
 # wheels declares this and switches the base's own off.
 joint_state_publisher = "roqsim.plugins.joint_state_publisher:JointStatePublisherPlugin"
+# True poses of named frames on one topic, for a ROS stack that reads simulator ground truth there
+# (Gazebo's PosePublisher): any entity's root, body, site or frame, in the world or relative to another.
+pose_publisher = "roqsim.plugins.pose_publisher:PosePublisherPlugin"
 # HOW HARD, over the same geometry: the normal force of those contacts integrated at the physics
 # step. A collision lasts tens of milliseconds, so the integral is not recoverable from any series
 # a publish rate can carry, and a bit cannot be graded by severity. No force threshold -- that is
@@ -66,6 +71,10 @@ model_override = "roqsim.plugins.model_override:ModelOverridePlugin"
 # Carried mass on any robot's body -- a load, not a robot family, so it is core beside the other
 # world-agnostic plugins.
 payload = "roqsim.plugins.payload:PayloadPlugin"
+# A flex's material (Young's modulus, Poisson's ratio, damping, contact) from the world, for a flex any
+# model declared. On the spec, before compile, because MuJoCo bakes the modulus into the compiled
+# stiffness and keeps no field a runtime write could reach.
+flex_material = "roqsim.plugins.flex_material:FlexMaterialPlugin"
 # What the run COST, beside what it did: mechanical power off the actuators, integrated. Core rather
 # than a robot family because every actuated thing has the question, and the measured part
 # (force * velocity) is the same for a wheel, a joint and a rotor.
@@ -74,6 +83,13 @@ energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 # Ground that is not flat. Without it everything this substrate can stand a robot on is a plane, while
 # four of its ported platforms are outdoor machines whose papers are about what happens when it is not.
 heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"
+
+# A running simulation's endpoints over ZeroMQ, the driver's pause/resume/step/reset as endpoints, and
+# entity placement and presence as commands.
+# `roqsim sim` adds both itself (--control); a world does not declare them.
+ipc_bridge = "roqsim.ipc.bridge:IpcBridge"
+run_control = "roqsim.plugins.run_control:RunControlPlugin"
+entity_control = "roqsim.plugins.entity_control:EntityControlPlugin"
 
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of

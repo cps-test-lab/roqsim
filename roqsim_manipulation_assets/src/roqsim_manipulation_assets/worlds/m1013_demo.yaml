@@ -12,7 +12,6 @@ components:
   - spawn_arm:
       model: m1013
       prefix: "m1013_"
-      pos: [0.0, 0.0, 0.0]
     name: m1013
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from roqsim import exit_status
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
 from roqsim.manifest import manifest_license
 from roqsim.models import ModelError, resolve_model
@@ -177,11 +178,54 @@ def test_model_details_add_the_config_a_spawn_actually_injects():
     # scanner it carries and the frame name the robot's URDF uses, and a spawn injects it verbatim.
     assert mount["spawn_sensor"]["model"] == "rplidar_a1"
     assert mount["spawn_sensor"]["frame_id"] == "rplidar_link"
+    # It hangs from a frame the robot declares, listed so a world can put another device there.
+    frames = {f["name"]: f for f in detail["frames"]}
+    assert mount["spawn_sensor"]["parent_frame"] == "shell_link"
+    assert frames["shell_link"]["parent"] == "base_link"
+    assert set(frames) == {"shell_link", "oakd_camera_bracket"}
     # A component whose entry is bare is listed too (`diff_drive: {}` -- its geometry is in the
     # plugin's defaults), because what a spawn injects is the entry, empty or not.
     assert any("diff_drive" in c for c in detail["components"])
     # Where meshes are searched, in order: the answer to a model that loads without its geometry.
     assert detail["mesh_dirs"] and all(Path(d).is_dir() for d in detail["mesh_dirs"][:1])
+
+
+_ARM_WITH_A_WHEEL = """
+<mujoco>
+  <worldbody>
+    <body name="base">
+      <geom name="wheel" type="sphere" size="0.05"/>
+      <joint name="spin_joint" type="hinge"/>
+      <site name="tool"/>
+    </body>
+  </worldbody>
+  <contact><pair geom1="wheel" geom2="floor" friction="1 1 0.005 0.0001 0.0001"/></contact>
+  <actuator><position name="spin" joint="spin_joint"/></actuator>
+</mujoco>
+"""
+
+
+def test_model_details_name_each_actuator_and_the_joint_it_drives(tmp_path):
+    """What ``actuators: each:`` keys on, and a contact pair naming the world's floor still compiles."""
+    model = tmp_path / "arm_with_a_wheel.xml"
+    model.write_text(_ARM_WITH_A_WHEEL)
+    names = get_model_details(str(model))["names"]
+    assert names == {
+        "bodies": ["base"],
+        "sites": ["tool"],
+        "joints": ["spin_joint"],
+        "actuators": [{"name": "spin", "joint": "spin_joint"}],
+    }
+
+
+def test_the_cli_exits_nonzero_when_a_model_does_not_compile(tmp_path, capsys):
+    model = tmp_path / "missing_mesh.xml"
+    model.write_text(
+        '<mujoco><asset><mesh name="m" file="absent.obj"/></asset>'
+        '<worldbody><geom type="mesh" mesh="m"/></worldbody></mujoco>'
+    )
+    assert main(["model", str(model)]) == exit_status.BAD_INPUT
+    assert "error" in json.loads(capsys.readouterr().out)["names"]
 
 
 def test_details_for_an_unknown_model_is_an_error_not_an_exception():
@@ -202,7 +246,7 @@ def test_the_cli_prints_json_and_refs(capsys):
 
 
 def test_the_cli_exits_nonzero_for_an_unknown_model(capsys):
-    assert main(["model", "not_a_model_xyz"]) == 1
+    assert main(["model", "not_a_model_xyz"]) == exit_status.BAD_INPUT
     assert "error" in json.loads(capsys.readouterr().out)
 
 

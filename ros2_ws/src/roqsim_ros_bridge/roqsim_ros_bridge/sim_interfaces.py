@@ -14,15 +14,10 @@ Concurrency: services run on the bridge/executor thread. State changes go throug
 :class:`roqsim.control.RunControl`; anything touching ``data`` goes through
 :func:`roqsim_ros_bridge.physics.run_on_physics`, which posts to the physics thread and waits (see
 docs/architecture.rst §7). Every mutating service *waits*: answering ``RESULT_OK`` before the change
-has run makes a paused simulator indistinguishable from a working one.
+has run makes a stalled simulator indistinguishable from a working one.
 
 Reuses the ``rclpy`` node created by :class:`~roqsim_ros_bridge.ros2_bridge.Ros2Bridge` when present
 (looked up on the blackboard under ``ros2_node``); otherwise creates and spins its own.
-
-Config::
-
-    sim_interfaces:
-      node_name: roqsim_interfaces   # name of its own node, when there is no bridge node to reuse
 """
 
 from __future__ import annotations
@@ -30,7 +25,6 @@ from __future__ import annotations
 import math
 import threading
 
-import numpy as np
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -50,9 +44,11 @@ from simulation_interfaces.srv import (
 )
 
 from roqsim import control as ctl
+from roqsim.kinematics import body_twist
 from roqsim.placement import PLACEABLE_MODES_HINT, place_body
 from roqsim.plugin import Plugin
 from roqsim.presence import set_present
+from roqsim.schema import Field
 
 from .physics import DEFAULT_TIMEOUT_S, run_on_physics
 
@@ -231,6 +227,14 @@ class SimInterfacesPlugin(Plugin):
     # scene consumer (render, review, export) may drop it. See Plugin.transport_only.
     transport_only = True
 
+    CONFIG_SCHEMA = {
+        "node_name": Field(
+            str,
+            default="roqsim_interfaces",
+            doc="name of the node the services are served on, where no ros2_bridge node is shared",
+        ),
+    }
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self._ctx = None
@@ -247,7 +251,7 @@ class SimInterfacesPlugin(Plugin):
             if not rclpy.ok():
                 rclpy.init()
                 self._we_inited_rclpy = True
-            node = Node(self.config.get("node_name", "roqsim_interfaces"))
+            node = Node(self.settings.node_name)
             self._own_node = True
         self._node = node
 
@@ -390,7 +394,7 @@ class SimInterfacesPlugin(Plugin):
             return resp
         # Physics-thread only, like every other write to model/data -- and WAITED FOR, so RESULT_OK
         # means the entity really has appeared. Posting and answering OK immediately would report
-        # success before the flip has run, so a paused or stalled simulator accepts spawns
+        # success before the flip has run, so a stalled simulator accepts spawns
         # that never happen and the caller has no way to tell.
         #
         # Pose first, then presence, in ONE transaction: placing an entity that is already
@@ -415,7 +419,7 @@ class SimInterfacesPlugin(Plugin):
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not apply {verb} {name!r} within "
-                f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+                f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
             )
             return resp
         if "welded_at" in outcome:
@@ -505,7 +509,7 @@ class SimInterfacesPlugin(Plugin):
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not place {req.entity!r} within "
-                f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+                f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
             )
             return resp
         if "welded_at" in outcome:
@@ -558,13 +562,12 @@ class SimInterfacesPlugin(Plugin):
         bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         if bid < 0:
             return {}
-        vel = np.zeros(6)
-        mujoco.mj_objectVelocity(ctx.model, ctx.data, mujoco.mjtObj.mjOBJ_BODY, bid, vel, 0)
+        twist = body_twist(ctx.model, ctx.data, bid)
         return {
             "pos": [float(v) for v in ctx.data.xpos[bid]],
             "quat": [float(v) for v in ctx.data.xquat[bid]],
-            "ang": [float(v) for v in vel[:3]],
-            "lin": [float(v) for v in vel[3:]],
+            "ang": list(twist.angular),
+            "lin": list(twist.linear),
         }
 
     def validate_config(self, config: dict) -> list[str]:

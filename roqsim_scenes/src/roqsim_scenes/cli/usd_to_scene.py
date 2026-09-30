@@ -1,9 +1,9 @@
 """Convert an IsaacSim/USD world into a roqsim static scene (per-object OBJ + a JSON manifest).
 
-Run with a bundled Blender (4.x, ships a USD importer)::
+It runs inside Blender (4.x, which ships a USD importer); ``roqsim`` starts Blender for it::
 
-    blender --background --roqsim scenes usd-to-scene -- \
-        <input.usd> src/roqsim_scenes/scenes/<name> <name> [--unit-scale 0.01]
+    roqsim scenes usd-to-scene <input.usd> src/roqsim_scenes/scenes/<name> <name> \
+        [--unit-scale 0.01]
 
 For each USD mesh prim it writes ``<name>/meshes/<obj>.obj`` (world-space, in **metres**, MuJoCo
 Z-up) and records the prim in ``<name>/scene.json`` with its diffuse ``rgba`` and a ``collide`` flag.
@@ -69,7 +69,10 @@ def _rgba(obj: bpy.types.Object) -> list[float]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    # Named explicitly: this parser runs inside Blender's interpreter, whose argv[0] is `blender`,
+    # and a usage line reading `usage: blender ...` sends the reader off to spell an invocation
+    # that does not exist.
+    ap = argparse.ArgumentParser(prog="roqsim scenes usd-to-scene")
     ap.add_argument("input_usd")
     ap.add_argument("out_dir")
     ap.add_argument("scene_name")
@@ -116,7 +119,11 @@ def main() -> None:
         )
         entries.append({"name": slug, "mesh": rel, "rgba": _rgba(obj), "collide": True})
 
+    # The stamp of roqsim_scenes.scene_manifest, written literally: this runs under Blender's own
+    # Python, which cannot import the package. A test keeps the two equal.
     manifest = {
+        "format": "roqsim_scenes.scene_manifest",
+        "version": 1,
         "name": args.scene_name,
         "source": os.path.basename(args.input_usd),
         "unit_scale": args.unit_scale,

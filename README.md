@@ -6,7 +6,7 @@
   <a href="https://github.com/cps-test-lab/roqsim/actions"><img src="https://github.com/cps-test-lab/roqsim/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/MuJoCo-3.0%2B-orange.svg" alt="MuJoCo 3.0+">
+  <img src="https://img.shields.io/badge/MuJoCo-3.14-orange.svg" alt="MuJoCo 3.14">
 </p>
 
 **roqsim** — **ro**bots, **q**uickly **sim**ulated (in [MuJoCo](https://mujoco.org)) — is a
@@ -68,7 +68,7 @@ make help     # list all targets
 
 **Ready-to-run worlds** ship in the box, named by a `<package>:<world>` ref that `roqsim sim`
 takes. Every robot model also registers a `<name>_demo` world that shows that
-one robot in an empty room, which is how the commands above run. `roqsim --help` lists the command groups; `roqsim <group> --help` gives one line per tool.
+one robot in an empty room, which is how the commands above run. `roqsim --help` lists the core's commands and the command groups; `roqsim <group> --help` gives one line per tool.
 
 Headless, as fast as the machine allows, with timings:
 

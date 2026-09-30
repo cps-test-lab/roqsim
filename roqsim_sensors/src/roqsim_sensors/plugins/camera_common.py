@@ -8,9 +8,9 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
   described once, in the model, not duplicated into plugin config.
 * :class:`CameraPlugin` -- resolves the camera, owns a lazily-created ``mujoco.Renderer``, throttles
   capture to ``rate_hz``, skips rendering when no endpoint the render feeds reports a subscriber (see
-  ``roqsim.context.Endpoint.has_subscribers``), and registers the endpoints. Subclasses set
-  class-level defaults and may override ``_configure_extra``/``_capture_extra`` to add more outputs
-  (e.g. depth).
+  ``roqsim.context.Endpoint.has_subscribers``), and declares the endpoints. Subclasses set
+  class-level defaults, may override ``_configure_extra``/``_capture_extra`` to add more outputs
+  (e.g. depth), and declare those outputs' endpoints on their own methods.
 
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
@@ -29,14 +29,15 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from roqsim import endpoint
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
 from roqsim.rendering import FrameRenderer, hold_gc
+from roqsim.types import CameraInfo, Image
 
 # image_transport's own default, and what real camera drivers ship with. Stated here rather than
-# imported from the bridge: a sensor package must not depend on a transport backend (the endpoint
-# names its ROS type as a string for the same reason), so the two defaults agree by both citing
-# image_transport, not by sharing a symbol.
+# imported from the bridge: a sensor package must not depend on a transport backend, so the two
+# defaults agree by both citing image_transport, not by sharing a symbol.
 DEFAULT_JPEG_QUALITY = 95
 
 
@@ -58,6 +59,30 @@ class Intrinsics:
     cx: float
     cy: float
     d: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+#: The name suffix of a device model's depth camera: the second MuJoCo camera of a device that images
+#: depth through its own optics, beside the colour camera on the same body (a RealSense's
+#: ``d435_depth`` beside ``d435_color``). It is a stream of that one device, not another viewpoint,
+#: so what counts or draws a device's view -- ``spawn_sensor``'s ``show_fov`` frustums and the lens
+#: ``intrinsics:`` it defaults to, ``sensor_coverage_probe``'s ``sensors: auto`` -- skips it.
+DEPTH_CAMERA_SUFFIX = "_depth"
+
+
+def depth_stream_cameras(model) -> set[int]:
+    """Ids of the depth cameras (:data:`DEPTH_CAMERA_SUFFIX`) that share a body with another camera."""
+    by_body: dict[int, list[int]] = {}
+    for cid in range(model.ncam):
+        by_body.setdefault(int(model.cam_bodyid[cid]), []).append(cid)
+    return {
+        cid
+        for cids in by_body.values()
+        if len(cids) > 1
+        for cid in cids
+        if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, cid) or "").endswith(
+            DEPTH_CAMERA_SUFFIX
+        )
+    }
 
 
 def intrinsics_from_model(
@@ -172,20 +197,13 @@ def _build_distortion_map(intr: Intrinsics) -> tuple[np.ndarray, np.ndarray]:
     return m[..., 0].copy(), m[..., 1].copy()
 
 
+def camera_info_of(intr: Intrinsics) -> CameraInfo:
+    """The ``camera_info`` payload of *intr*."""
+    return CameraInfo(intr.width, intr.height, intr.fx, intr.fy, intr.cx, intr.cy, list(intr.d))
+
+
 def join_topic(*parts: str) -> str:
     return "/".join(p for p in parts if p)
-
-
-def sibling_topic(topic: str, name: str) -> str:
-    """The topic called ``name`` in ``topic``'s own namespace.
-
-    ROS's convention for a ``camera_info`` beside its image, and the reason this is not
-    :func:`join_topic` on the split parts: that drops empty parts, which turns an ABSOLUTE topic
-    (``/cam/depth/image_raw``, as a world hardwires to match a driver) into a relative one that the
-    bridge then puts under the robot's namespace.
-    """
-    namespace, slash, _ = topic.rpartition("/")
-    return f"{namespace}{slash}{name}" if slash else name
 
 
 class CameraPlugin(Plugin):
@@ -255,16 +273,15 @@ class CameraPlugin(Plugin):
         self._distortion_cfg = self.config.get("distortion")
         # The forward-distortion remap, built once in configure() -- see _build_distortion_map().
         self._dist_map: tuple[np.ndarray, np.ndarray] | None = None
+        self._prefix = ""
         self._cam_id = -1
         self._intr: Intrinsics | None = None
         self._frames: FrameRenderer | None = None
         self._rgb: np.ndarray | None = None
         self._last_capture = float("-inf")
-        self._image_ep: Endpoint | None = None
-        self._compressed_ep: Endpoint | None = None
-        # Output endpoints a subclass adds that are fed by the SAME render pass (depth, point cloud).
-        # They gate the renderer alongside `image` -- see _gate_endpoints().
-        self._extra_outputs: list[Endpoint] = []
+        # The output endpoints fed by the render pass (colour, and a subclass's depth, point cloud or
+        # labels), which gate the renderer -- see _gate_endpoints().
+        self._rendered: list[Endpoint] = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = self.validate_topics(config)
@@ -297,8 +314,8 @@ class CameraPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
+        self._prefix = prefix
         self._cam_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, prefix + self.camera)
         if self._cam_id < 0:
             raise RuntimeError(f"{type(self).__name__}: camera {prefix + self.camera!r} not found")
@@ -316,89 +333,69 @@ class CameraPlugin(Plugin):
         if self._distortion_cfg is not None:
             self._dist_map = _build_distortion_map(self._intr)
 
-        # Resolved once: the compressed topic is derived from it, so a world that hardwires
-        # `topics: {image: ...}` to match an external driver gets the matching `/compressed` for free.
-        image_topic = self.topic_override("image") or join_topic(
-            self.DEFAULT_TOPIC_PREFIX, "image_raw"
-        )
-        if self.color:
-            self._register_color(ctx, ns, image_topic)
-        ctx.interface.add(
-            Endpoint(
-                name="camera_info",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._intr,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.CameraInfo",
-                        "topic": self.topic_override("camera_info")
-                        or join_topic(self.DEFAULT_TOPIC_PREFIX, "camera_info"),
-                        "frame_id": self.frame_id,
-                    }
-                },
-            )
-        )
-        self._configure_extra(ctx, prefix, ns)
+        self._configure_extra(ctx, prefix)
 
-    def _register_color(self, ctx: SimContext, ns: str, image_topic: str) -> None:
-        """The colour stream: the raw frame, and its compressed companion.
+    #: Endpoints this camera declares that need no render: a lone subscriber to one of them (an
+    #: rviz panel on camera_info, say) must not switch the renderer on.
+    RENDER_FREE = frozenset({"camera_info", "depth_camera_info"})
 
-        ``camera_info`` is NOT here even though it describes this frame: it describes every stream
-        off this camera, and a label-only camera still has to publish it.
-        """
-        self._image_ep = Endpoint(
-            name="image",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._rgb,
-            rate_hz=self.rate_hz,
-            # A full raw frame is the most expensive thing this plugin can put on the wire (2.8 MB at
-            # 1280x720), so it is not serialised while nothing is listening.
-            lazy=True,
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.Image",
-                    "topic": image_topic,
-                    "frame_id": self.frame_id,
-                    "encoding": "rgb8",
-                }
-            },
-        )
-        ctx.interface.add(self._image_ep)
-        if self.compressed:
-            # Same neutral payload as `image` -- one array, two wire formats. The bridge's converter
-            # owns the codec, so this plugin never imports one, and `lazy` means the encode is paid
-            # only while something subscribes to THIS topic (a raw-image consumer must not trigger it).
-            self._compressed_ep = Endpoint(
-                name="image_compressed",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._rgb,
-                rate_hz=self.rate_hz,
-                lazy=True,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.CompressedImage",
-                        # `<image topic>/compressed` is image_transport's convention, which is what
-                        # makes an unmodified driver-shaped consumer find it.
-                        "topic": self.topic_override("image_compressed")
-                        or join_topic(image_topic, "compressed"),
-                        "frame_id": self.frame_id,
-                        "encoding": "rgb8",
-                        "format": "jpeg",
-                        "quality": self.jpeg_quality,
-                    }
-                },
-            )
-            ctx.interface.add(self._compressed_ep)
+    def register_endpoints(self, ctx: SimContext) -> list[Endpoint]:
+        endpoints = super().register_endpoints(ctx)
+        self._rendered = [
+            ep for ep in endpoints if ep.direction == "out" and ep.name not in self.RENDER_FREE
+        ]
+        return endpoints
 
-    def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
-        """Hook for subclasses to register additional endpoints (e.g. depth)."""
+    # The colour stream. A full raw frame is the most expensive thing this plugin can put on the wire
+    # (2.8 MB at 1280x720), so it is not serialised while nothing is listening.
+    @endpoint.out(
+        rate="rate_hz",
+        lazy=True,
+        when="color",
+        ros2=lambda self: {
+            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "image_raw"),
+            "frame_id": self.frame_id,
+        },
+    )
+    def image(self) -> Image | None:
+        """The colour frame; nothing before the first capture of a trial."""
+        return None if self._rgb is None else Image(self._rgb, "rgb8")
+
+    # Same payload as `image` -- one array, two wire formats. The bridge's converter owns the codec,
+    # so this plugin never imports one, and `lazy` means the encode is paid only while something
+    # subscribes to THIS topic (a raw-image consumer must not trigger it). `<image topic>/compressed`
+    # is image_transport's convention, which is what makes a driver-shaped consumer find it, and it
+    # follows a world's rename of `image`.
+    @endpoint.out(
+        rate="rate_hz",
+        lazy=True,
+        when=lambda self: self.color and self.compressed,
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.CompressedImage",
+            "topic": "{image}/compressed",
+            "frame_id": self.frame_id,
+            "format": "jpeg",
+            "quality": self.jpeg_quality,
+        },
+    )
+    def image_compressed(self) -> Image | None:
+        """The colour frame, JPEG-compressed on the wire."""
+        return self.image()
+
+    # It describes every stream off this camera, so a label-only camera publishes it too.
+    @endpoint.out(
+        rate="rate_hz",
+        ros2=lambda self: {
+            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "camera_info"),
+            "frame_id": self.frame_id,
+        },
+    )
+    def camera_info(self) -> CameraInfo:
+        """The pinhole intrinsics of the published frame."""
+        return camera_info_of(self._intr)
+
+    def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
+        """Hook for subclasses to resolve what their additional outputs need (e.g. depth)."""
 
     def _gate_endpoints(self) -> list[Endpoint]:
         """The output endpoints whose subscribers justify a render.
@@ -411,14 +408,12 @@ class CameraPlugin(Plugin):
         ``camera_info`` is deliberately NOT here: it needs no render, so a lone info subscriber (an
         rviz panel, say) must not switch the renderer on.
         """
-        return [
-            ep
-            for ep in (self._image_ep, self._compressed_ep, *self._extra_outputs)
-            if ep is not None
-        ]
+        return self._rendered
 
     def _due(self, ctx: SimContext) -> bool:
-        if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz:
+        # A thousandth of a step short still counts: float drift in the summed clock would otherwise
+        # push a period the timestep divides to the step after it.
+        if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return False
         gates = self._gate_endpoints()
         # `has_subscribers is None` = no introspection available (no bridge, or a backend that cannot

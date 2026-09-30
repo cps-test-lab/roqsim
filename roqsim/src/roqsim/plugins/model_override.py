@@ -28,6 +28,9 @@ Measured against MuJoCo 3.11.0:
   kept ``rbound`` at 0.0866 and, while overlapping the floor, produced ``ncon = 0`` -- geometry that
   renders big and collides as if small. Refused; change size in ``build``.
 * ``geom_friction`` and the two contact masks are live and reverse exactly.
+* A flex's ``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are live (measured
+  on MuJoCo 3.14.0) -- damping only on a flex compiled with some, and refused otherwise. Its Young's
+  modulus is not a compiled field at all; the ``flex_material`` plugin sets it before compile.
 
 Three refusals are *decisions*, not safety, and are listed so they read as chosen:
 
@@ -60,7 +63,7 @@ Config::
     model_override:
       overrides:                       # one or more; each names a field, a selection and a target
         - field: geom_friction         # must be on the allowlist (see `field_catalog`)
-          select: [pad_left, pad_right]  # names in the field's own namespace (geom/body/actuator/joint)
+          select: [pad_left, pad_right]  # names in the field's namespace (geom/body/actuator/joint/flex)
           bodies: []                   # ...or every geom of these bodies' subtrees (geom fields only)
           entity: ""                   # ...or an entity's body subtree (geom fields only)
           to: 0.0                      # scalar (broadcast) or the field's full row
@@ -69,7 +72,7 @@ Config::
                                        # faults in one world do not both serve `/override`
       rate_hz: 10.0                    # publish rate of the two out endpoints
 
-Endpoint ``override`` (in) is a **service**, ``std_srvs/SetBool``: apply or restore, replying
+Endpoint ``override`` (a command) is a **service**, ``std_srvs/SetBool``: apply or restore, replying
 ``success`` plus a ``message`` carrying the verdict -- so a scenario's ``service_call()`` can fail the
 trial when a fault did not land, instead of a warning nobody reads. Endpoints ``override_state``
 (``Bool`` of ``active``) and ``override_verified`` (``String`` of ``verified``) publish continuously,
@@ -78,6 +81,9 @@ recording -- without them an injected fault is invisible to every downstream ana
 
 All three are scoped by the instance's ``name:``, so the world above serves
 ``/grip_fault/override``, ``/grip_fault/override_state`` and ``/grip_fault/override_verified``.
+Over the control socket ``override`` is ``grip_fault/override``, and ``override_verified`` confirms
+it: ``roqsim call grip_fault/override true`` replies with the report the step after the change
+recorded, ``verified`` included.
 
 In-process, ``ctx.blackboard`` carries a :class:`ModelOverrideHandle` under
 ``model_override:<name>``, which is how a ROS-free stepped run (an ``.osc`` action, a test) fires it --
@@ -94,9 +100,13 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from ..context import Endpoint, SimContext
+from .. import endpoint
+from ..contact_scope import side_name
+from ..context import SimContext
 from ..plugin import Plugin
 from ..presence import ABSENT_GEOM_GROUP, entity_geom_ids
+from ..types import Duration
+from ._flex_material import refuse_damping_from_zero
 
 _log = logging.getLogger(__name__)
 
@@ -139,6 +149,7 @@ _OBJ = {
     "body": mujoco.mjtObj.mjOBJ_BODY,
     "actuator": mujoco.mjtObj.mjOBJ_ACTUATOR,
     "joint": mujoco.mjtObj.mjOBJ_JOINT,
+    "flex": mujoco.mjtObj.mjOBJ_FLEX,
 }
 
 #: v1 is exactly what has been measured. Everything else is refused, so no row here is a guess.
@@ -201,7 +212,10 @@ _ALLOWED: dict[str, FieldSpec] = {
             ),
             caveats=(
                 "A position servo keeps commanding its target; only the achievable force changes. "
-                "The row is (min, max) and both are usually needed."
+                "The row is (min, max) and both are usually needed. On a joint whose drive supplies "
+                "its gravity term (roqsim.actuators.apply_gravity_compensation) the term bypasses "
+                "this row and is clamped by the joint's actuatorfrcrange, fixed at build, so a "
+                "lowered value weakens the servo's correction but not what holds the arm up."
             ),
             measured="a saturating position servo went from 50.0 N to 0.5 N on the next step",
         ),
@@ -220,6 +234,63 @@ _ALLOWED: dict[str, FieldSpec] = {
                 "1 -> 20 kg left the mass matrix at 1.0 until mj_setConst, after which "
                 "acceleration under 100 N was -4.81 m/s^2, i.e. correct for 20 kg"
             ),
+        ),
+        # The flex rows were measured on MuJoCo 3.14.0 (tests/test_flex_material.py). A flex's
+        # Young's modulus and Poisson's ratio are not here: MuJoCo bakes them into the compiled
+        # stiffness, so they are set before compile by the flex_material plugin (_flex_material,
+        # "baked at compile").
+        FieldSpec(
+            "flex_damping",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does=(
+                "a flex's stiffness-proportional damping (s). Raising it makes the flex ring down "
+                "faster; lowering it lets a deformation oscillate longer."
+            ),
+            caveats=(
+                "Refused for a flex compiled with damping 0: MuJoCo builds what damping acts "
+                "through only for a flex compiled with some, so the write would act in part. "
+                "Compile it with a non-zero damping (its MJCF, or flex_material) first."
+            ),
+            measured=(
+                "a cantilever written 0.001 -> 0.01 s at run time moved as the one compiled with "
+                "0.01 s, to 1e-9 m; over a compiled 0 the same write barely changed the ringing"
+            ),
+        ),
+        FieldSpec(
+            "flex_friction",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does="the friction of a flex's contacts (slide, spin, roll). Lowering it makes it slip.",
+            caveats=(
+                "Combined with the other side's friction as for geoms: the higher `priority` wins, "
+                "and at equal priority the element-wise MAXIMUM -- so lowering the flex cannot bring "
+                "a contact below its partner's value. Verified by reading the row back only."
+            ),
+            measured="a soft block on a floor tilted ~24 deg crept 18 mm in 1 s at 1.0, slid 1.5 m at 0.1",
+        ),
+        FieldSpec(
+            "flex_solref",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does="the contact solver reference of a flex's contacts; a longer time constant is softer.",
+            caveats=(
+                "Mixed with the other side's by solmix unless one side has the higher priority. "
+                "Verified by reading the row back only."
+            ),
+            measured="a resting soft block sank 8.7 mm deeper at a 0.08 s time constant than at 0.02 s",
+        ),
+        FieldSpec(
+            "flex_solimp",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does="the contact impedance of a flex's contacts; a lower dmin/dmax is softer.",
+            caveats="As flex_solref. Verified by reading the row back only.",
+            measured="a resting soft block sank 8.8 mm deeper at impedance 0.1..0.2 than at 0.9..0.95",
         ),
     )
 }
@@ -280,12 +351,19 @@ def refusal_reasons() -> dict[str, str]:
 
 @dataclass
 class OverrideReport:
-    """Neutral payload for the two out endpoints."""
+    """What the two out endpoints read.
+
+    Attributes:
+        active: whether the override is applied
+        since: sim time the override last became active; -1.0 if it never has
+        changes: how many times the state actually changed since reset
+        verified: 'landed', 'no_effect' or 'untested'
+    """
 
     active: bool
-    since: float  # sim time the override last became active; -1.0 if it never has
-    changes: int  # how many times the state actually changed since reset
-    verified: str  # LANDED | NO_EFFECT | UNTESTED
+    since: Duration
+    changes: int
+    verified: str
 
 
 @dataclass
@@ -304,7 +382,7 @@ class _Target:
     def __init__(self, spec: FieldSpec, ids: list[int], nominal: np.ndarray, target: np.ndarray):
         self.spec = spec
         self.ids = ids
-        self.nominal = nominal  # saved from the compiled model, so restoring is exact
+        self.nominal = nominal  # the rows as they were when last applied, so restoring is exact
         self.target = target
 
     def write(self, model, active: bool) -> None:
@@ -383,14 +461,6 @@ class ModelOverridePlugin(Plugin):
     # -- lifecycle -----------------------------------------------------------------------------
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        # Scope the endpoints by this instance's NAME unless the world says otherwise. Two faults in
-        # one world -- a grip fault and a traction fault, which is the ordinary case -- would
-        # otherwise both serve `/override`, and two services on one name is a collision rather than
-        # redundancy. An explicit `namespace:` still wins; an instance the world never named stays
-        # unscoped, since `self.name` is then just the class name.
-        named = self.name != type(self).__name__
-        ns = self.config.get("namespace") or (self.name if named else "")
-
         self._targets = [self._resolve(ctx, i, entry) for i, entry in enumerate(self.overrides)]
         self._check_mask_pairs()
 
@@ -408,49 +478,6 @@ class ModelOverridePlugin(Plugin):
                 read_state=self.read_state,
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="override",
-                direction="in",
-                owner=self.name,
-                namespace=ns,
-                write=lambda payload: self.set_active(bool(payload)),
-                backend={
-                    "ros2": {
-                        # A service, not a topic: apply/restore is a command with an outcome, and the
-                        # reply is what lets a scenario fail the trial when a fault did not land.
-                        "service": "std_srvs.srv.SetBool",
-                        "name": self.topic_override("override") or "override",
-                        # Where the handler reads the verdict it replies with.
-                        "state_key": f"model_override:{self.name}",
-                    }
-                },
-            )
-        )
-        for endpoint_name, field, msg in (
-            ("override_state", "active", "std_msgs.msg.Bool"),
-            ("override_verified", "verified", "std_msgs.msg.String"),
-        ):
-            ctx.interface.add(
-                Endpoint(
-                    name=endpoint_name,
-                    direction="out",
-                    owner=self.name,
-                    namespace=ns,
-                    read=lambda: self._report,
-                    rate_hz=self.rate_hz,
-                    backend={
-                        "ros2": {
-                            "type": msg,
-                            # The report is a structure and these types carry one value, so the
-                            # endpoint says WHICH field rather than the bridge holding a converter
-                            # that knows this plugin's attribute names.
-                            "field": field,
-                            "topic": self.topic_override(endpoint_name) or endpoint_name,
-                        }
-                    },
-                )
-            )
         _log.info(
             "model_override %r: %d override(s) over %d row(s), active=%s",
             self.name,
@@ -466,6 +493,8 @@ class ModelOverridePlugin(Plugin):
         ids = self._select(ctx, where, spec, entry)
         if spec.namespace == "geom":
             self._check_geoms(where, model, ids)
+        if spec.field == "flex_damping":
+            refuse_damping_from_zero(model, ids, entry["to"], where)
 
         rows = getattr(model, spec.field)
         nominal = np.array(rows[ids], copy=True)
@@ -575,12 +604,59 @@ class ModelOverridePlugin(Plugin):
                     "-- measured. Override both fields over the same selection."
                 )
 
+    # -- endpoints ---------------------------------------------------------------------------
+    @property
+    def endpoint_owner(self) -> str:
+        """The endpoints belong to this instance, not to an entity it may be nested under."""
+        return self.name
+
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """Scoped by this instance's NAME unless the world says otherwise.
+
+        Two faults in one world -- a grip fault and a traction fault, which is the ordinary case --
+        would otherwise both serve ``/override``, and two services on one name is a collision rather
+        than redundancy. An explicit ``namespace:`` still wins; an instance the world never named
+        stays unscoped, since ``self.name`` is then just the class name.
+        """
+        named = self.name != type(self).__name__
+        return self.config.get("namespace") or (self.name if named else "")
+
+    # A service, not a topic: apply/restore is a command with an outcome, and the reply is what lets
+    # a scenario fail the trial when a fault did not land. `state_key` is where the handler reads
+    # the verdict it replies with. `confirm` returns the report post_step records after a change
+    # with the command's reply.
+    @endpoint.command(
+        confirm="override_verified",
+        ros2=lambda self: {
+            "service": "std_srvs.srv.SetBool",
+            "state_key": f"model_override:{self.name}",
+        },
+    )
+    def override(self, data: bool) -> None:
+        """Apply the configured overrides, or restore nominal.
+
+        Args:
+            data: true applies, false restores
+        """
+        self.set_active(data)
+
+    # The report is a structure and each topic carries one value of it, so each endpoint says WHICH
+    # field rather than the bridge holding a converter that knows this plugin's attribute names.
+    @endpoint.out(rate="rate_hz", ros2={"field": "active"})
+    def override_state(self) -> OverrideReport:
+        """The override's state; ROS carries whether it is active."""
+        return self._report
+
+    @endpoint.out(rate="rate_hz", ros2={"field": "verified"})
+    def override_verified(self) -> OverrideReport:
+        """The override's state; ROS carries whether the last change landed."""
+        return self._report
+
     # -- the trigger ---------------------------------------------------------------------------
     def set_active(self, on: bool) -> None:
         """Apply the configured targets, or restore nominal. Physics thread only.
 
-        The ROS side reaches this through the bridge, which marshals every inbound payload through
-        ``ctx.post`` -- so this always runs on the physics thread at the start of a step, and the
+        The ``override`` command reaches this on the physics thread at the start of a step, so the
         single-writer rule holds without this plugin doing anything about it.
         """
         ctx = self._ctx
@@ -588,14 +664,21 @@ class ModelOverridePlugin(Plugin):
             return
         self._apply(ctx, bool(on))
 
-    def _apply(self, ctx: SimContext, on: bool) -> None:
+    def _write(self, ctx: SimContext, on: bool) -> None:
         for target in self._targets:
+            if on:
+                # Taken now rather than at configure, so a value another plugin set after this one
+                # was configured -- a payload's mass -- is what a restore brings back.
+                rows = getattr(ctx.model, target.spec.field)[target.ids]
+                target.nominal = np.array(rows, copy=True)
             target.write(ctx.model, on)
         if any(t.spec.write == SETCONST for t in self._targets):
             # Without this the dynamics ignore a mass write entirely -- measured, the mass matrix
             # does not move. Cheap, and only run when a SETCONST-class row is in play.
             mujoco.mj_setConst(ctx.model, ctx.data)
 
+    def _apply(self, ctx: SimContext, on: bool) -> None:
+        self._write(ctx, on)
         self._active = on
         self._contacts_before = self._count_selected_contacts(ctx)
         self._verify_pending = on  # a restore writes back saved values; there is nothing to verify
@@ -624,20 +707,22 @@ class ModelOverridePlugin(Plugin):
         it, nothing crashes, and the nominal control cell silently becomes a faulted one. Restoring
         to the configured value rather than to ``false`` is what keeps ``active: true`` usable as a
         static campaign factor.
+
+        Only a state the trial changed is written back: an override that stayed as configured
+        leaves the rows alone, and with them whatever another plugin wrote there.
         """
         self._ctx = ctx
-        for target in self._targets:
-            target.write(ctx.model, self.initial_active)
-        if any(t.spec.write == SETCONST for t in self._targets):
-            mujoco.mj_setConst(ctx.model, ctx.data)
+        if self._active != self.initial_active:
+            self._write(ctx, self.initial_active)
         self._active = self.initial_active
-        self._contacts_before = 0
-        self._verify_pending = False
-        self._report = OverrideReport(self.initial_active, -1.0, 0, UNTESTED)
+        # An override active from the start is checked after the first step, as a triggered one is.
+        self._contacts_before = self._count_selected_contacts(ctx) if self._active else 0
+        self._verify_pending = self._active
+        self._report = OverrideReport(self._active, 0.0 if self._active else -1.0, 0, UNTESTED)
 
     def shutdown(self, ctx: SimContext) -> None:
-        for target in self._targets:
-            target.write(ctx.model, self.initial_active)
+        if self._active != self.initial_active:
+            self._write(ctx, self.initial_active)
 
     # -- did it land? --------------------------------------------------------------------------
     def post_step(self, ctx: SimContext) -> None:
@@ -687,20 +772,28 @@ class ModelOverridePlugin(Plugin):
         want = max(float(target.target[0][0]), MJMINMU)
         selected = set(target.ids)
         for i in range(ctx.data.ncon):
+            # A flex side has geom -1, which is never a selected id, so membership needs no guard;
+            # naming the other side does, since -1 looked up as a geom is the model's last one.
             c = ctx.data.contact[i]
             if int(c.geom1) not in selected and int(c.geom2) not in selected:
                 continue
             applied = float(c.friction[0])
             if not np.isclose(applied, want, rtol=0.05, atol=2 * MJMINMU):
-                other = int(c.geom2) if int(c.geom1) in selected else int(c.geom1)
-                name = (
-                    mujoco.mj_id2name(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, other) or f"geom{other}"
+                other = 1 if int(c.geom1) in selected else 0
+                name = side_name(
+                    ctx.model, c.geom[other], c.flex[other], c.vert[other], c.elem[other]
+                )
+                fix = (
+                    "Set that flex's own friction or priority (its <contact> in the MJCF): a flex "
+                    "is not a geom this plugin can select"
+                    if int(c.geom[other]) < 0
+                    else "Select it too, or select it instead"
                 )
                 return (
                     NO_EFFECT,
                     f"contact friction is {applied:.4g}, not {want:.4g}: {name} governs this pair "
                     "(higher priority, or equal priority and higher friction -- MuJoCo takes the "
-                    "element-wise maximum). Select it too, or select it instead",
+                    f"element-wise maximum). {fix}",
                 )
         return LANDED, f"contact friction is {want:.4g}"
 

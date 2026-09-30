@@ -41,6 +41,7 @@ def _harness(config=None, *, air=True):
     ctx.data = mujoco.MjData(model)
     plugin = MultirotorMotorsPlugin(config or {}, entity="drone")
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -189,9 +190,23 @@ def test_handle_and_endpoint_are_registered():
     endpoint = next(e for e in ctx.interface.all() if e.name == "motor_cmd")
     assert endpoint.direction == "in"
     assert endpoint.backend["ros2"]["type"] == "std_msgs.msg.Float32MultiArray"
-    # The bridge hands over the message; a bare sequence must work too, for in-process callers.
-    endpoint.write([1.0, 1.0, 1.0, 1.0])
+    assert [(p.name, p.type.kind) for p in endpoint.params] == [("data", "array")]
+    # The bridge hands over the message's `data`; the stream applies it on the physics thread.
+    endpoint.write({"data": [1.0, 1.0, 1.0, 1.0]})
+    ctx.drain_commands()
     assert plugin._cmd == pytest.approx(np.ones(4))
+
+
+def test_a_motor_command_of_the_wrong_length_is_refused(caplog):
+    ctx, plugin = _harness()
+    endpoint = next(e for e in ctx.interface.all() if e.name == "motor_cmd")
+    endpoint.write({"data": [0.5, 0.5, 0.5, 0.5]})
+    ctx.drain_commands()
+    endpoint.write({"data": [1.0, 1.0]})
+    with caplog.at_level(logging.ERROR):
+        ctx.drain_commands()
+    assert "expected 4 normalized commands, got 2" in caplog.text
+    assert plugin._cmd == pytest.approx(np.full(4, 0.5))
 
 
 def test_reset_clears_the_external_torque():
@@ -210,3 +225,54 @@ def test_warns_in_a_vacuum(caplog):
     with caplog.at_level(logging.WARNING):
         _harness(air=False)
     assert any("vacuum" in r.message for r in caplog.records)
+
+
+def test_another_plugins_external_torque_on_the_airframe_survives():
+    """The reaction torque replaces its own last value, not whatever else is on the body."""
+    ctx, plugin = _harness({"spin": [1, 1, 1, 1], "time_constant": 0.0})
+    mujoco.mj_forward(ctx.model, ctx.data)  # the orientation the torque is rotated by
+    foreign = np.array([0.3, -0.2, 0.1])
+    ctx.data.xfrc_applied[_bid(ctx), 3:6] = foreign
+    plugin.set_normalized([0.5] * 4)
+    for _ in range(2):  # a second step replaces the first's torque, it does not stack on it
+        plugin.pre_step(ctx)
+    ours = ctx.data.xfrc_applied[_bid(ctx), 3:6] - foreign
+    # Level airframe, four CCW rotors at half thrust: -4 * k_m * T about world z, and nothing else.
+    np.testing.assert_allclose(
+        ours, [0.0, 0.0, -4 * MOMENT_CONSTANT * 0.5 * MAX_THRUST], rtol=1e-6, atol=1e-9
+    )
+
+
+_ROTOR_BODIES = """
+<mujoco>
+  <worldbody>
+    <body name="frame" pos="0 0 1">
+      <freejoint/>
+      <geom type="box" size=".2 .2 .05" mass="1"/>
+      <body name="prop0" pos=".2 .2 .05"><geom type="cylinder" size=".1 .005" mass=".01"/>
+        <site name="r0"/></body>
+      <body name="prop1" pos="-.2 -.2 .05"><geom type="cylinder" size=".1 .005" mass=".01"/>
+        <site name="r1"/></body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="rotor0_thrust" site="r0" gear="0 0 1 0 0 0" ctrlrange="0 5"/>
+    <motor name="rotor1_thrust" site="r1" gear="0 0 1 0 0 0" ctrlrange="0 5"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def test_the_torque_acts_on_the_entitys_root_not_rotor_zeros_body():
+    """An airframe whose rotor sites sit on rotor bodies still takes the torque on its frame."""
+    from roqsim.context import Entity
+
+    model = mujoco.MjModel.from_xml_string(_ROTOR_BODIES)
+    ctx = SimContext({})
+    ctx.model, ctx.data = model, mujoco.MjData(model)
+    ctx.entities.add(Entity(name="drone", kind="robot", body="frame", meta={"prefix": ""}))
+    plugin = MultirotorMotorsPlugin(
+        {"rotors": ["rotor0_thrust", "rotor1_thrust"], "spin": [1, -1]}, entity="drone"
+    )
+    plugin.configure(ctx)
+    assert plugin._bid == mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "frame")
