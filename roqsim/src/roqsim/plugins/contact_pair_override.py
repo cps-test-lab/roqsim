@@ -15,7 +15,9 @@ statement about one of them. Two consequences follow, and the second is why this
   independently, and no assignment of per-geom values produces it.
 
 MuJoCo's own answer is an explicit ``<pair>``, which carries its own friction and wins over the
-combination rule. This plugin declares one from world config::
+combination rule. This plugin declares one from world config.
+
+Config::
 
     contact_pair_override:
       a: {entity: robot}     # each side is named ONE of: entity, body, geom

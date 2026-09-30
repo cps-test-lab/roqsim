@@ -13,7 +13,6 @@ components:
   - spawn_arm:
       model: gen3
       prefix: "gen3_"
-      pos: [0.0, 0.0, 0.0]
     name: gen3
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the

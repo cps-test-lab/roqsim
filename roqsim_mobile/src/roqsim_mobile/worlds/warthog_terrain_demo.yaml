@@ -24,7 +24,7 @@ components:
       # model states, which is measured against flat ground at z=0 -- and the field's lowest sample
       # IS z=0, so this is the one spot where that height is right. A spawn over a hill starts
       # inside it and is thrown clear on the first step; change the seed and the spawn must move
-      # with it, or state a z in `pos`.
+      # with it, or state a z in the robot's `pose`.
       seed: 25
       size: [24.0, 24.0]
       # 2.5 m over 24 m: slopes a 1.0 m/s skid-steer works to climb, not a wall it stops at.

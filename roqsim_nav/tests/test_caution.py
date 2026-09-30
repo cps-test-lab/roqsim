@@ -13,7 +13,6 @@ these run with recovery ENABLED; asserting them with it off would test nothing.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import mujoco
@@ -24,6 +23,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 from roqsim_nav.caution import CautionProbe, is_dynamic_body, subtree_geoms
+from roqsim_nav.plugins.navigator import AVOIDANCE_SCHEMA
 
 DATA = Path(__file__).parent / "data"
 CRATE = """<mujoco model="crate">
@@ -305,7 +305,7 @@ def test_replan_reports_a_blocker_the_same_way_stop_does(tmp_path):
 
 def test_an_unknown_avoidance_key_is_refused(tmp_path):
     """A typo must not read as a default. The block names what it accepts."""
-    with pytest.raises(PluginError, match="does not accept"):
+    with pytest.raises(PluginError, match="'avoidance.on_blocked' is not a key of 'avoidance'"):
         Engine(_world(tmp_path, nav={"avoidance": {"on_blocked": "replan"}}))
 
 
@@ -391,19 +391,6 @@ def test_traffic_ignore_drives_on_and_respect_stops(tmp_path):
     assert outcomes["respect"] < -0.5, "it drove on although it was told to stop"
 
 
-@pytest.mark.parametrize(
-    ("old", "points_at"),
-    [
-        ({"traffic": "ignore"}, "avoidance: {stop: false}"),
-        ({"caution": {"lookahead": 1.0}}, "keys of `avoidance:` directly"),
-    ],
-)
-def test_a_retired_spelling_is_refused_and_says_where_it_went(tmp_path, old, points_at):
-    """Silently ignoring one would give the world the opposite of what it asked for."""
-    with pytest.raises(PluginError, match=re.escape(points_at)):
-        Engine(_world(tmp_path, nav=old))
-
-
 def test_avoidance_as_a_bare_value_is_refused(tmp_path):
     """It is a block rather than a model name, and the message has to say so."""
     with pytest.raises(PluginError, match="is a block, not a value"):
@@ -434,6 +421,48 @@ def test_the_probe_scans_inside_the_movers_own_obstacle_band(tmp_path):
     low = CautionProbe({"band": (0.05, 0.6)})
     assert low.height == pytest.approx(0.10)
     assert CautionProbe({"band": (0.1, 1.8), "height": 0.9}).height == pytest.approx(0.9)
+
+
+# -- height and blockage_radius: derived when absent, used as written when set --------------------
+DERIVED = {"height": 0.10, "blockage_radius": 0.3}  # band (0.05, 0.6) + 5 cm; width 0.6 / 2
+
+
+def _probe(tmp_path, **avoidance):
+    engine = Engine(_world(tmp_path, nav={"avoidance": {"lookahead": 1.0, **avoidance}}))
+    engine.setup()
+    try:
+        return _navigator(engine)._caution
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize("key", sorted(DERIVED))
+def test_an_absent_key_is_derived(tmp_path, key):
+    assert getattr(_probe(tmp_path), key) == pytest.approx(DERIVED[key])
+
+
+@pytest.mark.parametrize("key", sorted(DERIVED))
+def test_a_written_value_is_used_as_written(tmp_path, key):
+    assert getattr(_probe(tmp_path, **{key: 0.42}), key) == pytest.approx(0.42)
+
+
+@pytest.mark.parametrize("key", sorted(DERIVED))
+def test_a_written_zero_is_refused_by_name(tmp_path, key):
+    with pytest.raises(PluginError, match=rf"'avoidance\.{key}' must be > 0"):
+        _probe(tmp_path, **{key: 0})
+
+
+@pytest.mark.parametrize("key", sorted(DERIVED))
+def test_the_probe_derives_only_an_absent_key(key):
+    """A written value is never swapped for the derived one, whatever its value."""
+    assert getattr(CautionProbe({"band": (0.05, 0.6), key: 0.0}), key) == 0.0
+
+
+@pytest.mark.parametrize("key", sorted(DERIVED))
+def test_the_schema_publishes_what_is_derived_not_a_number(key):
+    described = AVOIDANCE_SCHEMA[key].describe(key)
+    assert described["default"] is None
+    assert described["doc"].split("; ")[1].startswith("default: ")
 
 
 def test_a_short_robot_is_seen_by_another_short_robot(tmp_path):

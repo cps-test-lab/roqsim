@@ -21,7 +21,7 @@ roqsim consists of multiple packages:
 * ``roqsim_nav`` — 2D navigation (A\* over the model's walls, a behaviour tree, the ``navigator``
   plugin), shared by robots, props and walkers.
 * ``roqsim_mcp`` — an MCP server over the plugin, model and world catalogs (``roqsim mcp serve``).
-* ``roqsim_scene_builder`` / ``roqsim_webctrl`` — the human-in-the-loop scene windows and the web control UI.
+* ``roqsim_scene_builder`` — the human-in-the-loop scene windows.
 * ``scenario_execution_roqsim`` — the OpenSCENARIO 2 vocabulary (``import osc.roqsim``): what a
   scenario can ask a running simulation and what it can break in one. Named for
   scenario-execution's own convention rather than ours, because that is the project it plugs into.
@@ -81,6 +81,11 @@ dependencies, and the generated target paths — and driven by:
    make external-resources RESOURCE=livox_mid360_meshes BLENDER=/path/to/blender   # one resource
    make external-sync-gitignore       # rewrite the managed .gitignore block from the manifest
    make add-external-resource ARGS="--name X --source URL::PATH[::manual] --target PATH ..."
+
+Every source the runner fetches itself is pinned by ``sha256`` and verified after download, so a
+regenerated asset is the same asset: a URL names a location, and a vendor that replaces the CAD
+behind one would otherwise change every mesh derived from it in silence. A ``manual`` source (behind a
+portal) is placed by hand and carries no pin until it is.
 
 Four resources are declared, spanning the shapes the schema supports:
 
