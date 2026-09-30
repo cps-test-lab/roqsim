@@ -536,7 +536,9 @@ def _lift_effort(tmp_path, joint_attrs: str, actuator_attrs: str) -> float:
         ("", 'forcerange="-10 10" gear="50"', 500.0),
     ],
 )
-def test_effort_is_what_the_joints_drives_can_deliver(tmp_path, joint_attrs, actuator_attrs, effort):
+def test_effort_is_what_the_joints_drives_can_deliver(
+    tmp_path, joint_attrs, actuator_attrs, effort
+):
     """URDF's effort is the joint's limit, so the joint's own ``actuatorfrcrange`` bounds it too."""
     assert _lift_effort(tmp_path, joint_attrs, actuator_attrs) == pytest.approx(effort)
 

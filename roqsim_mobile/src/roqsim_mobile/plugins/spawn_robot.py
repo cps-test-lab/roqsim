@@ -56,9 +56,9 @@ model's ``forcerange`` is therefore the drive's total rating, holding torque inc
 vendor's rated torque or force, never one net of the weight it holds. A one-sided rating (a
 single-acting lift cylinder) goes on the joint's ``actuatorfrcrange`` with the ``forcerange`` at
 least as wide: the ``forcerange`` clamps the servo before the gravity term is added, so a floor of 0
-there leaves the carriage weightless. ``gravity_compensation: false`` leaves every body uncompensated, for drives that
-genuinely supply no gravity term (a hobby servo, a backdrivable joint); each servo then trades
-position error for holding torque. There is no whole-mechanism form, unlike ``spawn_arm``'s
+there leaves the carriage weightless. ``gravity_compensation: false`` leaves every body
+uncompensated, for drives that genuinely supply no gravity term (a hobby servo, a backdrivable
+joint); each servo then trades position error for holding torque. There is no whole-mechanism form, unlike ``spawn_arm``'s
 ``true``: it would compensate the base and lift the robot off its wheels.
 
 ``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
