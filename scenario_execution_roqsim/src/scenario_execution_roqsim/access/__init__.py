@@ -603,7 +603,7 @@ def select(kwargs: dict, *, what: str) -> WorldAccess:
     executed, and a scenario that had to declare it would have to be edited to move between the two.
     ``simulation`` is offered by the stepped runner and makes this in-process; otherwise the
     simulator is another process, reached over the control socket it serves -- found the way
-    ``roqsim ls`` finds it (``ROQSIM_CONTROL``, the run directory, or the only one running), once
+    ``roqsim ls`` finds it (``ROQSIM_CONTROL``, or the only one running), once
     it answers, so a simulator that is still starting is waited for rather than refused.
 
     Imported lazily, per backend, so the in-process path never pays for MuJoCo at tree-build time
