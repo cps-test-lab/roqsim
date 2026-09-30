@@ -15,8 +15,9 @@ IMU (D435i)      ``<ns>/camera/imu``                          ``camera_imu_optic
 ===============  ==========================================  =============================
 
 The IMU is not this plugin's: the D435i's inertial module is a separate device inside the same
-housing, so it is an ``imu`` component in ``d435.manifest.yaml`` (with the vendor's extrinsic) rather
-than another stream rendered here. It arrives with ``spawn_sensor: {model: d435}`` and is switched off
+housing, so it is an ``imu`` component in ``realsense_d435.manifest.yaml`` (at the vendor's gyro
+optical frame) rather than another stream rendered here. It arrives with ``spawn_sensor: {model:
+realsense_d435}`` and is switched off
 per world with ``enabled: false``; the row is listed because a consumer looking for the device's
 topics should find all of them in one table.
 
@@ -26,11 +27,17 @@ points per capture. A consumer that only wants an occupancy map often does bette
 depth image directly (MoveIt's ``DepthImageOctomapUpdater``); the cloud exists for the pipeline shape
 the OM-X palm-harvesting benchmark reconstructs, which is D435 -> PCL cloud -> OctoMap.
 
-Reference frames. The cloud is emitted in the **ROS optical convention** -- x right, y down, z along
-the view direction -- because that is what ``realsense-ros`` publishes and what every depth-image
-consumer assumes. A MuJoCo camera looks down its own ``-z`` with ``+y`` up, so the two conventions
-differ by a fixed rotation; a world must publish the static transform from the mount body to
-``camera_depth_optical_frame`` itself (this plugin publishes no TF, like every other sensor here).
+Reference frames. Colour is rendered from ``camera`` (``d435_color``, at the vendor colour optical
+frame) and depth, its ``camera_info`` and the cloud from ``depth_camera`` (``d435_depth``, at the
+vendor depth optical frame, 15 mm along the baseline from the colour one), each through its own
+optics -- so a depth pixel reprojected in ``camera_depth_optical_frame`` lands where the surface is in
+TF. The cloud is emitted in the **ROS optical convention** -- x right, y down, z along the view
+direction -- because that is what ``realsense-ros`` publishes and what every depth-image consumer
+assumes. A MuJoCo camera looks down its own ``-z`` with ``+y`` up, so the two conventions differ by a
+fixed rotation. This plugin publishes no TF: a ``spawn_sensor`` mount of the ``realsense_d435`` model
+publishes the vendor chain (``camera_bottom_screw_frame`` -> ``camera_link`` ->
+``camera_color_optical_frame``, ``camera_depth_optical_frame``, ...), and a robot whose own MJCF
+carries the camera publishes its own.
 
 Config (also inherits ``camera_common.CameraPlugin``'s own fields, undocumented here)::
 
@@ -39,6 +46,7 @@ Config (also inherits ``camera_common.CameraPlugin``'s own fields, undocumented 
       points: true        # publish a PointCloud2 -- implies depth (default: false)
       clip_near: 0.28     # m; the D435's minimum-Z. Outside [clip_near, clip_far] reads "no return"
       clip_far: 3.0       # m; the datasheet's usable range at default settings
+      depth_camera: d435_depth  # the MuJoCo camera depth is rendered from (see depth_camera.py)
       depth_frame_id: camera_depth_optical_frame
       depth_encoding: 32FC1  # or 16UC1 -- millimetres, 0 for invalid, as realsense-ros publishes it
 
@@ -48,22 +56,24 @@ References:
 * https://www.intelrealsense.com/depth-camera-d435i/ -- D435i data sheet. Colour FOV 69.4 x 42.5 deg;
   DEPTH FOV 87 x 58 deg; min-Z ~0.28 m at 848x480; usable range ~0.3-3 m.
 
-Note on FOV. One MuJoCo camera has one ``fovy``, while a real D435 images colour and depth through
-different optics. A model that ships a ``d435_color`` camera therefore has to pick: the bundled
-``d435`` model uses the colour FOV, and the OpenMANIPULATOR-X's eye-in-hand camera uses the *depth*
-FOV (58 deg), because the depth path is the one its experiment consumes. Override ``fovy`` in plugin
-config to choose per world.
+Note on FOV. A real D435 images colour and depth through different optics, so the bundled
+``realsense_d435`` model has one MuJoCo camera per stream, each with its data-sheet FOV and
+resolution: ``fovy``/``width``/``height`` size the colour camera and ``depth_width``/``depth_height``
+the depth one. A robot MJCF that carries a single ``d435_color`` camera (the OpenMANIPULATOR-X's
+eye-in-hand one, at the depth FOV its experiment consumes) renders depth through it with
+``depth_camera: d435_color``.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.types import PointCloud
 
 from .camera_common import join_topic
 from .depth_camera import DepthCameraPlugin
-from .payloads import PointCloud
 
 #: realsense-ros publishes depth and the coloured cloud under `depth/`, and colour under `color/`,
 #: so the two share no prefix -- the base class's single DEFAULT_TOPIC_PREFIX cannot express that.
@@ -78,6 +88,7 @@ class RealsenseD435Plugin(DepthCameraPlugin):
     DEFAULT_WIDTH = 640
     DEFAULT_HEIGHT = 480
     DEFAULT_DEPTH_FRAME_ID = "camera_depth_optical_frame"
+    DEFAULT_DEPTH_CAMERA = "d435_depth"
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         cfg = dict(config or {})
@@ -92,40 +103,28 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         self.depth = bool(self.config.get("depth", False)) or self.points
         self.depth_frame_id = self.config.get("depth_frame_id", self.DEFAULT_DEPTH_FRAME_ID)
         self._cloud: PointCloud | None = None
-        self._points_ep: Endpoint | None = None
         self._uv: tuple[np.ndarray, np.ndarray] | None = None
 
-    def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
-        if not self.depth:
-            return
-        self._add_depth_endpoints(
-            ctx,
-            ns,
-            self.topic_override("depth") or join_topic(DEPTH_PREFIX, "image_rect_raw"),
-            self.depth_frame_id,
-        )
+    def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
+        if self.depth:
+            self._add_depth_endpoints(
+                ctx, join_topic(DEPTH_PREFIX, "image_rect_raw"), self.depth_frame_id
+            )
 
-        if not self.points:
-            return
-        self._points_ep = Endpoint(
-            name="points",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._cloud,
-            rate_hz=self.rate_hz,
-            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.PointCloud2",
-                    "topic": self.topic_override("points")
-                    or join_topic(DEPTH_PREFIX, "color/points"),
-                    "frame_id": self.depth_frame_id,
-                }
-            },
-        )
-        ctx.interface.add(self._points_ep)
-        self._extra_outputs.append(self._points_ep)
+    # As expensive to serialise as the colour frame; see camera_common's `image`.
+    @endpoint.out(
+        name="points",
+        rate="rate_hz",
+        lazy=True,
+        when="points",
+        ros2=lambda self: {
+            "topic": join_topic(DEPTH_PREFIX, "color/points"),
+            "frame_id": self.depth_frame_id,
+        },
+    )
+    def point_cloud(self) -> PointCloud | None:
+        """The depth frame reprojected to points in the depth optical frame."""
+        return self._cloud
 
     def _capture_extra(self, ctx: SimContext, renderer) -> None:
         if not self.depth:
@@ -150,7 +149,7 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         than emitted at some sentinel range, so an occupancy map never carves free space out of a
         pixel the sensor could not see.
         """
-        intr = self._intr
+        intr = self._depth_intr
         h, w = depth.shape
         if self._uv is None or self._uv[0].shape != depth.shape:
             v, u = np.meshgrid(

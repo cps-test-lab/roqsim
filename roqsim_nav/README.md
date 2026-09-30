@@ -26,7 +26,7 @@ interface, local avoidance. The only thing that differs per entity is how motion
 | `output` | moves | cost |
 |---|---|---|
 | `drive` | a `spawn_robot` | Calls the `RobotHandle.drive(vx, vy, w)` its controller published — the *same* entry the ROS bridge writes `/cmd_vel` into. `diff_drive` still does its own inverse kinematics, acceleration ramp and odometry. A full robot in the solver. |
-| `mocap` | `spawn_model: {mocap: true}` | Writes the pose. **Zero solver DOFs**: collision geometry the robot sees, nothing to integrate. The cheap default. |
+| `mocap` | `spawn_model: {motion: driven}` | Writes the pose. **Zero solver DOFs**: collision geometry the robot sees, nothing to integrate. The cheap default. |
 | `walker` | a `walker` | Seventeen mocap bodies and a gait, also zero DOFs. Registered by `roqsim_walker`, not listed here. |
 
 Outputs resolve from the **`roqsim_nav.outputs`** entry-point group (or `module:Class`, or

@@ -16,7 +16,7 @@ from roqsim_ros_bridge.registry import get_converter, to_time_msg
 
 @dataclass
 class _Scan:
-    """Stand-in for roqsim_sensors.plugins.payloads.LaserScan (the bridge never imports the producer)."""
+    """Stand-in for a scan payload (the bridge never imports the producer)."""
 
     ranges: np.ndarray
     angle_min: float = -2.356194490

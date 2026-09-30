@@ -16,7 +16,7 @@ def _belt_only(tmp_path, conv_extra=None):
     plugins = [
         {"conveyor": dict(conv_extra or {}), "name": "conveyor"},
     ]
-    return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path)
 
 
 def _run(engine, steps):
@@ -118,7 +118,8 @@ def test_placed_belt_keeps_its_package(tmp_path):
     # so a belt spawned away from the origin must still reset its package onto its own belt, not
     # onto the floor at the world origin.
     pos, yaw = [13.584, 5.779, 0.0], 0.8936
-    engine = Engine(_belt_only(tmp_path, {"pos": pos, "rpy": [0.0, 0.0, yaw], "length": 2.0}))
+    pose = {"position": dict(zip("xyz", pos, strict=True)), "orientation": {"yaw": yaw}}
+    engine = Engine(_belt_only(tmp_path, {"pose": pose, "length": 2.0}))
     engine.setup()
     engine.reset()
     belt = _geom_pos(engine, "belt_visual")  # belt centre, world
@@ -169,7 +170,7 @@ def test_industrial_table_top_carries_the_belt(tmp_path):
         },
         {"conveyor": {}, "name": "conveyor"},
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     top = _geom_pos(engine, "industrial_table_top")
     assert top[2] + _geom_size(engine, "industrial_table_top")[2] == pytest.approx(0.76, abs=1e-6)

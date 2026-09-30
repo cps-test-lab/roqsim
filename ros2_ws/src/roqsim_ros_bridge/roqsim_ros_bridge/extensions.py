@@ -8,12 +8,12 @@ entry-point group::
     # <your package>/setup.py
     entry_points={
         "roqsim_ros_bridge.extensions": [
-            "walker_nav = roqsim_walker_ros.actions",
+            "roqsim_nav = roqsim_nav_ros.actions",
         ],
     }
 
 Importing the module runs its ``@action_handler`` / ``@service_handler`` / ``@converter`` /
-``@decoder`` decorators. This is how ``roqsim_walker_ros`` teaches the bridge
+``@decoder`` decorators. This is how ``roqsim_nav_ros`` teaches the bridge
 ``nav2_msgs/NavigateThroughPoses`` without the core bridge ever depending on nav2.
 
 Its own module, and free of ROS imports, so that a registry which needs no ROS types (see
