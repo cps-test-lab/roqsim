@@ -54,8 +54,8 @@ Config::
       rate_hz: 62.0          # endpoint publish rate
 
 One ``out`` endpoint per zone, named ``bumper/<zone>``, reads a ``bool``: is that zone pressed this
-step. The ROS 2 backend hint publishes each as a ``std_msgs/Bool`` on ``bumper/<zone>`` (relative,
-so it is scoped by the entity's namespace). A stack that wants a vendor's message assembles it from
+step. ROS carries each as a ``std_msgs/Bool`` on ``bumper/<zone>`` (relative, so it is scoped by
+the entity's namespace). A stack that wants a vendor's message assembles it from
 these in its own adapter node -- a bumper switch is a bool on every robot, and the vendor's
 envelope around it is the stack's business, not the simulator's.
 
@@ -78,8 +78,9 @@ from dataclasses import dataclass, replace
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -176,7 +177,6 @@ class BumperPlugin(Plugin):
         self._ctx = ctx
         model = ctx.model
         entity = ctx.entities.get(self.robot)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # Which contacts are this entity's: the rule shared with every other contact observable,
         # so the bumper and contact_monitor can never disagree about whose contact it was.
@@ -216,32 +216,19 @@ class BumperPlugin(Plugin):
         self._scope = scope
 
         ctx.blackboard.set(f"bumper:{self.address}", self.read_state)
-        for zone in self.zones:
-            ctx.interface.add(
-                Endpoint(
-                    name=f"bumper/{zone}",
-                    direction="out",
-                    owner=self.robot,
-                    namespace=ns,
-                    read=lambda z=zone: self._reading.pressed[z],
-                    rate_hz=self.rate_hz,
-                    # Cheap to read, but there are as many of these as zones and only a safety
-                    # stack listens: nothing is published until something subscribes.
-                    lazy=True,
-                    backend={
-                        "ros2": {
-                            "type": "std_msgs.msg.Bool",
-                            "topic": self.topic_override(f"bumper/{zone}") or f"bumper/{zone}",
-                        }
-                    },
-                )
-            )
         _log.info(
             "bumper: %d zones on %r over %d geoms",
             len(self.zones),
             scope.body,
             int(scope.watched.sum()),
         )
+
+    # Cheap to read, but there are as many of these as zones and only a safety stack listens:
+    # nothing is published until something subscribes.
+    @endpoint.out(each="zones", rate="rate_hz", lazy=True)
+    def bumper(self, zone: str) -> bool:
+        """Whether this zone is pressed this step."""
+        return self._reading.pressed[zone]
 
     def read_state(self) -> BumperReading:
         """The current reading. A callable, not the dataclass: ``post_step`` REPLACES it each step,

@@ -38,11 +38,7 @@ class OakDCameraPlugin(DepthCameraPlugin):
     DEFAULT_WIDTH = 320
     DEFAULT_HEIGHT = 240
 
-    def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
+    def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         self._add_depth_endpoints(
-            ctx,
-            ns,
-            self.topic_override("depth")
-            or join_topic(self.DEFAULT_TOPIC_PREFIX, "depth/image_raw"),
-            self.frame_id,
+            ctx, join_topic(self.DEFAULT_TOPIC_PREFIX, "depth/image_raw"), self.frame_id
         )

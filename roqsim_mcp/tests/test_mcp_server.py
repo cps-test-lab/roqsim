@@ -44,7 +44,27 @@ def test_every_tool_is_registered():
         "list_models",
         "get_model_details",
         "list_worlds",
+        "list_endpoints",
+        "describe_endpoint",
+        "read_endpoint",
+        "call_endpoint",
+        "pause",
+        "resume",
+        "step",
+        "check_world",
     }
+
+
+def test_a_simulation_tool_with_no_simulator_answers_with_an_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.delenv("ROQSIM_CONTROL", raising=False)
+
+    async def _call():
+        return await create_server().call_tool("list_endpoints", {})
+
+    payload = json.loads(_run(_call()).content[0].text)
+    assert payload["kind"] == "not_found" and "roqsim sim" in payload["error"]
 
 
 def test_the_catalog_tools_answer_with_usable_refs():

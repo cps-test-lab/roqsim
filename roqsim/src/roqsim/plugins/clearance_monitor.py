@@ -54,7 +54,8 @@ Config::
 Endpoint ``clearance`` (out) reads a :class:`ClearanceReport`:
 ``(current, minimum, at_time, geom, saturated)`` -- ``minimum`` is the closest approach
 since the last reset and ``geom`` names what it was to, so a near-miss is attributable
-rather than merely flagged.
+rather than merely flagged. ROS carries ``current`` alone, a ``std_msgs/Float32`` on
+``clearance``.
 
 ``compute_rate_hz`` is separate from ``rate_hz`` because they answer different questions.
 Publishing is cheap; measuring is a distance query per (watched geom, candidate geom) pair,
@@ -77,21 +78,31 @@ from dataclasses import dataclass
 
 import mujoco
 
-from ..context import Endpoint, SimContext
+from .. import endpoint
+from ..context import SimContext
 from ..plugin import Plugin
+from ..types import Duration, Length
 
 _log = logging.getLogger(__name__)
 
 
 @dataclass
 class ClearanceReport:
-    """Neutral payload for the ``clearance`` endpoint."""
+    """What the ``clearance`` endpoint reads.
 
-    current: float  # distance now [m]; <= 0 while overlapping
-    minimum: float  # closest approach since the last reset
-    at_time: float  # sim time of that closest approach; -1.0 before the first step
-    geom: str  # what the closest approach was to ("" until measured)
-    saturated: bool  # current is the distmax cutoff, not a measured distance
+    Attributes:
+        current: distance now; <= 0 while overlapping
+        minimum: closest approach since the last reset
+        at_time: sim time of that closest approach; -1.0 before the first step
+        geom: what the closest approach was to; "" until measured
+        saturated: current is the distmax cutoff, not a measured distance
+    """
+
+    current: Length
+    minimum: Length
+    at_time: Duration
+    geom: str
+    saturated: bool
 
 
 class ClearanceMonitorPlugin(Plugin):
@@ -135,7 +146,6 @@ class ClearanceMonitorPlugin(Plugin):
         model = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         body_name = (
             (prefix + self.body)
@@ -198,27 +208,6 @@ class ClearanceMonitorPlugin(Plugin):
         # handles ("robot.clearance_monitor", "forklift.clearance_monitor") rather than
         # colliding on a class name.
         ctx.blackboard.set(f"clearance:{self.address}", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="clearance",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        # Float32 and the CURRENT distance: a running minimum is derivable
-                        # from a recorded series, while the series is not derivable from a
-                        # minimum. Publishing the reducible half would throw away the shape
-                        # of the approach, which is what a reader wants to see.
-                        "type": "std_msgs.msg.Float32",
-                        "field": "current",
-                        "topic": self.topic_override("clearance") or "clearance",
-                    }
-                },
-            )
-        )
         _log.info(
             "clearance_monitor: watching %d geom(s) of %r against %d candidate(s), distmax %.2f m",
             len(self._watched),
@@ -226,6 +215,14 @@ class ClearanceMonitorPlugin(Plugin):
             len(self._candidates),
             self.distmax,
         )
+
+    # Float32 and the CURRENT distance: a running minimum is derivable from a recorded series, while
+    # the series is not derivable from a minimum. Publishing the reducible half would throw away the
+    # shape of the approach, which is what a reader wants to see.
+    @endpoint.out(rate="rate_hz", ros2={"field": "current", "type": "std_msgs.msg.Float32"})
+    def clearance(self) -> ClearanceReport:
+        """Distance to the nearest thing the entity may hit, and the closest approach since reset."""
+        return self._report
 
     def read_state(self) -> ClearanceReport:
         """The latest report; the blackboard handle hands this to an in-process consumer.

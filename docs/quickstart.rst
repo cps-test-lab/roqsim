@@ -33,6 +33,10 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be
 — set it only to override that choice. To record a run, add ``--record`` — see
 :ref:`recording-a-run` below.
 
+A running simulation prints ``control: <uri>`` and serves its endpoints and run control there:
+``roqsim endpoints``, ``roqsim read``, ``roqsim call`` and ``roqsim ctl pause|resume|step N`` from
+another shell reach it with no ROS -- see :doc:`control`. ``--control none`` serves nothing.
+
 .. note::
 
    **Windowed GL defaults.** On many Linux + GL-driver combinations the windowed launch aborts with
@@ -261,18 +265,19 @@ world file and its manifests to work out what is in there.
 A world with a flex (MuJoCo's ``<flexcomp>``) gets two more things: what each flex compiled into, and
 what it will do -- worked out from the compiled model, before any step::
 
+   world: world.yaml
    ok    loads, compiles, every component resolved, and it resets
 
-   WARN  [flex-damping] flex 'blk': numerical damping is 100% of its damping (zeta_1 = 0.036, of which ...
-         hint: state <elasticity damping> (a time, s) and keep sim.timestep at or below it: zeta_i = ...
+   WARN  [flex-damping] flex 'blk': numerical damping is 100% of its damping (zeta_1 = 0.036, of which 0.036 is the discrete integrator's timestep * omega / 2), so its ringing changes with sim.timestep
+         hint: state <elasticity damping> (a time, s) and keep sim.timestep at or below it: zeta_i = (damping + timestep) * omega_i / 2, with omega_1 = 71.92 rad/s
 
-   model: 38 bodies, 1 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
+   model: 38 bodies, 0 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
           timestep 0.001s, integrator discrete (auto: flex 'blk' (elasticity))
 
    flexes (1):
      blk  dim 3, 45 vertices, 96 elements, dof full, 9 pinned, on holder; elastic, no passive contact
           modes 11.4, 13, 22.4 Hz; damping ratio 0.036, 0.0407, 0.0703 at damping 0 s (numerical share 100% at timestep 0.001 s)
-          contact solref 0.02 1 (flex), floor 0.001 s
+          contact solref 0.02 1 (flex), floor 0.00102598 s
 
 The **modes** are the flex's lowest elastic frequencies with everything else held, from a
 finite-difference stiffness and the mass matrix (:func:`roqsim.flex_modes.first_modes`); they match
@@ -285,17 +290,30 @@ frequency, hold while the timestep **resolves** the mode: at ``omega_i * timeste
 damped at a ratio up to 0.3 rings within 5 % of both. Beyond it the run damps the mode less and
 rings it slower than reported -- with the damping one timestep, by 11 % and 9 % at 0.5, and at 0.85
 a reported ratio of 0.85 rings down at 0.65 -- so the report stars that mode's figures
-(``resolved: false`` in ``--json``) and warns. The **contact floor** is the time constant MuJoCo raises a stiffer ``solref`` to: one
-timestep under ``discrete``, two under every other integrator. These rules were measured on MuJoCo
-3.14 and are stated in :mod:`roqsim.flex_modes` (``explain_flex``, ``solref_floor``).
+(``resolved: false`` in ``--json``) and warns. The **contact floor** is the time constant MuJoCo
+raises a stiffer ``solref`` to: two timesteps under every integrator but ``discrete``; under
+``discrete`` it caps the stiffness instead, which is ``timestep * sqrt(solimp[1]) / (solimp[1] *
+dampratio)`` at the default ``solimp`` -- about 1.03 steps at a damping ratio of 1. These rules were
+measured on MuJoCo 3.14; the damping and the resolution are stated in
+:func:`roqsim.flex_modes.explain_flex`, the floor in :func:`roqsim.solref.solref_floor`, which
+``sim.contact_override`` is held to as well.
 
 The same block at a 4 ms step, with the damping raised to match it::
 
-   WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved by the timestep (omega * timestep = 0.33, above 0.3), and so is mode 3; ...
-         hint: set sim.timestep <= 0.00213 s to bring omega * timestep to 0.3 or below for every reported mode, or lower ...
+   world: world.yaml
+   ok    loads, compiles, every component resolved, and it resets
 
+   WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved by the timestep (omega * timestep = 0.33, above 0.3), and so is mode 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
+         hint: set sim.timestep <= 0.00213 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+
+   model: 38 bodies, 0 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
+          timestep 0.004s, integrator discrete (auto: flex 'blk' (elasticity))
+
+   flexes (1):
+     blk  dim 3, 45 vertices, 96 elements, dof full, 9 pinned, on holder; elastic, no passive contact
           modes 11.4, 13*, 22.4* Hz; damping ratio 0.288, 0.326*, 0.562* at damping 0.004 s (numerical share 50% at timestep 0.004 s)
           * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
+          contact solref 0.02 1 (flex), floor 0.00410392 s
 
 A ``WARN`` line names something a world that loads will do and its author probably did not mean --
 damping that is mostly the integrator's (``flex-damping``), a mode the timestep under-resolves
@@ -639,9 +657,9 @@ obstacle mid-run is described by it rather than by the world it started in.
 
 ``timestamp`` is exact simulated seconds. One convention worth knowing: ``mj_step`` integrates ``qpos``
 and leaves ``xpos`` holding the pose from *before* that integration, so a row is a coherent snapshot of
-``timestamp - dt`` carrying the label ``timestamp`` — deliberately the same one-step lag the
-``ground_truth_pose`` plugin publishes with, so the two describe the same instant. It cancels in every
-derivative.
+``timestamp - dt`` carrying the label ``timestamp`` — deliberately the same one-step lag the core
+pose endpoints (``sim/entities/<name>/pose``) read with, so the two describe the same instant. It
+cancels in every derivative.
 
 Like the clock map and unlike the ``.npz``, it is flushed per row, so a run killed outright still leaves
 everything up to the last sample.
@@ -651,7 +669,7 @@ A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directo
 wherever the launch left the working directory; otherwise it resolves against the working directory as
 usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the root shared by every run of a batch, so
 anchoring a per-run file there gives one path that each run of a sweep overwrites in turn. Recording stays a *session*
-concern either way — the same footing as ``sim.headless``, which a world YAML ignores with a warning — so
+concern either way — the same footing as ``--headless``, which a world YAML has no key for — so
 there is no route to it through the world.
 
 A recording also converts to a **browser run capture** — the motion half of replaying a run in a web
@@ -922,7 +940,13 @@ An ``.npz`` of array series carries them as the ``times`` and ``wall_times`` mem
 ``--sensor`` re-runs a sensor **the world declares**, configured exactly as the world configured it, so
 ``--check`` is how you see what is on offer. Its output shape decides the file: a few values become CSV
 columns, a scan becomes an ``.npz`` array, and an image is refused with a pointer to
-``roqsim render --camera``. A re-run sensor is deterministic and gets the noise that moment would have had
+``roqsim render --camera``. A sensor's columns are named ``<endpoint>.<field path>.<index>``: a number
+is ``<endpoint>`` alone, a vector ``<endpoint>.<index>``, and a payload type ``<endpoint>.<field>`` per
+field in declaration order, with a nested type's fields under its field's name and ``.<index>`` per
+element of a vector field — an odometry endpoint gives ``odom.position.0`` to ``odom.angular.2``, a
+wrench ``wrench.force.0`` to ``wrench.torque.2``. Text fields (joint names) have no column, and a
+vector field wider than 32 values is refused; ``--joint`` reads joints from the state instead.
+A re-run sensor is deterministic and gets the noise that moment would have had
 (the recording carries the run's seed), but it is not bit-identical to what the live run published at
 that timestamp — live, the sensor fires between recorded samples, so the value published then was
 computed a moment earlier.
@@ -1014,26 +1038,112 @@ What a scenario can ask the simulation
 
    entity_moved(entities: ['parcel'], threshold: 0.05, mode: displacement_mode!z, dwell: 8.0)
    entity_rotated(entities: ['crate'], angle: 0.5)
-   entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-   set_model_override(instance: 'grip_fault')            # ...and `active: false` restores it
+   entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+   entity_call(entity: 'grip_fault', command: 'override', value: 'true')   # 'false' restores it
+   entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+   entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
 
 ``entity_moved`` / ``entity_rotated`` succeed once the named entities have been displaced (or turned)
 from where they were **when the action started** — net displacement, not path length, unlike
-``osc.ros``'s ``odometry_distance_traveled``. ``set_model_override`` applies or restores a
-``model_override`` fault (§9.2) and **fails the trial when the plugin reports the write changed
-nothing**, so a run cannot record an unfaulted outcome under a faulted label. ``entity_reports``
-succeeds once a value a plugin publishes about an entity -- ``<report>.<field>``, as the world names
-it -- compares as expected; it is how a scenario ends a run on a trial's outcome, with ``emit end``
-after it.
+``osc.ros``'s ``odometry_distance_traveled``. ``entity_call`` sends any command a plugin declares --
+here a ``model_override`` fault (§9.2) -- and **fails the trial when the command's confirmation reports
+that it changed nothing**, so a run cannot record an unfaulted outcome under a faulted label.
 
-Each works in a stepped run *and* in a ROS run, unedited: the transport is chosen from what the
-runner offered. In-process they read ``MujocoSim.context`` (entity poses from ``data.xpos``, the fault
-through the ``model_override:<name>`` blackboard handle, a report from its endpoint, writes queued with
-``ctx.post``); over ROS they use ``simulation_interfaces/GetEntityState``, ``<instance>/override`` and
-the endpoint map the bridge latches at ``roqsim/endpoints``. Both are keyed on the same
-**entity and instance names**, which is what makes one scenario serve both — see the package's README
-for why TF is deliberately not the ROS pose source. None of them can run under ``remote()``: a remote
-server is handed no simulation.
+``entity_monitor`` keeps a scenario variable equal to a value a plugin publishes about an entity --
+``<endpoint>.<field>``, as the world names it -- on every tick, as ``osc.ros``'s ``topic_monitor``
+does for a topic. It never succeeds on its own, so it runs in a ``parallel`` branch, and every
+condition is plain OpenSCENARIO over the variable:
+
+.. code-block:: text
+
+   scenario trial:
+       timeout(120s)
+       min_clearance: float = 0.3
+       var tripped: bool = false
+       var clearance: float = 10.0
+       do parallel:
+           entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+           entity_monitor(entity: 'robot', value: 'clearance.current', target_variable: clearance)
+           serial:
+               wait tripped == true
+               emit end
+           serial:
+               wait clearance < 0.2
+               emit fail
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - pattern
+     - how it reads
+   * - end the run on an outcome
+     - ``wait tripped == true`` then ``emit end``
+   * - threshold
+     - ``wait clearance < 0.3``
+   * - assertion: fail if it ever goes bad
+     - a parallel branch: ``wait clearance < 0.2`` then ``emit fail``
+   * - bound an action
+     - ``entity_navigate(...) with:`` then ``until docked == true``
+   * - combined conditions
+     - ``wait tripped or clearance < 0.1``
+   * - comparison with a parameter
+     - ``wait clearance < min_clearance``
+   * - event and condition
+     - ``wait @fault_on if clearance < 0.3``
+
+A flag is compared explicitly (``tripped == true``): a condition is a comparison or a logical
+expression, not a bare variable. Until the first reading arrives the variable keeps its declared
+default, so declare one the condition does not hold for. A condition that must hold for a length of
+time is composed in the language itself; scenario-execution's language documentation describes that
+pattern. An entity, endpoint or field that does not exist, and a field that is not a single number,
+flag or string, are refused with the same text on both transports.
+
+Where an entity is -- near something, inside an area -- is geometry, which an expression cannot
+compute, so actions state it; each succeeds on the first tick its condition holds:
+
+.. code-block:: text
+
+   entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+   entity_near_position(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+   entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)
+   entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
+   entity_in_region(entity: 'person', outside: true, region: [p1, p2, p3, p4])   # a polygon
+
+The distance is between reference points -- the origins of the entities' bodies, from the core's
+``sim/entities/<name>/pose`` -- and measured in the floor plane unless ``distance_mode!spatial`` asks
+for 3D, since "the robot reached the shelf" is a statement about the floor plan. A region is an area
+of the floor plan: two points are a box's opposite corners, three or more a polygon's vertices; z is
+ignored and the boundary counts as inside. Neither action fails on its own: ``timeout()`` bounds one
+that must hold in time, and "must never enter" is a branch that fails the trial, bounded by ``until``
+for as long as the rule applies:
+
+.. code-block:: text
+
+   do parallel:
+       serial:
+           entity_navigate(entity: 'robot', goal_poses: [...])
+           emit end
+       serial:
+           entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m),
+                                                      position_3d(x: 3m, y: 1m)])
+           emit fail
+       with:
+           until @door_open
+
+Every ``entity_*`` condition (``entity_moved``, ``entity_rotated`` and these) reads the core's
+``sim/entities/<name>/pose`` on both transports, so it names entities, not bodies. An entity that
+exists but is absent (deleted, or not spawned yet) is nowhere, so the condition waits for it and says
+so; a name the world never had is refused at once, naming the closest names, with the same text on
+both transports. ``entity_moved`` and ``entity_rotated`` also refuse an entity welded to the world
+(the pose endpoint's ``movable: false``), whose pose can never change.
+
+Each works in a stepped run *and* against a simulator in another process, unedited: the transport is
+chosen from what the runner offered. In-process they read ``MujocoSim.context`` (entity poses,
+commands and reports through the world's endpoints, writes queued on the physics
+thread); otherwise they reach ``roqsim sim``'s control socket (:doc:`control`) -- the same endpoints,
+found by the same entity and endpoint names, which is what makes one scenario serve both. None of them
+can run under ``remote()``: a remote server is handed no simulation.
 
 ROS 2 bridge
 ------------

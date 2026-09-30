@@ -9,6 +9,7 @@
     roqsim sim world.yaml --set components.floorplan.size=4.0   # override world values
     roqsim sim world.yaml --record run.npz                  # record state for later rendering
     roqsim sim world.yaml --video run.webm                  # ... and render it when the run ends
+    roqsim sim world.yaml --control tcp://:5555              # serve the control socket on TCP
 
 The positional argument is the thing to run, dispatched by shape (see :func:`config_for_input`):
 a ``.yaml`` world, a ``.xml`` MJCF scene, or a model reference (``<pkg>:<name>``, a bundled model
@@ -36,7 +37,7 @@ import time
 from pathlib import Path
 
 from . import control as ctl
-from . import exit_status, logging_setup
+from . import exit_status, ipc, logging_setup
 from .capture import (
     DEFAULT_FPS,
     CaptureError,
@@ -53,6 +54,7 @@ from .config import (
     drop_transport,
     load_config,
     load_config_from_dict,
+    with_control,
     with_transport,
 )
 from .engine import Engine
@@ -108,7 +110,7 @@ _DEFAULT_VIDEO = "run.webm"
 #: one shared path that each run of a sweep overwrites in turn. It is deliberately not in this list --
 #: a per-run artifact has no business at the campaign root, and falling back to the working directory
 #: is at least obviously local rather than quietly shared.
-_OUTPUT_DIR_VARS = ("RUN_OUTPUT_DIR", "OUTPUT_DIR")
+_OUTPUT_DIR_VARS = ipc.OUTPUT_DIR_VARS
 
 
 def _session_path(value: str) -> Path:
@@ -236,6 +238,8 @@ def _tick(engine: Engine, pacer: Pacer) -> bool:
         engine.step()
         return True
     engine.idle()  # posted commands still run while paused; time does not advance
+    # The next step is paced from when it is taken, so a pause is not counted as falling behind.
+    pacer.reset()
     time.sleep(0.005)
     return None  # paused, not quitting
 
@@ -583,7 +587,8 @@ def _warn_no_transport(dropped: list[str]) -> None:
         "(no clock, no TF, no sensor topics, no odometry) and no command is received (no cmd_vel, "
         "no goal, no service). Anything outside this process -- a nav2 stack, a scenario, a "
         "recording node -- sees a simulator that was never started, and a robot it would have "
-        "driven stands still. Use it to look at the world, not to run its experiment.",
+        "driven stands still. Use it to look at the world, not to run its experiment. (The "
+        "control socket, which only reaches this process, stays; --control none removes it.)",
         ", ".join(dropped),
     )
 
@@ -607,6 +612,7 @@ def run(
     seed: int | None = None,
     transport: dict | None = None,
     no_transport: bool = False,
+    control: str | None = None,
     logger: logging.Logger | None = None,
 ) -> Engine:
     """Load ``target``, run the loop, and return the (shut-down) engine. Programmatic entry point.
@@ -636,6 +642,12 @@ def run(
     :func:`roqsim.config.drop_transport`) so a ``*_ros`` world can be *watched* without its middleware
     installed. The run is then mute -- it publishes and receives nothing -- which the loop says out
     loud, because a mute simulation is a different experiment rather than a quieter one.
+
+    ``control`` is a control URI (:mod:`roqsim.ipc`): the run serves every endpoint there, with
+    pause/resume/step/reset as ``sim/run_control/*`` and entity placement and presence as
+    ``sim/entities/set_state`` / ``set_presence``, and prints ``control: <uri>`` once it does.
+    ``no_transport`` does not remove it -- the control socket is how this process is reached, not a
+    middleware the experiment publishes on.
     """
     # Parse the world before any GL: a bad target (missing YAML, unknown model ref, a schema error) is
     # a millisecond away and must fail as a plain message, not behind a window that then has to be torn
@@ -643,6 +655,8 @@ def run(
     cfg = config_for_input(target, overrides, transport)
     if no_transport:
         _warn_no_transport(drop_transport(cfg))
+    if control:
+        control = with_control(cfg, control, world=target)
 
     # Open the viewer on an empty placeholder first, so the roqsim logo is on screen while the
     # (slow) world compiles; the compiled world is swapped into this same window below. Windowed
@@ -683,6 +697,9 @@ def run(
                 seed, logger or log, config_seed=getattr(cfg, "seed", None)
             )
             stack.enter_context(engine)
+            if control:
+                # Once the socket is bound: a client started on this line finds it.
+                print(f"control: {control}", flush=True)
             if profile:
                 print(engine.format_load_report(), file=sys.stderr)
             engine.reset()
@@ -705,7 +722,7 @@ def run(
             # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
             # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
             # to add --record to without editing a launch file that two backends share. Recording is a session
-            # concern -- the same footing as `sim.headless`, which a world YAML ignores with a warning -- so the
+            # concern -- the same footing as `--headless`, which a world YAML has no key for -- so the
             # environment is the right channel, and it is the one the scenario adapter already uses.
             # An explicit flag always wins.
             if record is None:
@@ -945,6 +962,7 @@ def _replay(args, parser) -> int:
         "--sim-control": "sim_control",
         "--tf-namespace": "tf_namespace",
         "--no-communication": "no_communication",
+        "--control": "control",
     }
     stated = sorted(
         flag for flag, dest in live_only.items() if getattr(args, dest) != parser.get_default(dest)
@@ -980,6 +998,26 @@ def _replay(args, parser) -> int:
         RecordingError,
     ) as err:
         return exit_status.fail("roqsim sim", err)
+
+
+def _control_uri(value: str | None) -> str | None:
+    """The control URI this run serves, from ``--control`` / ``ROQSIM_CONTROL`` / the default.
+
+    Asked for by name, a control socket that cannot be served is an error (the bridge raises
+    naming the extra). The default is served only where pyzmq is installed, and a run without it
+    says so, rather than failing every simulation in an environment without the extra.
+    """
+    import importlib.util
+
+    uri = ipc.bind_uri(value, log)
+    asked = value is not None or bool(os.environ.get(ipc.ENV))
+    if uri is not None and not asked and importlib.util.find_spec("zmq") is None:
+        log.warning(
+            "control: not served -- pyzmq is not installed, so this run has no control socket "
+            "(pip install 'roqsim[ipc]'; --control none silences this)"
+        )
+        return None
+    return uri
 
 
 def main(argv: list | None = None) -> int:
@@ -1097,7 +1135,16 @@ def main(argv: list | None = None) -> int:
         "no goals), so an external stack sees no simulator at all and a robot it would have driven "
         "just stands there. For looking at the world; not for running its experiment. Only plugins "
         "identifiable as transport go -- an unresolvable ref that is not one still fails loudly, "
-        "because there it would be a typo.",
+        "because there it would be a typo. The control socket (--control) stays.",
+    )
+    parser.add_argument(
+        "--control",
+        default=None,
+        metavar="URI",
+        help="where this run serves its endpoints and run control (pause/resume/step): ipc://<path> "
+        "or tcp://[host]:<port> (tcp://:<port> binds 127.0.0.1), or 'none'. Default: "
+        f"${ipc.ENV}, else ipc://<run dir>/{ipc.SOCKET_NAME}. Clients: `roqsim ls`, "
+        "`roqsim endpoints`, roqsim.control_client.",
     )
     parser.add_argument(
         "--pacing", default=None, help="'realtime' | 'asap' | a float factor (e.g. 4.0)"
@@ -1199,6 +1246,11 @@ def main(argv: list | None = None) -> int:
         )
 
     try:
+        control = _control_uri(args.control)
+    except ValueError as err:
+        parser.error(f"--control: {err}")
+
+    try:
         run(
             args.target,
             headless=args.headless,
@@ -1220,6 +1272,7 @@ def main(argv: list | None = None) -> int:
             seed=args.seed,
             transport=transport,
             no_transport=args.no_communication,
+            control=control,
         )
     except (DisplayError, GLBackendError, ViewError, PluginError, ModelError, CaptureError) as err:
         return exit_status.fail("roqsim sim", err)

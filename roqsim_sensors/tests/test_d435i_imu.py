@@ -19,6 +19,7 @@ from roqsim_sensors.plugins.imu import ImuPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.pose import pose_mapping
 
 # -- the vendor's own numbers, and only these ------------------------------------------------
 # realsense2_description/urdf/_d435.urdf.xacro
@@ -47,7 +48,7 @@ def _spawn(*, overrides=None):
                     "spawn_sensor": {
                         "model": "realsense_d435",
                         "prefix": "d435_",
-                        "pos": [1.0, 0.0, 0.5],
+                        "pose": pose_mapping([1.0, 0.0, 0.5]),
                     },
                     "name": "cam",
                 }
@@ -114,7 +115,7 @@ def test_the_reported_frame_is_the_optical_one_the_driver_stamps():
 def test_the_imu_frame_is_published_on_the_chain():
     engine = _spawn()
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    links = {(t["parent"], t["child"]) for t in frames.backend["ros2"]["static_tf"]}
+    links = {(t["parent"], t["child"]) for t in [vars(t) for t in frames.read().transforms]}
     assert ("camera_link", "camera_gyro_frame") in links
     assert ("camera_gyro_frame", "camera_gyro_optical_frame") in links
     assert ("camera_gyro_optical_frame", "camera_imu_optical_frame") in links

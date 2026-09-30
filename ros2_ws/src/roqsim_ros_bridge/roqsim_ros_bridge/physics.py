@@ -16,7 +16,6 @@ Only for a *cross-thread* caller. Code already on the physics thread (a plugin h
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -29,19 +28,12 @@ DEFAULT_TIMEOUT_S = 2.0
 def run_on_physics(ctx, fn: Callable[[Any], None], timeout: float | None = None) -> bool:
     """Post *fn* to the physics thread and block until it has run. ``False`` on timeout.
 
-    ``timeout`` defaults to :data:`DEFAULT_TIMEOUT_S`, read at call time so the module constant is
-    actually the knob it looks like.
+    ``True`` means it ran, whether it returned or raised; a raise is logged by the physics thread,
+    and a caller that needs it waits on :meth:`roqsim.context.SimContext.submit`'s future with
+    ``result`` instead. ``timeout`` defaults to :data:`DEFAULT_TIMEOUT_S`, read at call time so the
+    module constant is actually the knob it looks like.
     """
-    done = threading.Event()
-
-    def wrapped(c):
-        try:
-            fn(c)
-        finally:
-            done.set()
-
-    ctx.post(wrapped)
-    return done.wait(DEFAULT_TIMEOUT_S if timeout is None else timeout)
+    return ctx.submit(fn).wait(DEFAULT_TIMEOUT_S if timeout is None else timeout)
 
 
 def barrier(ctx, timeout: float | None = None) -> bool:
