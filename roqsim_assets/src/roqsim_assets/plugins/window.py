@@ -6,8 +6,8 @@ this plugin fills it. Parametric for the same reason ``shelf`` is -- a wall's op
 one size, and a per-width MJCF model per wall is exactly the frozen geometry the plugin pattern exists
 to avoid. Like ``spawn_model`` the window is welded in place (static scenery, no free joint).
 
-Geometry (all metres). Placed by the **opening centre** (``pos``, like ``door``) and the wall direction
-(``rpy`` yaw): the pane spans ``width`` along the wall, ``height`` up from the floor, and ``depth``
+Geometry (all metres). Placed by the **opening centre** (``pose.position``, like ``door``) and the
+wall direction (the pose's yaw): the pane spans ``width`` along the wall, ``height`` up from the floor, and ``depth``
 through it. Two stiles run the full height at the sides, a head and a sill span between them, and the
 glass fills what is left inside a uniform ``frame`` border.
 
@@ -24,8 +24,9 @@ Config::
 
     window:
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 window)
-      pos: [0.0, 0.0, 0.0]  # opening CENTRE, [x, y] or [x, y, z] world placement
-      rpy: [0.0, 0.0, 0.0]  # orientation; yaw aligns the pane with its wall
+      pose:                 # opening CENTRE, a geometry_msgs/Pose in the world (roqsim.pose);
+        position: {x: 0.0, y: 0.0}   #   omitted components are 0
+        orientation: {yaw: 0.0}      #   yaw aligns the pane with its wall
       width: 0.94         # opening width along the wall, m (default 0.94)
       height: 2.06        # overall height from the floor, m (default 2.06 -- door_frame's outer height)
       depth: 0.10         # thickness through the wall, m (default 0.10 -- the default wall thickness)
@@ -44,7 +45,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 # Defaults that make a window line up with this library's door unit -- see the module docstring.
 _DOOR_MATCHED_H = 2.06
@@ -63,15 +64,7 @@ class WindowPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
-        # Pose parsing tolerates malformed input (falls back to the origin / identity) so a bad length
-        # is reported by validate_config with a friendly message rather than crashing construction.
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        if len(pos) in (2, 3):
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        else:
-            self.pos = [0.0, 0.0, 0.0]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports them
         # with a friendly message rather than crashing construction.
         self.width = self._float(self.config.get("width"), 0.94)
@@ -123,10 +116,7 @@ class WindowPlugin(Plugin):
         for key in ("color", "glass_color"):
             if key in config and self._rgba(config[key]) is None:
                 errors.append(f"'{key}' must be [r, g, b] or [r, g, b, a] numbers")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, "window")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:

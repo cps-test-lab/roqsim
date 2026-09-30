@@ -31,8 +31,9 @@ Config::
 
     palm_tree:
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 tree)
-      pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement of the trunk base
-      rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)
+      pose:                 # the trunk base, a geometry_msgs/Pose (roqsim.pose); omitted
+        position: {x: 0.0, y: 0.0, z: 0.0}          #   components are 0
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       trunk_height: 1.60    # m, top of the pole above the floor
       trunk_radius: 0.030   # m
       pot_height: 0.16      # m (0 for a pole with no pot)
@@ -62,7 +63,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 _TRUNK_H = 1.60
 _TRUNK_R = 0.030
@@ -107,13 +108,7 @@ class PalmTreePlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        if len(pos) in (2, 3):
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        else:
-            self.pos = [0.0, 0.0, 0.0]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
         # Bad values are tolerated here (kept as the default) so validate_config reports them with a
         # friendly message rather than crashing construction.
         self.trunk_height = self._float(self.config.get("trunk_height"), _TRUNK_H)
@@ -185,10 +180,7 @@ class PalmTreePlugin(Plugin):
                 errors.append(f"bunches[{i}]: 'radius' must be > 0")
             if self._int(bunch.get("fruits"), 9) < 1:
                 errors.append(f"bunches[{i}]: 'fruits' must be >= 1")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, "palm_tree")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:

@@ -233,7 +233,8 @@ def test_a_shell_made_elastic_in_one_block_is_accepted(tmp_path):
     [
         ({"young": 1.0e5}, "'flex' is required"),
         ({"flex": "beam"}, "sets nothing"),
-        ({"flex": "beam", "youngs": 1.0e5}, "'youngs' is not a flex material key"),
+        ({"flex": "beam", "youngs": 1.0e5}, "'youngs' is not a setting .* did you mean 'young'"),
+        ({"flex": []}, "'flex' must name a flex"),
         ({"flex": "beam", "young": "5e5"}, "YAML 1.1"),
         ({"flex": "beam", "poisson": 0.5}, "below 0.5"),
         ({"flex": "beam", "elastic2d": "soft"}, "must be one of"),

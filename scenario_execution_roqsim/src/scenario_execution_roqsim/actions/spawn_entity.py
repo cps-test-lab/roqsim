@@ -14,8 +14,9 @@ can only place it where the world compiled it and then move it, which is visible
 leaves a free body accelerating under gravity in between.
 
 Like every action here it runs over either transport (``roqsim.access``): in a stepped run the flip
-is a posted callback on the physics thread, and in a ROS run it is ``simulation_interfaces``'
-``SpawnEntity``. The scenario is written once and does not learn which shape it is in.
+is a posted callback on the physics thread, and over the control socket it is the
+``sim/entities/set_presence`` command -- both :func:`roqsim.entity_control.set_presence`. The
+scenario is written once and does not learn which shape it is in.
 
 ``scenario_execution_sim`` declares a ``spawn_entity`` too -- its own, ROS-only, ``uri``-shaped one.
 That is not a clash to rename around: an action name is unique within a LIBRARY, and an invocation

@@ -5,11 +5,15 @@ of a ``<flexcomp>`` otherwise answers by running the world and watching it: what
 into, how fast it rings, how much of its damping is the material's and how much the integrator's,
 and whether its contact stiffness is the one MuJoCo will use.
 
-Three answers are rules of MuJoCo's integrator rather than of the model. Only this analysis reads
-them, so they are stated where they are used rather than among :mod:`roqsim.flex`'s numbered rules:
-**numerical damping under** ``discrete`` and **the resolution limit** in :func:`explain_flex`, and
-**the** ``solref`` **floor** in :func:`solref_floor`. Each was measured on MuJoCo 3.14.0 and is
-pinned by ``tests/test_flex_modes.py``, which measures it on a stepped model.
+Three answers are rules of MuJoCo's integrator rather than of the model. Two are read only by this
+analysis, so they are stated where they are used, in :func:`explain_flex`, rather than among
+:mod:`roqsim.flex`'s numbered rules: **numerical damping under** ``discrete`` and **the resolution
+limit**. Each was measured on MuJoCo 3.14.0 and is pinned by ``tests/test_flex_modes.py``, which
+measures it on a stepped model. The third, **the** ``solref`` **floor**, applies to every contact
+and not only a flex's, so it is :func:`roqsim.solref.solref_floor`, measured in
+``tests/test_solref_floor.py``: two timesteps under every integrator but ``discrete``, and under
+``discrete`` a cap on the contact's stiffness -- ``timestep * sqrt(solimp[1]) / (solimp[1] *
+dampratio)`` as a time constant at the default ``solimp``, about 1.03 steps at a damping ratio of 1.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from dataclasses import dataclass
 import mujoco
 
 from .flex import flex_dof_body_ids
+from .solref import floor_rule, floor_text, solref_floor
 
 #: ``flex_interp`` -> the ``dof`` attribute a ``<flexcomp>`` states it with.
 DOF_MODES = {0: "full", 1: "trilinear", 2: "quadratic"}
@@ -268,22 +273,6 @@ def first_modes(
     return FlexModes(omega, len(dofs), rigid, dofs, inv_chol.T @ vectors[:, chosen])
 
 
-def solref_floor(model: mujoco.MjModel) -> float | None:
-    """The time constant below which MuJoCo raises a contact's ``solref``, ``None`` if there is none.
-
-    **The solref floor.** With ``refsafe`` enabled (MuJoCo's default) a contact's time constant is
-    raised to a floor before it is used, so a ``solref`` stiffer than the floor is silently not the
-    one that runs. The floor is **one** timestep under ``discrete`` and two under every other integrator;
-    with ``refsafe`` disabled there is none. Measured as the depth a resting sphere sits at: equal
-    for every time constant below the floor, deeper above it. A ``solref`` whose first entry is not
-    positive states stiffness and damping directly and has no floor.
-    """
-    if model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_REFSAFE:
-        return None
-    steps = 1 if model.opt.integrator == mujoco.mjtIntegrator.mjINT_DISCRETE else 2
-    return steps * float(model.opt.timestep)
-
-
 def contact_solref(model: mujoco.MjModel, flex_id: int) -> tuple[list[float], str]:
     """The ``solref`` this flex's contacts start from, and where it comes from.
 
@@ -296,6 +285,13 @@ def contact_solref(model: mujoco.MjModel, flex_id: int) -> tuple[list[float], st
     return [float(v) for v in model.flex_solref[flex_id]], "flex"
 
 
+def contact_solimp(model: mujoco.MjModel, flex_id: int) -> list[float]:
+    """The ``solimp`` this flex's contacts start from, from the same source as :func:`contact_solref`."""
+    if model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_OVERRIDE:
+        return [float(v) for v in model.opt.o_solimp]
+    return [float(v) for v in model.flex_solimp[flex_id]]
+
+
 def explain_flex(model: mujoco.MjModel, flex_id: int, n: int = 3) -> tuple[dict, list[dict]]:
     """``(derived, warnings)`` for one flex: its modes, damping, and contact, as ``roqsim check`` reports them.
 
@@ -306,13 +302,14 @@ def explain_flex(model: mujoco.MjModel, flex_id: int, n: int = 3) -> tuple[dict,
     not what a run shows); the flex's ``damping``, the ``timestep``, the ``numerical_share`` of the
     damping, the ``max_timestep_for_half`` that keeps it at most half and the
     ``max_timestep_resolved`` that resolves every reported mode; and the contact ``solref``, its
-    ``solref_floor`` and whether it is ``below_floor``. The numerical terms and the resolution are
-    those of the ``discrete`` integrator (below) and ``None`` under any other. ``warnings`` are
-    ``roqsim check`` warnings -- ``{"check", "message", "hint"}``, with the flex's name in the
-    message and, as an extra key, in ``flex`` -- and never make a world fail. ``check`` is
-    ``flex-damping`` (the integrator's share of the damping is above half), ``flex-timestep`` (a
-    reported mode is under-resolved by the timestep) or ``flex-solref`` (the contact ``solref`` is
-    below the floor).
+    ``solref_floor`` (:func:`roqsim.solref.solref_floor` for the damping ratio and ``solimp`` its
+    contacts start from; ``None`` with ``refsafe`` disabled or a direct-form ``solref``) and whether
+    it is ``below_floor``. The numerical terms and the resolution are those of the ``discrete``
+    integrator (below) and ``None`` under any other. ``warnings`` are ``roqsim check`` warnings --
+    ``{"check", "message", "hint"}``, with the flex's name in the message and, as an extra key, in
+    ``flex`` -- and never make a world fail. ``check`` is ``flex-damping`` (the integrator's share of
+    the damping is above half), ``flex-timestep`` (a reported mode is under-resolved by the
+    timestep) or ``flex-solref`` (the contact ``solref`` is below the floor).
 
     **Numerical damping under ``discrete``.** The integrator damps a flex's elastic mode *i*
     as if the stated Rayleigh damping (``<elasticity damping>``, a time) were one timestep larger:
@@ -437,23 +434,23 @@ def explain_flex(model: mujoco.MjModel, flex_id: int, n: int = 3) -> tuple[dict,
         )
 
     solref, source = contact_solref(model, flex_id)
-    floor = solref_floor(model)
+    # Only the standard form (both entries positive) is a time constant with a floor.
+    standard = solref[0] > 0 and solref[1] > 0
+    floor = solref_floor(model.opt, solref, contact_solimp(model, flex_id)) if standard else None
     derived["solref"] = solref
     derived["solref_source"] = source
     derived["solref_floor"] = floor
-    derived["below_floor"] = bool(floor is not None and 0 < solref[0] < floor)
+    derived["below_floor"] = bool(floor is not None and solref[0] < floor)
     if derived["below_floor"]:
-        integrator = mujoco.mjtIntegrator(model.opt.integrator).name.removeprefix("mjINT_").lower()
-        steps = "one timestep" if discrete else "two timesteps"
         warnings.append(
             {
                 "check": "flex-solref",
                 "message": (
                     f"flex {name!r}: contact solref time constant {solref[0]:g} s ({source}) is below MuJoCo's "
-                    f"floor of {floor:g} s ({steps} under {integrator}); MuJoCo uses the floor, so "
-                    "the stated contact stiffness is not the one that runs"
+                    f"floor of {floor_text(floor)} s ({floor_rule(model.opt)}); MuJoCo uses the "
+                    "floor, so the stated contact stiffness is not the one that runs"
                 ),
-                "hint": f"raise solref[0] to at least {floor:g} s, or lower sim.timestep",
+                "hint": f"raise solref[0] to at least {floor_text(floor)} s, or lower sim.timestep",
                 "flex": name,
             }
         )

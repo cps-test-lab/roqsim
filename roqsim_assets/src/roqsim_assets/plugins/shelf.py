@@ -16,8 +16,9 @@ Config::
 
     shelf:
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 shelf)
-      pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement
-      rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)
+      pose:                 # world placement, a geometry_msgs/Pose (roqsim.pose); omitted
+        position: {x: 0.0, y: 0.0, z: 0.0}          #   components are 0
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       layers: 5           # number of boards (int >= 2; default 5, matching the mesh model)
       width: 1.51         # board size along Y, m   (default 1.51)
       depth: 0.80         # board size along X, m   (default 0.80; half-depth => 0.40)
@@ -38,7 +39,7 @@ import mujoco
 from roqsim.context import Entity, SimContext
 from roqsim.models import ModelError, resolve_model
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 logger = logging.getLogger("roqsim_assets.shelf")
 
@@ -70,18 +71,7 @@ class ShelfPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
-        # Pose parsing tolerates malformed input (falls back to the origin / identity) so a bad length
-        # is reported by validate_config with a friendly message rather than crashing construction.
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        if len(pos) in (2, 3):
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        else:
-            self.pos = [0.0, 0.0, 0.0]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        if len(rpy) == 3:
-            self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
-        else:
-            self.quat = [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config can report
         # them with a friendly message rather than crashing during construction.
         self.layers = self._int(self.config.get("layers"), 5)
@@ -133,10 +123,7 @@ class ShelfPlugin(Plugin):
                 errors.append("boards do not fit: 'thickness' * 'layers' must be < 'height'")
         except (TypeError, ValueError):
             pass  # already reported by the per-key checks above
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, "shelf")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:

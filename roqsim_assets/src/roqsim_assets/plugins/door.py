@@ -6,8 +6,8 @@ model) **and** an *articulated, live-controllable* prop like the ``conveyor`` (a
 by a position actuator, whose target is set over ROS). It fills the gap the floorplan generator
 leaves -- a door opening is otherwise just a 2 m hole with a lintel, no leaf.
 
-Geometry. The door is placed by its **opening centre** (``pos``, like every other prop) and the wall
-direction (``rpy`` yaw). ``hinge_side`` picks which vertical edge of the opening is *fixed* (the
+Geometry. The door is placed by its **opening centre** (``pose.position``, like every other prop)
+and the wall direction (the pose's yaw). ``hinge_side`` picks which vertical edge of the opening is *fixed* (the
 hinge); the leaf spans from there across the opening. A ``hinge`` joint about +Z lets it swing;
 ``swing`` (+1/-1) chooses which side of the wall it opens toward. ``open`` is the initial openness
 fraction (0 = closed, 1 = fully open at ``max_angle``) -- i.e. *how open* the door starts.
@@ -34,11 +34,14 @@ Config::
 
     door:
       prefix: door_1_        # MJCF name prefix (distinct per door)
-      pos: [x, y, 0]         # opening CENTRE, [x, y] or [x, y, z] world placement
-      rpy: [0, 0, yaw]       # orientation; yaw aligns the closed leaf along its wall
+      pose:                  # opening CENTRE, a geometry_msgs/Pose in the world (roqsim.pose);
+        position: {x: 0.0, y: 0.0}   #   omitted components are 0
+        orientation: {yaw: 0.0}      #   yaw aligns the closed leaf along its wall
       width: 0.9             # opening / leaf width (m)
       height: 2.0            # leaf height (m)
       thickness: 0.04        # leaf thickness (m); box leaf only
+      floor_gap: 0.01        # clearance above the floor and below the lintel (m), so the leaf
+                             #   does not scrape the ground and fight its actuator
       leaf: true             # false -> a cased opening: the casing is welded, no leaf is hung
       model: door            # optional leaf mesh model (door | door_glass | pkg:name); omit -> box
       color: [r, g, b, a]    # repaint the leaf (omit -> the model's own colours); alpha optional
@@ -56,6 +59,9 @@ Config::
       namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
       kp: 40.0               # position-actuator stiffness
       kv: 8.0                # position-actuator damping (velocity gain)
+      max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
+      stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
+      stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
 
 The leaf-mesh convention (``model:``) mirrors the rest of the asset library but with one addition: a
 door model's origin is its **hinge (fixed) vertical edge** at floor level, the leaf extending along
@@ -91,10 +97,11 @@ from dataclasses import dataclass
 
 import mujoco
 
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim import endpoint
+from roqsim.context import Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 logger = logging.getLogger("roqsim_assets.door")
 
@@ -138,13 +145,7 @@ class DoorPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.door_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        if len(pos) in (2, 3):
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        else:
-            self.pos = [0.0, 0.0, 0.0]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
 
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports
         # them with a friendly message rather than crashing construction.
@@ -175,6 +176,8 @@ class DoorPlugin(Plugin):
         self.max_angle = math.radians(self._float(self.config.get("max_angle"), 120.0))
         self.open0 = min(max(self._float(self.config.get("open"), 0.0), 0.0), 1.0)
         self.controllable = bool(self.config.get("controllable", True))
+        # The ROS surface needs something to command: a controllable door with a leaf.
+        self.commandable = self.leaf and self.controllable
         self.kp = self._float(self.config.get("kp"), 40.0)
         self.kv = self._float(self.config.get("kv"), 8.0)
         # An automatic door only pushes *gently*: the actuator force is capped, so an obstacle
@@ -274,10 +277,7 @@ class DoorPlugin(Plugin):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
             errors.append("'swing' must be non-zero (+1 or -1)")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, "door")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -471,59 +471,46 @@ class DoorPlugin(Plugin):
         if not self.controllable:
             return  # passive door: holds `open`, no ROS surface
 
-        ns = self.config.get("namespace", "")
         # State reader keyed by the door's own name so the (generalized) GripperCommand handler finds
         # it without the door pretending to be a gripper (see roqsim_ros_bridge.actions).
         ctx.blackboard.set(f"door:{self.door_name}:state", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="cmd",
-                direction="in",
-                owner=self.door_name,
-                namespace=ns,
-                write=self.set_openness,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "topic": self.topic_override("cmd") or "cmd",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="state",
-                direction="out",
-                owner=self.door_name,
-                namespace=ns,
-                read=lambda: self._target if self._ctx is None else self.read_state()[0],
-                rate_hz=10.0,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "topic": self.topic_override("state") or "state",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="door",
-                direction="in",
-                owner=self.door_name,
-                namespace=ns,
-                write=self.set_openness,
-                backend={
-                    "ros2": {
-                        "action": "control_msgs.action.GripperCommand",
-                        "name": self.topic_override("door") or "door",
-                        # Where the handler reads (position, velocity) for reached/stalled -- the
-                        # door's own reader, not a gripper's (handler defaults to gripper:<owner>).
-                        "state_key": f"door:{self.door_name}:state",
-                    }
-                },
-            )
-        )
+
+    # -- endpoints, declared only when `commandable` -------------------------------------------
+    @property
+    def endpoint_owner(self) -> str:
+        """The door entity this plugin registers."""
+        return self.door_name
+
+    @endpoint.stream(when="commandable", ros2={"type": "std_msgs.msg.Float64"})
+    def cmd(self, data: float) -> None:
+        """Target openness, fire-and-forget; applied once per step.
+
+        Args:
+            data: openness, 0 closed to 1 fully open; clamped
+        """
+        self.set_openness(data)
+
+    @endpoint.out(rate=10.0, when="commandable")
+    def state(self) -> float:
+        """Current openness, 0 closed to 1 fully open."""
+        return self._target if self._ctx is None else self.read_state()[0]
+
+    # Served by the GripperCommand action, which reports reached or stalled by watching the door's
+    # own state reader (`state_key`) rather than a gripper's.
+    @endpoint.command(
+        when="commandable",
+        ros2=lambda self: {
+            "action": "control_msgs.action.GripperCommand",
+            "state_key": f"door:{self.door_name}:state",
+        },
+    )
+    def door(self, position: float) -> None:
+        """Move to an openness and report when it is reached or the leaf stalls.
+
+        Args:
+            position: openness, 0 closed to 1 fully open; clamped
+        """
+        self.set_openness(position)
 
     def set_openness(self, openness: float) -> None:
         """Set the target openness fraction (0 = closed, 1 = fully open); clamped.

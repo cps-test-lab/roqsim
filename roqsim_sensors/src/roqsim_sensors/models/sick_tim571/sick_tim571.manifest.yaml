@@ -13,8 +13,6 @@
 frames:
   - name: "{frame_id}"      # the vendor scan frame: the mount itself
     parent: mount
-    pos: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
 
 components:
   - lidar:

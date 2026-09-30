@@ -45,7 +45,7 @@ def test_a_working_world_reaches_the_last_stage_and_says_what_it_is(tmp_path):
     assert world["model"]["nbody"] > 1
     assert world["integrator"] == "implicitfast"  # the spelling a world writes, not the enum's
     # The robot, and the scanner its manifest mounts: a mounted device is an entity of its own.
-    assert {e["name"] for e in world["entities"]} == {"robot", "robot.rplidar"}
+    assert {e["name"] for e in world["entities"]} == {"robot", "robot.rplidar", "robot.oakd"}
     # The inventory is the half that is not about failure: what to write the next thing against.
     assert {"cmd_vel", "odom", "scan"} <= {e["topic"] for e in world["endpoints"]}
     assert all(c["address"] for c in world["components"])
@@ -106,7 +106,7 @@ def test_a_package_ref_is_accepted_the_way_roqsim_sim_takes_one():
     pytest.importorskip("roqsim_mobile")
     report = check_world("roqsim_mobile:turtlebot4_demo")
     assert report["ok"] is True
-    assert {e["name"] for e in report["world"]["entities"]} == {"robot", "robot.rplidar"}
+    assert {e["name"] for e in report["world"]["entities"]} == {"robot", "robot.rplidar", "robot.oakd"}
     topics = {e["topic"] for e in report["world"]["endpoints"]}
     assert {"cmd_vel", "odom", "scan"} <= topics
 
@@ -268,7 +268,7 @@ def test_an_arm_home_that_buries_the_arm_in_the_table_is_named(tmp_path, capsys)
         components:
           - spawn_model: {model: table.xml, motion: static}
             name: table
-          - spawn_arm: {model: ur5e, pos: [0, 0, 0.4], home: [0, 0.9, 0, 0, 0, 0]}
+          - spawn_arm: {model: ur5e, pose: {position: {z: 0.4}}, home: [0, 0.9, 0, 0, 0, 0]}
             name: arm
         """,
     )
@@ -304,3 +304,42 @@ def test_a_plugin_whose_reset_fails_is_a_reset_problem(tmp_path):
     assert report["reached"] == "configure"
     assert [p["stage"] for p in report["problems"]] == ["reset"]
     assert "cannot re-home" in report["problems"][0]["message"]
+
+
+def test_an_unknown_model_in_a_nested_entry_is_a_failed_check_not_a_traceback(tmp_path, capsys):
+    pytest.importorskip("roqsim_mobile", reason="the turtlebot4 model lives in roqsim_mobile")
+    world = _world(
+        tmp_path,
+        """
+        sim: {}
+        components:
+          - spawn_robot: {model: turtlebot4}
+            name: robot
+            components:
+              - spawn_sensor: {model: no_such_model_xyz}
+                name: oakd
+        """,
+    )
+    assert main([str(world)]) == exit_status.FINDING
+    out = capsys.readouterr().out
+    assert f"FAIL  [config] {world.resolve()}: robot.oakd: model 'no_such_model_xyz'" in out
+    assert "Traceback" not in out
+
+
+def test_a_yaml_syntax_error_is_a_config_problem(tmp_path, capsys):
+    world = _world(tmp_path, "sim: {}\ncomponents: [\n")
+    assert main([str(world)]) == exit_status.FINDING
+    out = capsys.readouterr().out
+    assert "FAIL  [config] " in out and "Error" in out
+    assert "Traceback" not in out
+
+
+def test_a_bug_in_the_loader_is_not_reported_as_a_config_problem(tmp_path, monkeypatch):
+    import roqsim.config
+
+    def broken(*_args, **_kwargs):
+        raise KeyError("a bug, not bad input")
+
+    monkeypatch.setattr(roqsim.config, "load_config", broken)
+    with pytest.raises(KeyError, match="a bug"):
+        check_world(str(_world(tmp_path, "sim: {}\ncomponents: []\n")))

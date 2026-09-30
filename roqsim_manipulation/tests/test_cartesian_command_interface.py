@@ -17,12 +17,13 @@ import pytest
 from roqsim_manipulation.plugins.cartesian_admittance import (
     CartesianAdmittancePlugin,
     _GoalStream,
-    _type_from_law,
 )
 from roqsim_sensors.plugins.force_torque import WrenchReader
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import PluginError
+from roqsim.types import Pose, Wrench
 
 
 def _law(*, stiffness=None, axes=None, wrench=(0.0, 0.0, 0.0), pos=None, mat=None, w_d=None):
@@ -132,26 +133,13 @@ def test_the_clamp_leaves_a_twist_inside_the_limit_alone():
 # -- identity ------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("law", "stiffness", "expected"),
-    [
-        ("position", [0] * 6, "cartesian_motion_controller"),
-        ("admittance", [0] * 6, "cartesian_force_controller"),
-        ("admittance", [100, 100, 0, 0, 0, 0], "cartesian_compliance_controller"),
-    ],
-)
-def test_the_legacy_law_key_derives_a_controller_type(law, stiffness, expected):
-    """`law` is the older spelling and worlds still carry it; it must land on the identity that
-    behaves the way that `law` specifies."""
-    assert _type_from_law(law, stiffness) == expected
-
-
-def test_an_explicit_controller_type_wins_over_the_law_key():
+def test_the_controller_type_decides_which_terms_are_live():
     plugin = CartesianAdmittancePlugin(
-        {"controller_type": "cartesian_motion_controller", "law": "admittance"}, entity="arm"
+        {"controller_type": "cartesian_motion_controller"}, entity="arm"
     )
     assert plugin.controller_type == "cartesian_motion_controller"
     assert plugin._needs_ft is False
+    assert plugin._uses_wrench is False
 
 
 def test_a_controller_type_names_its_topics():
@@ -175,8 +163,53 @@ def test_initial_state_defaults_to_active(config, active):
     [{"controller_type": "nonsense"}, {"initial_state": "paused"}],
 )
 def test_a_bad_identity_is_refused_with_the_alternatives_named(config):
-    errors = CartesianAdmittancePlugin({}, entity="arm").validate_config(config)
-    assert errors, f"{config} should not validate"
+    (key,) = config
+    errors = CartesianAdmittancePlugin({}, entity="arm").config_errors(config)
+    assert any(key in e and "must be one of" in e for e in errors), errors
+
+
+# -- the keys: every one it reads is declared, and no other is accepted ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "key", "near"),
+    [
+        ({"law": "position"}, "law", None),
+        ({"stifness": [0] * 6}, "stifness", "stiffness"),
+        ({"feedforward_window": 0.1}, "feedforward_window", "feedforward_window_s"),
+    ],
+)
+def test_a_key_it_does_not_read_is_refused_by_name(config, key, near):
+    errors = CartesianAdmittancePlugin({}, entity="arm").config_errors(config)
+    (error,) = [e for e in errors if f"'{key}'" in e]
+    assert "is not a setting of this component" in error
+    if near:
+        assert f"did you mean '{near}'" in error
+
+
+def test_a_wrong_entry_count_in_a_per_axis_vector_is_refused_by_name():
+    errors = CartesianAdmittancePlugin({}, entity="arm").config_errors({"damping": [80] * 5})
+    assert any("'damping'" in e and "exactly 6" in e for e in errors), errors
+
+
+def test_the_keys_a_manifest_or_the_transport_injects_are_accepted():
+    config = {"prefix": "ur5e_", "namespace": "ur5e", "topics": {}, "qos": {}}
+    assert not CartesianAdmittancePlugin({}, entity="arm").config_errors(config)
+
+
+def test_a_misspelt_key_in_a_world_fails_the_load(tmp_path):
+    with pytest.raises(PluginError, match="'law' is not a setting"):
+        Engine(_world(tmp_path, {"law": "position"})).setup()
+
+
+def test_the_handle_offers_no_law_switch(tmp_path):
+    """A controller's law is its type; changing behaviour part-way is a controller switch."""
+    engine = Engine(_world(tmp_path))
+    engine.setup()
+    handle = engine.ctx.blackboard.require("cartesian:ur5e")
+    assert not hasattr(handle, "set_law")
+    plugin = next(p for p in engine.plugins if isinstance(p, CartesianAdmittancePlugin))
+    assert not hasattr(plugin, "set_law")
 
 
 # -- in a world ----------------------------------------------------------------------------------
@@ -218,14 +251,13 @@ def test_the_command_endpoints_are_declared_under_the_controller_name(tmp_path):
     engine.setup()
     eps = {e.name: e for e in engine.ctx.interface.all()}
 
+    # A Pose travels as geometry_msgs/PoseStamped and a Wrench as geometry_msgs/WrenchStamped.
     frame_ep = eps["target_frame"]
-    assert frame_ep.direction == "in"
-    assert frame_ep.backend["ros2"]["type"] == "geometry_msgs.msg.PoseStamped"
-    assert frame_ep.backend["ros2"]["topic"] == "cartesian_compliance_controller/target_frame"
+    assert frame_ep.direction == "in" and frame_ep.payload_type.cls is Pose
+    assert frame_ep.backend["ros2"] == {"topic": "cartesian_compliance_controller/target_frame"}
 
     wrench_ep = eps["target_wrench"]
-    assert wrench_ep.direction == "in"
-    assert wrench_ep.backend["ros2"]["type"] == "geometry_msgs.msg.WrenchStamped"
+    assert wrench_ep.direction == "in" and wrench_ep.payload_type.cls is Wrench
 
     assert eps["current_pose"].direction == "out"
 
@@ -236,7 +268,8 @@ def test_a_commanded_wrench_reaches_the_law(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "target_wrench")
 
-    ep.write(((1.0, 2.0, -8.0), (0.0, 0.0, 0.5)))
+    ep.write({"force": (1.0, 2.0, -8.0), "torque": (0.0, 0.0, 0.5)})
+    engine.step()  # a stream is applied on the physics thread, once per step
 
     plugin = engine.ctx.blackboard.require("cartesian:ur5e")
     assert plugin.controller_name
@@ -250,7 +283,8 @@ def test_a_commanded_frame_reaches_the_law(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "target_frame")
 
-    ep.write(((0.4, 0.1, 0.3), (1.0, 0.0, 0.0, 0.0)))
+    ep.write({"position": (0.4, 0.1, 0.3), "orientation": (1.0, 0.0, 0.0, 0.0)})
+    engine.step()  # a stream is applied on the physics thread, once per step
 
     law = next(p for p in engine.plugins if isinstance(p, CartesianAdmittancePlugin))
     assert law._goal_pos == pytest.approx([0.4, 0.1, 0.3])
@@ -263,9 +297,9 @@ def test_current_pose_reads_back_as_position_and_quaternion(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "current_pose")
 
-    position, quat = ep.read()
-    assert len(position) == 3 and len(quat) == 4
-    assert np.linalg.norm(quat) == pytest.approx(1.0, abs=1e-6)
+    pose = ep.read()
+    assert len(pose.position) == 3 and len(pose.orientation) == 4
+    assert np.linalg.norm(pose.orientation) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_activating_anchors_on_the_arm_state_now(tmp_path):
