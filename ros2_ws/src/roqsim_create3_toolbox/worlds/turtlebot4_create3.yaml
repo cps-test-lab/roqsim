@@ -35,12 +35,14 @@ components:
         orientation: {yaw: 3.141592653589793}
     name: standard_dock
     components:
-      - ground_truth_pose: {child_frame: standard_dock, rate_hz: 62, lazy: true,
-                            topics: {pose: _internal/sim_ground_truth_dock_pose}}
-        name: gt_dock
-      - ground_truth_pose: {site: halo_link, relative_to: base, rate_hz: 62, lazy: true,
-                            topics: {pose: _internal/sim_ground_truth_dock_pose}}
-        name: gt_halo
+      - pose_publisher:
+          poses:
+            - {frame: .}                                     # published as standard_dock
+            - {frame: halo_link, relative_to: std_dock_link}
+          rate_hz: 62
+          lazy: true
+          topics: {poses: _internal/sim_ground_truth_dock_pose}
+        name: gt
 
   - ros2_bridge: {}
   - sim_interfaces: {}

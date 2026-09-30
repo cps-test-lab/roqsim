@@ -180,6 +180,31 @@ def test_every_usage_line_names_the_command_the_user_types(helps):
     assert not wrong, f"these usage lines do not name `roqsim <path>`: {wrong}"
 
 
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_a_blender_hosted_tool_answers_help_without_blender(tmp_path, flag):
+    """Asking how to run a tool must not need the program it runs in; running it still does."""
+    env = {**os.environ, "PATH": str(tmp_path)}  # an empty directory: no `blender` on PATH
+    cmd = [sys.executable, "-m", "roqsim.commands", "scenes", "usd-to-scene"]
+    shown = subprocess.run(
+        [*cmd, flag], capture_output=True, text=True, timeout=60, cwd=REPO, env=env
+    )
+    assert shown.returncode == 0, shown.stderr
+    assert re.search(
+        r"usage: (roqsim|python -m roqsim\.commands) scenes usd-to-scene(\s|$)", shown.stdout
+    ), shown.stdout
+
+    run = subprocess.run(
+        [*cmd, "in.usd", "out", "name"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=REPO,
+        env=env,
+    )
+    assert run.returncode != 0
+    assert "not on PATH" in run.stderr
+
+
 def test_every_command_has_a_one_line_summary(tree):
     """The listing line comes from the docstring's first line, so that line has a job to do."""
     bad = {}

@@ -43,9 +43,13 @@ sits rather than a config key::
                                  #   cannot coexist there, and MoveIt matches states and trajectory
                                  #   points to the description by name.
       namespace: ur10e           # transport scope (default: inherited from spawn_arm's namespace)
-      topics: {joint_states: /joint_states}  # optional: hardwire the joint_states topic to an
-                                 #   absolute name, overriding namespace (see Plugin.topic_override)
+      topics: {joint_states: /joint_states}  # optional: rename an endpoint, here to an absolute
+                                 #   name that overrides the namespace (see Plugin.topic_override)
       controller_name: arm_controller   # action at <controller_name>/follow_joint_trajectory
+      initial_state: active      # active | inactive -- `inactive` is ros2_control's
+                                 #   `spawner --inactive`: registered, but not holding the arm
+      joint_state_broadcaster_name: joint_state_broadcaster  # the robot's one broadcaster; a
+                                 #   second arm on the entity extends the one the first registered
       goal_tolerance: 0.5        # rad the joints may end from the trajectory's last waypoint before
                                  #   the action reports GOAL_TOLERANCE_VIOLATED instead of success.
                                  #   A scalar applies to every joint; {joint: rad} sets them apart;
@@ -60,12 +64,21 @@ sits rather than a config key::
                                  #   (see "Velocity commands" below). Off by default.
       velocity_timeout_s: 0.5    # watchdog: a velocity command decays to zero if not refreshed within
                                  #   this window, so a dropped stream cannot leave the arm drifting.
+      max_velocity: 0.4          # optional: the fastest the held target moves toward a commanded
+                                 #   position, in the joint's unit per second (see "Limited joints"
+                                 #   below). A scalar applies to every joint; {joint: value} sets
+                                 #   them apart, and a joint it does not name is not limited.
+      max_acceleration: 1.0      # optional: the same for the rate of that speed, unit per s^2.
       gripper_ctrl: 255.0        # ctrl held on any non-joint (tendon) actuator, e.g. the gripper
       rest: {joint1: 0.0, ...}   # {joint: angle} spawn+hold stance. Seeds BOTH the reset qpos (so the
                                  #   arm spawns in the pose) and the held target (so it stays there).
                                  #   Needed whenever the arm is carried by `spawn_robot`, which sets
                                  #   only the base pose and no joint stance -- see below.
       test_target: [...]         # optional joint vector held every tick (standalone demo)
+      gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd (see below)
+      gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
+      gripper_open: 0.0          # gripper_joint position with the fingers open
+      gripper_close: 0.8         # gripper_joint position with the fingers closed
 
 To pose the arm by hand with the viewer's control sliders instead, run ``roqsim --manual-control``
 (a run-level switch; see :attr:`roqsim.context.SimContext.manual_control`).
@@ -90,6 +103,35 @@ Two consequences worth knowing before using it for a metric:
 ``ArmHandle.set_velocities(names, velocities)`` is the in-process entry point; the transport endpoint is
 ``<controller_name>/joint_velocity``.
 
+**Limited joints** (``max_velocity`` / ``max_acceleration``). Without them a position command is a
+step: the servo is handed the new target at once and the joint gets there as fast as its gains and
+force range allow. A hydraulic lift handed a step leaps, and a load standing on it is thrown off.
+With a limit, a command sets the joint's *goal*, and every ``pre_step`` moves the held target toward
+it no faster than ``max_velocity``, speeding up and slowing down at no more than ``max_acceleration``
+and slowing in time to stop exactly on the goal -- a trapezoidal profile, which is what a real
+drive's limiter or a proportional valve's flow limit does to a step. Joints without a limit take
+each command at once. Nothing is limited by default: an MJCF declares no velocity limit to take one
+from, so the values come from the robot's source (a URDF's ``<limit velocity=>``), in its manifest
+or the world, and ``null`` lifts a limit a manifest set.
+
+The limiter belongs to the drive, not to any one command path, so every way of commanding the arm
+goes through it: a ``follow_joint_trajectory`` waypoint, a streamed ``joint_trajectory`` point,
+``ArmHandle.set_targets`` (and with it a Cartesian command source), ``test_target``, and a velocity
+command, whose rate is clipped to ``max_velocity`` before it is integrated into the goal. The ``rest``
+stance and a reset are not commands: they place the arm and leave nothing in motion.
+``controller_state`` reports the held target as its ``reference``.
+
+Consequences worth knowing:
+
+- A single position is a complete "go there" command, which is what a limit is for.
+- A goal that keeps moving -- an interpolated trajectory, a stream -- is trailed by
+  ``v**2 / (2 * max_acceleration)``, the distance the target needs to be able to stop, and the target
+  makes it up once the goal stops. A trajectory faster than the limits arrives late and is graded by
+  ``goal_time_tolerance`` like any late arm.
+- A cancelled trajectory, which the bridge ends by commanding the measured pose, brakes at
+  ``max_acceleration`` and comes back to that pose rather than stopping dead.
+- A velocity stream that stops leaves the target to brake onto the integrated goal.
+
 **The ``rest`` stance.** ``spawn_arm`` supplies a per-model ``home`` that this plugin seeds its targets from. ``spawn_robot``
 does **not**: a robot spawn sets the base pose only, so an arm carried by a mobile base falls back to
 ``qpos0`` -- all joints zero. For the Panda that is not a neutral default but an actively bad pose (its
@@ -102,8 +144,13 @@ If the arm has a non-joint (tendon) actuator -- a parallel gripper -- it also be
 plugin declares a ``control_msgs/GripperCommand`` action endpoint at
 ``<gripper_controller_name>/gripper_cmd`` and publishes a ``() -> (position, velocity)`` reader on the
 blackboard under ``gripper:<arm>`` (the bridge's GripperCommand handler watches it to report
-reached/stalled). The commanded position (the gripper joint angle, e.g. 0=open .. 0.8=closed for a
-Robotiq 2F-85) is mapped linearly onto the tendon actuator's ctrlrange.
+reached/stalled). The commanded position is the ``gripper_joint``'s position (e.g. 0=open .. 0.8=closed
+for a Robotiq 2F-85, 0.057=open .. 0.021=closed for a ViperX 300 finger slide), mapped linearly onto the
+actuator's ctrlrange. Which end of the ctrlrange is open is read from the model -- the actuator's gain
+and its signed moment on that joint -- so ``gripper_open``/``gripper_close`` are the joint's positions
+with the fingers open and closed, the two positions the ctrlrange's ends hold it at, whichever way the
+actuator runs. A gripper needs its ``gripper_joint``, driven with a constant moment; configure fails
+without one.
 
 **Grip force.** Beside the position the plugin publishes a :class:`GripperEffort` under
 ``gripper_effort:<arm>``, the key the endpoint's ``effort_key`` hint names. It takes GripperCommand's
@@ -113,26 +160,26 @@ effort, in that joint's own unit -- newtons for a slide jaw, newton-metres for a
 (``gripper_controllers/hardware_interface_adapter.hpp``). A goal is never refused for its effort: a
 request at or above the model's own limit saturates there, as a drive does, and ``max_effort <= 0``
 and every reset restore the model's own force range. The clamp reaches the actuator through the
-transmission, so it needs a constant moment -- a joint transmission or a fixed tendon, which every
-shipped gripper has. Any other keeps its range and executes the position alone, as a
-position-interface controller does. Gripper config::
-
-      gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd
-      gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
-      gripper_open: 0.0          # position value that maps to the open end of the actuator ctrlrange
-      gripper_close: 0.8         # position value that maps to the closed end
+transmission's constant moment. A gripper actuator without a force limit keeps its range and executes
+the position alone, as a position-interface controller does. Its keys are the ``gripper_*`` entries
+of the Config block above.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import mujoco
+import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.actuators import joint_effort
+from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
+from roqsim.types import JointPositions, JointState
 
 from ._arm import (
     named_actuators,
@@ -143,16 +190,15 @@ from ._arm import (
 )
 
 
-def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
-    """The effort on ``joint_id`` per unit of the actuator's force, or 0.0 where it is not constant.
+def joint_moment(model, actuator_id: int, joint_id: int) -> float:
+    """The actuator's length change per unit of ``joint_id``'s position, signed; 0.0 where not constant.
 
     Read from the model alone, so it holds in every configuration or not at all: an actuator on the
     joint carries its gear, and one on a fixed tendon carries gear times the tendon's coefficient on
-    that joint. The unit is the joint's own -- newtons for a slide joint, newton-metres for a hinge --
-    the unit ``/joint_states`` reports its effort in. A spatial tendon, a site transmission, or a joint
-    the transmission does not reach has no constant moment, and gets 0.0.
+    that joint. A spatial tendon, a site transmission, or a joint the transmission does not reach has
+    no constant moment, and gets 0.0.
     """
-    gear = abs(float(model.actuator_gear[actuator_id][0]))
+    gear = float(model.actuator_gear[actuator_id][0])
     target = int(model.actuator_trnid[actuator_id][0])
     trn = model.actuator_trntype[actuator_id]
     if trn == mujoco.mjtTrn.mjTRN_JOINT:
@@ -165,8 +211,81 @@ def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> f
         if model.wrap_type[wrap] != mujoco.mjtWrap.mjWRAP_JOINT:
             return 0.0
         if int(model.wrap_objid[wrap]) == joint_id:
-            coef = abs(float(model.wrap_prm[wrap]))
+            coef = float(model.wrap_prm[wrap])
     return gear * coef
+
+
+def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
+    """The effort on ``joint_id`` per unit of the actuator's force, or 0.0 where it is not constant.
+
+    The magnitude of :func:`joint_moment`. The unit is the joint's own -- newtons for a slide joint,
+    newton-metres for a hinge -- the unit ``/joint_states`` reports its effort in.
+    """
+    return abs(joint_moment(model, actuator_id, joint_id))
+
+
+def ctrl_direction_on_joint(model, actuator_id: int, joint_id: int) -> int:
+    """+1 if raising the actuator's ctrl moves ``joint_id`` toward larger positions, -1 if smaller.
+
+    0 where the model does not say: no constant moment on the joint, or no gain. A servo settles where
+    ``gain * ctrl + bias0 + bias1 * length = 0``, so its length rises with ctrl as ``gain / -bias1``;
+    a motor without a position bias pushes its length the way ``gain`` points. The joint then follows
+    the length through the transmission's signed moment.
+    """
+    gain = float(model.actuator_gainprm[actuator_id][0])
+    bias = float(model.actuator_biasprm[actuator_id][1])
+    along_length = gain / -bias if bias != 0.0 else gain
+    slope = along_length * joint_moment(model, actuator_id, joint_id)
+    return (slope > 0.0) - (slope < 0.0)
+
+
+@dataclass
+class JointVelocities:
+    """Target velocities for named joints.
+
+    ROS carries it as ``trajectory_msgs/JointTrajectory`` with the velocities in the last point's
+    ``positions`` (:mod:`roqsim_manipulation.ros2_types`).
+
+    Attributes:
+        names: joint names, in the order of ``velocities``
+        velocities: rad/s for a revolute joint, m/s for a prismatic one
+    """
+
+    names: list[str]
+    velocities: NDArray[np.float64]
+
+
+@dataclass
+class TrajectoryPoint:
+    """Joint values at one point of a trajectory controller's loop.
+
+    Attributes:
+        positions: rad for a revolute joint, m for a prismatic one
+        velocities: rad/s or m/s; empty where the point states none
+    """
+
+    positions: list[float]
+    velocities: list[float] = field(default_factory=list)
+
+
+@dataclass
+class ControllerState:
+    """A trajectory controller's loop: the setpoint it holds against what the joints do.
+
+    Shaped as ``control_msgs/JointTrajectoryControllerState``, so the ROS bridge maps it by field
+    name.
+
+    Attributes:
+        joint_names: the controlled joints, in actuator order
+        reference: the held target
+        feedback: the measured positions and velocities
+        error: reference - feedback, the sign the message states and ros2_control publishes
+    """
+
+    joint_names: list[str]
+    reference: TrajectoryPoint
+    feedback: TrajectoryPoint
+    error: TrajectoryPoint
 
 
 @dataclass
@@ -190,7 +309,8 @@ class ArmHandle:
     """Published by :class:`ArmControllerPlugin`; consumed by in-process drivers (scripts, tests).
 
     ``set_targets`` accepts (joint names, positions) — unknown names are ignored, so a MoveIt
-    trajectory naming a subset of joints works. ``read_state`` returns the latest
+    trajectory naming a subset of joints works; a joint with a motion limit ramps to its position
+    rather than taking it at once. ``read_state`` returns the latest
     ``(names, positions, velocities, efforts)`` for all arm joints — effort included because a real
     driver reports it. Both run on the physics thread.
     """
@@ -221,8 +341,8 @@ class ArmControllerPlugin(Plugin):
     requires_owner = True
 
     def validate_config(self, config: dict) -> list[str]:
-        # Only the ``joint_states`` endpoint topic is hardwireable here (the trajectory action is not
-        # a topic). ``topics: {joint_states: /joint_states}`` matches external/hardware names.
+        # ``topics:`` renames an endpoint, e.g. ``{joint_states: /joint_states}`` to match
+        # external/hardware names; an action's rename is its action name.
         errors = self.validate_topics(config)
         if "joints" in config and not isinstance(config["joints"], list):
             errors.append("arm_controller: `joints` must be a list of joint names")
@@ -234,6 +354,39 @@ class ArmControllerPlugin(Plugin):
                 "without it the prefix scan picks up tendon actuators itself"
             )
         errors += self._validate_tolerances(config)
+        errors += self._validate_limits(config)
+        return errors
+
+    @staticmethod
+    def _validate_limits(config: dict) -> list[str]:
+        """Refuse a motion limit that would not be in force, or would stop the joint dead.
+
+        Zero or a negative limit would hold the joint where it is for ever, and a per-joint limit
+        naming a joint this controller does not own would be dropped -- a lift the author believes
+        is speed-limited would still leap. As with the tolerances, the owned joints are only
+        known here when ``joints:`` lists them.
+        """
+        errors: list[str] = []
+        owned = config.get("joints")
+        for key in ("max_velocity", "max_acceleration"):
+            value = config.get(key)
+            if value is None:
+                continue
+            items = value.items() if isinstance(value, dict) else [(None, value)]
+            for joint, v in items:
+                where = f"`{key}`" if joint is None else f"`{key}[{joint}]`"
+                if isinstance(v, bool) or not isinstance(v, int | float) or v <= 0.0:
+                    errors.append(
+                        f"arm_controller: {where} must be a positive number, got {v!r} "
+                        "-- leave it out (or null) for no limit"
+                    )
+            if isinstance(value, dict) and isinstance(owned, list):
+                unknown = [j for j in value if j not in owned]
+                if unknown:
+                    errors.append(
+                        f"arm_controller: `{key}` names {unknown}, which `joints` does not list -- "
+                        "it would be dropped rather than applied"
+                    )
         return errors
 
     @staticmethod
@@ -311,6 +464,12 @@ class ArmControllerPlugin(Plugin):
         self._ctrl_names: list[str] = []  # unprefixed, actuator order
         self._report_names: list[str] = []  # unprefixed, all arm joints
         self._target: dict[str, float] = {}
+        # Limited joints (see "Limited joints" in the module docstring): what was last commanded, and
+        # the speed the held target is moving toward it at. `_target` is what the servo holds.
+        self._goal: dict[str, float] = {}
+        self._sp_vel: dict[str, float] = {}
+        self._vmax: dict[str, float] = {}
+        self._amax: dict[str, float] = {}
         self._ctx = None  # set in configure; read_state/read_gripper_state compute from its data
         # Gripper (present iff the arm has a non-joint/tendon actuator). ctrl held on the aux
         # actuator(s); defaults to gripper_ctrl until a GripperCommand goal moves it.
@@ -322,7 +481,18 @@ class ArmControllerPlugin(Plugin):
         self._grip_close = float(self.config.get("gripper_close", 0.8))
         self._grip_ctrl_lo = 0.0
         self._grip_ctrl_hi = 255.0
+        # The gripper_joint positions at the ctrlrange's low and high end: gripper_open and
+        # gripper_close in the order the actuator runs, set in configure.
+        self._grip_q_at_ctrl_lo = self._grip_open
+        self._grip_q_at_ctrl_hi = self._grip_close
         self._gripper_key = ""  # set in configure; the reader key the bridge is pointed at
+        # Names the endpoints' hints carry, resolved in configure.
+        self._controller = ""
+        self._gripper_controller = ""
+        self._arm_key = ""
+        self._effort_key = ""
+        #: A non-joint (tendon) actuator makes the hand commandable, with a ``gripper_cmd``.
+        self.has_gripper = False
         # Grip force: the model's own force range on the gripper actuator (what a reset restores), the
         # gripper joint's effort per unit of actuator force, and the joint-effort limit that range
         # allows. `_grip_cap_warned` keeps a gripper that cannot take a clamp to one warning.
@@ -338,9 +508,9 @@ class ArmControllerPlugin(Plugin):
         entity = ctx.entities.get(self.arm)
         prefix = entity.meta.get("prefix", "") if entity else ""
         home = list(entity.meta.get("home", [])) if entity else []
-        # Transport scope for this arm's endpoints: own config wins, else inherited from the spawn
-        # (spawn_arm stores its `namespace` on the entity), else unscoped.
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
+        # Transport scope for this arm's endpoints and controllers: own config wins, else inherited
+        # from the spawn (spawn_arm stores its `namespace` on the entity), else unscoped.
+        ns = self.endpoint_namespace(ctx)
         m = ctx.model
 
         if self.joints:
@@ -389,14 +559,34 @@ class ArmControllerPlugin(Plugin):
                 (lo, hi) if (hi > lo and bool(m.jnt_limited[jid])) else (-1e9, 1e9)
             )
 
+        # Motion limits, keyed by the names this controller reports (`joint_prefix` included); the
+        # config names joints as `joints:` does.
+        for key, limits in (("max_velocity", self._vmax), ("max_acceleration", self._amax)):
+            value = self.config.get(key)
+            if value is None:
+                continue
+            per_joint = (
+                value
+                if isinstance(value, dict)
+                else dict.fromkeys((n[len(jp) :] for n in self._ctrl_names), value)
+            )
+            for joint, v in per_joint.items():
+                if jp + joint not in self._ctrl_names:
+                    raise RuntimeError(
+                        f"arm_controller[{self.arm}]: `{key}` names joint {joint!r}, which is not "
+                        f"one of this arm's controllable joints {self._ctrl_names}"
+                    )
+                limits[jp + joint] = float(v)
+
         # Seed targets from the home pose (mapped by joint name), falling back to current qpos.
         home_map = dict(zip(self._report_names, home, strict=False))  # home may be partial/empty
         for name, (_, jid) in zip(self._ctrl_names, self._joint_acts, strict=True):
             self._target[name] = float(home_map.get(name, ctx.data.qpos[m.jnt_qposadr[jid]]))
+        self._hold_where_targeted()
         self._apply_rest(ctx)
         if "test_target" in self.config:
             for name, val in zip(self._ctrl_names, self.config["test_target"], strict=False):
-                self._target[name] = float(val)
+                self._command(name, float(val))
 
         # Blackboard keys. One entity can carry several controllers (a humanoid's two arms), and they
         # would then all publish under `arm:<entity>` / `gripper:<entity>`, each silently overwriting
@@ -407,6 +597,11 @@ class ArmControllerPlugin(Plugin):
         controller = self.config.get("controller_name", "arm_controller")
         gripper_controller = self.config.get("gripper_controller_name", "gripper_controller")
         arm_key = f"arm:{self.arm}:{controller}" if self.joints else f"arm:{self.arm}"
+        self._controller, self._gripper_controller, self._arm_key = (
+            controller,
+            gripper_controller,
+            arm_key,
+        )
         self._gripper_key = (
             f"gripper:{self.arm}:{gripper_controller}" if self.joints else f"gripper:{self.arm}"
         )
@@ -476,166 +671,176 @@ class ArmControllerPlugin(Plugin):
             ),
         )
 
-        # Declare joint_states as a backend-neutral output endpoint (no ROS import here). The bridge
-        # resolves the type string and publishes it; ``namespace`` keeps several arms' topics apart
-        # under one shared bridge.
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_state,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
-
-        # Trajectory execution as a backend-neutral *action* endpoint: the hint names the action
-        # type as a string; a bridge with a handler for it (see roqsim_ros_bridge.actions) runs the
-        # goal and feeds each waypoint through ``write`` as a neutral (names, positions) payload.
-        ctx.interface.add(
-            Endpoint(
-                name="follow_joint_trajectory",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda wp: self.set_targets(*wp),
-                backend={
-                    "ros2": {
-                        "action": "control_msgs.action.FollowJointTrajectory",
-                        "name": f"{controller}/follow_joint_trajectory",
-                        # Which ArmHandle the handler reads back, so its feedback reports measured
-                        # `actual` against commanded `desired` -- as a real JTC does. Its default
-                        # (arm:<owner>) cannot tell two arms on one entity apart.
-                        "arm_state_key": arm_key,
-                        # What "reached the goal" means for THIS arm. The handler grades the result
-                        # on the joints rather than on the trajectory's clock; a goal may tighten
-                        # these per joint, and a heavier or softer arm loosens them here.
-                        "goal_tolerance": self.config.get("goal_tolerance", 0.5),
-                        "goal_time_tolerance": float(self.config.get("goal_time_tolerance", 1.0)),
-                    }
-                },
-            )
-        )
-
-        # Controller state, the third interface a ros2_control JointTrajectoryController exposes
-        # alongside the action and the command topic (rqt_joint_trajectory_controller and most
-        # diagnostics read it). Reported against the held target, which IS this controller's setpoint.
-        ctx.interface.add(
-            Endpoint(
-                name="controller_state",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_controller_state,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "control_msgs.msg.JointTrajectoryControllerState",
-                        "topic": f"{controller}/controller_state",
-                    }
-                },
-            )
-        )
-
-        # Streaming joint-position command as a *topic* input, mirroring ros2_control's
-        # JointTrajectoryController ``<controller>/joint_trajectory`` topic (the real UR driver exposes
-        # both that topic and the action). This is the high-rate path moveit_servo drives: each inbound
-        # single-point JointTrajectory just sets the held target, so a stream of positions servos the arm
-        # (``pre_step`` holds ``data.ctrl`` at the target every tick). Same neutral payload as the action.
-        if self.stream_commands:
-            ctx.interface.add(
-                Endpoint(
-                    name="joint_command",
-                    direction="in",
-                    owner=self.arm,
-                    namespace=ns,
-                    write=lambda wp: self.set_targets(*wp),
-                    backend={
-                        "ros2": {
-                            "type": "trajectory_msgs.msg.JointTrajectory",
-                            "topic": f"{controller}/joint_trajectory",
-                        }
-                    },
-                )
-            )
-
-        # Joint-VELOCITY command input, for reactive controllers that resolve to joint rates rather
-        # than poses (see "Velocity commands" in the module docstring). Integrated in pre_step.
-        if self.velocity_commands:
-            ctx.interface.add(
-                Endpoint(
-                    name="joint_velocity",
-                    direction="in",
-                    owner=self.arm,
-                    namespace=ns,
-                    write=lambda wp: self.set_velocities(*wp),
-                    backend={
-                        "ros2": {
-                            "type": "trajectory_msgs.msg.JointTrajectory",
-                            "topic": f"{controller}/joint_velocity",
-                        }
-                    },
-                )
-            )
-
         # Gripper: a non-joint (tendon) actuator makes this arm's hand commandable. Map the tendon's
         # ctrlrange to a commanded gripper position and expose a GripperCommand action + a state reader.
         if self._aux_acts:
-            lo, hi = m.actuator_ctrlrange[self._aux_acts[0]]
+            grip = self._aux_acts[0]
+            lo, hi = m.actuator_ctrlrange[grip]
             self._grip_ctrl_lo, self._grip_ctrl_hi = float(lo), float(hi)
             gjoint = self.config.get("gripper_joint")
-            if gjoint:
-                jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}{gjoint}")
-                if jid < 0:
-                    raise RuntimeError(
-                        f"arm_controller: gripper_joint {gjoint!r} not found for arm {self.arm!r}"
-                    )
-                self._grip_jid = jid
-                self._grip_qposadr = int(m.jnt_qposadr[jid])
-                self._grip_dofadr = int(m.jnt_dofadr[jid])
+            if not gjoint:
+                raise RuntimeError(
+                    f"arm_controller[{self.arm}]: the arm has a gripper actuator but no "
+                    "`gripper_joint`; name the joint whose position a GripperCommand sets and reports"
+                )
+            jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}{gjoint}")
+            if jid < 0:
+                raise RuntimeError(
+                    f"arm_controller: gripper_joint {gjoint!r} not found for arm {self.arm!r}"
+                )
+            self._grip_jid = jid
+            self._grip_qposadr = int(m.jnt_qposadr[jid])
+            self._grip_dofadr = int(m.jnt_dofadr[jid])
+            # Which end of the ctrlrange opens depends on the actuator, not on a convention: a
+            # Robotiq tendon closes as its ctrl rises, an Interbotix finger slide opens.
+            direction = ctrl_direction_on_joint(m, grip, jid)
+            if direction == 0:
+                raise RuntimeError(
+                    f"arm_controller[{self.arm}]: the gripper actuator has no constant moment on "
+                    f"gripper_joint {gjoint!r}, so the direction a command moves it is unknown; "
+                    "drive the gripper through that joint or a fixed tendon over it"
+                )
+            ends = sorted((self._grip_open, self._grip_close))
+            if direction < 0:
+                ends.reverse()
+            self._grip_q_at_ctrl_lo, self._grip_q_at_ctrl_hi = ends
             ctx.blackboard.set(self._gripper_key, self.read_gripper_state)
-            grip = self._aux_acts[0]
             self._grip_forcerange = tuple(float(v) for v in m.actuator_forcerange[grip])
-            if self._grip_jid is not None and m.actuator_forcelimited[grip]:
-                self._grip_gain = joint_effort_per_actuator_force(m, grip, self._grip_jid)
+            if m.actuator_forcelimited[grip]:
+                self._grip_gain = joint_effort_per_actuator_force(m, grip, jid)
             self._grip_limit = min(abs(v) for v in self._grip_forcerange) * self._grip_gain
-            effort_key = self._gripper_key.replace("gripper:", "gripper_effort:", 1)
+            self._effort_key = self._gripper_key.replace("gripper:", "gripper_effort:", 1)
             ctx.blackboard.set(
-                effort_key,
+                self._effort_key,
                 GripperEffort(
                     limit=self._grip_limit,
                     set_max_effort=self.set_gripper_max_effort,
                     read_effort=self.read_gripper_effort,
                 ),
             )
-            ctx.interface.add(
-                Endpoint(
-                    name="gripper_cmd",
-                    direction="in",
-                    owner=self.arm,
-                    namespace=ns,
-                    write=self.set_gripper,
-                    backend={
-                        "ros2": {
-                            "action": "control_msgs.action.GripperCommand",
-                            "name": f"{gripper_controller}/gripper_cmd",
-                            # Tell the bridge's handler which reader to watch; its default is
-                            # gripper:<owner>, which cannot distinguish two grippers on one entity.
-                            "state_key": self._gripper_key,
-                            # Where the handler finds the gripper's effort clamp (GripperCommand's
-                            # max_effort), a second command beside the position.
-                            "effort_key": effort_key,
-                        }
-                    },
-                )
-            )
+            self.has_gripper = True
+
+    # -- endpoints ----------------------------------------------------------------------------
+    # Each takes a waypoint's names and positions, the fields of a JointPositions. Joints this
+    # controller does not own are ignored, so a message may name a subset. The inputs are commands,
+    # not streams: every message is applied, in order, because each merges into the held target and
+    # a later one in the same step must not replace an earlier one that named other joints.
+
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """Positions, velocities and efforts of the joints this controller reports."""
+        names, pos, vel, eff = self.read_state()
+        return JointState(names, np.array(pos), np.array(vel), np.array(eff))
+
+    # Trajectory execution as an action: a bridge with a handler for the type (see
+    # roqsim_ros_bridge.actions) runs the goal and feeds each waypoint through this command.
+    @endpoint.command(
+        JointPositions,
+        ros2=lambda self: {
+            "action": "control_msgs.action.FollowJointTrajectory",
+            "name": f"{self._controller}/follow_joint_trajectory",
+            # Which ArmHandle the handler reads back, so its feedback reports measured `actual`
+            # against commanded `desired` -- as a real JTC does. Its default (arm:<owner>) cannot
+            # tell two arms on one entity apart.
+            "arm_state_key": self._arm_key,
+            # What "reached the goal" means for THIS arm. The handler grades the result on the
+            # joints rather than on the trajectory's clock; a goal may tighten these per joint, and
+            # a heavier or softer arm loosens them here.
+            "goal_tolerance": self.config.get("goal_tolerance", 0.5),
+            "goal_time_tolerance": float(self.config.get("goal_time_tolerance", 1.0)),
+        },
+    )
+    def follow_joint_trajectory(self, names: list[str], positions: NDArray[np.float64]) -> None:
+        """One waypoint of a trajectory goal, held from now.
+
+        Args:
+            names: the joints the waypoint names
+            positions: one per name
+        """
+        self.set_targets(names, positions)
+
+    # Controller state, the third interface a ros2_control JointTrajectoryController exposes
+    # alongside the action and the command topic (rqt_joint_trajectory_controller and most
+    # diagnostics read it).
+    @endpoint.out(
+        rate=50.0,
+        ros2=lambda self: {
+            "type": "control_msgs.msg.JointTrajectoryControllerState",
+            "topic": f"{self._controller}/controller_state",
+        },
+    )
+    def controller_state(self) -> ControllerState:
+        """The held target against the measured joints, for the joints this controller commands.
+
+        Only those, not everything ``joint_states`` reports: the state describes the control loop,
+        and a joint with no actuator (a mimicked finger) has no setpoint to state.
+        """
+        m, d = self._ctx.model, self._ctx.data
+        desired = [self._target[n] for n in self._ctrl_names]
+        actual = [float(d.qpos[m.jnt_qposadr[jid]]) for _, jid in self._joint_acts]
+        vel = [float(d.qvel[m.jnt_dofadr[jid]]) for _, jid in self._joint_acts]
+        return ControllerState(
+            list(self._ctrl_names),
+            TrajectoryPoint(desired),
+            TrajectoryPoint(actual, vel),
+            TrajectoryPoint([d - a for d, a in zip(desired, actual, strict=True)]),
+        )
+
+    # Streaming joint-position command as a *topic* input, mirroring ros2_control's
+    # JointTrajectoryController ``<controller>/joint_trajectory`` topic (the real UR driver exposes
+    # both that topic and the action). This is the high-rate path moveit_servo drives: each
+    # single-point trajectory sets the held target, so a stream of positions servos the arm.
+    @endpoint.command(
+        JointPositions,
+        when="stream_commands",
+        ros2=lambda self: {"topic": f"{self._controller}/joint_trajectory"},
+    )
+    def joint_command(self, names: list[str], positions: NDArray[np.float64]) -> None:
+        """A joint-position target, held from now.
+
+        Args:
+            names: the joints it names
+            positions: one per name
+        """
+        self.set_targets(names, positions)
+
+    # Joint-VELOCITY command input, for reactive controllers that resolve to joint rates rather
+    # than poses (see "Velocity commands" in the module docstring). Integrated in pre_step.
+    @endpoint.command(
+        JointVelocities,
+        when="velocity_commands",
+        ros2=lambda self: {"topic": f"{self._controller}/joint_velocity"},
+    )
+    def joint_velocity(self, names: list[str], velocities: NDArray[np.float64]) -> None:
+        """Joint velocities, integrated into the held target each step.
+
+        Args:
+            names: the joints it names
+            velocities: one per name, rad/s or m/s
+        """
+        self.set_velocities(names, velocities)
+
+    @endpoint.command(
+        when="has_gripper",
+        ros2=lambda self: {
+            "action": "control_msgs.action.GripperCommand",
+            "name": f"{self._gripper_controller}/gripper_cmd",
+            # Tell the bridge's handler which reader to watch; its default is gripper:<owner>,
+            # which cannot distinguish two grippers on one entity.
+            "state_key": self._gripper_key,
+            # Where the handler finds the gripper's effort clamp (GripperCommand's max_effort), a
+            # second command beside the position.
+            "effort_key": self._effort_key,
+        },
+    )
+    def gripper_cmd(self, position: float) -> None:
+        """The gripper's commanded position.
+
+        Args:
+            position: the gripper joint's target (rad, or m for a slide), between gripper_open and
+                gripper_close
+        """
+        self.set_gripper(position)
 
     def _apply_rest(self, ctx: SimContext) -> None:
         """Overlay the `rest` stance onto data.qpos and the held target, by joint name.
@@ -657,15 +862,68 @@ class ArmControllerPlugin(Plugin):
             _, jid = by_name[jn]
             ctx.data.qpos[m.jnt_qposadr[jid]] = float(ang)
             self._target[jn] = float(ang)
+            self._goal[jn] = float(ang)
+            self._sp_vel[jn] = 0.0
         # The stance is state the hooks after this one read in the same reset -- a Cartesian
         # controller anchors on the tool's pose -- so the kinematics are brought up to date here,
         # not left to the engine's closing forward pass, which runs after every plugin's on_reset.
         mujoco.mj_forward(m, ctx.data)
 
+    def _hold_where_targeted(self) -> None:
+        """Make every joint's goal its held target, at rest: nothing is on its way anywhere."""
+        for name, value in self._target.items():
+            self._goal[name] = value
+            self._sp_vel[name] = 0.0
+
+    def _is_limited(self, name: str) -> bool:
+        return name in self._vmax or name in self._amax
+
+    def _command(self, name: str, position: float) -> None:
+        """Command one joint: a limited joint's goal, which ``pre_step`` moves the held target
+        toward; any other joint's held target itself."""
+        if not self._is_limited(name):
+            self._goal[name] = self._target[name] = position
+            return
+        # Inside the joint's range, so the ramp ends where the joint can: a goal beyond a limit would
+        # leave the target pressing on it, still "moving", and braking from that speed later.
+        lo, hi = self._jnt_range[name]
+        self._goal[name] = min(max(position, lo), hi)
+
+    def _advance_limited(self, dt: float) -> None:
+        """Move each limited joint's held target one step toward its goal (a trapezoidal profile).
+
+        The speed wanted is the most from which the target can still stop at the goal, braking by
+        ``a * dt`` a step (``v**2 / (2 a) + v * dt / 2 = |remaining|``), capped at ``max_velocity``;
+        the speed then changes toward it by at most ``a * dt``. A joint with no acceleration limit
+        instead takes whatever covers the remaining distance in this step. A target that would reach
+        or pass the goal this step at a speed it can shed in one is put exactly on it and stopped,
+        which is the one step whose change of speed may exceed ``a * dt`` -- by less than half.
+        """
+        inf = float("inf")
+        for name in self._vmax.keys() | self._amax.keys():
+            x, goal, v = self._target[name], self._goal[name], self._sp_vel[name]
+            vmax, amax = self._vmax.get(name, inf), self._amax.get(name, inf)
+            rem = goal - x
+            if rem == 0.0 and v == 0.0:
+                continue
+            step = amax * dt
+            if amax < inf:
+                half = step / 2.0
+                speed = min(vmax, (half * half + 2.0 * amax * abs(rem)) ** 0.5 - half)
+            else:
+                speed = min(vmax, abs(rem) / dt)
+            wanted = speed if rem > 0.0 else -speed
+            v = min(max(wanted, v - step), v + step)
+            x_next = x + v * dt
+            if (goal - x_next) * rem <= 0.0 and abs(v) <= step:
+                x_next, v = goal, 0.0  # arrived
+            self._target[name] = x_next
+            self._sp_vel[name] = v
+
     def set_targets(self, names, positions) -> None:
         for n, p in zip(names, positions, strict=False):  # tolerate external/partial input
             if n in self._target:
-                self._target[n] = float(p)
+                self._command(n, float(p))
         # A position command supersedes any in-flight velocity command; otherwise the integrator would
         # keep walking away from the pose the caller just asked for.
         self._vel_cmd.clear()
@@ -685,7 +943,11 @@ class ArmControllerPlugin(Plugin):
         self._vel_stamp = float(self._ctx.data.time) if self._ctx is not None else 0.0
 
     def _integrate_velocity(self, d) -> None:
-        """target += qd*dt, clamped to the joint range; stale commands decay to a hold."""
+        """target += qd*dt, clamped to the joint range; stale commands decay to a hold.
+
+        A limited joint integrates into its goal instead, at a rate clipped to ``max_velocity``, and
+        the held target follows the goal on the ramp.
+        """
         if not self._vel_cmd:
             return
         if self._vel_stamp >= 0.0 and (d.time - self._vel_stamp) > self.velocity_timeout_s:
@@ -695,7 +957,12 @@ class ArmControllerPlugin(Plugin):
         dt = float(self._ctx.model.opt.timestep) if self._ctx is not None else 0.0
         for name, qd in self._vel_cmd.items():
             lo, hi = self._jnt_range[name]
-            self._target[name] = min(max(self._target[name] + qd * dt, lo), hi)
+            if not self._is_limited(name):
+                self._target[name] = min(max(self._target[name] + qd * dt, lo), hi)
+                continue
+            vmax = self._vmax.get(name, float("inf"))
+            qd = min(max(qd, -vmax), vmax)
+            self._command(name, min(max(self._goal[name] + qd * dt, lo), hi))
 
     def read_state(self):
         # Computed on demand: the bridge calls this only at the joint_states rate, not every physics
@@ -706,37 +973,21 @@ class ArmControllerPlugin(Plugin):
         # already projected onto the joint's DOF, so it is the per-joint effort even for a gripper
         # finger driven through a tendon.
         #
-        # ``qfrc_gravcomp`` is added because a compensated arm splits one physical quantity across
-        # two fields. A real drive that holds its own weight delivers that torque and its sensor
-        # reads it; MuJoCo's ``body_gravcomp`` supplies the same torque outside the actuator, so
-        # ``qfrc_actuator`` alone reports a motor doing nothing while the arm hangs off it. The sum
-        # is what the joint carries, and it matches an uncompensated arm's reading in the same pose.
+        # A real drive that holds its own weight delivers that torque and its sensor reads it.
+        # ``joint_effort`` is ``qfrc_actuator``, which carries the gravity term of a joint whose drive
+        # supplies it (``actuatorgravcomp``), plus ``qfrc_gravcomp`` on a joint where MuJoCo applies
+        # the term passively -- a finger held through a tendon. Either way the reading is what the
+        # joint carries, and it matches an uncompensated arm's reading in the same pose.
         m, d = self._ctx.model, self._ctx.data
         pos = [float(d.qpos[m.jnt_qposadr[jid]]) for jid in self._report_jids]
         vel = [float(d.qvel[m.jnt_dofadr[jid]]) for jid in self._report_jids]
-        eff = [
-            float(d.qfrc_actuator[m.jnt_dofadr[jid]] + d.qfrc_gravcomp[m.jnt_dofadr[jid]])
-            for jid in self._report_jids
-        ]
+        eff = [joint_effort(m, d, int(m.jnt_dofadr[jid])) for jid in self._report_jids]
         return (self._report_names, pos, vel, eff)
 
-    def read_controller_state(self):
-        """``(names, desired, actual, velocities)`` for the controlled joints, in actuator order.
-
-        Only the joints this controller commands, not everything it reports in ``joint_states``: a
-        JointTrajectoryControllerState describes the control loop, and a joint with no actuator (a
-        mimicked finger) has no setpoint to state.
-        """
-        m, d = self._ctx.model, self._ctx.data
-        desired = [self._target[n] for n in self._ctrl_names]
-        actual = [float(d.qpos[m.jnt_qposadr[jid]]) for _, jid in self._joint_acts]
-        vel = [float(d.qvel[m.jnt_dofadr[jid]]) for _, jid in self._joint_acts]
-        return (list(self._ctrl_names), desired, actual, vel)
-
     def set_gripper(self, position) -> None:
-        """Map a commanded gripper position (gripper_joint angle) onto the tendon actuator ctrl."""
-        span = self._grip_close - self._grip_open
-        frac = 0.0 if span == 0 else (float(position) - self._grip_open) / span
+        """Map a commanded gripper position (gripper_joint position) onto the gripper actuator ctrl."""
+        span = self._grip_q_at_ctrl_hi - self._grip_q_at_ctrl_lo
+        frac = 0.0 if span == 0 else (float(position) - self._grip_q_at_ctrl_lo) / span
         frac = max(0.0, min(1.0, frac))
         self._gripper_ctrl_target = self._grip_ctrl_lo + frac * (
             self._grip_ctrl_hi - self._grip_ctrl_lo
@@ -754,8 +1005,8 @@ class ArmControllerPlugin(Plugin):
         if self._grip_limit <= 0.0 and effort > 0.0 and not self._grip_cap_warned:
             self._grip_cap_warned = True
             self._ctx.logger.warning(
-                "arm_controller[%s]: the gripper actuator has no constant moment on its joint, so "
-                "max_effort cannot be applied; the position runs with the model's own force range",
+                "arm_controller[%s]: the gripper actuator has no force limit, so max_effort cannot "
+                "be applied; the position runs with the model's own force range",
                 self.arm,
             )
         if effort <= 0.0 or effort >= self._grip_limit:
@@ -765,19 +1016,11 @@ class ArmControllerPlugin(Plugin):
         self._ctx.model.actuator_forcerange[grip] = (-limit, limit)
 
     def read_gripper_effort(self) -> float:
-        """The gripper joint's effort now, as ``/joint_states`` reports it.
-
-        NaN when the arm has no gripper joint.
-        """
-        if self._grip_jid is None:
-            return float("nan")
-        d = self._ctx.data
-        return float(d.qfrc_actuator[self._grip_dofadr] + d.qfrc_gravcomp[self._grip_dofadr])
+        """The gripper joint's effort now, as ``/joint_states`` reports it."""
+        return joint_effort(self._ctx.model, self._ctx.data, self._grip_dofadr)
 
     def read_gripper_state(self):
-        # Computed on demand (see read_state); (0, 0) when the arm has no gripper joint.
-        if self._grip_jid is None:
-            return (0.0, 0.0)
+        # Computed on demand (see read_state).
         d = self._ctx.data
         return (float(d.qpos[self._grip_qposadr]), float(d.qvel[self._grip_dofadr]))
 
@@ -797,6 +1040,7 @@ class ArmControllerPlugin(Plugin):
         m = ctx.model
         for name, (_, jid) in zip(self._ctrl_names, self._joint_acts, strict=True):
             self._target[name] = float(ctx.data.qpos[m.jnt_qposadr[jid]])
+        self._hold_where_targeted()
         # Then re-seat the `rest` stance, so repeated trials start from an identical arm pose. Order
         # matters: the resync above reads whatever qpos the spawn left, which for spawn_robot (no joint
         # stance) is qpos0 -- `rest` is what makes a mobile manipulator's arm reproducible per trial.
@@ -808,7 +1052,7 @@ class ArmControllerPlugin(Plugin):
             ctx.model.actuator_forcerange[self._aux_acts[0]] = self._grip_forcerange
         if "test_target" in self.config:
             for name, val in zip(self._ctrl_names, self.config["test_target"], strict=False):
-                self._target[name] = float(val)
+                self._command(name, float(val))
         # The commands that hold this pose, written now rather than at the first step: a reset zeroes
         # every actuator command, so until they are written the physics state is the arm pulled
         # toward zero, and anything read before the first step -- a wrench, a tare -- reads that
@@ -878,6 +1122,8 @@ class ArmControllerPlugin(Plugin):
             self.ensure_updated(ctx)
             if self._active:
                 self._integrate_velocity(ctx.data)
+            # The limiter is the drive's, not the trajectory role's: it runs whoever commanded.
+            self._advance_limited(float(ctx.model.opt.timestep))
             self._write_ctrl(ctx.data)
 
     # joint / gripper state are computed on demand in read_state / read_gripper_state (the bridge reads

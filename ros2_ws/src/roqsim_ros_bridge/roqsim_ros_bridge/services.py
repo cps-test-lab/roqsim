@@ -29,8 +29,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from roqsim.context import CommandFuture
+
 from . import physics
 from .extensions import EXTENSION_GROUP, load_extensions
+from .params import payload_for
 from .physics import barrier
 
 # srv-type-string -> handler(request, response, ctx, on_payload, endpoint) -> response message
@@ -59,6 +62,37 @@ def get_service_handler(
     return fn
 
 
+def _applied(ctx, outcome, response) -> bool:
+    """Wait for a queued command; on failure fill ``response`` and return ``False``.
+
+    *outcome* is what the inbound callback returned: a future for the command (see
+    :meth:`roqsim.context.SimContext.submit`), whose exception becomes the reply's message. For
+    anything else a barrier behind the command says it has run.
+    """
+    if not isinstance(outcome, CommandFuture):
+        ran, error = barrier(ctx), None
+    else:
+        try:
+            outcome.result(physics.DEFAULT_TIMEOUT_S)
+            ran, error = True, None
+        except TimeoutError:
+            ran, error = False, None
+        except Exception as exc:  # noqa: BLE001 - the producer's failure is the reply
+            ran, error = True, exc
+    if not ran:
+        response.success = False
+        response.message = (
+            f"the simulation did not apply the command within {physics.DEFAULT_TIMEOUT_S} s "
+            "(is the physics thread stalled?)"
+        )
+        return False
+    if error is not None:
+        response.success = False
+        response.message = f"the command failed: {type(error).__name__}: {error}"
+        return False
+    return True
+
+
 @service_handler("std_srvs.srv.Trigger")
 def trigger(request, response, ctx, on_payload, endpoint=None):  # noqa: ARG001
     """Press a producer's button: a command that takes no argument and still needs an outcome.
@@ -66,19 +100,14 @@ def trigger(request, response, ctx, on_payload, endpoint=None):  # noqa: ARG001
     The sibling of :func:`set_bool` for the commands that carry nothing -- zeroing a force/torque
     sensor is the first, and it is the shape a real driver's ``zero_ftsensor`` has. There is no
     argument to marshal, so the request is not read at all; what the caller needs back is whether
-    the simulator got to it, which is what the barrier answers.
+    the simulator got to it, and whether the producer raised doing it.
 
-    One barrier, not two. ``set_bool`` waits a second time because a producer may publish a verdict
+    One wait, not two. ``set_bool`` waits a second time because a producer may publish a verdict
     that only the following ``post_step`` computes; a command with no argument has no such verdict
     to wait for -- it either ran on the physics thread or the simulation is not stepping.
     """
-    on_payload(None)  # queued for the physics thread by the bridge's inbound marshaller
-    if not barrier(ctx):
-        response.success = False
-        response.message = (
-            f"the simulation did not apply the command within {physics.DEFAULT_TIMEOUT_S} s "
-            "(is it paused?)"
-        )
+    # Queued for the physics thread by the bridge's inbound marshaller.
+    if not _applied(ctx, on_payload(None), response):
         return response
     response.success = True
     response.message = "applied"
@@ -89,9 +118,9 @@ def trigger(request, response, ctx, on_payload, endpoint=None):  # noqa: ARG001
 def set_bool(request, response, ctx, on_payload, endpoint=None):
     """Switch a producer on or off, and report whether it took effect.
 
-    The generic policy for "a command with an outcome": the request goes to the producer as the
-    neutral ``bool`` payload its ``write`` expects, and the reply says what the simulator *did* rather
-    than that the message was delivered.
+    The generic policy for "a command with an outcome": the request goes to the producer as its
+    parameter ``data`` (the bare ``bool`` for an untyped ``write``), and the reply says what the
+    simulator *did* rather than that the message was delivered.
 
     The verdict is the producer's, not this handler's. A producer that publishes a state object
     carrying ``verified`` (see ``roqsim.plugins.model_override``) has it read off the blackboard under the
@@ -100,18 +129,13 @@ def set_bool(request, response, ctx, on_payload, endpoint=None):
     producer without such a reader simply reports that the command was applied. Nothing here knows
     what was switched.
 
-    Timing: ``ctx.post`` is FIFO and drained at the start of ``pre_step``, so one barrier proves the
-    write has run, and a second spans the step whose ``post_step`` records the verdict. Without the
+    Timing: the command queue is FIFO and drained at the start of ``pre_step``, so waiting on the
+    command (its future, or a barrier behind it) proves the write has run, and a barrier spans the step whose ``post_step`` records the verdict. Without the
     second, this would read the verdict from *before* the change and report it as this call's.
     """
     want = bool(request.data)
-    on_payload(want)  # queued for the physics thread by the bridge's inbound marshaller
-    if not barrier(ctx):
-        response.success = False
-        response.message = (
-            f"the simulation did not apply the command within {physics.DEFAULT_TIMEOUT_S} s "
-            "(is it paused?)"
-        )
+    # Queued for the physics thread by the bridge's inbound marshaller.
+    if not _applied(ctx, on_payload(payload_for(endpoint, {"data": want})), response):
         return response
 
     read_state = None
