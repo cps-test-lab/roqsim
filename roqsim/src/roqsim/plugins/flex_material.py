@@ -81,7 +81,6 @@ class FlexMaterialPlugin(Plugin):
         ),
         "solimp": Field((float, list), doc="contact solver impedance, up to 5 numbers"),
     }
-    STRICT_KEYS = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)

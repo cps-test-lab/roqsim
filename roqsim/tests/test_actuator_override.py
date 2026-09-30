@@ -261,12 +261,18 @@ def test_an_each_entry_is_judged_against_the_law_it_inherits():
     assert any("not a gain of control: effort" in e for e in errors)
 
 
-def test_an_unknown_key_is_refused():
-    assert any("not a setting" in e for e in validate_override({"stifness": 5.0}))
+def test_an_unknown_key_is_refused_by_its_path():
+    (shared,) = validate_override({"stifness": 5.0})
+    assert shared.startswith("'actuators.stifness' is not a key of 'actuators' -- did you mean")
+    (entry,) = validate_override({"each": {"a_act": {"stifness": 5.0}}})
+    assert entry.startswith(
+        "'actuators.each.a_act.stifness' is not a key of 'actuators.each.a_act'"
+    )
 
 
-def test_a_gain_of_the_wrong_type_is_refused():
-    assert any("must be float" in e for e in validate_override({"control": "position", "p": "soft"}))
+def test_a_gain_of_the_wrong_type_is_refused_by_its_path():
+    errors = validate_override({"control": "position", "p": "soft"})
+    assert any(e.startswith("'actuators.p' must be float") for e in errors)
 
 
 def test_every_gain_declares_its_unit():

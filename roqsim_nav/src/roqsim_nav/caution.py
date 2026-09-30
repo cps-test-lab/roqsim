@@ -165,13 +165,18 @@ class CautionProbe:
 
     @staticmethod
     def validate(cfg: dict | None) -> list[str]:
-        cfg = cfg or {}
+        """The ranges of the tuning in *cfg*. A value that is not a number is the schema's to report."""
+        numbers = {
+            k: v
+            for k, v in (cfg or {}).items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
         errors = []
         for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
-            if key in cfg and float(cfg[key]) <= 0:
+            if key in numbers and numbers[key] <= 0:
                 errors.append(f"'avoidance.{key}' must be > 0")
         for key in ("clear_time", "forget_after", "yield_time"):
-            if key in cfg and float(cfg[key]) < 0:
+            if key in numbers and numbers[key] < 0:
                 errors.append(f"'avoidance.{key}' must be >= 0")
         return errors
 
