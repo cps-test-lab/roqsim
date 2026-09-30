@@ -21,7 +21,7 @@ The YAML has two top-level sections::
         follow_heading: true # optional: chase cam -- azimuth becomes an offset from the robot's yaw
       sync: {enabled: false} # foreseen lockstep mode (inert in M1)
 
-    components:            # ``plugins:`` is accepted as an alias of this key
+    components:
       - floorplan:                                # a short-name ref is the entry's key
           size: 3.0                               # its config: opaque, validated by the plugin itself
         name: ground                              # reserved sibling key; identifies this instance
@@ -64,9 +64,15 @@ A world may inherit another with two optional top-level keys (see :func:`_resolv
     extends: roqsim_scenes:depot # a parent world YAML ("<package>:<world>" ref or a path)
     disable: [table_2]      # OPTIONAL: drop inherited plugins by name (needs ``extends``)
 
-The parent's ``sim`` is deep-merged (the child wins per key) and the child's ``plugins`` are
+The parent's ``sim`` is deep-merged (the child wins per key) and the child's ``components`` are
 appended after the parent's (minus any ``disable``\\ d). To *modify* an inherited plugin, ``disable``
-it and re-add a tweaked copy in the child's ``plugins``.
+it and re-add a tweaked copy in the child's ``components``.
+
+Those keys and ``version:`` are the whole top level (:data:`WORLD_KEYS`); any other key is refused.
+A world declares no parameters and substitutes nothing into itself: a value that varies per run is
+written as its ordinary literal and changed by an *override* (below), which addresses that key in
+place. An override is rooted at ``sim`` or ``components`` (:data:`OVERRIDE_ROOTS`) and any other
+root is refused, since nothing would read it.
 
 Validation is delegated to each plugin's ``validate_config``; the engine aggregates all errors and
 fails fast with one readable report before the build phase.
@@ -92,7 +98,7 @@ from typing import Any
 
 import yaml
 
-from .document import check_version
+from .document import check_version, refuse_unknown_keys
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -131,28 +137,18 @@ class PluginSpec:
         return f"{self.entity}.{self.label}" if self.entity else self.label
 
 
-#: The document key holding the list of entries. ``plugins`` is an accepted alias: a document may
-#: use either, but never both -- two spellings of one key in
-#: one file is a merge nobody can predict, so it is refused rather than resolved.
+#: The document key holding the list of entries.
 _ENTRIES_KEY = "components"
-_ENTRIES_KEY_LEGACY = "plugins"
 
 
-def document_entries(doc: dict, where: str = "document") -> list:
-    """The entry list of *doc*, under either spelling; ``[]`` when it has neither."""
-    if _ENTRIES_KEY in doc and _ENTRIES_KEY_LEGACY in doc:
-        raise PluginError(
-            f"{where}: has both 'components:' and 'plugins:', which are one key under two spellings "
-            f"('plugins' is the former one). Keep 'components:' and delete 'plugins:'."
-        )
-    return list(doc.get(_ENTRIES_KEY, doc.get(_ENTRIES_KEY_LEGACY)) or [])
+def document_entries(doc: dict) -> list:
+    """The entry list of *doc*; ``[]`` when it has none."""
+    return list(doc.get(_ENTRIES_KEY) or [])
 
 
 def with_document_entries(doc: dict, entries: list) -> dict:
-    """*doc* with its entry list replaced, normalised onto the current spelling."""
-    out = {k: v for k, v in doc.items() if k != _ENTRIES_KEY_LEGACY}
-    out[_ENTRIES_KEY] = entries
-    return out
+    """*doc* with its entry list replaced."""
+    return {**doc, _ENTRIES_KEY: entries}
 
 
 #: Reserved sibling keys on a components-list entry: everything an entry says about *itself* rather
@@ -328,9 +324,18 @@ def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
         clash = seen.get(spec.label)
         if clash is not None:
             where = f"'{owner}'" if owner else "this document"
+            # Top-level entries are the ones `extends:` inherits, and re-declaring one to swap it
+            # is the usual way to land here -- so say how to replace it, not only how to rename.
+            replace = (
+                f" To replace an inherited '{spec.label}' with this one, write "
+                f"'disable: [{spec.label}]' beside 'extends:'."
+                if owner is None
+                else ""
+            )
             raise PluginError(
                 f"{where} has two components labelled '{spec.label}' ({clash.ref} and {spec.ref}). "
-                f"A label addresses one component, so give at least one of them a 'name:' of its own."
+                f"A label addresses one component, so give at least one of them a 'name:' of its "
+                f"own.{replace}"
             )
         seen[spec.label] = spec
 
@@ -598,9 +603,34 @@ def _apply_disable(plugins: list, selectors: list) -> list:
 
 
 #: The world document version this roqsim reads, stated with a top-level ``version:`` (absent is 1).
-#: Bumped when a key is renamed, moved or changes meaning, not when one is added.
+#: It covers the world document's own keys (:data:`WORLD_KEYS`), and is bumped when one of them is
+#: renamed, moved or changes meaning, not when one is added. Each plugin's config is that plugin's
+#: own.
 WORLD_VERSION = 1
 _VERSION_KEY = "version"
+
+#: The top-level keys of a world document.
+WORLD_KEYS = frozenset({_VERSION_KEY, "extends", "disable", "sim", _ENTRIES_KEY})
+
+#: The roots an override may address. ``version``, ``extends`` and ``disable`` are consumed while
+#: inheritance resolves, before overrides merge, so one addressed there would be read by nothing.
+OVERRIDE_ROOTS = frozenset({"sim", _ENTRIES_KEY})
+
+#: Appended to a refused top-level key or override root: a world has no parameter block, so a key
+#: invented for one is told where a value that varies per run goes instead.
+_VARYING_VALUE_HINT = (
+    "A world declares no parameters and substitutes nothing into itself: a value that varies per "
+    "run is written as its ordinary literal and changed by an override "
+    "('sim.<key>=<value>' or 'components.<name>.<key>=<value>'), which addresses that key in place."
+)
+
+
+def _refuse_unknown_world_keys(block: dict, known: frozenset, where: str) -> None:
+    """:func:`refuse_unknown_keys` for a world's top level, with :data:`_VARYING_VALUE_HINT`."""
+    try:
+        refuse_unknown_keys(block, known, where, error=PluginError)
+    except PluginError as err:
+        raise PluginError(f"{err}\n{_VARYING_VALUE_HINT}") from None
 
 
 def _check_world_version(raw: dict, where: str) -> dict:
@@ -617,17 +647,19 @@ def _check_world_version(raw: dict, where: str) -> dict:
 def _resolve_inheritance(
     raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset(), *, where: str = "world config"
 ) -> dict:
-    """Expand an ``extends``/``disable`` world into a plain ``{sim, plugins}`` dict.
+    """Expand an ``extends``/``disable`` world into a plain ``{sim, components}`` dict.
 
     Recursively merges the parent world (which may itself ``extends``): ``sim`` is deep-merged with
-    the child winning, and ``plugins`` becomes ``(parent - disabled) + child``. A no-op when the
+    the child winning, and ``components`` becomes ``(parent - disabled) + child``. A no-op when the
     world declares no ``extends``. Cycles raise.
 
-    Every document in the chain passes through here, so each one's ``version:`` is checked
-    (:data:`WORLD_VERSION`), a parent's like a leaf's.
+    Every document in the chain passes through here, so each one's top-level keys
+    (:data:`WORLD_KEYS`) and ``version:`` (:data:`WORLD_VERSION`) are checked, a parent's like a
+    leaf's.
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
+    _refuse_unknown_world_keys(raw, WORLD_KEYS, where)
     raw = _check_world_version(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
@@ -659,7 +691,7 @@ def _resolve_inheritance(
         )
     merged_sim = deep_merge(parent_sim, raw.get("sim") or {})
 
-    kept = _apply_disable(document_entries(parent_raw, str(parent_path)), disable or [])
+    kept = _apply_disable(document_entries(parent_raw), disable or [])
     merged = {k: v for k, v in raw.items() if k not in ("extends", "disable")}
     merged["sim"] = merged_sim
     return with_document_entries(merged, kept + document_entries(raw))
@@ -706,7 +738,10 @@ def load_config(
     if transport:
         raw = with_transport(raw, **transport)
     return _from_dict(
-        raw, base_dir=path.parent, assignments=assignments_from_mapping(overrides or {})
+        raw,
+        base_dir=path.parent,
+        assignments=assignments_from_mapping(overrides or {}),
+        where=str(path),
     )
 
 
@@ -942,8 +977,8 @@ def _flatten(value: Any, prefix: tuple[str, ...], out: list, source: str) -> Non
     """Leaves of a nested override document, with dotted keys split into segments.
 
     A non-empty mapping recurses; ``{}``, a list and a scalar are leaves. Splitting dotted keys is
-    what makes ``{plugins: {"robot.lidar": {...}}}`` and ``{plugins: {robot: {lidar: {...}}}}`` the
-    same assignment -- which they have to be, since a caller flattening a path onto a command line
+    what makes ``{components: {"robot.lidar": {...}}}`` and
+    ``{components: {robot: {lidar: {...}}}}`` the same assignment -- which they have to be, since a caller flattening a path onto a command line
     and one writing a document are describing the same override.
     """
     if isinstance(value, dict) and value:
@@ -962,9 +997,8 @@ def assignments_from_mapping(doc: dict, source: str = "override") -> list[Assign
     return out
 
 
-#: Roots an assignment may address. ``plugins`` is an alias of the container key and is
-#: accepted here for the same reason it is accepted in a document.
-_COMPONENT_ROOTS = (_ENTRIES_KEY, _ENTRIES_KEY_LEGACY)
+#: Roots an assignment may address.
+_COMPONENT_ROOTS = (_ENTRIES_KEY,)
 
 
 #: Matches exactly one address segment. One segment, not any number of them, because a path that
@@ -1003,6 +1037,11 @@ def _resolve_targets(
                 out.append((spec, ()))
             continue
         segment = rest[i]
+        # A disabled entry a live sibling replaces is not addressable (see `_replaced_by_live`):
+        # `robot` names the robot that runs, and a value meant for it does not also land on the one
+        # it replaced.
+        live = {c.label for c in siblings if c.enabled}
+        siblings = [c for c in siblings if c.enabled or c.label not in live]
         children = siblings if segment == _WILDCARD else [c for c in siblings if c.label == segment]
         if not children:
             # A segment straight after a wildcard has to name a component -- see the docstring.
@@ -1164,6 +1203,40 @@ def overrides_from_dotlist(dotlist: list[str]) -> dict:
     return overrides
 
 
+#: The ``sim:`` keys the engine sets straight onto MuJoCo's ``opt.*`` field of the same name. The
+#: engine's loop and :data:`SIM_KEYS` both read this tuple, so a key applied there is a key a world
+#: may carry, and neither can gain one without the other.
+SIM_OPTION_KEYS = (
+    "solver",
+    "iterations",
+    "ls_iterations",
+    "noslip_iterations",
+    "impratio",
+    "density",
+    "viscosity",
+)
+
+#: The keys of a world's ``sim:`` block: what :class:`SimConfig` and :mod:`roqsim.engine` read.
+#: A key read anywhere is listed here; any other is refused at load.
+SIM_KEYS = frozenset(
+    {
+        "cone",
+        "contact_override",
+        "dedup_assets",
+        "gravity",
+        "integrator",
+        "name",
+        "pacing",
+        "seed",
+        "sync",
+        "timestep",
+        "view",
+        "wind",
+        "world",
+        *SIM_OPTION_KEYS,
+    }
+)
+
 #: The complete ``sim.view`` schema -- the camera, and nothing else. Anything else there is a typo or
 #: a run-level switch that does not belong in a world, and is rejected rather than silently dropped.
 _VIEW_KEYS = frozenset({"lookat", "distance", "azimuth", "elevation", "track", "follow_heading"})
@@ -1269,20 +1342,19 @@ def _validate_contact_override(override) -> None:
             raise PluginError(f"sim.contact_override.{key}: all entries must be numbers")
 
 
-def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
+def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = None) -> SimConfig:
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
     assignments = list(assignments or ())
     # Non-component assignments (`sim.*`) merge into the document before anything reads it -- and
     # before it is validated, so a typo arriving by `--set` is refused exactly like one written in
     # the file.
-    apply_assignments(raw, [], [a for a in assignments if not _is_component(a)])
-    if "headless" in (raw.get("sim") or {}):
-        _logger.warning(
-            "\u26a0\ufe0f  sim.headless is IGNORED: the viewer is windowed by default; run with "
-            "--headless (standalone) or the headless scenario parameter to suppress the window. "
-            "Remove the key from the world YAML to silence this."
-        )
+    rest = [a for a in assignments if not _is_component(a)]
+    _refuse_unknown_world_keys(
+        {a.path[0]: None for a in rest if a.path}, OVERRIDE_ROOTS, "world override"
+    )
+    apply_assignments(raw, [], rest)
+    refuse_unknown_keys(raw.get("sim") or {}, SIM_KEYS, "sim", error=PluginError)
     unknown = sorted(set((raw.get("sim") or {}).get("view") or {}) - _VIEW_KEYS)
     if unknown:
         raise PluginError(
@@ -1313,7 +1385,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # to be wired, checked and ordered exactly like the ones the document declared -- so they go
     # back through the same walk rather than being spliced in beside it.
     plugins = flatten_specs(declared_tree)
-    effective, unresolved = expand_document(plugins, base_dir)
+    effective, unresolved = expand_document(plugins, base_dir, where=where)
     _refuse_late_expansion_overrides(component_assignments, _as_tree(effective), plugins, base_dir)
     _refuse_late_additions(component_assignments, _as_tree(effective), plugins)
     matched += apply_assignments(raw, _as_tree(effective), component_assignments)
@@ -1441,9 +1513,10 @@ def _refuse_config_keys_naming_components(tree: list[PluginSpec], base_dir: Path
     An override is split where the tree ends (:func:`_resolve_targets`), so ``robot.lidar.rays``
     against a robot whose scanner hangs off a mounted device (``robot.rplidar.lidar``) stops at
     ``robot`` and writes a config key ``lidar`` there: nothing reads it, the real component keeps its
-    value, and the run looks configured. A plugin declaring ``STRICT_KEYS`` refuses any unknown key
-    when it is instantiated; this runs earlier, at load, because only the effective tree can say
-    which address was meant -- any depth below the entry, since a mounted device nests one level.
+    value, and the run looks configured. A strict plugin (every one with a schema it does not open)
+    refuses any unknown key when it is instantiated; this runs earlier, at load, because only the
+    effective tree can say which address was meant -- any depth below the entry, since a mounted
+    device nests one level.
     """
     from .schema import INJECTED_KEYS
 
@@ -1694,8 +1767,37 @@ def drop_transport(cfg: SimConfig) -> list[str]:
     return dropped
 
 
+#: What :func:`with_control` adds: the driver's run control at ``sim.run_control``, entity placement
+#: and presence at ``sim.entities``, and the bridge.
+_RUN_CONTROL = "run_control"
+_ENTITY_CONTROL = "entity_control"
+_CONTROL_BRIDGE = "ipc_bridge"
+
+
+def with_control(cfg: SimConfig, uri: str, *, world: str = "") -> str:
+    """Serve *cfg*'s endpoints at control URI *uri*: add ``run_control``, ``entity_control`` and
+    the ``ipc`` bridge.
+
+    The two control plugins go first, so their endpoints exist before any bridge binds, and the bridge
+    last, after every producer. Added by the driver rather than written into a world, like
+    :func:`with_transport`: how a run is reached is a property of the run. A world that already
+    declares either keeps its own. Returns the URI the run will serve -- the world's own bridge's,
+    where it declares one.
+    """
+    refs = {spec.ref for spec in cfg.plugins}
+    if _ENTITY_CONTROL not in refs:
+        cfg.plugins.insert(0, PluginSpec(_ENTITY_CONTROL, "entities", {}, entity="sim"))
+    if _RUN_CONTROL not in refs:
+        cfg.plugins.insert(0, PluginSpec(_RUN_CONTROL, "run_control", {}, entity="sim"))
+    declared = next((s for s in cfg.plugins if s.ref == _CONTROL_BRIDGE), None)
+    if declared is not None:
+        return str(declared.config.get("uri", ""))
+    cfg.plugins.append(PluginSpec(_CONTROL_BRIDGE, None, {"uri": uri, "world": world}))
+    return uri
+
+
 def expand_document(
-    declared: list[PluginSpec], base_dir: Path
+    declared: list[PluginSpec], base_dir: Path, *, where: str | None = None
 ) -> tuple[list[PluginSpec], list[tuple[str, str]]]:
     """The document's EFFECTIVE components, and the refs that would not resolve.
 
@@ -1718,18 +1820,34 @@ def expand_document(
     that reaches the same model file twice, or nests deeper than :data:`_MAX_EXPANSION_DEPTH`, is
     refused with the chain named.
 
+    **A disabled entry that a live sibling replaces is not expanded** (:func:`_replaced_by_live`).
+    Everything here is keyed on addresses -- a manifest's dedupe, a mount finding its carrier, the
+    wait for an owner -- and ``disable:`` leaves the inherited entry in the document, so a world that
+    disables its parent's ``robot`` and declares its own holds two entries at one address. The
+    replaced one and what it owns stay in the list, in the record and turned off, but nothing looks
+    them up: otherwise the live robot dedupes its manifest against the dead one's injected copies
+    and loses every one of them, or takes the dead model's defaults into the overrides it declares.
+
     Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
+
+    An :func:`input_errors` error raised while expanding an entry is re-raised as a
+    :class:`PluginError` prefixed with *where* (the world file, ``None`` for a document with none)
+    and the entry's address (:func:`_located`), as is every unresolved ref's message. Any other
+    exception is a bug and propagates unchanged.
     """
     effective: list[PluginSpec] = []
     unresolved: list[tuple[str, str]] = []
+    replaced = _replaced_by_live(declared)
     # Handed to every `expand`, and grown by what each returns, so a nested producer dedupes against
     # what the world AND an outer manifest already said for its entity.
-    world: list[PluginSpec] = list(declared)
+    world: list[PluginSpec] = [s for s in declared if id(s) not in replaced]
     landed: set[str] = set()
     waiting: dict[str, list[tuple[PluginSpec, tuple]]] = {}
 
     def place(spec: PluginSpec, chain: tuple) -> None:
         effective.append(spec)
+        if id(spec) in replaced:
+            return
         landed.add(spec.address)
         try:
             cls = resolve_plugin(spec.ref, base_dir=base_dir)
@@ -1737,17 +1855,22 @@ def expand_document(
             # Tolerated, not raised: this runs while the document LOADS, and a consumer that only
             # wants the scene (`roqsim render`, the exporters, `roqsim scenes describe`) must still
             # get one for a world whose transport it cannot import. The spec stays, unexpanded, and
-            # `instantiate_plugins` is where the refusal happens -- with the same message it always
-            # gave, including the "this is a ROS world, here are your two ways on" case.
-            unresolved.append((spec.ref, str(exc)))
+            # `instantiate_plugins` is where the refusal happens -- with the resolver's message,
+            # located, including the "this is a ROS world, here are your two ways on" case.
+            unresolved.append((spec.ref, _located(str(exc), where, spec.address)))
             cls = None
         if cls is not None:
-            _check_ownership(spec, cls)
-            link = (spec.address, _expansion_model(spec, base_dir))
-            inner = (*chain, link)
-            subs = cls.expand(spec, world, base_dir)
-            for sub in subs:
-                _check_expansion_chain(inner, sub, base_dir)
+            # Only this entry's own work is wrapped: a nested entry's error is located by its own
+            # `place` below, and passes through here unchanged.
+            try:
+                _check_ownership(spec, cls)
+                link = (spec.address, _expansion_model(spec, base_dir))
+                inner = (*chain, link)
+                subs = cls.expand(spec, world, base_dir)
+                for sub in subs:
+                    _check_expansion_chain(inner, sub, base_dir)
+            except input_errors() as exc:
+                raise PluginError(_located(str(exc), where, spec.address)) from exc
             # All of them are visible before any is expanded: a mounted device's manifest must see
             # the override its carrier's manifest nests under it, which is a later entry of `subs`.
             world.extend(subs)
@@ -1764,10 +1887,66 @@ def expand_document(
     if waiting:
         owners = ", ".join(sorted(waiting))
         raise PluginError(
-            f"expansion injected components for {owners}, which no entry in this document is. An "
-            f"`expand` must wire what it returns to its own address or to one of its components."
+            f"{_at(where)}expansion injected components for {owners}, which no entry in this "
+            f"document is. An `expand` must wire what it returns to its own address or to one of "
+            f"its components."
         )
     return effective, unresolved
+
+
+def input_errors() -> tuple[type[Exception], ...]:
+    """What loading a world raises for bad input: a missing or unreadable file, a document that
+    does not parse, a model that does not resolve, a refusal. Anything else is a bug in the loader.
+    """
+    from .models import ModelError
+
+    return (OSError, ValueError, yaml.YAMLError, PluginError, ModelError)
+
+
+def _at(where: str | None) -> str:
+    return f"{where}: " if where else ""
+
+
+def _located(message: str, where: str | None, address: str) -> str:
+    """*message* prefixed with ``<where>: <address>: ``, minus the part it already states.
+
+    A message that starts with *where* is returned as it is; one that already quotes *address*
+    gets *where* alone.
+    """
+    if where and message.startswith(f"{where}:"):
+        return message
+    if f"'{address}'" in message:
+        return f"{_at(where)}{message}"
+    return f"{_at(where)}{address}: {message}"
+
+
+def _replaced_by_live(declared: list[PluginSpec]) -> set[int]:
+    """The declared specs a live sibling replaces, and everything they own, by identity.
+
+    A disabled entry is replaced when an enabled sibling -- same owner, same label -- exists: the
+    shape ``extends`` + ``disable: [robot]`` + a new ``robot`` leaves. Siblings are read from the
+    declared tree rather than from addresses, which are exactly what the two share. A disabled entry
+    with no live twin is not replaced: it expands as it always did, so an override reaching below
+    it still has a target. An override naming the shared address reaches the live entry alone
+    (:func:`_resolve_targets`).
+    """
+    out: set[int] = set()
+
+    def drop(spec: PluginSpec) -> None:
+        out.add(id(spec))
+        for child in spec.children:
+            drop(child)
+
+    def walk(siblings: list[PluginSpec]) -> None:
+        live = {s.label for s in siblings if s.enabled}
+        for spec in siblings:
+            if not spec.enabled and spec.label in live:
+                drop(spec)
+            else:
+                walk(spec.children)
+
+    walk([s for s in declared if s.entity is None])
+    return out
 
 
 #: How many expansions one chain may nest: a world's robot, the device it mounts, a device on that

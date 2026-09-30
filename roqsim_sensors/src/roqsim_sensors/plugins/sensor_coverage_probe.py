@@ -1,6 +1,6 @@
 """Scene plugin: report the sensor coverage of a world, enabled/disabled from the world YAML.
 
-The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``plugins:`` block
+The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``components:``
 and it computes coverage **once** (at ``configure``, after the model is compiled) and writes an
 agent-digestible ``report.json`` plus a human render -- then does nothing per step. Omit it and there is
 no coverage output. The optimization *search* over hypothetical mounts is the CLI's job
@@ -47,7 +47,7 @@ from ..coverage import sampling
 from ..coverage.adapters import PlacedSensor, build_fov
 from ..coverage.catalog import placed_from_proposal
 from ..coverage.engine import coverage
-from ..coverage.report import build_report
+from ..coverage.report import build_report, normalise_target
 from .camera_common import depth_stream_cameras
 
 
@@ -58,7 +58,7 @@ class SensorCoverageProbePlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.sensors = self.config.get("sensors", "auto")
         self.camera_far = float(self.config.get("camera_far", 10.0))
-        self.target = self.config.get("target", {})
+        self.target = normalise_target(self.config.get("target"))
         sample = self.config.get("sample", {}) or {}
         self.sample_volume = bool(sample.get("volume", True))
         self.sample_objects = bool(sample.get("objects", True))

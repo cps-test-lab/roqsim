@@ -52,7 +52,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from .solref import solref_floor
+from .solref import MAX_IMP, MIN_IMP, solref_floor
 
 #: The absolute floor of the tolerance, in metres. A start pose is written by hand, snapped from a
 #: settled run, or placed by a primitive against a mesh's hull, and each of those is off by a few
@@ -72,10 +72,6 @@ HINT = (
     "intended, exclude the pair (contype/conaffinity or an <exclude>) so the solver does not "
     "separate it on the first steps"
 )
-
-# MuJoCo clamps solimp's dmin/dmax into [mjMINIMP, mjMAXIMP] before using them.
-_MIN_IMP = 0.0001
-_MAX_IMP = 0.9999
 
 
 @dataclass(frozen=True)
@@ -138,7 +134,7 @@ def contact_tolerance(model, solref, solimp, floor: float = DEFAULT_TOLERANCE) -
     """
     solref = np.asarray(solref, dtype=float).reshape(-1, 2)
     solimp = np.asarray(solimp, dtype=float).reshape(-1, 5)
-    dmax = np.clip(solimp[:, 1], _MIN_IMP, _MAX_IMP)
+    dmax = np.clip(solimp[:, 1], MIN_IMP, MAX_IMP)
     width = solimp[:, 2]
 
     timeconst = solref[:, 0]

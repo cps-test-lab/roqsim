@@ -27,7 +27,7 @@ components:
   - spawn_arm:
       model: open_manipulator_x
       prefix: "omx_"
-      pos: [0.0, 0.0, 0.73]
+      pose: {position: {z: 0.73}}
     name: omx
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the

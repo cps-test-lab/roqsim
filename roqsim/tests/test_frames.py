@@ -34,12 +34,11 @@ def _model():
 
 
 CHAIN = [
-    {"name": "shell_link", "parent": "base_link", "pos": [0, 0, 0.1]},
+    {"name": "shell_link", "parent": "base_link", "pose": {"position": {"z": 0.1}}},
     {
         "name": "rplidar_link",
         "parent": "shell_link",
-        "pos": [-0.04, 0, 0.1],
-        "rpy": [0, 0, np.pi / 2],
+        "pose": {"position": {"x": -0.04, "z": 0.1}, "orientation": {"yaw": np.pi / 2}},
     },
 ]
 
@@ -71,8 +70,8 @@ def test_a_chain_is_built_on_its_body_and_read_back_per_link():
 def test_a_rotated_parent_frame_rotates_what_hangs_from_it():
     spec = _model()
     frames = [
-        {"name": "flipped", "parent": "base_link", "rpy": [np.pi, 0, 0]},
-        {"name": "below", "parent": "flipped", "pos": [0, 0, 0.1]},
+        {"name": "flipped", "parent": "base_link", "pose": {"orientation": {"roll": np.pi}}},
+        {"name": "below", "parent": "flipped", "pose": {"position": {"z": 0.1}}},
     ]
     add_frame_sites(spec, parse_frames(frames, "t"), "t")
     (link,) = static_transforms(spec.compile(), [("base_link", "base_link", "below", "below")], "t")
@@ -87,7 +86,9 @@ def test_a_rotated_parent_frame_rotates_what_hangs_from_it():
         ([{"name": "base_link", "parent": "base_link"}], "own parent"),
         ([{"name": "a", "parent": "base_link"}, {"name": "a", "parent": "base_link"}], "twice"),
         ([{"name": "a", "parent": "base_link", "xyz": [0, 0, 0]}], "unknown key"),
-        ([{"name": "a", "parent": "base_link", "pos": [0, 0]}], "'pos'"),
+        ([{"name": "a", "parent": "base_link", "tf": False}], r"unknown key\(s\) \['tf'\]"),
+        ([{"name": "a", "parent": "base_link", "pose": {"position": {"q": 0}}}], "'pose.position'"),
+        ([{"name": "a", "parent": "base_link", "pose": {"header": {}}}], "no 'header'"),
         ([{"parent": "base_link"}], "'name' is required"),
     ],
 )
@@ -121,10 +122,14 @@ def test_substitute_fills_known_placeholders_and_refuses_the_rest():
             substitute(bad, values, "w")
 
 
-def test_a_static_tf_endpoint_carries_only_its_list():
-    ep = static_tf_endpoint("frames", "robot", "ns", [{"parent": "p", "child": "c"}])
-    assert ep.read() is None and ep.namespace == "ns" and ep.owner == "robot"
-    assert ep.backend["ros2"]["static_tf"] == [{"parent": "p", "child": "c"}]
+def test_a_static_tf_endpoint_carries_only_its_transforms():
+    link = {"parent": "p", "child": "c", "translation": [1.0, 0.0, 0.5], "rotation": [1, 0, 0, 0]}
+    ep = static_tf_endpoint("frames", "robot", "ns", [link])
+    assert ep.namespace == "ns" and ep.owner == "robot"
+    assert ep.backend["ros2"] == {"static": True}
+    (t,) = ep.read().transforms
+    assert (t.parent, t.child) == ("p", "c")
+    assert t.translation.tolist() == [1.0, 0.0, 0.5] and t.rotation.tolist() == [1.0, 0, 0, 0]
 
 
 def _write(tmp_path, manifest):
@@ -179,3 +184,22 @@ def test_expand_manifest_substitutes_into_nested_configs_and_refuses_unknown(tmp
     assert raw.config["frame_id"] == "{frame_id}"
     with pytest.raises(PluginError, match=r"\{frame_id\}"):
         expand_manifest(spec, [spec], substitutions={"parent_frame": "x"})
+
+
+def test_a_pose_is_an_offset_whose_omitted_components_are_zero():
+    (frame,) = parse_frames(
+        [{"name": "a", "parent": "base_link", "pose": {"position": {"z": 0.2}}}], "t"
+    )
+    assert frame.pos == (0.0, 0.0, 0.2) and frame.quat == (1.0, 0.0, 0.0, 0.0)
+    (bare,) = parse_frames([{"name": "a", "parent": "base_link"}], "t")
+    assert bare.pos == (0.0, 0.0, 0.0) and bare.quat == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_pos_and_rpy_are_refused_showing_the_pose_they_mean():
+    entry = {"name": "a", "parent": "base_link", "pos": [0, 0, 0.3], "rpy": [0, 0, 1.5]}
+    with pytest.raises(
+        PluginError,
+        match=r"'pos' and 'rpy' are not read .*pose: \{position: \{z: 0\.3\}, "
+        r"orientation: \{yaw: 1\.5\}\}",
+    ):
+        parse_frames([entry], "t")

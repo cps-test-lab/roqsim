@@ -34,7 +34,7 @@ def fake_rst(monkeypatch, tmp_path):
 def world(tmp_path):
     """A real file, because render_scene checks up front that a path-shaped target exists."""
     path = tmp_path / "w.yaml"
-    path.write_text("plugins: []\n")
+    path.write_text("components: []\n")
     return str(path)
 
 

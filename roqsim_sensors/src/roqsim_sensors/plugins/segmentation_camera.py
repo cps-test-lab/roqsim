@@ -106,13 +106,18 @@ half of hiding and is no help here: it is a colour, and an id pass need not resp
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.endpoint import Unit
 from roqsim.presence import ABSENT_GEOM_GROUP
+from roqsim.types import Image
 
 from .camera_common import CameraPlugin, join_topic
 
@@ -125,6 +130,43 @@ MAX_CLASS_ID = 255
 #: 16UC1 carries the instance image, and instance ids are body ids -- a model with more bodies than
 #: this cannot be labelled per instance (the class image is unaffected).
 MAX_INSTANCE_ID = 65535
+
+
+Pixels = Annotated[float, Unit("px")]
+
+
+@dataclass
+class Box2D:
+    """One visible instance's tight box in the image, measured from the mask.
+
+    Attributes:
+        class_id: the class, as the label image carries it
+        class_name: the class's declared name
+        instance_id: the instance, as the instance image carries it
+        cx: box centre, column
+        cy: box centre, row
+        width: box width, both edge columns included
+        height: box height, both edge rows included
+    """
+
+    class_id: int
+    class_name: str
+    instance_id: int
+    cx: Pixels
+    cy: Pixels
+    width: Pixels
+    height: Pixels
+
+
+@dataclass
+class Boxes2D:
+    """The 2D boxes of every instance visible in one frame.
+
+    Attributes:
+        boxes: one per visible instance
+    """
+
+    boxes: list[Box2D]
 
 
 class SegmentationCameraPlugin(CameraPlugin):
@@ -202,77 +244,56 @@ class SegmentationCameraPlugin(CameraPlugin):
 
     # -- lifecycle ----------------------------------------------------------------------------
 
-    def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
+    def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         self._build_lookups(ctx, prefix)
 
         self._seg_opt = mujoco.MjvOption()
         # The one line that makes absence mean absence in an id pass; see the module docstring.
         self._seg_opt.geomgroup[ABSENT_GEOM_GROUP] = 0
 
-        labels_ep = Endpoint(
-            name="labels",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._labels,
-            rate_hz=self.rate_hz,
-            lazy=True,  # a full frame on the wire, like the colour image
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.Image",
-                    "topic": self.topic_override("labels")
-                    or join_topic(self.DEFAULT_TOPIC_PREFIX, "class_image"),
-                    "frame_id": self.frame_id,
-                    "encoding": "mono8",
-                }
-            },
-        )
-        ctx.interface.add(labels_ep)
-        self._extra_outputs.append(labels_ep)
+    # A full frame on the wire, like the colour image.
+    @endpoint.out(
+        rate="rate_hz",
+        lazy=True,
+        ros2=lambda self: {
+            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "class_image"),
+            "frame_id": self.frame_id,
+        },
+    )
+    def labels(self) -> Image | None:
+        """The class image: each pixel the class id of what it shows, 0 for nothing labelled."""
+        return None if self._labels is None else Image(self._labels, "mono8")
 
-        if self.instances:
-            instances_ep = Endpoint(
-                name="instances",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._instance_img,
-                rate_hz=self.rate_hz,
-                lazy=True,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.Image",
-                        "topic": self.topic_override("instances")
-                        or join_topic(self.DEFAULT_TOPIC_PREFIX, "instance_image"),
-                        "frame_id": self.frame_id,
-                        "encoding": "16UC1",
-                    }
-                },
-            )
-            ctx.interface.add(instances_ep)
-            self._extra_outputs.append(instances_ep)
+    @endpoint.out(
+        name="instances",
+        rate="rate_hz",
+        lazy=True,
+        when="instances",
+        ros2=lambda self: {
+            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "instance_image"),
+            "frame_id": self.frame_id,
+        },
+    )
+    def instance_image(self) -> Image | None:
+        """The instance image: each pixel the id of the object it shows, 0 for nothing labelled."""
+        return None if self._instance_img is None else Image(self._instance_img, "16UC1")
 
-        if self.detections:
-            detections_ep = Endpoint(
-                name="detections",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._boxes,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "vision_msgs.msg.Detection2DArray",
-                        "topic": self.topic_override("detections")
-                        or join_topic(self.DEFAULT_TOPIC_PREFIX, "detections"),
-                        "frame_id": self.frame_id,
-                    }
-                },
-            )
-            ctx.interface.add(detections_ep)
-            # Gated too: the boxes come off the same render, so a consumer that wants only boxes
-            # must still get frames -- the rule camera_common's _gate_endpoints states for depth.
-            self._extra_outputs.append(detections_ep)
+    # Gated on too: the boxes come off the same render, so a consumer that wants only boxes must
+    # still get frames -- the rule camera_common's _gate_endpoints states for depth.
+    @endpoint.out(
+        name="detections",
+        rate="rate_hz",
+        when="detections",
+        ros2=lambda self: {
+            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "detections"),
+            "frame_id": self.frame_id,
+        },
+    )
+    def detection_boxes(self) -> Boxes2D | None:
+        """A tight box per visible instance, with its class and instance."""
+        if self._boxes is None:
+            return None
+        return Boxes2D([Box2D(*box) for box in self._boxes])
 
     def _build_lookups(self, ctx: SimContext, prefix: str) -> None:
         """geom -> (class, instance), resolved once against the compiled model.

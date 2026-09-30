@@ -39,8 +39,8 @@ import mujoco
 import numpy as np
 
 #: MuJoCo's impedance bounds (``mjMINIMP`` / ``mjMAXIMP``); it clamps ``solimp[0:2]`` to them.
-_MIN_IMP = 0.0001
-_MAX_IMP = 0.9999
+MIN_IMP = 0.0001
+MAX_IMP = 0.9999
 
 
 def integrator_name(option) -> str:
@@ -65,8 +65,8 @@ def solref_floor(option, solref, solimp):
     if int(option.integrator) != mujoco.mjtIntegrator.mjINT_DISCRETE:
         floor = np.full(solref.shape[:-1], 2.0 * timestep)
     else:
-        dmin = np.clip(solimp[..., 0], _MIN_IMP, _MAX_IMP)
-        dmax = np.clip(solimp[..., 1], _MIN_IMP, _MAX_IMP)
+        dmin = np.clip(solimp[..., 0], MIN_IMP, MAX_IMP)
+        dmax = np.clip(solimp[..., 1], MIN_IMP, MAX_IMP)
         with np.errstate(divide="ignore", invalid="ignore"):
             floor = timestep * np.sqrt(np.maximum(dmin, dmax)) / (dmax * solref[..., 1])
     return float(floor) if floor.ndim == 0 else floor

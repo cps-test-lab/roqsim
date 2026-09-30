@@ -22,7 +22,7 @@ def test_empty_room_is_registered_and_default():
 
 def test_no_scene_plugin_gets_default_empty_room():
     # A plugin-less world still stands on a lit floor, enclosed by perimeter walls.
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": []}))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": []}))
     engine.setup()
     names = _geom_names(engine.ctx.model)
     assert names.count("floor") == 1
@@ -58,7 +58,9 @@ def test_sim_world_loads_an_mjcf_file(tmp_path):
         "<geom name='baked_box' type='box' size='.2 .2 .2' pos='0 0 .2'/>"
         "</worldbody></mujoco>"
     )
-    cfg = load_config_from_dict({"sim": {"world": "scene.xml"}, "plugins": []}, base_dir=tmp_path)
+    cfg = load_config_from_dict(
+        {"sim": {"world": "scene.xml"}, "components": []}, base_dir=tmp_path
+    )
     engine = Engine(cfg, plugins=[])
     engine.setup()
     names = _geom_names(engine.ctx.model)
@@ -80,7 +82,7 @@ class _ScenePlugin(Plugin):
 
 def test_provides_world_plugin_fills_the_slot_instead_of_the_definition():
     """The plugin builds the ground, so no world definition is built underneath it."""
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     engine = Engine(cfg, plugins=[_ScenePlugin()])
     engine.setup()
 
@@ -95,7 +97,7 @@ def test_a_world_stated_twice_is_refused():
     brightens it -- so the scene looks like a room and is not the one the document describes.
     Whichever of the two is dropped is the author's call, so neither can be picked here.
     """
-    cfg = load_config_from_dict({"sim": {"world": "empty_room"}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {"world": "empty_room"}, "components": []})
     engine = Engine(cfg, plugins=[_ScenePlugin()])
 
     with pytest.raises(PluginError) as caught:
@@ -111,7 +113,7 @@ def test_two_scene_plugins_providing_the_world_are_refused():
     Two ground-providing plugins in one document -- a floorplan and a terrain, say -- is the same
     mistake without the config key that makes it visible.
     """
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     engine = Engine(cfg, plugins=[_ScenePlugin(name="indoors"), _ScenePlugin(name="outdoors")])
 
     with pytest.raises(PluginError) as caught:
@@ -127,7 +129,7 @@ def test_a_baked_scene_beside_such_a_plugin_is_refused_too():
     A file world is *loaded* as the base spec before any plugin builds, so a warning saying it was
     ignored would describe something that had already happened.
     """
-    cfg = load_config_from_dict({"sim": {"world": "scene.xml"}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {"world": "scene.xml"}, "components": []})
     engine = Engine(cfg, plugins=[_ScenePlugin()])
 
     with pytest.raises(PluginError, match="scene.xml"):

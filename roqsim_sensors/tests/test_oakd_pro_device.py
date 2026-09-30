@@ -1,14 +1,9 @@
-"""The OAK-D Pro is mounted by its vendor ``oakd_link``, and the move changed no camera.
+"""The OAK-D Pro is mounted by its vendor ``oakd_link``.
 
 * **The chain is the vendor's** (``turtlebot4_description/urdf/sensors/oakd.urdf.xacro``): the mount
   publishes ``oakd_link -> oakd_rgb_camera_frame -> oakd_rgb_camera_optical_frame``, the stereo pair at
   +-baseline/2 and the IMU frame, and the camera the image is rendered from IS the RGB optical frame.
-* **The re-seat moved names, not the camera.** The retired ``oakd`` model pre-rotated ``mount`` by +90
-  deg about z so a mount at ``rpy [0, 0, 0]`` looked along +y; a mount of it at ``T_old`` and one of
-  ``oakd_pro`` at ``T_old * Rq`` (``external/convert/build_oakd_pro.py --rewrite-mounts``) put the
-  camera and the housing at the same world pose.
 * **The device carries the vendor inertial** rather than a mass MuJoCo derives from the box.
-* **The old name is refused**, naming the new one.
 """
 
 from __future__ import annotations
@@ -21,7 +16,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.models import ModelError, resolve_model
+from roqsim.pose import pose_mapping
 
 OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
 BASELINE = 0.075
@@ -29,42 +24,11 @@ BASELINE = 0.075
 MASS = 0.061
 DIAGINERTIA = (0.00000202475, 0.00001527320, 0.00001605536)
 
-# The retired model, as it was: every geom in oakd_link, the body pre-rotated by +90 deg about z.
-RETIRED_QUAT = (0.70710678, 0.0, 0.0, 0.70710678)
-RETIRED_MJCF = """<mujoco>
-  <worldbody>
-    <body name="mount" quat="0.70710678 0 0 0.70710678">
-      <geom name="oakd_visual" type="box" pos="-0.011 0 -0.005" size="0.01125 0.0485 0.015"/>
-      <camera name="oakd_rgb" pos="0 0 0" xyaxes="0 -1 0 0 0 1" fovy="56.84" resolution="320 240"/>
-    </body>
-  </worldbody>
-</mujoco>"""
-
 POSES = [
     ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
     ([-1.5, -1.5, 0.6], [0.0, 0.0, -0.7854]),
     ([2.0, 1.0, 3.0], [-0.6, 0.2, 2.4]),
 ]
-
-
-def _rot(rpy) -> np.ndarray:
-    quat = np.zeros(4)
-    mujoco.mju_euler2Quat(quat, np.asarray(rpy, dtype=float), "XYZ")
-    mat = np.zeros(9)
-    mujoco.mju_quat2Mat(mat, quat)
-    return mat.reshape(3, 3)
-
-
-def _rpy(m: np.ndarray) -> list[float]:
-    pitch = math.asin(max(-1.0, min(1.0, -m[2, 0])))
-    return [math.atan2(m[2, 1], m[2, 2]), pitch, math.atan2(m[1, 0], m[0, 0])]
-
-
-def _re_expressed(pos, rpy):
-    q = np.asarray(RETIRED_QUAT) / np.linalg.norm(RETIRED_QUAT)
-    rq = np.zeros(9)
-    mujoco.mju_quat2Mat(rq, q)
-    return list(pos), _rpy(_rot(rpy) @ rq.reshape(3, 3))
 
 
 def _compiled(model, pos, rpy):
@@ -76,8 +40,7 @@ def _compiled(model, pos, rpy):
                     "spawn_sensor": {
                         "model": model,
                         "prefix": "cam_",
-                        "pos": list(pos),
-                        "rpy": list(rpy),
+                        "pose": pose_mapping(pos, rpy),
                         "default_plugins": False,
                     },
                     "name": "cam",
@@ -102,25 +65,10 @@ def _pose(engine, objtype, name):
     return d.geom_xpos[ident].copy(), d.geom_xmat[ident].reshape(3, 3).copy()
 
 
-@pytest.mark.parametrize("pos, rpy", POSES)
-def test_a_re_expressed_mount_puts_the_camera_where_the_retired_one_did(tmp_path, pos, rpy):
-    retired = tmp_path / "retired_oakd.xml"
-    retired.write_text(RETIRED_MJCF)
-    old = _compiled(str(retired), pos, rpy)
-    new = _compiled("oakd_pro", *_re_expressed(pos, rpy))
-    for objtype, name in (
-        (mujoco.mjtObj.mjOBJ_CAMERA, "cam_oakd_rgb"),
-        (mujoco.mjtObj.mjOBJ_GEOM, "cam_oakd_visual"),
-    ):
-        (p_old, r_old), (p_new, r_new) = _pose(old, objtype, name), _pose(new, objtype, name)
-        assert np.allclose(p_old, p_new, atol=1e-9), name
-        assert np.allclose(r_old, r_new, atol=1e-7), name  # the retired quat is 8 digits
-
-
 def test_the_mount_publishes_the_vendor_chain():
     engine = _compiled("oakd_pro", [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tfs = {(t["parent"], t["child"]): t for t in frames.backend["ros2"]["static_tf"]}
+    tfs = {(t["parent"], t["child"]): t for t in [vars(t) for t in frames.read().transforms]}
     assert set(tfs) == {
         ("world", "oakd_link"),
         ("oakd_link", "oakd_rgb_camera_frame"),
@@ -169,14 +117,3 @@ def test_the_images_are_stamped_in_the_vendor_optical_frame():
     )
     camera = next(s for s in cfg.plugins if s.ref == "oakd_camera")
     assert camera.config["frame_id"] == "oakd_rgb_camera_optical_frame"
-
-
-def test_the_retired_name_is_refused_naming_the_new_one():
-    with pytest.raises(ModelError) as exc:
-        resolve_model("oakd")
-    assert str(exc.value) == (
-        "spawn_sensor: model 'oakd' — renamed to 'oakd_pro' when its mount frame became the one "
-        "its vendor macro places (it was a display convention pointing the lens along +y). Update "
-        "the name, and re-express this mount's pos/rpy as the vendor macro's origin; see "
-        "roqsim_sensors/README.md."
-    )
