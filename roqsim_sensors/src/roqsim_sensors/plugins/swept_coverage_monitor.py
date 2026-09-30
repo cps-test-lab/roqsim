@@ -46,15 +46,19 @@ carrier's structure occludes exactly as any other geometry does.
 once a coverage target is reached reads the endpoint and decides, with the threshold stated in the
 experiment rather than in the substrate.
 
-Its keys are declared in :attr:`SweptCoverageMonitorPlugin.CONFIG_SCHEMA`. The mount is exactly
-one of ``camera:`` (a MuJoCo ``<camera>``: pose and intrinsics from the compiled model), ``site:`` (a
-``<site>``, such as a lidar's scan site) or ``body:``; names are resolved with the owning entity's
-``prefix`` when this entry is nested under a spawn, so ``camera: oakd_rgb`` finds a prefixed robot's
-camera. A body mount places the sensor at ``pose`` in the body's frame, a ``geometry_msgs/Pose`` whose
-omitted components are 0; a camera or site mount is posed by the model and takes no ``pose``.
-``type`` names the coverage adapter that builds the field of view (any of ``roqsim sensors coverage
-catalog``'s types) and ``config`` its parameters; ``sample`` is the fixed point set the union is
-accumulated over, and ``regions``/``region_names``/``restrict`` limit it to named regions.
+Its keys are declared in :attr:`SweptCoverageMonitorPlugin.CONFIG_SCHEMA`. ``frame`` is the mount: a
+frame path (:mod:`roqsim.paths`, resolved by :func:`roqsim.frames.resolve_frame`) -- an entity's root,
+one of its bodies, sites, cameras, declared or device frames, or a body, site or camera of the world's
+own MJCF by its MuJoCo name (``gantry``). Nested under an entity the path is relative to it (``.`` is
+the entity, ``oakd/oakd_rgb`` its OAK-D's camera) and a leading ``/`` starts at the top of the world;
+at the top of a world it starts with an entity's name, and the entry is declared after the entry that
+spawns it. The field of view sits at the frame, moved by ``pose``, a ``geometry_msgs/Pose`` in the
+frame's coordinates whose omitted components are 0. A camera frame gives a camera-type field of view
+its intrinsics and its pose -- MuJoCo's camera frame, looking along -z with +y up -- with ``config``
+overriding ``fovy``/``width``/``height`` and setting the range; on any other frame ``config`` states
+the whole field of view, boresight along the frame's +x. ``type`` names the coverage adapter that
+builds it (any of ``roqsim sensors coverage catalog``'s types); ``sample`` is the fixed point set the
+union is accumulated over, and ``regions``/``region_names``/``restrict`` limit it to named regions.
 
 Endpoint ``coverage`` (out) reads a :class:`SweptCoverageReport`; ROS carries its ``fraction`` as a
 ``std_msgs/Float32`` on ``coverage_fraction``. The report holds the covered fraction of the sample
@@ -91,6 +95,8 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.endpoint import Unit
+from roqsim.frames import Frame, resolve_frame
+from roqsim.paths import PathError
 from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose
 from roqsim.schema import Field
@@ -102,9 +108,6 @@ from ..coverage.engine import coverage as evaluate_coverage
 from ..coverage.report import build_report
 
 _log = logging.getLogger(__name__)
-
-#: The three mount keys, in the order they are reported. Exactly one may be set.
-_MOUNT_KEYS = ("camera", "site", "body")
 
 #: Areas are unreportable without a volume grid; ``-1.0`` says so rather than reading as zero.
 UNKNOWN_AREA = -1.0
@@ -162,6 +165,31 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _carrier(model, frame: Frame) -> int:
+    """The body *frame* rides on, for ``SensorFov.body_exclude``; ``-1`` for the world body."""
+    if frame.kind in ("root", "body"):
+        body = frame.index
+    elif frame.is_camera:
+        body = int(model.cam_bodyid[frame.index])
+    else:
+        body = int(model.site_bodyid[frame.index])
+    return body if body > 0 else -1
+
+
+def _pose_reader(ctx: SimContext, frame: Frame) -> Callable[[], tuple[np.ndarray, np.ndarray]]:
+    """``(position, rotation matrix)`` of *frame* in the world, read from ``data`` as it stands.
+
+    The arrays :func:`roqsim.frames.frame_pose` reads, read directly: an entity's root is its body,
+    and the monitor needs the pose at ``configure`` too, before the entity pose endpoints exist.
+    """
+    i = frame.index
+    if frame.kind in ("root", "body"):
+        return lambda: (ctx.data.xpos[i], ctx.data.xmat[i].reshape(3, 3))
+    if frame.is_camera:
+        return lambda: (ctx.data.cam_xpos[i], ctx.data.cam_xmat[i].reshape(3, 3))
+    return lambda: (ctx.data.site_xpos[i], ctx.data.site_xmat[i].reshape(3, 3))
+
+
 class SweptCoverageMonitorPlugin(Plugin):
     """See the module docstring."""
 
@@ -172,10 +200,9 @@ class SweptCoverageMonitorPlugin(Plugin):
     #: mistake: on a many-core lane it holds back every other parallel-safe observer in the world.
     parallel_safe = True
 
-    #: NOT `requires_owner`: the mount is named explicitly, so there is no default to resolve from an
-    #: entity and therefore none to resolve wrongly -- and a sensor may ride something that registers
-    #: no entity at all (a moving prop, a gantry body in the world MJCF). Nesting it under a spawn is
-    #: still the usual case and is what supplies the name `prefix`.
+    #: NOT `requires_owner`: the mount is a frame path, which a top-level entry states absolutely --
+    #: and a sensor may ride something that registers no entity at all (a gantry body in the world
+    #: MJCF). Nesting it under a spawn is still the usual case, and makes the path relative to it.
     requires_owner = False
 
     #: Declared once, so ``roqsim plugins describe swept_coverage_monitor`` publishes the keys the
@@ -188,25 +215,25 @@ class SweptCoverageMonitorPlugin(Plugin):
             doc="sensor type: the coverage adapter that builds the field of view "
             "(any of `roqsim sensors coverage catalog`'s types)",
         ),
-        "camera": Field(
-            str, default="", static=True, doc="mount: a MuJoCo camera, posed and sized by the model"
-        ),
-        "site": Field(str, default="", static=True, doc="mount: a MuJoCo site, posed by the model"),
-        "body": Field(
-            str, default="", static=True, doc="mount: a MuJoCo body, with the sensor at 'pose'"
+        "frame": Field(
+            str,
+            required=True,
+            static=True,
+            doc="mount: a frame path; relative to the owning entity when nested, '/' for absolute",
         ),
         "pose": Field(
             dict,
             default={},
             static=True,
-            doc="the sensor in a body mount's frame, a geometry_msgs/Pose (omitted components "
-            "are 0); body mounts only",
+            doc="the sensor in the frame's coordinates, a geometry_msgs/Pose (omitted components "
+            "are 0)",
         ),
         "config": Field(
             dict,
             default={},
             static=True,
-            doc="field-of-view parameters for the adapter (fovy/width/height/far, range_max, ...)",
+            doc="field-of-view parameters for the adapter (fovy/width/height/far, range_max, ...); "
+            "on a camera frame, overrides of the camera's own intrinsics",
         ),
         "sample": Field(
             dict,
@@ -289,22 +316,13 @@ class SweptCoverageMonitorPlugin(Plugin):
             from ..coverage.adapters import registered_types
 
             errors.append(f"'type' is required; known sensor types: {registered_types()}")
-        mounted = [key for key in _MOUNT_KEYS if config.get(key)]
-        if len(mounted) != 1:
-            errors.append(
-                f"exactly one of {list(_MOUNT_KEYS)} names the mount, got {mounted or 'none'}"
-            )
-        if "pose" in config:
-            if not settings.body:
-                errors.append(
-                    "'pose' places the sensor in a body mount's frame; a camera or site mount is "
-                    "posed by the model"
-                )
-            elif isinstance(settings.pose, dict):
-                try:
-                    parse_pose(settings.pose, relative=True)
-                except PoseError as exc:
-                    errors.append(str(exc))
+        if settings.frame == "":
+            errors.append("'frame' is required: the frame path the sensor is mounted on")
+        if isinstance(settings.pose, dict):
+            try:
+                parse_pose(settings.pose, relative=True)
+            except PoseError as exc:
+                errors.append(str(exc))
         for key, value in (
             ("compute_rate_hz", settings.compute_rate_hz),
             ("rate_hz", settings.rate_hz),
@@ -335,10 +353,7 @@ class SweptCoverageMonitorPlugin(Plugin):
         # forward pass has populated the world's geom/camera/site poses.
         mujoco.mj_forward(model, data)
 
-        entity = ctx.entities.get(self.entity) if self.entity else None
-        prefix = entity.meta.get("prefix", "") if entity else ""
-
-        self._build_fov(model, data, prefix)
+        self._build_fov(ctx)
         self._build_points(model, data)
 
         self._visits = np.zeros(len(self._points), dtype=np.int64)
@@ -375,8 +390,8 @@ class SweptCoverageMonitorPlugin(Plugin):
 
     # -- the mount ---------------------------------------------------------------------------------
 
-    def _build_fov(self, model, data, prefix: str) -> None:
-        """Resolve the mount and build the field of view once, at its current pose.
+    def _build_fov(self, ctx: SimContext) -> None:
+        """Resolve the mount frame and build the field of view once, at its current pose.
 
         Built once and re-posed per evaluation rather than rebuilt: an adapter re-reads the MJCF
         intrinsics (and, for a lidar type, re-instantiates the plugin whose defaults it borrows) on
@@ -384,82 +399,56 @@ class SweptCoverageMonitorPlugin(Plugin):
         pose is two array reads.
         """
         settings = self.settings
-        mounted = [key for key in _MOUNT_KEYS if getattr(settings, key)]
-        if len(mounted) != 1:
-            raise RuntimeError(
-                f"swept_coverage_monitor[{self.label}]: exactly one of {list(_MOUNT_KEYS)} names "
-                f"the mount, got {mounted or 'none'}"
-            )
-        kind = mounted[0]
-        name = prefix + getattr(settings, kind)
-        obj = {
-            "camera": mujoco.mjtObj.mjOBJ_CAMERA,
-            "site": mujoco.mjtObj.mjOBJ_SITE,
-            "body": mujoco.mjtObj.mjOBJ_BODY,
-        }[kind]
-        mount_id = mujoco.mj_name2id(model, obj, name)
-        if mount_id < 0:
+        model, data = ctx.model, ctx.data
+        try:
+            frame = resolve_frame(ctx, settings.frame, within=self.entity or None)
+        except PathError as exc:
             # Loudly, for the reason contact_monitor and clearance_monitor refuse: a monitor whose
             # mount does not exist would report zero coverage for the whole run, which is
             # indistinguishable from a sensor that saw nothing and would quietly pass a campaign.
             raise RuntimeError(
-                f"swept_coverage_monitor[{self.label}]: {kind} {name!r} not found in the compiled "
-                f"world. Names are resolved with the owning entity's prefix "
-                f"({prefix!r}); check the spelling, or nest this entry under the spawn that "
-                f"carries the sensor."
-            )
-        self._mount_desc = f"{kind} {name!r}"
+                f"swept_coverage_monitor[{self.label}]: 'frame' {settings.frame!r}: {exc}"
+            ) from exc
+        self._mount_desc = f"frame {frame.path!r}"
+        self._mount_pose = _pose_reader(ctx, frame)
 
-        if kind == "camera":
-            placed = PlacedSensor(self.sensor_type, cam_id=mount_id, config=settings.config)
-            self._mount_pose = lambda i=mount_id: (
-                self._ctx.data.cam_xpos[i],
-                self._ctx.data.cam_xmat[i].reshape(3, 3),
-            )
-        elif kind == "site":
-            placed = PlacedSensor(self.sensor_type, site_id=mount_id, config=settings.config)
-            self._mount_pose = lambda i=mount_id: (
-                self._ctx.data.site_xpos[i],
-                self._ctx.data.site_xmat[i].reshape(3, 3),
-            )
+        if frame.is_camera:
+            # The adapter reads the camera's intrinsics and places the field of view at the camera
+            # frame itself, so the sensor sits at the frame's origin before `pose` moves it.
+            placed = PlacedSensor(self.sensor_type, cam_id=frame.index, config=settings.config)
         else:
-            # A body mount is the adapter's *hypothetical* placement form, built at the pose's
-            # position with no rotation, so the adapter's own conventions (a camera's optical axis, a
-            # lidar's boresight) are inherited rather than restated here; the pose's orientation is
-            # applied on top below, as the adapter applies a placement's own (rot = R @ base).
-            position, quat = parse_pose(settings.pose, relative=True)
+            # The adapter's hypothetical placement form, at the origin with no rotation, so its own
+            # conventions (a camera's optical axis, a lidar's boresight) are inherited rather than
+            # restated here; the frame's pose is applied on top below, as the adapter applies a
+            # placement's own (rot = R @ base).
             placed = PlacedSensor(
-                self.sensor_type, pos=np.asarray(position), rpy=np.zeros(3), config=settings.config
-            )
-            self._mount_pose = lambda i=mount_id: (
-                self._ctx.data.xpos[i],
-                self._ctx.data.xmat[i].reshape(3, 3),
+                self.sensor_type, pos=np.zeros(3), rpy=np.zeros(3), config=settings.config
             )
         placed.label = self.label
-
         try:
             self._fov = build_fov(model, data, placed)
         except (KeyError, ValueError) as exc:
+            where = "camera frame" if frame.is_camera else "frame"
             raise RuntimeError(
                 f"swept_coverage_monitor[{self.label}]: cannot build a {self.sensor_type!r} field "
-                f"of view on a {kind} mount: {exc}"
+                f"of view on {where} {frame.path!r}: {exc}"
             ) from exc
 
-        # The sensor's pose in the mount frame. For a camera/site mount the adapter already resolved
-        # the frame itself, so the sensor sits at its origin; for a body mount it is the configured
-        # pose, its orientation composed onto the adapter's base rotation.
-        if kind == "body":
-            rotation = np.empty(9)
-            mujoco.mju_quat2Mat(rotation, np.asarray(quat, dtype=np.float64))
-            self._local_pos = np.asarray(self._fov.origin, dtype=np.float64).copy()
-            self._local_rot = rotation.reshape(3, 3) @ np.asarray(self._fov.rot, dtype=np.float64)
-            # A hypothetical placement excludes nothing, but a mounted sensor's origin sits inside
-            # the housing it is bolted to -- the same correction the adapters make for a camera/site
-            # mount via SensorFov.body_exclude.
-            self._fov.body_exclude = mount_id
+        # The field of view in the frame's coordinates: its base pose there, moved by `pose`.
+        if frame.is_camera:
+            base_pos, base_rot = np.zeros(3), np.eye(3)
         else:
-            self._local_pos = np.zeros(3)
-            self._local_rot = np.eye(3)
+            base_pos = np.asarray(self._fov.origin, dtype=np.float64).copy()
+            base_rot = np.asarray(self._fov.rot, dtype=np.float64).copy()
+        position, quat = parse_pose(settings.pose, relative=True)
+        rotation = np.empty(9)
+        mujoco.mju_quat2Mat(rotation, np.asarray(quat, dtype=np.float64))
+        rotation = rotation.reshape(3, 3)
+        self._local_pos = np.asarray(position, dtype=np.float64) + rotation @ base_pos
+        self._local_rot = rotation @ base_rot
+        # A mounted sensor's origin sits inside the housing it is bolted to, so the carrying body is
+        # excluded from its raycasts -- unless that is the world body, whose geometry is the walls.
+        self._fov.body_exclude = _carrier(model, frame)
         # Posed at the mount as configured, which is where a reset puts it back.
         self._repose()
         self._fov_start = (self._fov.origin.copy(), self._fov.rot.copy())

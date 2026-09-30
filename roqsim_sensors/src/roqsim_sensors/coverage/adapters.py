@@ -122,13 +122,16 @@ def _own_body(model, *, cam_id: int = -1, site_id: int = -1) -> int:
 
     A *hypothetical* placement (pos/rpy, no in-world id) has no body and needs none: nothing of it
     exists to occlude. A spawned one always does, and its housing is in the way -- see
-    :attr:`SensorFov.body_exclude`.
+    :attr:`SensorFov.body_exclude` -- except on the world body, whose geometry is the walls: a camera
+    or site placed directly in ``<worldbody>`` excludes nothing.
     """
     if cam_id >= 0:
-        return int(model.cam_bodyid[cam_id])
-    if site_id >= 0:
-        return int(model.site_bodyid[site_id])
-    return -1
+        body = int(model.cam_bodyid[cam_id])
+    elif site_id >= 0:
+        body = int(model.site_bodyid[site_id])
+    else:
+        return -1
+    return body if body > 0 else -1
 
 
 # -- camera ------------------------------------------------------------------------------------------

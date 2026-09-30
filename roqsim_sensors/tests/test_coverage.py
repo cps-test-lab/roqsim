@@ -169,6 +169,32 @@ def test_including_group4_causes_occlusion():
     assert res.counts.tolist() == [0, 0]  # the group-4 box now blocks the near point too
 
 
+@pytest.mark.parametrize("mount", ["camera", "site"])
+def test_a_sensor_in_the_worldbody_is_occluded_by_the_worlds_walls(mount):
+    """A camera or site placed directly in ``<worldbody>`` rides the world body, whose geometry is
+    the walls; excluding its mount body from the raycasts would make every wall transparent."""
+    xml = _OCCLUSION_XML.replace(
+        "  </worldbody>",
+        '    <camera name="eye" pos="0 0 .5" xyaxes="0 -1 0  0 0 1" fovy="90"/>\n'
+        '    <site name="eye" pos="0 0 .5"/>\n'
+        "  </worldbody>",
+    )
+    m = mujoco.MjModel.from_xml_string(xml)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    obj = mujoco.mjtObj.mjOBJ_CAMERA if mount == "camera" else mujoco.mjtObj.mjOBJ_SITE
+    ident = mujoco.mj_name2id(m, obj, "eye")
+    placed = (
+        PlacedSensor("camera", cam_id=ident, config={"far": 10})
+        if mount == "camera"
+        else PlacedSensor("lidar", site_id=ident)
+    )
+    fov = build_fov(m, d, placed)
+    assert fov.body_exclude == -1
+    res = coverage(m, d, [fov], np.array([[2.0, 0, 0.5]]))  # behind the wall
+    assert res.counts.tolist() == [0]
+
+
 def test_coverage_fraction_and_by_type():
     m, d, cam = _occlusion_world()
     pts = np.array([[0.9, 0, 0.5], [2.0, 0, 0.5]])

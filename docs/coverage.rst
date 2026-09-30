@@ -77,22 +77,33 @@ The swept plugin (a sensor that moves)
 because an occluder may itself move. List ``swept_coverage_monitor`` instead to evaluate the same
 geometry at ``compute_rate_hz`` while the world runs and accumulate the union of everything covered.
 
-The mount is given as exactly one of ``camera:``, ``site:`` or ``body:`` — naming a mount on a moving
-entity is the whole point, and the pose is re-read from the model on every evaluation rather than
-captured once. A body mount places the sensor at ``pose`` in the body's frame, a
-``geometry_msgs/Pose`` whose omitted components are 0; a camera or site is posed by the model.
+The mount is ``frame:``, a frame path (:ref:`paths`) whose pose is re-read from the model on every
+evaluation rather than captured once: an entity's root, body, site, camera or declared frame, or a
+body, site or camera of the world's own MJCF by its MuJoCo name -- a sensor on a gantry in the world
+file is ``frame: gantry`` or ``frame: gantry_cam``. Nested under an entity the path is relative to it
+(``.`` is the entity) and a leading ``/`` starts at the top of the world. ``pose`` offsets the sensor
+in the frame's coordinates, a ``geometry_msgs/Pose`` whose omitted components are 0.
+
+On a **camera** frame the field of view is that camera's: its intrinsics come from the model, and its
+axes are MuJoCo's camera frame (looking along -z, +y up), so ``pose: {position: {z: -0.3}}`` moves it
+0.3 m along the view. ``config`` may override ``fovy``/``width``/``height`` and sets the detection
+range. On any **other** frame ``config`` states the field of view in full, looking along the frame's
++x as the adapter's placement form does.
 
 .. code:: yaml
 
    components:
-     - swept_coverage_monitor:
-         type: lidar              # which adapter builds the field of view
-         site: lidar              # or camera: <name> / body: <name> (+ pose)
-         config: {angle_min: -0.51, angle_max: 0.51, max_range: 1.3}
-         sample: {volume: true, resolution: 0.05, heights: [0.05]}
-         compute_rate_hz: 5.0     # how often the union is updated
-         rate_hz: 2.0             # how often the fraction is published
-         out: coverage            # optional report.json at shutdown
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - swept_coverage_monitor:
+             type: oakd_camera        # which adapter builds the field of view
+             frame: oakd/oakd_rgb     # relative to `robot`: its OAK-D's camera, with its intrinsics
+             config: {far: 5.0}       # the detection range, an assumption for a camera
+             sample: {volume: true, resolution: 0.25, heights: [0.5]}
+             compute_rate_hz: 5.0     # how often the union is updated
+             rate_hz: 2.0             # how often the fraction is published
+             out: coverage            # optional report.json at shutdown
 
 It publishes a ``coverage`` endpoint carrying the covered fraction, and puts a reader on the
 blackboard under ``swept_coverage:<address>`` that hands out the sample points and each point's visit
@@ -103,7 +114,7 @@ Two properties are worth relying on: the union is **monotonic** (a cell once cov
 uncovered, so holding still raises the visit counts and leaves the union untouched), and an occluded
 cell stays at **exactly zero** visits rather than near zero. Both are asserted in the package's
 tests, as is the thing the plugin exists for: on a corridor fixture, the same sensor driven along it
-covers 3.16× what it covers standing still.
+covers at least twice what it covers standing still.
 
 Unlike the static probe this plugin does no rendering, which is what lets it run in parallel with
 other simulations; a coverage figure and a picture of it are separate jobs here.

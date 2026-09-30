@@ -473,7 +473,7 @@ CASES: dict[str, Case] = {
             {
                 "swept_coverage_monitor": {
                     "type": "camera",
-                    "body": "base_link",
+                    "frame": "base_link",
                     "config": {"fovy": 60, "width": 64, "height": 48, "far": 3.0},
                     "sample": {"resolution": 0.5, "heights": [0.3]},
                 }

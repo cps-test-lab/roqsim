@@ -63,7 +63,7 @@ _DIVIDED = _CORRIDOR.replace(
 )
 
 # The carrier: a box on a free joint with a forward-looking camera on its own body, so the mount
-# moves with it and `camera:` resolves in the compiled world.
+# moves with it and `frame: rover_cam` resolves, relative to the spawn, as a camera frame.
 _ROVER = """
 <mujoco model="rover">
   <worldbody>
@@ -89,7 +89,7 @@ def _world(tmp_path, scene: str = _CORRIDOR, **monitor):
     (tmp_path / "rover.xml").write_text(_ROVER)
     config = {
         "type": "camera",
-        "camera": "rover_cam",
+        "frame": "rover_cam",
         "config": SENSOR,
         "sample": SAMPLE,
         "compute_rate_hz": 50.0,
@@ -380,15 +380,30 @@ def test_the_report_names_what_the_sweep_missed(tmp_path):
 
 def test_a_mount_that_does_not_exist_is_refused(tmp_path):
     """A monitor watching nothing would report 0.000 for the whole run, which reads like a bad sweep
-    rather than like a typo."""
-    with pytest.raises(RuntimeError, match="camera 'no_such_cam' not found"):
-        _engine(_world(tmp_path, camera="no_such_cam"))
+    rather than like a typo -- and the refusal names the nearest frame, from the frame resolver."""
+    with pytest.raises(RuntimeError, match="'frame' 'rover_camm'.*Did you mean 'rover/rover_cam'"):
+        _engine(_world(tmp_path, frame="rover_camm"))
 
 
-def test_no_mount_and_two_mounts_are_both_refused(tmp_path):
-    for config in ({"camera": "", "site": ""}, {"camera": "rover_cam", "site": "somewhere"}):
-        with pytest.raises(PluginError, match="exactly one of"):
-            _engine(_world(tmp_path, **config))
+def test_a_missing_frame_is_refused(tmp_path):
+    with pytest.raises(PluginError, match="'frame' is required"):
+        _engine(_world(tmp_path, frame=""))
+
+
+@pytest.mark.parametrize("key", ["camera", "site", "body"])
+def test_a_mount_named_by_mjcf_kind_is_an_unknown_key(tmp_path, key):
+    """``frame`` is the one mount key; the strict schema refuses any other as it refuses a typo."""
+    with pytest.raises(PluginError, match=f"'{key}' is not a setting"):
+        _engine(_world(tmp_path, **{key: "rover_cam"}))
+
+
+def test_an_absolute_path_inside_a_spawn_starts_at_the_top_of_the_world(tmp_path):
+    engine = _engine(_world(tmp_path, frame="/rover/rover_cam"))
+    try:
+        plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
+        assert plugin._mount_desc == "frame 'rover/rover_cam'"
+    finally:
+        engine.shutdown()
 
 
 def test_a_missing_sensor_type_is_refused(tmp_path):
@@ -398,8 +413,11 @@ def test_a_missing_sensor_type_is_refused(tmp_path):
 
 
 def test_a_type_that_cannot_take_this_mount_is_refused(tmp_path):
-    """A lidar's FoV comes off a site, not a camera -- and the message says so."""
-    with pytest.raises(RuntimeError, match="cannot build a 'lidar' field of view"):
+    """A camera frame gives a camera its intrinsics; a lidar has none to take -- and the message
+    says which frame refused it."""
+    with pytest.raises(
+        RuntimeError, match="cannot build a 'lidar' field of view on camera frame 'rover/rover_cam'"
+    ):
         _engine(_world(tmp_path, type="lidar"))
 
 
@@ -421,15 +439,12 @@ def test_a_mistyped_sample_block_is_reported_not_raised(tmp_path):
         _engine(_world(tmp_path, sample={**SAMPLE, "heights": []}))
 
 
-def test_a_pose_is_stated_one_way_and_only_for_a_body_mount(tmp_path):
-    """The sensor's place on a body is a ``pose:``; a ``offset``/``rpy`` pair is not read, and a
-    camera or site mount is posed by the model, so a ``pose`` beside one would be ignored."""
+def test_a_pose_is_stated_one_way(tmp_path):
+    """The sensor's place on its frame is a ``pose:``; an ``offset``/``rpy`` pair is not read."""
     with pytest.raises(PluginError, match="'offset' is not a setting"):
-        _engine(_world(tmp_path, camera="", body="base", offset=[0.2, 0.0, 0.0]))
-    with pytest.raises(PluginError, match="'pose' places the sensor in a body mount's frame"):
-        _engine(_world(tmp_path, pose={"position": {"x": 0.2}}))
+        _engine(_world(tmp_path, frame="base", offset=[0.2, 0.0, 0.0]))
     with pytest.raises(PluginError, match="has no key"):
-        _engine(_world(tmp_path, camera="", body="base", pose={"pos": [0.2, 0.0, 0.0]}))
+        _engine(_world(tmp_path, frame="base", pose={"pos": [0.2, 0.0, 0.0]}))
 
 
 def test_a_bad_rate_is_refused(tmp_path):
@@ -477,14 +492,16 @@ def test_a_region_restriction_shrinks_the_sample_set(tmp_path):
 @pytest.mark.parametrize(
     ("mount", "sensor_type", "config"),
     [
-        ({"camera": "rover_cam"}, "camera", SENSOR),
-        ({"camera": "", "site": "rover_scan"}, "lidar", {"v_fov": [-0.3, 0.3], "range_max": 4.0}),
+        ({"frame": "rover_cam"}, "camera", SENSOR),
+        ({"frame": "rover_scan"}, "lidar", {"v_fov": [-0.3, 0.3], "range_max": 4.0}),
     ],
 )
 def test_reposing_agrees_with_rebuilding_the_fov_from_scratch(tmp_path, mount, sensor_type, config):
     """The pose this plugin composes must equal the one the adapter would build at that instant.
 
-    A ``cam_id``/``site_id`` placement re-reads the mount pose out of ``model``/``data`` on every
+    Asserted against the adapter's in-world forms: a camera frame goes through one, and a site
+    frame is placed hypothetically and moved by the frame pose, which must land on the same field of
+    view the site form builds. A ``cam_id``/``site_id`` placement re-reads the mount pose out of ``model``/``data`` on every
     ``build_fov`` call, so rebuilding per tick would work -- it is just wasteful (a lidar adapter
     re-instantiates the plugin whose defaults it borrows, a camera adapter re-parses the MJCF
     intrinsics, and neither changes while a sensor moves). This plugin therefore builds once and
@@ -504,8 +521,8 @@ def test_reposing_agrees_with_rebuilding_the_fov_from_scratch(tmp_path, mount, s
         plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
         _drive_to(engine, 4.0)
 
-        kind = "camera" if mount.get("camera") else "site"
-        name = mount["camera"] or mount["site"]
+        kind = "camera" if sensor_type == "camera" else "site"
+        name = mount["frame"]
         obj = mujoco.mjtObj.mjOBJ_CAMERA if kind == "camera" else mujoco.mjtObj.mjOBJ_SITE
         mount_id = mujoco.mj_name2id(engine.ctx.model, obj, name)
         placed = PlacedSensor(
@@ -526,11 +543,11 @@ def test_reposing_agrees_with_rebuilding_the_fov_from_scratch(tmp_path, mount, s
         engine.shutdown()
 
 
-# -- the other two mounts ----------------------------------------------------------------------
+# -- other frames ------------------------------------------------------------------------------
 
 
 def test_a_lidar_on_a_site_sweeps_behind_itself_too(tmp_path):
-    """The site mount, and a genuinely different FoV: a 360-degree scanner is not a camera.
+    """A site frame, and a genuinely different FoV: a 360-degree scanner is not a camera.
 
     Driving east and back, a forward camera never covers the cells west of its start while a full
     dome does -- so this asserts the shape of the field of view, not merely that something happened.
@@ -541,8 +558,7 @@ def test_a_lidar_on_a_site_sweeps_behind_itself_too(tmp_path):
         _world(
             tmp_path,
             type="lidar",
-            camera="",
-            site="rover_scan",
+            frame="rover_scan",
             config={"v_fov": [-0.3, 0.3], "range_max": 4.0},
         )
     )
@@ -556,15 +572,15 @@ def test_a_lidar_on_a_site_sweeps_behind_itself_too(tmp_path):
         engine.shutdown()
 
 
-def test_a_body_mount_carries_the_pose_through_the_carrier_rotation(tmp_path):
-    """The one piece of geometry this plugin composes itself: mount pose x sensor-in-mount pose.
+def test_a_root_mount_carries_the_pose_through_the_carrier_rotation(tmp_path):
+    """The one piece of geometry this plugin composes itself: frame pose x sensor-in-frame pose.
 
-    ``pose`` is read in the mount frame, so a carrier yawed 90 degrees must put a +x offset on the
+    ``pose`` is read in the frame's coordinates -- here the spawn's root, ``.``, so a carrier yawed 90 degrees must put a +x offset on the
     world +y axis. Getting that composition wrong (applying the offset in world, or transposing the
     rotation) still produces a moving sensor and a plausible coverage number, so the pose itself is
     asserted rather than only its effect.
     """
-    engine = _engine(_world(tmp_path, camera="", body="base", pose={"position": {"x": 0.2}}))
+    engine = _engine(_world(tmp_path, frame=".", pose={"position": {"x": 0.2}}))
     try:
         plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
         # Yaw the carrier a quarter turn about +z (MuJoCo quaternions are w, x, y, z).
@@ -586,13 +602,12 @@ def test_a_body_mount_carries_the_pose_through_the_carrier_rotation(tmp_path):
 
 
 def test_a_body_mount_turns_the_sensor_by_the_pose_orientation(tmp_path):
-    """The pose's orientation is applied on top of the adapter's base rotation, in the mount frame:
+    """The pose's orientation is applied on top of the adapter's base rotation, in the frame:
     a quarter turn of yaw on an unrotated carrier points the camera along world +y."""
     engine = _engine(
         _world(
             tmp_path,
-            camera="",
-            body="base",
+            frame="base",
             pose={"position": {"x": 0.2}, "orientation": {"yaw": float(np.pi / 2)}},
         )
     )
@@ -606,6 +621,129 @@ def test_a_body_mount_turns_the_sensor_by_the_pose_orientation(tmp_path):
             mat @ [0.0, 1.0, 0.0], abs=1e-6
         )
         assert mat @ [0.0, 1.0, 0.0] == pytest.approx([0.0, 1.0, 0.0], abs=1e-3)
+    finally:
+        engine.shutdown()
+
+
+def test_a_camera_frame_brings_its_intrinsics_and_its_own_axes(tmp_path):
+    """On a camera frame the field of view is that camera's: its ``fovy`` and resolution come from
+    the model with nothing restated, and ``pose`` is read in MuJoCo's camera frame -- -z is the view
+    direction, so ``z: -0.3`` moves the sensor 0.3 m along the optical axis, world +x here."""
+    from roqsim_sensors.plugins.camera_common import intrinsics_from_model
+
+    engine = _engine(
+        _world(tmp_path, config={"far": 4.0}, pose={"position": {"z": -0.3}}, compute_rate_hz=200.0)
+    )
+    try:
+        plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
+        _drive_to(engine, 2.0)
+        model, data = engine.ctx.model, engine.ctx.data
+        cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "rover_cam")
+        assert plugin._fov.intrinsics == intrinsics_from_model(model, cam)
+        assert float(model.cam_fovy[cam]) == pytest.approx(70.0)
+        assert plugin._fov.rot == pytest.approx(data.cam_xmat[cam].reshape(3, 3), abs=1e-9)
+        assert plugin._fov.origin == pytest.approx(data.cam_xpos[cam] + [0.3, 0.0, 0.0], abs=1e-6)
+        assert plugin._fov.body_exclude == int(model.cam_bodyid[cam])
+    finally:
+        engine.shutdown()
+
+
+# A gantry in the world's own MJCF: a carriage on a slide joint along the corridor, owned by no
+# entity, carrying a forward-looking camera. Its frames are named by their MuJoCo names alone.
+_GANTRY = _CORRIDOR.replace(
+    "  </worldbody>",
+    """    <body name="gantry" pos="0 0 .5">
+      <joint name="gantry_x" type="slide" axis="1 0 0"/>
+      <geom name="carriage" type="box" size=".15 .15 .15" mass="1"/>
+      <camera name="gantry_cam" pos="0 0 0" xyaxes="0 -1 0  0 0 1" fovy="70"/>
+    </body>
+  </worldbody>""",
+)
+
+
+def _gantry_engine(tmp_path, **monitor):
+    (tmp_path / "gantry.xml").write_text(_GANTRY)
+    config = {"type": "camera", "config": {"far": 4.0}, "sample": SAMPLE, "compute_rate_hz": 50.0}
+    world = {
+        "sim": {"world": str(tmp_path / "gantry.xml")},
+        "components": [{"swept_coverage_monitor": {**config, **monitor}, "name": "sweep"}],
+    }
+    return _engine(world)
+
+
+def _move_gantry(engine, xs):
+    plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
+    for x in xs:
+        engine.ctx.data.qpos[0] = x
+        engine.ctx.data.qvel[:] = 0.0
+        mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
+        for _ in range(4):
+            engine.step()
+    return plugin, plugin.read()
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        {"frame": "gantry_cam"},
+        # The carriage body itself, with the camera adapter's hypothetical form looking along +x.
+        {"frame": "gantry", "config": SENSOR},
+    ],
+)
+def test_a_sensor_on_a_world_gantry_sweeps_with_its_carriage(tmp_path, mount):
+    """A carrier no entity owns -- a slide-jointed gantry in the world MJCF -- is mounted by its
+    MuJoCo name, and the union follows the carriage down the corridor."""
+    still = _gantry_engine(tmp_path, **mount)
+    try:
+        plugin, held = _move_gantry(still, [0.0] * 9)
+        assert plugin._mount_desc == f"frame {mount['frame']!r}"
+        body = mujoco.mj_name2id(still.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "gantry")
+        assert plugin._fov.body_exclude == body
+    finally:
+        still.shutdown()
+    moving = _gantry_engine(tmp_path, **mount)
+    try:
+        _, swept = _move_gantry(moving, np.linspace(0.0, 8.0, 9))
+    finally:
+        moving.shutdown()
+    assert held.n_evaluations == swept.n_evaluations
+    assert held.n_covered > 0
+    assert swept.n_covered >= 2 * held.n_covered
+
+
+def test_a_camera_on_the_world_body_is_still_occluded_by_the_walls(tmp_path):
+    """A frame on the world body excludes nothing from its raycasts: the world body's geometry is
+    the walls, and excluding it would let a fixed camera see through the divider."""
+    scene = _DIVIDED.replace(
+        "  </worldbody>",
+        '    <camera name="fixed_cam" pos="2 0 .5" xyaxes="0 -1 0  0 0 1" fovy="70"/>\n'
+        "  </worldbody>",
+    )
+    (tmp_path / "fixed.xml").write_text(scene)
+    world = {
+        "sim": {"world": str(tmp_path / "fixed.xml")},
+        "components": [
+            {
+                "swept_coverage_monitor": {
+                    "type": "camera",
+                    "frame": "fixed_cam",
+                    "config": {"far": 8.0},
+                    "sample": SAMPLE,
+                    "compute_rate_hz": 50.0,
+                },
+                "name": "sweep",
+            }
+        ],
+    }
+    engine = _engine(world)
+    try:
+        for _ in range(4):
+            engine.step()
+        plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
+        assert plugin._fov.body_exclude == -1
+        points, visits = plugin._points, plugin._visits
+        assert int((visits[points[:, 0] < 5.0] > 0).sum()) > 0, "it sees its own side"
+        assert int((visits[points[:, 0] > 5.2] > 0).sum()) == 0, "and nothing past the divider"
     finally:
         engine.shutdown()
 
