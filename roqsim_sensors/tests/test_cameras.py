@@ -42,7 +42,7 @@ class _CameraScene(Plugin):
 def _world(plugin_ref: str, **config):
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_CameraScene": {}},
             # One camera for both streams: the fixture has no separate depth camera.
             {plugin_ref: {"camera": "cam", "depth_camera": "cam", **config}},
@@ -298,7 +298,7 @@ def test_realsense_d435_depth_is_opt_in_and_uses_realsense_topics():
 def test_a_depth_camera_the_model_lacks_is_refused_rather_than_replaced_by_the_colour_one():
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_CameraScene": {}},
             {D435: {"camera": "cam", "depth": True}},  # the default depth camera, d435_depth
         ],
@@ -355,7 +355,7 @@ def test_d455_model_fov_matches_datasheet():
 
     MuJoCo stores only fovy (vertical); the horizontal FOV falls out of fovy + the resolution
     aspect, so this locks BOTH: fovy == 62 and the derived horizontal FOV ~= 87 deg."""
-    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "realsense_d455"}, "name": "d455"}]}
+    cfg = {"sim": {}, "components": [{"spawn_sensor": {"model": "realsense_d455"}, "name": "d455"}]}
     engine = Engine(load_config_from_dict(cfg))
     engine.setup()
     engine.reset()

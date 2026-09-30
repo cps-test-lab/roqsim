@@ -1,16 +1,10 @@
-"""Shared by the device builders that re-seat a device model on the frame its vendor macro places.
+"""Shared by the device builders that seat a device model on the frame its vendor macro places.
 
 A device model whose ``mount`` body is the frame its vendor macro attaches to the macro's ``parent``
-is placed by the ``origin`` a robot description gives that macro; one whose ``mount`` was pre-rotated
-into a display convention was not. When a builder moves a model from the second to the first it
-renames it (the old name is refused at load, see ``roqsim.models.RetiredModel``) and every existing
-mount must be re-expressed: a mount of the old model at ``T_old`` becomes ``T_old * D``, for the
-``D`` its builder derives.
-
-This module holds what every such builder needs and nothing device-specific: rotations in the URDF
-convention, a reader for one xacro macro's properties and fixed joints, the splice that rewrites a
-manifest's generated block, and :func:`rewrite_mounts`, which applies a ``D`` to the world files it
-is given. Builders: ``build_realsense_devices.py``, ``build_oakd_pro.py``.
+is placed by the ``origin`` a robot description gives that macro. This module holds what every such
+builder needs and nothing device-specific: rotations in the URDF convention, a reader for one xacro
+macro's properties and fixed joints, number formatting, and the splice that rewrites a manifest's
+generated block. Builders: ``build_realsense_devices.py``, ``build_oakd_pro.py``.
 """
 
 from __future__ import annotations
@@ -38,27 +32,6 @@ def rpy_matrix(rpy) -> np.ndarray:
     return rz @ ry @ rx
 
 
-def matrix_rpy(m: np.ndarray) -> tuple[float, float, float]:
-    """The inverse of :func:`rpy_matrix`, with pitch in [-pi/2, pi/2]."""
-    pitch = math.asin(max(-1.0, min(1.0, -m[2, 0])))
-    if abs(math.cos(pitch)) < 1e-9:  # gimbal lock: fold the roll into the yaw
-        return 0.0, pitch, math.atan2(-m[0, 1], m[1, 1])
-    return math.atan2(m[2, 1], m[2, 2]), pitch, math.atan2(m[1, 0], m[0, 0])
-
-
-def quat_matrix(q) -> np.ndarray:
-    w, x, y, z = (float(v) for v in q)
-    n = math.sqrt(w * w + x * x + y * y + z * z)
-    w, x, y, z = w / n, x / n, y / n, z / n
-    return np.array(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
-            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
-            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
-        ]
-    )
-
-
 def matrix_quat(m: np.ndarray) -> tuple[float, float, float, float]:
     """A unit quaternion (w, x, y, z) with w >= 0 for a rotation matrix."""
     t = np.trace(m)
@@ -76,13 +49,6 @@ def matrix_quat(m: np.ndarray) -> tuple[float, float, float, float]:
         q = ((m[k, j] - m[j, k]) / s, *v)
     q = np.asarray(q)
     return tuple(float(v) for v in (q if q[0] >= 0 else -q))
-
-
-def rewrite_pose(pos, rpy, delta) -> tuple[list[float], list[float]]:
-    r_d, t_d = delta
-    r_old = rpy_matrix(rpy)
-    p_old = np.asarray(list(pos) + [0.0] * (3 - len(pos)), dtype=float)
-    return (p_old + r_old @ t_d).tolist(), list(matrix_rpy(r_old @ r_d))
 
 
 # -- the vendor description ----------------------------------------------------------------------
@@ -165,18 +131,6 @@ def fmt_vec(values) -> str:
     return " ".join(fmt_num(v) for v in values)
 
 
-def fmt_list(values) -> str:
-    return "[" + ", ".join(fmt_num(v) for v in values) + "]"
-
-
-def fmt_pose(pos, rpy) -> str:
-    """A flow ``pose:`` mapping (``geometry_msgs/Pose``, Euler orientation) for *pos* and *rpy*."""
-    position = ", ".join(f"{a}: {fmt_num(v)}" for a, v in zip("xyz", pos, strict=True))
-    angles = zip(("roll", "pitch", "yaw"), rpy, strict=True)
-    orientation = ", ".join(f"{a}: {fmt_num(v)}" for a, v in angles)
-    return f"{{position: {{{position}}}, orientation: {{{orientation}}}}}"
-
-
 def frame_pose(pos=None, rpy=None) -> str:
     """``, pose: {...}`` for a ``frames:`` entry, zero components left out; ``""`` for the identity."""
     parts = []
@@ -188,18 +142,6 @@ def frame_pose(pos=None, rpy=None) -> str:
     if orientation:
         parts.append("orientation: {" + ", ".join(orientation) + "}")
     return f", pose: {{{', '.join(parts)}}}" if parts else ""
-
-
-def pose_values(pose) -> tuple[list[float], list[float]]:
-    """``(pos, rpy)`` of a ``pose:`` mapping, omitted components 0 (a mount's pose is relative)."""
-    pose = pose or {}
-    position = pose.get("position") or {}
-    pos = [float(position.get(a, 0.0)) for a in "xyz"]
-    orientation = pose.get("orientation") or {}
-    if set(orientation) & {"x", "y", "z", "w"}:
-        quat = [float(orientation.get(k, 1.0 if k == "w" else 0.0)) for k in "wxyz"]
-        return pos, list(matrix_rpy(quat_matrix(quat)))
-    return pos, [float(orientation.get(a, 0.0)) for a in ("roll", "pitch", "yaw")]
 
 
 def splice(manifest: Path, block: str, begin: str, end: str) -> None:
@@ -214,123 +156,3 @@ def splice(manifest: Path, block: str, begin: str, end: str) -> None:
     head, rest = text.split(begin, 1)
     _, tail = rest.split(end, 1)
     manifest.write_text(head + block + (tail[1:] if tail.startswith("\n") else tail))
-
-
-# -- re-expressing existing mounts -----------------------------------------------------------------
-
-_MODEL = re.compile(
-    r"^(?P<indent>\s*)model:\s*(?P<quote>['\"]?)(?P<name>[\w:]+)(?P=quote)\s*(#.*)?$"
-)
-
-
-def _block(lines: list[str], i: int, width: int) -> tuple[int, int]:
-    """The ``[start, end)`` lines of the mapping whose keys sit at *width*, around line *i*."""
-
-    def inside(line: str) -> bool:
-        body = line.strip()
-        return not body or body.startswith("#") or len(line) - len(line.lstrip(" ")) >= width
-
-    start = i
-    while start > 0 and inside(lines[start - 1]):
-        start -= 1
-    end = i + 1
-    while end < len(lines) and inside(lines[end]):
-        end += 1
-    return start, end
-
-
-_FLOW = re.compile(r"spawn_sensor:\s*(\{.*\})")
-
-
-def _flow_mount(line: str, deltas: dict) -> str | None:
-    """*line* re-expressed if it is a one-line flow ``spawn_sensor: {model: <retired>, ...}``."""
-    import yaml
-
-    fm = _FLOW.search(line)
-    if not fm:
-        return None
-    body = fm.group(1)
-    try:
-        cfg = yaml.safe_load(body)
-    except yaml.YAMLError:
-        return None
-    name = str(cfg.get("model", "")).split(":")[-1] if isinstance(cfg, dict) else ""
-    if name not in deltas:
-        return None
-    new_model, delta = deltas[name]
-    new_pos, new_rpy = rewrite_pose(*pose_values(cfg.get("pose")), delta)
-    fields = []
-    for key, value in cfg.items():
-        if key == "model":
-            fields.append(f"model: {str(value).replace(name, new_model)}")
-        elif key != "pose":
-            fields.append(f"{key}: {yaml.safe_dump(value, default_flow_style=True).strip()}")
-    fields.append(f"pose: {fmt_pose(new_pos, new_rpy)}")
-    out = "{" + ", ".join(fields) + "}"
-    if yaml.safe_load(out).get("model") is None:
-        raise RuntimeError(f"rewriting {line.strip()!r} lost its model")
-    return line[: fm.start(1)] + out + line[fm.end(1) :]
-
-
-def rewrite_mounts(path: Path, deltas: dict) -> int:
-    """Rename and re-pose every ``spawn_sensor`` of a retired model in *path*.
-
-    *deltas* maps each retired model name to ``(new name, (R, t))``: a mount of the old model at
-    ``T_old`` is written as ``T_old * (R, t)`` (:func:`rewrite_pose`).
-
-    Line-based, so comments and layout survive. A block-style mount is named by its ``model:`` line;
-    its sibling ``pose:`` line (same indentation, a flow mapping) is rewritten in place, or added
-    after the ``model:`` line when there is none. A one-line flow mount (``spawn_sensor: {model: ...,
-    pose: {...}}``) is rewritten within its line. Anything else naming a retired model -- a pose
-    written as a block mapping, a mount split over lines some other way -- is refused, since a pose
-    left unconverted would load at the wrong place silently.
-    """
-    import yaml
-
-    names = "|".join(re.escape(n) for n in sorted(deltas))
-    retired = re.compile(rf"model:\s*['\"]?(\w+:)?({names})\b")
-    lines = path.read_text().splitlines(keepends=True)
-    changed = 0
-    i = 0
-    while i < len(lines):
-        flow = _flow_mount(lines[i], deltas)
-        if flow is not None:
-            lines[i] = flow
-            changed += 1
-            i += 1
-            continue
-        m = _MODEL.match(lines[i].rstrip("\n"))
-        name = m and m.group("name").split(":")[-1]
-        if not m or name not in deltas:
-            if retired.search(lines[i]):
-                raise RuntimeError(f"{path}:{i + 1}: a retired mount this rewrite cannot parse")
-            i += 1
-            continue
-        indent = m.group("indent")
-        start, end = _block(lines, i, len(indent))
-        found = None
-        for j in range(start, end):
-            km = re.match(
-                rf"^{re.escape(indent)}pose:\s*(\{{.*\}})\s*(#.*)?$", lines[j].rstrip("\n")
-            )
-            if km:
-                found = (j, yaml.safe_load(km.group(1)), km.group(2) or "")
-            elif re.match(rf"^{re.escape(indent)}pose:", lines[j]):
-                raise RuntimeError(f"{path}:{j + 1}: pose must be a flow mapping to be rewritten")
-        new_pos, new_rpy = rewrite_pose(*pose_values(found[1] if found else None), deltas[name][1])
-        new_model = deltas[name][0]
-        lines[i] = lines[i].replace(m.group("name"), m.group("name").replace(name, new_model), 1)
-        pose_line = (
-            f"{indent}pose: {fmt_pose(new_pos, new_rpy)}"
-            + (f"  {found[2]}" if found and found[2] else "")
-            + "\n"
-        )
-        if found:
-            lines[found[0]] = pose_line
-            i += 1
-        else:
-            lines.insert(i + 1, pose_line)
-            i += 2
-        changed += 1
-    path.write_text("".join(lines))
-    return changed

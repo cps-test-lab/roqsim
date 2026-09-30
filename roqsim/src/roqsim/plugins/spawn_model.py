@@ -20,7 +20,6 @@ Config::
       scale: 1.0                     # uniform geometric scale factor (see below)
       motion: physics                # who owns the pose: physics (default; a movable body),
                                      #   static (welded scenery), driven (a plugin writes it)
-      mocap: false                   # make it a mocap body: moved by a plugin, not by physics
       present: true                  # false: compiled in, but absent until it is spawned
       mass: 0.5                      # override the total mass (kg): root-body geoms + flex vertices
       friction: [1.2, 0.005, 0.0001] # override root-body geom and flex friction (or a single sliding val)
@@ -41,17 +40,17 @@ its mass -- is therefore rescaled like any other and weighs exactly what the wor
 ``friction`` accepts a single sliding coefficient or the full ``[sliding, torsional, rolling]``
 triple. Both are refused when the prop has nothing to scale, rather than silently doing nothing.
 
-A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
-a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
-two non-default ones.
+A prop is in one of three states, named by ``motion``: a **free** body physics moves (``physics``,
+the default), **welded** scenery (``static``), or a **mocap** body some plugin drives (``driven``).
 
 ``motion: driven`` makes the prop's root body a MuJoCo mocap body: it has **no degrees of freedom**, so
 it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
 and a robot bumps into. Its pose is written every step by whoever owns it -- a ``navigator``
 component nested under this entry, say -- rather than integrated. That is what a *controlled* obstacle
-is: it goes where the experiment says, and the robot under test cannot shove it off course. Like
-``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
-rather than a joint), so a repetition never inherits where the last one left it.
+is: it goes where the experiment says, and the robot under test cannot shove it off course. Like a
+``physics`` prop, it is re-seated at its spawn pose on ``on_reset`` (through
+``mocap_pos``/``mocap_quat`` rather than a joint), so a repetition never inherits where the last one
+left it.
 
 ``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves --
 a box a robot can pick up. It also registers the joint as the entity's
@@ -140,8 +139,8 @@ is inert geometry with no intrinsic controller or sensors. Place several by list
 multiple times with distinct ``prefix`` (and ``name``).
 
 ``publish_tf`` puts the spawned root body's world pose on TF so a viewer binds the scene node by name
-(``child_frame_id`` == the exported body name) and a TF-tree consumer (rviz, an rso_web_backend federation)
-gets the frame. It has no effect on the baked web scene, which already seats the body at its spawn pose.
+(``child_frame_id`` == the exported body name) and a TF-tree consumer such as rviz gets the frame. It
+has no effect on the baked web scene, which already seats the body at its spawn pose.
 
   - ``false`` (default): a static prop already seated by the baked scene needs no TF.
   - ``dynamic`` (or ``true``): stream the live world pose on the relative ``tf`` topic at ``tf_rate``.
@@ -588,7 +587,7 @@ class SpawnModelPlugin(Plugin):
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: motion: driven, but {asset.path} gives its root body "
                 f"a joint. A mocap body has no degrees of freedom, so the articulation would be "
-                f"inert -- spawn it without `mocap`."
+                f"inert -- spawn it with `motion: physics` or `motion: static`."
             )
         root.mocap = True
 

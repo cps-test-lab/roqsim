@@ -223,7 +223,7 @@ def cell(tmp_path_factory):
     """An arm on a bench, in the default walled room, with a part it is about to pick up."""
     world = {
         "sim": {},
-        "plugins": [
+        "components": [
             _prop("industrial_table", "bench", 0.0, 0.0),
             _prop("graspable_box", "part", 0.3, 0.8, motion="physics"),
             _arm(),
@@ -284,7 +284,7 @@ def test_a_world_with_no_props_writes_an_empty_scene_and_says_so(tmp_path, caplo
         "<mujoco><worldbody/></mujoco>",
         encoding="utf-8",
     )
-    world = {"sim": {"world": str(tmp_path / "bare.xml")}, "plugins": [_arm()]}
+    world = {"sim": {"world": str(tmp_path / "bare.xml")}, "components": [_arm()]}
     with caplog.at_level("WARNING"):
         out = _export(tmp_path, world, "--tip-site", "pinch", "--scene")
     assert _scene_of(out)["world"]["collision_objects"] == []
@@ -298,7 +298,7 @@ def test_a_prop_the_arm_is_already_touching_is_reported(tmp_path, caplog):
     the world), so only a distance query finds it."""
     world = {
         "sim": {},
-        "plugins": [_prop("graspable_box", "clutter", 0.0, 0.85), _arm()],
+        "components": [_prop("graspable_box", "clutter", 0.0, 0.85), _arm()],
     }
     with caplog.at_level("WARNING"):
         out = _export(tmp_path, world, "--tip-site", "pinch", "--scene")
@@ -327,7 +327,7 @@ def test_two_arms_in_one_description_write_the_scene_in_their_common_root(tmp_pa
 
     world = {
         "sim": {},
-        "plugins": [
+        "components": [
             _prop("industrial_table", "bench", 0.0, 0.0),
             arm("left", -0.9),
             arm("right", 0.9),
@@ -344,7 +344,10 @@ def test_two_arms_in_one_description_write_the_scene_in_their_common_root(tmp_pa
 def test_an_arm_with_no_prefix_is_refused_rather_than_given_an_empty_scene(tmp_path, capsys):
     """The URDF export selects the robot's bodies by name prefix, so with none it takes every body in
     the world and the scene would come out empty for a reason nothing in it explains."""
-    world = {"sim": {}, "plugins": [_prop("industrial_table", "bench", 0.0, 0.0), _arm(prefix="")]}
+    world = {
+        "sim": {},
+        "components": [_prop("industrial_table", "bench", 0.0, 0.0), _arm(prefix="")],
+    }
     _export(tmp_path, world, "--scene", expect=exit_status.BAD_INPUT)
     assert "needs the arm to have an MJCF `prefix:`" in capsys.readouterr().err
 
@@ -355,7 +358,7 @@ def test_a_robot_that_is_not_welded_down_is_refused(tmp_path, capsys):
     right only until the base moved."""
     world = {
         "sim": {},
-        "plugins": [
+        "components": [
             {
                 "spawn_robot": {"model": "husky_a200", "pose": {"position": {"x": 0.0, "y": 0.0}}},
                 "name": "h",
@@ -384,7 +387,7 @@ def test_the_robot_geoms_a_touch_is_measured_against_are_the_ones_the_urdf_colli
         load_config_from_dict(
             {
                 "sim": {},
-                "plugins": [_prop("industrial_table", "bench", 0.0, 0.0), _arm()],
+                "components": [_prop("industrial_table", "bench", 0.0, 0.0), _arm()],
             },
             base_dir=cell,
         )

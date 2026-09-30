@@ -20,7 +20,6 @@ package rather than `roqsim_mobile`/`roqsim_manipulation`. ROS-free; ROS couplin
 | `spawn_sensor` | Attach a standalone sensor MJCF (mesh + camera/site) at a fixed mount pose — the robot-free analogue of `spawn_robot`/`spawn_arm` for a sensor that isn't carried by anything (an overhead camera, a mast lidar). Pulls in the model's default capture plugin from its `<model>.manifest.yaml` manifest, e.g. `{model: realsense_d435}` brings in the `realsense_d435` plugin. |
 | `fiducial_marker` | Add an ArUco/AprilTag fiducial to the scene as a flat, non-colliding geom so cameras render it and a detector can decode it. The marker image is generated at build time with OpenCV (`cv2.aruco`, one dep covers both families) and injected as raw texture data. Fixed placement at `pose`: free-standing, or welded to a robot body (`attach_to` + `prefix`) with `pose` in its frame. Needs the optional `markers` extra: `pip install 'roqsim_sensors[markers]'`. |
 | `force_torque` | Six-axis force/torque sensor at a site — the one sensor here that reports **contact force** rather than geometry, which is the whole measurement for a contact-rich manipulation task (insertion, polishing, compliant assembly). Adds MuJoCo's `<force>`/`<torque>` pair on a site (yielding to a vendor MJCF that already ships one), reports the wrench in the `sensor`, `base` or `world` frame, and publishes both a `wrench` (`WrenchStamped`) endpoint and a `WrenchReader` on the blackboard under `ft:<name>` for in-process controllers. **Where the sensor cuts matters**: a site sensor measures the wrench transmitted *through* that site from its children, so the tool must hang below it — a tool attached above the site reads identically zero. |
-| `ground_truth_pose` | Publish a body's *true* world pose (no odometry drift, no localisation), as a TF-shaped endpoint — the reference signal an evaluation compares a stack's estimate against. See `docs/ground_truth.rst`. |
 | `gnss` | GNSS receiver: a body's world position as a WGS84 fix (`NavSatFix`) against a required `datum`, with white noise plus a slowly drifting bias and a `denied` switch, so GNSS denial is a first-class experiment factor. Family-agnostic: an outdoor wheeled base wants it as much as an aircraft. Also publishes an in-process handle at `gnss:<robot>` that a flight-stack bridge (`roqsim_aerial`'s `px4_sitl`) reads for its `HIL_GPS`. |
 | `sensor_coverage_probe` | Report the **sensor coverage** of a world (a world-YAML toggle for the `coverage` subpackage below). Computes once at `configure` how much of the room / which objects the world's sensors observe, and by how many (0..N), then writes an agent-digestible `report.json` + a render. `sensors: auto` evaluates every MuJoCo camera; give an explicit list for lidars/Livox. Rendering needs a GL backend, which `import roqsim` selects for this machine — set `MUJOCO_GL` only to override. |
 
@@ -141,36 +140,10 @@ an entry of its `frames:`) and whose `pose` is the origin the robot description 
 value only where its vendor configuration differs. The RealSense MJCFs
 and their manifests' `frames:` blocks are written by `external/convert/build_realsense_devices.py`
 from `realsense2_description` at a pinned realsense-ros tag, including the fixed
-`camera_bottom_screw_frame` → `camera_link` offset (`--mount-delta` prints it).
+`camera_bottom_screw_frame` → `camera_link` offset.
 
 The model name `realsense_d435` also names the capture plugin, in the other entry-point group: the
 two are one device, the model placing it and the plugin rendering it.
-
-### Renamed models
-
-A model renamed because what its pose means changed is refused by its old name at load, naming the
-new one (`roqsim.models.resolve_model`, this package's `RETIRED_MODELS`):
-
-| retired | now | what changed |
-|---------|-----|--------------|
-| `d415`, `d435`, `d455` | `realsense_d415`, `realsense_d435`, `realsense_d455` | The mount frame became the one the vendor macro's origin places, `camera_bottom_screw_frame`. It was a display convention: the body was pre-rotated so a mount with no rotation looked along +y. |
-| `oakd` | `oakd_pro` | The mount frame became the one the vendor macro's origin places, `oakd_link`. It was a display convention: the body was turned +90° about z so a mount with no rotation looked along +y. |
-
-Re-express a mount of a retired model rather than editing its numbers by hand:
-
-    python external/convert/build_realsense_devices.py --rewrite-mounts world.yaml [...]
-
-renames the model and rewrites each mount's `pose` to `T_old * D` with
-`D = Rq * T_link_mesh^-1 * T_screw_link^-1` (`Rq` the retired body rotation, `T_link_mesh` the vendor
-mesh-in-link pose, `T_screw_link` the screw-to-`camera_link` offset), which puts the housing and the
-camera where they were. One camera moves: the retired `d415` centred its camera on the
-housing, 5 mm in front of the glass, and `realsense_d415`'s sits at the vendor colour optical frame,
-38 mm from there. `tests/test_realsense_devices.py` holds that check.
-
-    python external/convert/build_oakd_pro.py --rewrite-mounts world.yaml [...]
-
-does the same for `oakd` with `T_old * Rq`, which puts the camera where it was;
-`tests/test_oakd_pro_device.py` holds that check.
 
 ## Demo world
 

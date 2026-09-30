@@ -13,6 +13,7 @@ from roqsim.plugins.contact_monitor import ContactMonitorPlugin
 from roqsim.plugins.energy_monitor import EnergyMonitorPlugin
 from roqsim.plugins.joint_state_publisher import JointStatePublisherPlugin
 from roqsim.plugins.model_override import ModelOverridePlugin
+from roqsim.plugins.pose_publisher import PosePublisherPlugin
 from roqsim.plugins.spawn_model import SpawnModelPlugin
 
 #: plugin class -> {endpoint name: (kind, payload type)}
@@ -29,6 +30,7 @@ EXPECTED = {
         "override_state": ("out", "OverrideReport"),
         "override_verified": ("out", "OverrideReport"),
     },
+    PosePublisherPlugin: {"poses/{item}": ("out", "Transform")},
 }
 
 
@@ -46,7 +48,8 @@ def test_each_endpoint_is_declared_with_its_kind_payload_and_doc(cls):
         assert row.get("payload") == payload, name
         assert row["doc"], f"{cls.__name__}.{name} has no docstring for `plugins describe`"
         if kind == "out":
-            assert row["rate_hz"] == {"from": "rate_hz"}, name
+            # A plugin with a schema also publishes the key's default beside it.
+            assert row["rate_hz"]["from"] == "rate_hz", name
 
 
 def _units(row) -> dict[str, str]:

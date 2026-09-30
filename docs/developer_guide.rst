@@ -25,7 +25,7 @@ Repository layout
    roqsim_manipulation/         arm plugins only;  roqsim_manipulation_assets/  arm + gripper models
    roqsim_mobile_manipulation/  base AND arm robots — the one package depending on both families
    roqsim_humanoid/ roqsim_quadruped/   legged families;  roqsim_walker/  pedestrians (dynamic obstacles)
-   roqsim_scene_builder/ roqsim_webctrl/   human-in-the-loop scene windows, web control UI
+   roqsim_scene_builder/          human-in-the-loop scene windows
    scenario_execution_roqsim/     OSC actions (entity_moved, entity_monitor, entity_call, ...);
                                     the ONLY package here that may import scenario_execution
    ros2_ws/src/
@@ -41,6 +41,8 @@ Golden rules
 * **No mid-run recompile:** modify the ``MjSpec`` only in ``build()``; at runtime use mocap/qpos
   writes or a pre-compiled entity pool.
 * Keep the core ROS-free. The ROS bridge is just another plugin.
+* **A config key whose meaning changes gets a new name.** The old name is then unknown and refused,
+  so a document written for the old meaning fails at load instead of being read with the new one.
 * **Read a model field through ``int()`` before matching it against an ``mjt*`` enum.**
   ``model.jnt_type[j]`` is a numpy scalar, and ``x in (mjJNT_HINGE, mjJNT_SLIDE)`` puts the
   *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered

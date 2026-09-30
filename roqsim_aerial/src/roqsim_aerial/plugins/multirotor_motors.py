@@ -23,7 +23,7 @@ being surprised is a trap:
   change hover, station-keeping or the low-speed manoeuvres this substrate is used for.
 * **rotor drag / induced-drag terms** -- the lateral force proportional to rotor speed times body
   velocity that makes a real quad's velocity dynamics first-order rather than pure double
-  integrator. MuJoCo's medium drag (``sim.physics`` density/viscosity) supplies body drag, but it
+  integrator. MuJoCo's medium drag (``sim.density``/``sim.viscosity``) supplies body drag, but it
   is not the same term.
 * **ground effect** -- the thrust increase within roughly one rotor diameter of the floor. An
   experiment about landing or low hover would notice.
@@ -33,7 +33,6 @@ being surprised is a trap:
 Config::
 
     multirotor_motors:
-      robot: drone                # entity name registered by spawn_robot
       namespace: ""               # transport scope (default: inherited from spawn_robot)
       body: x500                  # root body the reaction torque acts on (default: entity's root)
       rotors: [rotor0_thrust, rotor1_thrust, rotor2_thrust, rotor3_thrust]

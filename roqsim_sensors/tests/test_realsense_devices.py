@@ -1,6 +1,6 @@
-"""The RealSense devices are mounted where the vendor macro's origin places them, and no camera moved.
+"""The RealSense devices are mounted where the vendor macro's origin places them.
 
-Four claims, each against the vendor's published numbers rather than against the model:
+Two claims, each against the vendor's published numbers rather than against the model:
 
 * **The chain is the vendor's.** Each mount is ``camera_bottom_screw_frame``, the frame
   ``realsense2_description``'s macro attaches to its parent at the origin it is given, with
@@ -10,59 +10,40 @@ Four claims, each against the vendor's published numbers rather than against the
   so a consumer that looks a pixel up in TF finds where it was taken.
 * **Depth is rendered from the depth frame.** The depth camera IS the depth optical frame the
   published TF puts together, with the depth stream's data-sheet optics, and a surface's depth,
-  reprojected and carried through that TF, lands on the surface.
-* **The re-seat moved names, not cameras.** The retired ``d415``/``d435``/``d455`` models pre-rotated
-  ``mount`` so a mount at ``rpy [0, 0, 0]`` looked along ``+y``. A mount of the old model at ``T_old``
-  and one of the new at ``T_old * D`` (``D = Rq * T_link_mesh^-1 * T_screw_link^-1``, from the
-  constants below) put the housing and the D435's and D455's cameras at the same world pose to float
-  tolerance. So do the mounts ``vendor_mount.rewrite_mounts`` writes (what
-  ``external/convert/build_realsense_devices.py --rewrite-mounts`` runs) and the demo world's. The
-  retired D415's camera was not at its colour lens -- centred on the housing, 5 mm in front of the
-  glass -- and sits at the vendor colour frame now; that one move is asserted as what it is.
-* **The old names are refused**, naming the new one."""
+  reprojected and carried through that TF, lands on the surface."""
 
 from __future__ import annotations
 
-import importlib.util
 import math
-from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
-import yaml
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.models import ModelError, resolve_model
 
 OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
 
 # realsense2_description @ realsense-ros 4.56.1: the `${name}_link_joint` origin (`camera_link` in the
-# bottom screw frame), the `${name}_link` visual origin used with the mesh, and the
-# `${name}_color_joint` origin, the last two in `${name}_link`. Every depth frame is `${name}_link`'s.
+# bottom screw frame) and the `${name}_color_joint` origin in `${name}_link`. Every depth frame is
+# `${name}_link`'s.
 VENDOR = {
     "realsense_d415": {
         # (0, d415_cam_depth_py, d415_cam_depth_pz)
         "screw": (0.0, 0.020, 0.0115),
-        # (d415_cam_mount_from_center_offset, -d415_cam_depth_py, 0)
-        "mesh": (0.00987, -0.020, 0.0),
         "color": (0.0, 0.015, 0.0),
         "cam": "d415",
     },
     "realsense_d435": {
         # (d435_mesh_x_offset = 0.0149 - 0.1e-3 - 4.2e-3, d435_cam_depth_py, d435_cam_depth_pz)
         "screw": (0.0106, 0.0175, 0.0125),
-        # (d435_zero_depth_to_glass + d435_glass_to_front, -d435_cam_depth_py, 0)
-        "mesh": (0.0043, -0.0175, 0.0),
         "color": (0.0, 0.015, 0.0),
         "cam": "d435",
     },
     "realsense_d455": {
         # (d455_mesh_x_offset, d455_cam_depth_py, d455_cam_depth_pz)
         "screw": (0.01115, 0.0475, 0.0145),
-        # (d455_zero_depth_to_glass + d455_glass_to_front, -d455_cam_depth_py, 0)
-        "mesh": (0.00465, -0.0475, 0.0),
         "color": (0.0, -0.059, 0.0),
         "cam": "d455",
     },
@@ -73,16 +54,6 @@ DEPTH_OPTICS = {
     "realsense_d415": (40.0, 848, 480),
     "realsense_d435": (58.0, 848, 480),
     "realsense_d455": (58.0, 848, 480),
-}
-MESH_RPY = (math.pi / 2, 0.0, math.pi / 2)  # every one of the three
-
-# The retired models, as they were: a `mount` pre-rotated by this quaternion (mesh +z -> +y, mesh +y
-# -> +z), holding the mesh in its own axes and the colour camera at this mesh-local pose.
-RETIRED_QUAT = (0.0, 0.0, 0.70710678, 0.70710678)
-RETIRED_CAMERA = {
-    "realsense_d415": {"pos": (0.0, 0.0, 0.005), "xyaxes": (-1, 0, 0, 0, 1, 0)},
-    "realsense_d435": {"pos": (0.0325, 0.0, -0.0043), "xyaxes": (-1, 0, 0, 0, 1, 0)},
-    "realsense_d455": {"pos": (-0.0115, 0.0, -0.00465), "xyaxes": (-1, 0, 0, 0, 1, 0)},
 }
 
 POSES = [
@@ -106,45 +77,6 @@ def _quat_rot(q) -> np.ndarray:
     mat = np.zeros(9)
     mujoco.mju_quat2Mat(mat, q / np.linalg.norm(q))
     return mat.reshape(3, 3)
-
-
-def _rpy(m: np.ndarray) -> list[float]:
-    pitch = math.asin(max(-1.0, min(1.0, -m[2, 0])))
-    return [math.atan2(m[2, 1], m[2, 2]), pitch, math.atan2(m[1, 0], m[0, 0])]
-
-
-def _delta(model: str) -> tuple[np.ndarray, np.ndarray]:
-    r_lm, t_lm = _rot(MESH_RPY), np.asarray(VENDOR[model]["mesh"])
-    r = _quat_rot(RETIRED_QUAT) @ r_lm.T
-    return r, -r @ (t_lm + np.asarray(VENDOR[model]["screw"]))
-
-
-def _re_expressed(model, pos, rpy):
-    r_d, t_d = _delta(model)
-    r_old = _rot(rpy)
-    return (np.asarray(pos) + r_old @ t_d).tolist(), _rpy(r_old @ r_d)
-
-
-def _retired_mjcf(tmp_path, model) -> str:
-    cam = RETIRED_CAMERA[model]
-    short = VENDOR[model]["cam"]
-    path = tmp_path / f"retired_{short}.xml"
-    # The very mesh the model ships, so the two housings are one mesh placed twice (MuJoCo puts a
-    # mesh geom's frame at the mesh's own centroid, which a stand-in shape would not share).
-    mesh = resolve_model(model).path.parent / "meshes" / f"{short}.obj"
-    path.write_text(
-        f"""<mujoco>
-  <asset><mesh name="{short}_mesh" file="{mesh}"/></asset>
-  <worldbody>
-    <body name="mount" quat="{" ".join(map(str, RETIRED_QUAT))}">
-      <geom name="{short}_visual" type="mesh" mesh="{short}_mesh" contype="0" conaffinity="0"/>
-      <camera name="{short}_color" pos="{" ".join(map(str, cam["pos"]))}"
-              xyaxes="{" ".join(map(str, cam["xyaxes"]))}"/>
-    </body>
-  </worldbody>
-</mujoco>"""
-    )
-    return str(path)
 
 
 def _pose(pos, rpy) -> dict:
@@ -189,109 +121,6 @@ def _geom(engine, name):
     gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, name)
     assert gid >= 0, name
     return d.geom_xpos[gid].copy(), d.geom_xmat[gid].reshape(3, 3).copy()
-
-
-# -- the re-seat moved names, not cameras -------------------------------------------------------
-
-
-def _assert_where_the_retired_mount_put_it(tmp_path, model, retired, new, atol=1e-9):
-    """A retired mount at *retired* and a mount of *model* at *new* (both ``(pos, rpy)``) put the
-    housing and the camera at one world pose -- the D415's camera aside, which moved to its lens."""
-    short = VENDOR[model]["cam"]
-    old = _compiled(_retired_mjcf(tmp_path, model), *retired)
-    now = _compiled(model, *new)
-    # The housing: the retired model's mesh sat at its body origin, the new one's at the vendor
-    # mesh-in-link pose; the same mesh placed the same way compiles to the same geom pose.
-    old_h, new_h = _geom(old, f"cam_{short}_visual"), _geom(now, f"cam_{short}_visual")
-    assert np.allclose(old_h[0], new_h[0], atol=atol)
-    assert np.allclose(old_h[1], new_h[1], atol=atol)
-    old_c, new_c = _cam(old, f"cam_{short}_color"), _cam(now, f"cam_{short}_color")
-    assert np.allclose(old_c[1], new_c[1], atol=atol)  # every camera still points where it did
-    if model == "realsense_d415":
-        # The retired D415 centred its camera on the housing, 5 mm proud of the glass. It is at the
-        # colour lens now: (0.035, 0, -0.00987) in mesh axes, 38 mm from where it was.
-        moved = np.linalg.norm(new_c[0] - old_c[0])
-        assert moved == pytest.approx(math.hypot(0.035, 0.005 + 0.00987), abs=atol)
-    else:
-        assert np.allclose(old_c[0], new_c[0], atol=atol)
-
-
-@pytest.mark.parametrize("model", sorted(VENDOR))
-@pytest.mark.parametrize("pos, rpy", POSES)
-def test_a_re_expressed_mount_puts_the_housing_and_camera_where_the_retired_one_did(
-    tmp_path, model, pos, rpy
-):
-    _assert_where_the_retired_mount_put_it(
-        tmp_path, model, (pos, rpy), _re_expressed(model, pos, rpy)
-    )
-
-
-def _vendor_mount():
-    """``external/convert/vendor_mount.py``, the rewrite the builder's ``--rewrite-mounts`` runs."""
-    path = Path(__file__).resolve().parents[2] / "external" / "convert" / "vendor_mount.py"
-    spec = importlib.util.spec_from_file_location("vendor_mount", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_rewritten_mounts_keep_each_camera_where_it_was(tmp_path):
-    """Block- and flow-style mounts of each retired model, rewritten, load where they were."""
-    retired = {"realsense_d415": "d415", "realsense_d435": "d435", "realsense_d455": "d455"}
-    mounts = [(model, pos, rpy) for model in sorted(VENDOR) for pos, rpy in POSES[1:3]]
-    vendor_mount = _vendor_mount()
-    lines = ["components:"]
-    for i, (model, pos, rpy) in enumerate(mounts):
-        if i % 2:
-            lines += [
-                f"  - spawn_sensor: {{model: {retired[model]}, "
-                f"pose: {vendor_mount.fmt_pose(pos, rpy)}}}",
-                f"    name: m{i}",
-            ]
-        else:
-            lines += [
-                "  - spawn_sensor:",
-                f"      model: {retired[model]}",
-                f"      pose: {vendor_mount.fmt_pose(pos, rpy)}  # kept",
-                f"    name: m{i}",
-            ]
-    world = tmp_path / "world.yaml"
-    world.write_text("\n".join(lines) + "\n")
-    deltas = {retired[m]: (m, _delta(m)) for m in VENDOR}
-    assert vendor_mount.rewrite_mounts(world, deltas) == len(mounts)
-    assert "pose: {position: {" in world.read_text() and "  # kept" in world.read_text()
-    rewritten = yaml.safe_load(world.read_text())["components"]
-    for (model, pos, rpy), entry in zip(mounts, rewritten, strict=True):
-        spec = entry["spawn_sensor"]
-        assert spec["model"] == model
-        _assert_where_the_retired_mount_put_it(
-            tmp_path, model, (pos, rpy), vendor_mount.pose_values(spec["pose"])
-        )
-
-
-#: The demo world's RealSense mounts as they were written for the retired models.
-RETIRED_DEMO_MOUNTS = {
-    "realsense_d435": ([1.5, 0.0, 0.5], [0.0, 0.0, 1.5708]),
-    "realsense_d415": ([0.0, -1.5, 0.5], [0.0, 0.0, 0.0]),
-    "realsense_d455": ([0.0, 1.5, 0.5], [0.0, 0.0, 3.14159]),
-}
-
-
-def test_the_demo_world_keeps_each_realsense_where_the_retired_mount_put_it(tmp_path):
-    demo = (
-        Path(resolve_model("realsense_d435").path).parents[2] / "worlds" / "all_sensors_demo.yaml"
-    )
-    mounts = {
-        c["spawn_sensor"]["model"]: c["spawn_sensor"]
-        for c in yaml.safe_load(demo.read_text())["components"]
-        if isinstance(c, dict) and "spawn_sensor" in c
-    }
-    for model, retired in RETIRED_DEMO_MOUNTS.items():
-        spec = mounts[model]
-        # The world writes a pose to ten decimals.
-        _assert_where_the_retired_mount_put_it(
-            tmp_path, model, retired, _vendor_mount().pose_values(spec["pose"]), atol=1e-8
-        )
 
 
 # -- the chain is the vendor's ------------------------------------------------------------------
@@ -508,22 +337,3 @@ def test_a_depth_return_reprojects_onto_the_surface_through_tf(model):
     info = eps["depth_camera_info"].read()
     assert (info.width, info.height) == (w, h)
     assert info.fy == pytest.approx(h / (2 * math.tan(math.radians(fovy) / 2)))
-
-
-# -- the old names are refused ------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "old, new", [("d415", "realsense_d415"), ("d435", "realsense_d435"), ("d455", "realsense_d455")]
-)
-def test_a_retired_name_is_refused_naming_the_new_one(old, new):
-    with pytest.raises(ModelError) as exc:
-        resolve_model(old)
-    assert str(exc.value) == (
-        f"spawn_sensor: model {old!r} — renamed to {new!r} when its mount frame became the one its "
-        f"vendor macro places (it was a display convention pointing the lens along +y). Update the "
-        f"name, and re-express this mount's pose as the vendor macro's origin; see "
-        f"roqsim_sensors/README.md."
-    )
-    with pytest.raises(ModelError, match=f"renamed to '{new}'"):
-        resolve_model(f"roqsim_sensors:{old}")

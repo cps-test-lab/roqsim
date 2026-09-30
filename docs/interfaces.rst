@@ -79,6 +79,25 @@ a soft stiffness holds a pose instead of folding; at zero gravity it is identica
 Which law and gains every joint ended up with is written into the run's recording, so a result can
 state what its joints ran under. See :ref:`architecture` for the full mechanism.
 
+Every ``sim:`` key is checked
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``sim:`` takes ``world``, ``name``, ``timestep``, ``pacing``, ``sync``, ``seed``, ``integrator``,
+``cone``, ``gravity``, ``wind``, ``contact_override``, ``dedup_assets``, ``view``, and the MuJoCo
+``opt.*`` fields set by their own names: ``solver``, ``iterations``, ``ls_iterations``,
+``noslip_iterations``, ``impratio``, ``density``, ``viscosity`` (``roqsim.config.SIM_KEYS``).
+
+**Any other key is refused, not ignored**, and the message names the nearest known one::
+
+   sim: unknown key(s) 'timstep' (did you mean 'timestep'?); it takes cone, contact_override, ...
+
+Ignored, ``timstep: 0.004`` would run at the model's step, and the run would still finish and
+report, with every number measuring something its author did not write. The check runs after
+``extends:`` resolves and after overrides merge, so a key is refused whether it came from the file,
+a parent world or ``--set``. Headless is a run switch (``--headless``), not a ``sim:`` key. The
+``opt.*`` keys are one tuple, ``roqsim.config.SIM_OPTION_KEYS``, which both this check and the
+engine read.
+
 Overriding the world
 --------------------
 
@@ -95,6 +114,10 @@ callers never depend on list indices:
 
 Values deep-merge (scalars and lists replace). Overrides must be applied at load time -- the scene is
 compiled when the engine is built, so mutating a built ``SimConfig`` has no effect.
+
+An override addresses ``sim.<key>`` or ``components.<name>.<key>`` and nothing else. Any other root
+-- a parameter name, say, or an inheritance key already consumed when the world loaded -- is refused
+rather than merged into a document where nothing reads it.
 
 The standalone runner exposes the same thing on the command line, where
 ``roqsim.overrides_from_dotlist`` parses the ``path=value`` form::
