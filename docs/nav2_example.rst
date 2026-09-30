@@ -66,8 +66,9 @@ Each starts the sim + ROS 2 bridge (``roqsim_ros_bridge``) on its world (``world
 ``g1_nav2.yaml``, ``spot_nav2.yaml``), the static transform, and nav2 ``map_server`` +
 ``planner_server`` (NavFn) + ``controller_server`` (Regulated Pure Pursuit) + ``behavior_server`` +
 ``bt_navigator`` with its params file (``params/nav2_params.yaml``, ``nav2_params_g1.yaml``,
-``nav2_params_spot.yaml``). Each takes ``world:=``, ``map:=``, ``params_file:=`` and
-``use_sim_time:=``; the G1 and Spot ones also ``gui:=true`` (a MuJoCo viewer and rviz2).
+``nav2_params_spot.yaml``). Each takes ``world:=``, ``map:=``, ``params_file:=``,
+``use_sim_time:=`` and ``gui:=true``: the TurtleBot 4's opens the MuJoCo viewer and takes
+``rviz:=true`` for rviz2, the G1's and Spot's open both.
 
 * The TurtleBot 4's scan is published in the RPLIDAR's ``rplidar_link`` frame, and the bridge
   publishes the static ``base_link`` → ``shell_link`` → ``rplidar_link`` transforms the robot's model
