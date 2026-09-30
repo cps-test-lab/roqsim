@@ -346,3 +346,53 @@ def test_a_gripper_command_that_reaches_its_position_still_succeeds():
     assert handle.status == "succeeded"
     assert result.reached_goal is True
     assert result.position == pytest.approx(0.4, abs=5e-3)
+
+
+class _WrongWayFingers(_Fingers):
+    """A hand whose command runs inverted over its 0..0.8 travel: sent to 0.6, it settles at 0.2."""
+
+    def set_gripper(self, position) -> None:
+        super().set_gripper(0.8 - float(position))
+
+
+class _BlockedFingers(_Fingers):
+    """A hand that closes on an object at 0.3 and moves no further."""
+
+    def step(self) -> None:
+        super().step()
+        if self.position > 0.3:
+            self.position, self.velocity = 0.3, 0.0
+
+
+@pytest.mark.parametrize(
+    "fingers",
+    [
+        pytest.param(_WrongWayFingers(0.0, converge=0.5), id="wrong-way"),
+        pytest.param(_BlockedFingers(0.0, converge=0.5), id="blocked-by-an-object"),
+    ],
+)
+def test_a_gripper_that_stops_short_of_its_position_has_not_reached_it(fingers):
+    """``reached_goal`` is the measured position against the commanded one, as ros2_control reports it.
+
+    A stop anywhere else is ``stalled``: a grasp on an object, or fingers that went the wrong way.
+    Neither may report the goal reached.
+    """
+    ctx, endpoint, on_payload = _wire(
+        fingers.read_state,
+        lambda position: fingers.set_gripper(position),
+        name="gripper_cmd",
+        state_key="gripper:ur5e",
+        backend={
+            "action": "control_msgs.action.GripperCommand",
+            "name": "gripper_controller/gripper_cmd",
+            "state_key": "gripper:ur5e",
+        },
+    )
+    handle = _GoalHandle(_gripper_goal(0.6), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, endpoint)
+
+    assert result.position != pytest.approx(0.6, abs=0.05)
+    assert result.reached_goal is False
+    assert result.stalled is True

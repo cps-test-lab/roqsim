@@ -1,4 +1,4 @@
-"""Shared helpers for the manipulator plugins (joint/actuator discovery)."""
+"""Shared helpers for the manipulator plugins (joint and actuator discovery)."""
 
 from __future__ import annotations
 

@@ -21,7 +21,6 @@ components:
   - spawn_arm:
       model: vx300s
       prefix: "vx300s_"
-      pos: [0.0, 0.0, 0.0]
     name: vx300s
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the

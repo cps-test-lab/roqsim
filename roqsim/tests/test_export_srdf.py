@@ -32,6 +32,7 @@ from roqsim.export_srdf import (
     unmask_self_collision,
 )
 from roqsim.export_urdf import UrdfExporter
+from roqsim.pose import pose_mapping
 
 # ---------------------------------------------------------------------------------------------
 # A synthetic three-link chain, so each matrix category can be provoked deliberately.
@@ -225,7 +226,7 @@ def _composed(tmp_path):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_robot": {
                         "model": "husky_a200",
@@ -238,7 +239,7 @@ def _composed(tmp_path):
                         "model": "ur10e",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
-                        "pos": [0.25, 0.0, 0.2587],
+                        "pose": pose_mapping([0.25, 0.0, 0.2587]),
                         "end_effector": {
                             "model": "robotiq_2f85",
                             "replaces": ["ee_plate"],
@@ -279,12 +280,12 @@ def bolted(tmp_path_factory):
     config = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_arm": {
                         "model": "ur5e",
                         "prefix": "ur5e_",
-                        "pos": [0.0, 0.0, 0.30],
+                        "pose": pose_mapping([0.0, 0.0, 0.30]),
                         "pedestal": True,
                     },
                     "name": "ur5e",

@@ -51,9 +51,9 @@ class DriveOutput(NavOutput):
         if handle is None:
             raise OutputUnavailable(
                 f"entity {entity.name!r} publishes no RobotHandle, so there is nothing to command. "
-                f"A drive plugin (diff_drive, omni_drive, ackermann_drive, or a legged locomotion "
-                f"controller) must be a component of it -- for a robot model that usually arrives "
-                f"from its manifest."
+                f"A drive plugin (diff_drive, omni_drive, ackermann_drive, tricycle_drive, or a "
+                f"legged locomotion controller) must be a component of it -- for a robot model that "
+                f"usually arrives from its manifest."
             )
         self._handle = handle
         if self._kinematics == "auto":

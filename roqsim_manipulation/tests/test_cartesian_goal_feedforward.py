@@ -261,6 +261,6 @@ def test_the_compliance_law_damps_relative_to_the_goal_velocity():
 
 def test_the_feedforward_key_is_validated():
     plugin = CartesianAdmittancePlugin({}, entity="arm")
-    assert plugin.validate_config({"feedforward": "sometimes"})
-    assert plugin.validate_config({"feedforward_window_s": 0.0})
-    assert not plugin.validate_config({"feedforward": "off", "feedforward_window_s": 0.1})
+    assert plugin.config_errors({"feedforward": "sometimes"})
+    assert plugin.config_errors({"feedforward_window_s": 0.0})
+    assert not plugin.config_errors({"feedforward": "off", "feedforward_window_s": 0.1})

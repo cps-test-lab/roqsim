@@ -35,7 +35,7 @@ def world(tmp_path):
     scene.write_text(_SCENE)
     return {
         "sim": {"world": str(scene)},
-        "plugins": [
+        "components": [
             {"lidar": {"site": "scan", "num_rays": 64, "range_stddev": 0.05}, "name": "front"}
         ],
     }
