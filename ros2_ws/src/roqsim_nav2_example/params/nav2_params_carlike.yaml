@@ -1,0 +1,237 @@
+# Nav2 for a car-like base: any robot that steers rather than turning in place.
+#
+# That is every `ackermann_drive` and `tricycle_drive` robot. Both answer a cmd_vel with v = 0 and a
+# yaw rate by not moving, so the grid planner and the rotate-to-heading controller of
+# nav2_params.yaml leave them standing still. This file is the stack Nav2 offers instead:
+#
+#  - planner: Smac Hybrid-A* over REEDS_SHEPP motions -- curves no tighter than a minimum turning
+#    radius, forwards and backwards, so a plan may reverse;
+#  - controller: Regulated Pure Pursuit with allow_reversing, which follows such a plan through its
+#    cusps, and use_rotate_to_heading: false, since the robot cannot rotate on the spot;
+#  - behaviour tree (set by nav2_carlike.launch.py): nav2_bt_navigator's
+#    navigate_w_replanning_only_if_path_becomes_invalid.xml. It replans only when the path is
+#    blocked -- replanning Hybrid-A* every second from a moving robot lets consecutive plans flip
+#    between a forward and a reversing solution -- and it has no recovery, where the default tree
+#    recovers by spinning, the one manoeuvre these robots do not have;
+#  - behaviour server: no spin, for the same reason. Only NavigateToPose is enabled: the shipped
+#    through-poses tree recovers by spinning too.
+#
+# Nothing in this file depends on a robot's size. What does -- the footprint, the minimum turning
+# radius, speeds, lookahead, inflation, tolerances and the scan sources -- is in one small file per
+# robot, params/carlike_<robot>.yaml, which the launch file loads after this one so its values win.
+# To bring up another car-like robot, copy carlike_piracer.yaml and change what its comments name.
+#
+# Frames: base_link must be the point the robot turns about -- the centre of its rear (fixed) axle
+# -- which is where both Hybrid-A*'s motion model and pure pursuit put it, and what each drive's
+# odom -> base_link names. For tricycle_drive it is required; an ackermann_drive model whose
+# base_link sits a little ahead of the rear axle (the PiRacer's, by 0.024 m) plans about a point
+# that slips sideways by that much on a curve.
+#
+# Localisation is a static identity map -> odom (the launch file), so the robot's wheel odometry is
+# its pose. The goal test judges on ground truth instead.
+
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    navigators: ["navigate_to_pose"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    default_nav_to_pose_bt_xml: ""   # set from the launch file (see the header)
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.25   # per robot
+      # A cusp is a stop, a steering sweep across the lock, and a restart.
+      movement_time_allowance: 15.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25          # per robot
+      # Pure pursuit steers for position; the heading at the goal is what the planned approach
+      # leaves, and a car-like robot cannot trim it on the spot.
+      yaw_goal_tolerance: 0.35
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.5          # per robot
+      lookahead_dist: 0.8              # per robot: about the wheelbase or more
+      min_lookahead_dist: 0.5          # per robot
+      max_lookahead_dist: 1.2          # per robot
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: true
+      transform_tolerance: 0.2
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.5
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.9   # per robot
+      regulated_linear_scaling_min_speed: 0.1
+      # Car-like: never rotate on the spot, and follow a Reeds-Shepp plan through its cusps.
+      use_rotate_to_heading: false
+      allow_reversing: true
+      max_angular_accel: 2.0
+      max_robot_pose_search_dist: 10.0
+      # The last stretch. Without these the carrot stops at the goal point, the robot steers straight
+      # at it and arrives with whatever heading that leaves; a robot that cannot trim its heading on
+      # the spot then shuffles back and forth over the goal until the progress checker gives up.
+      # Curvature is taken at a fixed distance instead, and past the goal from a carrot interpolated
+      # along the goal's heading, so the robot is steered into that heading as it arrives.
+      use_fixed_curvature_lookahead: true
+      curvature_lookahead_dist: 0.6    # per robot: about the wheelbase
+      interpolate_curvature_after_goal: true
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 5                          # per robot
+      height: 5
+      resolution: 0.05
+      footprint: "[[0.5, 0.3], [-0.5, 0.3], [-0.5, -0.3], [0.5, -0.3]]"   # per robot
+      # The map as well as the scan: pure pursuit checks the arc to its carrot against this costmap,
+      # and a robot that scans only forwards would otherwise reverse into a wall it has on the map.
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        footprint_clearing_enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 8.0
+          obstacle_max_range: 6.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # Per robot, and above the footprint's circumscribed radius with a cost still above zero
+        # there: Smac Hybrid-A* then tells from one cell when the full footprint needs checking.
+        # A steeper decay rounds that cost to zero and it checks the footprint everywhere.
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.9
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      footprint: "[[0.5, 0.3], [-0.5, 0.3], [-0.5, -0.3], [0.5, -0.3]]"   # per robot
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        footprint_clearing_enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 8.0
+          obstacle_max_range: 6.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0        # per robot (see local_costmap)
+        inflation_radius: 0.9
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      downsample_costmap: false
+      tolerance: 0.25
+      allow_unknown: false
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      # Reeds-Shepp: forwards and backwards. DUBIN would plan forwards only, and a goal behind the
+      # robot would then cost a loop instead of a reverse.
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 3.0
+      analytic_expansion_max_cost: 200.0
+      analytic_expansion_max_cost_override: false
+      # Per robot, in metres about base_link, and NOT the physical minimum. The physical minimum is
+      # the geometry's: wheelbase / tan(max_steer_angle) for ackermann_drive, |steer_offset| /
+      # tan(max_steer_angle) for tricycle_drive. The planning value is a tuning choice above it,
+      # which leaves the controller lock to correct a tracking error with and keeps the plans out of
+      # tight many-cusp shuffles that pure pursuit cannot follow. Each carlike_<robot>.yaml states
+      # both numbers.
+      minimum_turning_radius: 1.0
+      reverse_penalty: 2.0
+      change_penalty: 0.5
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      lookup_table_size: 20.0
+      cache_obstacle_heuristic: true
+      debug_visualizations: false
+      smooth_path: true
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+        do_refinement: true
+        refinement_num: 2
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    # No spin: a car-like robot cannot. BackUp and DriveOnHeading are straight lines it can drive.
+    behavior_plugins: ["backup", "drive_on_heading", "wait"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.1
+
+map_server:
+  ros__parameters:
+    yaml_filename: ""   # set from the launch file

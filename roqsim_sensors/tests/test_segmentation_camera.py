@@ -15,7 +15,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 import pytest
-from roqsim_sensors.plugins.segmentation_camera import SegmentationCameraPlugin
+from roqsim_sensors.plugins.segmentation_camera import Boxes2D, SegmentationCameraPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import Entity, SimContext
@@ -176,8 +176,8 @@ def test_instance_ids_are_body_ids_and_a_subtree_is_one_instance():
 
 def test_the_instance_image_is_only_published_when_asked_for():
     assert _endpoint(_engine(capture=False), "instances") is None
-    ep = _endpoint(_engine(instances=True, capture=False), "instances")
-    assert ep is not None and ep.backend["ros2"]["encoding"] == "16UC1"
+    ep = _endpoint(_engine(instances=True), "instances")
+    assert ep is not None and ep.read().encoding == "16UC1"
 
 
 def test_a_reset_clears_the_previous_trials_frame():
@@ -269,13 +269,13 @@ def test_the_label_endpoint_gates_the_renderer():
 
 
 def test_the_endpoints_advertise_the_topics_and_types_a_consumer_expects():
-    engine = _engine(instances=True, capture=False)
-    hints = {name: _endpoint(engine, name).backend["ros2"] for name in ("labels", "detections")}
-    assert hints["labels"]["type"] == "sensor_msgs.msg.Image"
-    assert hints["labels"]["topic"] == "segmentation/class_image"
-    assert hints["labels"]["encoding"] == "mono8"
-    assert hints["detections"]["type"] == "vision_msgs.msg.Detection2DArray"
-    assert hints["detections"]["topic"] == "segmentation/detections"
+    engine = _engine(instances=True)
+    labels, detections = _endpoint(engine, "labels"), _endpoint(engine, "detections")
+    # An Image and a set of 2D boxes: a sensor_msgs/Image and a vision_msgs/Detection2DArray over ROS.
+    assert labels.backend["ros2"]["topic"] == "segmentation/class_image"
+    assert labels.read().encoding == "mono8"
+    assert detections.result.cls is Boxes2D
+    assert detections.backend["ros2"]["topic"] == "segmentation/detections"
 
 
 @pytest.mark.parametrize(
