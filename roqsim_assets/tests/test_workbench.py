@@ -14,7 +14,7 @@ from roqsim_assets.plugins.workbench import WorkbenchPlugin
 
 def _built(tmp_path, extra=None):
     plugins = [{"workbench": dict(extra or {}), "name": "bench"}]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     return engine
 
@@ -131,6 +131,7 @@ def test_validate_config_rejects_bad_geometry():
     assert errs({"width": 1.0})  # no room for a cabinet between the columns
     assert errs({"depth": 0.30})  # no room for the lift column
     assert errs({"cabinet": "middle"})  # not a side
-    assert errs({"rpy": [0.0, 0.0]})  # wrong length
+    assert errs({"rpy": [0.0, 0.0, 1.0]})  # a pose is `pose:`
+    assert errs({"pose": {"orientation": {"heading": 1.0}}})  # not a pose
     assert not errs({"height": 0.995})  # the raised catalogue position
     assert not errs({"width": 1.0, "cabinet": "none"})  # a narrow bench without a cabinet

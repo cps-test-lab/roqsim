@@ -31,6 +31,7 @@ from roqsim.context import Entity, SimContext
 from roqsim.engine import Engine
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import parse_pose
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile_manipulation" / "models"
@@ -106,6 +107,7 @@ def _ctx(model, data) -> SimContext:
 def _drive(ctx, **overrides):
     p = DiffDrivePlugin({**_manifest("diff_drive"), **overrides}, entity="robot")
     p.configure(ctx)
+    p.register_endpoints(ctx)
     p.on_reset(ctx)
     return p
 
@@ -524,7 +526,8 @@ def test_c1_the_scan_frame_is_at_omrons_plane(scan):
         if type(p).__name__ == "SpawnSensorPlugin" and p.address == f"{OWNER}.{LABEL}"
     )
     assert mount["model"] == "omron_os32c" and mount["parent_frame"] == "base_link"
-    assert np.allclose(mount["pos"], SCAN_ORIGIN - (0.0, 0.0, DEVICE_SCAN_HEIGHT), atol=1e-12)
+    pos, _ = parse_pose(mount["pose"], relative=True)
+    assert np.allclose(pos, SCAN_ORIGIN - (0.0, 0.0, DEVICE_SCAN_HEIGHT), atol=1e-12)
     for site in (f"{PREFIX}{LABEL}_scan", f"{PREFIX}{LABEL}_{SCAN_FRAME}"):
         pos, rot = _pose_in_base(scan, site)
         assert np.allclose(pos, SCAN_ORIGIN, atol=1e-6), f"{site} at {pos}"
@@ -602,7 +605,7 @@ def test_c5_the_tf_chain_and_topic(scan):
     address = f"{OWNER}.{LABEL}"
     (frames,) = [e for e in scan.ctx.interface.all() if e.name == "frames" and e.owner == address]
     assert frames.namespace == NAMESPACE
-    tf = frames.backend["ros2"]["static_tf"]
+    tf = [vars(t) for t in frames.read().transforms]
     assert [(t["parent"], t["child"]) for t in tf] == [("base_link", SCAN_FRAME)], tf
     assert np.allclose(tf[0]["translation"], SCAN_ORIGIN, atol=1e-6)
     (endpoint,) = [e for e in scan.ctx.interface.all() if e.name == "scan" and e.owner == address]

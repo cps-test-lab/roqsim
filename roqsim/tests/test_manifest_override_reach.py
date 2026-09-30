@@ -57,7 +57,7 @@ def test_a_structural_override_changes_which_manifest_expands():
     not just a value on it. The husky ships no depth camera; the turtlebot4 does."""
     swapped = _components(overrides_from_dotlist(["components.robot.model=husky_a200"]))
     assert "robot.diff_drive" in swapped
-    assert "robot.oakd_camera" not in swapped
+    assert "robot.oakd.oakd_camera" not in swapped
 
 
 def test_an_override_that_names_no_component_is_still_refused():
@@ -83,3 +83,11 @@ def test_reaching_an_injected_component_leaves_nothing_on_its_owner():
     assert config["robot.rplidar.lidar"]["rays"] == 90
     assert "rplidar" not in config["robot"]
     assert "lidar" not in config["robot.rplidar"]
+
+
+def test_the_camera_address_the_device_mount_replaced_is_refused_naming_the_new_one():
+    """The TurtleBot 4's camera is `robot.oakd.oakd_camera`, on its mounted `oakd_pro` device. A
+    world or campaign still switching `robot.oakd_camera` off would otherwise leave the camera on
+    while every run looked configured."""
+    with pytest.raises(PluginError, match=r"components\.robot\.oakd\.oakd_camera"):
+        _components(overrides_from_dotlist(["components.robot.oakd_camera.enabled=false"]))

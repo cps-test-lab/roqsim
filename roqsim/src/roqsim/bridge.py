@@ -4,18 +4,19 @@ A concrete bridge (ROS 2, zenoh, zmq, ...) subclasses :class:`BridgeBase`, sets 
 key, and implements the small set of backend hooks below. Everything else -- discovering endpoints,
 rate-gating (on the world's physics grid, see :meth:`BridgeBase._rate_gate`), skipping endpoints that
 opted out of publishing to nobody (``Endpoint.lazy``), the per-tick publish loop, marshalling
-inbound data onto the physics thread, and the map of what the bridge publishes
-(:meth:`BridgeBase.endpoint_map`) -- lives here and is shared across backends.
+inbound data onto the physics thread, and what each endpoint is called on the transport
+(:meth:`BridgeBase.bound_name`) -- lives here and is shared across backends.
 
 The bridge reads :class:`roqsim.context.Endpoint`s registered by the robot's plugins; it never
 imports the robot package or hardcodes topic/stream names. Backend particulars (message type, topic,
-QoS, frames) come from each endpoint's ``backend[BACKEND]`` hint block, so adding an interface is a
-one-line endpoint registration on the producer with zero bridge edits.
+QoS, frames) come from each endpoint's ``backend[BACKEND]`` hint block, and for a decorated endpoint
+from what its payload type maps to on the backend (:meth:`BridgeBase._hints_for`), so adding an
+interface is a declaration on the producer with zero bridge edits.
 
 Threading (see docs/architecture.rst > Concurrency): ``_setup``/``configure``/``post_step``/
 ``shutdown`` run on the physics thread. Inbound transport callbacks run on the backend's own thread
 and MUST NOT touch ``data`` -- they call the ``on_payload`` handed to :meth:`_make_input`, which
-marshals the write onto the physics thread via ``ctx.post``.
+marshals the write onto the physics thread (``ctx.submit``, or the endpoint's own queue).
 """
 
 from __future__ import annotations
@@ -23,18 +24,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .endpoint import hints_for
 from .plugin import Plugin
 from .rates import SNAP_NOTABLE, SNAP_QUIET, GridRate, snap_rate
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .context import Endpoint, SimContext
-
-#: Where a bridge advertises what it publishes (:meth:`BridgeBase.endpoint_map`), relative to the
-#: bridge's own scope -- for a ROS bridge, its node namespace. A reader in the same scope finds it
-#: by this name without knowing anything else about the deployment.
-ENDPOINT_MAP = "roqsim/endpoints"
 
 
 class _RateGate:
@@ -84,7 +79,13 @@ class _Output:
 
 
 class BridgeBase(Plugin):
-    """Base for transport bridges. Subclass, set ``BACKEND``, implement the backend hooks."""
+    """Base for transport bridges. Subclass, set ``BACKEND``, implement the backend hooks.
+
+    Config (every bridge)::
+
+        owner: robot              # serve only this owner's endpoints (a name or a list); default all
+        rates: {scan: 5.0}        # Hz per endpoint name, over the endpoint's own rate
+    """
 
     #: Backend key selecting which ``endpoint.backend[...]`` hint block applies (e.g. "ros2").
     BACKEND: str = ""
@@ -98,6 +99,9 @@ class BridgeBase(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self._ctx: SimContext | None = None
         self._outputs: list[_Output] = []
+        #: What this bridge made of each endpoint it bound, by ``id(endpoint)`` (see
+        #: :meth:`bound_name`).
+        self._names: dict[int, dict] = {}
         self._ready = False
         # Optional owner filter (``owner``: a name or list of names; omit to serve all endpoints).
         # The common case is ONE bridge serving everything -- per-robot scoping comes from each
@@ -122,13 +126,16 @@ class BridgeBase(Plugin):
         # convention enforced rather than assumed: a producer listed after the bridge now raises
         # instead of quietly never being published.
         ctx.interface.mark_bound(self.name)
+        ctx.interface.bridges.append(self)
         rate_overrides = self.config.get("rates", {})
         for ep in ctx.interface.all():
-            hints = ep.backend.get(self.BACKEND)
-            if hints is None:
-                continue
             if self._owners is not None and ep.owner not in self._owners:
                 continue
+            hints = self._hints_for(ep)
+            if hints is None:
+                continue
+            # Before the backend hook, which may replace it with the name it resolved.
+            self._names[id(ep)] = dict(hints)
             if ep.direction == "out":
                 if ep.read is None:
                     ctx.logger.warning("bridge: out endpoint %r has no read(); skipped", ep.name)
@@ -148,26 +155,23 @@ class BridgeBase(Plugin):
                     "bridge: endpoint %r has bad direction %r", ep.name, ep.direction
                 )
 
-    def endpoint_map(self, describe: Callable[[_Output], dict]) -> dict:
-        """What this bridge publishes, keyed as the world names it: ``(owner, endpoint name)``.
+    def _hints_for(self, ep: Endpoint) -> dict | None:
+        """The hint block this backend binds *ep* with, or ``None`` to leave it unbound.
 
-        A scenario addresses a plugin's report by the entity that owns it and the endpoint's name;
-        the transport carries it under whatever the backend made of that -- for ROS a topic after the
-        endpoint's namespace, a ``topics:`` rename, a stripped namespace and a ground-truth prefix.
-        Only the bridge knows the result exactly, because it is what resolved it, so the bridge says
-        it rather than a reader re-deriving it. ``describe`` is the backend's half: where and how one
-        bound output travels (a ROS bridge: its topic, message type and published field).
-
-        ``owners`` is the owner filter (``None`` = every owner), so a reader can tell "that entity
-        publishes no such report" from "this bridge does not serve that entity".
+        The endpoint's own block for this backend; a block of ``None`` keeps it off. A decorated
+        endpoint (``Endpoint.transport``) is bound without one, with an empty block -- a backend
+        overrides this to fill in what its payload type maps to.
         """
-        return {
-            "owners": None if self._owners is None else sorted(self._owners),
-            "endpoints": [
-                {"owner": out.endpoint.owner, "name": out.endpoint.name, **describe(out)}
-                for out in self._outputs
-            ],
-        }
+        return hints_for(ep, self.BACKEND)
+
+    def bound_name(self, ep: Endpoint) -> dict | None:
+        """What this bridge made of *ep*: its hints, or what the backend resolved them to (a ROS
+        topic after namespaces and renames). ``None`` when this bridge did not bind it.
+
+        For a reader that describes an endpoint across transports -- another bridge answering
+        "what is this called on ROS" -- so the name it gives is the one this bridge actually used.
+        """
+        return self._names.get(id(ep))
 
     def _rate_gate(self, ctx: SimContext, rate_hz: float, subject: str) -> _RateGate:
         """A gate at the nearest rate this world can hold, announced in proportion to the move.
@@ -301,12 +305,24 @@ class BridgeBase(Plugin):
         )
 
     def _inbound(self, ep: Endpoint):
-        """Return a thread-safe callback that marshals a neutral payload onto the physics thread."""
+        """Return a thread-safe callback that marshals a neutral payload onto the physics thread.
 
-        def on_payload(payload) -> None:
+        The callback returns what the write gives back: a :class:`~roqsim.context.CommandFuture`
+        for a command, which a handler waits on for the outcome, and ``None`` for a stream. A
+        ``marshalled`` endpoint queues the work itself, so it is called directly; any other write
+        is submitted to run on the physics thread.
+        """
+        if ep.slot is not None:
+            # Tagged, so two transports driving one stream are told apart (StreamSlot.put).
+            return lambda payload, write=ep.write, src=self.BACKEND: write(payload, source=src)
+        if ep.marshalled:
+            return ep.write
+
+        def on_payload(payload):
             ctx = self._ctx
-            if ctx is not None:
-                ctx.post(lambda c, w=ep.write, p=payload: w(p))
+            if ctx is None:
+                return None
+            return ctx.submit(lambda c, w=ep.write, p=payload: w(p))
 
         return on_payload
 
