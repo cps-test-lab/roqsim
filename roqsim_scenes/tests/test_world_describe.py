@@ -48,7 +48,7 @@ def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, wo
 
 def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
     path = tmp_path / "named.yaml"
-    path.write_text("plugins:\n- boxes:\n    instances: []\n  name: obstacles\n")
+    path.write_text("components:\n- boxes:\n    instances: []\n  name: obstacles\n")
     plugin = _describe(capsys, str(path))["components"][0]
     assert (plugin["address"], plugin["ref"]) == ("obstacles", "boxes")
     assert "components.obstacles.instances" in plugin["paths"]
@@ -178,7 +178,7 @@ def dummy_world(tmp_path):
     """
     path = tmp_path / "dummy_world.yaml"
     path.write_text(
-        "plugins:\n- dummy:\n    size: 0.3\n  name: box_a\n- dummy:\n    size: 0.2\n  name: box_b\n"
+        "components:\n- dummy:\n    size: 0.3\n  name: box_a\n- dummy:\n    size: 0.2\n  name: box_b\n"
     )
     return path
 
@@ -256,7 +256,7 @@ def ros_world(tmp_path):
     """
     path = tmp_path / "dummy_ros.yaml"
     path.write_text(
-        "plugins:\n"
+        "components:\n"
         "- dummy:\n"
         "    size: 0.3\n"
         "  name: box_a\n"
@@ -310,7 +310,7 @@ def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
 def test_an_overrides_file_that_is_not_there_is_named(capsys, tmp_path):
     """Describing the base world instead would answer a question nobody asked."""
     world = tmp_path / "w.yaml"
-    world.write_text("plugins: []\n")
+    world.write_text("components: []\n")
     assert (
         world_describe.main([str(world), "--override", str(tmp_path / "nope.yaml")])
         == exit_status.BAD_INPUT
@@ -321,9 +321,9 @@ def test_an_overrides_file_that_is_not_there_is_named(capsys, tmp_path):
 def test_an_override_naming_no_plugin_is_still_refused(capsys, tmp_path):
     """The cheap mistake this command exists to catch, and applying overrides must not hide it."""
     world = tmp_path / "w.yaml"
-    world.write_text("plugins:\n- boxes: {instances: []}\n")
+    world.write_text("components:\n- boxes: {instances: []}\n")
     overrides = tmp_path / "ov.yaml"
-    overrides.write_text("plugins:\n  boxesTYPO:\n    instances: []\n")
+    overrides.write_text("components:\n  boxesTYPO:\n    instances: []\n")
     assert world_describe.main([str(world), "--override", str(overrides)]) == exit_status.BAD_INPUT
     assert "matches no component" in capsys.readouterr().err
 
@@ -336,7 +336,7 @@ def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
     does not have it. An unresolvable ref that is not identifiable as transport must stay fatal.
     """
     path = tmp_path / "typo.yaml"
-    path.write_text("plugins:\n- dummmy:\n    size: 0.3\n  name: box_a\n")
+    path.write_text("components:\n- dummmy:\n    size: 0.3\n  name: box_a\n")
     assert world_describe.main([str(path), "--entities"]) == exit_status.BAD_INPUT
     out = capsys.readouterr()
     assert "dummmy" in out.err
@@ -370,7 +370,7 @@ def test_a_world_that_cannot_load_reports_why(capsys, tmp_path):
     is what lets this answer for a world whose plugins live in another package.
     """
     bad = tmp_path / "bad.yaml"
-    bad.write_text("extends: ./nowhere.yaml\nplugins: []\n")
+    bad.write_text("extends: ./nowhere.yaml\ncomponents: []\n")
     assert world_describe.main([str(bad)]) == exit_status.BAD_INPUT
     out = capsys.readouterr()
     assert "cannot load world" in out.err

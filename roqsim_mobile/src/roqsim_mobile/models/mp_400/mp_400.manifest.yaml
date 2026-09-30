@@ -43,8 +43,9 @@ components:
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [0.230, 0.0, 0.1049]      # Neobotix MP-400 Positions of Sensors, LS1; see HEIGHT and X
-      rpy: [3.14, 0.0, 0.0]          # mp_400_body.urdf.xacro:38, lidar_1_joint origin rpy
+      # position: Neobotix MP-400 Positions of Sensors, LS1 (HEIGHT and X);
+      # orientation: mp_400_body.urdf.xacro:38, lidar_1_joint origin
+      pose: {position: {x: 0.230, z: 0.1049}, orientation: {roll: 3.14}}
       frame_id: lidar_1_link         # mp_400_gazebo.urdf.xacro:41, the link the scan is stamped in
     name: scan_front
     components:

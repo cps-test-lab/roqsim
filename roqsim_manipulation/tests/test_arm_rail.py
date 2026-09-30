@@ -18,7 +18,7 @@ from roqsim.engine import Engine
 RAIL = {"axis": [1, 0, 0], "range": [-1.5, 1.5], "home": 0.3}
 # Ceiling mount: 2.6 m up and rolled 180 deg, so the arm hangs -- the configuration the rail option
 # exists for (a floor pedestal needs no carriage).
-CEILING = {"pos": [0.0, 0.0, 2.6], "rpy": [3.14159265, 0.0, 0.0]}
+CEILING = {"pose": {"position": {"z": 2.6}, "orientation": {"roll": 3.14159265}}}
 
 
 def _world(tmp_path, arm_extra=None):
@@ -105,7 +105,7 @@ def test_rail_geometry_is_visual_only(tmp_path):
     ("rail", "expected"),
     [
         ({"range": [1.0, -1.0]}, "min < max"),
-        ({"range": [0.0, 1.0], "home": 2.0}, "'home' must lie within"),
+        ({"range": [0.0, 1.0], "home": 2.0}, "'rail.home' must lie within"),
         ({"axis": [0, 0, 0]}, "non-zero"),
     ],
 )

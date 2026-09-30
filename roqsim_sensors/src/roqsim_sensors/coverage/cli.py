@@ -42,7 +42,7 @@ from roqsim.override_options import (
 from . import catalog as catalog_mod
 from .adapters import build_fov
 from .engine import coverage
-from .report import build_report
+from .report import build_report, normalise_target
 
 # -- world loading -----------------------------------------------------------------------------------
 
@@ -93,12 +93,14 @@ def parse_target(text: str | None) -> dict:
     """Parse ``k=1,frac=0.95`` -> {'metric','k','value'}. Empty -> no target."""
     if not text:
         return {}
-    parts = dict(kv.split("=", 1) for kv in text.split(",") if "=" in kv)
-    return {
-        "metric": "fraction_covered",
-        "k": int(parts.get("k", 1)),
-        "value": float(parts.get("frac", parts.get("value", 1.0))),
-    }
+    parts = [kv.strip() for kv in text.split(",")]
+    bare = [kv for kv in parts if "=" not in kv]
+    if bare:
+        raise ValueError(
+            f"coverage target: {', '.join(map(repr, bare))} is not key=value; "
+            "give k and frac, e.g. k=1,frac=0.95"
+        )
+    return normalise_target(dict(kv.split("=", 1) for kv in parts))
 
 
 def _read_placements(path: str) -> list[dict]:
@@ -316,7 +318,7 @@ def cmd_greedy(args) -> int:
         _render_outputs(model, data, result, out_dir, args.render, args.palette)
     a = report["achieved"]
     k = int(target.get("k", 1))
-    frac = a.get(f"fraction_covered_k{k}", a["fraction_covered_k1"])
+    frac = a[f"fraction_covered_k{k}"]
     print(
         f"GREEDY_OK chose={len(chosen)} sensors k{k}={frac:.3f} target_met={report['target_met']} "
         f"-> {out_dir / 'placements.json'}"
