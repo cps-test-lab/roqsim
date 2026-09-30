@@ -21,6 +21,7 @@ import pytest
 from roqsim.config import PluginError, load_config_from_dict
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import Odometry, Twist
 from roqsim_mobile.plugins.ackermann_drive import AckermannDrivePlugin
 
 WHEELBASE = 0.4
@@ -276,7 +277,7 @@ def test_odometry_is_the_encoder_estimate_and_drifts_on_a_curve():
     Cornering, the tyres slip and the bicycle relation under-reports the turn: measured here, the car
     ends up at a yaw of ~1.1 rad while its odometry believes ~0.8. That gap is what a localisation
     experiment is about, so it is asserted to EXIST rather than tuned away with a fudge factor;
-    `ground_truth_pose` is what a grader compares against.
+    the true pose is what a grader compares against.
     """
     engine = _engine()
     _, _, yaw = _run(engine, 0.6, 0.6)
@@ -288,15 +289,17 @@ def test_odometry_is_the_encoder_estimate_and_drifts_on_a_curve():
 def test_the_steer_joints_are_in_joint_states():
     """A car's steering angle is state a stack watches; leaving it out is how a URDF's front wheels
     stay straight in RViz while the robot corners."""
-    names, positions, _ = _plugin(_engine()).read_joint_states()
-    assert names[:2] == ["steer_left", "steer_right"]
-    assert len(positions) == 4
+    joints = _plugin(_engine()).joint_states()
+    assert joints.names[:2] == ["steer_left", "steer_right"]
+    assert len(joints.positions) == 4
 
 
 def test_the_endpoints_are_the_ones_every_base_publishes():
     engine = _engine()
     names = {e.name: e for e in engine.ctx.interface.all()}
-    assert names["cmd_vel"].backend["ros2"]["type"] == "geometry_msgs.msg.Twist"
+    assert names["cmd_vel"].payload_type.cls is Twist
+    assert names["cmd_vel"].backend["ros2"] == {"stamped": False}  # geometry_msgs/Twist
+    assert names["odom"].payload_type.cls is Odometry
     assert names["odom"].backend["ros2"]["emit_tf"] is True
     assert engine.ctx.blackboard.get("robot:robot") is not None
 

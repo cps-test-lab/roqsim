@@ -30,11 +30,14 @@ def _engine(present=None):
         config["present"] = present
     return Engine(
         load_config_from_dict(
-            {"sim": {"world": "empty_room"}, "plugins": [{SPAWN_ROBOT: config, "name": "robot"}]},
+            {
+                "sim": {"world": "empty_room"},
+                "components": [{SPAWN_ROBOT: config, "name": "robot"}],
+            },
             # The manifest's camera wants a GL context the moment the engine steps, and nothing here
             # is about what a camera sees. Presence is decided in the model, which the lidar and the
             # contact set read without one.
-            overrides={"components": {"robot.oakd_camera": {"enabled": False}}},
+            overrides={"components": {"robot.oakd.oakd_camera": {"enabled": False}}},
         )
     )
 
@@ -91,7 +94,9 @@ def test_present_must_be_a_bool():
     cfg = load_config_from_dict(
         {
             "sim": {"world": "empty_room"},
-            "plugins": [{SPAWN_ROBOT: {"model": "turtlebot4", "present": "no"}, "name": "robot"}],
+            "components": [
+                {SPAWN_ROBOT: {"model": "turtlebot4", "present": "no"}, "name": "robot"}
+            ],
         }
     )
     with pytest.raises(Exception, match="'present' must be true or false"):

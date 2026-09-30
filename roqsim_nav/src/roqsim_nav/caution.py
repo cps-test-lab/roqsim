@@ -123,7 +123,8 @@ class CautionProbe:
         #: Scanning low cannot have that failure: a mover that cannot pass over something must have
         #: geometry near the floor, or it would not be an obstacle.
         band = cfg.get("band") or (0.1, 1.8)
-        self.height = float(cfg.get("height", 0.0)) or float(band[0]) + _SCAN_MARGIN
+        height = cfg.get("height")
+        self.height = float(band[0]) + _SCAN_MARGIN if height is None else float(height)
         self.clear_time = float(cfg.get("clear_time", 0.5))
         #: How long a blockage is treated as traffic that will clear. While the mover is inside
         #: this window it holds AND its progress clock is rebased, so waiting for a robot to pass
@@ -137,7 +138,8 @@ class CautionProbe:
         self.forget_after = float(cfg.get("forget_after", 5.0))
         #: Radius of the disc a remembered blockage marks out, defaulting to the corridor's own
         #: half width -- a mark as wide as the gap the mover just failed to fit through.
-        self.blockage_radius = float(cfg.get("blockage_radius", 0.0)) or self.width / 2.0
+        radius = cfg.get("blockage_radius")
+        self.blockage_radius = self.width / 2.0 if radius is None else float(radius)
         self.ignore = tuple(cfg.get("ignore") or ())
         self._own: set[int] = set()
         self._ignored: set[int] = set()
@@ -163,13 +165,18 @@ class CautionProbe:
 
     @staticmethod
     def validate(cfg: dict | None) -> list[str]:
-        cfg = cfg or {}
+        """The ranges of the tuning in *cfg*. A value that is not a number is the schema's to report."""
+        numbers = {
+            k: v
+            for k, v in (cfg or {}).items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
         errors = []
         for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
-            if key in cfg and float(cfg[key]) <= 0:
+            if key in numbers and numbers[key] <= 0:
                 errors.append(f"'avoidance.{key}' must be > 0")
         for key in ("clear_time", "forget_after", "yield_time"):
-            if key in cfg and float(cfg[key]) < 0:
+            if key in numbers and numbers[key] < 0:
                 errors.append(f"'avoidance.{key}' must be >= 0")
         return errors
 

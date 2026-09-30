@@ -42,7 +42,7 @@ def test_a_bridge_declares_itself_transport_only():
 
 
 def test_transport_plugin_is_dropped_and_reported():
-    cfg = load_config_from_dict({"plugins": [{GEOMETRY: {}}, {TRANSPORT: {}}]})
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {TRANSPORT: {}}]})
     transport, unavailable = drop_transport_plugins(cfg)
     assert _refs(cfg) == [GEOMETRY]
     assert transport == [TRANSPORT]
@@ -51,7 +51,7 @@ def test_transport_plugin_is_dropped_and_reported():
 
 def test_unresolvable_ref_is_dropped_separately():
     """The reported case: `ros2_bridge` lives in a colcon package, absent from a pip-only venv."""
-    cfg = load_config_from_dict({"plugins": [{"ros2_bridge": {}}, {GEOMETRY: {}}]})
+    cfg = load_config_from_dict({"components": [{"ros2_bridge": {}}, {GEOMETRY: {}}]})
     transport, unavailable = drop_transport_plugins(cfg)
     assert _refs(cfg) == [GEOMETRY]
     assert transport == []
@@ -60,13 +60,13 @@ def test_unresolvable_ref_is_dropped_separately():
 
 def test_a_named_instance_is_reported_by_name_and_ref():
     """So a world with several bridges says which one went."""
-    cfg = load_config_from_dict({"plugins": [{TRANSPORT: {}, "name": "gt_bridge"}]})
+    cfg = load_config_from_dict({"components": [{TRANSPORT: {}, "name": "gt_bridge"}]})
     transport, _ = drop_transport_plugins(cfg)
     assert transport == [f"gt_bridge ({TRANSPORT})"]
 
 
 def test_a_scene_of_only_geometry_is_untouched():
-    cfg = load_config_from_dict({"plugins": [{GEOMETRY: {}}, {"dummy": {}}]})
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {"dummy": {}}]})
     assert drop_transport_plugins(cfg) == ([], [])
     assert _refs(cfg) == [GEOMETRY, "dummy"]
 
@@ -83,7 +83,7 @@ def _world(tmp_path, body: str):
 def test_render_builds_a_world_whose_bridge_is_not_installed(tmp_path):
     from roqsim import render
 
-    target = _world(tmp_path, "plugins:\n  - ros2_bridge: {}\n  - sim_interfaces: {}\n")
+    target = _world(tmp_path, "components:\n  - ros2_bridge: {}\n  - sim_interfaces: {}\n")
     model, _data, _ctx, _view, _cam = render.build_target(target, None)
     assert model is not None  # the empty_room world definition, built without ROS
 
@@ -92,7 +92,7 @@ def test_render_can_still_demand_the_simulators_strict_build(tmp_path):
     """`roqsim sim` uses that build: a missing bridge there must stay a loud failure."""
     from roqsim import render
 
-    target = _world(tmp_path, "plugins:\n  - ros2_bridge: {}\n")
+    target = _world(tmp_path, "components:\n  - ros2_bridge: {}\n")
     with pytest.raises(PluginError, match="unknown plugin 'ros2_bridge'"):
         render.build_target(target, None, skip_transport=False)
 
@@ -100,7 +100,7 @@ def test_render_can_still_demand_the_simulators_strict_build(tmp_path):
 def test_render_warns_about_what_it_could_not_load(tmp_path, caplog):
     from roqsim import render
 
-    target = _world(tmp_path, "plugins:\n  - ros2_bridge: {}\n")
+    target = _world(tmp_path, "components:\n  - ros2_bridge: {}\n")
     with caplog.at_level("WARNING"):
         render.build_target(target, None)
     assert "ros2_bridge" in caplog.text  # a typo'd ref surfaces the same way
@@ -125,7 +125,7 @@ def test_a_registered_but_unimportable_plugin_is_dropped_too(monkeypatch):
             raise ModuleNotFoundError("No module named 'rclpy'")
 
     monkeypatch.setattr(registry, "_entry_points", lambda group: (_EP(),))
-    cfg = load_config_from_dict({"plugins": [{"explodes": {}}, {GEOMETRY: {}}]})
+    cfg = load_config_from_dict({"components": [{"explodes": {}}, {GEOMETRY: {}}]})
     transport, unavailable = drop_transport_plugins(cfg)
     assert _refs(cfg) == [GEOMETRY], "the unimportable plugin was not dropped"
     assert transport == []
@@ -136,7 +136,7 @@ def test_a_registered_but_unimportable_plugin_is_dropped_too(monkeypatch):
 
 
 def test_no_communication_drops_a_declared_transport():
-    cfg = load_config_from_dict({"plugins": [{GEOMETRY: {}}, {TRANSPORT: {}}]})
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {TRANSPORT: {}}]})
     assert drop_transport(cfg) == [TRANSPORT]
     assert _refs(cfg) == [GEOMETRY]
 
@@ -144,7 +144,7 @@ def test_no_communication_drops_a_declared_transport():
 def test_no_communication_drops_a_bridge_this_environment_cannot_resolve():
     """The pip-only case: the class that would declare `transport_only` is what is missing."""
     cfg = load_config_from_dict(
-        {"plugins": [{"ros2_bridge": {}}, {"sim_interfaces": {}}, {GEOMETRY: {}}]}
+        {"components": [{"ros2_bridge": {}}, {"sim_interfaces": {}}, {GEOMETRY: {}}]}
     )
     assert drop_transport(cfg) == ["ros2_bridge", "sim_interfaces"]
     assert _refs(cfg) == [GEOMETRY]
@@ -156,13 +156,13 @@ def test_no_communication_keeps_an_unresolvable_ref_that_is_not_a_bridge():
     Dropping every ref that fails to resolve would swallow a misspelt geometry plugin -- harmless for
     a picture, a silently different experiment for a run.
     """
-    cfg = load_config_from_dict({"plugins": [{"groud_truth_pose": {}}, {"ros2_bridge": {}}]})
+    cfg = load_config_from_dict({"components": [{"groud_truth_pose": {}}, {"ros2_bridge": {}}]})
     assert drop_transport(cfg) == ["ros2_bridge"]
     assert _refs(cfg) == ["groud_truth_pose"], "a typo must survive to fail the build"
 
 
 def test_no_communication_reports_a_named_instance_by_name_and_ref():
-    cfg = load_config_from_dict({"plugins": [{TRANSPORT: {}, "name": "gt_bridge"}]})
+    cfg = load_config_from_dict({"components": [{TRANSPORT: {}, "name": "gt_bridge"}]})
     assert drop_transport(cfg) == [f"gt_bridge ({TRANSPORT})"]
 
 
@@ -207,7 +207,7 @@ def _build(raw):
 def test_a_world_failing_only_on_its_bridges_names_both_ways_out(no_entry_points):
     """The reported experience: `unknown plugin 'ros2_bridge'` sent the reader hunting for a typo."""
     with pytest.raises(PluginError) as err:
-        _build({"plugins": [{GEOMETRY: {}}, {"ros2_bridge": {}}, {"sim_interfaces": {}}]})
+        _build({"components": [{GEOMETRY: {}}, {"ros2_bridge": {}}, {"sim_interfaces": {}}]})
     message = str(err.value)
     assert "ros2_bridge, sim_interfaces: transport, not scene" in message
     assert "ros2_ws/install/setup.bash" in message, "the way to run it as authored"
@@ -217,7 +217,7 @@ def test_a_world_failing_only_on_its_bridges_names_both_ways_out(no_entry_points
 def test_a_typo_alongside_a_bridge_gets_the_plain_report(no_entry_points):
     """The hint would be actively misleading here: --no-communication cannot fix a misspelt plugin."""
     with pytest.raises(PluginError) as err:
-        _build({"plugins": [{"ros2_bridge": {}}, {"groud_truth_pose": {}}]})
+        _build({"components": [{"ros2_bridge": {}}, {"groud_truth_pose": {}}]})
     message = str(err.value)
     assert "groud_truth_pose" in message and "ros2_bridge" in message, "both are reported"
     assert "--no-communication" not in message
@@ -229,14 +229,14 @@ def test_every_unresolvable_ref_is_reported_at_once():
     No fixture needed: these two names are not registered in any environment.
     """
     with pytest.raises(PluginError) as err:
-        _build({"plugins": [{"nope_one": {}}, {"nope_two": {}}]})
+        _build({"components": [{"nope_one": {}}, {"nope_two": {}}]})
     assert "nope_one" in str(err.value) and "nope_two" in str(err.value)
 
 
 def test_a_single_failure_keeps_the_original_wording():
     """A plain typo is the common case; it should not gain a list to read."""
     with pytest.raises(PluginError, match="^unknown plugin 'groud_truth_pose'"):
-        _build({"plugins": [{"groud_truth_pose": {}}]})
+        _build({"components": [{"groud_truth_pose": {}}]})
 
 
 # -- expansion runs while the document loads, and must not make loading strict ------------------

@@ -15,17 +15,29 @@ from pathlib import Path
 import yaml
 
 from .config import PluginError, PluginSpec, document_entries, parse_plugin_entry
-from .document import refuse_unknown_keys
-from .frames import substitute
+from .document import nearest, refuse_unknown_keys
+from .frames import parse_frames, substitute
 from .models import resolve_model
 from .registry import resolve_plugin
 
-#: Every key a manifest may carry at its top level: ``components`` (or its alias ``plugins``) and
-#: ``extends`` read here, ``assets`` in :mod:`roqsim.models`, ``fov``/``frames``/``frame_id``/``license``
-#: by the accessors below. :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would
-#: load a model with no frames.
+#: Every key a manifest may carry at its top level: ``components`` and
+#: ``extends`` read here, ``assets`` in :mod:`roqsim.models`,
+#: ``fov``/``frames``/``frame_id``/``device_name``/``license`` by the accessors below,
+#: ``end_effector`` by ``spawn_arm`` (the site an arm mounts a tool at).
+#: :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would load a model with no
+#: frames.
 MANIFEST_KEYS = frozenset(
-    {"components", "plugins", "extends", "assets", "fov", "frames", "frame_id", "license"}
+    {
+        "components",
+        "extends",
+        "assets",
+        "fov",
+        "frames",
+        "frame_id",
+        "device_name",
+        "license",
+        "end_effector",
+    }
 )
 
 
@@ -68,8 +80,42 @@ def manifest_frames(model_file: Path) -> list:
     data = yaml.safe_load(path.read_text()) or {}
     frames = data.get("frames")
     if frames is not None and not isinstance(frames, list):
-        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pos, rpy}}")
+        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pose}}")
     return list(frames or [])
+
+
+def resolve_parent_frame(model_file: Path, name: str, frames=None, where: str = "") -> None:
+    """Refuse a ``parent_frame`` that is neither a body nor a declared frame of a carrier model.
+
+    *frames* are frames the carrier's spawn declares beside its manifest's (``spawn_robot``'s
+    ``frames:``). An unknown name is refused with a did-you-mean and the carrier's frames listed,
+    so a device is not left to fail at build with a missing site. Every declared frame is checked
+    too: two of one name, or a ``parent`` that is neither a body of the model nor a frame declared
+    before it, is refused.
+    """
+    import mujoco
+
+    path = manifest_path(model_file)
+    at = f"{where}: " if where else ""
+    declared = parse_frames(manifest_frames(model_file) + list(frames or []), f"manifest {path}")
+    bodies = {b.name for b in mujoco.MjSpec.from_file(str(model_file)).bodies if b.name}
+    seen: set[str] = set()
+    for frame in declared:
+        if frame.parent not in seen and frame.parent not in bodies:
+            raise PluginError(
+                f"manifest {path}: frame {frame.name!r} hangs from {frame.parent!r}, which is "
+                f"neither a body of {model_file.stem} nor a frame declared before it."
+            )
+        seen.add(frame.name)
+    if name in seen or name in bodies:
+        return
+    guess = nearest(name, seen | bodies)
+    hint = f" Did you mean {guess!r}?" if guess else ""
+    listed = ", ".join(f.name for f in declared) or "none"
+    raise PluginError(
+        f"{at}parent_frame {name!r} is neither a body nor a frame of {model_file.stem}.{hint} "
+        f"Its frames: {listed} (the 'frames:' block of {path.name})."
+    )
 
 
 def manifest_frame_id(model_file: Path) -> str | None:
@@ -78,8 +124,12 @@ def manifest_frame_id(model_file: Path) -> str | None:
     A mount that sets no ``frame_id`` of its own takes this one, and it is what a device manifest's
     ``{frame_id}`` placeholders are filled with then. ``None`` when there is no manifest or the
     vendor names no default -- a device whose frame name is always its integrator's choice -- so
-    such a mount must name the frame itself. A value that is not a plain frame name raises: a
-    default that is itself a template would reach a TF tree as a literal brace.
+    such a mount must name the frame itself.
+
+    The one placeholder it may carry is ``{device_name}`` (:func:`manifest_device_name`): a vendor
+    macro that prefixes every link with its ``name`` parameter names its optical frame
+    ``<name>_..._optical_frame``, and the mount fills it in. Any other placeholder raises, since it
+    would reach a TF tree as a literal brace.
     """
     path = manifest_path(model_file)
     if not path.exists():
@@ -88,9 +138,34 @@ def manifest_frame_id(model_file: Path) -> str | None:
     value = data.get("frame_id")
     if value is None:
         return None
-    if not isinstance(value, str) or not value or "{" in value or "}" in value:
+    bare = value.replace("{device_name}", "") if isinstance(value, str) else value
+    if not isinstance(value, str) or not value or "{" in bare or "}" in bare:
         raise PluginError(
             f"manifest {path}: 'frame_id' is the vendor's default scan-frame name, a non-empty "
+            f"string whose only placeholder may be '{{device_name}}' -- got {value!r}"
+        )
+    return value
+
+
+def manifest_device_name(model_file: Path) -> str | None:
+    """The ``device_name:`` a device model's manifest declares: the vendor macro's default ``name``.
+
+    A vendor description that instantiates a device through a macro prefixes each link it creates
+    with the macro's ``name`` parameter (``camera_link``, ``camera_color_optical_frame``). The
+    manifest spells those frames ``{device_name}_link``, and a mount that sets no ``device_name`` of
+    its own takes this default. ``None`` when there is no manifest or it declares none. A value that
+    is not a plain name raises.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text()) or {}
+    value = data.get("device_name")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or "{" in value or "}" in value:
+        raise PluginError(
+            f"manifest {path}: 'device_name' is the vendor macro's default 'name', a non-empty "
             f"string with no placeholder -- got {value!r}"
         )
     return value
@@ -167,7 +242,7 @@ def load_manifest(
             raise PluginError(f"manifest 'extends' cycle detected: {chain}")
         base_model = resolve_model(str(ext), base_dir=base_dir or path.parent).path
         inherited = load_manifest(base_model, base_dir=base_dir, seen=seen | {path})
-    return inherited + document_entries(data, str(path))
+    return inherited + document_entries(data)
 
 
 def expand_manifest(

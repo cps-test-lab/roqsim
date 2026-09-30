@@ -22,8 +22,7 @@ frame_id: velodyne          # velodyne_description VLP-16.urdf.xacro `name:=velo
 frames:
   - name: "{frame_id}"      # the vendor scan frame (VLP-16.urdf.xacro `${name}_base_scan_joint`)
     parent: mount
-    pos: [0.0, 0.0, 0.0377]
-    rpy: [0.0, 0.0, 0.0]
+    pose: {position: {z: 0.0377}}
 
 components:
   - lidar:

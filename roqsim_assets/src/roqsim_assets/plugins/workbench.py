@@ -34,8 +34,9 @@ Config::
 
     workbench:
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 bench)
-      pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement
-      rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)
+      pose:                 # world placement, a geometry_msgs/Pose (roqsim.pose); omitted
+        position: {x: 0.0, y: 0.0, z: 0.0}          #   components are 0
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       height: 0.695         # worktop height, m -- the lift column's stroke, 0.695 .. 0.995
       width: 2.00           # worktop size along X, m (default 2.00)
       depth: 0.70           # worktop size along Y, m (default 0.70)
@@ -54,7 +55,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 # The electric column's real stroke (datasheet: 695 mm nominal, 695-995 mm adjustable). Outside it the
 # bench is no longer this product, so it is refused rather than silently clamped.
@@ -108,15 +109,7 @@ class WorkbenchPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
-        # Pose parsing tolerates malformed input (falls back to the origin / identity) so a bad length
-        # is reported by validate_config with a friendly message rather than crashing construction.
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        if len(pos) in (2, 3):
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        else:
-            self.pos = [0.0, 0.0, 0.0]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports them
         # with a friendly message rather than crashing construction.
         self.height = self._float(self.config.get("height"), _HEIGHT_MIN)
@@ -212,10 +205,7 @@ class WorkbenchPlugin(Plugin):
                 )
             if 0 < depth < _CAB_D / 2 + 0.10:
                 errors.append(f"'depth' must be >= {_CAB_D / 2 + 0.10:g} m for a drawer cabinet")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, "workbench")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
