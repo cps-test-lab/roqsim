@@ -98,7 +98,7 @@ class Base(Plugin):
 
 
 def _engine(config=None, **world_config):
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     base = Base({"plan_rate_hz": 5.0, "publish_plan": False, **(config or {})}, entity="bot")
     return Engine(cfg, plugins=[DummyPlugin({}, name="bot"), base], preview=True), base
 
@@ -144,7 +144,7 @@ def test_an_option_naming_nothing_is_refused():
         def odom(self) -> float:
             return 0.0
 
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     engine = Engine(
         cfg, plugins=[DummyPlugin({}, name="bot"), Typo({}, entity="bot")], preview=True
     )

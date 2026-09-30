@@ -94,7 +94,7 @@ class Sim:
     """A world driven like `roqsim sim` drives it, on a thread of its own."""
 
     def __init__(self, uri: str, *extra):
-        cfg = load_config_from_dict({"sim": {}, "plugins": []})
+        cfg = load_config_from_dict({"sim": {}, "components": []})
         self.tank = Tank({}, entity="box", label="tank")
         self.engine = Engine(
             cfg,
@@ -292,7 +292,7 @@ def test_pause_step_n_and_resume(uri):
 
 
 def test_a_resumed_run_is_not_counted_as_falling_behind():
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{"dummy": {}, "name": "d0"}]})
+    cfg = load_config_from_dict({"sim": {}, "components": [{"dummy": {}, "name": "d0"}]})
     engine = Engine(cfg, preview=True)
     with engine:
         engine.reset()
@@ -307,7 +307,7 @@ def test_a_resumed_run_is_not_counted_as_falling_behind():
 
 
 def test_two_transports_writing_one_stream_warn_once_naming_both(caplog):
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     tank = Tank({}, entity="box", label="tank")
     with Engine(cfg, plugins=[DummyPlugin({}, name="box"), tank], preview=True) as engine:
         ep = engine.ctx.interface.find("box", "setpoint")

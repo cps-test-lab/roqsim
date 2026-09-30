@@ -34,21 +34,21 @@ def _kinds(plugins):
 
 
 def test_expand_injects_spec_after_parent():
-    cfg = load_config_from_dict({"plugins": [{PARENT: {}, "name": "r1"}]})
+    cfg = load_config_from_dict({"components": [{PARENT: {}, "name": "r1"}]})
     plugins = instantiate_plugins(cfg)
     assert _kinds(plugins) == ["Parent", "Child"]
     assert plugins[1].config == {"robot": "r1"}  # wired to the parent's entity
 
 
 def test_plain_plugin_expands_to_nothing():
-    cfg = load_config_from_dict({"plugins": [{CHILD: {}}]})
+    cfg = load_config_from_dict({"components": [{CHILD: {}}]})
     assert _kinds(instantiate_plugins(cfg)) == ["Child"]
 
 
 def test_each_parent_injects_its_own_child():
     cfg = load_config_from_dict(
         {
-            "plugins": [
+            "components": [
                 {PARENT: {}, "name": "alice"},
                 {PARENT: {}, "name": "bob"},
             ]

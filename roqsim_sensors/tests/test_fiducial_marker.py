@@ -86,7 +86,7 @@ def test_marker_attaches_to_named_body():
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_BodyScene": {}},
                 {
                     _MARKER: {
@@ -116,7 +116,7 @@ def test_missing_body_raises():
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     _MARKER: {"family": "apriltag_36h11", "attach_to": "ghost", "prefix": "x_"},
                 }
@@ -159,7 +159,7 @@ def test_world_marker_renders_and_decodes():
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_MarkerCamScene": {}},
                 {
                     _MARKER: {

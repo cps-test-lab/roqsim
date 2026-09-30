@@ -344,9 +344,9 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
   plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
-  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name`` and ``license`` and
-  nothing else: a key outside that
-  set is refused with the nearest known one named, since nothing reads it and a manifest loaded
+  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name``, ``license`` and, on an arm,
+  ``end_effector`` (where ``spawn_arm`` mounts a tool) and nothing else: a key outside that set is
+  refused with the nearest known one named, since nothing reads it and a manifest loaded
   without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
@@ -558,73 +558,20 @@ steers, because opting out of yielding is not opting out of existing: a mover th
 is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
 whose state is overwritten from ground truth, so the others go round it and it is never pushed.
 
-**Every key, and its default.** ``python -m pydoc roqsim_nav.plugins.navigator`` prints the
-annotated original beside the code it configures, which is the copy that cannot go stale.
+**Every key, and its default.** ``roqsim plugins describe navigator`` publishes the navigator's
+schema: each key with its type, unit and default, and for the ``avoidance``, ``planner``,
+``recovery`` and ``action_names`` blocks the keys each accepts. A key it does not name is refused at
+load, at the top level and inside a block alike, with the nearest key it knows. The ``drive``
+output's keys (``kinematics``, ``heading_gain``, ``max_angular_vel``, ``turn_in_place``,
+``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema;
+``kinematics`` is refused under ``output: mocap``.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 14 62
-
-   * - key
-     - default
-     - what it does
-   * - ``speed``
-     - *required*
-     - m/s the route is followed at.
-   * - ``goals``
-     - ``[]``
-     - The route, world metres: ``[x, y]`` or ``[x, y, yaw]``. Empty means "wait to be told".
-   * - ``output``
-     - ``auto``
-     - ``drive`` | ``mocap`` | ``walker`` | ``module:Class``. ``auto`` probes in a fixed order.
-   * - ``route_mode``
-     - ``plan``
-     - ``plan`` runs A\* between the points; ``exact`` makes the polyline *be* the path.
-   * - ``tracker``
-     - ``waypoint``
-     - ``waypoint`` steers at the goal; ``pure_pursuit`` steers at a carrot along the route, which
-       bounds cross-track error by ``lookahead`` rather than by ``arrival_radius``.
-   * - ``autostart``
-     - ``true``
-     - ``false`` plans at load and holds at the first point until something starts it.
-   * - ``loop``
-     - ``false``
-     - Cycle the route forever rather than stopping at the last point.
-   * - ``arrival_radius``
-     - ``0.25``
-     - m within which a goal counts as reached.
-   * - ``avoidance``
-     - ``{stop: true}``
-     - The block above: ``stop``, ``steer``, ``reroute``, ``params``, and the probe's tuning
-       (``lookahead``, ``width``, ``rays``, ``height``, ``clear_time``, ``yield_time``,
-       ``forget_after``, ``blockage_radius``, ``ignore``).
-   * - ``recovery``
-     - ``{enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}``
-     - For a mover that is wedged rather than merely blocked: it backs away from what stopped it and
-       re-plans. Refused with ``route_mode: exact``, which by definition cannot leave its path.
-   * - ``obstacle_height``
-     - ``[0.1, 1.8]``
-     - The z band a geom must span to be a wall **for this mover**, and the band its probe scans in.
-   * - ``resolution``
-     - ``0.05``
-     - m per planner grid cell. Movers agreeing on this and on ``obstacle_height`` share one raster.
-   * - ``planner``
-     - ``{inflation_radius: <measured>, waypoint_radius: 0.3}``
-     - Inflation defaults to the mover's own measured footprint, so it plans a path it fits through.
-   * - ``update_hz``
-     - ``20`` (``60`` for ``walker``)
-     - The nav pipeline's rate. Physics steps far faster; the output declares what it needs.
-   * - ``namespace``, ``goal_endpoint``, ``actions``
-     - the owner's, ``true``, all
-     - The goal interface: which actions this mover answers, and under what scope. nav2's
-       ``navigate_to_pose`` and ``navigate_through_poses`` send a route; ``start_route``
-       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is a ROS action only
-       when ``goals`` is set. Each returns the route's sequence number, which ``route_status``
-       reports once applied; ``cancel_route`` stops the mover. Those two are not on ROS.
-
-Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
-``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to
-``drive``; ``yaw_rate`` to ``mocap`` and ``walker``.
+**The goal interface.** ``goal_endpoint``, ``actions`` and ``action_names`` say which actions a
+mover answers and under what name, in the owner's ``namespace``. nav2's ``navigate_to_pose`` and
+``navigate_through_poses`` send a route; ``start_route`` (``roqsim_nav_interfaces/StartRoute``) runs
+the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
+number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
+not on ROS.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
@@ -754,11 +701,16 @@ contact it takes part in and never a statement about one of them. Two consequenc
   value is a floor on both.
 
 An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
-answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
-or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
-is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
-subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
-asking a world to enumerate them is how a pair silently misses the one that actually touches.
+answer and what this plugin declares. Its ``solref``, like every contact's, is subject to MuJoCo's
+floor for the integrator the world runs under (:func:`roqsim.solref.solref_floor`: two steps, or
+about one under ``discrete``, depending on the damping ratio and ``solimp``). ``sim.contact_override``
+refuses a time constant below it and ``roqsim check`` warns about a flex's; a pair's is passed
+through as stated, because the plugin builds before the integrator is resolved. Each side is named
+independently as an ``entity``, a ``body`` or a ``geom``, because a real pair mixes kinds -- the
+floor is a geom while the thing sliding on it is an entity, as in the second line above. An
+``entity`` or ``body`` pairs every geom of that subtree: a robot base with twenty collision geoms
+against a five-geom crate is a hundred pairs, and asking a world to enumerate them is how a pair
+silently misses the one that actually touches.
 
 One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
 contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
@@ -1176,7 +1128,9 @@ turn poses back into effort, which is a fitted constant between the simulator an
 ``efficiency``, ``idle_w``, ``resistive_w_per_nm2`` and ``regenerative`` are the platform's own
 numbers; unset, the plugin reports mechanical work and nothing else. A state of charge exists only
 where a ``capacity_wh`` was given -- without one the fraction is reported as *unknown* rather than as
-a full battery.
+a full battery. Every one of those defaults is what an absent key means, so a misspelt one would
+report an energy figure that looks measured and assumes nothing: the plugin's keys are declared with
+``STRICT_KEYS``, and ``resistive_w_per_nm`` is refused with the key it meant.
 
 The per-actuator split is what makes the number usable on an arm. Each actuator's ``force *
 velocity`` is sorted into driving and driven *before* the sum, so one joint descending under gravity
@@ -1276,7 +1230,7 @@ not read is a plugin that publicly takes no configuration::
            resolution: 0.25         # nested keys are published as sample.resolution
    """
 
-Four things the readers rely on:
+The things the readers rely on:
 
 * **The block opens with a line beginning** ``Config`` **and ending** ``::``. Qualify it freely
   ("Config (in addition to ``lidar_common``'s ...)::") and let the qualifier wrap over up to three
@@ -1284,9 +1238,20 @@ Four things the readers rely on:
 * **One key per line, as** ``name: example``. The example is documentation, not a parsed value.
 * **Nest as the world YAML nests.** A key opening a mapping is published under the dotted path a
   world writes it at, so the block and the YAML have one shape rather than two.
+* **A list is an example, not a block's end.** Under a key holding a list, ``- [4.0, 3.0]`` is an
+  example value, and ``- field: geom_friction`` publishes the item's keys under the list's key
+  (``overrides.field``). A blank line between groups of keys stays in the block; the block ends at a
+  line written left of its keys, which is where the prose after it sits.
 * **Put it on the MODULE, not the class.** A class docstring that merely points at the module
   ("See the module docstring.") is ignored in favour of the module's, but a class that documents
   different keys than its module will publish its own.
+* **Inherited keys are documented once, on the base.** A device built on shared machinery -- a
+  scanner on ``lidar_common``, a depth camera on ``camera_common`` -- documents what distinguishes
+  it, and ``roqsim plugins describe`` publishes its block followed by each base plugin's.
+* **Every key the plugin reads is in it.** A guard test reads every shipped plugin's source and
+  fails on a literal key that neither the block nor the schema publishes, since a caller that checks
+  a world against the catalog would refuse that key in a valid world. A key read only to be refused
+  with a reason (``seed`` on a sensor that draws from the run's seed) is not a setting and stays out.
 
 Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
 cannot be validated, so it drifts, and this block is read by a caller writing a world.
@@ -1305,6 +1270,9 @@ the published description come from one place::
            "body": Field(str, default="", static=True, doc="body to load (default: the root body)"),
        }
 
+       def configure(self, ctx):
+           mass = self.settings.mass                  # the configured value, or the default
+
        def validate_config(self, config):
            return [...]                               # whatever only this plugin knows
 
@@ -1313,21 +1281,44 @@ the published description come from one place::
 adds; there is no call to remember. A schema the catalog publishes and nothing checks would be
 prose with a type annotation.
 
-``roqsim plugins describe payload`` then carries a ``schema`` block beside the docstring-parsed
-``parameters``: the same keys with their **types, defaults, units and bounds**. That is what a caller
-generating a world needs and what prose cannot give it -- and unlike a comment it cannot drift from
-behaviour, because validation runs on it.
+``roqsim plugins describe payload`` then carries a ``schema`` block: the keys with their **types,
+defaults, units and bounds**. That is what a caller generating a world needs and what prose cannot
+give it -- and unlike a comment it cannot drift from behaviour, because validation runs on it. The
+``parameters`` list every plugin publishes, and this page's ``Config::`` block for the plugin, are
+derived from the same declaration, so a plugin with a schema writes **no** ``Config::`` block of its
+own: a second copy of its keys in prose is the one that drifts, and a test refuses it.
+
+**It is also how the plugin reads its config.** ``self.settings`` is the config seen through the
+schema: ``self.settings.mass`` is the configured value, or the declared default where the world left
+the key out, so a default is written once rather than again in ``__init__`` and ``validate_config``.
+A name the schema does not declare raises ``AttributeError`` (a ``config.get`` of a misspelt key
+returns ``None`` and runs on it), and nothing can be assigned to it. ``validate_config`` reads the
+config it is handed with ``self.settings_for(config)``. Nothing is converted beyond an ``int`` read as
+a ``float``, so a plugin takes values as they are rather than calling ``float()`` in ``__init__``,
+where a wrong type would raise before the check that names it. Keys another owner injects
+(``namespace``, ``topics``) stay on ``self.config``, as does a plugin without a schema.
 
 It is opt-in: a plugin without a declaration is unchecked by it, and one with a declaration still
 owns ``validate_config``. The schema covers what is the same everywhere; a rule only one plugin has
 (two lists the same length, a file that must exist, a cut that must be finite) stays where it
 belongs rather than growing the shared vocabulary.
 
+A key that takes more than one shape declares a tuple of types, as ``isinstance`` does:
+``Field((float, dict), minimum=0.0)`` is one coefficient or one per actuator, and is published as
+``"type": ["float", "dict"]``. The bound applies to the number; a mapping's entries stay with
+``validate_config``, which is the rule a schema cannot state for a shape it does not look inside.
+
+A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
+(``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
+block, and ``present``, which the base class checks for every plugin). The same guard test holds
+every shipped schema to it.
+
 ``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
 ``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
 opt-in because a component's config carries keys the world's author did not write (a manifest's
 ``prefix``, a spawn's entity); those are known centrally, and a plugin says so once its own list is
-complete.
+complete. A schema that stays open says why in ``OPEN_KEYS = "<reason>"``, which ``describe``
+publishes beside ``strict_keys``; the guard test refuses an open schema without one.
 
 Declaring a plugin's endpoints
 ------------------------------
@@ -2154,9 +2145,6 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is accepted as well and derives a ``controller_type`` when none is
-named; prefer ``controller_type``.
-
 **A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
 setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
 closes on the pose error follows it a steady distance behind: ``v / kp`` for the motion controller
@@ -2222,7 +2210,7 @@ blackboard handle. The sensor and the control law belong to the arm, so they sit
          name: ft
        - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
-   - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
+   - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, target_pos: [...]}
 
 **Read the refs, not the order.** Three are named — ``spawn_arm`` and ``cartesian_admittance`` from
 ``roqsim_manipulation``, ``force_torque`` from ``roqsim_sensors`` — and resolve through entry points because
@@ -2235,11 +2223,16 @@ it, is the experiment's to state.
 
 Four things decide whether such a world measures anything at all:
 
-* **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
-  from the body's children, so the tool must hang **below** it. A peg attached above the measurement
-  site produces a wrench that is identically zero — which looks like a well-behaved controller, not
-  like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut) and ``tool_site`` (the attach
-  point, further out) so the two cannot be confused.
+* **Where the sensor cuts.** A site force sensor reads the wrench the site's body receives from its
+  parent -- that body and everything below it -- so the tool must hang **below** it. A tool on any
+  other branch contributes nothing: no weight, no push, no contact, which looks like a well-behaved
+  controller, not like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut, on its
+  sensor stack ``tool0``) and ``tool_site`` (the stack's outer face, further out), and its manifest
+  declares ``tool_site`` as where ``spawn_arm``'s ``end_effector:`` mounts a tool by default -- its
+  bare ``attachment_site`` is on the flange *beside* the stack, where a tool reads as 0 N at
+  ``fts_site``. Every arm model with a free mount declares its site the same way
+  (``end_effector: {site: ...}`` in its manifest), and ``force_torque`` refuses a sensor on an arm
+  whose mounted tool is outside the subtree it reads -- see that plugin's docstring.
 * **Gravity and tool mass.** With gravity on and a realistically-massed tool, any metric that
   integrates force is dominated by the tool's own weight. Zeroing is a command, as it is on real
   hardware: ``force_torque`` exposes a ``tare`` service (``std_srvs/Trigger``, the analogue of a
@@ -2418,8 +2411,8 @@ Manipulation: a prop or a tool that deforms
 
 A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
 model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
-``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
-needs (:mod:`roqsim.flex`). What the spawn adds around it:
+``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto``
+picks the integrator the flex needs (:mod:`roqsim.flex`). What the spawn adds around it:
 
 * **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
   ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts

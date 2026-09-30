@@ -79,7 +79,13 @@ class _Output:
 
 
 class BridgeBase(Plugin):
-    """Base for transport bridges. Subclass, set ``BACKEND``, implement the backend hooks."""
+    """Base for transport bridges. Subclass, set ``BACKEND``, implement the backend hooks.
+
+    Config (every bridge)::
+
+        owner: robot              # serve only this owner's endpoints (a name or a list); default all
+        rates: {scan: 5.0}        # Hz per endpoint name, over the endpoint's own rate
+    """
 
     #: Backend key selecting which ``endpoint.backend[...]`` hint block applies (e.g. "ros2").
     BACKEND: str = ""
