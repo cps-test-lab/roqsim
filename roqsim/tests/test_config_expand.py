@@ -34,21 +34,21 @@ def _kinds(plugins):
 
 
 def test_expand_injects_spec_after_parent():
-    cfg = load_config_from_dict({"plugins": [{PARENT: {}, "name": "r1"}]})
+    cfg = load_config_from_dict({"components": [{PARENT: {}, "name": "r1"}]})
     plugins = instantiate_plugins(cfg)
     assert _kinds(plugins) == ["Parent", "Child"]
     assert plugins[1].config == {"robot": "r1"}  # wired to the parent's entity
 
 
 def test_plain_plugin_expands_to_nothing():
-    cfg = load_config_from_dict({"plugins": [{CHILD: {}}]})
+    cfg = load_config_from_dict({"components": [{CHILD: {}}]})
     assert _kinds(instantiate_plugins(cfg)) == ["Child"]
 
 
 def test_each_parent_injects_its_own_child():
     cfg = load_config_from_dict(
         {
-            "plugins": [
+            "components": [
                 {PARENT: {}, "name": "alice"},
                 {PARENT: {}, "name": "bob"},
             ]
@@ -302,3 +302,62 @@ def test_components_under_an_entry_that_registers_no_entity_are_refused(tmp_path
     )
     with pytest.raises(PluginError, match="registers no entity"):
         _load([{CARRIER: {"model": robot}, "name": "robot"}])
+
+
+# -- where an expansion error comes from ----------------------------------------------------------
+
+
+def _world_file(tmp_path, entries):
+    import yaml
+
+    path = tmp_path / "world.yaml"
+    path.write_text(yaml.safe_dump({"sim": {}, "components": entries}))
+    return path
+
+
+def test_an_unknown_model_in_a_nested_entry_names_the_world_file_and_the_address(tmp_path):
+    from roqsim.config import load_config
+
+    robot = _robot_model(tmp_path, "no_such_model_xyz")
+    world = _world_file(tmp_path, [{CARRIER: {"model": robot}, "name": "robot"}])
+    with pytest.raises(PluginError) as exc:
+        load_config(world)
+    message = str(exc.value)
+    assert message.startswith(f"{world.resolve()}: robot.scan_front: model 'no_such_model_xyz'")
+    assert message.count(str(world.resolve())) == 1, "located once, by the entry that failed"
+
+
+def test_an_error_that_quotes_the_address_is_not_given_it_twice(tmp_path):
+    from roqsim.config import load_config
+
+    world = _world_file(tmp_path, [{PARENT: {}, "name": "p", "components": [{CHILD: {}}]}])
+    with pytest.raises(PluginError) as exc:
+        load_config(world)
+    assert str(exc.value).startswith(f"{world.resolve()}: 'p' ({PARENT}) has a 'components:'")
+
+
+def test_an_unresolved_ref_names_the_world_file_and_the_address(tmp_path):
+    from roqsim.config import load_config
+
+    world = _world_file(
+        tmp_path,
+        [{CARRIER: {}, "name": "robot", "components": [{"not_a_plugin_xyz": {}, "name": "x"}]}],
+    )
+    with pytest.raises(PluginError) as exc:
+        instantiate_plugins(load_config(world))
+    assert str(exc.value).startswith(f"{world.resolve()}: robot.x: ")
+    assert "not_a_plugin_xyz" in str(exc.value)
+
+
+class Buggy(Plugin):
+    @classmethod
+    def expand(cls, spec, world, base_dir):
+        raise KeyError("a bug in expand")
+
+
+def test_a_bug_in_expand_propagates_unchanged(tmp_path):
+    from roqsim.config import load_config
+
+    world = _world_file(tmp_path, [{f"{__name__}:Buggy": {}, "name": "b"}])
+    with pytest.raises(KeyError, match="a bug in expand"):
+        load_config(world)

@@ -63,7 +63,7 @@ class _Scene(Plugin):
 def _engine(*sensors: dict) -> Engine:
     cfg = {
         "sim": {},
-        "plugins": [{f"{__name__}:_Scene": {}}]
+        "components": [{f"{__name__}:_Scene": {}}]
         + [{"roqsim_sensors.plugins.range_sensor:RangeSensorPlugin": s} for s in sensors],
     }
     engine = Engine(load_config_from_dict(cfg))

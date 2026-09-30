@@ -32,6 +32,7 @@ Config::
       package_pose:         # the package's free-body reset pose, in the BELT's frame (the belt's
         position: {x: 1.0, y: 0.6, z: 0.996}   #   own pose is applied to it); a geometry_msgs/Pose,
                                                #   omitted components 0; default at the feed end
+      object_name: package  # entity name the ridden package registers under
 """
 
 from __future__ import annotations

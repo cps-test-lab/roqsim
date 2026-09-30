@@ -36,7 +36,7 @@ class _OneWallScene(Plugin):
 def _world(**cfg):
     config = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_OneWallScene": {}},
             {"roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin": cfg},
         ],
@@ -146,7 +146,7 @@ def _single_ray_world(wall_x: float, **cfg):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_SingleWallScene": {}},
                 {
                     "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin": {
@@ -215,7 +215,7 @@ def _grazing_world(**cfg):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_GroundPlaneScene": {}},
                 {
                     "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin": {
@@ -302,7 +302,7 @@ def _device_world(**spawn):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [{"spawn_sensor": {"model": "mid360", **spawn}, "name": "lidar"}],
+            "components": [{"spawn_sensor": {"model": "mid360", **spawn}, "name": "lidar"}],
         }
     )
 

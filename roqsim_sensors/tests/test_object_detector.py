@@ -42,7 +42,7 @@ def _engine(**config) -> Engine:
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_Scene": {}},
                 {"roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin": config},
             ],

@@ -35,7 +35,7 @@ class _OneWallScene(Plugin):
 def _world(**lidar_config):
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_OneWallScene": {}},
             {"roqsim_sensors.plugins.lidar:LidarPlugin": lidar_config},
         ],
@@ -365,7 +365,7 @@ class _MastScene(Plugin):
 def _mast_world(**lidar_config):
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_MastScene": {}},
             {"roqsim_sensors.plugins.lidar:LidarPlugin": lidar_config},
         ],
@@ -472,7 +472,7 @@ def _housed_world(**lidar_config):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_HousedScene": {}},
                 {"roqsim_sensors.plugins.lidar:LidarPlugin": lidar_config},
             ],

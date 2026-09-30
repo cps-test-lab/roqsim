@@ -295,11 +295,6 @@ def _switch_every_controller(engine: Engine) -> None:
         )
 
 
-def _set_law(engine: Engine) -> None:
-    for plugin in _plugins(engine, "cartesian_admittance"):
-        plugin.set_law("position")
-
-
 def _override(engine: Engine) -> None:
     for plugin in _plugins(engine, "model_override"):
         plugin.set_active(not plugin.initial_active)
@@ -397,7 +392,7 @@ CASES: dict[str, Case] = {
     "force_torque": Case(lambda _: _arm()),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
-        use=(_switch_every_controller, _set_law),
+        use=(_switch_every_controller,),
     ),
     "force_limit": Case(
         # Low enough to trip within the trial, which is what a trial does with it.

@@ -12,8 +12,12 @@ drive plugin published (so ``diff_drive`` still does its own inverse kinematics,
 and odometry -- the wheels really turn), a mocap prop takes a written pose. Outputs are resolved from
 an entry-point group, so nothing here knows what embodiments exist.
 
-Config -- a component of the entry that provides the entity it moves, since ownership is where the
-entry sits rather than a config key::
+It is a component of the entry that provides the entity it moves, since ownership is where the entry
+sits rather than a config key. Every key, with its type, unit and default, is
+:data:`NavigatorPlugin.CONFIG_SCHEMA`, which ``roqsim plugins describe navigator`` publishes, and a
+key it does not name is refused. The nested blocks -- ``avoidance``, ``planner``, ``recovery`` and
+``action_names`` -- declare their keys there too, and are published with them. The top-level keys,
+grouped by what reads them::
 
     navigator:
       output: auto            # auto | drive | mocap | ... | module:Class | file.py:Class
@@ -37,23 +41,12 @@ entry sits rather than a config key::
       arrival_radius: 0.25
 
       # -- what it does about what the plan did not contain -----------------------------------
-      # Three independent capabilities, not a ladder. See AVOIDANCE_KEYS for why.
-      avoidance:
-        stop: true            # look ahead and hold until the way is clear
-        steer: none           # none | give_way | orca | module:Class -- which model gives way
-        reroute: false        # remember what stopped it and plan around it (needs `stop`)
-        params: {}            # per-agent keys the chosen model accepts, checked at load
-
-        # the probe's own tuning, in the same block
-        lookahead: 1.2        # m of clear corridor needed, measured from the mover's FRONT
-        width: 0.6            # m of corridor swept: the body, plus the clearance it should keep
-        rays: 5               # how finely that width is sampled
-        height: 0             # m above the floor to scan; 0 -> just above obstacle_height's floor
-        clear_time: 0.5       # s the way must stay open before setting off again
-        yield_time: 3.0       # s a blockage reads as traffic before recovery may engage
-        forget_after: 5.0     # s a remembered blockage keeps steering the planner (reroute only)
-        blockage_radius: 0    # m of the disc a blockage marks; 0 -> half the corridor width
-        ignore: []            # entities this mover never stops for
+      # `avoidance:` holds three independent capabilities, not a ladder (see AVOIDANCE_KEYS for
+      # why), and the probe's tuning.
+      radius: 0.3             # m, this mover's disc to the avoidance model (default: measured
+                              #   from its footprint) and the planner's inflation (default: 0.3)
+      max_speed: 1.0          # m/s the avoidance model may command it (default: max(1, 2*speed))
+      params: {}              # this mover's own keys for the avoidance model, passed to add_agent
 
       # -- output: drive ---------------------------------------------------------------------
       kinematics: auto        # auto | unicycle | holonomic | ackermann (auto asks the output)
@@ -67,10 +60,8 @@ entry sits rather than a config key::
       yaw_rate: 3.0           # rad/s the body is re-faced at (0 = snap)
 
       # -- planning --------------------------------------------------------------------------
-      obstacle_height: [0.05, 0.6]  # z band a geom must span to be a wall FOR THIS MOVER
+      obstacle_height: [0.1, 1.8]   # z band a geom must span to be a wall FOR THIS MOVER
       resolution: 0.05              # m per planner grid cell
-      planner:  {inflation_radius: 0.35, waypoint_radius: 0.3}
-      recovery: {enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       update_hz: 20.0               # nav pipeline rate; physics steps far faster
 
 ``obstacle_height`` is per mover on purpose: a 0.4 m pallet is not stopped by a ceiling beam that
@@ -90,6 +81,7 @@ from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
+from roqsim.schema import Field
 from roqsim.types import Length
 
 from .._resolve import RegistryError
@@ -133,15 +125,6 @@ ROUTE_MODES = ("plan", "exact")
 #: stopped for it.
 AVOIDANCE_KEYS = ("steer", "stop", "reroute", "params")
 
-#: Keys `avoidance:` supersedes, and what each maps to. Refused by name rather than quietly ignored:
-#: a world that spells it that way is asking for behaviour it will not get.
-_RETIRED_KEYS = {
-    "traffic": "`traffic: respect` is `avoidance: {stop: true}` (the default); `traffic: ignore` "
-    "is `avoidance: {stop: false}`.",
-    "caution": "Its tuning keys (lookahead, width, rays, height, clear_time, ignore, ...) are now "
-    "keys of `avoidance:` directly, and `caution.on_blocked: replan` is `avoidance: {reroute: true}`.",
-}
-
 #: How the planned path is turned into motion.
 #:
 #: ``waypoint`` steers at the active goal and advances when within ``arrival_radius`` -- the
@@ -162,8 +145,77 @@ _RETIRED_KEYS = {
 TRACKERS = ("waypoint", "pure_pursuit")
 
 
+#: The probe's tuning in ``avoidance:`` (:attr:`CautionProbe.KEYS`). Ranges are the probe's to check.
+_PROBE_FIELDS = {
+    "lookahead": Field(float, default=1.2, unit="m", doc="clear corridor needed, from the front"),
+    "width": Field(float, default=0.6, unit="m", doc="corridor swept: the body plus its clearance"),
+    "rays": Field(int, default=5, doc="rays sampling that width"),
+    "height": Field(
+        float, default=None, unit="m", doc="scan height; default: obstacle_height's floor + 5 cm"
+    ),
+    "clear_time": Field(float, default=0.5, unit="s", doc="the way stays open this long to go on"),
+    "yield_time": Field(
+        float, default=3.0, unit="s", doc="a blockage is traffic this long before recovery may run"
+    ),
+    "forget_after": Field(
+        float, default=5.0, unit="s", doc="a remembered blockage steers the planner this long"
+    ),
+    "blockage_radius": Field(
+        float, default=None, unit="m", doc="disc a blockage marks; default: half the corridor width"
+    ),
+    "ignore": Field(list, default=[], doc="entities this mover never stops for"),
+}
+
+#: ``avoidance:``: the three capabilities (:data:`AVOIDANCE_KEYS`), the model's parameters, and the
+#: probe's tuning.
+AVOIDANCE_SCHEMA = {
+    "stop": Field(bool, default=True, doc="look ahead and hold until the way is clear"),
+    "steer": Field(
+        str, default="none", doc="none | give_way | orca | module:Class: which model gives way"
+    ),
+    "reroute": Field(bool, default=False, doc="plan around what stopped it; needs stop"),
+    "params": Field(dict, default={}, doc="the steer model's world-level keys"),
+    **_PROBE_FIELDS,
+}
+
+#: ``planner:``.
+PLANNER_SCHEMA = {
+    "inflation_radius": Field(
+        float, default=None, unit="m", doc="wall inflation; default: the mover's footprint radius"
+    ),
+    "waypoint_radius": Field(float, default=0.3, unit="m", doc="a path waypoint counts as reached"),
+}
+
+#: ``recovery:``.
+RECOVERY_SCHEMA = {
+    "enabled": Field(bool, default=True, doc="back away and re-plan when wedged"),
+    "stuck_time": Field(float, default=1.5, unit="s", doc="window progress is measured over"),
+    "stuck_eps": Field(float, default=0.10, unit="m", doc="less progress than this is stuck"),
+    "backup_time": Field(float, default=0.5, unit="s", doc="how long it backs away"),
+    "backup_speed": Field(float, default=0.4, unit="m/s", doc="speed it backs away at"),
+    "max_recovery": Field(int, default=4, doc="recoveries before it gives up on a goal"),
+}
+
+
+def _number(value) -> bool:
+    """A YAML number; the schema reports anything else."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _params_errors(where: str, cls, steer: str, params) -> list[str]:
+    """Keys of *params* the model *steer* does not accept."""
+    schema = set(getattr(cls, "params_schema", ()) or ())
+    unknown = sorted(set(params or {}) - schema) if schema else []
+    if not unknown:
+        return []
+    return [
+        f"'{where}': avoidance model {steer!r} does not accept {', '.join(unknown)}. It accepts: "
+        f"{', '.join(sorted(schema))}."
+    ]
+
+
 def _validate_avoidance(config: dict, base_dir) -> list[str]:
-    """Check the `avoidance:` block: its three capabilities, its model, and the probe's tuning."""
+    """What the schema cannot say about `avoidance:`: how its keys combine, and its model."""
     spec = config.get("avoidance")
     if spec is None:
         return []
@@ -175,9 +227,6 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
             "For example: avoidance: {steer: give_way, stop: true, lookahead: 0.6}"
         ]
     errors = []
-    for key in ("stop", "reroute"):
-        if key in spec and not isinstance(spec[key], bool):
-            errors.append(f"'avoidance.{key}' must be true or false")
     if spec.get("reroute") and not spec.get("stop", True):
         errors.append(
             "'avoidance.reroute' needs 'stop': a blockage is only ever discovered by looking ahead "
@@ -190,31 +239,15 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
             f"does not say which. Use 'none' or one of: "
             f"{', '.join(avoidance_models()) or '(none registered)'}."
         )
-    elif not isinstance(steer, str):
-        errors.append("'avoidance.steer' must be 'none' or a model name")
-    elif steer != "none":
+    elif isinstance(steer, str) and steer != "none":
         try:
             cls = resolve_model(steer, base_dir)
         except RegistryError as exc:
             errors.append(str(exc))
         else:
-            schema = set(getattr(cls, "params_schema", ()) or ())
-            params = spec.get("params") or {}
-            unknown = sorted(set(params) - schema) if schema else []
-            if unknown:
-                errors.append(
-                    f"avoidance model {steer!r} does not accept {', '.join(unknown)}. It accepts: "
-                    f"{', '.join(sorted(schema))}. (A key left over from another model is refused "
-                    f"rather than ignored.)"
-                )
-    probe = {k: v for k, v in spec.items() if k not in AVOIDANCE_KEYS}
-    unknown = sorted(set(probe) - set(CautionProbe.KEYS))
-    if unknown:
-        errors.append(
-            f"'avoidance' does not accept {', '.join(unknown)}. Its keys are "
-            f"{', '.join(AVOIDANCE_KEYS)} plus the probe's: {', '.join(CautionProbe.KEYS)}."
-        )
-    return errors + CautionProbe.validate(probe)
+            errors += _params_errors("avoidance.params", cls, steer, spec.get("params"))
+            errors += _params_errors("params", cls, steer, config.get("params"))
+    return errors + CautionProbe.validate({k: v for k, v in spec.items() if k in _PROBE_FIELDS})
 
 
 def _dwell_pair(d) -> tuple[float, float]:
@@ -283,6 +316,68 @@ class NavigatorPlugin(Plugin):
     #: attribute it can honestly carry.
     requires_owner = True
 
+    #: Action types a bridge may serve this navigator's goal endpoint as. Named as STRINGS, so this
+    #: package imports nothing ROS and a world that declares no bridge needs no nav2 installed --
+    #: the bridge resolves the name and finds its handler.
+    ACTIONS = {
+        "navigate_to_pose": "nav2_msgs.action.NavigateToPose",
+        "navigate_through_poses": "nav2_msgs.action.NavigateThroughPoses",
+        "start_route": "roqsim_nav_interfaces.action.StartRoute",
+    }
+
+    #: Every key the navigator and its ``drive`` and ``mocap`` outputs read, its nested blocks'
+    #: included.
+    CONFIG_SCHEMA = {
+        "output": Field(str, default="auto", doc="auto | drive | mocap | walker | module:Class"),
+        "speed": Field(float, required=True, minimum=0.0, unit="m/s", doc="0: does not move"),
+        "goals": Field(list, default=[], unit="m", doc="the route: [x, y] or [x, y, yaw] each"),
+        "dwell": Field(
+            object,
+            default=0.0,
+            unit="s",
+            doc="pause on reaching a point: s, [lo, hi], or one per route point, start included",
+        ),
+        "route_mode": Field(str, default="plan", choices=ROUTE_MODES, doc="exact: no planner"),
+        "tracker": Field(str, default="waypoint", choices=TRACKERS),
+        "lookahead": Field(float, default=0.6, unit="m", doc="pure_pursuit carrot distance"),
+        "autostart": Field(bool, default=True, doc="false: hold at the start until started"),
+        "loop": Field(bool, default=False, doc="cycle the route forever"),
+        "arrival_radius": Field(float, default=0.25, unit="m", doc="a goal counts as reached"),
+        "avoidance": Field(dict, schema=AVOIDANCE_SCHEMA, doc="what it does about the unplanned"),
+        "params": Field(dict, default={}, doc="this mover's own keys for the steer model"),
+        "radius": Field(float, default=None, unit="m", doc="footprint; default: measured"),
+        "max_speed": Field(
+            float, default=None, unit="m/s", doc="cap for avoidance; default: max(1, 2 * speed)"
+        ),
+        "kinematics": Field(
+            str, default="auto", choices=("auto", *sorted(LAWS)), doc="drive: the base's law"
+        ),
+        "heading_gain": Field(float, default=2.0, unit="1/s", doc="drive: yaw rate per rad error"),
+        "max_angular_vel": Field(float, default=1.5, unit="rad/s", doc="drive: yaw rate cap"),
+        "turn_in_place": Field(
+            float, default=0.8, unit="rad", doc="drive, unicycle: pivot above this heading error"
+        ),
+        "min_speed": Field(float, default=0.15, unit="m/s", doc="drive, ackermann: speed floor"),
+        "face": Field(str, default="travel", choices=("travel", "hold"), doc="drive, holonomic"),
+        "yaw_rate": Field(float, default=3.0, unit="rad/s", doc="mocap: re-facing rate; 0 snaps"),
+        "obstacle_height": Field(
+            list, default=[0.1, 1.8], length=2, unit="m", doc="z band a geom spans to be a wall"
+        ),
+        "resolution": Field(float, default=DEFAULT_RESOLUTION, unit="m", doc="planner grid cell"),
+        "planner": Field(dict, schema=PLANNER_SCHEMA, doc="the path between the route's points"),
+        "recovery": Field(dict, schema=RECOVERY_SCHEMA, doc="backing away when wedged"),
+        "update_hz": Field(
+            float, default=None, unit="Hz", doc="nav rate; default: the output's, else 20"
+        ),
+        "goal_endpoint": Field(bool, default=True, doc="false: declares no goal endpoint"),
+        "actions": Field(list, default=None, doc="actions served; default: all"),
+        "action_names": Field(
+            dict,
+            schema={a: Field(str, default=a, doc="the action's name") for a in ACTIONS},
+            doc="the name each action is served under",
+        ),
+    }
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self._output = None
@@ -306,29 +401,11 @@ class NavigatorPlugin(Plugin):
 
     # -- validation ----------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
+        """What the schema cannot say: keys that depend on each other, and the avoidance model."""
         errors: list[str] = []
-        speed = config.get("speed")
-        if speed is None:
-            errors.append("'speed' is required (m/s the route is followed at)")
-        else:
-            try:
-                if float(speed) < 0.0:
-                    # Zero is allowed and means "does not move": a mover parked as scenery that a
-                    # scenario may later send somewhere, or a walker placed purely to be measured
-                    # against. Negative is not a slower speed, it is a mistake.
-                    errors.append("'speed' must be >= 0 (0 means it does not move)")
-            except (TypeError, ValueError):
-                errors.append("'speed' must be a number (m/s)")
-
-        mode = config.get("route_mode", "plan")
-        if mode not in ROUTE_MODES:
-            errors.append(f"'route_mode' must be one of: {', '.join(ROUTE_MODES)}")
-
         tracker = config.get("tracker", "waypoint")
-        if tracker not in TRACKERS:
-            errors.append(f"'tracker' must be one of: {', '.join(TRACKERS)}")
         if config.get("lookahead") is not None:
-            if float(config["lookahead"]) <= 0.0:
+            if _number(config["lookahead"]) and config["lookahead"] <= 0.0:
                 errors.append("'lookahead' must be > 0")
             if tracker != "pure_pursuit":
                 errors.append(
@@ -350,8 +427,6 @@ class NavigatorPlugin(Plugin):
             errors.append("'loop: true' needs at least one goal to cycle through")
 
         kin = config.get("kinematics", "auto")
-        if kin != "auto" and kin not in LAWS:
-            errors.append(f"'kinematics' must be 'auto' or one of: {', '.join(sorted(LAWS))}")
         if kin != "auto" and config.get("output") in ("mocap",):
             # Silently ignoring a key is the failure a validator exists to prevent: a pose is
             # written where the path says, so there is no base geometry to shape a command for.
@@ -362,29 +437,32 @@ class NavigatorPlugin(Plugin):
 
         band = config.get("obstacle_height")
         if band is not None:
-            ok = isinstance(band, (list, tuple)) and len(band) == 2
-            if not ok or float(band[0]) >= float(band[1]):
+            ok = isinstance(band, (list, tuple)) and len(band) == 2 and all(map(_number, band))
+            if not ok or band[0] >= band[1]:
                 errors.append("'obstacle_height' must be [z_lo, z_hi] with z_lo < z_hi")
 
         for key in ("arrival_radius", "resolution", "update_hz", "heading_gain", "max_angular_vel"):
             value = config.get(key)
-            if value is not None and float(value) <= 0.0:
+            if _number(value) and value <= 0.0:
                 errors.append(f"'{key}' must be > 0")
 
-        for gone, guidance in _RETIRED_KEYS.items():
-            if gone in config:
-                errors.append(f"'{gone}' has moved into the `avoidance:` block. {guidance}")
+        actions = config.get("actions")
+        for key in actions if isinstance(actions, list) else ():
+            if key not in self.ACTIONS:
+                errors.append(f"'actions' names {key!r}; the actions are {', '.join(self.ACTIONS)}")
         errors += _validate_avoidance(config, self.base_dir)
         avoid_spec = config.get("avoidance")
         avoid_spec = avoid_spec if isinstance(avoid_spec, dict) else {}
-        if avoid_spec.get("reroute") and config.get("route_mode") == "exact":
+        exact = config.get("route_mode") == "exact"
+        if avoid_spec.get("reroute") and exact:
             errors.append(
                 "'avoidance.reroute' cannot be used with 'route_mode: exact'. An exact route IS the "
                 "given polyline, so planning around something means not walking it; stopping is the "
                 "only response that keeps that promise."
             )
 
-        if (config.get("recovery") or {}).get("enabled") and mode == "exact":
+        recovery = config.get("recovery")
+        if isinstance(recovery, dict) and recovery.get("enabled") and exact:
             # Backing up and re-planning is, by definition, leaving the path that was given.
             errors.append(
                 "'recovery' cannot be enabled with route_mode: exact -- recovery re-plans, and "
@@ -780,15 +858,6 @@ class NavigatorPlugin(Plugin):
         st.loop = bool(self.config.get("loop", False))
         self._core.reset()
 
-    #: Action types a bridge may serve this navigator's goal endpoint as. Named as STRINGS, so this
-    #: package imports nothing ROS and a world that declares no bridge needs no nav2 installed --
-    #: the bridge resolves the name and finds its handler.
-    ACTIONS = {
-        "navigate_to_pose": "nav2_msgs.action.NavigateToPose",
-        "navigate_through_poses": "nav2_msgs.action.NavigateThroughPoses",
-        "start_route": "roqsim_nav_interfaces.action.StartRoute",
-    }
-
     def _select_goal_endpoints(self) -> None:
         """Which goal endpoints this mover declares, and each one's action name.
 
@@ -819,14 +888,8 @@ class NavigatorPlugin(Plugin):
         self.serves_start_route = "start_route" in served
         self.serves_goals = bool(cfg.get("goal_endpoint", True))
         names = cfg.get("action_names") or {}
-        # `action_name` (singular) is the walker's own spelling for the through-poses name.
-        legacy = cfg.get("action_name")
         self._action_hints = {
-            a: {
-                "action": self.ACTIONS[a],
-                "name": names.get(a) or (legacy if legacy and a == "navigate_through_poses" else a),
-            }
-            for a in served
+            a: {"action": self.ACTIONS[a], "name": names.get(a) or a} for a in served
         }
 
     # Commands, so every goal is applied, in order. The navigation action handlers go through the

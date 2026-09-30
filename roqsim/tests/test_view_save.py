@@ -169,7 +169,7 @@ def test_the_view_line_itself_is_left_alone():
 
 
 def test_adds_a_view_to_a_sim_block_that_has_none():
-    before = "sim:\n  name: Lab\n  pacing: realtime\n\nplugins:\n  - dummy: {}\n"
+    before = "sim:\n  name: Lab\n  pacing: realtime\n\ncomponents:\n  - dummy: {}\n"
     after = replace_sim_view(before, VIEW)
     assert _sim_view(after) == VIEW
     assert yaml.safe_load(after)["sim"]["pacing"] == "realtime"
@@ -193,7 +193,7 @@ def test_writes_into_the_child_of_an_extends_chain():
 
 
 def test_a_comment_between_sim_and_plugins_is_not_swallowed():
-    before = "sim:\n  name: Lab\n\n# The robot and its sensors:\nplugins:\n  - dummy: {}\n"
+    before = "sim:\n  name: Lab\n\n# The robot and its sensors:\ncomponents:\n  - dummy: {}\n"
     after = replace_sim_view(before, VIEW)
     assert "# The robot and its sensors:" in after
     assert _sim_view(after) == VIEW
@@ -250,7 +250,7 @@ def test_an_unterminated_flow_mapping_is_refused():
 
 def test_save_view_rewrites_the_file(tmp_path):
     path = tmp_path / "world.yaml"
-    path.write_text("sim:\n  name: Lab  # keep me\n\nplugins:\n  - dummy: {}\n")
+    path.write_text("sim:\n  name: Lab  # keep me\n\ncomponents:\n  - dummy: {}\n")
     save_view(path, VIEW)
     assert _sim_view(path.read_text()) == VIEW
     assert "# keep me" in path.read_text()

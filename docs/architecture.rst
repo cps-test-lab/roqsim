@@ -164,6 +164,14 @@ Single world YAML, two sections; ``components`` order = execution order:
 Each entry is a mapping with exactly one plugin-ref key (its value is the ``config`` map) plus an
 optional reserved ``name:`` sibling, defaulting to the ref. ``name:`` or ``components:`` found inside
 the config map is refused (``parse_plugin_entry``), because no plugin reads either from its config.
+
+Those two sections, ``extends``/``disable`` (inheritance) and ``version`` are the whole top level
+(``roqsim.config.WORLD_KEYS``), and any other key there is refused. A world declares no parameters
+and substitutes nothing into itself: a value that varies per run is written as its ordinary literal
+and changed by an **override**, which addresses the key in place. An override rooted anywhere but
+``sim`` or ``components`` is refused for the same reason: accepted, it would merge into the document
+where nothing reads it, and the run would report success against the unchanged world.
+
 Three plugin-ref resolution forms (``resolve_plugin``):
 
 1. **Short name** → ``roqsim.plugins`` entry-point group.
@@ -438,9 +446,9 @@ On a fixed base nothing lies above the mechanism: the engine steps with one ``mj
 
 **Where each half is applied, and why they differ.** The actuator rewrite runs on the child ``MjSpec`` right after ``apply_assets`` and **before** an end effector is grafted on: ``actuators:`` names the actuators *this model* declares, and the graft puts a gripper's tendon actuator into the same spec, so a shared ``control:`` resolved after it would fall on a tendon — which has no joint stiffness — and refuse a block whose gains were only ever about the arm. The gravity-compensation half runs **after** the graft, for the opposite reason: ``body_gravcomp`` is per body and does not cascade, so an arm compensated before its tool was attached would sag by exactly the tool's weight. Compensating the tool is also the right physics — a real controller is told its payload and holds that too. Both run before ``spec.attach``, so the whole thing is pre-compile and the file on disk is never touched; a world that declares nothing compiles a byte-identical model.
 
-**Refusals name their replacement**, the way ``motion:`` does: MuJoCo's own spellings (``kp``, ``kv``, ``kd``, ``forcerange``) and its actuator types (``motor``, ``pd``) are refused rather than translated, because these plugins take config maps they do not fully own and a key merely not read would be accepted in silence. Keys under ``each:`` are actuator names; a **joint** name is refused naming the actuator that drives it, rather than resolved silently, so a reader of someone else's world can tell what a key is without opening the MJCF. ``roqsim catalog model <model>`` lists the names.
+**The block is declared once**, as ``roqsim.actuators.ACTUATORS``, and both spawn plugins put it in their ``CONFIG_SCHEMA``: the shared keys are a block of fixed keys, and ``each:`` is a mapping from actuator names to blocks of the same keys (``Field(dict, values=...)``), so ``roqsim plugins describe`` publishes it and the schema check refuses an unknown key by its full path (``actuators.each.wrist_3.stifness``). **Refusals name their replacement**: MuJoCo's own spellings (``kp``, ``kv``, ``kd``, ``forcerange``) and its actuator types (``motor``, ``pd``) are unknown keys and values like any other, refused in one error that carries the replacement as the declaration's hint, and never read. Keys under ``each:`` are actuator names; a **joint** name is refused naming the actuator that drives it, rather than resolved silently, so a reader of someone else's world can tell what a key is without opening the MJCF. ``roqsim catalog model <model>`` lists the names.
 
-A shape error (an unknown key, a gain the chosen law does not read) is found by ``validate_config`` at ``roqsim check``'s **config** stage, before anything is compiled. Anything needing the model — an unknown actuator, a joint name, a tendon, a missing ``ctrlrange`` — is raised in ``build()`` and lands at the **build** stage. That split is a contract rather than a detail: an external validator that checks a world before spending compute on it does so by compiling — ``roqsim scenes describe --entities`` is that call — so both kinds of mistake reach its author rather than a trial. ``ctrlrange`` is required only when the **command unit** changes (rad ↔ rad/s ↔ N·m); ``position`` → ``impedance`` keeps the unit, so the model's own ``ctrlrange`` stays correct and is not refused.
+A shape error (an unknown key, a gain the chosen law does not read) is found by the schema check and ``validate_config`` at ``roqsim check``'s **config** stage, before anything is compiled. Anything needing the model — an unknown actuator, a joint name, a tendon, a missing ``ctrlrange`` — is raised in ``build()`` and lands at the **build** stage. That split is a contract rather than a detail: an external validator that checks a world before spending compute on it does so by compiling — ``roqsim scenes describe --entities`` is that call — so both kinds of mistake reach its author rather than a trial. ``ctrlrange`` is required only when the **command unit** changes (rad ↔ rad/s ↔ N·m); ``position`` → ``impedance`` keeps the unit, so the model's own ``ctrlrange`` stays correct and is not refused.
 
 The **resolved table** — every actuator, its final law and gains, and whether each value came from the model or the world — is published on ``SimContext.actuator_tables`` at ``configure`` and written into the run's provenance beside ``world_model`` (``capture.py``). It carries every actuator rather than only the changed ones, because "what did this joint run under" is a question about the run and not about the diff. The addition needs no ``FORMAT_VERSION`` bump: ``Recording`` reads ``world_model`` by name and ignores keys it does not know.
 
@@ -523,8 +531,6 @@ A spawn plugin's ``model:`` string is resolved by ``roqsim.models.resolve_model`
 
     [project.entry-points."roqsim.models"]
     roqsim_assets = "roqsim_assets.models"   # a module exposing MODELS_DIR
-
-**A retired name is refused.** A model renamed because what its numbers mean changed -- a mount frame re-seated on the frame the vendor macro's origin places -- keeps its old name in a table, so a world that still names it is refused at load with the new name, why it changed and what to re-express, rather than loading with its pose silently reinterpreted. A provider module declares its own as ``RETIRED_MODELS`` (old name to ``roqsim.models.RetiredModel``) beside ``MODELS_DIR``; ``roqsim.models.RETIRED_MODELS`` holds the core's. An entry is deleted once downstream has moved.
 
 Example: a downstream package can ship only a custom arm variant — say ``ur10e_custom.xml`` + ``ur10e_custom.manifest.yaml``, no mesh copies — whose manifest ``assets: [roqsim_manipulation_assets, roqsim_sensors]`` borrows the stock arm meshes from one package and a camera mesh from another. ``spawn_arm: {model: ur10e_custom}`` then places it even though ``spawn_arm`` lives in a third package, ``roqsim_manipulation`` — which ships no models at all.
 
