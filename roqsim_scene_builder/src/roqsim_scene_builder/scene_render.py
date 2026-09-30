@@ -106,6 +106,7 @@ def render_scene(
 
     Raises:
         FileNotFoundError: if ``target`` or ``state`` names a file that does not exist.
+        TypeError: if ``focus`` is a string rather than a list of names.
         RuntimeError: if rendering fails -- the message is ``roqsim render``'s own.
     """
     if target:
@@ -115,6 +116,9 @@ def render_scene(
         raise FileNotFoundError(f"state: no such file: {state}")
     if not target and not state:
         raise ValueError("give a target to render, or a state recording to render from")
+    if isinstance(focus, str):
+        # Spread as a list, a string would frame on each of its characters.
+        raise TypeError(f"focus is a list of names: focus=[{focus!r}]")
 
     destination = (
         Path(out) if out else Path(tempfile.mkdtemp(prefix="roqsim-render-")) / "render.png"
@@ -129,8 +133,7 @@ def render_scene(
     if view:
         argv += ["--view", *view]
     if focus:
-        # A bare string is one name, not a sequence of characters.
-        argv += ["--focus", *([focus] if isinstance(focus, str) else focus)]
+        argv += ["--focus", *focus]
     if camera:
         argv += ["--camera", camera]
     if no_ceiling:

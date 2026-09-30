@@ -102,11 +102,11 @@ def test_flags_are_forwarded(fake_rst, tmp_path, world):
     ]
 
 
-def test_a_single_focus_string_is_one_name(fake_rst, tmp_path, world):
-    scene_render.render_scene(world, out=str(tmp_path / "x.png"), focus="robot")
-    argv = fake_rst["argv"]
-    assert argv[argv.index("--focus") + 1] == "robot"
-    assert "r" not in argv, "a string was spread into its characters"
+def test_a_focus_string_is_refused(fake_rst, tmp_path, world):
+    """``focus`` is a list; a string would be spread into its characters."""
+    with pytest.raises(TypeError, match=r"focus=\['robot'\]"):
+        scene_render.render_scene(world, out=str(tmp_path / "x.png"), focus="robot")
+    assert "argv" not in fake_rst, "nothing is rendered"
 
 
 @pytest.mark.parametrize("moment", ["onset", "onset+2.5", "onset-1"])
