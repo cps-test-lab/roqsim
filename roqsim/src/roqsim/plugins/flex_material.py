@@ -5,21 +5,15 @@ arm's ``end_effector``, the world MJCF, or a plugin's build. Its material is wha
 varies, and a value that lives only in that MJCF cannot be a campaign factor. This plugin states it
 in the world, where ``--set`` and a campaign reach it like any other component key.
 
-Config::
+Every key is declared in :attr:`FlexMaterialPlugin.CONFIG_SCHEMA`, which ``roqsim plugins describe
+flex_material`` publishes, and any other key is refused. A softer block, for instance::
 
     flex_material:
-      flex: block             # REQUIRED: the flex's name in the model (an attached model's prefix
-                              # included), or a list of names that all take this material
-      young: 5.0e+5           # Pa, Young's modulus (write 5.0e+5, not 5e5 -- see below)
-      poisson: 0.45           # Poisson's ratio, [0, 0.5)
-      damping: 0.002          # s, stiffness-proportional damping
+      flex: block             # the flex's name in the model (an attached model's prefix included),
+                              # or a list of names that all take this material
+      young: 5.0e+5           # Pa (write 5.0e+5, not 5e5 -- see below)
+      poisson: 0.45
       friction: 1.5           # sliding, or [slide, spin, roll]
-      solref: [0.004, 1]      # contact solver reference; a scalar sets the time constant
-      solimp: [0.95, 0.99, 0.001, 0.5, 2]
-      priority: 1             # contact priority: the higher side's friction/solref/solimp win
-      radius: 0.002           # m, collision radius around vertices and elements
-      thickness: 0.002        # m, dim=2 (shell) only
-      elastic2d: both         # dim=2 only: none | bend | stretch | both
 
 Every key but ``flex`` is optional, and one left out keeps the model's own value, so a world states
 exactly the factors it varies. A vector given short keeps the flex's own values for the rest. Each key
@@ -61,7 +55,7 @@ import mujoco
 
 from ..context import SimContext
 from ..plugin import Plugin
-from ..schema import INJECTED_KEYS, Field
+from ..schema import Field
 from ._flex_material import ELASTIC2D, MATERIAL_KEYS, MATERIAL_VECTORS, apply_material, find_flex
 
 _log = logging.getLogger(__name__)
@@ -71,6 +65,9 @@ class FlexMaterialPlugin(Plugin):
     #: The flex it edits was added by another plugin's build, or by the world MJCF.
 
     CONFIG_SCHEMA = {
+        "flex": Field(
+            (str, list), required=True, doc="the flex's name in the model, or a list of names"
+        ),
         "young": Field(float, minimum=0.0, unit="Pa", doc="Young's modulus"),
         "poisson": Field(float, minimum=0.0, doc="Poisson's ratio, below 0.5"),
         "damping": Field(float, minimum=0.0, unit="s", doc="stiffness-proportional damping"),
@@ -78,6 +75,11 @@ class FlexMaterialPlugin(Plugin):
         "radius": Field(float, minimum=0.0, unit="m", doc="collision radius"),
         "thickness": Field(float, minimum=0.0, unit="m", doc="shell thickness (dim=2 only)"),
         "elastic2d": Field(str, choices=ELASTIC2D, doc="shell elasticity mode (dim=2 only)"),
+        "friction": Field((float, list), doc="sliding, or [slide, spin, roll]; each >= 0"),
+        "solref": Field(
+            (float, list), doc="contact solver reference; a scalar is the time constant"
+        ),
+        "solimp": Field((float, list), doc="contact solver impedance, up to 5 numbers"),
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -87,21 +89,12 @@ class FlexMaterialPlugin(Plugin):
 
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
+        # Types, the required key and unknown keys are the schema's; what is left is what it has no
+        # word for: the names in a list, the entries of a vector, and the Poisson bound.
         flex = config.get("flex")
-        if isinstance(flex, str):
-            flex = [flex]
-        if (
-            not flex
-            or not isinstance(flex, list)
-            or not all(isinstance(f, str) and f for f in flex)
-        ):
-            errors.append("'flex' is required: the name of the flex (or a list of names) to set")
-        known = {"flex", *MATERIAL_KEYS, *INJECTED_KEYS}
-        for key in config:
-            if key not in known:
-                errors.append(
-                    f"'{key}' is not a flex material key. Known: {', '.join(MATERIAL_KEYS)}"
-                )
+        names = [flex] if isinstance(flex, str) else flex
+        if isinstance(names, list) and not (names and all(isinstance(f, str) and f for f in names)):
+            errors.append("'flex' must name a flex, or be a non-empty list of names")
         if not any(key in config for key in MATERIAL_KEYS):
             errors.append(f"sets nothing: give at least one of {', '.join(MATERIAL_KEYS)}")
         for key, value in config.items():

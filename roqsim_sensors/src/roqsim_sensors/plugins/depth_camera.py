@@ -2,15 +2,30 @@
 
 :class:`~camera_common.CameraPlugin` owns the colour render; this adds the depth pass on top of it and
 nothing device-specific, so an OAK-D, a RealSense and a Zivid are siblings here rather than one
-subclassing another. A subclass sets its optics and its topic layout, and registers its depth
-endpoint through :meth:`DepthCameraPlugin._add_depth_endpoints`.
+subclassing another. A subclass sets its optics and its topic layout, and turns its depth
+endpoints on through :meth:`DepthCameraPlugin._add_depth_endpoints`.
 
 Config (in addition to ``camera_common.CameraPlugin``'s)::
 
     <plugin short name>:
+      depth_camera: <DEFAULT_DEPTH_CAMERA>  # the MuJoCo camera depth is rendered from; default:
+                              #   the device's own, else the colour `camera`
+      depth_width: null       # override the depth camera's MJCF resolution (a separate depth
+      depth_height: null      #   camera only; through the colour camera, `width`/`height` apply)
       clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return"
       clip_far: 100.0         # m
       depth_encoding: 32FC1   # or 16UC1 -- see below
+      depth_codec: png        # png | rvl: the 16UC1 compressedDepth companion's codec
+
+**Which camera depth comes from.** Depth is rendered from the camera at the frame it is stamped in.
+A device that images depth through its own optics -- a RealSense's stereo pair, whose depth frame is
+not its colour frame -- has a second MuJoCo camera at its depth optical frame
+(:data:`~camera_common.DEPTH_CAMERA_SUFFIX`), and a subclass names it as ``DEFAULT_DEPTH_CAMERA``:
+depth, the depth ``camera_info`` and anything reprojected from them then come from that camera, at
+its own FOV and resolution, while colour stays on ``camera``. A device whose driver aligns depth to
+the colour image (an OAK-D's default) or whose depth and colour share one imager (a Zivid) renders
+depth through ``camera`` itself, off the colour pass. A world overrides it with ``depth_camera:``,
+and a camera that does not exist is refused at configure rather than replaced by the colour one.
 
 **The two depth encodings, and why the choice exists.** ``self._depth`` is always float32 metres with
 ``inf`` for "no return": that is what a reprojection wants, and the point-cloud path consumes it
@@ -40,11 +55,15 @@ depth topics that disagree.
 
 from __future__ import annotations
 
+import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.rendering import FrameRenderer
+from roqsim.types import CameraInfo, Image
 
-from .camera_common import CameraPlugin, sibling_topic
+from .camera_common import CameraPlugin, Intrinsics, camera_info_of, intrinsics_from_model
 
 #: uint16 millimetres saturate here, so this is the largest range `16UC1` can carry.
 MAX_16UC1_RANGE_M = 65.535
@@ -67,16 +86,29 @@ DEFAULT_DEPTH_CODEC = "png"
 class DepthCameraPlugin(CameraPlugin):
     DEFAULT_DEPTH_ENCODING = "32FC1"
     DEPTH_ENCODINGS = ("32FC1", "16UC1")
+    #: The camera depth is rendered from; ``None`` is the colour camera (see the module docstring).
+    DEFAULT_DEPTH_CAMERA: str | None = None
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
+        self.depth_camera = (
+            self.config.get("depth_camera") or self.DEFAULT_DEPTH_CAMERA or self.camera
+        )
+        self._depth_width_cfg = self.config.get("depth_width")
+        self._depth_height_cfg = self.config.get("depth_height")
+        self._depth_cam_id = -1
+        self._depth_intr: Intrinsics | None = None
+        #: The depth camera's own renderer, when it is not the colour camera.
+        self._depth_frames: FrameRenderer | None = None
         self.clip_near = float(self.config.get("clip_near", 0.3))
         self.clip_far = float(self.config.get("clip_far", 100.0))
         self.depth_encoding = str(self.config.get("depth_encoding", self.DEFAULT_DEPTH_ENCODING))
         self.depth_codec = str(self.config.get("depth_codec", DEFAULT_DEPTH_CODEC))
         self._depth: np.ndarray | None = None
-        self._depth_ep: Endpoint | None = None
-        self._depth_compressed_ep: Endpoint | None = None
+        #: The depth topic before the world's `topics:` rename, and its frame; set by
+        #: `_add_depth_endpoints`, and empty on a device that publishes no depth.
+        self._depth_topic = ""
+        self._depth_frame_id = ""
         #: The encoded payload, cached for the frame in `_depth`; see `_depth_payload`.
         self._depth_wire: np.ndarray | None = None
         #: The "no return" mask, kept from the clip step so the conversion needs no `isfinite` pass.
@@ -85,6 +117,18 @@ class DepthCameraPlugin(CameraPlugin):
 
     def validate_config(self, config: dict) -> list[str]:
         errors = super().validate_config(config)
+        for key in ("depth_width", "depth_height"):
+            if config.get(key) is not None and int(config[key]) <= 0:
+                errors.append(f"'{key}' must be > 0")
+        depth_camera = config.get("depth_camera") or self.DEFAULT_DEPTH_CAMERA
+        camera = config.get("camera", self.DEFAULT_CAMERA)
+        if (depth_camera in (None, camera)) and (
+            config.get("depth_width") is not None or config.get("depth_height") is not None
+        ):
+            errors.append(
+                "'depth_width'/'depth_height' size a separate depth camera; this one renders depth "
+                f"through the colour camera {camera!r}, which 'width'/'height' size"
+            )
         if float(config.get("clip_near", 0.3)) < 0:
             errors.append("'clip_near' must be >= 0")
         if float(config.get("clip_far", 100.0)) <= float(config.get("clip_near", 0.3)):
@@ -125,92 +169,92 @@ class DepthCameraPlugin(CameraPlugin):
             )
         return errors
 
-    def _add_depth_endpoints(self, ctx: SimContext, ns: str, topic: str, frame_id: str) -> Endpoint:
-        """Register this camera's depth output(s) and return the raw image endpoint.
+    def _add_depth_endpoints(self, ctx: SimContext, topic: str, frame_id: str) -> None:
+        """Turn on this camera's depth output(s), published on *topic* in *frame_id*.
 
-        Every depth camera registers through here, so the payload an endpoint reads and the
-        ``encoding`` it advertises cannot drift apart -- publishing metres under a ``16UC1`` hint is
-        a garbled image, not an error, at the far end. ``topic`` is the caller's already-resolved
-        topic (each device has its own layout, which is why the endpoint is not built here from a
-        prefix).
+        Every depth camera goes through here, so the payload an endpoint reads and the ``encoding``
+        it carries cannot drift apart -- publishing metres as ``16UC1`` is a garbled image, not an
+        error, at the far end. *topic* is the device's own layout (each device has its own, which is
+        why it is not built here from a prefix); a world's ``topics: {depth: ...}`` renames it.
         """
-        self._depth_ep = Endpoint(
-            name="depth",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=self._depth_payload,
-            rate_hz=self.rate_hz,
-            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.Image",
-                    "topic": topic,
-                    "frame_id": frame_id,
-                    "encoding": self.depth_encoding,
-                }
-            },
-        )
-        ctx.interface.add(self._depth_ep)
-        # Gate the renderer on depth too: a consumer wanting only depth must still get frames.
-        self._extra_outputs.append(self._depth_ep)
+        self._resolve_depth_camera(ctx)
+        self._depth_topic = topic
+        self._depth_frame_id = frame_id
 
-        # A depth stream needs its OWN intrinsics: a consumer that rectifies or reprojects depth
-        # subscribes to the info topic beside the depth image, and given only the colour stream's it
-        # waits forever. `camera_info` is a sibling of its image in the same namespace (ROS's own
-        # convention, and what realsense-ros, zivid-ros and a Gazebo rgbd_camera all publish), so the
-        # topic is derived from the resolved depth topic rather than spelled out per device -- a world
-        # that hardwires the depth topic to match a driver gets the matching info topic with it.
-        #
-        # The payload is the colour intrinsics, because both streams come off ONE MuJoCo camera: real
-        # hardware images depth through different optics with different intrinsics, and a plugin
-        # rendering one camera cannot pretend otherwise. NOT in `_gate_endpoints`, and not lazy, for
-        # the same reasons the colour info is neither: it needs no render and costs six floats.
-        ctx.interface.add(
-            Endpoint(
-                name="depth_camera_info",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._intr,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.CameraInfo",
-                        "topic": self.topic_override("depth_camera_info")
-                        or sibling_topic(topic, "camera_info"),
-                        "frame_id": frame_id,
-                    }
-                },
+    # As expensive to serialise as the colour frame; see camera_common's `image`.
+    @endpoint.out(
+        name="depth",
+        rate="rate_hz",
+        lazy=True,
+        when="_depth_topic",
+        ros2=lambda self: {"topic": self._depth_topic, "frame_id": self._depth_frame_id},
+    )
+    def depth_image(self) -> Image | None:
+        """The depth frame in the encoding this camera advertises; nothing before the first capture."""
+        payload = self._depth_payload()
+        return None if payload is None else Image(payload, self.depth_encoding)
+
+    # A depth stream needs its OWN intrinsics: a consumer that rectifies or reprojects depth
+    # subscribes to the info topic beside the depth image, and given only the colour stream's it
+    # waits forever. `camera_info` is a sibling of its image in the same namespace (ROS's own
+    # convention, and what realsense-ros, zivid-ros and a Gazebo rgbd_camera all publish), so the
+    # topic is derived from the depth topic rather than spelled out per device.
+    #
+    # The payload is the depth camera's intrinsics -- the colour camera's only where depth is rendered
+    # through it. Not lazy, and no render gate, for the same reasons the colour info is neither: it
+    # needs no render and costs six floats.
+    @endpoint.out(
+        rate="rate_hz",
+        when="_depth_topic",
+        ros2=lambda self: {
+            "topic": "{depth}/../camera_info",
+            "frame_id": self._depth_frame_id,
+        },
+    )
+    def depth_camera_info(self) -> CameraInfo:
+        """The pinhole intrinsics of the depth frame."""
+        return camera_info_of(self._depth_intr)
+
+    # `<depth topic>/compressedDepth`, image_transport's convention. Same payload as the raw
+    # endpoint: one array, two wire formats, and the codec belongs to the bridge. Lazy: the encode is
+    # paid only while something subscribes to THIS topic.
+    @endpoint.out(
+        rate="rate_hz",
+        lazy=True,
+        when=lambda self: (
+            bool(self._depth_topic) and self.compressed and self.depth_encoding == "16UC1"
+        ),
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.CompressedImage",
+            "topic": "{depth}/compressedDepth",
+            "frame_id": self._depth_frame_id,
+            "format": self.depth_codec,
+        },
+    )
+    def depth_compressed(self) -> Image | None:
+        """The depth frame, compressedDepth-encoded on the wire."""
+        return self.depth_image()
+
+    def _resolve_depth_camera(self, ctx: SimContext) -> None:
+        """The depth camera's id and intrinsics: the colour camera's own when depth renders through it."""
+        if self.depth_camera == self.camera:
+            self._depth_cam_id, self._depth_intr = self._cam_id, self._intr
+            return
+        name = self._prefix + self.depth_camera
+        self._depth_cam_id = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
+        if self._depth_cam_id < 0:
+            raise RuntimeError(
+                f"{type(self).__name__}: depth camera {name!r} not found. A model that renders "
+                f"depth through its colour camera says so with 'depth_camera: {self.camera}'."
             )
+        self._depth_intr = intrinsics_from_model(
+            ctx.model,
+            self._depth_cam_id,
+            width=self._depth_width_cfg,
+            height=self._depth_height_cfg,
+            default_width=self.DEFAULT_WIDTH,
+            default_height=self.DEFAULT_HEIGHT,
         )
-        if self.compressed and self.depth_encoding == "16UC1":
-            # `<depth topic>/compressedDepth`, image_transport's convention, derived from the topic
-            # resolved above -- so a world that hardwires the depth topic to match a driver gets the
-            # matching compressed one without naming it twice. Same payload as the raw endpoint: one
-            # array, two wire formats, and the codec belongs to the bridge.
-            self._depth_compressed_ep = Endpoint(
-                name="depth_compressed",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self._depth_payload,
-                rate_hz=self.rate_hz,
-                lazy=True,  # the encode is paid only while something subscribes to THIS topic
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.CompressedImage",
-                        "topic": self.topic_override("depth_compressed")
-                        or f"{topic}/compressedDepth",
-                        "frame_id": frame_id,
-                        "encoding": self.depth_encoding,
-                        "format": self.depth_codec,
-                    }
-                },
-            )
-            ctx.interface.add(self._depth_compressed_ep)
-            self._extra_outputs.append(self._depth_compressed_ep)
-        return self._depth_ep
 
     def _depth_payload(self) -> np.ndarray | None:
         """The depth image in the encoding this camera advertises.
@@ -242,8 +286,15 @@ class DepthCameraPlugin(CameraPlugin):
         return mm.astype(np.uint16)
 
     def _capture_extra(self, ctx: SimContext, renderer) -> None:
+        if self._depth_cam_id != self._cam_id:
+            if self._depth_frames is None:
+                intr = self._depth_intr
+                self._depth_frames = FrameRenderer(
+                    ctx.model, intr.width, intr.height, camera=self._depth_cam_id
+                )
+            renderer = self._depth_frames.raw
         renderer.enable_depth_rendering()
-        renderer.update_scene(ctx.data, camera=self._cam_id)
+        renderer.update_scene(ctx.data, camera=self._depth_cam_id)
         depth = renderer.render().astype(np.float32)
         renderer.disable_depth_rendering()
         self._invalid = (depth < self.clip_near) | (depth > self.clip_far)
@@ -254,3 +305,9 @@ class DepthCameraPlugin(CameraPlugin):
     def _reset_extra(self, ctx: SimContext) -> None:
         self._depth = None
         self._depth_wire = None
+
+    def shutdown(self, ctx: SimContext) -> None:
+        if self._depth_frames is not None:
+            self._depth_frames.close()
+            self._depth_frames = None
+        super().shutdown(ctx)

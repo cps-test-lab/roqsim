@@ -208,6 +208,24 @@ def test_a_trigger_reaches_the_producer_on_the_physics_thread():
     assert button.presses == 1
 
 
+def test_a_trigger_whose_command_raises_replies_with_the_failure():
+    """A marshalled command hands back a future, and what it raised is the reply, not a success."""
+    ctx, stop, thread = _wire()
+
+    def refuse(_c):
+        raise RuntimeError("no sensor to zero")
+
+    handler = get_service_handler("std_srvs.srv.Trigger")
+    try:
+        out = handler(object(), _Response(), ctx, lambda _p: ctx.submit(refuse), None)
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
+
+    assert out.success is False
+    assert "no sensor to zero" in out.message
+
+
 def test_a_trigger_on_a_stalled_simulation_reports_that_it_did_not_land():
     """Not a silent success: the barrier is the only thing that can tell the caller."""
     button = _Button()

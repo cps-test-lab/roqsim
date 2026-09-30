@@ -52,6 +52,8 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from .solref import MAX_IMP, MIN_IMP, solref_floor
+
 #: The absolute floor of the tolerance, in metres. A start pose is written by hand, snapped from a
 #: settled run, or placed by a primitive against a mesh's hull, and each of those is off by a few
 #: millimetres without anything being wrong; a pose that is actually wrong buries a part by
@@ -70,10 +72,6 @@ HINT = (
     "intended, exclude the pair (contype/conaffinity or an <exclude>) so the solver does not "
     "separate it on the first steps"
 )
-
-# MuJoCo clamps solimp's dmin/dmax into [mjMINIMP, mjMAXIMP] before using them.
-_MIN_IMP = 0.0001
-_MAX_IMP = 0.9999
 
 
 @dataclass(frozen=True)
@@ -124,8 +122,9 @@ def contact_tolerance(model, solref, solimp, floor: float = DEFAULT_TOLERANCE) -
       ``dmin`` to ``dmax``, so a contact inside it is still being eased in by design.
     * ``g / k``: the depth at which the contact's spring alone asks for one standard gravity of
       acceleration, with ``k`` MuJoCo's reference stiffness for the contact's ``solref`` --
-      ``1 / (dmax^2 * timeconst^2 * dampratio^2)``, the time constant clamped to two steps as MuJoCo
-      clamps it, or ``-solref[0] / dmax^2`` in the direct form. A resting contact carries its weight
+      ``1 / (dmax^2 * timeconst^2 * dampratio^2)``, the time constant raised to MuJoCo's floor for
+      this integrator (:func:`roqsim.solref.solref_floor`), or ``-solref[0] / dmax^2`` in the direct
+      form. A resting contact carries its weight
       at a fraction of this depth; a contact several times deeper is pushed out at several g on the
       first step. A contact softer than the default is meant to sink further, and this term is what
       lets the tolerance follow it.
@@ -135,12 +134,12 @@ def contact_tolerance(model, solref, solimp, floor: float = DEFAULT_TOLERANCE) -
     """
     solref = np.asarray(solref, dtype=float).reshape(-1, 2)
     solimp = np.asarray(solimp, dtype=float).reshape(-1, 5)
-    dmax = np.clip(solimp[:, 1], _MIN_IMP, _MAX_IMP)
+    dmax = np.clip(solimp[:, 1], MIN_IMP, MAX_IMP)
     width = solimp[:, 2]
 
     timeconst = solref[:, 0]
-    if not model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_REFSAFE:
-        timeconst = np.maximum(timeconst, 2.0 * model.opt.timestep)
+    if (ref_floor := solref_floor(model.opt, solref, solimp)) is not None:
+        timeconst = np.maximum(timeconst, ref_floor)
     dampratio = solref[:, 1]
     with np.errstate(divide="ignore", invalid="ignore"):
         k = np.where(
