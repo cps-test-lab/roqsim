@@ -40,6 +40,9 @@ schema from something that already exists, leaving the generator downstream unch
   be the former rather than inventing walls through them.
 * ``roqsim scenes dxf-to-floorplan`` — when the layout exists as a CAD drawing.
 
+Every ``roqsim scenes`` tool, including the SDF/USD/json-ld importers and ``fuel-fetch``, is listed
+with where it is covered in ``roqsim_scenes/README.md`` (*Commands*).
+
 Both emit axis-aligned walls only. A hand-drawn plan, or a world with diagonal walls, still belongs
 in the sketch window — the generator itself places a wall at any angle.
 
@@ -85,7 +88,7 @@ The ``review_scene_by_human`` tool
 
     review_scene_by_human(target: str, message: str = "", settle_steps: int = 0,
                           timeout_s: float | None = None, title: str = "",
-                          focus_object: str = "") -> dict
+                          focus_object: str = "", size: str = "960x720") -> dict
 
 * **target** — world / MJCF / model reference (above). A path to a missing file fails loudly.
 * **title** — a short heading atop the panel in a larger font (the *what* under review). Optional.
@@ -100,6 +103,7 @@ The ``review_scene_by_human`` tool
   model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An
   unknown name is not an error: it warns and falls back to the automatic camera.
 * **timeout_s** — seconds to wait for a verdict before ``TimeoutError`` (default 600).
+* **size** — the 3D view in pixels, ``WxH`` (default ``960x720``), the CLI's ``--size``.
 
 Returns::
 
@@ -170,7 +174,8 @@ The ``sketch_floorplan_by_human`` tool
 .. code-block:: text
 
     sketch_floorplan_by_human(message: str = "", initial: dict | None = None,
-                              timeout_s: float | None = None, title: str = "") -> dict
+                              timeout_s: float | None = None, title: str = "",
+                              size: str = "760x760") -> dict
 
 A 2D top-view window with five modes — **draw** a wall (either **drag** freehand, straightened into
 lines the instant the pencil lifts, or **click** a start point then **click** the end for one
@@ -215,7 +220,7 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
 * **markers** — prop points whose ``comment`` names the model to place; dropped in **mark** mode
   and/or added from 3D-review comment dots, and carried through a wall-editing round. ``in_room`` is
   the id of the room containing the marker (computed; ``null`` if outside every room). A marker also
-  carries ``yaw_deg`` (heading about +Z, 0 = +x, CCW → the prop's ``spawn_model`` ``rpy``) **only
+  carries ``yaw_deg`` (heading about +Z, 0 = +x, CCW → the yaw of the prop's ``spawn_model`` ``pose``) **only
   when the human dragged a direction** out of the point in mark mode; a plain click leaves it
   headingless (the prop is placed axis-aligned). Orientation the agent decides for a 3D-review prop
   goes in the generator's ``--markers-map`` instead (``roqsim scenes floorplan-to-world``), whose ``yaw_deg``

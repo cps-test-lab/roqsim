@@ -30,7 +30,7 @@ MESHES_DIR = MODELS_DIR
 
 
 def model_path(name: str) -> Path:
-    """Resolve a bundled model file (accepts a bare name like ``d435`` or a filename)."""
+    """Resolve a bundled model file (accepts a bare name like ``realsense_d435`` or a filename)."""
     p = Path(name)
     if p.is_absolute() and p.exists():
         return p

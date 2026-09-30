@@ -32,24 +32,25 @@ from roqsim.export_moveit import (
     ompl_planning_yaml,
     wrapped_joints,
 )
+from roqsim.pose import pose_mapping
 
 
 def _cell(tmp_path, model="ur5e", *, gripper="robotiq_2f85", name="ur5e", namespace=None):
     arm = {
         "model": model,
         "prefix": f"{model}_",
-        "pos": [0.0, 0.0, 0.76],
+        "pose": pose_mapping([0.0, 0.0, 0.76]),
     }
     if gripper:
         arm["end_effector"] = {
             "model": gripper,
             "site": "attachment_site",
-            "pos": [0.0, 0.0, 0.011],
+            "pose": pose_mapping([0.0, 0.0, 0.011]),
         }
     if namespace:
         arm["namespace"] = namespace
     return load_config_from_dict(
-        {"sim": {}, "plugins": [{"spawn_arm": arm, "name": name}]}, base_dir=tmp_path
+        {"sim": {}, "components": [{"spawn_arm": arm, "name": name}]}, base_dir=tmp_path
     )
 
 
@@ -255,16 +256,16 @@ def _refused(capsys, tmp_path, world: dict, *extra) -> str:
 
 _WORLD = {
     "sim": {},
-    "plugins": [
+    "components": [
         {
             "spawn_arm": {
                 "model": "ur5e",
                 "prefix": "ur5e_",
-                "pos": [0.0, 0.0, 0.76],
+                "pose": pose_mapping([0.0, 0.0, 0.76]),
                 "end_effector": {
                     "model": "robotiq_2f85",
                     "site": "attachment_site",
-                    "pos": [0.0, 0.0, 0.011],
+                    "pose": pose_mapping([0.0, 0.0, 0.011]),
                 },
             },
             "name": "ur5e",
@@ -352,7 +353,7 @@ def test_a_tip_that_is_not_a_link_is_refused(tmp_path, capsys):
 def test_a_world_with_no_arm_says_so(tmp_path, capsys):
     world = {
         "sim": {},
-        "plugins": [
+        "components": [
             {
                 "spawn_model": {
                     "model": "industrial_table",
@@ -368,9 +369,15 @@ def test_a_world_with_no_arm_says_so(tmp_path, capsys):
 def test_two_arms_must_be_disambiguated(tmp_path, capsys):
     world = {
         "sim": {},
-        "plugins": [
-            {"spawn_arm": {"model": "ur5e", "prefix": "a_", "pos": [0, 0, 0]}, "name": "a"},
-            {"spawn_arm": {"model": "ur5e", "prefix": "b_", "pos": [1, 0, 0]}, "name": "b"},
+        "components": [
+            {
+                "spawn_arm": {"model": "ur5e", "prefix": "a_", "pose": pose_mapping([0, 0, 0])},
+                "name": "a",
+            },
+            {
+                "spawn_arm": {"model": "ur5e", "prefix": "b_", "pose": pose_mapping([1, 0, 0])},
+                "name": "b",
+            },
         ],
     }
     assert "--arm" in _refused(capsys, tmp_path, world)
@@ -390,11 +397,11 @@ def _dual_world(joint_prefix: bool = True) -> dict:
                 "model": "ur5e",
                 "prefix": f"{name}_",
                 "namespace": name,
-                "pos": [0.0, y, 0.76],
+                "pose": pose_mapping([0.0, y, 0.76]),
                 "end_effector": {
                     "model": "robotiq_2f85",
                     "site": "attachment_site",
-                    "pos": [0.0, 0.0, 0.011],
+                    "pose": pose_mapping([0.0, 0.0, 0.011]),
                 },
             },
             "name": name,
@@ -403,7 +410,7 @@ def _dual_world(joint_prefix: bool = True) -> dict:
             entry["components"] = [{"arm_controller": {"joint_prefix": f"{name}_"}}]
         return entry
 
-    return {"sim": {}, "plugins": [arm("left", -0.4), arm("right", 0.4)]}
+    return {"sim": {}, "components": [arm("left", -0.4), arm("right", 0.4)]}
 
 
 @pytest.fixture(scope="module")
