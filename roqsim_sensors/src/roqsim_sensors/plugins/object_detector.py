@@ -48,11 +48,45 @@ The consumer contract, which a real detector must satisfy to drop in:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import Point3, Quaternion
+
+
+@dataclass
+class ObjectDetection:
+    """One detected object, in the reporting frame.
+
+    Attributes:
+        class_id: what the detector calls it
+        position: the object's origin
+        orientation: quaternion (w, x, y, z)
+        size: the object's box, x, y, z
+        score: the hypothesis's confidence
+    """
+
+    class_id: str
+    position: Point3
+    orientation: Quaternion
+    size: Point3
+    score: float
+
+
+@dataclass
+class ObjectDetections:
+    """Everything detected in one cycle; an object missing from it was not detected this cycle.
+
+    Attributes:
+        detections: one per detected object
+    """
+
+    detections: list[ObjectDetection]
 
 
 class ObjectDetectorPlugin(Plugin):
@@ -101,7 +135,6 @@ class ObjectDetectorPlugin(Plugin):
         self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         frame_name = prefix + self.frame
         self._frame_bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, frame_name)
@@ -118,30 +151,14 @@ class ObjectDetectorPlugin(Plugin):
             size = tuple(float(v) for v in entry.get("size", (0.0, 0.0, 0.0)))
             self._objects.append((str(entry["class_id"]), bid, size))
 
-        ctx.interface.add(
-            Endpoint(
-                name="detections",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self._read,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "vision_msgs.msg.Detection3DArray",
-                        "topic": self.topic_override("detections") or "detections",
-                        "frame_id": self.frame,
-                    }
-                },
-            )
-        )
+    @endpoint.out(rate="rate_hz", ros2=lambda self: {"frame_id": self.frame})
+    def detections(self) -> ObjectDetections:
+        """The objects detected this cycle, in the reporting frame."""
+        return ObjectDetections(self._read())
 
-    def _read(self):
-        """Endpoint ``read`` (physics thread) -> ``[(class_id, pose7, size3, score), ...]``.
-
-        ``pose7`` is ``(x, y, z, qw, qx, qy, qz)`` in the reporting frame. An empty list is a valid
-        reading: it means nothing was detected this cycle.
-        """
+    def _read(self) -> list[ObjectDetection]:
+        """The detections this cycle, in the reporting frame (physics thread). An empty list is a
+        valid reading: it means nothing was detected this cycle."""
         ctx = self._ctx
         d = ctx.data
         # The reporting frame's world pose, inverted once for all objects.
@@ -176,11 +193,8 @@ class ObjectDetectorPlugin(Plugin):
             quat = np.empty(4, dtype=float)
             mujoco.mju_mat2Quat(quat, rel_mat.reshape(9))
             out.append(
-                (
-                    class_id,
-                    (*(float(v) for v in rel_pos), *(float(v) for v in quat)),
-                    size,
-                    self.confidence,
+                ObjectDetection(
+                    class_id, np.array(rel_pos, dtype=float), quat, np.array(size), self.confidence
                 )
             )
         return out

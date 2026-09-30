@@ -21,8 +21,9 @@ Concepts
 
 * **Field of view.** Every sensor reduces to one ``SensorFov`` — a posed angular sector: a camera is a
   rectangular ``FRUSTUM``, a lidar a ``CONE_BAND`` (azimuth × elevation band). It is extracted per
-  sensor type by an adapter (see :doc:`architecture` › Sensor coverage), so a camera's FOV comes from
-  its MJCF ``fovy``/resolution and a lidar's from its plugin defaults — never re-typed.
+  sensor type by an adapter (see :doc:`developer_guide` › Sensor coverage (analysis layer)), so a
+  camera's FOV comes from its MJCF ``fovy``/resolution and a lidar's from its plugin defaults — never
+  re-typed.
 * **Coverage count.** For each sample point, the number of sensors that see it, gated by range → angular
   FOV → line of sight (occlusion by walls/furniture, but **not** by the sensor's own mount — see
   below). ``k=1`` means "seen by ≥1 sensor"; ``k=2`` is
@@ -42,15 +43,16 @@ The plugin (world-YAML toggle)
 
 List ``sensor_coverage_probe`` in a world's ``components:`` to compute coverage once (at ``configure``) and
 write ``report.json`` plus a render; omit it for none. ``sensors: auto`` evaluates every MuJoCo camera
-in the world; give an explicit list for lidars/Livox or hypothetical placements.
+in the world but a device's depth camera, which is another stream of the device beside its colour
+camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars/Livox or hypothetical placements.
 
 .. code:: yaml
 
    components:
-     - spawn_sensor: {model: mid360, name: cam_a, pos: [3, 1, 2.4], rpy: [3.14159, 0, 0]}
      - sensor_coverage_probe:
-         sensors: auto              # or a list of {type, pos, rpy, config}
-         target: {k: 1, frac: 0.95}
+         sensors:                   # or `auto`: every MuJoCo camera in the world
+           - {type: livox_mid360, pos: [3, 1, 2.4], rpy: [3.14159, 0, 0]}   # {type, pos, rpy, config}
+         target: {k: 1, frac: 0.95} # judged into report.json's target_met
          sample: {volume: true, objects: true, resolution: 0.25, heights: [0.3, 1.0, 1.7]}
          out: coverage              # writes report.json + render(s) here
          render: both               # 3d | 2d | both | none
@@ -108,10 +110,10 @@ regions stand out as the darkest areas. Both read the same ``counts``; only the 
 Adding a sensor the tool doesn't know
 -------------------------------------
 
-If ``build_fov`` raises ``no adapter for '<type>'``, register one in
+If ``build_fov`` raises ``no coverage FOV adapter for sensor type '<type>'``, register one in
 ``roqsim_sensors/coverage/adapters.py`` (``@register_adapter("<type>")`` returning a ``SensorFov``)
 and add a ``CATALOG`` entry in ``catalog.py``. The sensor plugin itself is never modified. See
-:doc:`architecture` › Sensor coverage for the design.
+:doc:`developer_guide` › Sensor coverage (analysis layer) for the design.
 
 **A catalog entry states policy, not optics.** Write ``cost``, ``mount`` and ``description`` -- how
 this device may realistically be deployed -- and name the bundled ``model`` it describes. The optics
@@ -132,8 +134,8 @@ Visualising a sensor's FOV directly
 Independently of coverage, ``spawn_sensor: {show_fov: true}`` draws a sensor's field of view in the
 viewer/renders. Three paths, tried in this order:
 
-* a **camera** mount (the RealSense/Zivid models) synthesises a translucent view **frustum** from the
-  camera's ``fovy``/aspect spanning ``fov_near``..``fov_range``, **always clipped against world geometry**
+* a **camera** mount (the RealSense/Zivid models) synthesises a translucent view **frustum** from each
+  camera but a depth camera beside a colour one, from its ``fovy``/aspect spanning ``fov_near``..``fov_range``, **always clipped against world geometry**
   into a visibility volume that stops at walls and objects (see below);
 * a **camera-less** model that ships a bundled ``_fov`` mesh reveals it (none of the current
   models: the Zivid ships one but has a camera, so it takes the frustum path);

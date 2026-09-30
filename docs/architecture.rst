@@ -164,6 +164,14 @@ Single world YAML, two sections; ``components`` order = execution order:
 Each entry is a mapping with exactly one plugin-ref key (its value is the ``config`` map) plus an
 optional reserved ``name:`` sibling, defaulting to the ref. ``name:`` or ``components:`` found inside
 the config map is refused (``parse_plugin_entry``), because no plugin reads either from its config.
+
+Those two sections, ``extends``/``disable`` (inheritance) and ``version`` are the whole top level
+(``roqsim.config.WORLD_KEYS``), and any other key there is refused. A world declares no parameters
+and substitutes nothing into itself: a value that varies per run is written as its ordinary literal
+and changed by an **override**, which addresses the key in place. An override rooted anywhere but
+``sim`` or ``components`` is refused for the same reason: accepted, it would merge into the document
+where nothing reads it, and the run would report success against the unchanged world.
+
 Three plugin-ref resolution forms (``resolve_plugin``):
 
 1. **Short name** → ``roqsim.plugins`` entry-point group.
@@ -295,15 +303,32 @@ A short vector is padded from MuJoCo's current value rather than zero-filled, so
 what sweeping one element means. Unknown keys and over-long vectors are rejected at config load, not
 at compile: a typo here is otherwise invisible.
 
-**The contact time constant has a floor at** ``2 * sim.timestep``, and it is the step that moves it.
-MuJoCo clamps a smaller one there and reports nothing, so at the default 2 ms step a world asking for
-0.5 ms, 1 ms or 2 ms gets 4 ms and a contact bit-identical in all three -- while its own configuration
-still reads 0.5 ms. A time constant below the floor is therefore refused, naming the floor that
-applies, because tightening a fit is exactly the reason to reach for this key and a silent clamp
-turns the attempt into a wrong conclusion about the solver. To go tighter, lower ``sim.timestep``:
-halving it halves the floor and roughly doubles the wall time. Only the positive form is a time
+**The contact time constant has a floor, and the integrator decides where it is.** With
+``refsafe`` on (MuJoCo's default) MuJoCo raises a stiffer ``solref`` to the floor and reports nothing,
+so a world asking for less gets the floor while its own configuration still reads the tighter value.
+A time constant below the floor is therefore refused, naming the floor and the rule that applies,
+because tightening a fit is exactly the reason to reach for this key and a silent clamp turns the
+attempt into a wrong conclusion about the solver. MuJoCo imposes it in two ways, measured on 3.14:
+
+* Under ``euler``, ``rk4``, ``implicit`` and ``implicitfast`` the time constant itself is raised to
+  ``2 * sim.timestep``. At a 2 ms step a world asking for 0.5 ms, 1 ms or 2 ms gets 4 ms and a contact
+  bit-identical in all three.
+* Under ``discrete`` -- which ``sim.integrator: auto`` picks for a world with an elastic flex -- the
+  time constant is left alone and the contact's *stiffness* is capped at what the step can resolve,
+  damping ratio kept. As a time constant that is ``timestep * sqrt(I) / (solimp[1] * dampratio)``,
+  with ``I`` the impedance at the contact's depth, which runs from ``solimp[0]`` to ``solimp[1]``;
+  the floor judged here takes the larger, so a value at or above it runs as stated at every depth.
+  At the default ``solimp`` and a damping ratio of 1 that is ``timestep / sqrt(0.95)``, about 1.03
+  steps, and it halves when the damping ratio doubles.
+
+The check runs after every plugin has built and the integrator is resolved, just before compile, and
+judges the ``o_solref`` the override puts in force against the ``o_solimp`` it puts in force -- stated
+or kept from the model. ``roqsim check`` warns about a flex's ``solref`` below the same floor
+(``flex-solref``), and the interpenetration tolerance raises a contact's time constant to it; all
+three read :func:`roqsim.solref.solref_floor`. To go tighter, lower ``sim.timestep``: the floor
+scales with it, and halving it roughly doubles the wall time. Only the standard form is a time
 constant -- a negative ``solref`` is MuJoCo's direct ``(-stiffness, -damping)`` parameterisation, to
-which no floor applies.
+which no floor applies, and with ``refsafe`` disabled there is none at all.
 
 Worth knowing before tuning for penetration: the floor is not usually what limits a fit. A 5 kg mass
 resting on a plate at the shipped defaults penetrates on the order of nanometres, four orders below
@@ -328,21 +353,25 @@ knows it is finished -- the goal was reached, the episode failed -- therefore pu
 observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
 condition on, and holds the robot idle until the scenario ends the run.
 
-For an endpoint, that condition is ``osc.roqsim``'s ``entity_reports``: the plugin registers its
-outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s ``tripped``, a trial
-plugin's own ``resolved``), and the scenario waits on it, then ends the run, with a ``timeout`` as the
-bound on the trial:
+For an endpoint, ``osc.roqsim``'s ``entity_monitor`` keeps a scenario variable equal to it: the
+plugin registers its outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s
+``tripped``, a trial plugin's own ``resolved``), the monitor writes it into the variable every tick,
+and the scenario waits on the variable, then ends the run, with a ``timeout`` as the bound on the
+trial:
 
 .. code-block:: text
 
    scenario trial:
        timeout(120s)
-       do serial:
-           entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-           emit end
+       var tripped: bool = false
+       do parallel:
+           entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+           serial:
+               wait tripped == true
+               emit end
 
 The report is addressed as the world names it -- the entity and the endpoint -- and read from the
-endpoint itself in a stepped run and through the bridge's endpoint map over ROS (§13), so one
+endpoint itself in a stepped run and over the control socket (§13), so one
 scenario ends the same way on either transport.
 
 The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand says it is finished
@@ -402,17 +431,24 @@ Four laws:
 
 **A modelled drive carries its own weight.** A ``position`` or ``impedance`` joint names hardware whose own loop supplies whatever torque the mass below it demands — a UR5e commanded to a pose holds it — so the bodies it holds up get ``body_gravcomp``. The gain then says how hard the joint resists a *disturbance*, which is what a gain means on real hardware, rather than doubling as a load rating. Without it the servo trades position error for holding torque and the arm settles below where it was sent: measured on the ur5e at its shipped 2000 N·m/rad, 9 mm at the flange, and metres of arc at a compliance gain. Nothing reports that — the pose is wrong, the model compiles, the run succeeds — which is why it is the default rather than an option.
 
-**Which bodies, and why not all of them.** A body is compensated when the chain from the world down to it passes such a joint — everything whose weight a drive is holding up. That deliberately excludes the load path to the ground: a mobile base hangs off nothing, and its wheels are driven by ``velocity``, so neither is compensated and the robot still presses on the floor. Compensate those and it stands on nothing — upright, so nothing says so. The arm bolted to that base *is* compensated, which is what makes ``spawn_arm`` and ``spawn_robot`` give the same Panda arm the same physics. ``velocity`` is excluded for that reason alone: it is how a wheel is driven, and no bundled arm ships it.
+**Which bodies, and why not all of them.** A body is compensated when the chain from the world down to it passes such a joint — everything whose weight a drive is holding up. That deliberately excludes the load path to the ground: a mobile base hangs off nothing, and its wheels are driven by ``velocity``, so neither is compensated. The arm bolted to that base *is* compensated, which is what makes ``spawn_arm`` and ``spawn_robot`` give the same Panda arm the same physics. ``velocity`` is excluded for that reason alone: it is how a wheel is driven, and no bundled arm ships it.
 
-``effort`` is the other exception: a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the controller's job — frequently the very thing an experiment is comparing. A drive that really has no gravity term (a hobby servo, a backdrivable joint) is a real machine too; ``spawn_arm``'s ``gravity_compensation:`` states either case explicitly, and ``true`` there means the whole mechanism, for a controller handed its own gravity term.
+**The compensation is a joint torque, so the weight stays on the ground.** MuJoCo's ``body_gravcomp`` is an *external* force, ``-m·g`` at each body's centre of mass, projected onto every degree of freedom above the body — a mobile base's free joint included. There it is a skyhook: the floor carries the base alone, and wheel loads, traction and tipping come out wrong (on ``frankie`` the floor would carry 637 of its 802 N). A real drive holding a link pushes on its mount instead, so the weight reaches the ground through the base. Two mechanisms make roqsim's compensation that:
 
-**A compensated joint still reports its torque.** ``body_gravcomp`` supplies the holding term outside the actuator, so ``qfrc_actuator`` alone would show a motor doing nothing while the arm hangs off it. ``arm_controller``'s effort report adds ``qfrc_gravcomp`` back, which is what the joint physically carries and what a real drive's torque sensor reads — it matches an uncompensated arm's reading in the same pose. **In a world at zero gravity every one of these coincides**, and a reader should not conclude the mode did nothing.
+* **The drive supplies the term.** ``apply_gravity_compensation`` sets ``actuatorgravcomp`` on every hinge or slide a holding actuator drives. MuJoCo then adds that joint's rows of ``qfrc_gravcomp`` to ``qfrc_actuator`` — after the actuator's own ``forcerange`` has clamped ``actuator_force`` — and clamps the sum by the joint's ``actuatorfrcrange``, so a joint without one gets its drive's (``forcerange`` times gear). A drive too weak for its load sags or stalls, as the hardware does. Either range is therefore the drive's whole capability, holding torque included, and a model states the rated value rather than one net of gravity (§6.2).
+* **The reaction goes into the mount.** ``roqsim.actuators.GravityReaction`` finds every compensated mechanism that hangs from a moving, uncompensated body (the *root*) and, between ``mj_step1`` and ``mj_step2``, subtracts the mechanism's weight at its centre of mass, applied to the root, from ``qfrc_gravcomp`` and ``qfrc_passive``. That removes exactly the rows above the root and leaves every row inside the mechanism as MuJoCo computed it. It touches no global (``mjcb_passive`` is one slot per process) and not ``qfrc_applied``. ``mj_step2`` integrates RK4 as Euler, so a world that needs the reaction refuses ``sim.integrator: rk4``. An entity made absent is compensated whole by presence, root included; the reaction then leaves it alone, so it stays frozen.
+
+On a fixed base nothing lies above the mechanism: the engine steps with one ``mj_step`` as before, and moving the term from ``qfrc_passive`` to ``qfrc_actuator`` changes the motion by rounding only, unless a drive's force limit is below its load.
+
+``effort`` is the other exception: a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the controller's job — frequently the very thing an experiment is comparing. A drive that really has no gravity term (a hobby servo, a backdrivable joint) is a real machine too; ``spawn_arm``'s ``gravity_compensation:`` states either case explicitly, and ``true`` there means the whole mechanism, for a controller handed its own gravity term. ``spawn_robot`` takes ``gravity_compensation: false`` for the same machine; it has no whole-mechanism form, which would compensate the base and lift the robot off its wheels.
+
+**A compensated joint still reports its torque.** ``qfrc_actuator`` carries the holding term of a joint whose drive supplies it; where MuJoCo applies it passively instead — a finger held through a tendon, a model that declares ``gravcomp`` itself — ``roqsim.actuators.joint_effort`` adds ``qfrc_gravcomp`` back. ``arm_controller``'s effort report is that sum, which is what the joint physically carries and what a real drive's torque sensor reads — it matches an uncompensated arm's reading in the same pose. **In a world at zero gravity every one of these coincides**, and a reader should not conclude the mode did nothing.
 
 **Where each half is applied, and why they differ.** The actuator rewrite runs on the child ``MjSpec`` right after ``apply_assets`` and **before** an end effector is grafted on: ``actuators:`` names the actuators *this model* declares, and the graft puts a gripper's tendon actuator into the same spec, so a shared ``control:`` resolved after it would fall on a tendon — which has no joint stiffness — and refuse a block whose gains were only ever about the arm. The gravity-compensation half runs **after** the graft, for the opposite reason: ``body_gravcomp`` is per body and does not cascade, so an arm compensated before its tool was attached would sag by exactly the tool's weight. Compensating the tool is also the right physics — a real controller is told its payload and holds that too. Both run before ``spec.attach``, so the whole thing is pre-compile and the file on disk is never touched; a world that declares nothing compiles a byte-identical model.
 
-**Refusals name their replacement**, the way ``motion:`` does: MuJoCo's own spellings (``kp``, ``kv``, ``kd``, ``forcerange``) and its actuator types (``motor``, ``pd``) are refused rather than translated, because these plugins take config maps they do not fully own and a key merely not read would be accepted in silence. Keys under ``each:`` are actuator names; a **joint** name is refused naming the actuator that drives it, rather than resolved silently, so a reader of someone else's world can tell what a key is without opening the MJCF. ``roqsim catalog model <model>`` lists the names.
+**The block is declared once**, as ``roqsim.actuators.ACTUATORS``, and both spawn plugins put it in their ``CONFIG_SCHEMA``: the shared keys are a block of fixed keys, and ``each:`` is a mapping from actuator names to blocks of the same keys (``Field(dict, values=...)``), so ``roqsim plugins describe`` publishes it and the schema check refuses an unknown key by its full path (``actuators.each.wrist_3.stifness``). **Refusals name their replacement**: MuJoCo's own spellings (``kp``, ``kv``, ``kd``, ``forcerange``) and its actuator types (``motor``, ``pd``) are unknown keys and values like any other, refused in one error that carries the replacement as the declaration's hint, and never read. Keys under ``each:`` are actuator names; a **joint** name is refused naming the actuator that drives it, rather than resolved silently, so a reader of someone else's world can tell what a key is without opening the MJCF. ``roqsim catalog model <model>`` lists the names.
 
-A shape error (an unknown key, a gain the chosen law does not read) is found by ``validate_config`` at ``roqsim check``'s **config** stage, before anything is compiled. Anything needing the model — an unknown actuator, a joint name, a tendon, a missing ``ctrlrange`` — is raised in ``build()`` and lands at the **build** stage. That split is a contract rather than a detail: an external validator that checks a world before spending compute on it does so by compiling — ``roqsim scenes describe --entities`` is that call — so both kinds of mistake reach its author rather than a trial. ``ctrlrange`` is required only when the **command unit** changes (rad ↔ rad/s ↔ N·m); ``position`` → ``impedance`` keeps the unit, so the model's own ``ctrlrange`` stays correct and is not refused.
+A shape error (an unknown key, a gain the chosen law does not read) is found by the schema check and ``validate_config`` at ``roqsim check``'s **config** stage, before anything is compiled. Anything needing the model — an unknown actuator, a joint name, a tendon, a missing ``ctrlrange`` — is raised in ``build()`` and lands at the **build** stage. That split is a contract rather than a detail: an external validator that checks a world before spending compute on it does so by compiling — ``roqsim scenes describe --entities`` is that call — so both kinds of mistake reach its author rather than a trial. ``ctrlrange`` is required only when the **command unit** changes (rad ↔ rad/s ↔ N·m); ``position`` → ``impedance`` keeps the unit, so the model's own ``ctrlrange`` stays correct and is not refused.
 
 The **resolved table** — every actuator, its final law and gains, and whether each value came from the model or the world — is published on ``SimContext.actuator_tables`` at ``configure`` and written into the run's provenance beside ``world_model`` (``capture.py``). It carries every actuator rather than only the changed ones, because "what did this joint run under" is a question about the run and not about the diff. The addition needs no ``FORMAT_VERSION`` bump: ``Recording`` reads ``world_model`` by name and ignores keys it does not know.
 
@@ -463,9 +499,13 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 - **A manifest entry that itself provides an entity** (a ``spawn_sensor`` in a robot manifest) gets the spawn's prefix as ``attach_prefix`` rather than ``prefix``, and derives its own from that. Its nested ``components:`` are kept, owned by its address and merged by label like everything else. Precedence is nearer-wins all the way down: the world's value, then the robot manifest's, then the device manifest's.
 
   - A mounted device's ``prefix`` defaults to ``<carrier prefix><label>_``, and its ``namespace`` to the carrier's.
-  - A device manifest may use ``{frame_id}`` and ``{parent_frame}`` placeholders, and no others.
-  - ``{frame_id}`` is the mount's ``frame_id``, else the manifest's top-level ``frame_id:`` (the vendor's default scan-frame name, ``roqsim.manifest.manifest_frame_id``). A device whose vendor names none declares none, and a mount of it without a ``frame_id`` is refused rather than given a made-up name. Two mounts on one carrier with the same ``frame_id`` are refused too, since they share its namespace.
-  - Vendor fixed links a model flattened are a ``frames:`` block (``roqsim.frames``). It is built as sites and published as static transforms. The ``spawn_sensor`` and ``spawn_robot`` docstrings (``docs/plugins.rst``) have the details.
+  - A device model's ``mount`` body is the frame its vendor macro's ``origin`` places: the link the macro attaches to its ``parent``. A mount's ``pose`` is that origin, so a pose copied from a robot description's call of the macro places the device where ``robot_state_publisher`` would, and the manifest's ``frames:`` chain starts at that frame.
+  - A device manifest may use ``{frame_id}``, ``{device_name}`` and ``{parent_frame}`` placeholders, and no others.
+  - ``{device_name}`` is the mount's ``device_name``, else the manifest's top-level ``device_name:`` (the vendor macro's default ``name`` parameter, which prefixes every link it creates; ``roqsim.manifest.manifest_device_name``).
+  - ``{frame_id}`` is the mount's ``frame_id``, else the manifest's top-level ``frame_id:`` (the vendor's default scan-frame name, ``roqsim.manifest.manifest_frame_id``), which may itself carry ``{device_name}``. A device whose vendor names none declares none, and a mount of it without a ``frame_id`` is refused rather than given a made-up name.
+  - Two mounts on one carrier that would publish any one frame name -- the scan frame or any link of the chain -- are refused, since they share its namespace; each names its own ``device_name`` or ``frame_id``. A carrier mount of a device that declares no ``frames:`` is refused, naming the device: it has no vendor frame to hang from.
+  - Vendor fixed links a model flattened are a ``frames:`` block (``roqsim.frames``): ``{name, parent, pose}``, the ``pose`` an offset from ``parent`` read by ``roqsim.pose.parse_pose`` with ``relative=True`` (omitted components are zero). It is built as sites and published as static transforms. Unlike ``components``, it is not inherited through ``extends:``: frames describe a model's geometry.
+  - A carrier's devices hang from its frames: a nested ``spawn_sensor`` names as its ``parent_frame`` the link the vendor description attaches it to -- a body of the carrier or an entry of its ``frames:`` -- and its ``pose`` is that joint's origin, an offset from the frame, which is how a world or an override moves a device. ``roqsim.manifest.resolve_parent_frame`` refuses, while the document expands, a ``parent_frame`` the carrier does not have (with a did-you-mean and its frames listed), a frame whose parent is neither a body nor a frame declared before it, and two frames of one name. The ``spawn_sensor`` and ``spawn_robot`` docstrings (``docs/plugins.rst``) have the details.
 - When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 
   .. note::
@@ -549,12 +589,14 @@ The incoming codebase is monolithic MuJoCo scripts. Rework them into plugins as 
 ~~~~~~~~~~~
 
 -  **New robot / arm:** a scene plugin whose ``build`` attaches the robot MJCF into ``spec`` (``spec.attach`` / add body), registers an ``Entity(kind="robot")`` and a ``RobotHandle`` in ``configure``.
+
+   **Its drives hold its weight, bounded by their force limits.** Spawned through ``spawn_arm`` or ``spawn_robot``, every body a ``position`` or ``impedance`` drive holds up is gravity-compensated with no config, and the term is a torque that drive supplies (§4, *Actuator overrides*): the floor carries a mobile robot's whole weight, and a joint's total torque, gravity included, is clamped by its ``actuatorfrcrange``, else by its actuator's ``forcerange`` times gear. That makes them the drive's **total** limit: state the real motor or cylinder rating (URDF ``<limit effort=>``, a datasheet's rated torque or force), never a value net of the load's weight. A range trimmed to leave room for a weight the drive was not carrying -- ``-2000 23000`` for a 25 kN cylinder under a 2 kN carriage -- now takes that weight off twice, and a one-sided ``0 25000`` is the honest statement of a single-acting cylinder. The rating has to cover the mechanism's own weight at full reach **plus** its rated payload; a placeholder too small for that makes the joint sag under its own links, and an unset one makes the drive infinitely strong. ``gravity_compensation: false`` on the spawn is for drives that supply no gravity term at all (a hobby servo, a backdrivable joint), not a fix for a sagging joint.
 -  **New sensor:** a ``post_step`` plugin that reads ``data`` (or renders via ``ctx.render``), optionally adds its own noise (§9), and hands the reading off (blackboard/bridge). Register a producer gate (§10) if it should participate in sync mode.
 -  **New controller:** a ``pre_step`` plugin that consumes a target (from blackboard / ``ctx.post``) and writes ``data.ctrl``. Expose a ``RobotHandle`` so a bridge can command it. It must honour ``ctx.manual_control`` (§7): when set, the human owns ``data.ctrl`` for the run — return from ``pre_step`` without writing it, so the viewer's control sliders drive the actuators. Writing ``ctrl`` once in ``on_reset`` stays right, and a controller should do it in every mode: a reset zeroes ``data.ctrl``, so until the controller writes the commands that hold its pose, the state the engine's closing ``mj_forward`` derives -- and anything a sensor reads or tares before the first step -- is the robot pulled toward zero. In manual mode the same write opens the sliders at the home pose; the rule is about the per-tick write. This is what the runner's ``--manual-control`` switches, world-wide, for every controller at once — hence a run-level flag rather than per-plugin config.
 -  **Environment/floorplan loader:** a ``build`` plugin that adds a mesh + collision geoms to ``spec``.
 -  **External transport (ROS/other):** a transport plugin — ``configure`` spins the client thread, callbacks ``ctx.post(...)``, ``post_step`` publishes from ``data``, ``shutdown`` stops the client.
 -  **Moving part (conveyor):** ``build`` adds an invisible belt body on a slide joint; ``pre_step`` forces its velocity and wraps position; a contact pair tunes belt↔object friction.
--  **Injected fault (model_override):** a plugin that in ``configure`` resolves a *named* selection of geoms/bodies/actuators, saves their current values and publishes a handle plus a ``std_srvs/SetBool`` service endpoint; ``set_active`` writes the target rows and ``on_reset`` writes them back. No ``pre_step`` at all -- the change rides on ``ctx.post`` from the service, and ``post_step`` runs only on the step after a change, to check the fault actually landed (§9.2).
+-  **Injected fault (model_override):** a plugin that in ``configure`` resolves a *named* selection of geoms/bodies/actuators, saves their current values and publishes a handle plus a ``std_srvs/SetBool`` service endpoint; ``set_active`` writes the target rows and ``on_reset`` writes them back. No ``pre_step`` at all -- the change rides on the service's ``override`` command, which runs on the physics thread, and ``post_step`` runs only on the step after a change, to check the fault actually landed (§9.2).
 -  **Articulated + commandable prop (door):** the ``door`` plugin (``roqsim_assets``) is both — ``build`` hangs a leaf on a hinge joint with a force-limited position actuator; ``pre_step`` drives it toward a target *openness* and, if the leaf stalls against an obstacle, backs off (a gentle automatic door); ``configure`` registers ``Entity(kind="door")``, a ``DoorHandle``, and — when ``controllable`` — ``std_msgs/Float64`` ``cmd``/``state`` endpoints plus a ``control_msgs/GripperCommand`` action (reusing the generic 1-DOF handler via its ``state_key`` hint). The natural home for a door in a floorplan world is the opening the generator already cut (``floorplan_to_world.py --doors-map``).
 
 .. _63-decomposition-guidance:
@@ -592,7 +634,12 @@ identical across arms.
 
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
-External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on.
+External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. A driver that is not stepping -- ``roqsim sim`` paused or stopped -- drains it in its idle loop instead (``Engine.idle``), and when a command ran, ``mj_forward`` brings body poses and sensor data in line with it; simulated time does not advance and no plugin hook runs. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on; ``ctx.submit`` is the same queue with a :class:`~roqsim.context.CommandFuture` for a caller that needs the outcome, and the drain delivers a command's exception to the caller waiting on it (one nobody waits on is logged). The queue is a ``collections.deque``: posting and draining take no lock. After the commands the drain applies each inbound stream's latest value (§13).
+
+The control socket's threads (§13) follow the same rule: its request threads never touch ``data`` -- a
+``read`` or a ``call`` is submitted to the physics thread and waited on -- and what it publishes is
+read in ``post_step``. The runner resets its pacer on every idle loop, so the first step after a pause
+is paced from when it is taken and the pause is not counted as falling behind.
 
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
 
@@ -618,7 +665,7 @@ A ``RenderService`` on the context that owns all GL/EGL contexts and camera rend
 
 -  **The offscreen backend is bound by ``import mujoco``, so it is chosen by ``import roqsim``.** ``MUJOCO_GL`` is read exactly once, inside ``mujoco/rendering/classic/gl_context.py``, while mujoco is being imported; it assigns ``GLContext`` there and then, and an *unset* value is not an error but a choice — it falls through to **glfw**. Everything that follows from that is the reason :func:`roqsim.gl.select_offscreen_gl` is called from the package ``__init__`` rather than from a driver's ``main``: a driver module's own imports reach mujoco before its ``main`` body runs, so a selection made there sets a variable nobody will read again. A selection made in ``roqsim.runner.main`` would be inert for every headless run, invisibly, because a world with no camera never constructs a ``Renderer`` and therefore never instantiates the mis-bound backend; the first camera world on a headless node would then fail with ``mujoco.FatalError: gladLoadGL error`` from inside ``MjrContext``. A node with a DRI render device gets ``egl``, one without gets ``osmesa``; an explicit ``MUJOCO_GL`` always wins and ``ROQSIM_NO_GL_SELECT`` opts out. Both backends are installed in the container images for the same reason the choice is deferred: which one works is a property of the node, not of the image. The one case the package ``__init__`` cannot cover — a consumer importing ``mujoco`` first — is caught by :func:`roqsim.rendering.check_gl_backend`, which every renderer in the tree funnels through and which names the cause and the fix rather than leaving MuJoCo's message to stand.
 -  The interactive viewer (``mujoco.viewer.launch_passive``) is a *driver* concern, separate from the offscreen ``RenderService``, so windowed vs headless is a driver switch, not a plugin change. The standalone runner sets the viewer's initial free camera from the world's optional ``sim.view`` block (``lookat``/``distance``/``azimuth``/``elevation``, plus ``track`` — an entity or body to follow — and ``follow_heading``; any subset — omitted keys keep MuJoCo's model-derived default). ``sim.view`` is the camera and *only* the camera: it is schema-checked on load, so an unknown key fails the run rather than being silently dropped. The two Simulate side panels are deliberately **not** expressible there — they are run-level flags (``--left-ui``/``--right-ui``, passed to ``launch_passive``'s ``show_left_ui``/``show_right_ui``, both hidden by default), on the same footing as ``--manual-control``: a world describes the experiment, whereas panels and hand-driving describe one interactive session. All of it is windowed-only (ignored under ``headless``) and is not a plugin concern. The keys roqsim adds to that window are declared once (:mod:`roqsim.keys`): the handlers take their keycodes from those records and the **F1** list is rendered from them, so what the window says a key does and what it does are one declaration -- and the list a run shows is merged from the handlers that run actually wired, so it never offers a key this window lacks. The window's text overlay is owned by slot (:mod:`roqsim.overlay`) because ``set_texts`` replaces the whole set: the camera-mode notice and the key list are two writers, and either alone would take the other down.
--  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back.
+-  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture; a robot whose manifest mounts devices is thumbnailed as ``spawn_robot`` builds it, devices attached, since its own MJCF does not carry them. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back.
 
 -  **Closing the window is a wait, not a request.** MuJoCo runs the window on threads it owns and ``Handle.close()`` only sets ``exitrequest``, so the window, its GL context and its X drawable are destroyed *after* the call returns. A process that closes and then exits promptly (a world that fails to load, ``--steps 1``, a short ``--seconds``) would race its own teardown: Python's ``atexit`` runs ``glfw.terminate`` under the render thread, whose in-flight ``glXSwapBuffers`` then hits a destroyed drawable, and Xlib's default handler calls ``exit()`` from that thread while the main thread is already finalizing — the process hangs after its last line of output (or segfaults). Both drivers therefore open with :func:`roqsim.viewer.launch_viewer` and close with :func:`roqsim.viewer.close_viewer`, which joins those threads (~10 ms) so the teardown is ordered; never ``Handle.close()`` or ``with handle:`` directly. Relatedly, the cosmetic X11 window branding (:mod:`roqsim.window_branding`) polls other clients' windows, where a window closing mid-pass is normal, so it installs an ignoring X error handler for the duration — Xlib's default one would kill the process over a window title.
 -  **Windowed run + cameras — two GL contexts, two backends.** The viewer window is *always* glfw: ``mujoco.viewer`` imports and initialises glfw directly, independent of ``MUJOCO_GL``, which selects only the *offscreen* ``Renderer`` backend. So a windowed run of a camera world holds a glfw window context **and** an offscreen render context at once, and they must not both be glfw — two glfw contexts in one process collide and MuJoCo aborts with ``gladLoadGL error``. The runner (see :func:`roqsim.viewer.prepare_viewer_gl`) resolves this before any GL loads, for windowed launches only, with two overridable defaults: it preloads the system **libGLEW** (the glfw window context needs it in the global symbol namespace on many Linux/GL-driver combinations) via an ``LD_PRELOAD`` re-exec — ``LD_PRELOAD`` is read only at process startup — and defaults ``MUJOCO_GL=egl`` so the offscreen cameras get their own context. That default decides only under ``ROQSIM_NO_GL_SELECT``: otherwise ``import roqsim`` has already chosen ``egl`` or ``osmesa``, which is not glfw either. Override with ``MUJOCO_GL`` / ``ROQSIM_NO_GL_PRELOAD``. Caveat: a hand-exported ``LD_PRELOAD=…libGLEW`` left in the shell drags GLX into the process alongside MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with ``undefined symbol: eglQueryString`` — roqsim preloads libGLEW itself, so do not also export it.
@@ -641,7 +688,7 @@ Instead, each sensor owns its noise as plain config:
 -  **Wheel odometry** (``roqsim_mobile``): ``diff_drive``'s ``odom_noise`` puts a multiplicative bias (``linear_scale``, ``angular_scale``) and zero-mean white noise (``linear_stddev``, ``angular_stddev``) on the velocities read off the wheels, before they are integrated, so the reported pose drifts the way real odometry does while the base itself moves exactly as the physics says. One draw per physics step from ``rng_for``, under the same seed and episode rules as the lidar; omitted, nothing is drawn.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``entity_call(entity: 'robot.lidar', command: 'override')``), over the same endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the detection limits and the noise so the devices cannot drift apart on them: the far limit and the presence mask are applied there once, for every device.
 
@@ -809,20 +856,71 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 A robot's I/O is **self-describing** and transport-neutral, so it is not duplicated in a per-backend
 bridge and can be wired to any transport. It has three layers:
 
-**1. Endpoints (neutral, in the robot packages).** In ``configure`` a plugin registers
-``Endpoint``\ s on ``ctx.interface`` (see :class:`roqsim.context.Endpoint`): a ``name``,
-``direction`` (``"out"`` → provide ``read``; ``"in"`` → provide ``write``), an ``owner`` (the entity),
-a ``namespace`` (a plain scope string each backend attaches to the endpoint's topics/frames/actions),
-an optional ``rate_hz``, and a ``backend`` dict of inert per-backend hints keyed by backend name. The
-``read``/``write`` callables traffic in **neutral payloads** (numpy arrays, tuples, small dataclasses)
-and run on the physics thread. Crucially the robot packages import nothing transport-specific — the
-message *type* is named as a **string** (``"sensor_msgs.msg.LaserScan"``) under the backend hint.
+**1. Endpoints (neutral, in the robot packages).** A plugin declares its ports with decorators on
+the methods that serve them (:mod:`roqsim.endpoint`): ``@endpoint.out`` (the method returns the
+payload), ``@endpoint.command`` (a request with an outcome) and ``@endpoint.stream`` (an inbound
+stream, latest value wins). **The method is the endpoint**: its name is the endpoint's name, its
+docstring's first line the endpoint's doc, and its signature the schema -- a command's or a stream's
+parameters (types with the unit aliases of :mod:`roqsim.types`, defaults, docs from the docstring's
+``Args:`` section) and the return type become ``Endpoint.params`` and ``Endpoint.result``, data any
+bridge reads. **Payloads are neutral types**: the dataclasses of :mod:`roqsim.types` (``Twist``,
+``Pose``, ``Odometry``, ``JointState``, ``JointPositions``, ``Wrench``, ``Imu``, ``LaserScan``,
+``Image``, ``CameraInfo``, ``PointCloud``, ``Transform``, ``Transforms``) or any dataclass of the plugin's own, never positional
+tuples; an ``in`` endpoint names its type (``@endpoint.stream(Twist)``) and takes the fields it uses
+by name, and ``Endpoint.payload_type`` says what a transport carries. A bridge passes parameters by
+name, and ``write`` refuses a missing, unknown or mistyped one before queueing
+(:class:`~roqsim.endpoint.ParameterError`). Options name attributes or config keys (``rate=``,
+``when=``, ``lazy=``, ``each=``) rather than wrapping them in callables; the owner and namespace come from the
+plugin (``endpoint_owner``, ``endpoint_namespace``; ``owner=`` for one that belongs elsewhere).
+**The engine registers** a plugin's endpoints right after its ``configure``
+(``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a bridge
+listed later binds them; it then applies the plugin's ``qos:`` to every endpoint the plugin
+registered, and the framework records its ``topics:`` renames as ``Endpoint.topic`` and renders a
+hint topic that names a sibling endpoint (``"{image}/compressed"``) from where that sibling is
+carried (:func:`roqsim.endpoint.topic_of`).
+:func:`roqsim.endpoint.declared` lists a class's endpoints with that schema without a world, and
+``roqsim plugins describe`` publishes them, with how each installed transport (the
+``roqsim.transports`` entry points) carries them. A port known only at run time is added with
+``ctx.interface.add(Endpoint(...))``. Either way an endpoint is (see
+:class:`roqsim.context.Endpoint`): a ``name``, ``direction`` (``"out"`` → provide ``read``;
+``"in"`` → provide ``write``), an ``owner`` (the entity), a ``namespace`` (a plain scope string each
+backend attaches to the endpoint's topics/frames/actions), an optional ``rate_hz``, and a ``backend``
+dict of inert per-backend hints keyed by backend name, which for a decorated endpoint carries only
+its deviations from the type's mapping (a frame, ``stamped``, ``emit_tf``, a QoS), and ``None`` to
+keep it off a backend. The ``read``/``write`` callables run on the physics thread. Crucially the
+robot packages import nothing transport-specific: a hand-built endpoint names its message *type* as a
+**string** under the backend hint, and a decorated one names none.
+
+**Entity poses are the core's.** Every entity whose body is in the model has an ``out`` endpoint
+``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`): the body's world position
+and ``(w, x, y, z)`` quaternion from ``xpos``/``xquat`` and its velocity from ``cvel``, computed only
+when read, ``None`` while the entity is deleted, and ``movable``, false for a body welded to the
+world (no joint on its chain to the world and not mocap), whose pose never changes. It carries no backend hint, so no bridge publishes
+it unasked, and it is registered even after a bridge bound, for a consumer that looks it up by name.
+
+**Marshalling is the framework's.** A decorated method runs on the physics thread and never posts
+itself. A command's ``write`` is safe from any thread: it submits the method
+(:meth:`~roqsim.context.SimContext.submit`) and returns a :class:`~roqsim.context.CommandFuture`, whose
+``result(timeout)`` gives the caller what the method returned or re-raises what it raised. A stream's
+``write`` stores the payload in the endpoint's :class:`~roqsim.context.StreamSlot`, and
+``drain_commands`` hands the newest one to the method once, after the queued commands; values
+superseded within a step are never applied. Such an endpoint is ``marshalled``, and a bridge calls
+its ``write`` directly; any other ``in`` endpoint's write is submitted to the physics thread by the
+bridge.
 
 **2. ``BridgeBase`` (backend-agnostic, in ``roqsim/bridge.py``).** Shared machinery for every
 transport: it iterates ``ctx.interface``, applies the optional owner filter, rate-gates each ``out``
 endpoint, runs the per-tick publish loop on the physics thread, and marshals inbound data onto the
-physics thread via ``ctx.post`` (single-writer rule intact, §7). A backend implements a few hooks:
-``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
+physics thread via ``ctx.submit`` unless the endpoint marshals itself (single-writer rule intact,
+§7), handing the backend a callback that returns the command's future. It binds an endpoint that
+carries a hint block for its backend, and a decorated one (``Endpoint.transport``) without one, from
+what its payload type maps to (``_hints_for``); a hint block of ``None`` keeps an endpoint off that
+backend. A backend that carries neutral payloads as they are (``ipc``) overrides ``_hints_for`` to bind
+every endpoint. A backend implements a few hooks: ``_setup`` / ``_hints_for`` / ``_make_output`` /
+``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``. Each bridge records what it made
+of an endpoint (``bound_name``: a ROS topic after namespaces and renames), so another transport can
+say what the endpoint is called there. A write into a stream is tagged with the bridge's backend, and
+two transports driving one stream within a second of each other are logged once, naming both.
 
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
 ``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
@@ -849,10 +947,24 @@ its ``realised_hz`` and the ``every_steps`` behind it. So a rate quoted from the
 checked against the one the run actually published at without measuring arrival times.
 
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
-``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
-type string into a class via ``importlib`` (cached); converters keyed by that string fill an outbound
-message in place, decoders turn an inbound message into a neutral payload, and a reflective path
-(``msg.data = payload``) covers primitive ``std_msgs`` with no registered converter. One converter per
+``Ros2Bridge(BridgeBase)`` and **one table from the neutral types to ROS messages**
+(``roqsim_ros_bridge/typemap.py``, free of ROS imports): each type of :mod:`roqsim.types` and each
+scalar maps to its message (``Twist`` to ``geometry_msgs/Twist``, ``Odometry`` to
+``nav_msgs/Odometry``, ...) with a converter each way, a ``stamped`` hint choosing between a
+message and its stamped form. ``typemap.resolve`` gives an endpoint's effective hints -- the
+message ``type`` (or a ``std_srvs/Trigger`` service for a command without parameters), the
+``topic`` (:func:`roqsim.endpoint.topic_of`: the world's ``topics:`` name, else the hint's, else
+the endpoint's name), the ``qos``
+(the world's ``qos:``, else the hint's, else ``default``: reliable, depth 10) and the producer's own
+frames -- and the converters. A dataclass without a row maps **by field name** onto the message its
+hint names, checked when the bridge binds it: a field that does not fit is refused by name, never
+dropped. A package maps its own type once through the ``roqsim.ros2_types`` entry-point group; with
+neither, the endpoint is not on ROS, which ``roqsim plugins describe`` reports. A hand-built endpoint
+keeps the registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the type string into a
+class via ``importlib`` (cached); converters keyed by that string fill an outbound message in place,
+decoders turn an inbound message into the positional payload its ``write`` takes, and a reflective
+path (``msg.data = payload``, and ``data`` inbound) covers primitive ``std_msgs`` with no registered
+converter. One converter per
 *wire format*, not per producer: the same rendered frame is published as ``sensor_msgs/Image`` or as
 ``sensor_msgs/CompressedImage`` purely by which type string an endpoint names, so a camera plugin
 offers a compressed stream without importing a codec (the encoder itself is
@@ -869,6 +981,27 @@ default, and missing it aborts with ``GOAL_TOLERANCE_VIOLATED``. Succeeding as s
 waypoint has been *fed* would make a blocked or saturated arm indistinguishable from one
 that did the job, and MoveIt forwards that verdict unchanged, so the caller would see a clean execution
 against a scene that never moved.
+
+**The control socket (``ipc``).** The second backend, :class:`roqsim.ipc.bridge.IpcBridge`, is core
+roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default
+(``--control``, ``ROQSIM_CONTROL``; ``none`` disables) together with the ``run_control`` plugin,
+which serves the driver's :class:`~roqsim.control.RunControl` as ``sim/run_control/{pause, resume,
+step, reset, state}``, and ``entity_control``, which serves :mod:`roqsim.entity_control` as
+``sim/entities/{set_state, set_presence}`` -- the same functions a stepped run's scenario actions
+call, so a refusal reads the same over either. It wires every endpoint under a path built from the
+address of the plugin that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
+``robot.lidar`` + ``scan`` is ``robot/lidar/scan``; two endpoints on one path are refused at bind
+naming both. It serves on demand and publishes on no schedule: a ROUTER answers ``describe`` /
+``read`` / ``call`` on a background thread -- a ``read`` is the endpoint's ``read`` run on the
+physics thread through ``ctx.submit``, a ``call`` a command's future waited on, with a timeout
+that is an error and never a success -- and an XPUB publishes, from ``post_step`` at each
+endpoint's gated rate, only the outputs under a prefix some client subscribed to. With nobody
+subscribed its ``post_step`` checks two empty collections and returns. A command may name an
+``out`` endpoint of its producer that confirms it (``Endpoint.confirm``); the reply carries that
+endpoint's value read in the ``post_step`` of the step that applied the command, and while the
+run is paused it says ``verified: false`` rather than stepping. ``--no-communication`` keeps it: it
+reaches this process, not a middleware the experiment publishes on. The scenario-execution adapter
+never adds it -- a stepped run is in-process. User-facing: :doc:`control`.
 
 **Injection, not authoring.** A world does not declare its transport. ``with_transport`` appends the
 bridge at load time (``roqsim sim --ros``; ``ROQSIM_ROS`` for the scenario-execution adapter), which is
@@ -887,7 +1020,8 @@ across several transports.
 **Hardwired topics.** A producer can pin an endpoint's topic to an *absolute* name that ignores the
 namespace, so the sim matches an external / hardware topic layout exactly. Any endpoint-producing
 plugin accepts a ``topics:`` map keyed by endpoint role name — ``topics: {image:
-/camera/color/image_raw, joint_states: /joint_states}`` — read via ``Plugin.topic_override(name)``
+/camera/color/image_raw, joint_states: /joint_states}`` — which the framework records on a decorated
+endpoint (``Endpoint.topic``) and a hand-built one reads via ``Plugin.topic_override(name)``
 (``roqsim/plugin.py``) when it fills the backend ``topic``. An absolute topic (leading ``/``) is
 published verbatim by the ROS backend (``_resolve_topic`` in ``ros2_bridge.py``), bypassing
 ``ep.namespace`` (and the node namespace); a relative topic renames the endpoint inside its
@@ -896,23 +1030,12 @@ namespace. Only the topic is overridden — TF frames stay namespaced. For examp
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
 
-**The endpoint map.** A consumer outside the world addresses an endpoint as ``(owner, name)`` --
-``ctx.interface.find`` in-process -- while over ROS it travels on whatever topic the bridge made of
-it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefix. So the bridge says
-what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
-``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
-publishes by owner and name with the topic its publisher is on, the message type and the published
-``field`` (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its ``owner`` filter. The topic is
-read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
-a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
-``entity_reports`` reads over ROS; only the published field travels, so the other fields of a
-report are readable in a stepped run only.
-
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as
-matching-dtype numpy buffers (one C-level copy) instead of per-element Python loops. Adding a new
-backend (zenoh, zmq) is a new ``BridgeBase`` subclass + its own registry — robots and worlds are
-unchanged.
+matching-dtype numpy buffers (one C-level copy) instead of per-element Python loops. The ``ipc``
+backend copies each array once on the physics thread, since a producer may overwrite its buffer in
+the next step, and hands that copy to ZeroMQ without another. Adding a new backend (zenoh) is a new
+``BridgeBase`` subclass + its own registry — robots and worlds are unchanged.
 
 .. _14-glossary--faq:
 

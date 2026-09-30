@@ -87,14 +87,6 @@ components:
   # open), 0.030 = 29.5 mm, 0.000 = 5.0 mm. Usable object width is therefore <~ 55 mm. Command a travel
   # just inside the object's width for a force-limited squeeze (capped at the URDF's 10 N) -- that is
   # what holds it; commanding 0 asks for the whole remaining overshoot at full force.
-  #
-  # `gripper_open: 0.0` / `gripper_close: 0.07` look inverted and are not. arm_controller maps a
-  # commanded gripper position onto the actuator ctrlrange as
-  # ctrl = lo + (pos - gripper_open)/(gripper_close - gripper_open) * (hi - lo), i.e. it assumes the
-  # ctrlrange runs open -> closed. This gripper's runs the other way (ctrl 0 = pads together,
-  # ctrl 0.07 = open), so these two values are what make the map the IDENTITY -- which is what keeps
-  # a commanded position and the position `gripper_joint` reports back mean the same number. Setting
-  # them the intuitive way round inverts the gripper: commanding "open" closes it.
   # ---------------------------------------------------------------------------------------------
   - arm_controller:
       joints: [arm_left_1_joint, arm_left_2_joint, arm_left_3_joint, arm_left_4_joint,
@@ -103,8 +95,8 @@ components:
       gripper_controller_name: gripper_left_controller
       gripper_actuator: gripper_left_finger_pos
       gripper_joint: gripper_left_finger_joint
-      gripper_open: 0.0             # see the note above: these make the command->ctrl map identity
-      gripper_close: 0.07
+      gripper_open: 0.07            # travel, metres: fully open
+      gripper_close: 0.0
       gripper_ctrl: 0.07            # raw ctrl held until commanded = fully open. Must be set: the
                                     # plugin's 255.0 default is a Robotiq tendon value.
       # PAL's `home` motion, final waypoint. Not optional: at qpos0 both arms stick straight out
@@ -129,8 +121,8 @@ components:
       gripper_controller_name: gripper_right_controller
       gripper_actuator: gripper_right_finger_pos
       gripper_joint: gripper_right_finger_joint
-      gripper_open: 0.0
-      gripper_close: 0.07
+      gripper_open: 0.07
+      gripper_close: 0.0
       gripper_ctrl: 0.07
       rest:
         arm_right_1_joint: -0.36
@@ -167,8 +159,8 @@ components:
   - spawn_sensor:
       model: sick_tim571
       parent_frame: base_link
-      pos: [0.27512, -0.18297, 0.13244]        # base_sensors.urdf.xacro:71
-      rpy: [-3.141592654, 0.0, -0.785398163]   # base_sensors.urdf.xacro:71: -180, 0, -45 deg
+      # base_sensors.urdf.xacro:71: rpy -180, 0, -45 deg
+      pose: {position: {x: 0.27512, y: -0.18297, z: 0.13244}, orientation: {roll: -3.141592654, yaw: -0.785398163}}
       frame_id: base_front_laser_link          # `${name}_link`, name base_front_laser (:70)
     name: base_front_laser
     components:
@@ -186,8 +178,8 @@ components:
   - spawn_sensor:
       model: sick_tim571
       parent_frame: base_link
-      pos: [-0.27512, 0.18297, 0.13244]        # base_sensors.urdf.xacro:66
-      rpy: [-3.141592654, 0.0, 2.356194490]    # base_sensors.urdf.xacro:66: -180, 0, 135 deg
+      # base_sensors.urdf.xacro:66: rpy -180, 0, 135 deg
+      pose: {position: {x: -0.27512, y: 0.18297, z: 0.13244}, orientation: {roll: -3.141592654, yaw: 2.356194490}}
       frame_id: base_rear_laser_link           # `${name}_link`, name base_rear_laser (:65)
     name: base_rear_laser
     components:

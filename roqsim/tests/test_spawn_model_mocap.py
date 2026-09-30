@@ -1,10 +1,10 @@
-"""spawn_model `mocap: true`: a prop a plugin drives, rather than physics or nothing.
+"""spawn_model `motion: driven`: a prop a plugin drives, rather than physics or nothing.
 
-The third state of the same axis. ``free: false`` is welded scenery and ``free: true`` is a body
-physics moves; this is the one in between -- collision geometry that goes where something *tells* it
-to go. It is what a controlled obstacle needs: the robot under test can see it and bump into it, but
-cannot shove it off the course the experiment set, and it costs the solver nothing because it has no
-degrees of freedom.
+The third state of the same axis. ``motion: static`` is welded scenery and ``motion: physics`` is a
+body physics moves; this is the one in between -- collision geometry that goes where something
+*tells* it to go. It is what a controlled obstacle needs: the robot under test can see it and bump
+into it, but cannot shove it off the course the experiment set, and it costs the solver nothing
+because it has no degrees of freedom.
 
 The guards are the point as much as the feature. Both ways of getting it wrong -- asking for a free
 joint too, or driving a prop that has its own articulation -- compile without complaint in MuJoCo and
@@ -147,7 +147,9 @@ def test_mocap_on_an_articulated_prop_is_refused(tmp_path):
     """MuJoCo compiles a jointed mocap body and then never moves the joint.
 
     Without this the prop arrives looking right and is frozen, which is a slow thing to diagnose.
+    The remedy it names is a ``motion`` value, since the ``mocap`` key is itself refused.
     """
     engine = Engine(_world(tmp_path, xml=HINGED, name="hinged", motion="driven"))
-    with pytest.raises(Exception, match="no degrees of freedom|inert"):
+    with pytest.raises(Exception, match="no degrees of freedom|inert") as err:
         engine.setup()
+    assert "motion: physics" in str(err.value)

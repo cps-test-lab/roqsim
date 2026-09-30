@@ -36,9 +36,9 @@
        friction 1.2 for cardboard-on-rubber; and softened solimp/solref so the pads settle into a
        few tenths of a millimetre instead of chattering at a 2 ms timestep.
 
-       Spawn it with `spawn_model: {model: graspable_carton, free: true, publish_tf: dynamic}` --
-       `free` adds the <freejoint/>, so this file declares none and the same prop can also be placed
-       as static scenery. -->
+       Spawn it with `spawn_model: {model: graspable_carton, publish_tf: dynamic}` -- the default
+       `motion: physics` adds the <freejoint/>, so this file declares none and the same prop can
+       also be placed as static scenery (`motion: static`). -->
   <default>
     <geom condim="4" friction="1.2 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.005 1"/>
   </default>

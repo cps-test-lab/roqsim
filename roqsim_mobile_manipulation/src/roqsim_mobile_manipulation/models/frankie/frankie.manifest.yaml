@@ -41,8 +41,8 @@ components:
       joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
       gripper_actuator: actuator8   # the Franka Hand tendon; not inferable under explicit ownership
       gripper_joint: finger_joint1  # reported gripper position
-      gripper_open: 0.0
-      gripper_close: 0.04           # Franka Hand: 0..0.04 m per finger
+      gripper_open: 0.04            # Franka Hand: 0.04 m per finger apart, 0 together
+      gripper_close: 0.0
       velocity_commands: true       # joint-velocity input (rad/s), integrated into the held target
       stream_commands: true         # also keep the high-rate position-stream path available
       # Rest stance = `qr`, the ready pose the Robotics Toolbox Frankie model ships (see the port log
@@ -75,8 +75,7 @@ components:
   - spawn_sensor:
       model: omron_os32c
       parent_frame: base_link
-      pos: [0.265, 0.0, 0.123]
-      rpy: [0.0, 0.0, 0.0]
+      pose: {position: {x: 0.265, z: 0.123}}
     name: lidar
     components:
       # Omron's setting for this robot, over the OS32C's own 270 deg: I611 p. 1-6 and p. 2-13, "a 240 deg
