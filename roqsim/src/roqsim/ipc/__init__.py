@@ -129,6 +129,10 @@ def bind_uri(value: str | None, logger: logging.Logger | None = None) -> str | N
     A default whose path is too long for a Unix socket (a deep run directory) moves to
     :func:`runtime_dir`, with a warning naming both -- the printed ``control:`` line and the
     registration carry the address it moved to. A path given explicitly is refused instead.
+
+    The default's run directory is created if it does not exist yet: it is where the run's outputs
+    land, and a runner that names it (``RUN_OUTPUT_DIR``) may leave its creation to the first
+    output written there -- which the socket, bound before the first step, is.
     """
     explicit = value if value is not None else os.environ.get(ENV) or None
     uri = normalize(explicit) if explicit is not None else default_uri()
@@ -150,6 +154,8 @@ def bind_uri(value: str | None, logger: logging.Logger | None = None) -> str | N
             )
             runtime_dir().mkdir(parents=True, exist_ok=True)
             return moved
+    if explicit is None:
+        Path(uri[len("ipc://") :]).parent.mkdir(parents=True, exist_ok=True)
     return uri
 
 
