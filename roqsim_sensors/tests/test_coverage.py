@@ -759,7 +759,7 @@ def test_loading_a_world_that_fails_after_setup_leaves_no_engine_running(tmp_pat
     monkeypatch.setattr(Engine, "setup", recording_setup)
     monkeypatch.setattr(mujoco, "mj_forward", fails)
     world = tmp_path / "w.yaml"
-    world.write_text("sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n")
+    world.write_text("sim:\n  timestep: 0.005\ncomponents:\n  - dummy: {}\n    name: d0\n")
     with pytest.raises(RuntimeError, match="injected"):
         load_world(str(world))
     assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]

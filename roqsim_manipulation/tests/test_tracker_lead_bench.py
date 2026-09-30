@@ -60,7 +60,12 @@ def _arm(gain: float, gravity_compensation: bool | None = None):
                 "spawn_arm": arm,
                 "name": "ur10e",
                 "components": [
-                    {"cartesian_admittance": {"site": "attachment_site", "law": "position"}},
+                    {
+                        "cartesian_admittance": {
+                            "site": "attachment_site",
+                            "controller_type": "cartesian_motion_controller",
+                        }
+                    },
                 ],
             },
         ],

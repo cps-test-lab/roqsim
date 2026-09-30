@@ -1,6 +1,6 @@
 """Scene plugin: report the sensor coverage of a world, enabled/disabled from the world YAML.
 
-The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``plugins:`` block
+The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``components:``
 and it computes coverage **once** (at ``configure``, after the model is compiled) and writes an
 agent-digestible ``report.json`` plus a human render -- then does nothing per step. Omit it and there is
 no coverage output. The optimization *search* over hypothetical mounts is the CLI's job

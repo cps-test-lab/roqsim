@@ -110,7 +110,7 @@ _DEFAULT_VIDEO = "run.webm"
 #: one shared path that each run of a sweep overwrites in turn. It is deliberately not in this list --
 #: a per-run artifact has no business at the campaign root, and falling back to the working directory
 #: is at least obviously local rather than quietly shared.
-_OUTPUT_DIR_VARS = ipc.OUTPUT_DIR_VARS
+_OUTPUT_DIR_VARS = ("RUN_OUTPUT_DIR", "OUTPUT_DIR")
 
 
 def _session_path(value: str) -> Path:
@@ -722,7 +722,7 @@ def run(
             # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
             # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
             # to add --record to without editing a launch file that two backends share. Recording is a session
-            # concern -- the same footing as `sim.headless`, which a world YAML ignores with a warning -- so the
+            # concern -- the same footing as `--headless`, which a world YAML has no key for -- so the
             # environment is the right channel, and it is the one the scenario adapter already uses.
             # An explicit flag always wins.
             if record is None:
@@ -1143,7 +1143,7 @@ def main(argv: list | None = None) -> int:
         metavar="URI",
         help="where this run serves its endpoints and run control (pause/resume/step): ipc://<path> "
         "or tcp://[host]:<port> (tcp://:<port> binds 127.0.0.1), or 'none'. Default: "
-        f"${ipc.ENV}, else ipc://<run dir>/{ipc.SOCKET_NAME}. Clients: `roqsim ls`, "
+        f"${ipc.ENV}, else ipc://<runtime dir>/<pid>.sock. Clients: `roqsim ls`, "
         "`roqsim endpoints`, roqsim.control_client.",
     )
     parser.add_argument(

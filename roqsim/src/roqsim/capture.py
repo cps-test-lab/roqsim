@@ -583,10 +583,10 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
 class StateRecorder:
     """Sample MuJoCo state into a ``.npz`` while a run proceeds. A **driver** object, not a plugin.
 
-    Capture is a session concern, not an experiment one -- the same footing as ``sim.headless`` (which
-    the world YAML explicitly rejects), ``--left-ui`` and ``--manual-control``. So this is constructed by
-    a driver and ``sample``\\ d from the loop the driver already runs: no lifecycle hooks, nothing
-    injected into a parsed world, and no second route through the world YAML.
+    Capture is a session concern, not an experiment one -- the same footing as ``--headless``,
+    ``--left-ui`` and ``--manual-control``. So this is constructed by a driver and ``sample``\\ d
+    from the loop the driver already runs: no lifecycle hooks, nothing injected into a parsed world,
+    and no second route through the world YAML.
 
     Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step) plus a copy
     into a write buffer. Everything expensive -- rebuilding the world, rendering, encoding -- happens

@@ -56,7 +56,7 @@ def test_a_world_whose_bridge_is_not_installed_still_loads(tmp_path):
     from roqsim_scene_builder.scene_window import load_engine
 
     world = tmp_path / "w.yaml"
-    world.write_text("plugins:\n  - ros2_bridge: {}\n  - sim_interfaces: {}\n")
+    world.write_text("components:\n  - ros2_bridge: {}\n  - sim_interfaces: {}\n")
     engine, _view = load_engine(str(world))
     try:
         assert engine.ctx.model is not None
@@ -127,7 +127,7 @@ def test_a_load_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkey
     monkeypatch.setattr(Engine, "setup", recording_setup)
     monkeypatch.setattr(Engine, "reset", fails)
     world = tmp_path / "w.yaml"
-    world.write_text("sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n")
+    world.write_text("sim:\n  timestep: 0.005\ncomponents:\n  - dummy: {}\n    name: d0\n")
     with pytest.raises(RuntimeError, match="injected"):
         load_engine(str(world))
     assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]

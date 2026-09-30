@@ -49,7 +49,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from . import entity_pose
 from .actuators import GravityReaction
 from .assets import deduplicate_assets
-from .config import SimConfig, instantiate_plugins
+from .config import SIM_OPTION_KEYS, SimConfig, instantiate_plugins
 from .context import SimContext
 from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
@@ -57,6 +57,7 @@ from .interpenetration import Interpenetration, interpenetrations, summary
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
+from .solref import floor_rule, floor_text, solref_floor
 from .world import build_world, world_file
 
 _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
@@ -279,25 +280,17 @@ class Engine:
         # solver/constraint hardness rather than to friction, so it reads as a friction problem and is
         # not one -- so a world that needs a tighter solve asks for one here, in the document, rather
         # than in whatever code happens to build it.
-        for key, attr in (
-            ("solver", "solver"),
-            ("iterations", "iterations"),
-            ("ls_iterations", "ls_iterations"),
-            ("noslip_iterations", "noslip_iterations"),
-            ("impratio", "impratio"),
-            # The medium. MuJoCo defaults both to 0 -- a vacuum -- which is right for a ground robot
-            # and wrong for anything that flies: a quadrotor still hovers there, but nothing damps
-            # it, so a lateral step rings forever and reads as bad gains rather than as missing air.
-            # Before these existed an aerial model had no honest option but to pin <option> itself,
-            # and thereby reconfigure every world it was spawned into.
-            ("density", "density"),
-            ("viscosity", "viscosity"),
-        ):
+        # SIM_OPTION_KEYS is also what the loader admits, so every key applied here is one a world
+        # may carry. Among them the medium, `density`/`viscosity`: MuJoCo defaults both to 0 -- a
+        # vacuum -- which is right for a ground robot and wrong for anything that flies, where
+        # nothing damps a lateral step, so it rings forever and reads as bad gains rather than as
+        # missing air.
+        for key in SIM_OPTION_KEYS:
             if (value := self.config.sim.get(key)) is not None:
                 setattr(
                     spec.option,
-                    attr,
-                    _SOLVERS[value] if key == "solver" else type(getattr(spec.option, attr))(value),
+                    key,
+                    _SOLVERS[value] if key == "solver" else type(getattr(spec.option, key))(value),
                 )
         if (cone := self.config.sim.get("cone")) is not None:
             spec.option.cone = _CONES[cone]
@@ -385,12 +378,15 @@ class Engine:
         ``{solref: [0.05]}`` varies the contact time constant and leaves the damping ratio alone —
         which is what a sweep over one element means.
 
-        A contact time constant below ``2 * timestep`` is refused, because MuJoCo clamps it there
-        and says nothing: asked for 0.5 ms at a 2 ms step, a world gets 4 ms and a penetration
-        bit-identical to the one it was trying to tighten away from. That is the same invisibility
-        this key's unknown-name check exists for, one level down — a value rather than a spelling.
-        The floor moves with the step, so the fix is a smaller ``sim.timestep``, and the error says
-        so. It is checked here rather than at load because the step may come from the model.
+        A contact time constant below MuJoCo's floor (:func:`roqsim.solref.solref_floor`) is
+        refused, because MuJoCo raises it to the floor and says nothing: asked for 0.5 ms at a 2 ms
+        step under ``implicitfast``, a world gets 4 ms and a penetration bit-identical to the one it
+        was trying to tighten away from. That is the same invisibility this key's unknown-name check
+        exists for, one level down -- a value rather than a spelling. The floor is the one for the
+        integrator this model compiles with (two steps, or under ``discrete`` about one, depending on
+        the damping ratio and ``solimp``), so it is checked here, after the integrator is resolved
+        and before compile, rather than at load. It judges the ``o_solref`` the override puts in
+        force against the ``o_solimp`` it puts in force, stated or kept from the model.
         """
         override = self.config.sim.get("contact_override")
         if not override:
@@ -400,31 +396,35 @@ class Engine:
             if value is None:
                 continue
             values = [float(v) for v in (value if isinstance(value, (list, tuple)) else [value])]
-            if key == "solref":
-                self._check_solref_floor(values, float(spec.option.timestep))
             current = list(getattr(spec.option, attr))
             setattr(spec.option, attr, values + current[len(values) :])
+        self._check_solref_floor(spec.option, stated="solref" in override)
         spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_OVERRIDE
         self.logger.info("contact_override active: %s", dict(override))
 
     @staticmethod
-    def _check_solref_floor(values: list[float], timestep: float) -> None:
-        """Refuse a contact time constant MuJoCo would silently clamp to ``2 * timestep``.
+    def _check_solref_floor(option, stated: bool) -> None:
+        """Refuse an override time constant MuJoCo would silently raise to its floor.
 
-        Only the POSITIVE form is a time constant. A negative ``solref[0]`` is MuJoCo's direct
+        Only the standard form is a time constant. A negative ``solref`` is MuJoCo's direct
         parameterisation, where the pair is ``(-stiffness, -damping)`` and no floor applies; refusing
         it would reject a world that is not asking for a time constant at all.
         """
-        if not values or values[0] <= 0.0:
+        solref = [float(v) for v in option.o_solref]
+        if solref[0] <= 0.0 or solref[1] <= 0.0:
             return
-        floor = 2.0 * timestep
-        if values[0] < floor:
-            raise PluginError(
-                f"sim.contact_override.solref: a contact time constant of {values[0]} s is below "
-                f"MuJoCo's floor of 2 * timestep = {floor} s, which it would silently use instead — "
-                f"the run would report the tighter value and behave as though {floor} s had been "
-                f"asked for. Lower sim.timestep to reach it, or state {floor} s or more."
-            )
+        floor = solref_floor(option, solref, [float(v) for v in option.o_solimp])
+        if floor is None or solref[0] >= floor:
+            return
+        source = "" if stated else ", the model's o_solref that the override puts in force,"
+        shown = floor_text(floor)
+        raise PluginError(
+            f"sim.contact_override.solref: a contact time constant of {solref[0]:.6g} s{source} is "
+            f"below MuJoCo's floor of {shown} s ({floor_rule(option)}), which it would silently "
+            f"use instead -- the run would report the tighter value and behave as though {shown} s "
+            f"had been asked for. Lower sim.timestep to reach it (the floor scales with the step), "
+            f"or state {shown} s or more."
+        )
 
     def reset(self, **params) -> None:
         """Reset physics and let plugins restore initial state.

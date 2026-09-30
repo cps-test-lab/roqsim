@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 
@@ -94,7 +95,7 @@ class Sim:
     """A world driven like `roqsim sim` drives it, on a thread of its own."""
 
     def __init__(self, uri: str, *extra):
-        cfg = load_config_from_dict({"sim": {}, "plugins": []})
+        cfg = load_config_from_dict({"sim": {}, "components": []})
         self.tank = Tank({}, entity="box", label="tank")
         self.engine = Engine(
             cfg,
@@ -292,7 +293,7 @@ def test_pause_step_n_and_resume(uri):
 
 
 def test_a_resumed_run_is_not_counted_as_falling_behind():
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{"dummy": {}, "name": "d0"}]})
+    cfg = load_config_from_dict({"sim": {}, "components": [{"dummy": {}, "name": "d0"}]})
     engine = Engine(cfg, preview=True)
     with engine:
         engine.reset()
@@ -307,7 +308,7 @@ def test_a_resumed_run_is_not_counted_as_falling_behind():
 
 
 def test_two_transports_writing_one_stream_warn_once_naming_both(caplog):
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     tank = Tank({}, entity="box", label="tank")
     with Engine(cfg, plugins=[DummyPlugin({}, name="box"), tank], preview=True) as engine:
         ep = engine.ctx.interface.find("box", "setpoint")
@@ -346,19 +347,48 @@ def test_an_endpoint_opts_out_with_a_none_hint(uri):
 
 def test_roqsim_sim_serves_and_registers_the_control_socket(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path))
     monkeypatch.delenv(ipc.ENV, raising=False)
     world = tmp_path / "w.yaml"
     world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
     assert runner.main([str(world), "--headless", "--steps", "3", "--pacing", "asap"]) == 0
-    assert f"control: ipc://{tmp_path / ipc.SOCKET_NAME}" in capsys.readouterr().out
+    socket = tmp_path / "roqsim" / f"{os.getpid()}.sock"
+    assert f"control: ipc://{socket}" in capsys.readouterr().out
     assert ipc.running() == []  # unregistered at exit
-    assert not (tmp_path / ipc.SOCKET_NAME).exists(), "the socket file outlived the run"
+    assert not socket.exists(), "the socket file outlived the run"
+
+
+def test_the_default_socket_does_not_depend_on_a_runners_output_directory(
+    tmp_path, monkeypatch, capsys
+):
+    # A runner's result directory may not exist yet, and is no place a client in another process
+    # could be relied on to look: the default stays in the runtime directory whatever it says.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path / "out" / "config" / "0"))
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.delenv(ipc.ENV, raising=False)
+    world = tmp_path / "w.yaml"
+    world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
+    assert runner.main([str(world), "--headless", "--steps", "3", "--pacing", "asap"]) == 0
+    assert (
+        f"control: ipc://{tmp_path / 'roqsim' / f'{os.getpid()}.sock'}" in capsys.readouterr().out
+    )
+    assert not (tmp_path / "out").exists()
+
+
+def test_roqsim_control_names_the_address_for_the_simulator(tmp_path, monkeypatch, capsys):
+    # How a runner puts a simulator and its clients in different places on one address.
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv(ipc.ENV, f"ipc://{shared / 'roqsim-control.sock'}")
+    world = tmp_path / "w.yaml"
+    world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
+    assert runner.main([str(world), "--headless", "--steps", "3", "--pacing", "asap"]) == 0
+    assert f"control: ipc://{shared / 'roqsim-control.sock'}" in capsys.readouterr().out
 
 
 def test_roqsim_sim_control_none_serves_nothing(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path))
     world = tmp_path / "w.yaml"
     world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
     seen = []
@@ -368,8 +398,8 @@ def test_roqsim_sim_control_none_serves_nothing(tmp_path, monkeypatch, capsys):
     assert runner.main(args) == 0
     assert seen[0]["control"] is None
     assert "control:" not in capsys.readouterr().out
-    assert not (tmp_path / ipc.SOCKET_NAME).exists()
-    assert not list(tmp_path.glob("*.json"))
+    assert not list(tmp_path.rglob("*.sock"))
+    assert not list(tmp_path.rglob("*.json"))
 
 
 def test_discovery_finds_the_only_running_simulator(uri):

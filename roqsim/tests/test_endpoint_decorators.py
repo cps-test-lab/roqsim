@@ -53,7 +53,7 @@ class Probe(Plugin):
 
 
 def _engine(**probe_config):
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     probe = Probe(dict(probe_config), entity="box", label="probe")
     engine = Engine(cfg, plugins=[DummyPlugin({}, name="box"), probe], preview=True)
     return engine, probe
@@ -101,7 +101,7 @@ def test_a_bridge_listed_after_the_producer_binds_its_endpoints():
             self.bound.append(ep.name)
             self.inbound[ep.name] = on_payload
 
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     probe = Probe({}, entity="box", label="probe")
     bridge = Bound({})
     engine = Engine(cfg, plugins=[DummyPlugin({}, name="box"), probe, bridge], preview=True)

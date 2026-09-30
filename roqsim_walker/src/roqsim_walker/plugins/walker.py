@@ -12,6 +12,7 @@ Config::
       namespace: ""            # transport scope for the goal endpoint
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals instead of the character mesh
+      rgba: [r, g, b, a]       # colour of the capsule visuals (default: the humanoid's own)
       speed: 1.2               # m/s; past ~1.7 the run clip blends in
       pose:                    # where a goal-driven walker stands at the start (no `waypoints`):
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
@@ -133,7 +134,6 @@ class WalkerPlugin(Plugin):
         "recovery": "recovery",
         "update_hz": "update_hz",
         "goal_endpoint": "goal_endpoint",
-        "action_name": "action_name",
         "namespace": "namespace",
     }
 
@@ -160,6 +160,9 @@ class WalkerPlugin(Plugin):
 
         nav = {dst: cfg[src] for src, dst in cls._NAV_KEYS.items() if src in cfg}
         nav["output"] = "walker"
+        if "action_name" in cfg:
+            # The walker's goal endpoint is the navigator's `navigate_through_poses`.
+            nav["action_names"] = {"navigate_through_poses": cfg["action_name"]}
         # `waypoints` become the navigator's `goals`, minus the first: a walker starts *at* its first
         # waypoint, and the navigator's route already begins wherever the body is.
         raw = cfg.get("waypoints") or []

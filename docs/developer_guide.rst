@@ -41,6 +41,8 @@ Golden rules
 * **No mid-run recompile:** modify the ``MjSpec`` only in ``build()``; at runtime use mocap/qpos
   writes or a pre-compiled entity pool.
 * Keep the core ROS-free. The ROS bridge is just another plugin.
+* **A config key whose meaning changes gets a new name.** The old name is then unknown and refused,
+  so a document written for the old meaning fails at load instead of being read with the new one.
 * **Read a model field through ``int()`` before matching it against an ``mjt*`` enum.**
   ``model.jnt_type[j]`` is a numpy scalar, and ``x in (mjJNT_HINGE, mjJNT_SLIDE)`` puts the
   *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered

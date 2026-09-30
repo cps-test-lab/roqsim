@@ -18,7 +18,7 @@ def _world(tmp_path, **box):
     return load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_model": {
                         "model": "industrial_table",

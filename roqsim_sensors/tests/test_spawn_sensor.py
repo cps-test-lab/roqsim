@@ -17,7 +17,7 @@ from roqsim.pose import pose_mapping
 def _world(**spawn_config):
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {
                 "spawn_sensor": {"model": "realsense_d435", **spawn_config},
                 "name": "d435",
@@ -57,7 +57,7 @@ def test_default_plugins_false_skips_the_capture_plugin():
 def _mid360_world(**spawn_config):
     cfg = {
         "sim": {},
-        "plugins": [{"spawn_sensor": {"model": "mid360", **spawn_config}, "name": "mid360"}],
+        "components": [{"spawn_sensor": {"model": "mid360", **spawn_config}, "name": "mid360"}],
     }
     return load_config_from_dict(cfg)
 
@@ -74,7 +74,7 @@ def _fov_alpha(engine: Engine):
 def _robin_world(**spawn_config):
     cfg = {
         "sim": {},
-        "plugins": [{"spawn_sensor": {"model": "robin_w1g", **spawn_config}, "name": "robin_w1g"}],
+        "components": [{"spawn_sensor": {"model": "robin_w1g", **spawn_config}, "name": "robin_w1g"}],
     }
     return load_config_from_dict(cfg)
 
@@ -196,7 +196,7 @@ def test_show_fov_on_a_camera_model_synthesises_a_frustum():
 def test_fov_alpha_out_of_range_is_rejected():
     from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
 
-    errors = SpawnSensorPlugin().validate_config({"model": "mid360", "fov_alpha": 1.5})
+    errors = SpawnSensorPlugin().config_errors({"model": "mid360", "fov_alpha": 1.5})
     assert any("fov_alpha" in e for e in errors)
 
 
@@ -247,7 +247,7 @@ def test_camera_model_always_synthesises_occluded_frustum_not_envelope():
     for extra in ({}, {"fov_near": 0.0}, {"fov_near": 1.3, "fov_range": 2.5}):
         cfg = {
             "sim": {},
-            "plugins": [
+            "components": [
                 {
                     "spawn_sensor": {
                         "model": "zivid",
@@ -322,7 +322,7 @@ def test_a_realsense_mount_is_the_vendor_camera_link():
         ("realsense_d415", "d415_color"),
         ("realsense_d455", "d455_color"),
     ):
-        cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": model}, "name": model}]}
+        cfg = {"sim": {}, "components": [{"spawn_sensor": {"model": model}, "name": model}]}
         engine = Engine(load_config_from_dict(cfg))
         engine.setup()
         engine.reset()
@@ -339,7 +339,7 @@ def test_the_zivid_mount_keeps_its_horizontal_look_convention():
     """The Zivid ships no ROS description, so it has no vendor link: it looks +y with +z up."""
     import mujoco
 
-    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "zivid"}, "name": "zivid"}]}
+    cfg = {"sim": {}, "components": [{"spawn_sensor": {"model": "zivid"}, "name": "zivid"}]}
     engine = Engine(load_config_from_dict(cfg))
     engine.setup()
     engine.reset()
@@ -367,7 +367,7 @@ def _occlusion_engine(tmp_path, wall=True, **spawn):
     p.write_text(_OCCLUSION_WORLD.format(wall=_WALL if wall else ""))
     cfg = {
         "sim": {"world": str(p)},
-        "plugins": [
+        "components": [
             {
                 "spawn_sensor": {
                     "model": "realsense_d435",
@@ -460,9 +460,12 @@ def test_fov_rays_config_validation():
 
     plugin = SpawnSensorPlugin()
     assert any(
-        "fov_rays" in e for e in plugin.validate_config({"model": "realsense_d435", "fov_rays": [1, 4]})
+        "fov_rays" in e
+        for e in plugin.config_errors({"model": "realsense_d435", "fov_rays": [1, 4]})
     )
-    assert any("fov_rays" in e for e in plugin.validate_config({"model": "realsense_d435", "fov_rays": [8]}))
+    assert any(
+        "fov_rays" in e for e in plugin.config_errors({"model": "realsense_d435", "fov_rays": [8]})
+    )
 
 
 def test_lidar_sector_is_clipped_by_the_walls():
