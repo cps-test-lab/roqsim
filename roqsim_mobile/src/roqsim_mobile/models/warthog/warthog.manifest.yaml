@@ -36,7 +36,7 @@ components:
   # (clearpath_config sample/w200/w200_dual_laser.yaml @ b2a64ba): each on a vertical PACS bracket at
   # the front of a diff unit, the first on the left unit facing forward, the second on the right unit
   # facing backward, so the two 180 deg fields cover the turn between them. Clearpath's default W200
-  # (w200_default.yaml) carries no scanner and its other sample a VLP-16 on a tower; see the port log.
+  # (w200_default.yaml) carries no scanner and its other sample a VLP-16 on a tower.
   #
   # The chain is in `frames:` below, down to each bracket's `_vertical_mount`, and each device publishes
   # `bracket_<i>_vertical_mount -> lidar2d_<i>_laser`, 47.4 mm up. The scan frames sit in base_link at

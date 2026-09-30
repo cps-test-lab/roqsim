@@ -10,7 +10,7 @@ track 0.37559 m, wheelbase 0.262 m, base_link rest height 0.0635 m.
 
 Note on skid-steer: turning is scrubbed, not rolled, so the tolerances below are deliberately
 looser than for an ideal diff-drive (rotation drift, arc odometry). See ``slip_factor`` in the
-manifest and the port log.
+manifest.
 """
 
 from __future__ import annotations

@@ -152,7 +152,7 @@ def test_b1_straight_line():
 
 def test_b2_in_place_rotation_direction_and_stability():
     # Scrub-limited (rigid 4-wheel skid-steer): assert it turns in the commanded direction and stays
-    # stable near the spot, not a yaw-rate ratio. ~35 deg in 4 s at cmd 0.5 rad/s. See port log.
+    # stable near the spot, not a yaw-rate ratio. ~35 deg in 4 s at cmd 0.5 rad/s.
     model, data, dd, body = _run(0.0, 0.5, 4.0)
     assert _yaw(data) > math.radians(10), f"did not yaw (yaw={math.degrees(_yaw(data)):.1f} deg)"
     assert math.hypot(data.qpos[0], data.qpos[1]) < 0.35, "drifted too far during in-place turn"
@@ -161,7 +161,7 @@ def test_b2_in_place_rotation_direction_and_stability():
 
 def test_b3_arm_and_head_position_hold():
     # Arms + head are the manipulation DOFs and hold commanded targets against gravity. (The serial
-    # torso-lift chain holds *home* -- test_a3 -- but arbitrary lift poses need gravity comp; see port log.)
+    # torso-lift chain holds *home* -- test_a3 -- but arbitrary lift poses need gravity comp.)
     model, data = _build()
     ctx, dd, body = _plugins(model, data)
     target = {

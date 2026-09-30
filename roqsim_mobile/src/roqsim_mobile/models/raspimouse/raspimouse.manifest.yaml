@@ -18,7 +18,7 @@ components:
       wheel_radius: 0.024            # the URDF's collision cylinder, and the wheel mesh agrees
       wheel_separation: 0.085        # track = 2 x 0.0425, straight from the joint origins
       max_linear_vel: 0.5            # RT's published top speed
-      max_angular_vel: 3.0           # assumption: no yaw-rate figure is published (see port log)
+      max_angular_vel: 3.0           # assumption: no yaw-rate figure is published
       wheel_accel_limit: 1.0         # assumption: none published
       left_actuator: left_wheel_motor
       right_actuator: right_wheel_motor

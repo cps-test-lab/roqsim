@@ -14,8 +14,7 @@ drive geometry below is that plugin's own configuration.
 description: nine links, twelve meshes, and **no inertial or collision elements whatsoever** -- it
 sums to 0.0 kg. Everything physical comes from ``lgdxrobot2_sim.urdf``, which adds the inertials, a
 base collision box and a collision **sphere** per wheel. Building from the plain URDF would have
-produced a massless robot, and that is exactly why the ledger ranks ``official_desc_sim`` above
-``official_desc``.
+produced a massless robot, so this generator builds from ``lgdxrobot2_sim.urdf``.
 
 The wheel collision is the vendor's sphere, not a cylinder. For a mecanum wheel that is the better
 stand-in -- a sphere offers no preferred rolling direction -- and it matches how ``omni_drive`` treats

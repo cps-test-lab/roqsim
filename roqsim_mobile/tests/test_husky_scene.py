@@ -23,7 +23,7 @@ bracket at `top_plate_mount_d1`, and the chain to its scan frame is
 
 Note on skid-steer: turning is scrubbed, not rolled, so the tolerances below are deliberately looser
 than for an ideal diff-drive (rotation drift, arc odometry). See ``slip_factor`` in the diff_drive
-plugin and the port log.
+plugin and the manifest.
 """
 
 from __future__ import annotations

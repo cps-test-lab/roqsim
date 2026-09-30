@@ -35,9 +35,9 @@ dependencies = [
 test = ["pytest>=7.0"]
 
 # No plugins of its own, deliberately: both platforms are assembled from plugins that already exist
-# (spawn_robot, diff_drive, omni_drive, arm_controller, spawn_sensor, lidar). A composite robot needing a NEW plugin
-# would be a sign the composition mechanism is missing something -- see each port log's "substrate
-# extensions" table, which is what that claim is measured by.
+# (spawn_robot, diff_drive, omni_drive, arm_controller, spawn_sensor, lidar). A composite robot
+# needing a NEW plugin would be a sign the composition mechanism is missing something --
+# tests/test_mounted_arm_composition.py is what that claim is measured by.
 
 # Bundled models (frankie, tiago_pro), discoverable across packages via roqsim.models
 # (`spawn_robot: {model: frankie}`, or package-qualified `roqsim_mobile_manipulation:frankie`).

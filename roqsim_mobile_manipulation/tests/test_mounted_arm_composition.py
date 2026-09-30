@@ -213,8 +213,7 @@ def test_reach_envelope_is_statically_stable(tmp_path):
 
     Husky A200 (44 kg) + UR10e + 2F-85 (33.8 kg) is top-heavy: the arm is three quarters of the base's
     mass. Measured, it stays level out to ~1.05 m of horizontal reach from base_link and tips beyond
-    ~1.5 m, so this pins the working end of that envelope. The port log carries the full sweep and the
-    parking constraint it implies.
+    ~1.5 m, so this pins the working end of that envelope.
     """
     engine = Engine(_world(tmp_path, arm_extra=GRIPPER))
     engine.ctx.seed = 0  # driver-owned; the Husky's scanner noise draws from it

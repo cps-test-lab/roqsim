@@ -3,8 +3,8 @@
 
 A **holonomic** base. The differential and skid-steer robots use ``diff_drive``; the Ridgeback's
 four mecanum wheels strafe, so it uses ``omni_drive`` -- the plugin written for PAL's OMNI base.
-That is why the platform ledger records this port as **no new capability**:
-``roqsim_mobile/plugins/omni_drive.py`` already provides it.
+So this port needs **no new capability**: ``roqsim_mobile/plugins/omni_drive.py`` already
+provides it.
 
 Same source package as ``husky_a200`` (a200) and ``clearpath_jackal`` (j100), so the conversion path
 is a proven one. Every mass, inertia, link offset and collision primitive below is

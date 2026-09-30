@@ -4,22 +4,22 @@
 A 72.8 kg four-wheel **omnidirectional** base: all four wheels drive, none steers. Holonomic, so it
 uses ``omni_drive``'s existing mecanum path -- no swerve inverse kinematics and no ``slip_factor``.
 
-The ledger's open question is whether its omni wheels are mecanum or Swedish-roller. The macros
+Whether its omni wheels are mecanum or Swedish-roller is not stated anywhere obvious. The macros
 answer it: the only wheel macro is ``mpo_500_omni_wheel``, axis
 ``0 1 0``, and there is **no caster macro at all**, so nothing steers. Either roller type reduces to
 the same planar model here, and the wheel spin that keeps ``joint_states`` honest is the mecanum
 convention ``omni_drive`` already applies to the TIAGo Pro and the Ridgeback.
 
 Structurally this is the MPO-700 minus the steering layer, and it shares that port's two source
-facts: the MIT tree is `neo_simulation2` rather than the unlicensed `neo_mpo_500-2` the survey
-ranked, and the meshes are millimetre-scale Collada. It differs in one welcome way -- its
+facts: the MIT tree is `neo_simulation2` rather than `neo_mpo_500-2`, for which GitHub detects no
+licence, and the meshes are millimetre-scale Collada. It differs in one welcome way -- its
 ``ODM_joint_type`` defaults to ``revolute`` and is forced to ``fixed`` only when an arm is mounted,
 so unlike the MPO-700 the wheels are articulated without our intervention.
 
 **Not consolidated with `build_mpo700_mjcf.py`, deliberately.** The two share the wrapper pattern and
 the mesh pipeline but differ in body structure (steer layer or not), and the two remaining Neobotix
 platforms are *differential*, a third shape again. Consolidating two of four shapes now and reworking
-for the third is worse than consolidating once when all three are known -- see the port log.
+for the third is worse than consolidating once when all three are known.
 
 **The two SICK microScan3s are not in this model.** The manifest mounts the ``sick_microscan3`` device
 model at each of the vendor's ``lidar_1_joint`` and ``lidar_2_joint``, and those devices carry the
