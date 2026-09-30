@@ -74,8 +74,8 @@ notion of touching and is longer than the time force was transmitted: MuJoCo goe
 while the two geoms still overlap on the way apart, and those steps carry a zero normal force. The
 impulse is unaffected -- a zero integrand adds nothing -- and the alternative, a duration that
 switched off before the monitor's ``in_contact`` did, would be the second rule this plugin exists
-not to have. The ROS 2 backend hint publishes ``impulse_ns`` as a ``std_msgs/Float64`` on
-``contact_impulse``; a consumer that wants the rest reads the report through the blackboard handle
+not to have. ROS carries ``impulse_ns`` alone, a ``std_msgs/Float64`` on ``contact_impulse``; a
+consumer that wants the rest reads the report through the blackboard handle
 ``contact_impulse:<address>``.
 
 **Publishing is rate-limited and the integral is not.** ``rate_hz`` decides how often the running
@@ -104,26 +104,43 @@ and ``peak_time = -1.0`` -- a measured zero, which is what "nothing was hit" is.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
+from ..types import Duration, Force
+
+Impulse = Annotated[float, Unit("N*s")]
 
 
 @dataclass
 class ContactImpulseReport:
-    """Neutral payload for the ``contact_impulse`` endpoint."""
+    """What the ``contact_impulse`` endpoint reads: the totals since reset and this step's load.
 
-    impulse_ns: float = 0.0  # integral of the summed normal force since reset [N s]
-    peak_normal_n: float = 0.0  # largest summed normal force of any one step since reset [N]
-    contact_time_s: float = 0.0  # sim time spent with at least one qualifying contact [s]
-    normal_n: float = 0.0  # summed normal force this step [N] -- the integrand right now
-    count: int = 0  # qualifying contacts this step
-    peak_time: float = -1.0  # sim time of the peak; -1.0 while nothing has been touched
-    peak_geom_a: str = ""  # strongest single contact at the peak step ("" until one happens)
+    Attributes:
+        impulse_ns: integral of the summed normal force since reset
+        peak_normal_n: largest summed normal force of any one step since reset
+        contact_time_s: sim time spent with at least one qualifying contact
+        normal_n: summed normal force this step, the integrand right now
+        count: qualifying contacts this step
+        peak_time: sim time of the peak; -1.0 while nothing has been touched
+        peak_geom_a: one side of the strongest single contact at the peak step; "" until one
+        peak_geom_b: the other side of that contact
+    """
+
+    impulse_ns: Impulse = 0.0
+    peak_normal_n: Force = 0.0
+    contact_time_s: Duration = 0.0
+    normal_n: Force = 0.0
+    count: int = 0
+    peak_time: Duration = -1.0
+    peak_geom_a: str = ""
     peak_geom_b: str = ""
 
 
@@ -183,7 +200,6 @@ class ContactImpulsePlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # The rule is contact_monitor's, held in one place rather than restated here: resolving it
         # through the shared scope is what stops the two plugins counting different contacts.
@@ -204,26 +220,14 @@ class ContactImpulsePlugin(Plugin):
         # `self.name` falls back to the class name and two unnamed instances in one world would
         # write to a single key, reporting one robot's impulse as another's.
         ctx.blackboard.set(f"contact_impulse:{self.address}", self.read)
-        ctx.interface.add(
-            Endpoint(
-                name="contact_impulse",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        # The report is a structure and Float64 carries one field, so the endpoint
-                        # says WHICH rather than the bridge holding a converter that knows this
-                        # plugin's attribute names. The other fields stay readable in-process.
-                        "field": "impulse_ns",
-                        "topic": self.topic_override("contact_impulse") or "contact_impulse",
-                    }
-                },
-            )
-        )
+
+    # The report is a structure and Float64 carries one field, so the endpoint says WHICH rather
+    # than the bridge holding a converter that knows this plugin's attribute names. The other
+    # fields stay readable in-process.
+    @endpoint.out(rate="rate_hz", ros2={"field": "impulse_ns"})
+    def contact_impulse(self) -> ContactImpulseReport:
+        """The totals since reset and this step's load."""
+        return self._report
 
     def read(self) -> ContactImpulseReport:
         """The report as it stands. What the blackboard handle hands an in-process consumer."""

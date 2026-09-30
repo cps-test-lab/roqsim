@@ -16,6 +16,7 @@ setup(
                 "launch/nav2_turtlebot_depot.launch.py",
                 "launch/nav2_g1.launch.py",
                 "launch/nav2_spot.launch.py",
+                "launch/nav2_carlike.launch.py",
             ],
         ),
         (
@@ -25,6 +26,8 @@ setup(
                 "params/nav2_params_depot.yaml",
                 "params/nav2_params_g1.yaml",
                 "params/nav2_params_spot.yaml",
+                "params/nav2_params_carlike.yaml",
+                "params/carlike_piracer.yaml",
             ],
         ),
         (
@@ -38,6 +41,7 @@ setup(
                 "worlds/depot_nav2.yaml",
                 "worlds/g1_nav2.yaml",
                 "worlds/spot_nav2.yaml",
+                "worlds/piracer_nav2.yaml",
             ],
         ),
     ],
@@ -45,6 +49,9 @@ setup(
     zip_safe=True,
     maintainer="Frederik Pasch",
     maintainer_email="frederik.pasch@h-ka.de",
-    description="Minimal nav2 example on roqsim: TurtleBot 4, Unitree G1 humanoid, or Spot quadruped.",
+    description=(
+        "Minimal nav2 example on roqsim: TurtleBot 4, Unitree G1 humanoid, Spot quadruped, and "
+        "a car-like base (the PiRacer)."
+    ),
     license="Apache-2.0",
 )

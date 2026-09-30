@@ -23,8 +23,7 @@ frame_id: laser             # Husarion's scan frame with no component name (slam
 frames:
   - name: "{frame_id}"      # the vendor scan frame (slamtec_rplidar.urdf.xacro:63-65, 272-276, model s3)
     parent: mount
-    pos: [0.0, 0.0, 0.0305]
-    rpy: [0.0, 0.0, 3.141592654]
+    pose: {position: {z: 0.0305}, orientation: {yaw: 3.141592654}}
 
 components:
   - lidar:
