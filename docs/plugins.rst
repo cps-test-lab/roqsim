@@ -1126,8 +1126,7 @@ of it, with the block's modulus a world key (model paths resolve beside the worl
      - spawn_arm:
          model: ur5e
          prefix: ur5e_
-         pos: [-0.25, 0.0, 0.0]
-         rpy: [0.0, 0.0, 3.14159265]
+         pose: {position: {x: -0.25}, orientation: {yaw: 3.14159265}}
          home: [-0.0671, -1.3800, 2.0314, -2.2222, -1.5708, -0.0671]
          end_effector: {model: pad.xml}
        name: ur5e
