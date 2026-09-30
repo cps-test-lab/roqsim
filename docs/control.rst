@@ -89,21 +89,24 @@ Finding the simulator
 ``roqsim sim --control <uri>`` (or ``ROQSIM_CONTROL``) chooses the address; ``--control none``
 serves nothing:
 
-* ``ipc://<path>`` -- a Unix socket. The default is ``roqsim-control.sock`` in the run directory
-  (``RUN_OUTPUT_DIR``, else ``OUTPUT_DIR``, else the working directory). A run directory too deep
-  for a Unix socket path moves it to the runtime directory, with a warning naming both.
+* ``ipc://<path>`` -- a Unix socket. The default is ``<pid>.sock`` in the per-user runtime
+  directory (``$XDG_RUNTIME_DIR/roqsim``, else ``roqsim-<uid>`` in the temp directory), one per
+  simulator, so any number run side by side.
 * ``tcp://[host]:<port>`` -- ``tcp://:5555`` binds ``127.0.0.1``. Naming another address opens the
   simulator's control to that network.
 
 Subscriptions travel on a second socket derived from the first: ``<path>.pub``, or port + 1.
 
 A client (the commands above, :class:`roqsim.control_client.Client`, the MCP tools) takes
-``--control``/``control`` too, and without it looks in this order: ``ROQSIM_CONTROL``, the run
-directory's ``roqsim-control.sock`` when a running simulator serves it, then the only simulator
-running. Each running
-simulator registers itself in a per-user runtime directory, which is what ``roqsim ls`` lists; with
-several running and none named, a client refuses and lists them. A second simulator asked to serve
-an address one is already serving is refused at start-up.
+``--control``/``control`` too, and without it looks in this order: ``ROQSIM_CONTROL``, then the
+only simulator running. Each running simulator registers itself in the per-user runtime directory,
+which is what ``roqsim ls`` lists; with several running and none named, a client refuses and lists
+them. A second simulator asked to serve an address one is already serving is refused at start-up.
+
+The default is found only where the simulator and the client share that runtime directory -- one
+machine, one user. Where they do not, as when they run in separate containers, whoever starts them
+names the address for both: ``--control`` for ``roqsim sim``, and the same ``ROQSIM_CONTROL`` in
+every client's environment, on a directory they share.
 
 When pyzmq is not installed, ``roqsim sim`` runs without a control socket and says so once; asking
 for one by name (``--control``, ``ROQSIM_CONTROL``) is then an error naming the extra.
