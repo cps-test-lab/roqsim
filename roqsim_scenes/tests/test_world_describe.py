@@ -204,6 +204,28 @@ def test_body_tree_nests_the_geom_under_its_body(capsys, dummy_world):
     assert all("children" not in c for c in children), "a leaf has no children of its own"
 
 
+def test_body_tree_names_each_frame_by_the_path_the_resolver_accepts(capsys, tmp_path):
+    """What the tree shows is what a frame path can be typed as: an entity's body under the
+    entity's path, and a body, site or camera no entity owns by its MuJoCo name."""
+    (tmp_path / "gantry.xml").write_text(
+        '<mujoco><worldbody><body name="gantry" pos="0 0 2">'
+        '<joint name="gantry_x" type="slide" axis="1 0 0"/><geom type="box" size="0.1 0.1 0.1"/>'
+        '<site name="gantry_cam"/><camera name="overhead"/></body></worldbody></mujoco>'
+    )
+    world = tmp_path / "w.yaml"
+    world.write_text("sim: {world: gantry.xml}\ncomponents:\n- dummy: {size: 0.3}\n  name: box_a\n")
+    trees = {
+        m["root"]: m["tree"] for m in _describe(capsys, str(world), "--body-tree", "*")["body_tree"]
+    }
+    assert trees["box_a_box"]["frame"] == "box_a/box_a_box"
+    gantry = trees["gantry"]
+    assert gantry["frame"] == "gantry"
+    frames = {c["name"]: (c["type"], c.get("frame")) for c in gantry["children"]}
+    assert frames["gantry_cam"] == ("site", "gantry_cam")
+    assert frames["overhead"] == ("camera", "overhead")
+    assert frames["gantry_x"] == ("joint", None)
+
+
 def test_body_tree_glob_bounds_the_answer(capsys, dummy_world):
     """Same rule --overridable already follows: a caller after one body is not handed every body."""
     one = _describe(capsys, str(dummy_world), "--body-tree", "box_a_box")["body_tree"]
