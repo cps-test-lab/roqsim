@@ -18,6 +18,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.types import Image
 
 
 class _CameraScene(Plugin):
@@ -41,9 +42,10 @@ class _CameraScene(Plugin):
 def _world(plugin_ref: str, **config):
     cfg = {
         "sim": {},
-        "plugins": [
+        "components": [
             {f"{__name__}:_CameraScene": {}},
-            {plugin_ref: {"camera": "cam", **config}},
+            # One camera for both streams: the fixture has no separate depth camera.
+            {plugin_ref: {"camera": "cam", "depth_camera": "cam", **config}},
         ],
     }
     return load_config_from_dict(cfg)
@@ -51,6 +53,17 @@ def _world(plugin_ref: str, **config):
 
 def _endpoint(engine: Engine, name: str):
     return next((e for e in engine.ctx.interface.all() if e.name == name), None)
+
+
+def _read(engine: Engine, name: str):
+    """The endpoint's payload; an image's pixels."""
+    payload = _endpoint(engine, name).read()
+    return payload.data if isinstance(payload, Image) else payload
+
+
+def _topic(ep) -> str:
+    """The topic a bridge publishes *ep* on: the world's rename, else its hint's, else its name."""
+    return ep.topic or ep.backend["ros2"].get("topic") or ep.name
 
 
 # -- intrinsics -----------------------------------------------------------------------------
@@ -214,8 +227,8 @@ def test_oakd_camera_captures_rgb_and_depth():
     engine.setup()
     engine.reset()
     engine.step()
-    rgb = _endpoint(engine, "image").read()
-    depth = _endpoint(engine, "depth").read()
+    rgb = _read(engine, "image")
+    depth = _read(engine, "depth")
     info = _endpoint(engine, "camera_info").read()
     assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint8
     assert rgb.max() > 0  # not a black frame -- the box/plane actually rendered
@@ -229,8 +242,8 @@ def test_zivid_captures_rgb_and_depth_with_working_range_defaults():
     engine.setup()
     engine.reset()
     engine.step()
-    rgb = _endpoint(engine, "image").read()
-    depth = _endpoint(engine, "depth").read()
+    rgb = _read(engine, "image")
+    depth = _read(engine, "depth")
     info = _endpoint(engine, "camera_info").read()
     assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint8 and rgb.max() > 0
     assert depth.shape == (48, 64) and depth.dtype == np.float32
@@ -260,7 +273,7 @@ def _stepped(plugin_ref: str, **config):
 
 def test_realsense_d435_publishes_colour_only_by_default():
     engine = _stepped(D435)
-    rgb = _endpoint(engine, "image").read()
+    rgb = _read(engine, "image")
     assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint8 and rgb.max() > 0
     assert _endpoint(engine, "camera_info") is not None
     # Depth and the cloud are opt-in: a 640x480 cloud is up to 307k points per capture, so a world
@@ -272,14 +285,34 @@ def test_realsense_d435_publishes_colour_only_by_default():
 def test_realsense_d435_depth_is_opt_in_and_uses_realsense_topics():
     engine = _stepped(D435, depth=True)
     ep = _endpoint(engine, "depth")
-    depth = ep.read()
+    depth = ep.read().data
     assert depth.shape == (48, 64) and depth.dtype == np.float32
     assert np.isfinite(depth).any()  # the box at 2 m is inside the D435's 0.28-3.0 m range
     ros = ep.backend["ros2"]
     assert ros["topic"] == "camera/depth/image_rect_raw"
     assert ros["frame_id"] == "camera_depth_optical_frame"
-    assert ros["encoding"] == "32FC1"
+    assert ep.read().encoding == "32FC1"
     assert _endpoint(engine, "points") is None  # depth alone does not imply the cloud
+
+
+def test_a_depth_camera_the_model_lacks_is_refused_rather_than_replaced_by_the_colour_one():
+    cfg = {
+        "sim": {},
+        "components": [
+            {f"{__name__}:_CameraScene": {}},
+            {D435: {"camera": "cam", "depth": True}},  # the default depth camera, d435_depth
+        ],
+    }
+    with pytest.raises(RuntimeError, match="depth camera 'd435_depth' not found"):
+        Engine(load_config_from_dict(cfg)).setup()
+
+
+def test_a_depth_resolution_needs_a_separate_depth_camera():
+    plugin = RealsenseD435Plugin({})
+    assert plugin.validate_config({"depth_width": 424, "depth_height": 240}) == []
+    assert any("must be > 0" in e for e in plugin.validate_config({"depth_width": 0}))
+    errors = plugin.validate_config({"camera": "cam", "depth_camera": "cam", "depth_width": 424})
+    assert any("through the colour camera 'cam'" in e for e in errors)
 
 
 def test_realsense_d435_working_range_defaults_to_the_datasheet():
@@ -314,7 +347,7 @@ def test_realsense_d435_points_imply_depth_and_reproject_into_the_optical_frame(
     assert cloud.points[:, 2].min() == pytest.approx(0.5 / math.tan(math.radians(22.5)), abs=0.05)
     assert cloud.points[:, 2].max() <= 3.0
     # The cloud is exactly the depth image's valid pixels -- one is the other reprojected.
-    assert len(cloud.points) == int(np.isfinite(_endpoint(engine, "depth").read()).sum())
+    assert len(cloud.points) == int(np.isfinite(_read(engine, "depth")).sum())
 
 
 def test_d455_model_fov_matches_datasheet():
@@ -322,7 +355,7 @@ def test_d455_model_fov_matches_datasheet():
 
     MuJoCo stores only fovy (vertical); the horizontal FOV falls out of fovy + the resolution
     aspect, so this locks BOTH: fovy == 62 and the derived horizontal FOV ~= 87 deg."""
-    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "d455"}, "name": "d455"}]}
+    cfg = {"sim": {}, "components": [{"spawn_sensor": {"model": "realsense_d455"}, "name": "d455"}]}
     engine = Engine(load_config_from_dict(cfg))
     engine.setup()
     engine.reset()
@@ -352,14 +385,15 @@ class _FakeCtx:
 def test_due_gates_on_rate_and_has_subscribers():
     plugin = RealsenseD435Plugin({"rate_hz": 10.0})  # period = 0.1s
     plugin._last_capture = 0.0
-    plugin._image_ep = _FakeEndpoint(has_subscribers=None)
+    image_ep = _FakeEndpoint(has_subscribers=None)
+    plugin._rendered = [image_ep]
     assert plugin._due(_FakeCtx(0.05)) is False  # too soon
     assert plugin._due(_FakeCtx(0.2)) is True  # due, subscriber count unknown -> assume yes
 
-    plugin._image_ep.has_subscribers = lambda: False
+    image_ep.has_subscribers = lambda: False
     assert plugin._due(_FakeCtx(0.2)) is False  # due but nobody's listening -> skip
 
-    plugin._image_ep.has_subscribers = lambda: True
+    image_ep.has_subscribers = lambda: True
     assert plugin._due(_FakeCtx(0.2)) is True
 
 
@@ -372,12 +406,13 @@ def test_due_gates_on_every_endpoint_the_render_feeds_not_just_colour():
     """
     plugin = RealsenseD435Plugin({"rate_hz": 10.0})
     plugin._last_capture = 0.0
-    plugin._image_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    image_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    plugin._rendered = [image_ep]
     assert plugin._due(_FakeCtx(0.2)) is False  # colour only, unsubscribed -> nothing to render for
 
     depth_ep = _FakeEndpoint(has_subscribers=lambda: False)
     points_ep = _FakeEndpoint(has_subscribers=lambda: True)
-    plugin._extra_outputs = [depth_ep, points_ep]
+    plugin._rendered = [image_ep, depth_ep, points_ep]
     assert plugin._due(_FakeCtx(0.2)) is True  # cloud subscriber alone justifies the render
 
     points_ep.has_subscribers = lambda: False
@@ -418,7 +453,7 @@ def test_depth_camera_info_follows_realsense_ros_naming_and_only_exists_with_dep
 
 def test_depth_camera_info_topic_can_be_hardwired():
     engine = _stepped(D435, depth=True, topics={"depth_camera_info": "/cam/depth/info"})
-    assert _endpoint(engine, "depth_camera_info").backend["ros2"]["topic"] == "/cam/depth/info"
+    assert _topic(_endpoint(engine, "depth_camera_info")) == "/cam/depth/info"
 
 
 def test_every_depth_camera_publishes_its_depth_intrinsics():
@@ -445,7 +480,7 @@ def test_every_depth_camera_publishes_its_depth_intrinsics():
             info.backend["ros2"]["frame_id"]
             == _endpoint(engine, "depth").backend["ros2"]["frame_id"]
         )
-        assert info.read() is _endpoint(engine, "camera_info").read()
+        assert info.read() == _endpoint(engine, "camera_info").read()
 
 
 def test_depth_camera_info_follows_a_hardwired_depth_topic():
@@ -467,8 +502,8 @@ def test_compressed_endpoint_is_offered_by_default_on_the_conventional_topic():
     assert compressed is not None
     hints, image_hints = compressed.backend["ros2"], image.backend["ros2"]
     assert hints["type"] == "sensor_msgs.msg.CompressedImage"
-    assert hints["topic"] == image_hints["topic"] + "/compressed"
-    assert (hints["format"], hints["quality"], hints["encoding"]) == ("jpeg", 95, "rgb8")
+    assert _topic(compressed) == _topic(image) + "/compressed"
+    assert (hints["format"], hints["quality"], compressed.read().encoding) == ("jpeg", 95, "rgb8")
     # Same frame as the raw stream: it is the same pixels, so a consumer that time-syncs on one and
     # projects with the other must not see two frame ids.
     assert hints["frame_id"] == image_hints["frame_id"]
@@ -479,12 +514,12 @@ def test_compressed_topic_follows_a_hardwired_image_topic():
     gets the matching compressed topic without naming it twice."""
     engine = _stepped(D435, topics={"image": "/camera_1/camera_1/color/image_raw"})
     compressed = _endpoint(engine, "image_compressed")
-    assert compressed.backend["ros2"]["topic"] == "/camera_1/camera_1/color/image_raw/compressed"
+    assert _topic(compressed) == "/camera_1/camera_1/color/image_raw/compressed"
 
 
 def test_compressed_topic_can_be_hardwired_on_its_own():
     engine = _stepped(D435, topics={"image_compressed": "/elsewhere/compressed"})
-    assert _endpoint(engine, "image_compressed").backend["ros2"]["topic"] == "/elsewhere/compressed"
+    assert _topic(_endpoint(engine, "image_compressed")) == "/elsewhere/compressed"
 
 
 def test_compressed_can_be_switched_off():
@@ -498,11 +533,11 @@ def test_a_compressed_subscriber_alone_justifies_the_render():
     alone would hand it an endless stream of nothing -- the same failure as the point-cloud case."""
     plugin = RealsenseD435Plugin({"rate_hz": 10.0})
     plugin._last_capture = 0.0
-    plugin._image_ep = _FakeEndpoint(has_subscribers=lambda: False)
-    plugin._compressed_ep = _FakeEndpoint(has_subscribers=lambda: True)
+    compressed_ep = _FakeEndpoint(has_subscribers=lambda: True)
+    plugin._rendered = [_FakeEndpoint(has_subscribers=lambda: False), compressed_ep]
     assert plugin._due(_FakeCtx(0.2)) is True
 
-    plugin._compressed_ep.has_subscribers = lambda: False
+    compressed_ep.has_subscribers = lambda: False
     assert plugin._due(_FakeCtx(0.2)) is False
 
 
@@ -527,16 +562,16 @@ def test_depth_is_float_metres_by_default():
     says nothing must not change what it publishes."""
     engine = _stepped(D435, depth=True)
     ep = _endpoint(engine, "depth")
-    assert ep.backend["ros2"]["encoding"] == "32FC1"
-    assert ep.read().dtype == np.float32
+    assert ep.read().encoding == "32FC1"
+    assert ep.read().data.dtype == np.float32
 
 
 def test_depth_encoding_16uc1_publishes_uint16_millimetres_with_zero_for_no_return():
     """What a real RealSense driver puts on `depth/image_rect_raw`: millimetres, 0 for invalid."""
     engine = _stepped(D435, depth=True, depth_encoding="16UC1")
     ep = _endpoint(engine, "depth")
-    assert ep.backend["ros2"]["encoding"] == "16UC1"
-    depth = ep.read()
+    assert ep.read().encoding == "16UC1"
+    depth = ep.read().data
     assert depth.shape == (48, 64) and depth.dtype == np.uint16
 
     # The same geometry the cloud test pins, in the other unit: the camera is 0.5 m above the floor
@@ -553,7 +588,7 @@ def test_16uc1_rounds_rather_than_truncates():
     """A plain cast biases every reading down by up to a millimetre, systematically."""
     engine = _stepped(D435, depth=True, depth_encoding="16UC1")
     plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
-    metres, millimetres = plugin._depth, _endpoint(engine, "depth").read()
+    metres, millimetres = plugin._depth, _read(engine, "depth")
     seen = np.isfinite(metres)
     assert np.array_equal(millimetres[seen], np.rint(metres[seen] * 1000.0).astype(np.uint16))
 
@@ -565,7 +600,7 @@ def test_the_cloud_stays_in_metres_when_depth_is_published_in_millimetres():
     cloud = _endpoint(engine, "points").read()
     assert cloud.points.dtype == np.float32
     assert cloud.points[:, 2].min() == pytest.approx(0.5 / math.tan(math.radians(22.5)), abs=0.05)
-    assert _endpoint(engine, "depth").read().dtype == np.uint16
+    assert _read(engine, "depth").dtype == np.uint16
 
 
 def test_the_encoded_frame_is_converted_once_per_capture():
@@ -574,7 +609,7 @@ def test_the_encoded_frame_is_converted_once_per_capture():
     engine = _stepped(D435, depth=True, depth_encoding="16UC1")
     plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
     ep = _endpoint(engine, "depth")
-    assert ep.read() is ep.read()
+    assert ep.read().data is ep.read().data
     plugin._capture_extra(engine.ctx, plugin._frames.raw)
     assert plugin._depth_wire is None
 
@@ -613,10 +648,10 @@ def test_compressed_depth_is_offered_for_16uc1_on_the_transport_s_own_topic():
     assert compressed is not None
     hints, raw_hints = compressed.backend["ros2"], raw.backend["ros2"]
     assert hints["type"] == "sensor_msgs.msg.CompressedImage"
-    assert hints["topic"] == raw_hints["topic"] + "/compressedDepth"
-    assert (hints["encoding"], hints["format"]) == ("16UC1", "png")
+    assert _topic(compressed) == _topic(raw) + "/compressedDepth"
+    assert (compressed.read().encoding, hints["format"]) == ("16UC1", "png")
     assert hints["frame_id"] == raw_hints["frame_id"]
-    assert compressed.read() is raw.read()  # one array, two wire formats
+    assert compressed.read().data is raw.read().data  # one array, two wire formats
     assert compressed.lazy is True
 
 
@@ -689,19 +724,19 @@ def test_a_reset_lets_the_next_trial_render_again():
     engine.reset()
     for _ in range(400):  # 4 s at the default 100 Hz step, well past several 10 Hz captures
         engine.step()
-    first = _endpoint(engine, "image").read().copy()
+    first = _read(engine, "image").copy()
     assert first.max() > 0
 
     engine.reset()
     # Nothing has been captured for this trial yet, so no endpoint may serve the last one's payload.
-    assert _endpoint(engine, "image").read() is None
-    assert _endpoint(engine, "depth").read() is None
+    assert _read(engine, "image") is None
+    assert _read(engine, "depth") is None
     assert _endpoint(engine, "points").read() is None
 
     engine.step()
     engine.step()
-    assert _endpoint(engine, "image").read() is not None, "the first step of a trial must capture"
-    assert _endpoint(engine, "depth").read() is not None
+    assert _read(engine, "image") is not None, "the first step of a trial must capture"
+    assert _read(engine, "depth") is not None
     assert _endpoint(engine, "points").read() is not None
 
 
@@ -709,7 +744,7 @@ def test_a_rate_the_timestep_divides_renders_on_every_period():
     """10 Hz on a 2 ms step is every fiftieth step. The sim clock is a float sum of timesteps, so
     the step a period after the last capture can read a hair short of it; the gate must take it."""
     plugin = RealsenseD435Plugin({"rate_hz": 10.0})
-    plugin._image_ep = _FakeEndpoint(has_subscribers=None)
+    plugin._rendered = [_FakeEndpoint(has_subscribers=None)]
     ctx = _FakeCtx(0.0)
     due = []
     for step in range(1, 5001):  # 10 s

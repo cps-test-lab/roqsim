@@ -49,14 +49,15 @@ Each CLI prints its result JSON and exits 0 (pass/sent), 1 (fail), 2 (no display
 ## The tools
 
 ```
-review_scene_by_human(target, message="", settle_steps=0, timeout_s=None, title="", focus_object="") -> dict
+review_scene_by_human(target, message="", settle_steps=0, timeout_s=None, title="", focus_object="",
+                      size="960x720") -> dict
     # focus_object: name of a scene object to open the camera on (zoomed, clear line of sight); "" = automatic camera
     -> {"verdict": "pass"|"fail", "comment": str,
         "annotations": [{"id", "world": [x,y,z], "target": {"geom","body"} | null, "comment",
                          "yaw_deg"?}],  # yaw_deg only if a heading was dragged (double-click + hold-drag)
         "moves": [{"entity", "model", "pos": [x,y,z], "yaw_deg"}]}  # props dragged in Move-Objects mode; [] if none
 
-sketch_floorplan_by_human(message="", initial=None, timeout_s=None, title="") -> dict
+sketch_floorplan_by_human(message="", initial=None, timeout_s=None, title="", size="760x760") -> dict
     -> {"comment": str,                                            # unbounded canvas -> no dimensions
         "rooms":  [{"id", "name", "line_ids"}],                    # closed loops, default "room N"
         "lines":  [{"id", "x0_m","y0_m","x1_m","y1_m"}],           # independent wall segments, stable ids

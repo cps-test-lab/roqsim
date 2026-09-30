@@ -53,6 +53,14 @@ much of the arm it can lift. That is :func:`servo_holds_against_gravity`, and
 a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the
 controller's job, which is frequently the very thing under test.
 
+**The compensation is a joint torque, supplied by the drive.** A servo holding a link up pushes
+against the body it is mounted on, so the weight it holds still reaches the ground through that body.
+MuJoCo's ``body_gravcomp`` alone is an *external* force at each body's centre of mass, which on a
+robot standing on a free joint lifts the whole robot. Two things make it internal:
+:func:`apply_gravity_compensation` routes the term through each holding joint's actuator
+(``actuatorgravcomp``, so it counts against the drive's force limit), and :class:`GravityReaction`
+takes it off every degree of freedom above the mechanism -- a mobile base's free joint -- each step.
+
 A drive that genuinely has no gravity term -- a hobby servo, a backdrivable joint -- is a real
 machine too, and a spawn plugin's ``gravity_compensation: false`` says so.
 
@@ -73,9 +81,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import mujoco
+import numpy as np
 
 from .plugin import PluginError
-from .schema import Field, validate
+from .schema import Field
 
 #: The control laws a world may name. Ordered as the docstring's table.
 CONTROLS = ("position", "velocity", "effort", "impedance")
@@ -106,24 +115,31 @@ _GAINS: dict[str, tuple[str, ...]] = {
     "impedance": ("stiffness", "damping"),
 }
 
-#: MuJoCo's own spellings, and what replaces each. Refused rather than translated, and rather than
-#: ignored: these plugins take config maps they do not fully own, so a key merely not read would be
-#: accepted in silence and the world would run under gains nobody chose.
-_GONE = {
-    "kp": "'p' (control: position) or 'stiffness' (control: impedance)",
-    "kv": "'d' (control: position/velocity) or 'damping' (control: impedance)",
-    "kd": "'d' (control: position) or 'damping' (control: impedance)",
-    "forcerange": "'effort_limit', a single positive magnitude",
-    "gainprm": "'p'/'stiffness' -- state the gain, not MuJoCo's parameter vector",
-    "biasprm": "'d'/'damping' -- state the gain, not MuJoCo's parameter vector",
-    "mode": "'control'",
+#: MuJoCo's spellings of a gain block's keys, each with what this vocabulary writes instead. They are
+#: refused as unknown keys, with this as the hint (:attr:`roqsim.schema.Field.hints`), and nothing
+#: reads them: a key merely not read would be accepted in silence and the world would run under
+#: gains nobody chose.
+MUJOCO_KEYS = {
+    key: f"that is MuJoCo's spelling; use {replacement}"
+    for key, replacement in {
+        "kp": "'p' (control: position) or 'stiffness' (control: impedance)",
+        "kv": "'d' (control: position/velocity) or 'damping' (control: impedance)",
+        "kd": "'d' (control: position) or 'damping' (control: impedance)",
+        "forcerange": "'effort_limit', a single positive magnitude",
+        "gainprm": "'p'/'stiffness' -- state the gain, not MuJoCo's parameter vector",
+        "biasprm": "'d'/'damping' -- state the gain, not MuJoCo's parameter vector",
+        "mode": "'control'",
+    }.items()
 }
 
-#: Values that were MuJoCo's actuator types rather than a robot's command interface.
-_GONE_CONTROLS = {
-    "motor": "effort",
-    "pd": "impedance",
-    "general": "position, velocity, effort or impedance",
+#: MuJoCo's actuator types, which a ``control`` names a robot's command interface in place of.
+MUJOCO_CONTROLS = {
+    control: f"that is a MuJoCo actuator type; the command interface is {interface}"
+    for control, interface in {
+        "motor": "effort",
+        "pd": "impedance",
+        "general": "position, velocity, effort or impedance",
+    }.items()
 }
 
 #: One gain block: the shared keys, and the same set again inside every ``each:`` entry. Units are
@@ -134,6 +150,7 @@ GAIN_SCHEMA: dict[str, Field] = {
     "control": Field(
         str,
         choices=CONTROLS,
+        hints=MUJOCO_CONTROLS,
         doc="the command interface this joint runs under, as a robot's driver exposes it",
     ),
     "p": Field(
@@ -164,8 +181,28 @@ GAIN_SCHEMA: dict[str, Field] = {
     ),
 }
 
-#: The block's own keys: the gains, shared, plus the one that nests.
-_BLOCK_KEYS = frozenset(GAIN_SCHEMA) | {"each"}
+#: The ``actuators:`` block as a spawn plugin declares it: the gains, shared, plus ``each:``, whose
+#: keys are the model's actuator names. The schema check covers its shape at ``roqsim check``'s
+#: config stage; the rule between two keys is :func:`unread_gain_errors`, and whatever needs the
+#: model -- whether it has those names, what unit they command -- is :func:`resolve`'s, at build.
+ACTUATORS = Field(
+    dict,
+    schema={
+        **GAIN_SCHEMA,
+        "each": Field(
+            dict,
+            values=Field(
+                dict,
+                schema=GAIN_SCHEMA,
+                hints=MUJOCO_KEYS,
+                doc="this actuator's settings, on top of the shared keys",
+            ),
+            doc="per actuator, keyed by its name in the model (unprefixed)",
+        ),
+    },
+    hints=MUJOCO_KEYS,
+    doc="the control law and gains the model's actuators run under (roqsim.actuators)",
+)
 
 
 @dataclass(frozen=True)
@@ -208,78 +245,39 @@ class ResolvedActuator:
         return record
 
 
-def validate_override(override, *, where: str = "actuators") -> list[str]:
-    """Shape errors for an ``actuators:`` block, without needing the model.
+def unread_gain_errors(override, *, where: str = "actuators") -> list[str]:
+    """Gains an ``actuators:`` block states that the law in force does not read.
 
-    Called from a spawn plugin's ``validate_config``, so these land at ``roqsim check``'s **config**
-    stage -- before anything is compiled, which is where a key typo belongs. What cannot be checked
-    here is everything about the names under ``each:``: whether the model has them, and what unit its
-    actuators command. Those need the MJCF and are checked in :func:`resolve`, at the build stage.
-
-    Errors accumulate rather than raising at the first, the way :func:`roqsim.schema.validate` does:
-    a world with three mistakes should take one run to find them.
+    The one rule of the block its declaration (:data:`ACTUATORS`) cannot state, because it relates
+    two keys. Called from a spawn plugin's ``validate_config``, beside the schema check, so it lands
+    at ``roqsim check``'s config stage too; a shape the schema refuses is left to the schema.
     """
-    if override is None:
-        return []
     if not isinstance(override, dict):
-        return [f"'{where}' must be a mapping of shared settings plus an optional 'each'"]
-
-    errors: list[str] = []
-    shared = {k: v for k, v in override.items() if k != "each"}
-    shared_control = shared.get("control")
-    errors += _gain_errors(shared, where, shared_control)
-
+        return []
+    shared_control = override.get("control")
+    errors = _unread_gains(override, shared_control, where)
     each = override.get("each")
-    if each is not None and not isinstance(each, dict):
-        errors.append(f"'{where}.each' must be a mapping of actuator name to its settings")
-    elif each:
-        for name, entry in each.items():
-            if not isinstance(entry, dict):
-                errors.append(f"'{where}.each.{name}' must be a mapping of settings")
-                continue
+    for name, entry in each.items() if isinstance(each, dict) else ():
+        if isinstance(entry, dict):
             # An entry inherits the shared law unless it names its own, so that is what its gains
             # are judged against -- both are known here, with no model needed.
-            errors += _gain_errors(
-                entry, f"{where}.each.{name}", entry.get("control") or shared_control
-            )
+            control = entry.get("control") or shared_control
+            errors += _unread_gains(entry, control, f"{where}.each.{name}")
     return errors
 
 
-def _gain_errors(block: dict, where: str, control: str | None) -> list[str]:
-    """One gain block: the gone spellings, the schema, and the gains against the law in force.
-
-    *control* is the law this block's actuator ends up under -- its own ``control`` if it states one,
-    else the shared block's. ``None`` means neither said, so the law is whatever the model already
-    runs and only :func:`resolve` can judge the gains.
-    """
-    errors: list[str] = []
-    for key, replacement in _GONE.items():
-        if key in block:
-            errors.append(
-                f"'{where}.{key}' is gone -- use {replacement}. '{where.split('.')[0]}' states a "
-                f"joint's control law the way a robot's driver does, not the way MuJoCo stores it."
-            )
-    if isinstance(block.get("control"), str) and block["control"] in _GONE_CONTROLS:
-        errors.append(
-            f"'{where}.control: {block['control']}' is gone -- "
-            f"use {_GONE_CONTROLS[block['control']]}. "
-            f"These name a command interface, not a MuJoCo actuator type."
-        )
-        control = None
-    known = {k: v for k, v in block.items() if k not in _GONE}
-    errors += validate(GAIN_SCHEMA, known, strict_keys=True)
-    errors += _unread_gains(block, control, where)
-    return errors
-
-
-def _unread_gains(block: dict, control: str | None, where: str) -> list[str]:
+def _unread_gains(block: dict, control, where: str) -> list[str]:
     """Gains this block states that its law does not read -- accepted, then never applied.
+
+    *control* is the law this block's actuator ends up under -- its own ``control`` if it states
+    one, else the shared block's. One the block does not know (unset, or refused by the schema)
+    leaves the gains to :func:`resolve`, which knows the model's.
 
     Only gains stated in *this* block: one inherited from the shared keys is not a mistake but the
     ordinary case of an ``each:`` entry choosing a different law, where the shared gains simply do
     not apply to it.
     """
-    if control not in _GAINS:
+    if not isinstance(control, str) or control not in _GAINS:
         return []
     return [
         f"'{where}.{gain}' is not a gain of control: {control}, which reads "
@@ -362,7 +360,7 @@ def resolve(spec, override, *, model_name: str, where: str = "actuators") -> lis
 
 
 def _model_dependent_errors(shared, entry, merged, control, row, name, where) -> list[str]:
-    """The two checks :func:`validate_override` could not make, because both need the model.
+    """The two checks the config stage could not make, because both need the model.
 
     A gain is judged here only when NEITHER the shared keys nor the entry named a law: the law is
     then whatever the model already runs, which is the one thing the config stage cannot know. And
@@ -559,16 +557,33 @@ def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None)
     from the world down to it passes a joint driven by a ``position`` or ``impedance`` actuator --
     everything, that is, whose weight some drive is holding up. What that leaves out is the load
     path to the ground: a mobile base hangs off nothing and its wheels are driven by ``velocity``,
-    so neither is compensated and the robot still presses on the floor. Compensate those and it
-    stands on nothing, which it does without falling over, so nothing says so. The arm bolted to
-    that base IS compensated, because its links really are held up by its motors.
+    so neither is compensated. The arm bolted to that base IS compensated, because its links really
+    are held up by its motors.
 
     ``velocity`` is excluded for that reason and no other: it is how a wheel is driven. No bundled
     arm ships it, so nothing that holds a pose loses anything by its absence here.
 
     Without *rows* every body is compensated. That is the whole-mechanism form, for a caller that
     asks for it explicitly -- a torque controller handed its own gravity term -- and it is wrong
-    for anything that stands on the ground.
+    for a model that stands on the ground itself, whose base it would compensate too.
+
+    **The drive supplies the term, so the weight stays on the ground.** Each hinge or slide of a
+    compensated body that a holding actuator drives through a joint transmission (every such
+    actuator, in the whole-mechanism form) gets ``actuatorgravcomp``. MuJoCo 3.14 then adds that
+    joint's rows of ``qfrc_gravcomp`` to ``qfrc_actuator`` in ``mj_fwdActuation`` instead of to
+    ``qfrc_passive``, *after* each actuator's own ``forcerange`` has clamped ``actuator_force``, and
+    clamps the sum by the joint's ``actuatorfrcrange`` -- the only limit that sees the gravity term.
+    So a joint with no ``actuatorfrcrange`` of its own gets its drive's: the actuator's
+    ``forcerange`` times its gear, summed over the actuators driving it, or none when any of them is
+    unlimited. A drive too weak for its load then sags or stalls, as the hardware does. The limit is
+    copied when the model is built; an ``actuator_forcerange`` written at run time clamps the servo's
+    own share only.
+
+    What that leaves is the part of ``body_gravcomp`` MuJoCo projects onto the degrees of freedom
+    ABOVE the mechanism -- a mobile base's free joint, where it lifts the whole robot. The engine
+    removes it every step with :class:`GravityReaction`, which is what keeps a mobile manipulator's
+    full weight on its wheels. On a fixed base there is nothing above the mechanism and nothing to
+    remove.
 
     Called with the **whole entity's** spec, after anything is grafted onto it and before it is
     attached into the world. That timing is load-bearing and differs from :func:`resolve`'s on
@@ -584,9 +599,16 @@ def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None)
     as a load the way they carry any other. A gripper's linkage is not one of them: its joints are
     coupled to its actuator or close a loop with the ones that are.
     """
-    held = None
-    if rows is not None:
+    drives: dict[str, list] = {}
+    for actuator in spec.actuators:
+        if _is_joint(actuator):
+            drives.setdefault(actuator.target, []).append(actuator)
+    if rows is None:
+        held = None
+        supplied_by_drive = set(drives)
+    else:
         held = {row.joint for row in rows if row.joint and row.control in _HELD_BY_A_DRIVE}
+        supplied_by_drive = held
     acted_on, looped_bodies = _joints_acted_on(spec)
 
     compensated = 0
@@ -617,10 +639,187 @@ def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None)
             if below:
                 child.gravcomp = 1.0
                 compensated += 1
+                for joint in child.joints:
+                    if joint.name in supplied_by_drive and joint.type in _SCALAR_JOINTS:
+                        _drive_supplies_gravity(joint, drives[joint.name])
             _walk(child, below, child_swinging)
 
     _walk(spec.worldbody, False, False)
     return compensated
+
+
+#: The joints ``actuatorfrcrange`` bounds: MuJoCo clamps one entry of ``qfrc_actuator`` per joint.
+_SCALAR_JOINTS = (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE)
+
+
+def _is_limited(limited, value_range) -> bool:
+    """MuJoCo's reading of a ``*limited`` flag: ``auto`` means limited exactly when a range is set."""
+    if limited == mujoco.mjtLimited.mjLIMITED_TRUE:
+        return True
+    if limited == mujoco.mjtLimited.mjLIMITED_FALSE:
+        return False
+    return not (float(value_range[0]) == 0.0 and float(value_range[1]) == 0.0)
+
+
+def _drive_supplies_gravity(joint, actuators) -> None:
+    """Route *joint*'s gravity term through its actuators, bounded by what they can deliver."""
+    joint.actgravcomp = True
+    if _is_limited(joint.actfrclimited, joint.actfrcrange):
+        return  # The model states the joint's limit itself, and it is the one MuJoCo applies.
+    lo = hi = 0.0
+    for actuator in actuators:
+        if not _is_limited(actuator.forcelimited, actuator.forcerange):
+            return  # One unlimited drive on the joint leaves the joint unlimited.
+        gear = float(actuator.gear[0])
+        ends = sorted((gear * float(actuator.forcerange[0]), gear * float(actuator.forcerange[1])))
+        lo, hi = lo + ends[0], hi + ends[1]
+    if lo < hi:
+        joint.actfrclimited = mujoco.mjtLimited.mjLIMITED_TRUE
+        joint.actfrcrange = [lo, hi]
+
+
+def joint_effort(model, data, dof: int) -> float:
+    """The generalised force a joint's drives deliver at *dof*: what its torque sensor reads.
+
+    ``qfrc_actuator`` already holds the gravity term of a joint whose drive supplies it
+    (``actuatorgravcomp``, set by :func:`apply_gravity_compensation`). Anywhere else a nonzero
+    ``qfrc_gravcomp`` row is the passive route -- a model that declares ``gravcomp`` itself, a
+    gripper finger held through a tendon -- and the joint carries it all the same, so it is added.
+    """
+    force = float(data.qfrc_actuator[dof])
+    if not model.jnt_actgravcomp[model.dof_jntid[dof]]:
+        force += float(data.qfrc_gravcomp[dof])
+    return force
+
+
+class GravityReaction:
+    """Hands the weight a drive holds back to the body the drive is mounted on, every step.
+
+    MuJoCo implements ``body_gravcomp`` as an external force, ``-m*g`` at each compensated body's
+    centre of mass, and projects it onto every degree of freedom of the chain above that body. The
+    rows of a holding joint are the torque its drive supplies (:func:`apply_gravity_compensation`
+    routes them through the actuator). The rows above the mechanism are not a torque anything
+    supplies: on a robot standing on a free joint they are a skyhook that carries the arm, the mast
+    or the steered wheel, and the floor carries the rest -- wheel loads, traction and tipping all
+    come out wrong. MuJoCo has no per-DOF switch for them.
+
+    **What this removes, exactly.** A *mechanism* is a connected set of compensated bodies whose top
+    body hangs from an uncompensated body that can move -- the *root*, a mobile base. For each, the
+    compensated weight ``W`` at its combined centre of mass ``c`` is applied to the root with
+    :func:`mujoco.mj_applyFT` and subtracted from ``qfrc_gravcomp`` and from ``qfrc_passive``. The
+    root's point Jacobian at ``c`` equals any member's on every DOF above the root, so that removes
+    precisely those rows and leaves every row inside the mechanism as MuJoCo computed it. It is the
+    reaction a real drive puts into its mount.
+
+    **When it runs.** Between ``mj_step1`` and ``mj_step2``: ``mj_passive`` has computed
+    ``qfrc_gravcomp`` at the state being stepped, and ``mj_fwdActuation``, which reads it for
+    ``actuatorgravcomp`` joints, has not run yet. Nothing global is touched -- ``mjcb_passive`` would
+    do the same from inside ``mj_passive`` but is one slot per process, called for every model any
+    thread steps -- and ``qfrc_applied`` is left to whoever uses it for perturbations.
+    ``mj_step2`` integrates RK4 as Euler, so the engine refuses a world that needs this under
+    ``rk4``. An ``mj_forward`` outside a step (a reset, a plugin's own) leaves the rows in its
+    accelerations; the next step computes without them.
+
+    Per step it reads model fields, so an entity made absent (:mod:`roqsim.presence` compensates
+    its root too, to freeze it in place) keeps its full compensation while absent and gets the
+    correction back on return, and nothing needs resetting between trials.
+    """
+
+    def __init__(self, model, mechanisms: list[tuple[int, np.ndarray]]):
+        self._mechanisms = mechanisms
+        #: The top body of each robot carrying such a mechanism, for a refusal to name the robot by.
+        self.robots = sorted(
+            {
+                mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(model.body_rootid[root]))
+                for root, _members in mechanisms
+            }
+        )
+        above: set[int] = set()
+        for root, _members in mechanisms:
+            body = root
+            while body > 0:
+                adr, num = int(model.body_dofadr[body]), int(model.body_dofnum[body])
+                above.update(range(adr, adr + num))
+                body = int(model.body_parentid[body])
+        self._dofs = np.array(sorted(above), dtype=int)
+        via_actuator = model.jnt_actgravcomp[model.dof_jntid[self._dofs]].astype(bool)
+        self._passive_dofs = self._dofs[~via_actuator]
+        self._scratch = np.zeros(model.nv)
+        self._torque = np.zeros(3)
+
+    @classmethod
+    def of(cls, model) -> GravityReaction | None:
+        """The reaction *model* needs, or ``None`` when no drive-held mechanism hangs off a moving
+        body -- every fixed-base arm, every robot without a holding drive.
+
+        A mechanism counts when one of its joints routes its gravity term through a drive
+        (``actuatorgravcomp``): ``gravcomp`` a model declares on its own, such as a buoyant body,
+        is an external force by intent and stays one.
+        """
+        compensated = np.asarray(model.body_gravcomp) > 0.0
+        parent = model.body_parentid
+        supplied = {int(model.jnt_bodyid[j]) for j in range(model.njnt) if model.jnt_actgravcomp[j]}
+        mechanisms = []
+        for top in range(1, model.nbody):
+            root = int(parent[top])
+            if not compensated[top] or compensated[root] or int(model.body_weldid[root]) == 0:
+                continue
+            members = [top]
+            inside = {top}
+            # Bodies are numbered parents first, so one forward pass collects the connected set.
+            for body in range(top + 1, model.nbody):
+                if compensated[body] and int(parent[body]) in inside:
+                    members.append(body)
+                    inside.add(body)
+            if inside & supplied:
+                mechanisms.append((root, np.array(members, dtype=int)))
+        if not mechanisms:
+            return None
+        reaction = cls(model, mechanisms)
+        if model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_SLEEP:
+            raise PluginError(
+                f'the world MJCF enables sleep (<option><flag sleep="enable"/>), but drives on '
+                f"the moving robot(s) rooted at {reaction.robots} hold a mechanism up, whose weight "
+                "is handed back to the base every step from qfrc_gravcomp, which MuJoCo leaves stale "
+                "on a sleeping tree -- remove the flag, or set gravity_compensation: false on that "
+                "robot's spawn"
+            )
+        return reaction
+
+    def apply(self, model, data) -> None:
+        """Remove the mechanisms' weight from the DOFs above them. Physics thread, after
+        ``mj_step1`` and before ``mj_step2``."""
+        if not _gravcomp_live(model):
+            return
+        scratch = self._scratch
+        scratch[:] = 0.0
+        applied = False
+        for root, members in self._mechanisms:
+            if model.body_gravcomp[root] != 0.0:
+                # The root floats too (an absent entity, frozen by presence): nothing stands on
+                # anything, so the whole entity keeps MuJoCo's external compensation.
+                continue
+            weights = model.body_mass[members] * model.body_gravcomp[members]
+            total = float(weights.sum())
+            if total <= 0.0:
+                continue
+            point = weights @ data.xipos[members] / total
+            force = -model.opt.gravity * total
+            mujoco.mj_applyFT(model, data, force, self._torque, point, root, scratch)
+            applied = True
+        if not applied:
+            return
+        data.qfrc_gravcomp[self._dofs] -= scratch[self._dofs]
+        data.qfrc_passive[self._passive_dofs] -= scratch[self._passive_dofs]
+
+
+def _gravcomp_live(model) -> bool:
+    """Whether ``mj_passive`` computed ``qfrc_gravcomp`` at all, under the same gates it uses."""
+    disabled = int(model.opt.disableflags)
+    flags = mujoco.mjtDisableBit
+    if disabled & flags.mjDSBL_GRAVITY or not np.any(model.opt.gravity):
+        return False
+    return not (disabled & flags.mjDSBL_SPRING and disabled & flags.mjDSBL_DAMPER)
 
 
 def _joints_acted_on(spec) -> tuple[set[str], set[str]]:

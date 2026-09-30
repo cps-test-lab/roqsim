@@ -16,8 +16,9 @@ URI forms handled:
 
 - ``https://fuel.<host>/1.0/<Owner>/models/<Model Name>`` (with or without percent-encoding)
 - ``https://fuel.<host>/1.0/<Owner>/models/<Model Name>/<version>``
-- ``model://<name>`` -- resolved against ``--model-path`` / ``GZ_SIM_RESOURCE_PATH`` /
-  ``IGN_GAZEBO_RESOURCE_PATH`` / ``GAZEBO_MODEL_PATH``, never from the network.
+- ``model://<name>`` -- not fetched: :func:`resolve_model_uri` finds it on the model paths
+  (``sdf-to-scene``'s ``--model-path``, then ``GZ_SIM_RESOURCE_PATH`` /
+  ``IGN_GAZEBO_RESOURCE_PATH`` / ``GAZEBO_MODEL_PATH``), never on the network.
 
 ``fuel.ignitionrobotics.org`` (legacy) and ``fuel.gazebosim.org`` serve the same content; we normalise
 to the latter for fetching but record the URI as written in the world, because that string is the
