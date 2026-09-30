@@ -24,18 +24,16 @@ Config::
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
       motion: physics      # who owns the pose: physics (default; movable and TELEPORTABLE),
-                           #   static (welded scenery), driven (a plugin writes it)
-      motion: driven       # a plugin writes the pose: collidable, immovable, and NOT in a
-                           #   navigator's planner grid
+                           #   static (welded scenery), driven (a plugin writes the pose:
+                           #   collidable, immovable, and NOT in a navigator's planner grid)
 
 ``size`` is deliberately **full extents**, not MuJoCo half-extents: a world file describes a 0.4 m
 box, and halving it in your head is exactly the kind of silent factor-of-two a scene should not ask
 of its author.
 
-By default the box is welded scenery -- static, with no free joint -- like every other plugin in this
-package. ``motion: physics`` gives it a free joint, which buys two things: physics can move it, and
-``simulation_interfaces``' ``SetEntityState`` can **teleport** it (that service rejects any entity
-without a free ``base_joint``).
+By default (``motion: physics``) the box has a free joint, which buys two things: physics can move
+it, and ``simulation_interfaces``' ``SetEntityState`` can **teleport** it (that service rejects any
+entity without a free ``base_joint``).
 
 Teleporting is how an obstacle *appears* mid-trial. roqsim never recompiles the model at runtime, so
 there is no spawning: a box that must show up on cue is compiled in at build time, kept out of the

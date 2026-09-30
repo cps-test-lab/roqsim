@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
+from roqsim.endpoint import hints_for
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 
@@ -257,20 +258,47 @@ def test_starting_a_mover_with_no_configured_route_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize("goals, served", [([list(GOAL)], True), ([], False)])
-def test_start_route_is_an_endpoint_only_where_there_is_a_route_to_start(tmp_path, goals, served):
-    """Its own endpoint and type, not an empty nav2 goal -- and none where it could only refuse."""
+def test_start_route_is_a_ros_action_only_where_there_is_a_route_to_start(tmp_path, goals, served):
+    """Its own endpoint and type, not an empty nav2 goal -- and no ROS action where it could only
+    refuse. The endpoint itself is there either way, and refuses with start()'s own text."""
     engine = _engine(tmp_path, goals=goals)
     engine.setup()
+    engine.reset()
     try:
         endpoints = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cart"}
-        assert {"navigate_to_pose", "navigate_through_poses"} <= set(endpoints)
-        assert ("start_route" in endpoints) is served
+        assert {"navigate_to_pose", "navigate_through_poses", "start_route"} <= set(endpoints)
+        assert {"route_status", "cancel_route"} <= set(endpoints)
+        start = endpoints["start_route"]
+        assert (hints_for(start, "ros2") is not None) is served
         if served:
-            ros2 = endpoints["start_route"].backend["ros2"]
-            assert ros2 == {
+            assert start.backend["ros2"] == {
                 "action": "roqsim_nav_interfaces.action.StartRoute",
                 "name": "start_route",
             }
+        else:
+            refused = start.write(None)
+            engine.step()
+            with pytest.raises(ValueError, match="no configured route"):
+                refused.result(0)
+    finally:
+        engine.shutdown()
+
+
+def test_a_route_is_followed_by_its_sequence_number_through_the_endpoints(tmp_path):
+    engine = _engine(tmp_path, goals=[])
+    engine.setup()
+    engine.reset()
+    try:
+        endpoints = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cart"}
+        sent = endpoints["navigate_through_poses"].write({"poses": [list(GOAL)]})
+        engine.step()
+        seq = sent.result(0)
+        status = endpoints["route_status"].read()
+        assert status.seq == seq and not status.finished
+        cancel = endpoints["cancel_route"].write(None)
+        engine.step()
+        cancelled = cancel.result(0)
+        assert cancelled == seq + 1 and endpoints["route_status"].read().seq == cancelled
     finally:
         engine.shutdown()
 

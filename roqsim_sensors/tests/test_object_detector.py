@@ -13,7 +13,7 @@ import math
 import mujoco
 import numpy as np
 import pytest
-from roqsim_sensors.plugins.object_detector import ObjectDetectorPlugin
+from roqsim_sensors.plugins.object_detector import ObjectDetections, ObjectDetectorPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
@@ -42,7 +42,7 @@ def _engine(**config) -> Engine:
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {f"{__name__}:_Scene": {}},
                 {"roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin": config},
             ],
@@ -62,8 +62,13 @@ def _engine(**config) -> Engine:
 
 
 def _read(engine: Engine):
+    """The detections as ``(class_id, (x, y, z, qw, qx, qy, qz), size, score)``, which is what the
+    assertions below compare."""
     ep = next(e for e in engine.ctx.interface.all() if e.name == "detections")
-    return ep.read()
+    return [
+        (d.class_id, (*d.position, *d.orientation), tuple(d.size), d.score)
+        for d in ep.read().detections
+    ]
 
 
 def test_pose_is_relative_to_the_robot_not_the_world():
@@ -133,10 +138,9 @@ def test_endpoint_declares_the_detector_contract():
     """Topic, type and frame are the contract a real detector has to satisfy to replace this."""
     eng = _engine(frame="base_footprint")
     ep = next(e for e in eng.ctx.interface.all() if e.name == "detections")
-    hints = ep.backend["ros2"]
-    assert hints["type"] == "vision_msgs.msg.Detection3DArray"
-    assert hints["topic"] == "detections"
-    assert hints["frame_id"] == "base_footprint"
+    # A vision_msgs/Detection3DArray over ROS, on the endpoint's name.
+    assert ep.result.cls is ObjectDetections
+    assert ep.name == "detections" and ep.backend["ros2"] == {"frame_id": "base_footprint"}
 
 
 def test_orientation_noise_perturbs_the_reported_rotation():

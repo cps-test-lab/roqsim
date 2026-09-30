@@ -9,20 +9,26 @@
 # `sim.world` is left unset, so the engine builds the default `empty_room` (a lit, walled room) —
 # that gives every sensor something to see. Each `spawn_sensor` pulls its capture plugin from the
 # model manifest automatically (mid360 -> livox_mid360, robin_w1g -> seyond_robin_w1g,
-# d435 -> realsense_d435, d415 -> realsense_d415, d455 -> realsense_d455, zivid -> zivid,
-# oakd -> oakd_camera).
+# realsense_d435 -> realsense_d435, realsense_d415 -> realsense_d415, realsense_d455 -> realsense_d455,
+# zivid -> zivid, oakd_pro -> oakd_camera).
 #
 # Covered here: livox_mid360 (3D lidar, 360° dome), seyond_robin_w1g (3D lidar, forward 120°×70°),
 # lidar (2D), realsense_d435, realsense_d415, realsense_d455, zivid (RGB-D), oakd_camera (RGB-D),
-# fiducial_marker, sensor_coverage_probe (coverage report/render), and — from the d435's manifest,
-# not declared below — the D435i's integrated imu on camera/imu. Its mount is bolted to the world,
-# so it reads a steady 1 g and no rate; nothing is computed for it unless something subscribes.
+# fiducial_marker, sensor_coverage_probe (coverage report/render), and — from the realsense_d435's
+# manifest, not declared below — the D435i's integrated imu on d435/camera/imu. Its mount is bolted
+# to the world, so it reads a steady 1 g and no rate; nothing is computed for it unless something subscribes.
 #
 # Every sensor shows its field of view (show_fov): the Mid-360 and Robin W1G get a synthesised angular
 # sector (dome / forward wedge), and every camera mount — the RealSenses, the Zivid and the OAK-D —
-# gets a synthesised frustum. (The Zivid also ships a baked `_fov` envelope, which stays hidden: a
-# model with a camera always takes the frustum path.) sensor_coverage_probe then writes a coverage
-# report + render to ./coverage — run with MUJOCO_GL=egl.
+# gets a synthesised frustum.
+#
+# A RealSense mount's pose is that of `camera_bottom_screw_frame`, the frame the vendor macro
+# places at its origin (x along the lens normal, z up; `camera_link` sits at a fixed offset from it),
+# and each publishes its vendor frame chain (camera_bottom_screw_frame -> camera_link ->
+# camera_color_optical_frame, ...) as static TF. The three share the realsense-ros names, so each
+# sits in a namespace of its own, which scopes its topics and its frames alike. (The Zivid also ships
+# a baked `_fov` envelope, which stays hidden: a model with a camera always takes the frustum path.)
+# sensor_coverage_probe then writes a coverage report + render to ./coverage — run with MUJOCO_GL=egl.
 
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
@@ -33,7 +39,7 @@ components:
   - spawn_sensor:
       model: mid360
       prefix: "mid360_"
-      pos: [0.0, 0.0, 0.5]
+      pose: {position: {z: 0.5}}
       show_fov: true          # synthesise the Mid-360's translucent 360° dome FOV sector
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 6.0           # override the manifest far (40 m) to fit this room, as the cameras do
@@ -55,24 +61,26 @@ components:
 
   # --- Intel RealSense D435 (RGB) on the +x side, looking back toward the centre ----------------
   # The D435/D415 mounts ship no FOV mesh, so show_fov synthesises a translucent view frustum. Its
-  # near/far default to the model's manifest fov: block (D435 near 0.2 m), so the cone is truncated to
+  # near/far default to the model's manifest fov: block (D435 near 0.28 m), so the cone is truncated to
   # the valid range automatically; fov_range below overrides the far to fit this small demo room.
   - spawn_sensor:
-      model: d435
+      model: realsense_d435
       prefix: "d435_"
-      pos: [1.5, 0.0, 0.5]
-      rpy: [0.0, 0.0, 1.5708]    # yaw +90° so the +y-default camera faces -x (toward the centre)
+      namespace: d435
+      # camera_link's x faces -x (toward the centre)
+      pose: {position: {x: 1.5149, y: 0.0000000547, z: 0.4875}, orientation: {yaw: -3.1415889804}}
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
-      fov_range: 1.5            # override the manifest far (6 m) to fit this room; near stays 0.2 m
+      fov_range: 1.5            # override the manifest far (6 m) to fit this room; near stays 0.28 m
     name: d435
 
   # --- Intel RealSense D415 (RGB) on the -y side, looking toward the centre ---------------------
   - spawn_sensor:
-      model: d415
+      model: realsense_d415
       prefix: "d415_"
-      pos: [0.0, -1.5, 0.5]
-      rpy: [0.0, 0.0, 0.0]       # the d415 camera looks along +y by default (toward the centre)
+      namespace: d415
+      # camera_link's x faces +y (toward the centre)
+      pose: {position: {y: -1.50987, z: 0.4885}, orientation: {yaw: 1.5707963268}}
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
@@ -81,10 +89,11 @@ components:
   # --- Intel RealSense D455 (RGB, wide 87°×62° FOV) on the +y side, looking toward the centre ------
   # Its noticeably wider frustum vs the D435/D415 is visible with show_fov (same synthesised-frustum path).
   - spawn_sensor:
-      model: d455
+      model: realsense_d455
       prefix: "d455_"
-      pos: [0.0, 1.5, 0.5]
-      rpy: [0.0, 0.0, 3.14159]   # yaw 180° so the +y-default camera faces -y (toward the centre)
+      namespace: d455
+      # camera_link's x faces -y (toward the centre)
+      pose: {position: {x: 0.0000000419, y: 1.5158, z: 0.4855}, orientation: {yaw: -1.5707989804}}
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
@@ -100,21 +109,23 @@ components:
   - spawn_sensor:
       model: zivid
       prefix: "zivid_"
-      pos: [-1.5, 0.0, 0.5]
-      rpy: [0.0, 0.0, -1.5708]   # yaw -90° so the camera's +y optical axis faces +x (the centre)
+      # yaw -90° so the camera's +y optical axis faces +x (the centre)
+      pose: {position: {x: -1.5, z: 0.5}, orientation: {yaw: -1.5708}}
       show_fov: true
       fov_alpha: 0.25
     name: zivid
 
   # --- Luxonis OAK-D Pro in the remaining corner, looking toward the centre ----------------------
   # Its manifest auto-attaches `oakd_camera` -> `image` + `depth` + `camera_info` (RGB-D). The model
-  # is a box at the source URDF's collision dimensions rather than a mesh (see models/oakd/oakd.xml);
-  # what it provides is the camera. Its fovy is the TurtleBot 4's, which carries the same device.
+  # is a box at the source URDF's collision dimensions rather than a mesh (see
+  # models/oakd_pro/oakd_pro.xml); what it provides is the camera. The TurtleBot 4 mounts the same
+  # device. Its pose is that of the vendor `oakd_link` (x along the lens normal, z up), and the
+  # mount publishes its vendor frame chain (oakd_link -> oakd_rgb_camera_optical_frame, ...).
   - spawn_sensor:
-      model: oakd
+      model: oakd_pro
       prefix: "oakd_"
-      pos: [-1.5, -1.5, 0.6]
-      rpy: [0.0, 0.0, -0.7854]   # yaw -45° so the mount's +y optical axis faces the centre
+      # oakd_link's x faces the centre
+      pose: {position: {x: -1.5, y: -1.5, z: 0.6}, orientation: {yaw: 0.7853963268}}
       show_fov: true
       fov_alpha: 0.25
       fov_range: 4.0             # override the manifest far (8 m) to fit this room, as the others do
@@ -127,8 +138,8 @@ components:
   - spawn_sensor:
       model: robin_w1g
       prefix: "robin_"
-      pos: [1.5, 1.5, 0.7]
-      rpy: [0.0, 0.0, -2.35619]   # yaw -135° so the +x boresight points from this corner to the centre
+      # yaw -135° so the +x boresight points from this corner to the centre
+      pose: {position: {x: 1.5, y: 1.5, z: 0.7}, orientation: {yaw: -2.35619}}
       show_fov: true
       fov_alpha: 0.25
       fov_range: 6.0             # as for the Mid-360 above: the datasheet far is 200 m, which indoors
@@ -136,7 +147,8 @@ components:
                                  # only inflates the scene's bounding box
 
   # --- Fiducial targets so the cameras have something decodable to render ------------------------
-  # Free-standing AprilTags facing the two cameras (markers face +z by default; rpy tips them upright).
+  # Free-standing AprilTags facing the two cameras (markers face +z by default; the roll stands them
+  # upright).
   # Two markers, so each needs a label of its own: a label is what an override addresses and what
   # the generated texture is named after, and two entries answering to `fiducial_marker` is one
   # instance silently overwriting the other.
@@ -144,15 +156,15 @@ components:
       family: apriltag_36h11
       id: 0
       size: 0.12
-      pose: [0.0, 0.0, 0.5]
-      rpy: [1.5708, 0.0, 1.5708]   # stand upright, face +x toward the D435
+      # stand upright, face +x toward the D435
+      pose: {position: {z: 0.5}, orientation: {roll: 1.5708, yaw: 1.5708}}
     name: tag_toward_d435
   - fiducial_marker:
       family: apriltag_36h11
       id: 1
       size: 0.12
-      pose: [0.0, 0.0, 0.5]
-      rpy: [1.5708, 0.0, 3.14159]  # stand upright, face -y toward the D415
+      # stand upright, face -y toward the D415
+      pose: {position: {z: 0.5}, orientation: {roll: 1.5708, yaw: 3.14159}}
     name: tag_toward_d415
 
   # --- Sensor coverage report (the coverage subpackage's world-YAML toggle) ----------------------

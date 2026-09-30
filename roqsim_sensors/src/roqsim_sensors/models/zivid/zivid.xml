@@ -10,7 +10,7 @@
     ZIVID_MESH_LICENSE for provenance.
 
     Mount-local optical axes: +y = the view direction, +z = up (the standalone-mount convention -- at
-    spawn_sensor rpy [0,0,0] the sensor looks horizontally toward a wall, matching d435/d415). The two
+    spawn_sensor rpy [0,0,0] the sensor looks horizontally toward a wall). The two
     optical modules sit 250 mm apart (datasheet baseline); the imaging camera `zivid_color` is at the
     +x module (x=+0.125), the projector at the -x module. `zivid_color` looks along +y with a 39 deg
     square FOV.

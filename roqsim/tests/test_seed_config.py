@@ -28,16 +28,16 @@ def _cfg(tmp_path, body: str):
 
 
 def test_seed_is_read_from_the_sim_block(tmp_path):
-    assert _cfg(tmp_path, "sim: {seed: 7}\nplugins: []\n").seed == 7
+    assert _cfg(tmp_path, "sim: {seed: 7}\ncomponents: []\n").seed == 7
 
 
 def test_seed_absent_is_none(tmp_path):
     """Absent means 'draw one', which is not the same as seed 0."""
-    assert _cfg(tmp_path, "sim: {}\nplugins: []\n").seed is None
+    assert _cfg(tmp_path, "sim: {}\ncomponents: []\n").seed is None
 
 
 def test_seed_zero_is_a_seed_and_not_absence(tmp_path):
-    assert _cfg(tmp_path, "sim: {seed: 0}\nplugins: []\n").seed == 0
+    assert _cfg(tmp_path, "sim: {seed: 0}\ncomponents: []\n").seed == 0
 
 
 @pytest.mark.parametrize("value", ["'abc'", "-1", "1.5"])
@@ -45,7 +45,7 @@ def test_a_malformed_seed_is_rejected_at_load_time(tmp_path, value):
     """Loudly, and at load -- a seed that silently became 0 would make every run of a
     campaign share one noise draw while looking varied."""
     with pytest.raises(PluginError, match="sim.seed"):
-        _cfg(tmp_path, f"sim: {{seed: {value}}}\nplugins: []\n")
+        _cfg(tmp_path, f"sim: {{seed: {value}}}\ncomponents: []\n")
 
 
 def test_seed_survives_an_override(tmp_path):

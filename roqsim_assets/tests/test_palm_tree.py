@@ -26,7 +26,7 @@ def _world(tmp_path, **extra):
     cfg = {
         "palm_tree": {
             "prefix": "palm_",
-            "pos": [0.5, 0.2, 0.0],
+            "pose": {"position": {"x": 0.5, "y": 0.2}},
             "bunches": BUNCHES,
             **extra,
         },
@@ -122,9 +122,12 @@ def test_rejects_a_malformed_bunch(tmp_path):
 
 
 def test_yaw_rotates_the_crown(tmp_path):
-    """`rpy` must actually turn the tree: an experiment aims the gap between fronds with it."""
+    """The pose's yaw must actually turn the tree: an experiment aims the gap between fronds with it."""
     a = _built(tmp_path)
-    b = _built(tmp_path, rpy=[0.0, 0.0, math.pi / 8])
+    b = _built(
+        tmp_path,
+        pose={"position": {"x": 0.5, "y": 0.2}, "orientation": {"yaw": math.pi / 8}},
+    )
     for engine in (a, b):
         mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
 

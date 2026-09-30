@@ -61,9 +61,9 @@ being handed information the hardware could not give it. Two consequences, both 
   the experiment does not turn on *how* it was imperfect.
 
 The choice is the experiment's and belongs in the world, so both are config with a documented
-default rather than a behaviour this plugin picks. Prefixing the signal as ground truth (see
-:doc:`ground_truth`) would be wrong here: a stack subscribes to ``imu/data``, and the truth-ness is a
-property of the *attitude channel*, which the covariance already states.
+default rather than a behaviour this plugin picks. Moving the signal to a ground-truth topic would
+be wrong here: a stack subscribes to ``imu/data``, and the truth-ness is a property of the *attitude
+channel*, which the covariance already states.
 
 **Where it goes.** An IMU is bolted to a link, so this plugin creates its own site on that body at a
 configured offset -- no hand-authored MJCF site needed, which is what makes it usable from a robot
@@ -76,9 +76,10 @@ Config::
       # The entity is the one this entry is NESTED UNDER; declaring it at the top of a document is
       # refused (`requires_owner`) -- an IMU measures a body's motion, so it belongs to something.
       body: ""                  # body the IMU is bolted to; default: the entity's registered base body
-      site: ""                  # measure at an EXISTING site instead (then `body`/`pos`/`rpy` are unused)
-      pos: [0.0, 0.0, 0.0]      # mount offset in the body frame (m)
-      rpy: [0.0, 0.0, 0.0]      # mount orientation, fixed-axis XYZ (rad); or `quat: [w, x, y, z]`
+      site: ""                  # measure at an EXISTING site instead (then `body`/`pose` are unused)
+      pose:                     # the mount in the body frame, a geometry_msgs/Pose; omitted
+        position: {x: 0.0, y: 0.0, z: 0.0}           #   components are 0 (roqsim.pose, relative)
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   # or a quaternion x/y/z/w
       frame_id: imu_link        # the frame the reading is stamped in (default: '<label>_link')
       topic: imu/data           # the endpoint's RELATIVE topic, so a device can match its driver's
                                 #   layout (the D435i's IMU is `camera/imu`); `topics: {imu: /abs}`
@@ -91,10 +92,10 @@ Config::
       gyro_bias: [0, 0, 0]      # rad/s, likewise (a rate bias is what makes integrated yaw drift)
       orientation_stddev: 0.0   # rad, small-angle noise about each axis
       yaw_stddev: 0.0           # rad, EXTRA noise about the vertical axis only (see above)
-      fault: {gyro_stddev: 0.4} # optional: the values it takes while degraded (set_sensor_override)
+      fault: {gyro_stddev: 0.4} # optional: the values it takes while degraded (its `override`)
 
-Endpoint ``imu`` (out) reads an :class:`ImuReading` and carries a ``sensor_msgs/Imu`` backend hint on
-``imu/data`` -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the
+Endpoint ``imu`` (out) reads a :class:`roqsim.types.Imu`, a ``sensor_msgs/Imu`` on ``imu/data`` over
+ROS -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the
 static ``body -> frame_id`` transform. An :class:`ImuReader` is published on the blackboard under
 ``imu:<address>`` for in-process consumers.
 
@@ -126,36 +127,20 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import config_pose, config_pose_errors
+from roqsim.types import Imu
 
 from ..live_config import FaultableSensorMixin
 
 _log = logging.getLogger(__name__)
-
-
-@dataclass
-class ImuReading:
-    """Neutral payload for the ``imu`` endpoint: what a strap-down IMU reports at one instant.
-
-    ``orientation`` is (w, x, y, z) in the world frame; the rates and accelerations are in the
-    sensor frame, which is what a strap-down device measures and what REP 145 expects. The three
-    variances are per-axis and isotropic; ``orientation_valid`` False is the ROS "not provided"
-    marker rather than a zero quaternion, which a consumer cannot distinguish from level.
-    """
-
-    orientation: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
-    angular_velocity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    linear_acceleration: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    orientation_valid: bool = True
-    orientation_variance: float = 0.0
-    angular_velocity_variance: float = 0.0
-    linear_acceleration_variance: float = 0.0
 
 
 @dataclass
@@ -164,19 +149,7 @@ class ImuReader:
 
     name: str
     frame: str
-    read: Callable[[], ImuReading]
-
-
-def _quat_from_rpy(rpy) -> list[float]:
-    """(w, x, y, z) from fixed-axis XYZ roll/pitch/yaw (the ROS/URDF convention).
-
-    ``mju_euler2Quat`` with the sequence ``"XYZ"`` (upper case: fixed axes) is that convention
-    exactly -- checked against the hand-rolled half-angle form the other mount plugins carry, which
-    is why this one does not carry a fourth copy of it.
-    """
-    quat = np.zeros(4)
-    mujoco.mju_euler2Quat(quat, np.asarray([float(v) for v in rpy], dtype=float), "XYZ")
-    return [float(v) for v in quat]
+    read: Callable[[], Imu]
 
 
 def _vec3(value) -> list[float]:
@@ -211,8 +184,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
     REFUSED_WRITES = {
         "site": "the site is resolved to an id at configure; a later write moves no sensor.",
         "body": "the mount is built into the model before compile.",
-        "pos": "likewise -- the mount pose is geometry, not a per-frame value.",
-        "rpy": "likewise.",
+        "pose": "likewise -- the mount pose is geometry, not a per-frame value.",
         "frame_id": "a consumer that saw the frame change mid-run reads it as two sensors.",
         "rate_hz": "the endpoint's rate gate is fixed when the bridge binds it.",
     }
@@ -229,6 +201,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         # simply names its channels differently from a standalone IMU (`camera/imu`) should not have
         # to give up the namespace to say so, which is what an absolute override would cost it.
         self.topic = str(self.config.get("topic") or "imu/data")
+        self._static_tf: dict = {}  # the mount transform, set at configure
         self.orientation = bool(self.config.get("orientation", True))
         self.accel_stddev = float(self.config.get("accel_stddev", 0.0))
         self.gyro_stddev = float(self.config.get("gyro_stddev", 0.0))
@@ -273,19 +246,15 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         for key in ("accel_bias", "gyro_bias"):
             if key in config and len(config[key]) != 3:
                 errors.append(f"'{key}' must be three numbers [x, y, z]")
-        if "pos" in config and len(config["pos"]) != 3:
-            errors.append("'pos' must be three numbers [x, y, z] (a mount offset has a height)")
-        if "quat" in config and len(config["quat"]) != 4:
-            errors.append("'quat' must be four numbers [w, x, y, z]")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be three numbers [roll, pitch, yaw]")
-        if "quat" in config and "rpy" in config:
-            errors.append("set 'quat' or 'rpy', not both -- two spellings of one orientation")
-        if config.get("site") and (
-            "pos" in config or "rpy" in config or "quat" in config or config.get("body")
-        ):
+        errors += config_pose_errors(config, f"imu[{self.label}]")
+        if "quat" in config:
             errors.append(
-                "'site' names an existing mount, so 'body'/'pos'/'rpy'/'quat' would be ignored: "
+                f"imu[{self.label}]: 'quat' is not read -- state the orientation in 'pose': "
+                "pose: {orientation: {x, y, z, w}}"
+            )
+        if config.get("site") and ("pose" in config or config.get("body")):
+            errors.append(
+                "'site' names an existing mount, so 'body'/'pose' would be ignored: "
                 "either name the site the model ships, or give the body and offset to build one."
             )
         if "seed" in config:
@@ -333,12 +302,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
             # label, and a duplicate site name is a compile error that names neither of them.
             site_name = f"{body_name}_{self.label}_site"
             site.name = site_name
-            site.pos = [float(v) for v in self.config.get("pos", [0.0, 0.0, 0.0])]
-            site.quat = (
-                [float(v) for v in self.config["quat"]]
-                if "quat" in self.config
-                else _quat_from_rpy(self.config.get("rpy", [0.0, 0.0, 0.0]))
-            )
+            site.pos, site.quat = config_pose(self.config)
             # A mount frame, not geometry: small, and left in the default site group so a world's
             # own site-visualisation setting decides whether mounts are drawn.
             site.size = [0.005, 0.005, 0.005]
@@ -390,7 +354,6 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         self._ctx = ctx
         m = ctx.model
         entity = ctx.entities.get(self.owner)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         prefix = self.config.get("prefix")
         if prefix is None:
             prefix = entity.meta.get("prefix", "") if entity else ""
@@ -432,31 +395,24 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
             )
         ctx.blackboard.set(key, ImuReader(name=self.label, frame=self.frame_id, read=self.read))
 
-        # The fault switch, if this sensor declares one -- before the reading endpoint, so both are
-        # in ctx.interface when a bridge binds them.
-        self.register_fault_endpoints(ctx, ns)
-        ctx.interface.add(
-            Endpoint(
-                name="imu",
-                direction="out",
-                owner=self.owner,
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                # Read only while something subscribes -- see the module docstring.
-                lazy=True,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.Imu",
-                        # `imu/data` by default, where robot_localization and a standalone driver
-                        # look; `topic:` is how a device states its own layout.
-                        "topic": self.topic_override("imu") or self.topic,
-                        "frame_id": self.frame_id,
-                        "static_tf": self._mount_tf(m, prefix),
-                    }
-                },
-            )
-        )
+        # The fault switch, if this sensor declares one.
+        self.register_fault(ctx)
+        self._static_tf = self._mount_tf(m, prefix)
+
+    # Read only while something subscribes -- see the module docstring. `imu/data` by default, where
+    # robot_localization and a standalone driver look; `topic:` is how a device states its own layout.
+    @endpoint.out(
+        rate="rate_hz",
+        lazy=True,
+        ros2=lambda self: {
+            "topic": self.topic,
+            "frame_id": self.frame_id,
+            "static_tf": self._static_tf,
+        },
+    )
+    def imu(self) -> Imu:
+        """The current reading, with the declared noise as its variances."""
+        return self.read()
 
     def _mount_tf(self, m, prefix: str) -> dict:
         """Static ``mount body -> frame_id`` transform as plain numbers, for a bridge.
@@ -489,7 +445,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
 
     # -- the reading --------------------------------------------------------------------------
 
-    def read(self) -> ImuReading:
+    def read(self) -> Imu:
         """The current reading. Runs on the physics thread; called once per due tick per reader."""
         d = self._ctx.data
         gyro = np.array(d.sensordata[self._gyro_adr : self._gyro_adr + 3], dtype=float)
@@ -514,11 +470,11 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
             if self.orientation and (self.orientation_stddev or self.yaw_stddev):
                 quat = self._perturb(quat, rng)
 
-        return ImuReading(
-            orientation=[float(v) for v in quat],
-            angular_velocity=[float(v) for v in gyro],
-            linear_acceleration=[float(v) for v in accel],
-            orientation_valid=self.orientation,
+        return Imu(
+            orientation=np.asarray(quat, dtype=float),
+            angular_velocity=np.asarray(gyro, dtype=float),
+            linear_acceleration=np.asarray(accel, dtype=float),
+            orientation_valid=bool(self.orientation),
             # stddev**2, per channel. Bias is deliberately not folded in -- see the module docstring.
             orientation_variance=self.orientation_stddev**2 + self.yaw_stddev**2,
             angular_velocity_variance=self.gyro_stddev**2,
