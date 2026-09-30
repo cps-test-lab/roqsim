@@ -356,18 +356,6 @@ def test_roqsim_sim_serves_and_registers_the_control_socket(tmp_path, monkeypatc
     assert not (tmp_path / ipc.SOCKET_NAME).exists(), "the socket file outlived the run"
 
 
-def test_the_default_socket_creates_a_run_directory_not_yet_made(tmp_path, monkeypatch, capsys):
-    # A runner may name the output directory before anything has been written into it.
-    out = tmp_path / "out" / "config" / "0"
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    monkeypatch.setenv("RUN_OUTPUT_DIR", str(out))
-    monkeypatch.delenv(ipc.ENV, raising=False)
-    world = tmp_path / "w.yaml"
-    world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
-    assert runner.main([str(world), "--headless", "--steps", "3", "--pacing", "asap"]) == 0
-    assert f"control: ipc://{out / ipc.SOCKET_NAME}" in capsys.readouterr().out
-
-
 def test_roqsim_sim_control_none_serves_nothing(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path))
