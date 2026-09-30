@@ -70,10 +70,10 @@ The lag is observable: ``tracking_error`` reports ``goal - pose`` and the veloci
 ``ArmHandle`` that ``arm_controller`` publishes, and ``arm_controller`` remains the only writer of
 that arm's actuators.
 
-Config -- a component of the entry that spawns the arm, whose ``ArmHandle`` it drives, since
-ownership is where the entry sits rather than a config key. Every key, with its type, unit and
-default, is the plugin's ``CONFIG_SCHEMA`` (``roqsim plugins describe cartesian_admittance``), and
-any other key is refused::
+It is a component of the entry that spawns the arm, whose ``ArmHandle`` it drives, since ownership
+is where the entry sits rather than a config key. Every key, with its type, unit and default, is the
+plugin's ``CONFIG_SCHEMA`` (``roqsim plugins describe cartesian_admittance``), and any other key is
+refused. A compliance controller pressing down, for instance::
 
     cartesian_admittance:
       controller_type: cartesian_compliance_controller   # which of the three above

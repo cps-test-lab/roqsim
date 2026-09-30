@@ -5,21 +5,15 @@ arm's ``end_effector``, the world MJCF, or a plugin's build. Its material is wha
 varies, and a value that lives only in that MJCF cannot be a campaign factor. This plugin states it
 in the world, where ``--set`` and a campaign reach it like any other component key.
 
-Config::
+Every key is declared in :attr:`FlexMaterialPlugin.CONFIG_SCHEMA`, which ``roqsim plugins describe
+flex_material`` publishes, and any other key is refused. A softer block, for instance::
 
     flex_material:
-      flex: block             # REQUIRED: the flex's name in the model (an attached model's prefix
-                              # included), or a list of names that all take this material
-      young: 5.0e+5           # Pa, Young's modulus (write 5.0e+5, not 5e5 -- see below)
-      poisson: 0.45           # Poisson's ratio, [0, 0.5)
-      damping: 0.002          # s, stiffness-proportional damping
+      flex: block             # the flex's name in the model (an attached model's prefix included),
+                              # or a list of names that all take this material
+      young: 5.0e+5           # Pa (write 5.0e+5, not 5e5 -- see below)
+      poisson: 0.45
       friction: 1.5           # sliding, or [slide, spin, roll]
-      solref: [0.004, 1]      # contact solver reference; a scalar sets the time constant
-      solimp: [0.95, 0.99, 0.001, 0.5, 2]
-      priority: 1             # contact priority: the higher side's friction/solref/solimp win
-      radius: 0.002           # m, collision radius around vertices and elements
-      thickness: 0.002        # m, dim=2 (shell) only
-      elastic2d: both         # dim=2 only: none | bend | stretch | both
 
 Every key but ``flex`` is optional, and one left out keeps the model's own value, so a world states
 exactly the factors it varies. A vector given short keeps the flex's own values for the rest. Each key
