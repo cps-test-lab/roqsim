@@ -1204,9 +1204,11 @@ load **with the velocity it has**, so a parcel let go from a moving deck carries
 it.
 
 Like ``model_override`` and a sensor's ``fault:``, it owns no trigger: ``robot/attachment/attach`` is
-a ``std_srvs/SetBool`` a scenario calls when its own condition says to, and the initial state is
-config -- so "does the robot start loaded" is an ordinary campaign factor rather than a second world
-file. ``robot/attachment/attached`` reports the state for a stack that only wants to watch.
+a command a scenario sends when its own condition says to
+(``entity_call(entity: 'robot.attachment', command: 'attach', value: 'true')``), served over ROS as a
+``std_srvs/SetBool``, and the initial state is config -- so "does the robot start loaded" is an
+ordinary campaign factor rather than a second world file. ``robot/attachment/attached`` reports the
+state for a stack that only wants to watch.
 
 Ground that is not flat
 -----------------------

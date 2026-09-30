@@ -241,6 +241,21 @@ def test_the_switch_and_its_report_are_on_the_blackboard_and_the_interface():
     assert names["attached"].read().attached is True
 
 
+def test_the_attach_command_replies_with_the_state_it_left():
+    """The command is what the control socket and a scenario's ``entity_call`` reach, by the
+    component's path; its reply is the report, so a caller sees the hold it asked for."""
+    from roqsim.ipc import path_of
+
+    engine = _engine()
+    attach = next(e for e in engine.ctx.interface.all() if e.name == "attach")
+    assert path_of(attach) == "robot/attachment/attach"
+    future = attach.write(True)
+    engine.step()
+    report = future.result(timeout=1.0)
+    assert report.attached is True and report.changes == 1
+    assert bool(engine.ctx.data.eq_active[_plugin(engine)._eq_id]) is True
+
+
 def test_switching_to_the_state_it_is_already_in_is_not_a_change():
     engine = _engine()
     plugin = _plugin(engine)

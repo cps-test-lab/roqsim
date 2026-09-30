@@ -36,25 +36,21 @@ one bit crosses the wire and the timing belongs to the experiment: a scenario ca
 its own condition says to. The initial state is config, so "does the robot start loaded" is an
 ordinary campaign factor rather than two world files.
 
-Config::
-
-    attachment:
-      # The entity is the one this entry is NESTED UNDER (`requires_owner`): the thing that CARRIES.
-      body: graspable_carton    # REQUIRED: the body being carried
-      to: ""                    # body that holds it (default: the one body ending in base_link)
-      attached: false           # state at reset -- a campaign factor, not a second world file
-      prefix: ""                # name prefix for `body`/`to`, as the spawn plugins use
-      namespace: ""             # transport scope for the endpoints
+Its keys are declared in :attr:`AttachmentPlugin.CONFIG_SCHEMA`: the ``body`` carried (required),
+the body ``to`` hold it by, whether it is ``attached`` at reset, and a name ``prefix`` for both. The
+entity that carries is the one this entry is nested under (``requires_owner``).
 
 Endpoints, scoped by the component's **address** with dots as slashes (``robot.attachment`` ->
 ``robot/attachment/attach``), exactly as a sensor's fault switch is:
 
-``attach`` (in)
-    a ``std_srvs/SetBool`` service: true holds, false releases. The reply's message is the state
-    after the call (``attached`` or ``released``), so a scenario can fail a trial on a release that
-    did not happen.
+``attach`` (a command)
+    true holds, false releases, and the reply is the :class:`AttachmentReport` the call left. Over
+    ROS it is a ``std_srvs/SetBool`` service whose reply message is that state (``attached`` or
+    ``released``), so a scenario can fail a trial on a release that did not happen; a scenario
+    reaches it with ``entity_call(entity: 'robot.attachment', command: 'attach', value: 'true')``.
 ``attached`` (out)
-    a ``std_msgs/Bool``, so a stack can watch the load without calling anything.
+    the report; ROS carries its ``attached`` field as a ``std_msgs/Bool``, so a stack can watch the
+    load without calling anything.
 
 An :class:`AttachmentHandle` is published on the blackboard under ``attachment:<address>`` with the
 same three members the fault handles offer, so an in-process consumer drives this the way it drives
@@ -76,20 +72,29 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.paths import address_path
 from roqsim.plugin import Plugin
 from roqsim.schema import Field
+from roqsim.types import Duration
 
 _log = logging.getLogger(__name__)
 
 
 @dataclass
 class AttachmentReport:
-    """What the state endpoint carries, and what a service reply is built from."""
+    """Neutral payload for the ``attached`` endpoint and the ``attach`` command's reply.
+
+    Attributes:
+        attached: whether the load is held
+        since: sim time the state last changed; -1.0 if it has not since reset
+        changes: how many times it changed since reset
+    """
 
     attached: bool
-    since: float  # sim time the state last changed; -1.0 if it never has
-    changes: int  # how many times it changed since reset
+    since: Duration
+    changes: int
 
     @property
     def verified(self) -> str:
@@ -135,17 +140,12 @@ class AttachmentPlugin(Plugin):
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.carrier = self.entity
-        self.body = self.config.get("body", "")
-        self.to = self.config.get("to", "")
-        self.attached_at_reset = bool(self.config.get("attached", False))
         self._ctx: SimContext | None = None
         self._eq_id = -1
         self._load_bid = -1
         self._carrier_bid = -1
         self._report = AttachmentReport(False, -1.0, 0)
         self._eq_name = ""
-
-    # -- validation ---------------------------------------------------------------------------
 
     def validate_config(self, config: dict) -> list[str]:
         # Required keys and types come from CONFIG_SCHEMA; the topic map is this plugin's own.
@@ -157,12 +157,12 @@ class AttachmentPlugin(Plugin):
         """Add the weld, inactive. Both names are resolved by suffix, as the other build-time
         plugins do -- entities register in ``configure``, after every ``build``, so the owner's
         prefix is not known yet unless the world (or a manifest) states it."""
-        prefix = self.config.get("prefix")
-        load = self._resolve_body_name(spec, self.body, prefix)
+        settings = self.settings
+        load = self._resolve_body_name(spec, settings.body, settings.prefix)
         # The owner's registered body is not known before configure, and the weld needs both names
         # now, so an unstated `to:` means the conventional base body: the one named or ending in
         # base_link. A world with none, or with several, is refused by name.
-        carrier = self._resolve_body_name(spec, self.to or "base_link", prefix)
+        carrier = self._resolve_body_name(spec, settings.to or "base_link", settings.prefix)
 
         equality = spec.add_equality()
         # Named off the address: two attachments on one robot (a forklift with two forks) must not
@@ -200,9 +200,6 @@ class AttachmentPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
         m = ctx.model
-        entity = ctx.entities.get(self.carrier)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
-
         self._eq_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, self._eq_name)
         if self._eq_id < 0:
             raise RuntimeError(
@@ -228,51 +225,42 @@ class AttachmentPlugin(Plugin):
                 read_state=lambda: self._report,
             ),
         )
-        scope = self.address.replace(".", "/")
-        ctx.interface.add(
-            Endpoint(
-                name="attach",
-                direction="in",
-                owner=self.carrier,
-                namespace=ns,
-                write=lambda payload: self.set_attached(bool(payload), ctx.sim_time),
-                backend={
-                    "ros2": {
-                        # A service, not a topic, for the reason the fault switch is one: picking
-                        # something up is a command whose outcome the caller needs.
-                        "service": "std_srvs.srv.SetBool",
-                        "name": self.topic_override("attach") or f"{scope}/attach",
-                        "state_key": f"attachment:{self.address}",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="attached",
-                direction="out",
-                owner=self.carrier,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=5.0,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Bool",
-                        "topic": self.topic_override("attached") or f"{scope}/attached",
-                        # The payload is the report; the bridge publishes the named field, so no
-                        # converter needs to know this plugin's dataclass.
-                        "field": "attached",
-                    }
-                },
-            )
-        )
+
+    # -- endpoints ----------------------------------------------------------------------------
+
+    # A service, not a topic, for the reason the fault switch is one: picking something up is a
+    # command whose outcome the caller needs. `state_key` is where the SetBool handler reads it.
+    @endpoint.command(
+        ros2=lambda self: {
+            "service": "std_srvs.srv.SetBool",
+            "name": f"{address_path(self.address)}/attach",
+            "state_key": f"attachment:{self.address}",
+        },
+    )
+    def attach(self, data: bool) -> AttachmentReport:
+        """Hold the load where it is, or release it; replies with the state the call left.
+
+        Args:
+            data: true holds, false releases
+        """
+        self.set_attached(data, self._ctx.sim_time)
+        return self._report
+
+    # The report is a structure and ROS carries its verdict alone: `field` names it.
+    @endpoint.out(
+        rate=5.0,
+        ros2=lambda self: {"field": "attached", "topic": f"{address_path(self.address)}/attached"},
+    )
+    def attached(self) -> AttachmentReport:
+        """Whether the load is held, since when, and how often it changed since reset."""
+        return self._report
 
     def on_reset(self, ctx: SimContext) -> None:
         # Back to the configured state, through the same path a call takes -- so a world that starts
         # loaded is loaded again in trial 2, and one that does not is not still holding trial 1's box.
         ctx.data.eq_active[self._eq_id] = 0
         self._report = AttachmentReport(False, -1.0, 0)
-        if self.attached_at_reset:
+        if self.settings.attached:
             self.set_attached(True, ctx.sim_time)
             # The reset state is the starting state, not a change the trial made.
             self._report = AttachmentReport(True, -1.0, 0)
@@ -282,8 +270,8 @@ class AttachmentPlugin(Plugin):
     def set_attached(self, on: bool, sim_time: float = 0.0) -> None:
         """Hold the load where it currently is, or release it. Physics thread only.
 
-        The bridge marshals every inbound payload through ``ctx.post``, so this always runs on the
-        physics thread and the single-writer rule holds without this plugin doing anything about it.
+        The ``attach`` command reaches this on the physics thread at the start of a step, so the
+        single-writer rule holds without this plugin doing anything about it.
         """
         ctx = self._ctx
         on = bool(on)
