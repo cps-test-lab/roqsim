@@ -9,12 +9,19 @@ installed by ``make venv``), the 3D render needs only MuJoCo. Rendering works he
 setup — ``import roqsim`` selects an offscreen backend for the machine (see
 :func:`roqsim.gl.select_offscreen_gl`); set ``MUJOCO_GL`` only to override it.
 
-There are two front doors onto the same core:
+There are two front doors onto the same core, and one offline command for a sensor that moves:
 
 * the **plugin** ``sensor_coverage_probe`` — a world-YAML toggle that reports the coverage of the
-  sensors already in a world;
+  sensors already in a world, computed once, at ``configure``, for the mounts as placed;
 * the **CLI** ``roqsim sensors coverage`` — a placement-search workbench that evaluates *hypothetical*
-  candidate mounts and iterates toward a target.
+  candidate mounts and iterates toward a target;
+* ``roqsim sensors coverage swept`` — reads a **recorded run** and accumulates the union of
+  everything a sensor on a moving frame covered over it.
+
+The first two ask where to put a sensor; the third asks what a sensor that moved ended up seeing.
+They are the same range → FOV → line-of-sight computation, so a number from one is comparable with a
+number from another only when both sampled the same way — which is why all three build their points
+with one sample-set builder (``coverage/sampling.py``'s ``sample_set``).
 
 Concepts
 --------
@@ -61,6 +68,61 @@ camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars
 .. code:: bash
 
    roqsim sim world.yaml --headless --steps 1
+
+A sensor that moves: ``swept`` over a recording
+-----------------------------------------------
+
+What a sensor carried through a world saw over a run is computed afterwards, from the run's
+recording (``roqsim sim world.yaml --record run.mcap``). A recording holds the full MuJoCo state per
+sample, so each sample restores the world as it was — the carrier where it was, and every moving
+occluder where it was — and the same range → FOV → line-of-sight gate as ``estimate`` is ORed into a
+union over one fixed sample set. Because the run is already recorded, the sensor, the frame it rides
+on and its range are chosen afterwards, and one run answers any number of them:
+
+.. code:: bash
+
+   roqsim sensors coverage swept --recording run.mcap \
+       --frame robot/oakd/oakd_rgb --type oakd_camera --config '{"far": 5.0}' \
+       --sample volume --resolution 0.25 --heights 0.5 --out swept/
+
+``--frame`` is a frame path (:ref:`paths`): an entity's root, body, site, camera or declared frame
+(``robot/base_link``, ``robot/oakd/oakd_rgb``), or a body, site or camera of the world's own MJCF by
+its MuJoCo name — a sensor on a gantry in the world file is ``--frame gantry`` or
+``--frame gantry_cam``. ``--pose`` offsets the sensor in the frame's coordinates, a
+``geometry_msgs/Pose`` as JSON whose omitted components are 0.
+
+On a **camera** frame the field of view is that camera's: its intrinsics come from the model rather
+than from the catalog entry for ``--type``, and its axes are MuJoCo's camera frame (looking along
+-z, +y up), so ``--pose '{"position": {"z": -0.3}}'`` moves it 0.3 m along the view. ``--config``
+overrides ``fovy``/``width``/``height`` and sets the range. On any **other** frame the catalog entry
+and ``--config`` state the field of view, looking along the frame's +x, as a placement with
+``rpy = 0`` does.
+
+``--from``/``--to`` bound the sim-time window evaluated, and ``--rate`` thins the samples to at most
+that many evaluations per sim second; a rate above the recording's is refused, since the states it
+would need were not recorded. The sampling, region and target options are ``estimate``'s.
+
+``report.json`` has the static estimate's shape — the covered fraction, ``per_object``,
+``per_region`` and the ``uncovered_regions`` the sweep never reached — with the frame as the one
+placement, plus a ``swept`` block: the covered and sampled **areas** and the grid cell they are
+derived from, the number of evaluations and the window they span, and the visit distribution (how
+many evaluations each point was seen in, as a mean, a maximum and a histogram).
+
+Three things about the figure, all in the conservative direction:
+
+* **It is a lower bound, sampled at the recording's rate.** The field of view is evaluated at the
+  recorded states and never interpolated between them, because an interpolated field of view has no
+  line-of-sight test behind it and would report coverage through walls. What the sensor swept
+  between two samples is not counted; recording at a higher ``--capture-fps`` raises the figure.
+* **The sample set is fixed**, built once from the state at the first evaluated sample, so the union
+  is comparable across windows of one run — and a cell occupied at that sample, by the carrier or by
+  an occluder, is never sampled.
+* **The area is per xy column**, over the volume grid only: ``covered_area_m2`` counts the distinct
+  ``--resolution``-sized cells covered at *any* height, so sampling three heights does not triple the
+  area. With no grid points both areas read ``-1.0`` rather than ``0``.
+
+A raycast excludes the body the frame rides on, since a sensor's origin sits inside its housing —
+except the world body, whose geometry is the walls.
 
 The CLI (placement search)
 --------------------------

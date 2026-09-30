@@ -42,8 +42,8 @@ def test_a_meaning_has_no_semicolon():
 @pytest.mark.parametrize(
     ("err", "code"),
     [
-        (RecordingNotFoundError("x.npz: no such recording"), exit_status.BAD_INPUT),
-        (RecordingError("x.npz is not a readable recording"), exit_status.RECORDING),
+        (RecordingNotFoundError("x.mcap: no such recording"), exit_status.BAD_INPUT),
+        (RecordingError("x.mcap is not a readable recording"), exit_status.RECORDING),
         (DisplayError("no display"), exit_status.NO_GL),
         (GLBackendError("glfw bound"), exit_status.NO_GL),
         (RenderGLError("set MUJOCO_GL"), exit_status.NO_GL),

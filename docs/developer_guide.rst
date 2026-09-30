@@ -48,7 +48,7 @@ Golden rules
   *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered
   ``True``. A bare ``value == enum`` still works, so the break is silent and partial: the
   filter just returns nothing, and an arm reports no joints instead of raising. ``int()`` on
-  the model value (or plain-``int`` members, as in ``export_capture._SCALAR_JOINTS``) is
+  the model value (or plain-``int`` members, as in ``capture._SCALAR_JOINTS``) is
   correct on every version.
 
 Developer workflow
@@ -180,5 +180,9 @@ many?" (user docs: :doc:`coverage`). Design worth knowing when extending it:
   the layer must not depend on them). Free-space classification is deliberately conservative (drops are
   safe: they only make coverage look worse).
 * **Two front doors, one core:** the ``sensor_coverage_probe`` plugin (world-YAML toggle,
-  ``plugins/sensor_coverage_probe.py``) and the ``roqsim sensors coverage`` CLI (``coverage/cli.py``). The
+  ``plugins/sensor_coverage_probe.py``) and the ``roqsim sensors coverage`` CLI (``coverage/cli.py``),
+  whose ``swept`` command accumulates a moving sensor's field of view over a recorded run
+  (``coverage/swept.py``, each sample's state restored through :func:`roqsim.recording.open_recording`).
+  All of them build their points with ``coverage/sampling.py``'s ``sample_set`` on purpose: two
+  coverage figures are comparable only if they sampled the same way. The
   ``coverage`` extra (matplotlib, for the 2D heatmap) is optional; the 3D render needs only MuJoCo.

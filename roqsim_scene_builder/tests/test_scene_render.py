@@ -96,7 +96,7 @@ def test_flags_are_forwarded(fake_rst, tmp_path, world):
 
 
 def test_recording_flags_are_forwarded(fake_rst, tmp_path):
-    recording = tmp_path / "run.npz"
+    recording = tmp_path / "run.mcap"
     recording.write_bytes(b"x")
     scene_render.render_scene(state=str(recording), at=12.5, out=str(tmp_path / "x.png"))
     argv = fake_rst["argv"]
@@ -106,7 +106,7 @@ def test_recording_flags_are_forwarded(fake_rst, tmp_path):
 
 def test_a_target_is_optional_with_state(fake_rst, tmp_path):
     """The recording names its own world, so a caller need not repeat it."""
-    recording = tmp_path / "run.npz"
+    recording = tmp_path / "run.mcap"
     recording.write_bytes(b"x")
     scene_render.render_scene(state=str(recording), out=str(tmp_path / "x.png"))
     assert fake_rst["argv"][1] == "render"  # nothing was inserted as a positional target
@@ -121,7 +121,7 @@ def test_a_missing_file_is_named(tmp_path):
     with pytest.raises(FileNotFoundError, match="no such file"):
         scene_render.render_scene(str(tmp_path / "absent.yaml"))
     with pytest.raises(FileNotFoundError, match="no such file"):
-        scene_render.render_scene(state=str(tmp_path / "absent.npz"))
+        scene_render.render_scene(state=str(tmp_path / "absent.mcap"))
 
 
 def test_a_model_reference_is_not_checked_for_existence(fake_rst, tmp_path):

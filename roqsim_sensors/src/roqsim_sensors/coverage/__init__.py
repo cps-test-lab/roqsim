@@ -17,9 +17,13 @@ Layered so the pieces compose without dragging in the whole stack:
 * :mod:`~roqsim_sensors.coverage.catalog` -- the sensor catalog with constrained-mount metadata.
 * :mod:`~roqsim_sensors.coverage.report` / :mod:`~roqsim_sensors.coverage.viz` -- the two
   outputs (an agent-digestible JSON report and a human visualisation).
+* :mod:`~roqsim_sensors.coverage.swept` -- the union of a moving sensor's field of view over a
+  recorded run, each sample's state restored from the recording.
 
 Two front doors onto this core: the ``sensor_coverage_probe`` runtime plugin (a world-YAML toggle) and
-the ``roqsim sensors coverage`` CLI (:mod:`~roqsim_sensors.coverage.cli`).
+the ``roqsim sensors coverage`` CLI (:mod:`~roqsim_sensors.coverage.cli`), whose ``swept`` command
+reads a recording. All of them build their points with
+:func:`~roqsim_sensors.coverage.sampling.sample_set`.
 """
 
 from __future__ import annotations

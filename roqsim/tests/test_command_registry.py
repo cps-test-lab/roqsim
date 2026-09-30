@@ -270,7 +270,6 @@ _STATES_ITS_EXIT_STATUS = {
     "catalog",
     "plugins",
     "export web",
-    "export capture",
     "export urdf",
     "export srdf",
     "export mesh",
@@ -312,15 +311,14 @@ def _missing_input_cases(root: Path) -> dict[str, list[str]]:
         "assets reduce-mesh": [f"{nope}.glb", str(root / "out.obj")],
         "sim": [f"{nope}.yaml", "--headless"],
         "render": [f"{nope}.yaml", "--out", str(root / "x.png")],
-        "render --state": ["--state", f"{nope}.npz", "--out", str(root / "x.png")],
-        "state": ["--state", f"{nope}.npz", "--check"],
+        "render --state": ["--state", f"{nope}.mcap", "--out", str(root / "x.png")],
+        "state": ["--state", f"{nope}.mcap", "--check"],
         "check": [f"{nope}.yaml"],
         "health": [nope],
         "catalog": ["model", "nope_xyz"],
         "plugins": ["describe", "nope_xyz"],
         "export web": ["--world", f"{nope}.yaml", "--out", str(root / "web")],
         "export web --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "web")],
-        "export capture": ["--state", f"{nope}.npz", "--out", str(root / "cap")],
         "export urdf": ["--world", f"{nope}.yaml", "--out", str(root / "x.urdf")],
         "export urdf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.urdf")],
         "export srdf --mjcf": [
@@ -398,15 +396,7 @@ _FOREIGN_PATTERNS = (re.compile(r"\bskills?\b"), re.compile(r"resolution_attempt
 #: writer's output unreadable by the very consumer whose specification defines it. Keep this list
 #: short, per-line rather than per-file, and each entry justified -- an unexplained entry here is how
 #: the check decays into a convention.
-_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
-    # The wire identifier a consumer matches on, and the citation saying where that format is
-    # specified. Renaming either would not make this file standalone -- it would make its output
-    # unreadable, and leave a reader unable to find the spec it implements.
-    "roqsim/src/roqsim/export_capture.py": ('FORMAT = "robovast.run_capture"',
-                                            "The format is defined by the consumer that reads it"),
-    # Same: the pose table this writer fills in is somebody else's published contract.
-    "roqsim/src/roqsim/capture.py": ("pose-table contract",),
-}
+_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {}
 
 
 # -- an input the tool cannot load is one sentence, not a traceback ---------------------------------

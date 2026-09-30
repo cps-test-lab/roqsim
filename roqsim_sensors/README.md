@@ -188,10 +188,33 @@ roqsim sensors coverage estimate \             # evaluate a placement set
     --world <mjcf-or-world-yaml> --placements p.json --target k=1,frac=0.95 --render both --out run/
 roqsim sensors coverage greedy \               # deterministic max-coverage baseline
     --world <w> --target k=1,frac=0.9 --types livox_mid360,oakd_camera --mount-z 3.0 --out run/
+roqsim sensors coverage swept \                # what a moving sensor covered over a recorded run
+    --recording run.mcap --frame robot/oakd/oakd_rgb --type oakd_camera --out swept/
 ```
 
 To refine a layout: evaluate, read the gaps in `report.json`, adjust the placements, repeat
 (`docs/coverage.rst`).
+
+### A moving sensor: `swept`
+
+A robot carrying a sensor asks a *trajectory* question rather than a layout one: how much did it
+observe on the way. `swept` answers it from a run's recording (`roqsim sim world.yaml --record
+run.mcap`): each recorded sample restores the full MuJoCo state -- the carrier and every moving
+occluder where they were -- places the field of view at the frame's pose, runs the same
+range -> FOV -> line-of-sight gate as `estimate` over the shared sample set, and ORs the result into
+a union. The sensor, its frame and its range are chosen after the run.
+
+- **The mount is `--frame`**, a frame path: an entity's root, body, site, camera or declared frame
+  (`robot/oakd/oakd_rgb`), or a body, site or camera of the world's own MJCF by its MuJoCo name
+  (`gantry_cam`). `--pose` offsets it in the frame's coordinates. A camera frame brings its own
+  intrinsics and MuJoCo camera axes; `--config` overrides them and sets the range. On any other frame
+  the catalog entry for `--type` and `--config` state the field of view, looking along the frame's +x.
+- **`--from`/`--to`** bound the window, and **`--rate`** thins it, never above the recording's rate.
+- **The report** has the static estimate's shape -- fraction, `per_object`, `per_region`,
+  `uncovered_regions` -- plus a `swept` block with the covered and sampled areas (per xy column of
+  the volume grid, `-1.0` without one), the evaluations and the visit distribution.
+- **It is a lower bound, sampled at the recording's rate**: the field of view is never interpolated
+  between samples, because an interpolated one has no line-of-sight test behind it.
 
 ## Test
 

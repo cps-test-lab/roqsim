@@ -132,15 +132,14 @@ def test_the_stream_key_is_stable_across_processes():
 
 def test_the_seed_is_recorded_in_a_recordings_provenance(world, tmp_path):
     """A recomputed sensor needs the seed the live run drew, so it has to travel with the recording."""
-    import json
-
     from roqsim.capture import StateRecorder, snap_fps
+    from roqsim.recording import open_recording
 
     engine = Engine(load_config_from_dict(world))
     engine.ctx.seed = 4242
     engine.setup()
     engine.reset()
-    rec = StateRecorder(engine.ctx, tmp_path / "r.npz", snap_fps(25, 0.002), world="w")
+    rec = StateRecorder(engine.ctx, tmp_path / "r.mcap", snap_fps(25, 0.002), world="w")
     try:
         for _ in range(120):
             engine.step()
@@ -148,8 +147,7 @@ def test_the_seed_is_recorded_in_a_recordings_provenance(world, tmp_path):
         rec.close()
     finally:
         engine.shutdown()
-    meta = json.loads(str(np.load(tmp_path / "r.npz")["meta"]))
-    assert meta["seed"] == 4242
+    assert open_recording(tmp_path / "r.mcap").meta["seed"] == 4242
 
 
 # -- episodes ---------------------------------------------------------------

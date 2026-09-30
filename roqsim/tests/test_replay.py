@@ -67,31 +67,33 @@ def rec(tmp_path):
     model, data, _ctx, _view, _cam = render.build_target(str(world), None)
     ctx = _Ctx(model, data)
     recorder = StateRecorder(
-        ctx, tmp_path / "run.npz", snap_fps(25, model.opt.timestep), world=str(world)
+        ctx, tmp_path / "run.mcap", snap_fps(25, model.opt.timestep), world=str(world)
     )
     for _ in range(600):
         mujoco.mj_step(model, data)
         recorder.sample(ctx)
     recorder.close()
-    opened = open_recording(tmp_path / "run.npz")
+    opened = open_recording(tmp_path / "run.mcap")
     opened.build()
     return opened
 
 
 @pytest.fixture
 def replay(rec, tmp_path):
-    return Replay(rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots.yaml")
+    return Replay(rec, _Handle(), state=tmp_path / "run.mcap", shots=tmp_path / "shots.yaml")
 
 
 # -- which target replays --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("target", ["run.npz", "runs/x.NPZ", "/abs/path/run.npz"])
+@pytest.mark.parametrize("target", ["run.mcap", "runs/x.MCAP", "/abs/path/run.mcap"])
 def test_a_recording_replays(target):
     assert is_recording(target)
 
 
-@pytest.mark.parametrize("target", ["world.yaml", "scene.xml", "roqsim_assets:table", "bunny.obj"])
+@pytest.mark.parametrize(
+    "target", ["world.yaml", "scene.xml", "roqsim_assets:table", "bunny.obj", "old.npz"]
+)
 def test_everything_else_still_simulates(target):
     assert not is_recording(target)
 
@@ -163,7 +165,7 @@ def test_scrubbing_stops_playback(rec, tmp_path):
     """A scrub is a person taking over; carrying on playing would move the frame out from under them."""
     handler = ReplayKeys()
     replay = Replay(
-        rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots.yaml", keys=handler
+        rec, _Handle(), state=tmp_path / "run.mcap", shots=tmp_path / "shots.yaml", keys=handler
     )
     replay.playing = True
     handler.key_callback(SCRUB.keys[1].code)
@@ -287,7 +289,7 @@ def test_live_only_options_are_refused_by_name(tmp_path, rec, capsys):
     from roqsim import runner
 
     with pytest.raises(SystemExit):
-        runner.main([str(tmp_path / "run.npz"), "--record", str(tmp_path / "out.npz")])
+        runner.main([str(tmp_path / "run.mcap"), "--record", str(tmp_path / "out.mcap")])
     assert "--record" in capsys.readouterr().err
 
 
@@ -299,7 +301,7 @@ def test_a_recording_whose_world_moved_rebuilds_from_the_world_named(rec, tmp_pa
     moved = tmp_path / "elsewhere" / "w.yaml"
     moved.parent.mkdir()
     moved.write_text(_WORLD, encoding="utf-8")
-    reopened = open_recording(tmp_path / "run.npz")
+    reopened = open_recording(tmp_path / "run.mcap")
     model, _ctx = reopened.build(str(moved))
     assert model.nbody == rec._model.nbody
 
@@ -310,7 +312,7 @@ def test_a_shot_taken_in_such_a_replay_names_the_world_for_its_render(rec, tmp_p
     replay = Replay(
         rec,
         _Handle(),
-        state=tmp_path / "run.npz",
+        state=tmp_path / "run.mcap",
         shots=tmp_path / "shots.yaml",
         world=tmp_path / "elsewhere" / "w.yaml",
     )
@@ -318,6 +320,6 @@ def test_a_shot_taken_in_such_a_replay_names_the_world_for_its_render(rec, tmp_p
     assert doc["world_target"] == str(tmp_path / "elsewhere" / "w.yaml")
     assert render_args(doc)[0] == doc["world_target"] and render_args(doc)[1] == "--state"
     plain = Replay(
-        rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots2.yaml"
+        rec, _Handle(), state=tmp_path / "run.mcap", shots=tmp_path / "shots2.yaml"
     ).add_shot("own")
     assert "world_target" not in plain and render_args(plain)[0] == "--state"
