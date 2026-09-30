@@ -84,7 +84,7 @@ import mujoco
 import numpy as np
 
 from .plugin import PluginError
-from .schema import Field, validate
+from .schema import Field
 
 #: The control laws a world may name. Ordered as the docstring's table.
 CONTROLS = ("position", "velocity", "effort", "impedance")
@@ -115,24 +115,31 @@ _GAINS: dict[str, tuple[str, ...]] = {
     "impedance": ("stiffness", "damping"),
 }
 
-#: MuJoCo's own spellings, and what replaces each. Refused rather than translated, and rather than
-#: ignored: these plugins take config maps they do not fully own, so a key merely not read would be
-#: accepted in silence and the world would run under gains nobody chose.
-_GONE = {
-    "kp": "'p' (control: position) or 'stiffness' (control: impedance)",
-    "kv": "'d' (control: position/velocity) or 'damping' (control: impedance)",
-    "kd": "'d' (control: position) or 'damping' (control: impedance)",
-    "forcerange": "'effort_limit', a single positive magnitude",
-    "gainprm": "'p'/'stiffness' -- state the gain, not MuJoCo's parameter vector",
-    "biasprm": "'d'/'damping' -- state the gain, not MuJoCo's parameter vector",
-    "mode": "'control'",
+#: MuJoCo's spellings of a gain block's keys, each with what this vocabulary writes instead. They are
+#: refused as unknown keys, with this as the hint (:attr:`roqsim.schema.Field.hints`), and nothing
+#: reads them: a key merely not read would be accepted in silence and the world would run under
+#: gains nobody chose.
+MUJOCO_KEYS = {
+    key: f"that is MuJoCo's spelling; use {replacement}"
+    for key, replacement in {
+        "kp": "'p' (control: position) or 'stiffness' (control: impedance)",
+        "kv": "'d' (control: position/velocity) or 'damping' (control: impedance)",
+        "kd": "'d' (control: position) or 'damping' (control: impedance)",
+        "forcerange": "'effort_limit', a single positive magnitude",
+        "gainprm": "'p'/'stiffness' -- state the gain, not MuJoCo's parameter vector",
+        "biasprm": "'d'/'damping' -- state the gain, not MuJoCo's parameter vector",
+        "mode": "'control'",
+    }.items()
 }
 
-#: Values that were MuJoCo's actuator types rather than a robot's command interface.
-_GONE_CONTROLS = {
-    "motor": "effort",
-    "pd": "impedance",
-    "general": "position, velocity, effort or impedance",
+#: MuJoCo's actuator types, which a ``control`` names a robot's command interface in place of.
+MUJOCO_CONTROLS = {
+    control: f"that is a MuJoCo actuator type; the command interface is {interface}"
+    for control, interface in {
+        "motor": "effort",
+        "pd": "impedance",
+        "general": "position, velocity, effort or impedance",
+    }.items()
 }
 
 #: One gain block: the shared keys, and the same set again inside every ``each:`` entry. Units are
@@ -143,6 +150,7 @@ GAIN_SCHEMA: dict[str, Field] = {
     "control": Field(
         str,
         choices=CONTROLS,
+        hints=MUJOCO_CONTROLS,
         doc="the command interface this joint runs under, as a robot's driver exposes it",
     ),
     "p": Field(
@@ -173,8 +181,28 @@ GAIN_SCHEMA: dict[str, Field] = {
     ),
 }
 
-#: The block's own keys: the gains, shared, plus the one that nests.
-_BLOCK_KEYS = frozenset(GAIN_SCHEMA) | {"each"}
+#: The ``actuators:`` block as a spawn plugin declares it: the gains, shared, plus ``each:``, whose
+#: keys are the model's actuator names. The schema check covers its shape at ``roqsim check``'s
+#: config stage; the rule between two keys is :func:`unread_gain_errors`, and whatever needs the
+#: model -- whether it has those names, what unit they command -- is :func:`resolve`'s, at build.
+ACTUATORS = Field(
+    dict,
+    schema={
+        **GAIN_SCHEMA,
+        "each": Field(
+            dict,
+            values=Field(
+                dict,
+                schema=GAIN_SCHEMA,
+                hints=MUJOCO_KEYS,
+                doc="this actuator's settings, on top of the shared keys",
+            ),
+            doc="per actuator, keyed by its name in the model (unprefixed)",
+        ),
+    },
+    hints=MUJOCO_KEYS,
+    doc="the control law and gains the model's actuators run under (roqsim.actuators)",
+)
 
 
 @dataclass(frozen=True)
@@ -217,78 +245,39 @@ class ResolvedActuator:
         return record
 
 
-def validate_override(override, *, where: str = "actuators") -> list[str]:
-    """Shape errors for an ``actuators:`` block, without needing the model.
+def unread_gain_errors(override, *, where: str = "actuators") -> list[str]:
+    """Gains an ``actuators:`` block states that the law in force does not read.
 
-    Called from a spawn plugin's ``validate_config``, so these land at ``roqsim check``'s **config**
-    stage -- before anything is compiled, which is where a key typo belongs. What cannot be checked
-    here is everything about the names under ``each:``: whether the model has them, and what unit its
-    actuators command. Those need the MJCF and are checked in :func:`resolve`, at the build stage.
-
-    Errors accumulate rather than raising at the first, the way :func:`roqsim.schema.validate` does:
-    a world with three mistakes should take one run to find them.
+    The one rule of the block its declaration (:data:`ACTUATORS`) cannot state, because it relates
+    two keys. Called from a spawn plugin's ``validate_config``, beside the schema check, so it lands
+    at ``roqsim check``'s config stage too; a shape the schema refuses is left to the schema.
     """
-    if override is None:
-        return []
     if not isinstance(override, dict):
-        return [f"'{where}' must be a mapping of shared settings plus an optional 'each'"]
-
-    errors: list[str] = []
-    shared = {k: v for k, v in override.items() if k != "each"}
-    shared_control = shared.get("control")
-    errors += _gain_errors(shared, where, shared_control)
-
+        return []
+    shared_control = override.get("control")
+    errors = _unread_gains(override, shared_control, where)
     each = override.get("each")
-    if each is not None and not isinstance(each, dict):
-        errors.append(f"'{where}.each' must be a mapping of actuator name to its settings")
-    elif each:
-        for name, entry in each.items():
-            if not isinstance(entry, dict):
-                errors.append(f"'{where}.each.{name}' must be a mapping of settings")
-                continue
+    for name, entry in each.items() if isinstance(each, dict) else ():
+        if isinstance(entry, dict):
             # An entry inherits the shared law unless it names its own, so that is what its gains
             # are judged against -- both are known here, with no model needed.
-            errors += _gain_errors(
-                entry, f"{where}.each.{name}", entry.get("control") or shared_control
-            )
+            control = entry.get("control") or shared_control
+            errors += _unread_gains(entry, control, f"{where}.each.{name}")
     return errors
 
 
-def _gain_errors(block: dict, where: str, control: str | None) -> list[str]:
-    """One gain block: the gone spellings, the schema, and the gains against the law in force.
-
-    *control* is the law this block's actuator ends up under -- its own ``control`` if it states one,
-    else the shared block's. ``None`` means neither said, so the law is whatever the model already
-    runs and only :func:`resolve` can judge the gains.
-    """
-    errors: list[str] = []
-    for key, replacement in _GONE.items():
-        if key in block:
-            errors.append(
-                f"'{where}.{key}' is gone -- use {replacement}. '{where.split('.')[0]}' states a "
-                f"joint's control law the way a robot's driver does, not the way MuJoCo stores it."
-            )
-    if isinstance(block.get("control"), str) and block["control"] in _GONE_CONTROLS:
-        errors.append(
-            f"'{where}.control: {block['control']}' is gone -- "
-            f"use {_GONE_CONTROLS[block['control']]}. "
-            f"These name a command interface, not a MuJoCo actuator type."
-        )
-        control = None
-    known = {k: v for k, v in block.items() if k not in _GONE}
-    errors += validate(GAIN_SCHEMA, known, strict_keys=True)
-    errors += _unread_gains(block, control, where)
-    return errors
-
-
-def _unread_gains(block: dict, control: str | None, where: str) -> list[str]:
+def _unread_gains(block: dict, control, where: str) -> list[str]:
     """Gains this block states that its law does not read -- accepted, then never applied.
+
+    *control* is the law this block's actuator ends up under -- its own ``control`` if it states
+    one, else the shared block's. One the block does not know (unset, or refused by the schema)
+    leaves the gains to :func:`resolve`, which knows the model's.
 
     Only gains stated in *this* block: one inherited from the shared keys is not a mistake but the
     ordinary case of an ``each:`` entry choosing a different law, where the shared gains simply do
     not apply to it.
     """
-    if control not in _GAINS:
+    if not isinstance(control, str) or control not in _GAINS:
         return []
     return [
         f"'{where}.{gain}' is not a gain of control: {control}, which reads "
@@ -371,7 +360,7 @@ def resolve(spec, override, *, model_name: str, where: str = "actuators") -> lis
 
 
 def _model_dependent_errors(shared, entry, merged, control, row, name, where) -> list[str]:
-    """The two checks :func:`validate_override` could not make, because both need the model.
+    """The two checks the config stage could not make, because both need the model.
 
     A gain is judged here only when NEITHER the shared keys nor the entry named a law: the law is
     then whatever the model already runs, which is the one thing the config stage cannot know. And

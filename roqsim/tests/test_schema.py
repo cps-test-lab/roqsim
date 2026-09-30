@@ -110,7 +110,7 @@ def test_a_schema_that_is_both_required_and_defaulted_is_itself_an_error():
 # -- unknown keys -------------------------------------------------------------------------------
 
 
-def test_an_unknown_key_passes_unless_the_plugin_says_its_list_is_complete():
+def test_validate_refuses_an_unknown_key_only_when_asked():
     assert _errors({"mass": 1.0, "wobble": 3}) == []
     strict = _errors({"mass": 1.0, "wobble": 3}, strict_keys=True)
     assert any("'wobble' is not a setting" in e for e in strict)
@@ -157,7 +157,12 @@ def test_declaration_order_is_kept():
 
 class _Declared(Plugin):
     CONFIG_SCHEMA = SCHEMA
-    STRICT_KEYS = True
+
+
+class _Open(Plugin):
+    CONFIG_SCHEMA = SCHEMA
+    STRICT_KEYS = False
+    OPEN_KEYS = "the rest is passed on to something that checks it"
 
 
 class _Undeclared(Plugin):
@@ -169,9 +174,16 @@ def test_a_plugin_without_a_schema_is_unaffected_by_the_rule():
     assert _Undeclared({}).config_errors({"anything": 1}) == []
 
 
-def test_a_plugin_with_one_gets_the_checks_and_its_strictness():
+def test_a_plugin_with_one_gets_the_checks_and_is_strict_without_asking():
+    """Strict is the default: a schema says what the config is, so a key outside it is a typo."""
+    assert Plugin.STRICT_KEYS is True
     assert _Declared({}).validate_schema({"mass": 2.0}) == []
     assert any("not a setting" in e for e in _Declared({}).validate_schema({"mass": 2.0, "x": 1}))
+
+
+def test_a_plugin_that_opens_its_schema_passes_an_unknown_key():
+    assert _Open({}).validate_schema({"mass": 2.0, "x": 1}) == []
+    assert any("'mass' is required" in e for e in _Open({}).validate_schema({"x": 1}))
 
 
 def test_the_catalog_publishes_a_declared_schema_and_says_when_it_is_strict():
@@ -404,3 +416,191 @@ def test_the_docs_page_renders_a_schema_as_a_config_block():
     parsed = _parse_config_block("\n".join(block))
     assert [f["name"] for f in parsed] == ["keep", "above_z"]
     assert parsed[1]["example"] == "2.5"
+
+
+# -- a block declared as a schema of its own -----------------------------------------------------
+
+PLANNER = {
+    "radius": Field(float, default=0.3, minimum=0.0, unit="m", doc="a waypoint counts as reached"),
+    "retries": Field(int, default=4),
+}
+NESTED = {
+    "speed": Field(float, default=1.0, unit="m/s"),
+    "planner": Field(dict, schema=PLANNER, doc="the path between points"),
+}
+
+
+class _Nested(Plugin):
+    CONFIG_SCHEMA = NESTED
+
+
+def test_an_unknown_nested_key_is_refused_by_its_path_with_a_suggestion():
+    """Strict inside a block whatever the top level says: nothing is injected into a block."""
+    expected = [
+        "'planner.radus' is not a key of 'planner' -- did you mean 'radius'?. Known: radius, retries"
+    ]
+    assert validate(NESTED, {"planner": {"radus": 0.2}}, strict_keys=True) == expected
+    assert validate(NESTED, {"planner": {"radus": 0.2}}) == expected
+
+
+def test_a_nested_value_is_checked_and_named_by_its_path():
+    assert validate(NESTED, {"planner": {"radius": "far"}}) == [
+        "'planner.radius' must be float, got str ('far')"
+    ]
+    assert validate(NESTED, {"planner": {"radius": -1.0}}) == [
+        "'planner.radius' must be >= 0.0 m, got -1.0"
+    ]
+
+
+def test_a_block_that_is_not_a_mapping_is_one_type_error():
+    assert validate(NESTED, {"planner": 3}) == ["'planner' must be dict, got int (3)"]
+
+
+def test_a_block_declares_its_keys_defaults_rather_than_its_own():
+    schema = {"planner": Field(dict, default={}, schema=PLANNER)}
+    assert validate(schema, {}) == [
+        "schema error: 'planner' declares its keys, so it must take a dict and declare no default "
+        "of its own -- its keys' defaults are its default"
+    ]
+    assert validate({"planner": Field(list, schema=PLANNER)}, {})[0].startswith("schema error")
+
+
+def test_settings_fill_a_nested_default_whether_the_block_is_written_or_not():
+    assert _Nested({}).settings.planner.radius == 0.3
+    written = _Nested({"planner": {"retries": 2}}).settings.planner
+    assert written.radius == 0.3 and written.retries == 2
+    radius = _Nested({"planner": {"radius": 1}}).settings.planner.radius
+    assert radius == 1.0 and isinstance(radius, float)
+    with pytest.raises(AttributeError, match=r"_Nested\.planner declares no setting 'radus'"):
+        _ = _Nested({}).settings.planner.radus
+    assert _Nested({"planner": 3}).settings.planner == 3, "a wrong type reads as given"
+
+
+def test_a_block_publishes_its_keys_under_fields():
+    (_, planner) = describe(NESTED)
+    assert "default" not in planner
+    assert planner["fields"] == [
+        {
+            "name": "radius",
+            "type": "float",
+            "required": False,
+            "default": 0.3,
+            "minimum": 0.0,
+            "unit": "m",
+            "doc": "a waypoint counts as reached",
+        },
+        {"name": "retries", "type": "int", "required": False, "default": 4},
+    ]
+
+
+def test_a_block_publishes_its_parameters_and_config_block_as_the_world_nests_it():
+    from roqsim.introspection import _parse_config_block, _schema_parameters, schema_config_block
+
+    names = ["speed", "planner", "planner.radius", "planner.retries"]
+    assert [p["name"] for p in _schema_parameters(NESTED)] == names
+    block = schema_config_block("mover", _Nested)
+    assert "        radius: 0.3" in "\n".join(block)
+    parsed = _parse_config_block("\n".join(block))
+    assert [f["name"] for f in parsed] == names
+    assert parsed[2]["doc"] == "m; a waypoint counts as reached"
+
+
+# -- a mapping from names not known in advance ---------------------------------------------------
+
+GAINS = {
+    "p": Field(float, default=100.0, minimum=0.0, unit="N*m/rad"),
+    "control": Field(str, choices=("position", "effort"), hints={"motor": "write effort"}),
+}
+MAPPED = {
+    "each": Field(
+        dict,
+        values=Field(dict, schema=GAINS, hints={"kp": "write p"}, doc="one joint's gains"),
+        doc="per joint, by name",
+    ),
+}
+
+
+class _Mapped(Plugin):
+    CONFIG_SCHEMA = MAPPED
+
+
+def test_every_value_of_a_mapping_is_checked_and_named_by_its_path():
+    assert validate(MAPPED, {"each": {"elbow": {"p": 5.0}, "wrist": {"p": -1.0}}}) == [
+        "'each.wrist.p' must be >= 0.0 N*m/rad, got -1.0"
+    ]
+    assert validate(MAPPED, {"each": {"elbow": 5}}) == ["'each.elbow' must be dict, got int (5)"]
+
+
+def test_a_value_declared_as_a_block_is_strict_whatever_the_top_level_says():
+    expected = [
+        "'each.elbow.contrl' is not a key of 'each.elbow' -- did you mean 'control'?. "
+        "Known: control, p"
+    ]
+    assert validate(MAPPED, {"each": {"elbow": {"contrl": "effort"}}}) == expected
+    assert validate(MAPPED, {"each": {"elbow": {"contrl": "effort"}}}, strict_keys=True) == expected
+
+
+def test_settings_read_a_mapping_per_name_with_each_default_filled():
+    each = _Mapped({"each": {"elbow": {"control": "effort"}, "wrist": {"p": 7}}}).settings.each
+    assert list(each) == ["elbow", "wrist"]
+    assert each["elbow"].p == 100.0 and each["elbow"].control == "effort"
+    assert each["wrist"].p == 7.0 and isinstance(each["wrist"].p, float)
+    assert dict(_Mapped({}).settings.each) == {}
+    with pytest.raises(TypeError):
+        each["shoulder"] = {}
+
+
+def test_a_mapping_publishes_its_value_under_values():
+    (each,) = describe(MAPPED)
+    assert "default" not in each
+    assert each["values"]["type"] == "dict" and "name" not in each["values"]
+    assert each["values"]["hints"] == {"kp": "write p"}
+    assert [f["name"] for f in each["values"]["fields"]] == ["p", "control"]
+    assert each["values"]["fields"][1]["hints"] == {"motor": "write effort"}
+
+
+def test_a_mapping_publishes_its_parameters_and_config_block_with_a_name_placeholder():
+    from roqsim.introspection import _schema_parameters, schema_config_block
+
+    names = ["each", "each.<name>", "each.<name>.p", "each.<name>.control"]
+    assert [p["name"] for p in _schema_parameters(MAPPED)] == names
+    assert [line.split("#")[0].rstrip() for line in schema_config_block("joints", _Mapped)[2:]] == [
+        "    joints:",
+        "      each:",
+        "        <name>:",
+        "          p: 100.0",
+        "          control: <unset>",
+    ]
+
+
+def test_a_mapping_declares_what_its_values_are_and_nothing_else():
+    assert validate({"each": Field(dict, default={}, values=Field(float))}, {}) == [
+        "schema error: 'each' declares its values, so it must take a dict and declare no default "
+        "of its own -- its values' defaults are its default"
+    ]
+    both = Field(dict, schema=GAINS, values=Field(float))
+    assert validate({"each": both}, {})[0].startswith("schema error: 'each' declares both")
+
+
+# -- a word from another vocabulary --------------------------------------------------------------
+
+
+def test_a_hinted_key_is_refused_once_with_its_hint_in_place_of_a_suggestion():
+    assert validate(MAPPED, {"each": {"elbow": {"kp": 5.0}}}) == [
+        "'each.elbow.kp' is not a key of 'each.elbow' -- write p. Known: control, p"
+    ]
+
+
+def test_a_hinted_value_is_refused_once_with_its_hint():
+    assert validate(MAPPED, {"each": {"elbow": {"control": "motor"}}}) == [
+        "'each.elbow.control' must be one of position, effort, got 'motor' -- write effort"
+    ]
+    assert validate(MAPPED, {"each": {"elbow": {"control": "servo"}}}) == [
+        "'each.elbow.control' must be one of position, effort, got 'servo'"
+    ]
+
+
+def test_hints_stand_beside_keys_or_choices():
+    assert validate({"gain": Field(float, hints={"kp": "write gain"})}, {}) == [
+        "schema error: 'gain' declares hints but no keys or choices to refuse them beside"
+    ]

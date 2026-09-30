@@ -339,16 +339,28 @@ def _schema_doc(spec) -> str | None:
     return lead or spec.doc or None
 
 
-def _schema_parameters(schema: dict) -> list[dict]:
+#: How a key the world chooses reads in a published path (``actuators.each.<name>.p``).
+_ANY_NAME = "<name>"
+
+
+def _schema_parameters(schema: dict, where: str = "") -> list[dict]:
     """A declared schema in the ``parameters`` shape :func:`_parse_config_block` produces.
 
     For a plugin with a schema the keys are derived from it rather than parsed from prose, so the
     list a caller reads and the list validation runs on are one list. The typed form is ``schema``.
+    A block declared with its own schema is listed, then its keys under their dotted paths, as the
+    parser lists a nested mapping. A mapping declared with ``values`` is listed, then its value as
+    ``<name>`` -- a key the world chooses -- and that value's own keys under it.
     """
-    return [
-        {"name": name, "example": _schema_example(spec), "doc": _schema_doc(spec)}
-        for name, spec in schema.items()
-    ]
+    rows = []
+    for name, spec in schema.items():
+        path = f"{where}.{name}" if where else name
+        rows.append({"name": path, "example": _schema_example(spec), "doc": _schema_doc(spec)})
+        if spec.schema is not None:
+            rows += _schema_parameters(spec.schema, path)
+        if spec.values is not None:
+            rows += _schema_parameters({_ANY_NAME: spec.values}, path)
+    return rows
 
 
 def schema_config_block(name: str, cls) -> list[str]:
@@ -356,20 +368,36 @@ def schema_config_block(name: str, cls) -> list[str]:
 
     What the docs page shows for a plugin with a schema, in the shape every other plugin's
     hand-written block has, so the page reads the same everywhere while the keys come from the
-    declaration. A key without a default reads ``<required>`` or ``<unset>``.
+    declaration. A key without a default reads ``<required>`` or ``<unset>``, and a block declared
+    with its own schema opens a mapping with its keys indented under it; a mapping declared with
+    ``values`` opens one ``<name>:`` entry standing for every name the world writes there.
     """
-    strict = " -- unknown keys are refused" if getattr(cls, "STRICT_KEYS", False) else ""
-    rows = []
-    for field in _schema_parameters(cls.CONFIG_SCHEMA):
-        example = field["example"]
-        if example is None:
-            example = "<required>" if cls.CONFIG_SCHEMA[field["name"]].required else "<unset>"
-        rows.append((f"{field['name']}: {example}", field["doc"]))
+    strict = " -- unknown keys are refused" if getattr(cls, "STRICT_KEYS", True) else ""
+    rows = _schema_rows(cls.CONFIG_SCHEMA, "      ")
     width = max(len(key) for key, _ in rows)
     lines = [f"Config (declared in ``CONFIG_SCHEMA``{strict})::", "", f"    {name}:"]
     for key, doc in rows:
-        lines.append(f"      {key.ljust(width)}  # {doc}" if doc else f"      {key}")
+        lines.append(f"{key.ljust(width)}  # {doc}" if doc else key)
     return lines
+
+
+def _schema_rows(schema: dict, indent: str) -> list[tuple[str, str | None]]:
+    """``(indented key: example, doc)`` for each declared key, a block's keys under the block."""
+    rows = []
+    for name, spec in schema.items():
+        if spec.schema is not None:
+            rows.append((f"{indent}{name}:", _schema_doc(spec)))
+            rows += _schema_rows(spec.schema, indent + "  ")
+            continue
+        if spec.values is not None:
+            rows.append((f"{indent}{name}:", _schema_doc(spec)))
+            rows += _schema_rows({_ANY_NAME: spec.values}, indent + "  ")
+            continue
+        example = _schema_example(spec)
+        if example is None:
+            example = "<required>" if spec.required else "<unset>"
+        rows.append((f"{indent}{name}: {example}", _schema_doc(spec)))
+    return rows
 
 
 def list_plugins() -> dict:
@@ -475,7 +503,7 @@ def get_plugin_details(name: str) -> dict:
     declared = _declared_schema(cls)
     if declared is not None:
         details["schema"] = declared
-        details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+        details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", True))
         if not details["strict_keys"] and getattr(cls, "OPEN_KEYS", ""):
             details["open_keys"] = cls.OPEN_KEYS
     from roqsim.endpoint import declared

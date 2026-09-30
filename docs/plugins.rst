@@ -1129,8 +1129,8 @@ turn poses back into effort, which is a fitted constant between the simulator an
 numbers; unset, the plugin reports mechanical work and nothing else. A state of charge exists only
 where a ``capacity_wh`` was given -- without one the fraction is reported as *unknown* rather than as
 a full battery. Every one of those defaults is what an absent key means, so a misspelt one would
-report an energy figure that looks measured and assumes nothing: the plugin's keys are declared with
-``STRICT_KEYS``, and ``resistive_w_per_nm`` is refused with the key it meant.
+report an energy figure that looks measured and assumes nothing: the plugin's keys are declared in
+its schema, so ``resistive_w_per_nm`` is refused with the key it meant.
 
 The per-actuator split is what makes the number usable on an arm. Each actuator's ``force *
 velocity`` is sorted into driving and driven *before* the sum, so one joint descending under gravity
@@ -1276,8 +1276,8 @@ the published description come from one place::
        def validate_config(self, config):
            return [...]                               # whatever only this plugin knows
 
-**Declaring it is what enforces it.** The types, ranges, required keys and -- with ``STRICT_KEYS``
--- unknown keys are checked when the world's plugins are built, beside whatever ``validate_config``
+**Declaring it is what enforces it.** The types, ranges, required keys and unknown keys are checked
+when the world's plugins are built, beside whatever ``validate_config``
 adds; there is no call to remember. A schema the catalog publishes and nothing checks would be
 prose with a type annotation.
 
@@ -1308,17 +1308,56 @@ A key that takes more than one shape declares a tuple of types, as ``isinstance`
 ``"type": ["float", "dict"]``. The bound applies to the number; a mapping's entries stay with
 ``validate_config``, which is the rule a schema cannot state for a shape it does not look inside.
 
+A **block of fixed keys** declares them as a schema of its own, on the field that holds it::
+
+   PLANNER = {
+       "inflation_radius": Field(float, default=None, unit="m", doc="default: the footprint"),
+       "waypoint_radius": Field(float, default=0.3, unit="m", doc="a waypoint counts as reached"),
+   }
+   CONFIG_SCHEMA = {"planner": Field(dict, schema=PLANNER, doc="the path between points")}
+
+Its keys are checked like the top level's and named by their path (``'planner.waypoint_radius' must
+be float``), and an unknown one is refused with a suggestion, whatever ``STRICT_KEYS`` says: nothing
+is injected into a block, so its schema is complete. ``self.settings.planner.waypoint_radius`` reads
+0.3 whether the world wrote the block or not -- a block's default is its keys' defaults, so it
+declares none of its own. ``describe`` publishes the keys under the block's ``fields``, and the
+``Config::`` block on this page nests them as a world writes them. A block whose keys are open (a
+model's parameters, passed through) stays a plain ``Field(dict)``.
+
+A **mapping from names the world chooses** -- one entry per actuator of a model -- declares what each
+value is, as a field of its own::
+
+   CONFIG_SCHEMA = {"each": Field(dict, values=Field(dict, schema=GAINS), doc="by actuator name")}
+
+Every value is checked against it and named by its path (``'each.wrist_3.p' must be >= 0.0``), a
+value declared as a block strictly. ``self.settings.each`` is a read-only mapping of the names the
+world wrote, each read through the field -- ``self.settings.each["wrist_3"].p``, with the block's
+defaults filled. ``describe`` publishes the value's field under ``values``, and the ``Config::``
+block shows it as one ``<name>:`` entry. ``roqsim.actuators.ACTUATORS`` is declared this way.
+
+A word **from another vocabulary** -- MuJoCo's ``kp`` where a gain block says ``p``, its actuator
+type ``motor`` where a choice says ``effort`` -- is declared as a ``hint`` on the field that refuses
+it: ``Field(dict, schema=GAINS, hints={"kp": "use 'p'"})`` for a key of a block,
+``Field(str, choices=..., hints={"motor": "use effort"})`` for a value. It is refused like any other
+unknown key or value, in one error that carries the hint in place of the nearest-name suggestion,
+and nothing reads it.
+
 A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
 (``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
 block, and ``present``, which the base class checks for every plugin). The same guard test holds
 every shipped schema to it.
 
-``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
-``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
-opt-in because a component's config carries keys the world's author did not write (a manifest's
-``prefix``, a spawn's entity); those are known centrally, and a plugin says so once its own list is
-complete. A schema that stays open says why in ``OPEN_KEYS = "<reason>"``, which ``describe``
-publishes beside ``strict_keys``; the guard test refuses an open schema without one.
+**An unknown key is refused.** That is the check nothing else can do -- an unknown key is a typo,
+and ``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. The
+keys a component carries without the world's author writing them are known centrally, so a schema
+lists only its own. A plugin whose schema cannot be complete -- one that passes keys on to something
+it does not own -- opts out and says why::
+
+   STRICT_KEYS = False
+   OPEN_KEYS = "the rest is handed to the policy, which checks it"
+
+``describe`` publishes the reason beside ``strict_keys: false``, and the guard test refuses an open
+schema without one.
 
 Declaring a plugin's endpoints
 ------------------------------

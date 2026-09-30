@@ -105,7 +105,7 @@ def test_rail_geometry_is_visual_only(tmp_path):
     ("rail", "expected"),
     [
         ({"range": [1.0, -1.0]}, "min < max"),
-        ({"range": [0.0, 1.0], "home": 2.0}, "'home' must lie within"),
+        ({"range": [0.0, 1.0], "home": 2.0}, "'rail.home' must lie within"),
         ({"axis": [0, 0, 0]}, "non-zero"),
     ],
 )

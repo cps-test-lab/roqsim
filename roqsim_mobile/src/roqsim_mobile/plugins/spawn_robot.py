@@ -77,13 +77,12 @@ import mujoco
 
 from roqsim import endpoint
 from roqsim.actuators import (
+    ACTUATORS,
     apply_gravity_compensation,
+    unread_gain_errors,
 )
 from roqsim.actuators import (
     resolve as resolve_actuators,
-)
-from roqsim.actuators import (
-    validate_override as validate_actuators,
 )
 from roqsim.context import Entity, SimContext
 from roqsim.frames import (
@@ -149,7 +148,7 @@ class SpawnRobotPlugin(Plugin):
     expansion_keys = frozenset({"model", "default_plugins", "prefix"})
 
     #: Every key this plugin, its ``expand`` and the entity it registers read -- and nothing else,
-    #: which is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried:
+    #: which is what makes refusing any other key safe. A key outside it is refused rather than carried:
     #: ``robot.lidar.rays`` against a robot whose scanner is a mounted device stops at the robot and
     #: would write a ``lidar`` key here that nothing reads, while the real lidar keeps its value.
     #: The load names that component's address (:mod:`roqsim.config`); the schema refuses the rest.
@@ -159,7 +158,7 @@ class SpawnRobotPlugin(Plugin):
         "prefix": Field(str, default="", doc="MJCF name prefix; distinct per robot"),
         "pose": Field(dict, doc="spawn pose, as SpawnEntity's initial_pose (roqsim.pose)"),
         "base_joint": Field(str, default="base_free", doc="free joint used to place the base"),
-        "actuators": Field(dict, doc="control law and gains override (roqsim.actuators)"),
+        "actuators": ACTUATORS,
         "gravity_compensation": Field(
             bool, default=True, doc="false: no drive supplies a gravity term (roqsim.actuators)"
         ),
@@ -167,7 +166,6 @@ class SpawnRobotPlugin(Plugin):
         "frames": Field(list, doc="fixed links beyond the manifest's own (roqsim.frames)"),
         "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
     }
-    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):
@@ -224,7 +222,7 @@ class SpawnRobotPlugin(Plugin):
             parse_frames(settings.frames, "spawn_robot")
         except PluginError as exc:
             errors.append(str(exc))
-        errors += validate_actuators(settings.actuators)
+        errors += unread_gain_errors(config.get("actuators"))
         if settings.pose is not None:
             try:
                 parse_pose(settings.pose)
@@ -242,8 +240,9 @@ class SpawnRobotPlugin(Plugin):
         # Nothing is grafted onto a base, so both halves of an override land here: the actuator
         # rewrite, and -- when a joint runs under `impedance` -- the body-level gravity term that
         # makes a soft stiffness hold a pose instead of folding under the robot's own weight.
+        # The block as the world wrote it: a key it left out is the model's, not a default.
         self.actuator_table = resolve_actuators(
-            child, settings.actuators, model_name=str(settings.model)
+            child, self.config.get("actuators"), model_name=str(settings.model)
         )
         # Per body, not per spec, because a robot that stands on the ground has both kinds of
         # body: a mobile manipulator's ARM links are held up by its own motors, while the base
