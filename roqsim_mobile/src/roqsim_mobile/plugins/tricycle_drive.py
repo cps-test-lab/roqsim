@@ -66,6 +66,7 @@ Config::
       max_steer_angle: 1.2          # rad, < pi/2; the mechanical lock
       steer_rate: 1.5               # rad/s slew on the steering angle (0 = instant)
       accel_limit: 1.0              # m/s^2 on the commanded speed (0 = instant)
+      decel_limit: 1.0              # m/s^2 taking speed off; default accel_limit
       steer_actuator: steer_motor   # POSITION servo
       steer_joint: steer_joint
       drive_actuators: [left_motor, right_motor]   # VELOCITY servos; left then right for `axle`,
@@ -112,6 +113,7 @@ from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
+from roqsim_mobile.speed_ramp import ramp_speed
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
 _MIN_SPEED = 1e-3
@@ -146,6 +148,8 @@ class TricycleDrivePlugin(Plugin):
         self.max_steer = float(self.config.get("max_steer_angle", 1.0))
         self.steer_rate = float(self.config.get("steer_rate", 1.5))
         self.accel_limit = float(self.config.get("accel_limit", 1.0))
+        #: Braking rate: a vehicle stops harder than it pulls away (roqsim_mobile.speed_ramp).
+        self.decel_limit = float(self.config.get("decel_limit", self.accel_limit))
         self.steer_actuator_name = self.config.get("steer_actuator")
         self.steer_joint_name = self.config.get("steer_joint")
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])
@@ -204,7 +208,7 @@ class TricycleDrivePlugin(Plugin):
         ):
             if key in config and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
-        for key in ("steer_rate", "accel_limit"):
+        for key in ("steer_rate", "accel_limit", "decel_limit"):
             if key in config and float(config[key]) < 0:
                 errors.append(f"'{key}' must be >= 0 (0 means no limit)")
         if float(config.get("max_steer_angle", 1.0)) >= np.pi / 2:
@@ -411,11 +415,9 @@ class TricycleDrivePlugin(Plugin):
             # The watchdog: the last command has expired, so the target is a stop, through the ramp.
             self._target_v = self._target_w = 0.0
 
-        if self.accel_limit > 0:
-            dv = self.accel_limit * ctx.dt
-            self._cmd_v += float(np.clip(self._target_v - self._cmd_v, -dv, dv))
-        else:
-            self._cmd_v = self._target_v
+        self._cmd_v = ramp_speed(
+            self._cmd_v, self._target_v, self.accel_limit, self.decel_limit, ctx.dt
+        )
 
         target = self.steer_angle_for(self._target_v, self._target_w)
         if target is not None:
