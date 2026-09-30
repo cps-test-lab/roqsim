@@ -18,12 +18,9 @@ frame_id: laser             # Husarion's scan frame (slamtec_rplidar.urdf.xacro:
 frames:
   - name: rplidar_link      # the vendor mount link: the housing base, which is the mount body itself
     parent: mount
-    pos: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
   - name: "{frame_id}"      # the vendor scan frame (slamtec_rplidar.urdf.xacro:142-144, model c1)
     parent: rplidar_link
-    pos: [0.0, 0.0, 0.032]
-    rpy: [0.0, 0.0, 3.141592654]
+    pose: {position: {z: 0.032}, orientation: {yaw: 3.141592654}}
 
 components:
   - lidar:

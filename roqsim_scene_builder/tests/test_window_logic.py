@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
+import pytest
 from roqsim_scene_builder.scene_window import (
     DotModel,
     MoveModel,
@@ -13,6 +17,8 @@ from roqsim_scene_builder.scene_window import (
     rgba_hex,
     write_result,
 )
+
+from roqsim.pose import parse_pose, rpy_to_quat, yaw_of
 
 
 def test_add_numbers_sequentially():
@@ -89,26 +95,38 @@ def test_write_result_carries_moves():
     ]
 
 
-def test_apply_prop_pose_sets_pos_and_yaw():
-    cfg = {"model": "industrial_table", "name": "industrial_table_1", "pos": [0.0, 0.0, 0.0]}
+def test_apply_prop_pose_sets_the_position_and_heading():
+    cfg = {"model": "industrial_table", "pose": {"position": {"x": 0.0, "y": 0.0}}}
     apply_prop_pose(cfg, [10.911, 0.904, 0.0], 90.0)
-    assert cfg["pos"] == [10.911, 0.904, 0.0]
-    assert cfg["rpy"][2] == round(__import__("math").radians(90.0), 5)
-    assert cfg["rpy"][0] == 0.0 and cfg["rpy"][1] == 0.0
+    assert cfg["pose"] == {
+        "position": {"x": 10.911, "y": 0.904, "z": 0.0},
+        "orientation": {"yaw": round(math.radians(90.0), 5)},
+    }
 
 
-def test_apply_prop_pose_omits_rpy_when_flat():
-    cfg = {"model": "chair", "pos": [1.0, 1.0, 0.0]}
+def test_apply_prop_pose_omits_the_orientation_when_flat():
+    cfg = {"model": "chair", "pose": {"position": {"x": 1.0, "y": 1.0}}}
     apply_prop_pose(cfg, [2.0, 2.0, 0.0], 0.0)  # no rotation at all
-    assert cfg["pos"] == [2.0, 2.0, 0.0]
-    assert "rpy" not in cfg  # a flat prop's entry stays terse
+    assert cfg["pose"] == {"position": {"x": 2.0, "y": 2.0, "z": 0.0}}  # stays terse
 
 
 def test_apply_prop_pose_preserves_roll_pitch():
-    cfg = {"model": "lamp", "pos": [0.0, 0.0, 0.0], "rpy": [0.1, 0.2, 0.0]}
+    cfg = {"model": "lamp", "pose": {"orientation": {"roll": 0.1, "pitch": 0.2}}}
     apply_prop_pose(cfg, [3.0, 4.0, 0.0], 45.0)
-    assert cfg["rpy"][0] == 0.1 and cfg["rpy"][1] == 0.2  # roll/pitch untouched
-    assert cfg["rpy"][2] == round(__import__("math").radians(45.0), 5)
+    assert cfg["pose"]["orientation"] == {
+        "roll": 0.1,
+        "pitch": 0.2,
+        "yaw": round(math.radians(45.0), 5),
+    }
+
+
+def test_apply_prop_pose_keeps_a_quaternions_tilt_and_turns_it():
+    tilted = rpy_to_quat(0.3, 0.0, 1.0)
+    cfg = {"model": "lamp", "pose": {"orientation": dict(zip("wxyz", tilted, strict=True))}}
+    apply_prop_pose(cfg, [0.0, 0.0, 0.0], 30.0)
+    _, quat = parse_pose(cfg["pose"])
+    assert yaw_of(quat) == pytest.approx(math.radians(30.0), abs=1e-5)
+    assert np.allclose(np.abs(quat), np.abs(rpy_to_quat(0.3, 0.0, math.radians(30.0))), atol=1e-5)
 
 
 def test_movemodel_set_updates_existing_keeps_id_and_orig():
