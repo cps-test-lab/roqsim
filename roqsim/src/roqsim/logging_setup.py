@@ -19,10 +19,6 @@ aggregator that wants it sets that variable itself.
 
 Note that :data:`STAMPED_FORMAT` needs no clock call of its own: ``%(created)`` is the log
 record's own epoch timestamp, taken when the event happened rather than when it was formatted.
-
-``export_capture`` deliberately does **not** use this. Its logging format is bare
-``%(message)s`` because that CLI's contract is one line of JSON on stdout, and its output is
-plain by design -- so it is not an oversight to be tidied up into this helper later.
 """
 
 import logging
