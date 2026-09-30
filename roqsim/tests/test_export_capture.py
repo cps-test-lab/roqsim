@@ -248,9 +248,9 @@ def test_world_identity_distinguishes_no_overrides_from_unrecorded(tmp_path):
     model, data = _compile()
 
     known = write_capture(model, _samples(model, data), tmp_path / "known",
-                          world="w.yaml", overrides={"plugins": {"floorplan": {"size": 4.0}}},
+                          world="w.yaml", overrides={"components": {"floorplan": {"size": 4.0}}},
                           packages={"roqsim": "0.1.0"})
-    assert known["overrides"] == {"plugins": {"floorplan": {"size": 4.0}}}
+    assert known["overrides"] == {"components": {"floorplan": {"size": 4.0}}}
     assert known["packages"] == {"roqsim": "0.1.0"}
 
     none_applied = write_capture(model, _samples(model, data), tmp_path / "none",

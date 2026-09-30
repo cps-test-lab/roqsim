@@ -49,7 +49,6 @@ sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCove
 # once, at configure; this one accumulates the union of a carried sensor's FoV over a run, which is
 # what a coverage, patrol or exploration trial measures. One geometry engine, two questions.
 swept_coverage_monitor = "roqsim_sensors.plugins.swept_coverage_monitor:SweptCoverageMonitorPlugin"
-ground_truth_pose = "roqsim_sensors.plugins.ground_truth_pose:GroundTruthPosePlugin"
 object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
 # The pixel-level counterpart of object_detector: that one says WHERE an object is in the robot's
 # frame, this says WHICH PIXELS are it -- the ground truth a segmentation or detection metric is
@@ -69,6 +68,11 @@ roqsim_sensors = "roqsim_sensors.models"
 
 [project.entry-points."roqsim.commands"]
 sensors = "roqsim_sensors.commands:sensors"
+
+# How the ROS 2 bridge carries this package's own payloads (NavSatFix, Detection3DArray,
+# Detection2DArray); loaded by the bridge only.
+[project.entry-points."roqsim.ros2_types"]
+roqsim_sensors = "roqsim_sensors.ros2_types:TYPES"
 
 [tool.setuptools.packages.find]
 where = ["src"]

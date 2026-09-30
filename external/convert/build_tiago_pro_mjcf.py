@@ -503,7 +503,7 @@ def postprocess(base: Path, out: Path) -> None:
     )
 
     # Head RGB-D camera on the source's camera link. fovy 42.5 deg / 640x480 matches roqsim_sensors'
-    # d435 model (the D435 colour stream's vertical FOV), so the two agree on one sensor.
+    # realsense_d435 model (the D435 colour stream's vertical FOV), so the two agree on one sensor.
     # xyaxes puts -z (MuJoCo's view direction) along the link's +x, i.e. looking where the head faces.
     bodies["head_front_camera_link"].insert(
         0,

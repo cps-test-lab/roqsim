@@ -9,6 +9,8 @@ Ask the installation, not this file:
 - `roqsim --help` — every command; then `roqsim <group> --help` and `roqsim <group> <tool> --help`.
 - `roqsim plugins list` / `roqsim plugins describe <name>` — every registered plugin, as JSON.
 - `roqsim catalog models|worlds [--refs]` / `roqsim catalog model <name>` — what can be spawned and run.
+- `roqsim ls` / `roqsim endpoints` / `roqsim describe <path>` — a running simulation's endpoints,
+  over the control socket `roqsim sim` serves (`docs/control.rst`).
 - OSC actions: `docs/quickstart.rst` and `scenario_execution_roqsim/src/scenario_execution_roqsim/lib_osc/roqsim.osc`.
 
 ## Package layout
@@ -29,7 +31,6 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - `roqsim_walker/` — kinematic pedestrians, a `roqsim_nav` output. `roqsim`, `roqsim_nav`; no robot package depends on it.
   Licences differ per character (`CREDITS.txt` beside each) and the clips are CC-BY: `roqsim_walker/THIRD_PARTY.md`.
 - `roqsim_mcp/`, `roqsim_scene_builder/` — MCP servers (introspection; scene windows and renders). `roqsim`.
-- `roqsim_webctrl/` — web-control plugin fragment. No roqsim dependency.
 - `scenario_execution_roqsim/` — the OSC vocabulary (`import osc.roqsim`). `roqsim`; `scenario_execution` via `[osc]`.
 - `ros2_ws/src/` (colcon): `roqsim_ros_bridge` (transport + `simulation_interfaces`, as plugins), `roqsim_nav_interfaces`,
   `roqsim_nav_ros` (nav2 goal actions for roqsim's own movers), `roqsim_walker_ros`, `roqsim_nav2_example`,
@@ -62,6 +63,8 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - **`sim.contact_override` is global and pre-compile; `model_override` is aimed and at runtime.**
   Per-geom values belong in the model; one owner per knob, so never add `opt.*` to `model_override`'s
   allowlist. A flex's material is `flex_material`, before compile. Architecture §4 and §9.2.
+- **A `solref` is judged against the timestep in one place**, `roqsim.solref.solref_floor`, keyed on
+  the resolved integrator; the override, `roqsim check` and the interpenetration tolerance all read it.
 - **Aerial worlds fail silently in two ways.** A world with no `density`/`viscosity` is a vacuum, so
   nothing damps a drone; a multirotor MJCF has no stabiliser, so an uncommanded drone falls, which is
   why its manifest pulls the controller in (unless an external flight stack flies it). Architecture §4,

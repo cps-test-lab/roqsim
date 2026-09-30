@@ -1,6 +1,6 @@
 """Scene plugin: report the sensor coverage of a world, enabled/disabled from the world YAML.
 
-The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``plugins:`` block
+The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``components:``
 and it computes coverage **once** (at ``configure``, after the model is compiled) and writes an
 agent-digestible ``report.json`` plus a human render -- then does nothing per step. Omit it and there is
 no coverage output. The optimization *search* over hypothetical mounts is the CLI's job
@@ -9,8 +9,10 @@ no coverage output. The optimization *search* over hypothetical mounts is the CL
 Config::
 
     sensor_coverage_probe:
-      sensors: auto            # 'auto' = every MuJoCo camera in the world; or an explicit list of
-                               #   {type, pos, rpy, config} placements (for lidars, or hypotheticals)
+      sensors: auto            # 'auto' = every MuJoCo camera in the world, less a device's depth
+                               #   camera beside its colour one (camera_common.DEPTH_CAMERA_SUFFIX);
+                               #   or an explicit list of {type, pos, rpy, config} placements (for
+                               #   lidars, or hypotheticals)
       camera_far: 10.0         # detection range assumed for 'auto' cameras (metres; not physics)
       target: {k: 1, frac: 0.95}
       sample:
@@ -44,7 +46,8 @@ from ..coverage import sampling
 from ..coverage.adapters import PlacedSensor, build_fov
 from ..coverage.catalog import placed_from_proposal
 from ..coverage.engine import coverage
-from ..coverage.report import build_report
+from ..coverage.report import build_report, normalise_target
+from .camera_common import depth_stream_cameras
 
 
 class SensorCoverageProbePlugin(Plugin):
@@ -54,7 +57,7 @@ class SensorCoverageProbePlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.sensors = self.config.get("sensors", "auto")
         self.camera_far = float(self.config.get("camera_far", 10.0))
-        self.target = self.config.get("target", {})
+        self.target = normalise_target(self.config.get("target"))
         sample = self.config.get("sample", {}) or {}
         self.sample_volume = bool(sample.get("volume", True))
         self.sample_objects = bool(sample.get("objects", True))
@@ -84,7 +87,10 @@ class SensorCoverageProbePlugin(Plugin):
     def _discover_fovs(self, model, data):
         if self.sensors == "auto":
             fovs = []
+            depth_streams = depth_stream_cameras(model)
             for cam_id in range(model.ncam):
+                if cam_id in depth_streams:
+                    continue
                 name = (
                     mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, cam_id)
                     or f"camera{cam_id}"

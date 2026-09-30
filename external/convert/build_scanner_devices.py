@@ -495,7 +495,9 @@ DEVICES = {
             budget=3000,  # 14566 in the source
             visual_pos=(0.0, 0.0, 0.0),
             visual_rpy=(0.0, 0.0, 0.0),
-            rgba=(0.3, 0.3, 0.3, 1.0),  # turtlebot3_description common_properties.urdf `dark`
+            # The real LDS-01's black housing. The vendor URDF's display material `dark` (0.3 grey,
+            # turtlebot3_description common_properties.urdf) renders light grey under a top light.
+            rgba=(0.1, 0.1, 0.1, 1.0),
             collision='type="cylinder" pos="0.015 0 -0.0065" size="0.055 0.01575"',
             inertial='<inertial pos="0 0 0" mass="0.114" diaginertia="0.001 0.001 0.001"/>',
             site_pos=(0.0, 0.0, 0.0),

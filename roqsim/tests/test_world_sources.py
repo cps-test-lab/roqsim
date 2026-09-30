@@ -39,7 +39,7 @@ def test_a_plugins_own_file_is_a_source(tmp_path):
     world = _world(
         tmp_path,
         f"""\
-        plugins:
+        components:
           - "{__name__}:_NamesAFile":
               file: {asset}
     """,
@@ -56,7 +56,7 @@ def test_an_unresolvable_plugin_does_not_sink_the_answer(tmp_path):
     world = _world(
         tmp_path,
         """\
-        plugins:
+        components:
           - not_a_real_plugin_anywhere: {}
     """,
     )
@@ -67,7 +67,7 @@ def test_a_plugin_whose_sources_raises_is_skipped(tmp_path):
     world = _world(
         tmp_path,
         f"""\
-        plugins:
+        components:
           - "{__name__}:_Explodes": {{}}
     """,
     )
@@ -79,7 +79,7 @@ def test_a_source_that_does_not_exist_is_dropped(tmp_path):
     world = _world(
         tmp_path,
         f"""\
-        plugins:
+        components:
           - "{__name__}:_NamesAFile":
               file: {tmp_path / "absent.stl"}
     """,
@@ -115,7 +115,7 @@ def test_a_whole_walk_reports_nothing_skipped(tmp_path):
     world = _world(
         tmp_path,
         f"""\
-        plugins:
+        components:
           - "{__name__}:_NamesAFile":
               file: {asset}
     """,
@@ -134,7 +134,7 @@ def test_an_absent_file_is_not_something_skipped(tmp_path):
     world = _world(
         tmp_path,
         f"""\
-        plugins:
+        components:
           - "{__name__}:_NamesAFile":
               file: {tmp_path / "absent.stl"}
     """,
@@ -153,7 +153,7 @@ def test_a_plugin_that_cannot_be_asked_is_reported_as_skipped(tmp_path):
     world = _world(
         tmp_path,
         f"""\
-        plugins:
+        components:
           - "{__name__}:_Explodes": {{}}
     """,
     )
@@ -174,7 +174,7 @@ def test_an_extends_that_does_not_resolve_is_reported_as_skipped(tmp_path):
         tmp_path,
         """\
         extends: ./no_such_parent.yaml
-        plugins: []
+        components: []
     """,
     )
     skipped: list = []
