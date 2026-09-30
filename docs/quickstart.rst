@@ -241,9 +241,11 @@ cannot be read exits 2 with no report.
 It runs six stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure``, ``reset`` --
 and says which one it reached, because "the config is wrong" and "the config is fine and the model
 refused the name a plugin asked for" send a reader to different files. ``reset`` runs every plugin's
-``on_reset`` and leaves the state a trial starts from. It does not step the simulation: a world
-that passes can still behave wrongly, but it cannot fail to *start*, which is the failure worth
-catching before a campaign queues a thousand of them.
+``on_reset`` and leaves the state a trial starts from. A transport plugin (one that declares
+``transport_only``: the ROS bridge, an autopilot link) has its config checked and is not started,
+since its ``configure`` connects to a process a check does not run; a ``transport`` warning names
+it. It does not step the simulation: a world that passes can still behave wrongly, but it cannot
+fail to *start*, which is the failure worth catching before a campaign queues a thousand of them.
 
 **Warnings** do not clear ``ok`` and do not change the exit code; ``--json`` lists them under
 ``warnings`` as ``{"check", "message", "hint"}``. ``interpenetration`` is one: the reset state puts

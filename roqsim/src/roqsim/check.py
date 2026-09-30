@@ -145,7 +145,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
     probably did not mean.
     """
-    from roqsim.config import PluginError, input_errors, load_config
+    from roqsim.config import PluginError, drop_transport, input_errors, load_config
 
     overrides = overrides or {}
     report: dict = {
@@ -204,8 +204,6 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     # run's business. Checking a world must not block on a process that is not there, and the
     # transport adds nothing to what the world IS. Said in the report, so nobody reads the
     # inventory as "the bridge came up".
-    from roqsim.config import drop_transport
-
     transport = drop_transport(cfg)
     if transport:
         report["warnings"].append(
