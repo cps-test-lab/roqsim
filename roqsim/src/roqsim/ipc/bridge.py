@@ -25,6 +25,12 @@ carries that endpoint's value as read in the ``post_step`` of the step that appl
 While the run is paused no step runs, so the reply says ``applied`` and ``verified: false`` rather
 than stepping or reporting the verdict from before the change.
 
+Config (besides every bridge's ``owner`` and ``rates``)::
+
+    ipc_bridge:
+      uri: ipc:///tmp/run.sock  # REQUIRED: the control URI, ipc://<path> or tcp://<host>:<port>
+      world: ""                 # the world file the run serves, as the registry lists it
+
 Messages are :mod:`roqsim.ipc.wire`: JSON, with numpy arrays as raw frames beside it. pyzmq is the
 ``roqsim[ipc]`` extra and is imported only here, when the bridge starts.
 """
