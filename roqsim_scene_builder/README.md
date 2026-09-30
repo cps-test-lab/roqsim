@@ -44,8 +44,8 @@ roqsim-scene-builder serve --transport stdio
 Installing the package also adds a `builder` group to the `roqsim` command tree, so `roqsim builder serve`
 / `roqsim builder review-scene` / `roqsim builder sketch-floorplan` are the same three commands.
 
-Each CLI prints its result JSON and exits 0 (pass/sent), 1 (fail), 2 (no display / load error),
-3 (closed without a result).
+Each CLI prints its result JSON and exits 0 (pass, a neutral comment, or sent), 1 (fail), 2 (no
+display / load error), 3 (closed without a result).
 
 ## The tools
 
