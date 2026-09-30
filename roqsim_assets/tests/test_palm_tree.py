@@ -145,7 +145,10 @@ def test_yaw_rotates_the_crown(tmp_path):
 
 def test_bunch_positions_follow_a_yawed_tree(tmp_path):
     """The advertised bunch positions are the sites' -- through the tree's rotation, not beside it."""
-    engine = _built(tmp_path, rpy=[0.0, 0.0, math.pi / 2])
+    engine = _built(
+        tmp_path,
+        pose={"position": {"x": 0.5, "y": 0.2}, "orientation": {"yaw": math.pi / 2}},
+    )
     m, d = engine.ctx.model, engine.ctx.data
     mujoco.mj_forward(m, d)
     palm = engine.ctx.entities.get("palm")
