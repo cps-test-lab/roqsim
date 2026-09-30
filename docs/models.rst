@@ -30,12 +30,26 @@ Both print JSON, and every row carries ``use`` -- the line to put in a world fil
 line -- because "what do I type" is the question being asked. ``python -m roqsim.catalog models``
 is the same tool for a caller that has a shell in the image but not the console script, and
 ``roqsim mcp serve`` exposes ``list_models``, ``get_model_details``
-and ``list_worlds`` to an MCP client as the same three functions.
+and ``list_worlds`` to an MCP client as the same three functions, and ``check_world`` -- ``roqsim
+check --json`` -- to ask whether a world just written loads.
 
 A name printed there is a name that resolves: ``roqsim/tests/test_catalog.py`` hands every ref back
 to the loader. What is listed is what each package *offers* -- its ``roqsim.worlds`` entry point --
 rather than every YAML it ships: a package's debugging worlds are deliberately unregistered and are
 run by path, so a world absent from the listing is a decision rather than an omission.
+
+Bringing a model in
+-------------------
+
+Two tool groups add to these catalogs; each tool's ``--help`` has its options:
+
+* **a prop** — ``roqsim assets sketchfab-helper`` searches Sketchfab and checks a model's licence;
+  its ``import`` downloads, reduces (``reduce-mesh``) and finalizes (``finalize-mujoco``) the model in
+  one go, and ``inspect-prop`` checks the result. ``roqsim_assets/tools/README.md`` walks through the
+  pipeline and the steps it calls. ``collision`` checks what the prop collides as against what it
+  looks like (``roqsim_assets/README.md``, *Props: what a prop collides as*);
+* **a pedestrian** — ``roqsim walker import-actor`` turns a rigged Gazebo/Open-RMF actor into a
+  walker blueprint (``roqsim_walker/README.md``).
 
 Models
 ------

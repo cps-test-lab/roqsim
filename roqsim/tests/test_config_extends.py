@@ -27,7 +27,7 @@ def _parent(dir_, **sim):
         sim:
           world: {world}
           pacing: realtime
-        {extra}plugins:
+        {extra}components:
           - spawn_model: {{model: industrial_table}}
             name: table_1
           - spawn_model: {{model: industrial_table}}
@@ -45,7 +45,7 @@ def test_child_plugins_appended_after_parent(tmp_path):
         "child.yaml",
         """
         extends: parent.yaml
-        plugins:
+        components:
           - spawn_robot: {model: oli, prefix: oli_}
             name: oli
         """,
@@ -71,7 +71,7 @@ def test_sim_block_deep_merged_child_wins(tmp_path):
         extends: parent.yaml
         sim:
           timestep: 0.001
-        plugins: []
+        components: []
         """,
     )
     cfg = load_config(child)
@@ -92,7 +92,7 @@ def test_parent_relative_world_is_absolutized(tmp_path):
         "child.yaml",
         """
         extends: sub/parent.yaml
-        plugins: []
+        components: []
         """,
     )
     cfg = load_config(child)
@@ -107,7 +107,7 @@ def test_disable_drops_named_plugin(tmp_path):
         """
         extends: parent.yaml
         disable: [table_2, greeter]
-        plugins: []
+        components: []
         """,
     )
     cfg = load_config(child)
@@ -124,7 +124,7 @@ def test_disable_drops_named_plugin(tmp_path):
 
 def test_disable_then_re_add_is_how_you_modify_an_inherited_plugin(tmp_path):
     """The override pattern this module's own docstring documents: "To *modify* an inherited plugin,
-    ``disable`` it and re-add a tweaked copy in the child's ``plugins``."
+    ``disable`` it and re-add a tweaked copy in the child's ``components``."
 
     It has to survive the duplicate-label check, and only just does: `disable` turns the inherited
     entry OFF rather than removing it, so the document really does carry two entries under one
@@ -138,7 +138,7 @@ def test_disable_then_re_add_is_how_you_modify_an_inherited_plugin(tmp_path):
         """
         extends: parent.yaml
         disable: [table_2]
-        plugins:
+        components:
           - spawn_model: {model: industrial_table, pose: {position: {x: 1.0, y: 0.0, z: 0.0}}}
             name: table_2
         """,
@@ -163,7 +163,7 @@ def test_two_live_entries_under_one_label_still_raise(tmp_path):
         "child.yaml",
         """
         extends: parent.yaml
-        plugins:
+        components:
           - spawn_model: {model: industrial_table}
             name: table_1
         """,
@@ -180,7 +180,7 @@ def test_disable_unknown_selector_raises(tmp_path):
         """
         extends: parent.yaml
         disable: [does_not_exist]
-        plugins: []
+        components: []
         """,
     )
     with pytest.raises(PluginError, match="matched no inherited entry"):
@@ -193,7 +193,7 @@ def test_disable_without_extends_raises(tmp_path):
         "child.yaml",
         """
         disable: [foo]
-        plugins: []
+        components: []
         """,
     )
     with pytest.raises(PluginError, match="'disable' requires 'extends'"):
@@ -201,14 +201,14 @@ def test_disable_without_extends_raises(tmp_path):
 
 
 def test_extends_cycle_raises(tmp_path):
-    _write(tmp_path, "a.yaml", "extends: b.yaml\nplugins: []\n")
-    _write(tmp_path, "b.yaml", "extends: a.yaml\nplugins: []\n")
+    _write(tmp_path, "a.yaml", "extends: b.yaml\ncomponents: []\n")
+    _write(tmp_path, "b.yaml", "extends: a.yaml\ncomponents: []\n")
     with pytest.raises(PluginError, match="cycle detected"):
         load_config(tmp_path / "a.yaml")
 
 
 def test_extends_missing_target_raises(tmp_path):
-    child = _write(tmp_path, "child.yaml", "extends: nope.yaml\nplugins: []\n")
+    child = _write(tmp_path, "child.yaml", "extends: nope.yaml\ncomponents: []\n")
     with pytest.raises(PluginError, match="world YAML not found"):
         load_config(child)
 
@@ -224,7 +224,7 @@ def test_extends_package_ref_resolves(tmp_path):
         extends: roqsim_scenes:depot
         sim:
           timestep: 0.001
-        plugins:
+        components:
           - spawn_robot: {model: turtlebot4, prefix: robot_, pose: {position: {x: -8.0, y: 0.0}}}
             name: robot
         """,
@@ -252,10 +252,10 @@ def test_a_package_parents_world_is_inherited_by_reference_and_resolves(tmp_path
     mjcf = site / "fake_scenes" / "worlds" / "hall" / "hall.xml"
     mjcf.write_text("<mujoco/>")
     (site / "fake_scenes" / "worlds" / "hall.yaml").write_text(
-        "sim: {world: hall/hall.xml}\nplugins: []\n"
+        "sim: {world: hall/hall.xml}\ncomponents: []\n"
     )
     monkeypatch.syspath_prepend(str(site))
-    child = _write(tmp_path, "child.yaml", "extends: fake_scenes:hall\nplugins: []\n")
+    child = _write(tmp_path, "child.yaml", "extends: fake_scenes:hall\ncomponents: []\n")
     cfg = load_config(child)
     assert cfg.sim["world"] == "fake_scenes:hall/hall.xml"
     assert world_file(cfg.sim["world"], tmp_path) == str(mjcf)
