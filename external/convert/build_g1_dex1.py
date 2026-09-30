@@ -147,10 +147,9 @@ PAD_GAP_AT_ZERO = 0.0459  # measured; documented here so the manifest's box sizi
 TCP_POS = (0.1517, 0.0, 0.0)
 #: How far the measured pad centre may sit from TCP_POS before the build refuses.
 TCP_TOLERANCE = 0.0005
-# The tendon sums both fingers with coef -1, so its length is -(q1+q2). The sign matters:
-# roqsim_manipulation.arm_controller maps its configured `gripper_open` onto the actuator's ctrlrange LOW
-# end (see its set_gripper docstring, and gen3 where Robotiq ctrl 0 == open). With coef +1 the low end
-# would be the closed end and a GripperCommand "open" would clamp shut.
+# The tendon sums both fingers with coef -1, so its length is -(q1+q2) and the ctrlrange's LOW end is
+# the open end. roqsim_manipulation.arm_controller reads that direction from the sign; the manifest's
+# gripper travel and the tests' ctrl values are stated for it.
 TENDON_COEF = -1.0
 
 # Foot contact: four small spheres per sole, transplanted verbatim from unitree_g1.xml so the leg
@@ -440,7 +439,7 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
                 "name": f"{side}_dex1_gripper",
                 "tendon": f"{side}_dex1_split",
                 # Tendon length is -(q1+q2), so the OPEN extreme is the most negative: low end ==
-                # fully open, which is the end arm_controller maps `gripper_open` to.
+                # fully open.
                 "ctrlrange": f"{2 * FINGER_OPEN * TENDON_COEF} {2 * FINGER_CLOSE * TENDON_COEF}",
                 # Stiff and force-limited, which is how a real gripper grasps: the servo saturates
                 # against `forcerange` (the URDF's 20 N finger effort limit) rather than being told a

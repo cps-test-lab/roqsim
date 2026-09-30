@@ -583,10 +583,10 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
 class StateRecorder:
     """Sample MuJoCo state into a ``.npz`` while a run proceeds. A **driver** object, not a plugin.
 
-    Capture is a session concern, not an experiment one -- the same footing as ``sim.headless`` (which
-    the world YAML explicitly rejects), ``--left-ui`` and ``--manual-control``. So this is constructed by
-    a driver and ``sample``\\ d from the loop the driver already runs: no lifecycle hooks, nothing
-    injected into a parsed world, and no second route through the world YAML.
+    Capture is a session concern, not an experiment one -- the same footing as ``--headless``,
+    ``--left-ui`` and ``--manual-control``. So this is constructed by a driver and ``sample``\\ d
+    from the loop the driver already runs: no lifecycle hooks, nothing injected into a parsed world,
+    and no second route through the world YAML.
 
     Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step) plus a copy
     into a write buffer. Everything expensive -- rebuilding the world, rendering, encoding -- happens
@@ -811,9 +811,9 @@ class StateRecorder:
         One convention, stated because it is easy to get wrong and impossible to see: ``mj_step``
         integrates ``qpos`` and then leaves ``xpos`` holding the pose from *before* that integration,
         so the row is a coherent snapshot of ``sim - dt`` carrying the label ``sim``. That is
-        deliberately the same one-step lag the ``ground_truth_pose`` plugin publishes with, so this
-        table and the TF one describe the same instant and any difference between them is transport
-        rather than convention. It cancels in every derivative.
+        deliberately the same one-step lag every endpoint read in ``post_step`` has -- the core pose
+        endpoints among them -- so this table and a published pose describe the same instant and any
+        difference between them is transport rather than convention. It cancels in every derivative.
         """
         if self._pose_path is None:
             return

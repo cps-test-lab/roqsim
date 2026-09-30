@@ -46,6 +46,7 @@ from scan_mount_utils import (
     robot_hits,
     spawn,
     static_tf,
+    topic_of,
     urdf_rotation,
 )
 
@@ -373,8 +374,9 @@ def test_c6_the_tf_chain_and_topics(scan):
         assert [(t["parent"], t["child"]) for t in tf] == [(f"{bracket}_vertical_mount", frame_id)]
         assert np.allclose(tf[0]["translation"], LASER[0], atol=1e-6)
         assert np.allclose(quat_matrix(tf[0]["rotation"]), np.eye(3), atol=1e-9)
-        hints = endpoint(scan, "scan", address).backend["ros2"]
-        assert (hints["frame_id"], hints["topic"]) == (frame_id, topic)
+        scan_ep = endpoint(scan, "scan", address)
+        hints = scan_ep.backend["ros2"]
+        assert (hints["frame_id"], topic_of(scan_ep)) == (frame_id, topic)
         assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
 
 

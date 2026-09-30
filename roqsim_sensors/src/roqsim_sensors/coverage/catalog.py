@@ -145,28 +145,28 @@ class SensorSpec:
 CATALOG: dict[str, SensorSpec] = {
     "oakd_camera": SensorSpec(
         type="oakd_camera",
-        model="roqsim_sensors:oakd",
+        model="roqsim_sensors:oakd_pro",
         cost=1.0,
         mount=MountConstraint(surfaces=("wall", "ceiling"), z_range=(0.5, 3.5), can_tilt=True),
         description="OAK-D Pro RGB-D camera (narrow-ish FOV, medium range).",
     ),
     "realsense_d415": SensorSpec(
         type="realsense_d415",
-        model="roqsim_sensors:d415",
+        model="roqsim_sensors:realsense_d415",
         cost=0.8,
         mount=MountConstraint(surfaces=("wall", "ceiling"), z_range=(0.5, 3.5), can_tilt=True),
         description="RealSense D415 RGB camera (narrow FOV, 0.45 m min depth).",
     ),
     "realsense_d435": SensorSpec(
         type="realsense_d435",
-        model="roqsim_sensors:d435",
+        model="roqsim_sensors:realsense_d435",
         cost=0.8,
         mount=MountConstraint(surfaces=("wall", "ceiling"), z_range=(0.5, 3.5), can_tilt=True),
         description="RealSense D435 RGB camera.",
     ),
     "realsense_d455": SensorSpec(
         type="realsense_d455",
-        model="roqsim_sensors:d455",
+        model="roqsim_sensors:realsense_d455",
         cost=1.0,
         mount=MountConstraint(surfaces=("wall", "ceiling"), z_range=(0.5, 3.5), can_tilt=True),
         description="RealSense D455 RGB camera (wide 87x62 deg FOV, 0.6-6 m range).",

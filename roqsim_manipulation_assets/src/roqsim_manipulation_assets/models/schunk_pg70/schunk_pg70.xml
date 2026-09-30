@@ -16,10 +16,10 @@
        joints (see _arm.py `prefixed_actuators`). This mirrors robotiq_2f85's `split` tendon, so the
        plugin needed no change to gain a second gripper.
 
-       The tendon coefficients are NEGATIVE (-0.5 each), which looks arbitrary and is not: tendon
-       length is then -jaw-opening, so the LOW end of ctrlrange is the open end -- the end
-       `arm_controller` maps `gripper_open` onto. With +0.5 the mapping inverts and a GripperCommand to
-       open closes the jaws instead. The same trick is used by the G1 Dex1's tendon (coef -1).
+       The tendon coefficients are NEGATIVE (-0.5 each): tendon length is then -jaw-opening, so the
+       LOW end of ctrlrange is the open end. `arm_controller` reads that direction from the
+       coefficients' sign, and the manifest's `gripper_ctrl` (a raw ctrl) and the gripper tests' ctrl
+       values are stated for it.
 
        APERTURE (measured, see the port log): 61.2 mm open (ctrl -0.0301) down to 0 mm (ctrl 0.001).
        That is the URDF's stroke, NOT the PG+70 datasheet's 70 mm -- PILZ caps each jaw at 30.1 mm.

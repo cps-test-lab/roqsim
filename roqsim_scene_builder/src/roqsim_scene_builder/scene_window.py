@@ -64,6 +64,7 @@ from roqsim import (
     WALK_KEYS,
     walk_delta,
 )  # the camera-walk vocabulary is shared with the roqsim viewer
+from roqsim.pose import parse_pose, yaw_of
 from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in one module
     BG,
     FAIL_BG,
@@ -259,18 +260,36 @@ class DotModel:
 def apply_prop_pose(config: dict, pos, yaw_deg: float) -> dict:
     """Write a prop's new floor pose into its ``spawn_model`` config dict (pure, in place).
 
-    Sets ``pos`` ([x, y, z], rounded) and folds ``yaw_deg`` into ``rpy[2]`` (radians) while keeping any
-    existing roll/pitch. Leaves ``rpy`` off entirely when the whole orientation is zero, so an unrotated
-    prop's entry stays as terse as the author wrote it. Returns the same dict for convenience.
+    Sets ``pose.position`` ([x, y, z], rounded) and the heading ``yaw_deg``, keeping any roll and
+    pitch the entry states -- as Euler angles, or the tilt of a quaternion. An unrotated prop's pose
+    carries no ``orientation``, so its entry stays as terse as the author wrote it. Returns the
+    same dict for convenience.
     """
-    config["pos"] = [round(float(v), 3) for v in pos]
-    rpy = list(config.get("rpy", [0.0, 0.0, 0.0]))
-    if len(rpy) < 3:
-        rpy = [0.0, 0.0, 0.0]
-    rpy[2] = round(math.radians(float(yaw_deg)), 5)
-    if any(abs(v) > 1e-9 for v in rpy):
-        config["rpy"] = [round(rpy[0], 5), round(rpy[1], 5), rpy[2]]
+    orientation = dict((config.get("pose") or {}).get("orientation") or {})
+    yaw = round(math.radians(float(yaw_deg)), 5)
+    if set(orientation) & {"x", "y", "z", "w"}:
+        # A quaternion: keep its tilt, replace its heading.
+        _, quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": orientation})
+        tilt = np.zeros(4)
+        mujoco.mju_mulQuat(tilt, np.asarray(_heading(-yaw_of(quat))), np.asarray(quat))
+        turned = np.zeros(4)
+        mujoco.mju_mulQuat(turned, np.asarray(_heading(yaw)), tilt)
+        orientation = {k: round(float(v), 6) for k, v in zip("wxyz", turned, strict=True)}
+    else:
+        orientation = {
+            k: round(float(orientation[k]), 5) for k in ("roll", "pitch") if orientation.get(k)
+        }
+        if yaw:
+            orientation["yaw"] = yaw
+    x, y, z = (round(float(v), 3) for v in pos)
+    config["pose"] = {"position": {"x": x, "y": y, "z": z}}
+    if orientation:
+        config["pose"]["orientation"] = orientation
     return config
+
+
+def _heading(yaw: float) -> list[float]:
+    return [math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
 
 
 def move_record(entity_name: str, model: str, pos, yaw_deg: float) -> dict:
@@ -1030,11 +1049,9 @@ class _ReviewApp:
         spec = self._spec_for(entity)
         if spec is None:  # a prop with no editable spawn_model entry (e.g. baked into the MJCF)
             return False
-        pos = list(spec.config.get("pos", [0.0, 0.0, 0.0]))
-        while len(pos) < 3:
-            pos.append(0.0)
-        rpy = list(spec.config.get("rpy", [0.0, 0.0, 0.0]))
-        yaw = math.degrees(rpy[2]) if len(rpy) >= 3 else 0.0
+        pos, quat = parse_pose(spec.config.get("pose") or {"position": {"x": 0.0, "y": 0.0}})
+        pos = [pos[0], pos[1], pos[2] or 0.0]  # spawn_model's reading: an unstated z is the floor
+        yaw = math.degrees(yaw_of(quat))
         root_id = mujoco.mj_name2id(self.engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
         self._sel = {
             "entity": entity,

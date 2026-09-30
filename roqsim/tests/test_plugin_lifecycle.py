@@ -14,7 +14,7 @@ REF = "recording_plugin:RecordingPlugin"
 
 def test_full_lifecycle_order():
     cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{REF: {}, "name": "a"}, {REF: {}, "name": "b"}]}
+        {"sim": {}, "components": [{REF: {}, "name": "a"}, {REF: {}, "name": "b"}]}
     )
     engine = Engine(cfg)
     engine.setup()
@@ -49,7 +49,7 @@ class OnlyPreStep(Plugin):
 def test_optional_hooks_are_skipped():
     """A plugin that implements only pre_step must not error on the hooks it omits."""
     OnlyPreStep.ticks = 0
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{f"{__name__}:OnlyPreStep": {}}]})
+    cfg = load_config_from_dict({"sim": {}, "components": [{f"{__name__}:OnlyPreStep": {}}]})
     engine = Engine(cfg, profile=True)
     engine.setup()
     engine.reset()
@@ -63,7 +63,7 @@ def test_optional_hooks_are_skipped():
 
 
 def test_step_before_setup_raises():
-    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {}, "components": []})
     engine = Engine(cfg)
     with pytest.raises(RuntimeError):
         engine.step()
@@ -72,7 +72,7 @@ def test_step_before_setup_raises():
 def test_a_reset_without_params_clears_the_previous_trials():
     """``reset_params`` describes the trial being started; a reset that passes none must not leave
     the previous trial's parameters for a plugin to read."""
-    cfg = load_config_from_dict({"sim": {}, "plugins": [{REF: {}, "name": "a"}]})
+    cfg = load_config_from_dict({"sim": {}, "components": [{REF: {}, "name": "a"}]})
     engine = Engine(cfg)
     engine.setup()
     engine.reset(speed=0.5)
@@ -104,7 +104,7 @@ def test_a_configure_that_fails_shuts_down_what_was_configured_before_it():
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {REF: {}, "name": "a"},
                 {REF: {}, "name": "b"},
                 {"test_plugin_lifecycle:ConfigureRaises": {}, "name": "c"},
@@ -131,7 +131,7 @@ def _shutdowns() -> list[str]:
 
 
 def test_a_with_block_sets_up_on_entry_and_shuts_down_on_exit():
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": [{REF: {}, "name": "a"}]}))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": [{REF: {}, "name": "a"}]}))
     with engine as entered:
         assert entered is engine
         assert ("a", "configure") in RecordingPlugin.LOG
@@ -144,7 +144,7 @@ def test_a_with_block_sets_up_on_entry_and_shuts_down_on_exit():
 
 
 def test_a_with_block_shuts_down_when_its_body_raises():
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": [{REF: {}, "name": "a"}]}))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": [{REF: {}, "name": "a"}]}))
     with pytest.raises(RuntimeError, match="in the body"):
         with engine:
             raise RuntimeError("in the body")
@@ -155,7 +155,7 @@ def test_a_with_block_whose_setup_fails_shuts_down_once():
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
+            "components": [
                 {REF: {}, "name": "a"},
                 {"test_plugin_lifecycle:ConfigureRaises": {}, "name": "b"},
             ],
