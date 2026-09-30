@@ -768,10 +768,10 @@ distance query per geom pair, a real share of the step budget if done every phys
 ``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
 rather than offering a number that looks measured.
 
-It publishes the same report twice, because a series and a reduction are not the same observable.
-``clearance`` is the distance now, as a ``std_msgs/Float32``, and it is what a reader plots and
-reduces: a running minimum follows from a recorded series while the series does not follow from a
-minimum. ``clearance_report`` is the whole report — ``current``, ``minimum``, ``at_time``, ``geom``
+On ROS it publishes the same report twice, because a series and a reduction are not the same
+observable. ``clearance`` is the distance now, as a ``std_msgs/Float32``, and it is what a reader
+plots and reduces: a running minimum follows from a recorded series while the series does not follow
+from a minimum. ``clearance_report`` is the whole report — ``current``, ``minimum``, ``at_time``, ``geom``
 and ``saturated`` — as the named readings of a ``diagnostic_msgs/DiagnosticStatus``, because two of
 those fields are in no series at all. A distance does not say **what** it was measured to, nor
 whether it is a measurement or the ``distmax`` cutoff, so an experiment grading a near miss can say

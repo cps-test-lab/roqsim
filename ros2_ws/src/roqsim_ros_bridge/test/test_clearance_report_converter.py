@@ -1,18 +1,24 @@
 """The ``diagnostic_msgs/DiagnosticStatus`` converter: a whole report as named readings.
 
-The ``field`` hint publishes one member of a structured payload as a primitive message, which is all
-a producer needs whose report reduces to a number. One that does not needs the rest to leave the
-process too: ``clearance_monitor`` measures a distance, what the distance was to, and whether it is a
-measurement or the query's cutoff, and neither of the last two can be reconstructed by reducing a
-recorded series of the first. This is the door for those, and it stays ignorant of any producer's
-attribute names -- the endpoint's ``fields`` hint says which, keyed under their own names.
+A primitive message carries one member of a structured payload, which is all a producer needs whose
+report reduces to a number. One that does not needs the rest to leave the process too:
+``clearance_monitor`` measures a distance, what the distance was to, and whether it is a measurement
+or the query's cutoff, and neither of the last two can be reconstructed by reducing a recorded series
+of the first. This is the door for those, and it knows no producer's field names -- every field of
+the payload dataclass is one reading, keyed under its own name.
 """
 
 from dataclasses import dataclass
 
 import pytest
 
-from roqsim_ros_bridge.registry import get_converter, to_time_msg
+pytest.importorskip("roqsim")  # selects the GL backend before mujoco is imported
+pytest.importorskip("rclpy")
+
+from roqsim_ros_bridge import typemap  # noqa: E402
+from roqsim_ros_bridge.registry import get_converter, to_time_msg  # noqa: E402
+
+_FIELDS = ["current", "minimum", "at_time", "geom", "saturated"]
 
 
 @dataclass
@@ -26,15 +32,12 @@ class _Report:
     saturated: bool = False
 
 
-_FIELDS = ["current", "minimum", "at_time", "geom", "saturated"]
-
-
 def _fill(payload, hints=None):
     from diagnostic_msgs.msg import DiagnosticStatus
 
     msg = DiagnosticStatus()
     get_converter("diagnostic_msgs.msg.DiagnosticStatus")(
-        msg, payload, to_time_msg(12.5), {"fields": _FIELDS, **(hints or {})}
+        msg, payload, to_time_msg(12.5), dict(hints or {})
     )
     return msg
 
@@ -43,7 +46,7 @@ def _readings(msg) -> dict:
     return {entry.key: entry.value for entry in msg.values}
 
 
-def test_every_named_field_is_published_under_its_own_name():
+def test_every_field_is_published_under_its_own_name_in_declaration_order():
     msg = _fill(_Report())
     assert [entry.key for entry in msg.values] == _FIELDS
     assert _readings(msg)["geom"] == "post_geom"
@@ -88,18 +91,26 @@ def test_the_level_is_ok_because_a_reading_is_not_a_verdict():
     assert _fill(_Report(minimum=0.0, saturated=False)).level == DiagnosticStatus.OK
 
 
-def test_a_report_with_no_fields_named_is_refused():
-    """Loudly: the message would otherwise publish a status with no readings in it, which in a
-    recorded table is indistinguishable from a trial that measured nothing."""
+def test_a_payload_that_is_not_a_dataclass_is_refused():
+    """Loudly: a status with no readings in it is, in a recorded table, indistinguishable from a
+    trial that measured nothing."""
+    with pytest.raises(TypeError, match="dataclass"):
+        _fill((1.0, 0.5))
+
+
+def test_the_clearance_report_travels_as_a_diagnostic_status():
+    """The report's row in the type table, which the ``clearance_report`` endpoint binds through."""
     from diagnostic_msgs.msg import DiagnosticStatus
+    from roqsim.plugins.clearance_monitor import ClearanceReport
 
-    with pytest.raises(TypeError, match="fields"):
-        get_converter("diagnostic_msgs.msg.DiagnosticStatus")(
-            DiagnosticStatus(), _Report(), to_time_msg(1.0), {}
-        )
-
-
-def test_an_unknown_field_names_itself():
-    """A typo must name the field and the payload, not fail one layer down."""
-    with pytest.raises(TypeError, match="'minimun'"):
-        _fill(_Report(), {"fields": ["current", "minimun"]})
+    (wire,) = typemap.lookup(ClearanceReport).wires
+    msg = DiagnosticStatus()
+    wire.fill(msg, ClearanceReport(1.5, 0.25, 3.0, "post_geom", False), to_time_msg(3.0), {})
+    assert wire.msg == "diagnostic_msgs.msg.DiagnosticStatus"
+    assert _readings(msg) == {
+        "current": "1.5",
+        "minimum": "0.25",
+        "at_time": "3.0",
+        "geom": "post_geom",
+        "saturated": "false",
+    }

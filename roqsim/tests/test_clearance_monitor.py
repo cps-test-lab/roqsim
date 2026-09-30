@@ -18,7 +18,9 @@ import mujoco
 import pytest
 
 from roqsim.config import PluginError, load_config_from_dict
+from roqsim.endpoint import hints_for, topic_of
 from roqsim.engine import Engine
+from roqsim.plugins.clearance_monitor import ClearanceReport
 
 # A world with something to avoid, and a robot spawned as its own entity -- the monitor
 # watches an entity's subtree, so it is nested under the entry that provides one.
@@ -211,10 +213,8 @@ def test_the_distance_endpoint_publishes_the_current_distance_alone(world):
     engine = _engine(world)
     try:
         endpoint = _endpoint(engine, "clearance")
-        hints = endpoint.backend["ros2"]
-        assert hints["type"] == "std_msgs.msg.Float32"
-        assert hints["field"] == "current"
-        assert hints["topic"] == "clearance"
+        assert hints_for(endpoint, "ros2") == {"type": "std_msgs.msg.Float32", "field": "current"}
+        assert topic_of(endpoint, "ros2") == "clearance"
         _drive_to(engine, 0.0)
         assert endpoint.read().current == pytest.approx(1.7, abs=0.02)
     finally:
@@ -226,17 +226,16 @@ def test_the_report_endpoint_carries_every_field_of_the_report(world):
     engine = _engine(world)
     try:
         endpoint = _endpoint(engine, "clearance_report")
-        hints = endpoint.backend["ros2"]
-        assert hints["type"] == "diagnostic_msgs.msg.DiagnosticStatus"
-        assert hints["fields"] == ["current", "minimum", "at_time", "geom", "saturated"]
-        assert hints["topic"] == "clearance_report"
+        # The payload type decides the message; the hints only say who is reporting about what.
+        assert endpoint.result.cls is ClearanceReport
+        assert hints_for(endpoint, "ros2") == {
+            "name": "clearance_monitor: robot.clearance_monitor",
+            "hardware_id": "base",
+        }
+        assert topic_of(endpoint, "ros2") == "clearance_report"
         _drive_to(engine, 0.0)
         # One report, read twice: the two endpoints cannot describe different approaches.
         assert endpoint.read() is _report(engine)
-        # Every named field is one the payload has: the bridge reads them off the report by
-        # name, and one that is not there publishes nothing where a reading should be.
-        for field_name in hints["fields"]:
-            assert hasattr(endpoint.read(), field_name), field_name
     finally:
         engine.shutdown()
 

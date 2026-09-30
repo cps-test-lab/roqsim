@@ -56,10 +56,10 @@ Two endpoints, both reading a :class:`ClearanceReport`
 since the last reset and ``geom`` names what it was to, so a near-miss is attributable
 rather than merely flagged:
 
-* ``clearance`` (out) publishes ``current`` alone, as a ``std_msgs/Float32``: the series,
+* ``clearance`` (out): on ROS, ``current`` alone, as a ``std_msgs/Float32`` -- the series,
   from which a reader reconstructs the shape of an approach and reduces the minimum of the
   published samples.
-* ``clearance_report`` (out) publishes the whole report, as the named readings of a
+* ``clearance_report`` (out): on ROS, the whole report, as the named readings of a
   ``diagnostic_msgs/DiagnosticStatus``. Two of the five fields are in no series at all:
   nothing in a distance says what it was measured to, or whether it is a measurement rather
   than the ``distmax`` cutoff. Both are what a recorded table needs in order to say which
@@ -71,8 +71,9 @@ side: ``saturated`` says ``current`` is the cutoff, while an empty ``geom`` says
 so it reads ``minimum == distmax`` and names nothing. A trial that was never near anything
 reports exactly that, with ``at_time`` the first measurement of the run.
 
-Both endpoints read the same report and publish at ``rate_hz``, and the reduction in it runs
-from the last reset: ``on_reset`` starts a new trial's measurement.
+Both endpoints read the same report and publish at ``rate_hz``; a transport that carries the
+payload itself (``roqsim read``) sees the whole report on either. The reduction in it runs from
+the last reset: ``on_reset`` starts a new trial's measurement.
 
 ``compute_rate_hz`` is separate from ``rate_hz`` because they answer different questions.
 Publishing is cheap; measuring is a distance query per (watched geom, candidate geom) pair,
@@ -105,7 +106,7 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class ClearanceReport:
-    """What the ``clearance`` endpoint reads.
+    """What the ``clearance`` and ``clearance_report`` endpoints read.
 
     Attributes:
         current: distance now; <= 0 while overlapping
@@ -140,6 +141,7 @@ class ClearanceMonitorPlugin(Plugin):
         self._next_due = 0.0
         self._ctx: SimContext | None = None
         self._watched: list[int] = []
+        self._body_name = ""
         self._candidates: list[int] = []
         self._report = ClearanceReport(float("inf"), float("inf"), -1.0, "", False)
 
@@ -169,6 +171,7 @@ class ClearanceMonitorPlugin(Plugin):
             if self.body
             else (entity.body if entity and entity.body else prefix + "base_link")
         )
+        self._body_name = body_name
         root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         if root < 0:
             # Loudly, for the same reason contact_monitor refuses: a monitor watching nothing
@@ -239,6 +242,21 @@ class ClearanceMonitorPlugin(Plugin):
     @endpoint.out(rate="rate_hz", ros2={"field": "current", "type": "std_msgs.msg.Float32"})
     def clearance(self) -> ClearanceReport:
         """Distance to the nearest thing the entity may hit, and the closest approach since reset."""
+        return self._report
+
+    # The whole report, beside the series rather than instead of it: what the closest approach was
+    # to, and whether a reading is the cutoff, are in no series of the distance. ROS carries it as a
+    # `diagnostic_msgs/DiagnosticStatus` whose values are the report's fields under their own names.
+    @endpoint.out(
+        rate="rate_hz",
+        ros2=lambda self: {
+            "name": f"clearance_monitor: {self.address}",
+            "hardware_id": self._body_name,
+        },
+    )
+    def clearance_report(self) -> ClearanceReport:
+        """The whole report: the distance now, the closest approach since reset, when, to what, and
+        whether the distance is the cutoff."""
         return self._report
 
     def read_state(self) -> ClearanceReport:
