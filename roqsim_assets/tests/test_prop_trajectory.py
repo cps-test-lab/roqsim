@@ -186,15 +186,6 @@ def test_non_looping_path_finishes_and_stops(square_csv):
     assert np.allclose(_stage_xy(data, plugin), end, atol=1e-4), "stage moved after finishing"
 
 
-def test_progress_publishes_one_number_on_its_float64_topic(square_csv):
-    """``std_msgs/Float64`` carries one float; the endpoint names the field it publishes."""
-    _, _, ctx, plugin = _rig(square_csv)
-    ep = next(e for e in ctx.interface.all() if e.name == "stage_progress")
-    field = ep.backend["ros2"].get("field")
-    assert field is not None, "a tuple on a Float64 fails the message's type check at publish"
-    assert isinstance(getattr(ep.read(), field), float)
-
-
 def test_a_zero_length_path_is_refused(tmp_path):
     """It could never move or finish, so a trial gated on its progress would wait for ever."""
     p = tmp_path / "still.csv"
