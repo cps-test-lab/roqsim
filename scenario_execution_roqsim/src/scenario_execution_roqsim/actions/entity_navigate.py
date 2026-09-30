@@ -33,7 +33,6 @@ class EntityNavigate(SimAction):
         self._entity = ""
         self._poses: list[tuple[float, float, float]] = []
         self._wait = True
-        self._action_name = ""
         self._call = None
 
     def execute(  # noqa: D102 - the OSC signature is documented in roqsim.osc
@@ -41,12 +40,10 @@ class EntityNavigate(SimAction):
         entity: str,
         goal_poses=None,
         success_on_acceptance: bool = False,
-        action_name: str = "",
     ) -> None:
         if not entity:
             raise ActionError("entity_navigate: `entity` is required", action=self)
         self._entity = entity
-        self._action_name = action_name or ""
         self._wait = not bool(success_on_acceptance)
         self._poses = []
         for i, pose in enumerate(goal_poses or []):
@@ -95,9 +92,7 @@ class EntityNavigate(SimAction):
         return self.satisfied(f"{self._entity!r} {outcome.detail}")
 
     def _send(self):
-        return self._access.navigate(
-            self._entity, self._poses, wait=self._wait, action_name=self._action_name
-        )
+        return self._access.navigate(self._entity, self._poses, wait=self._wait)
 
     def request_cancel(self) -> bool:
         """Stop the mover when the branch this sits in is abandoned.
@@ -121,16 +116,9 @@ class EntityNavigateStart(EntityNavigate):
     """
 
     def execute(  # noqa: D102 - the OSC signature is documented in roqsim.osc
-        self, entity: str, success_on_acceptance: bool = False, action_name: str = ""
+        self, entity: str, success_on_acceptance: bool = False
     ) -> None:
-        super().execute(
-            entity,
-            goal_poses=None,
-            success_on_acceptance=success_on_acceptance,
-            action_name=action_name,
-        )
+        super().execute(entity, goal_poses=None, success_on_acceptance=success_on_acceptance)
 
     def _send(self):
-        return self._access.start_route(
-            self._entity, wait=self._wait, action_name=self._action_name
-        )
+        return self._access.start_route(self._entity, wait=self._wait)

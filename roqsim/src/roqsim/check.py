@@ -79,8 +79,8 @@ is in there.
 ``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
 elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
 it, whether the timestep resolves each mode, and whether its contact ``solref`` is above the floor
-MuJoCo raises it to (:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the resolution
-limit, the ``solref`` floor). The modes are
+MuJoCo raises it to (numerical damping under ``discrete`` and the resolution limit,
+:mod:`roqsim.flex_modes`; the ``solref`` floor, :mod:`roqsim.solref`). The modes are
 the one costly computation here -- two passive-force evaluations per flex DOF and an eigen solve,
 seconds at most -- and a flex above :data:`roqsim.flex_modes.MODES_DOF_CAP` DOFs is reported
 without them rather than analysed at any cost. Three warnings come from it, for what such a world
@@ -140,7 +140,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
     probably did not mean.
     """
-    from roqsim.config import PluginError, load_config
+    from roqsim.config import PluginError, input_errors, load_config
 
     overrides = overrides or {}
     report: dict = {
@@ -168,7 +168,8 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         # The aggregated one: every plugin's validation errors, in one message.
         report["problems"].append(_problem("config", str(exc)))
         return report
-    except (OSError, ValueError) as exc:
+    # Only bad input is a finding; anything else is a bug here and keeps its traceback.
+    except input_errors() as exc:
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
 
@@ -290,11 +291,13 @@ def _inventory(engine) -> dict:
     """What the loaded world turned out to be -- the half of this that is not about failure."""
     import mujoco
 
+    from roqsim.endpoint import topic_of
+
     ctx = engine.ctx
     model = ctx.model
     endpoints = []
     for endpoint in ctx.interface.all():
-        hints = endpoint.backend.get("ros2", {})
+        hints = endpoint.backend.get("ros2") or {}
         endpoints.append(
             {
                 "name": endpoint.name,
@@ -302,7 +305,8 @@ def _inventory(engine) -> dict:
                 "owner": endpoint.owner,
                 "namespace": endpoint.namespace,
                 "type": hints.get("type") or hints.get("service"),
-                "topic": hints.get("topic") or hints.get("name"),
+                "payload": endpoint.payload_type.name if endpoint.payload_type else None,
+                "topic": topic_of(endpoint, "ros2"),
                 "rate_hz": endpoint.rate_hz,
             }
         )
@@ -434,6 +438,8 @@ def _render_text(report: dict) -> str:
 
 def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
     """The flex block of the text report: one line of what each is, two of what it will do."""
+    from roqsim.solref import floor_text
+
     if not flexes:
         return []
     by_name = {row["name"]: row for row in derived.get("flexes", [])}
@@ -482,7 +488,13 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
         solref = " ".join(f"{v:g}" for v in row["solref"])
         lines.append(
             f"       contact solref {solref} ({row['solref_source']}), "
-            + (f"floor {floor:g} s" if floor is not None else "no floor (refsafe disabled)")
+            + (
+                f"floor {floor_text(floor)} s"
+                if floor is not None
+                else "no floor (direct form)"
+                if row["solref"][0] <= 0
+                else "no floor (refsafe disabled)"
+            )
         )
     return lines
 

@@ -23,31 +23,31 @@ def _world(tmp_path, body):
 
 
 def test_it_appends_the_bridge():
-    raw = {"plugins": [{"spawn_robot": {"model": "husky_a200"}}]}
+    raw = {"components": [{"spawn_robot": {"model": "husky_a200"}}]}
     assert _refs(with_transport(raw)) == ["spawn_robot", "ros2_bridge"]
 
 
 def test_control_is_opt_in():
     """The simulation_interfaces control plane is a handful of extra services that only
     a scenario touching entities needs."""
-    raw = {"plugins": []}
+    raw = {"components": []}
     assert _refs(with_transport(raw)) == ["ros2_bridge"]
     assert _refs(with_transport(raw, control=True)) == ["ros2_bridge", "sim_interfaces"]
 
 
 def test_ros_false_is_a_no_op():
-    raw = {"plugins": [{"floorplan": {}}]}
+    raw = {"components": [{"floorplan": {}}]}
     assert with_transport(raw, ros=False) is raw
 
 
 def test_it_is_idempotent():
     """A caller should not have to know whether the author already put one there."""
-    once = with_transport({"plugins": [{"floorplan": {}}]})
+    once = with_transport({"components": [{"floorplan": {}}]})
     assert with_transport(once) == once
 
 
 def test_a_world_that_already_has_a_transport_is_left_alone():
-    raw = {"plugins": [{"ros2_bridge": {"tf_namespace": "robot"}}]}
+    raw = {"components": [{"ros2_bridge": {"tf_namespace": "robot"}}]}
     assert with_transport(raw, tf_namespace="other") is raw
 
 
@@ -62,13 +62,13 @@ def test_tf_namespace_is_topic_only():
     """Nav2 launches with the standard /tf->tf remap; without this both it and
     scenario-execution's listener look under /<ns>/tf while the bridge publishes
     globally, and init_nav2 hangs waiting for a transform."""
-    out = with_transport({"plugins": []}, tf_namespace="robot")
+    out = with_transport({"components": []}, tf_namespace="robot")
     assert out["components"][0]["ros2_bridge"] == {"tf_namespace": "robot"}
 
 
 def test_it_is_the_inverse_of_dropping(tmp_path):
     """What ``roqsim render`` and the exporters strip is exactly what this adds."""
-    world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
+    world = _world(tmp_path, "sim: {}\ncomponents:\n  - dummy: {}\n")
     cfg = load_config(world, transport={"ros": True})
     assert [spec.ref for spec in cfg.plugins] == ["dummy", "ros2_bridge"]
 
@@ -83,7 +83,7 @@ def test_it_is_the_inverse_of_dropping(tmp_path):
 def test_a_checked_in_world_stays_ros_free(tmp_path):
     """The property the whole seam exists for: loading without transport leaves the file
     exactly as authored, so it runs where the bridge is not installed."""
-    world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
+    world = _world(tmp_path, "sim: {}\ncomponents:\n  - dummy: {}\n")
     assert [spec.ref for spec in load_config(world).plugins] == ["dummy"]
 
 
@@ -107,6 +107,6 @@ def test_overriding_a_plugin_that_does_not_exist_still_fails(tmp_path):
     """The injection must not turn a typo into a silent no-op."""
     from roqsim.plugin import PluginError
 
-    world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
+    world = _world(tmp_path, "sim: {}\ncomponents:\n  - dummy: {}\n")
     with pytest.raises(PluginError, match="matches no component"):
-        load_config(world, {"plugins": {"nosuch": {}}})
+        load_config(world, {"components": {"nosuch": {}}})

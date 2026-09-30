@@ -14,7 +14,7 @@ from roqsim.scenario_adapter import MujocoSim
 DUMMY_WORLD = """
 sim:
   timestep: 0.005
-plugins:
+components:
   - dummy: {}
     name: d0
 """
@@ -123,9 +123,9 @@ def test_runner_seconds_to_steps(tmp_path: Path):
 
 
 def test_config_view_accessor():
-    cfg = load_config_from_dict({"sim": {"view": {"azimuth": 42}}, "plugins": []})
+    cfg = load_config_from_dict({"sim": {"view": {"azimuth": 42}}, "components": []})
     assert cfg.view == {"azimuth": 42}
-    assert load_config_from_dict({"plugins": []}).view == {}
+    assert load_config_from_dict({"components": []}).view == {}
 
 
 def test_scenario_adapter_lifecycle(tmp_path: Path):

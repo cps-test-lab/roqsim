@@ -1,0 +1,12 @@
+Locomotion clips (female)
+
+Source:    CARLA Simulator (https://carla.org), content repository
+           https://bitbucket.org/carla-simulator/carla-content/src/master/
+Licence:   CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Copyright: Computer Vision Center (CVC) at the Universitat Autonoma de Barcelona (UAB)
+Cite:      "CARLA: An Open Urban Driving Simulator", Dosovitskiy et al., CoRL 2017.
+
+Each clip is retargeted onto this package's skeleton from one CARLA animation sequence:
+AS_female_Idle0C, AS_female_WalkCicle0C, AS_female_runCicle0E, AS_female_shortCicle, AS_female_LTurnCicle, AS_female_RTurnCicle.
+These clips are derivative works; the CC-BY attribution above travels with them. The full
+provenance is in roqsim_walker's THIRD_PARTY.md.

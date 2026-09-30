@@ -210,7 +210,7 @@ def test_refuses_a_top_level_key_nothing_reads(tmp_path):
         tmp_path,
         "cam",
         """
-        frame: [{name: optical, parent: link, pos: [0, 0, 0], rpy: [0, 0, 0]}]
+        frame: [{name: optical, parent: link, pose: {position: {z: 0.01}}}]
         components:
           - arm_controller: {}
         """,
