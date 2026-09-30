@@ -1203,6 +1203,40 @@ def overrides_from_dotlist(dotlist: list[str]) -> dict:
     return overrides
 
 
+#: The ``sim:`` keys the engine sets straight onto MuJoCo's ``opt.*`` field of the same name. The
+#: engine's loop and :data:`SIM_KEYS` both read this tuple, so a key applied there is a key a world
+#: may carry, and neither can gain one without the other.
+SIM_OPTION_KEYS = (
+    "solver",
+    "iterations",
+    "ls_iterations",
+    "noslip_iterations",
+    "impratio",
+    "density",
+    "viscosity",
+)
+
+#: The keys of a world's ``sim:`` block: what :class:`SimConfig` and :mod:`roqsim.engine` read.
+#: A key read anywhere is listed here; any other is refused at load.
+SIM_KEYS = frozenset(
+    {
+        "cone",
+        "contact_override",
+        "dedup_assets",
+        "gravity",
+        "integrator",
+        "name",
+        "pacing",
+        "seed",
+        "sync",
+        "timestep",
+        "view",
+        "wind",
+        "world",
+        *SIM_OPTION_KEYS,
+    }
+)
+
 #: The complete ``sim.view`` schema -- the camera, and nothing else. Anything else there is a typo or
 #: a run-level switch that does not belong in a world, and is rejected rather than silently dropped.
 _VIEW_KEYS = frozenset({"lookat", "distance", "azimuth", "elevation", "track", "follow_heading"})
@@ -1320,12 +1354,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = 
         {a.path[0]: None for a in rest if a.path}, OVERRIDE_ROOTS, "world override"
     )
     apply_assignments(raw, [], rest)
-    if "headless" in (raw.get("sim") or {}):
-        _logger.warning(
-            "\u26a0\ufe0f  sim.headless is IGNORED: the viewer is windowed by default; run with "
-            "--headless (standalone) or the headless scenario parameter to suppress the window. "
-            "Remove the key from the world YAML to silence this."
-        )
+    refuse_unknown_keys(raw.get("sim") or {}, SIM_KEYS, "sim", error=PluginError)
     unknown = sorted(set((raw.get("sim") or {}).get("view") or {}) - _VIEW_KEYS)
     if unknown:
         raise PluginError(
@@ -1484,9 +1513,10 @@ def _refuse_config_keys_naming_components(tree: list[PluginSpec], base_dir: Path
     An override is split where the tree ends (:func:`_resolve_targets`), so ``robot.lidar.rays``
     against a robot whose scanner hangs off a mounted device (``robot.rplidar.lidar``) stops at
     ``robot`` and writes a config key ``lidar`` there: nothing reads it, the real component keeps its
-    value, and the run looks configured. A plugin declaring ``STRICT_KEYS`` refuses any unknown key
-    when it is instantiated; this runs earlier, at load, because only the effective tree can say
-    which address was meant -- any depth below the entry, since a mounted device nests one level.
+    value, and the run looks configured. A strict plugin (every one with a schema it does not open)
+    refuses any unknown key when it is instantiated; this runs earlier, at load, because only the
+    effective tree can say which address was meant -- any depth below the entry, since a mounted
+    device nests one level.
     """
     from .schema import INJECTED_KEYS
 

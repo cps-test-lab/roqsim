@@ -12,6 +12,7 @@ Config::
       namespace: ""            # transport scope for the goal endpoint
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals instead of the character mesh
+      rgba: [r, g, b, a]       # colour of the capsule visuals (default: the humanoid's own)
       speed: 1.2               # m/s; past ~1.7 the run clip blends in
       pos: [0.0, 0.0]          # spawn, used when `waypoints` is empty (goal-driven only)
       waypoints:               # patrol route; the walker starts at waypoints[0]

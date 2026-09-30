@@ -15,6 +15,7 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
       clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return"
       clip_far: 100.0         # m
       depth_encoding: 32FC1   # or 16UC1 -- see below
+      depth_codec: png        # png | rvl: the 16UC1 compressedDepth companion's codec
 
 **Which camera depth comes from.** Depth is rendered from the camera at the frame it is stamped in.
 A device that images depth through its own optics -- a RealSense's stereo pair, whose depth frame is

@@ -52,6 +52,8 @@ sits rather than a config key::
       rate_hz: 100.0            # endpoint publish rate
       namespace: ""             # transport scope (default: inherited from the entity)
       topics: {wrench: /ft}     # optional absolute-topic hardwire
+      controller_name: ft_broadcaster  # name of the broadcaster it registers with the controller
+                                #   manager (default: <entry label>_broadcaster)
       flex_reaction: excluded   # accept a reading blind to flex contacts (see "A flex the sensor
                                 #   cannot see" below); refused without it where one could occur
 

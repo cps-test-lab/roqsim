@@ -276,7 +276,7 @@ def _gain_errors(block: dict, where: str, control: str | None) -> list[str]:
         )
         control = None
     known = {k: v for k, v in block.items() if k not in _GONE}
-    errors += validate(GAIN_SCHEMA, known, strict_keys=True)
+    errors += validate(GAIN_SCHEMA, known, strict_keys=True, where=where)
     errors += _unread_gains(block, control, where)
     return errors
 
