@@ -361,8 +361,10 @@ def test_the_watchdog_stops_a_truck_whose_stack_went_quiet():
     assert plugin._cmd_v == pytest.approx(0.0)
 
 
-def test_it_brakes_at_decel_limit_and_pulls_away_at_accel_limit():
-    engine = _engine(accel_limit=0.5, decel_limit=1.5)
+@pytest.mark.parametrize("decel", [1.5, None])
+def test_it_brakes_at_decel_limit_and_pulls_away_at_accel_limit(decel):
+    # without a decel_limit it brakes at accel_limit
+    engine = _engine(accel_limit=0.5, **({} if decel is None else {"decel_limit": decel}))
     plugin = _plugin(engine)
     plugin.drive(0.6, 0.0, 0.0)
     steps_to_speed = 0
@@ -375,7 +377,9 @@ def test_it_brakes_at_decel_limit_and_pulls_away_at_accel_limit():
         engine.step()
         steps_to_stop += 1
     assert steps_to_speed * engine.ctx.dt == pytest.approx(0.6 / 0.5, abs=2 * engine.ctx.dt)
-    assert steps_to_stop * engine.ctx.dt == pytest.approx(0.6 / 1.5, abs=2 * engine.ctx.dt)
+    assert steps_to_stop * engine.ctx.dt == pytest.approx(
+        0.6 / (decel or 0.5), abs=2 * engine.ctx.dt
+    )
 
 
 # -- refusals ----------------------------------------------------------------------------------

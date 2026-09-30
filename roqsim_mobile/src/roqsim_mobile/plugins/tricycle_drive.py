@@ -113,7 +113,7 @@ from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
-from roqsim_mobile.speed_ramp import decel_limit_from, ramp_speed
+from roqsim_mobile.speed_ramp import ramp_speed
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
 _MIN_SPEED = 1e-3
@@ -149,7 +149,7 @@ class TricycleDrivePlugin(Plugin):
         self.steer_rate = float(self.config.get("steer_rate", 1.5))
         self.accel_limit = float(self.config.get("accel_limit", 1.0))
         #: Braking rate: a vehicle stops harder than it pulls away (roqsim_mobile.speed_ramp).
-        self.decel_limit = decel_limit_from(self.config, self.accel_limit)
+        self.decel_limit = float(self.config.get("decel_limit", self.accel_limit))
         self.steer_actuator_name = self.config.get("steer_actuator")
         self.steer_joint_name = self.config.get("steer_joint")
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])

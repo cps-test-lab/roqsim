@@ -117,7 +117,7 @@ from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import Angle, AngularSpeed, JointState, Odometry, Speed, Twist
-from roqsim_mobile.speed_ramp import decel_limit_from, ramp_speed
+from roqsim_mobile.speed_ramp import ramp_speed
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
 _MIN_SPEED = 1e-3
@@ -166,7 +166,7 @@ class AckermannDrivePlugin(Plugin):
         self.steer_rate = float(self.config.get("steer_rate", 4.0))
         self.accel_limit = float(self.config.get("accel_limit", 2.0))
         #: Braking rate: a vehicle stops harder than it pulls away (roqsim_mobile.speed_ramp).
-        self.decel_limit = decel_limit_from(self.config, self.accel_limit)
+        self.decel_limit = float(self.config.get("decel_limit", self.accel_limit))
         self.steer_actuator_names = list(self.config.get("steer_actuators") or [])
         self.steer_joint_names = list(self.config.get("steer_joints") or [])
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])

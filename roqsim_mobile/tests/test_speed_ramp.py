@@ -18,7 +18,7 @@
 
 import pytest
 
-from roqsim_mobile.speed_ramp import decel_limit_from, ramp_speed
+from roqsim_mobile.speed_ramp import ramp_speed
 
 DT = 0.01
 
@@ -36,13 +36,18 @@ def test_braking_backwards_is_limited_by_decel_too():
 
 
 def test_a_reversal_brakes_to_rest_and_then_pulls_away_at_accel():
-    v, steps_braking = 0.8, 0
+    v, t = 0.8, 0.0
     while v > 0.0:
         v = ramp_speed(v, -0.8, 0.5, 2.0, DT)
-        steps_braking += 1
-    assert v == 0.0
-    assert steps_braking * DT == pytest.approx(0.8 / 2.0, abs=DT)
-    assert ramp_speed(v, -0.8, 0.5, 2.0, DT) == pytest.approx(-0.005)
+        t += DT
+    # rest is reached at 0.8 / 2.0 s; the rest of that step is spent pulling away at accel
+    assert v == pytest.approx(-0.5 * (t - 0.8 / 2.0))
+    assert ramp_speed(v, -0.8, 0.5, 2.0, DT) == pytest.approx(v - 0.005)
+
+
+def test_with_equal_limits_a_reversal_is_one_line_through_zero():
+    assert ramp_speed(0.003, -1.0, 1.0, 1.0, DT) == pytest.approx(-0.007)
+    assert ramp_speed(0.003, -0.002, 1.0, 1.0, DT) == pytest.approx(-0.002)
 
 
 def test_it_stops_on_the_target_rather_than_past_it():
@@ -53,10 +58,5 @@ def test_it_stops_on_the_target_rather_than_past_it():
 def test_a_zero_limit_is_instant():
     assert ramp_speed(0.0, 1.0, 0.0, 2.0, DT) == 1.0
     assert ramp_speed(1.0, 0.0, 0.5, 0.0, DT) == 0.0
-    # an instant stop still stops before the reversal ramps
-    assert ramp_speed(1.0, -1.0, 0.5, 0.0, DT) == 0.0
-
-
-def test_decel_defaults_to_accel():
-    assert decel_limit_from({}, 0.7) == 0.7
-    assert decel_limit_from({"decel_limit": 1.5}, 0.7) == 1.5
+    # an instant stop, then the new direction gained at accel for the whole step
+    assert ramp_speed(1.0, -1.0, 0.5, 0.0, DT) == pytest.approx(-0.005)
