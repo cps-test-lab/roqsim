@@ -689,7 +689,7 @@ class Importer:
         self._check_nothing_is_walled_off()
 
         if self.args.lock and not self.assets:
-            # Refused before anything is written: an import that succeeded without the lock it was
+            # Refused before scene.json is written: an import that succeeded without the lock it was
             # asked for would leave a loadable scene with nothing recording where its geometry came
             # from. Such a world's provenance is the source tree it was read from, which this tool
             # cannot digest.
