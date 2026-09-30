@@ -57,6 +57,7 @@ def _plugin(model, data, **cfg):
     )
     plugin = ContactMonitorPlugin(dict(cfg), entity="robot")
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 

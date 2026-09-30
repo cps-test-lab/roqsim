@@ -26,6 +26,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
+from roqsim.pose import pose_mapping
 
 # Husky A200 top plate, in base_link coordinates: the base collision box top is at
 # 0.12498 + 0.13375 = 0.25873. Forward of centre (x=+0.25) to clear the lidar mast at x=0.
@@ -45,7 +46,7 @@ def _world(tmp_path, arm_extra=None, robot_first=True, prefix="ur10e_"):
             "model": "ur10e",
             "prefix": prefix,
             "mount": {"robot": "husky", "body": "base_link"},
-            "pos": MOUNT_POS,
+            "pose": pose_mapping(MOUNT_POS),
             **(arm_extra or {}),
         },
         "name": "arm",
@@ -55,7 +56,11 @@ def _world(tmp_path, arm_extra=None, robot_first=True, prefix="ur10e_"):
 
 
 GRIPPER = {
-    "end_effector": {"model": "robotiq_2f85", "pos": [0, 0, 0.011], "replaces": ["ee_plate"]}
+    "end_effector": {
+        "model": "robotiq_2f85",
+        "pose": pose_mapping([0, 0, 0.011]),
+        "replaces": ["ee_plate"],
+    }
 }
 
 
@@ -115,7 +120,7 @@ def test_mounted_arm_rides_the_base(tmp_path):
                         "model": "ur10e",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
-                        "pos": MOUNT_POS,
+                        "pose": pose_mapping(MOUNT_POS),
                         **GRIPPER,
                     },
                     "name": "arm",

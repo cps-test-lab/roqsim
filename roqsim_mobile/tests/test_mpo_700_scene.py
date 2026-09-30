@@ -344,7 +344,8 @@ def test_joint_states_carries_the_steer_joints_it_actuates():
     engine = _engine()
     try:
         ep = next(e for e in engine.ctx.interface.all() if e.name == "joint_states")
-        names, pos, vel = ep.read()
+        joints = ep.read()
+        names, pos, vel = joints.names, joints.positions, joints.velocities
         steers = [f"mpo_700_caster_{c}_joint" for c in CORNER_NAMES]
         rolls = [f"mpo_700_wheel_{c}_joint" for c in CORNER_NAMES]
         assert list(names) == rolls + steers
@@ -353,7 +354,8 @@ def test_joint_states_carries_the_steer_joints_it_actuates():
         # And they carry the joint's real value, not a placeholder: a pure spin puts the two
         # diagonal pairs at different angles (see test_a_pure_spin_aims_each_wheel_tangentially).
         _drive(engine, 0.0, 0.0, 0.6)
-        names, pos, _ = ep.read()
+        joints = ep.read()
+        names, pos = joints.names, joints.positions
         model, data = engine.ctx.model, engine.ctx.data
         for name, reported in zip(names, pos, strict=True):
             jid = named(model, mujoco.mjtObj.mjOBJ_JOINT, f"n_{name}")

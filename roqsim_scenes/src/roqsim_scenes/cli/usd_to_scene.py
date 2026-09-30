@@ -1,9 +1,9 @@
 """Convert an IsaacSim/USD world into a roqsim static scene (per-object OBJ + a JSON manifest).
 
-Run with a bundled Blender (4.x, ships a USD importer)::
+It runs inside Blender (4.x, which ships a USD importer); ``roqsim`` starts Blender for it::
 
-    blender --background --roqsim scenes usd-to-scene -- \
-        <input.usd> src/roqsim_scenes/scenes/<name> <name> [--unit-scale 0.01]
+    roqsim scenes usd-to-scene <input.usd> src/roqsim_scenes/scenes/<name> <name> \
+        [--unit-scale 0.01]
 
 For each USD mesh prim it writes ``<name>/meshes/<obj>.obj`` (world-space, in **metres**, MuJoCo
 Z-up) and records the prim in ``<name>/scene.json`` with its diffuse ``rgba`` and a ``collide`` flag.

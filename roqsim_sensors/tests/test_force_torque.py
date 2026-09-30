@@ -152,7 +152,8 @@ def test_blackboard_reader_agrees_with_the_endpoint():
     assert reader is not None and reader.frame == "sensor"
     endpoint = next(e for e in engine.ctx.interface.all() if e.name == "wrench")
     force, torque = reader.read()
-    ep_force, ep_torque = endpoint.read()
+    wrench = endpoint.read()
+    ep_force, ep_torque = wrench.force, wrench.torque
     # Same instant, same wrench -- a controller reading the blackboard and a bag recording the topic
     # must not disagree about the force at one time.
     assert np.allclose(force, ep_force) and np.allclose(torque, ep_torque)
@@ -360,8 +361,9 @@ def test_the_zero_button_is_a_service_a_scenario_can_press():
     engine = _settled(name="ft")
     endpoint = next(e for e in engine.ctx.interface.all() if e.name == "tare")
 
-    assert endpoint.direction == "in"
-    assert endpoint.backend["ros2"]["service"] == "std_srvs.srv.Trigger"
+    # A command without parameters: what a ROS bridge serves as a std_srvs/Trigger service.
+    assert endpoint.direction == "in" and endpoint.params == ()
+    assert endpoint.backend["ros2"] == {"name": "ft/tare"}
 
     plugin = _plugin(engine)
     assert plugin.read()[0][2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)

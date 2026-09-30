@@ -247,7 +247,10 @@ def _freeze(model, data, entity) -> None:
     ``body_gravcomp``
         1.0, so gravity is exactly cancelled for the whole subtree rather than approximately
         resisted. Requires :func:`arm_gravity_compensation` to have marked the world body before
-        compile -- without it MuJoCo skips the gravcomp path and this write does nothing.
+        compile -- without it MuJoCo skips the gravcomp path and this write does nothing. The root
+        is compensated with the rest, which is what tells the engine's
+        :class:`~roqsim.actuators.GravityReaction` to leave a frozen robot's arm weightless rather
+        than hand its weight to a base the floor no longer touches.
     the subtree's velocities
         zeroed, because compensation removes the force but not the motion the entity already had.
         A prop deleted mid-flight would otherwise coast in a straight line forever.
