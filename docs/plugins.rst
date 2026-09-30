@@ -1835,6 +1835,11 @@ speed from the driven wheels and the yaw rate from the measured steering angle; 
 exist because ``robot_state_publisher`` leaves a link out of TF until every movable joint above it
 has a state. Like ``diff_drive`` it takes ``odom_rate_hz`` and ``publish_joint_states``.
 
+Both car-like drives ramp the commanded speed at two rates: ``accel_limit`` while gaining speed and
+``decel_limit`` while losing it -- towards a slower target, to a stop, or on a reversal down to rest,
+after which the new direction is gained at ``accel_limit``. ``decel_limit`` defaults to
+``accel_limit``; either at 0 is instant.
+
 Choosing a drive for a new robot
 --------------------------------
 
