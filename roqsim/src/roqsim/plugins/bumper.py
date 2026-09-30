@@ -181,8 +181,8 @@ class BumperPlugin(Plugin):
         # Which contacts are this entity's: the rule shared with every other contact observable,
         # so the bumper and contact_monitor can never disagree about whose contact it was.
         scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="bumper",
             body=self.body,
             ignore=self.ignore,

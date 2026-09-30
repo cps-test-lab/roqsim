@@ -139,7 +139,6 @@ class ContactMonitorPlugin(Plugin):
     # -- lifecycle -----------------------------------------------------------------------------
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        model = ctx.model
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
@@ -147,8 +146,8 @@ class ContactMonitorPlugin(Plugin):
         # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
         # severity of the very contacts this reports, and a rule restated in each would be two.
         self._scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="contact_monitor",
             body=self.body,
             ignore=self.ignore,

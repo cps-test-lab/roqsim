@@ -107,6 +107,7 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.endpoint import Unit
+from roqsim.frames import entity_body
 from roqsim.plugin import Plugin
 from roqsim.schema import Field
 
@@ -214,7 +215,7 @@ class EnergyMonitorPlugin(Plugin):
         self.voltage = settings.voltage
         self.rate_hz = settings.rate_hz
         self._ctx: SimContext | None = None
-        self._battery_frame = "base_link"  # the frame BatteryState is stamped in; see configure
+        self._battery_frame = ""  # the frame BatteryState is stamped in; set in configure
         self._actuators: np.ndarray | None = None
         self._resistive_k: np.ndarray | None = None
         self._energy_j = 0.0
@@ -264,11 +265,13 @@ class EnergyMonitorPlugin(Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
+        # The root the entity registered: the subtree whose actuators are metered, and the frame
+        # the battery is stamped in, as TF names it (without the model prefix).
+        root = entity_body(ctx, self.robot, who=f"energy_monitor[{self.label}]").index
+        self._battery_frame = m.body(root).name.removeprefix(prefix)
 
         self._actuators = (
-            self._named_actuators(m, prefix)
-            if self.actuator_names
-            else self._actuators_of(m, entity, prefix)
+            self._named_actuators(m, prefix) if self.actuator_names else self._actuators_of(m, root)
         )
         if self._actuators.size == 0:
             # A meter reading zero forever looks exactly like a robot that costs nothing to drive.
@@ -281,7 +284,6 @@ class EnergyMonitorPlugin(Plugin):
         self._resistive_k = self._resistive_coefficients(m, prefix)
 
         ctx.blackboard.set(f"energy:{self.address}", EnergyReader(name=self.label, read=self.read))
-        self._battery_frame = entity.body if entity and entity.body else "base_link"
 
     @endpoint.out(
         rate="rate_hz",
@@ -326,7 +328,7 @@ class EnergyMonitorPlugin(Plugin):
             ids.append(aid)
         return np.asarray(sorted(set(ids)), dtype=int)
 
-    def _actuators_of(self, m, entity, prefix: str) -> np.ndarray:
+    def _actuators_of(self, m, root: int) -> np.ndarray:
         """Every actuator that moves a body of this entity's kinematic subtree.
 
         Derived rather than configured, because "which motors are on this robot" is a fact about the
@@ -334,16 +336,6 @@ class EnergyMonitorPlugin(Plugin):
         joint. The subtree is the same notion ``contact_monitor`` watches: a robot is its base and
         everything descended from it.
         """
-        root = -1
-        if entity is not None and entity.body:
-            root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-        if root < 0:
-            root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}base_link")
-        if root < 0:
-            raise RuntimeError(
-                f"energy_monitor[{self.label}]: entity {self.robot!r} registered no base body, so "
-                f"the actuators that drive it cannot be found. Name them with 'actuators:'."
-            )
         subtree = {root}
         for body in range(root + 1, m.nbody):
             if int(m.body_parentid[body]) in subtree:

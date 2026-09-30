@@ -163,8 +163,8 @@ class ContactLocationPlugin(Plugin):
         # resolve or watches nothing: a sensor watching nothing reports "no contact" forever, which
         # a controller cannot distinguish from open space and would drive straight through.
         self._scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="contact_location",
             body=self.body,
             ignore=self.ignore,

@@ -196,7 +196,6 @@ class ContactImpulsePlugin(Plugin):
     # -- lifecycle -----------------------------------------------------------------------------
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        model = ctx.model
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
@@ -204,8 +203,8 @@ class ContactImpulsePlugin(Plugin):
         # The rule is contact_monitor's, held in one place rather than restated here: resolving it
         # through the shared scope is what stops the two plugins counting different contacts.
         self._scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="contact_impulse",
             body=self.body,
             ignore=self.ignore,

@@ -148,6 +148,7 @@ from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, Controller, registry_for
 from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
+from roqsim.frames import entity_body
 from roqsim.plugin import Plugin
 from roqsim.presence import entity_body_ids
 from roqsim.types import Wrench
@@ -311,14 +312,8 @@ class ForceTorquePlugin(Plugin):
         self._refuse_a_flex_contact_it_cannot_see(m, site_name)
 
         if self.frame == "base":
-            body_name = entity.body if entity and entity.body else f"{prefix}base"
-            self._ref_bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, body_name)
-            if self._ref_bid < 0:
-                raise RuntimeError(
-                    f"force_torque[{self.name}]: frame 'base' needs the entity's base body, but "
-                    f"{body_name!r} was not found. Nest this sensor under the entry that spawns "
-                    f"the entity, or use frame 'world'."
-                )
+            # The root body the entity registered; frame 'world' needs none.
+            self._ref_bid = entity_body(ctx, self.owner, who=f"force_torque[{self.name}]").index
 
         # Keyed on the LABEL, like every other identity: a document with two entries answering to
         # one label is already refused when it loads, so reaching this means a caller constructed
