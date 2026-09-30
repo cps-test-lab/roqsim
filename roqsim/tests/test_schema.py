@@ -503,3 +503,104 @@ def test_a_block_publishes_its_parameters_and_config_block_as_the_world_nests_it
     parsed = _parse_config_block("\n".join(block))
     assert [f["name"] for f in parsed] == names
     assert parsed[2]["doc"] == "m; a waypoint counts as reached"
+
+
+# -- a mapping from names not known in advance ---------------------------------------------------
+
+GAINS = {
+    "p": Field(float, default=100.0, minimum=0.0, unit="N*m/rad"),
+    "control": Field(str, choices=("position", "effort"), hints={"motor": "write effort"}),
+}
+MAPPED = {
+    "each": Field(
+        dict,
+        values=Field(dict, schema=GAINS, hints={"kp": "write p"}, doc="one joint's gains"),
+        doc="per joint, by name",
+    ),
+}
+
+
+class _Mapped(Plugin):
+    CONFIG_SCHEMA = MAPPED
+
+
+def test_every_value_of_a_mapping_is_checked_and_named_by_its_path():
+    assert validate(MAPPED, {"each": {"elbow": {"p": 5.0}, "wrist": {"p": -1.0}}}) == [
+        "'each.wrist.p' must be >= 0.0 N*m/rad, got -1.0"
+    ]
+    assert validate(MAPPED, {"each": {"elbow": 5}}) == ["'each.elbow' must be dict, got int (5)"]
+
+
+def test_a_value_declared_as_a_block_is_strict_whatever_the_top_level_says():
+    expected = [
+        "'each.elbow.contrl' is not a key of 'each.elbow' -- did you mean 'control'?. "
+        "Known: control, p"
+    ]
+    assert validate(MAPPED, {"each": {"elbow": {"contrl": "effort"}}}) == expected
+    assert validate(MAPPED, {"each": {"elbow": {"contrl": "effort"}}}, strict_keys=True) == expected
+
+
+def test_settings_read_a_mapping_per_name_with_each_default_filled():
+    each = _Mapped({"each": {"elbow": {"control": "effort"}, "wrist": {"p": 7}}}).settings.each
+    assert list(each) == ["elbow", "wrist"]
+    assert each["elbow"].p == 100.0 and each["elbow"].control == "effort"
+    assert each["wrist"].p == 7.0 and isinstance(each["wrist"].p, float)
+    assert dict(_Mapped({}).settings.each) == {}
+    with pytest.raises(TypeError):
+        each["shoulder"] = {}
+
+
+def test_a_mapping_publishes_its_value_under_values():
+    (each,) = describe(MAPPED)
+    assert "default" not in each
+    assert each["values"]["type"] == "dict" and "name" not in each["values"]
+    assert each["values"]["hints"] == {"kp": "write p"}
+    assert [f["name"] for f in each["values"]["fields"]] == ["p", "control"]
+    assert each["values"]["fields"][1]["hints"] == {"motor": "write effort"}
+
+
+def test_a_mapping_publishes_its_parameters_and_config_block_with_a_name_placeholder():
+    from roqsim.introspection import _schema_parameters, schema_config_block
+
+    names = ["each", "each.<name>", "each.<name>.p", "each.<name>.control"]
+    assert [p["name"] for p in _schema_parameters(MAPPED)] == names
+    assert [line.split("#")[0].rstrip() for line in schema_config_block("joints", _Mapped)[2:]] == [
+        "    joints:",
+        "      each:",
+        "        <name>:",
+        "          p: 100.0",
+        "          control: <unset>",
+    ]
+
+
+def test_a_mapping_declares_what_its_values_are_and_nothing_else():
+    assert validate({"each": Field(dict, default={}, values=Field(float))}, {}) == [
+        "schema error: 'each' declares its values, so it must take a dict and declare no default "
+        "of its own -- its values' defaults are its default"
+    ]
+    both = Field(dict, schema=GAINS, values=Field(float))
+    assert validate({"each": both}, {})[0].startswith("schema error: 'each' declares both")
+
+
+# -- a word from another vocabulary --------------------------------------------------------------
+
+
+def test_a_hinted_key_is_refused_once_with_its_hint_in_place_of_a_suggestion():
+    assert validate(MAPPED, {"each": {"elbow": {"kp": 5.0}}}) == [
+        "'each.elbow.kp' is not a key of 'each.elbow' -- write p. Known: control, p"
+    ]
+
+
+def test_a_hinted_value_is_refused_once_with_its_hint():
+    assert validate(MAPPED, {"each": {"elbow": {"control": "motor"}}}) == [
+        "'each.elbow.control' must be one of position, effort, got 'motor' -- write effort"
+    ]
+    assert validate(MAPPED, {"each": {"elbow": {"control": "servo"}}}) == [
+        "'each.elbow.control' must be one of position, effort, got 'servo'"
+    ]
+
+
+def test_hints_stand_beside_keys_or_choices():
+    assert validate({"gain": Field(float, hints={"kp": "write gain"})}, {}) == [
+        "schema error: 'gain' declares hints but no keys or choices to refuse them beside"
+    ]
