@@ -179,10 +179,10 @@ many?" (user docs: :doc:`coverage`). Design worth knowing when extending it:
   scipy/trimesh** (they are broken under numpy 2 in the system venv, and
   the layer must not depend on them). Free-space classification is deliberately conservative (drops are
   safe: they only make coverage look worse).
-* **Three front doors, one core:** the ``sensor_coverage_probe`` plugin (world-YAML toggle,
-  ``plugins/sensor_coverage_probe.py``), the ``swept_coverage_monitor`` plugin
-  (``plugins/swept_coverage_monitor.py``, the same geometry accumulated while the world runs, for a
-  sensor that moves) and the ``roqsim sensors coverage`` CLI (``coverage/cli.py``). All three
-  build their points with ``coverage/sampling.py``'s ``sample_set`` on purpose: two coverage figures are comparable
-  only if they sampled the same way. The
+* **Two front doors, one core:** the ``sensor_coverage_probe`` plugin (world-YAML toggle,
+  ``plugins/sensor_coverage_probe.py``) and the ``roqsim sensors coverage`` CLI (``coverage/cli.py``),
+  whose ``swept`` command accumulates a moving sensor's field of view over a recorded run
+  (``coverage/swept.py``, each sample's state restored through :func:`roqsim.recording.open_recording`).
+  All of them build their points with ``coverage/sampling.py``'s ``sample_set`` on purpose: two
+  coverage figures are comparable only if they sampled the same way. The
   ``coverage`` extra (matplotlib, for the 2D heatmap) is optional; the 3D render needs only MuJoCo.

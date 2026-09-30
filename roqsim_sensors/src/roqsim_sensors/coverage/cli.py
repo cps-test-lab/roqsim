@@ -1,4 +1,4 @@
-"""Search a fixed world for sensor placements that reach a coverage target.
+"""Search a world for sensor placements that reach a coverage target, or sweep a recorded run.
 
 Reached as ``roqsim sensors coverage`` (the first line above is what ``roqsim sensors --help`` prints).
 
@@ -9,16 +9,21 @@ Subcommands:
 * ``catalog`` -- print the sensor catalog (types, FOV, cost, mount constraints) as JSON.
 * ``greedy`` -- a deterministic submodular max-coverage baseline over candidate mount poses; a non-LLM
   sanity check and warm-start.
+* ``swept`` -- read a recorded run and accumulate what a sensor on a frame of it ever covered
+  (:mod:`~roqsim_sensors.coverage.swept`), into the same report plus a ``swept`` block.
 
 Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Example::
 
     roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
+    roqsim sensors coverage swept \\
+        --recording run.mcap --frame robot/oakd/oakd_rgb --type oakd_camera --out swept/
 
 Exit status (``roqsim.exit_status``): ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the
 report written; ``2`` and one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong
 -- a world that does not exist or does not load, a placements file that is missing, not JSON or not
-a list, an unknown sensor type or region -- or ``roqsim sensors coverage <cmd>: error: ...`` for a
+a list, an unknown sensor type or region, a recording that cannot be read, a frame path that names
+nothing, a window with no sample -- or ``roqsim sensors coverage <cmd>: error: ...`` for a
 usage error such as ``--set``/``--override`` with an MJCF ``--world``. The agent driving the
 propose -> evaluate -> refine loop greps that line; a traceback means a crash, not a refused input.
 """
@@ -117,11 +122,12 @@ def _read_placements(path: str) -> list[dict]:
     return placements
 
 
-def _build_samples(model, data, args):
+def _sample_set(model, data, args):
+    """:func:`~.sampling.sample_set` with the ``--sample``/``--resolution``/``--heights`` options."""
     from . import sampling
 
     want = args.sample
-    points, labels, names = sampling.sample_set(
+    return sampling.sample_set(
         model,
         data,
         volume=want in ("volume", "both"),
@@ -130,6 +136,10 @@ def _build_samples(model, data, args):
         heights=tuple(float(h) for h in args.heights),
         per_object=args.per_object,
     )
+
+
+def _build_samples(model, data, args):
+    points, labels, names = _sample_set(model, data, args)
     if len(points) == 0:
         raise SystemExit("no sample points produced -- check --sample / --heights / the world")
     return points, labels, names
@@ -318,6 +328,85 @@ def cmd_greedy(args) -> int:
     return 0
 
 
+def _json_option(text: str | None, option: str) -> dict:
+    """An inline JSON object option (``--config``, ``--pose``), or ``{}`` when not given."""
+    if not text:
+        return {}
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"{option} is not JSON: {err}") from None
+    if not isinstance(value, dict):
+        raise ValueError(f"{option} must be a JSON object, got {text!r}")
+    return value
+
+
+def cmd_swept(args) -> int:
+    from roqsim.recording import open_recording
+
+    from .swept import swept_coverage
+
+    config = _json_option(args.config, "--config")
+    pose = _json_option(args.pose, "--pose")
+    regions = _resolve_regions(args)
+
+    def sample(model, data):
+        # An empty set is refused by the sweep, which says why a recorded world yields none.
+        points, labels, names = _sample_set(model, data, args)
+        if len(points) and regions and args.restrict:
+            points, labels = _apply_restrict(points, labels, regions)
+        return points, labels, names
+
+    out_dir = Path(args.out)
+    target = parse_target(args.target)
+    with open_recording(args.recording) as rec:
+        swept = swept_coverage(
+            rec,
+            frame=args.frame,
+            sensor_type=args.type,
+            sample=sample,
+            config=config,
+            pose=pose,
+            start=getattr(args, "from"),
+            stop=args.to,
+            rate=args.rate,
+        )
+        result = swept.as_coverage()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        rendered = []
+        if args.render != "none":
+            # Drawn over the world as it stood at the last evaluated sample.
+            model, _ = rec.build()
+            data = rec.at(float(swept.times[-1])).data
+            rendered = _render_outputs(model, data, result, out_dir, args.render, args.palette)
+        world = rec.world or ""
+
+    per_region = _per_region(result, regions)
+    placement = {"frame": swept.frame, "type": args.type, "config": config, "pose": pose}
+    report = build_report(
+        result,
+        world=world,
+        target=target,
+        placements=[placement],
+        gap_resolution=args.resolution,
+        per_region=per_region,
+    )
+    report["recording"] = str(args.recording)
+    report["swept"] = swept.summary(args.resolution)
+    (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+    _print_per_region(per_region)
+    s = report["swept"]
+    print(
+        f"SWEPT_OK recording={args.recording} frame={swept.frame} points={s['n_points']} "
+        f"evaluations={s['n_evaluations']} fraction={s['fraction']:.3f} "
+        f"mean_visits={s['mean_visits']:.2f}"
+        + (f" target_met={report['target_met']}" if target else "")
+        + f" -> {out_dir / 'report.json'}"
+        + (f" + {', '.join(Path(r).name for r in rendered)}" if rendered else "")
+    )
+    return 0
+
+
 def _add_common_sampling(sp):
     sp.add_argument(
         "--world",
@@ -326,6 +415,10 @@ def _add_common_sampling(sp):
         "YAML or ref and are refused with an MJCF)",
     )
     add_override_options(sp)
+    _add_sampling(sp)
+
+
+def _add_sampling(sp):
     sp.add_argument("--out", required=True, help="output directory")
     sp.add_argument("--sample", choices=("volume", "objects", "both"), default="both")
     sp.add_argument(
@@ -393,6 +486,39 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-sensors", type=int, default=10, help="stop after this many sensors")
     sp.set_defaults(func=cmd_greedy, parser=sp)
 
+    sp = sub.add_parser(
+        "swept",
+        help="accumulate what a sensor on a frame of a recorded run ever covered -> report.json",
+    )
+    sp.add_argument("--recording", required=True, help="a roqsim recording (.mcap)")
+    sp.add_argument(
+        "--frame",
+        required=True,
+        help="the mount: a frame path (tb4/oakd/oakd_rgb, or a world MJCF body/site/camera by its "
+        "MuJoCo name); a camera frame brings its own intrinsics",
+    )
+    sp.add_argument("--type", required=True, help="sensor type, one of the catalog's")
+    sp.add_argument(
+        "--config",
+        default=None,
+        help="JSON field-of-view overrides of the catalog entry (e.g. '{\"far\": 4.0}')",
+    )
+    sp.add_argument(
+        "--pose",
+        default=None,
+        help="JSON geometry_msgs/Pose offset in the frame's coordinates (omitted components are 0)",
+    )
+    sp.add_argument("--from", type=float, default=None, help="first sim time evaluated [s]")
+    sp.add_argument("--to", type=float, default=None, help="last sim time evaluated [s]")
+    sp.add_argument(
+        "--rate",
+        type=float,
+        default=None,
+        help="evaluations per sim second, at most the recording's rate (default: every sample)",
+    )
+    _add_sampling(sp)
+    sp.set_defaults(func=cmd_swept, parser=sp)
+
     return ap
 
 
@@ -405,12 +531,13 @@ def main(argv=None) -> int:
             "--world names a bare MJCF, compiled with no plugins -- pass a world YAML instead",
         )
     # A wrong input ends here as one line and exit 2 (see the module docstring).
+    from roqsim.mcap_format import RecordingError
     from roqsim.models import ModelError
     from roqsim.plugin import PluginError
 
     try:
         return args.func(args)
-    except (PluginError, ModelError, KeyError, ValueError, OSError) as err:
+    except (PluginError, ModelError, RecordingError, KeyError, ValueError, OSError) as err:
         # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
         message = err.args[0] if isinstance(err, KeyError) and err.args else err
         print(f"roqsim sensors coverage: {message}", file=sys.stderr)
