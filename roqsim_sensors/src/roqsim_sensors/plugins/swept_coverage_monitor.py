@@ -46,40 +46,21 @@ carrier's structure occludes exactly as any other geometry does.
 once a coverage target is reached reads the endpoint and decides, with the threshold stated in the
 experiment rather than in the substrate.
 
-Config::
+Its keys are declared in :attr:`SweptCoverageMonitorPlugin.CONFIG_SCHEMA`. The mount is exactly
+one of ``camera:`` (a MuJoCo ``<camera>``: pose and intrinsics from the compiled model), ``site:`` (a
+``<site>``, such as a lidar's scan site) or ``body:``; names are resolved with the owning entity's
+``prefix`` when this entry is nested under a spawn, so ``camera: oakd_rgb`` finds a prefixed robot's
+camera. A body mount places the sensor at ``pose`` in the body's frame, a ``geometry_msgs/Pose`` whose
+omitted components are 0; a camera or site mount is posed by the model and takes no ``pose``.
+``type`` names the coverage adapter that builds the field of view (any of ``roqsim sensors coverage
+catalog``'s types) and ``config`` its parameters; ``sample`` is the fixed point set the union is
+accumulated over, and ``regions``/``region_names``/``restrict`` limit it to named regions.
 
-    swept_coverage_monitor:
-      type: ""               # REQUIRED: sensor type, i.e. which coverage adapter builds the FoV
-                             #   (any of `roqsim sensors coverage catalog`'s types)
-      # The mount, exactly one of these three. Names are resolved with the owning entity's
-      # `prefix` when this entry is nested under a spawn, so `camera: oakd_rgb` finds a
-      # prefixed robot's camera.
-      camera: ""             # a MuJoCo <camera>: pose AND intrinsics from the compiled model
-      site: ""               # a MuJoCo <site>: pose from the model (a lidar's scan site)
-      body: ""               # a MuJoCo <body>, plus the offset/rpy below
-      offset: [0, 0, 0]      # sensor position in the mount frame  -- `body:` only
-      rpy: [0, 0, 0]         # sensor orientation in the mount frame -- `body:` only
-      config: {}             # FoV parameters for the adapter (fovy/width/height/far, range_max, ...)
-
-      sample:                # the fixed point set the union is accumulated over
-        volume: true         #   free-interior grid at `resolution`, one layer per height
-        objects: false       #   object surfaces as well (labelled per geom)
-        resolution: 0.25     #   grid pitch [m]; also the cell the area figure is derived from
-        heights: [0.5]       #   world z of the grid layers
-        per_object: 64       #   surface points per object
-
-      regions: ""            # optional named regions (a JSON path or an inline spec / floorplan)
-      region_names: []       #   subset of those regions to keep
-      restrict: false        #   sample only inside the regions' union
-
-      compute_rate_hz: 5.0   # how often the FoV is EVALUATED and the union grown
-      rate_hz: 2.0           # how often the endpoint is PUBLISHED
-      out: ""                # optional directory for a report.json written at shutdown
-
-Endpoint ``coverage`` (out) reads a :class:`SweptCoverageReport`: the covered fraction of the sample
-set, the covered and sampled **areas** with the cell they are derived from, how many evaluations went
-into the union, and the mean number of evaluations a point was seen in -- so a revisit figure falls
-out of the same accumulator as a coverage one. A :class:`SweptCoverageReader` on the blackboard under
+Endpoint ``coverage`` (out) reads a :class:`SweptCoverageReport`; ROS carries its ``fraction`` as a
+``std_msgs/Float32`` on ``coverage_fraction``. The report holds the covered fraction of the sample
+set, the covered and sampled **areas** with the cell they are derived from, how many evaluations
+went into the union, and the mean number of evaluations a point was seen in -- so a revisit figure
+falls out of the same accumulator as a coverage one. A :class:`SweptCoverageReader` on the blackboard under
 ``swept_coverage:<address>`` hands an in-process consumer the sample points and the per-point visit
 counts themselves.
 
@@ -102,16 +83,22 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
+from roqsim.schema import Field
+from roqsim.types import Duration
 
 from ..coverage import sampling
 from ..coverage.adapters import PlacedSensor, build_fov
-from ..coverage.engine import coverage
+from ..coverage.engine import coverage as evaluate_coverage
 from ..coverage.report import build_report
 
 _log = logging.getLogger(__name__)
@@ -123,28 +110,35 @@ _MOUNT_KEYS = ("camera", "site", "body")
 UNKNOWN_AREA = -1.0
 
 
-def _triple(value) -> np.ndarray:
-    """A 3-vector from config, or zeros when it is not one -- ``validate_config`` reports the why."""
-    try:
-        arr = np.asarray(value if value is not None else [0.0, 0.0, 0.0], dtype=np.float64)
-    except (TypeError, ValueError):
-        return np.zeros(3)
-    return arr.reshape(3) if arr.size == 3 else np.zeros(3)
+#: An area, in square metres.
+Area = Annotated[float, Unit("m^2")]
 
 
 @dataclass
 class SweptCoverageReport:
-    """Neutral payload for the ``coverage`` endpoint: the union as it stands."""
+    """Neutral payload for the ``coverage`` endpoint: the union as it stands.
 
-    fraction: float = 0.0  # of the sample set, covered by at least one evaluation
-    n_points: int = 0  # size of the fixed sample set
-    n_covered: int = 0  # how many of them have ever been covered
-    covered_area_m2: float = UNKNOWN_AREA  # distinct grid cells covered x cell_area_m2
-    sampled_area_m2: float = UNKNOWN_AREA  # the denominator the fraction of area is taken over
-    cell_area_m2: float = 0.0  # resolution^2, so the two areas are reconstructible
-    n_evaluations: int = 0  # FoV evaluations folded into the union since the last reset
-    mean_visits: float = 0.0  # evaluations a point was covered in, averaged over the sample set
-    sim_time: float = 0.0  # when this report was assembled
+    Attributes:
+        fraction: of the sample set, covered by at least one evaluation
+        n_points: size of the fixed sample set
+        n_covered: how many of them have ever been covered
+        covered_area_m2: distinct grid cells covered times ``cell_area_m2``; -1.0 without a grid
+        sampled_area_m2: the area the fraction of area is taken over; -1.0 without a grid
+        cell_area_m2: the grid pitch squared, so the two areas are reconstructible
+        n_evaluations: field-of-view evaluations folded into the union since the last reset
+        mean_visits: evaluations a point was covered in, averaged over the sample set
+        sim_time: when this report was assembled
+    """
+
+    fraction: float = 0.0
+    n_points: int = 0
+    n_covered: int = 0
+    covered_area_m2: Area = UNKNOWN_AREA
+    sampled_area_m2: Area = UNKNOWN_AREA
+    cell_area_m2: Area = 0.0
+    n_evaluations: int = 0
+    mean_visits: float = 0.0
+    sim_time: Duration = 0.0
 
 
 @dataclass
@@ -164,6 +158,10 @@ class SweptCoverageReader:
     visits: Callable[[], np.ndarray]  # (P,) int -- evaluations each point was covered in
 
 
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 class SweptCoverageMonitorPlugin(Plugin):
     """See the module docstring."""
 
@@ -180,44 +178,92 @@ class SweptCoverageMonitorPlugin(Plugin):
     #: still the usual case and is what supplies the name `prefix`.
     requires_owner = False
 
+    #: Declared once, so ``roqsim plugins describe swept_coverage_monitor`` publishes the keys the
+    #: checks run on. Everything but the two rates is read once, at configure.
+    CONFIG_SCHEMA = {
+        "type": Field(
+            str,
+            required=True,
+            static=True,
+            doc="sensor type: the coverage adapter that builds the field of view "
+            "(any of `roqsim sensors coverage catalog`'s types)",
+        ),
+        "camera": Field(
+            str, default="", static=True, doc="mount: a MuJoCo camera, posed and sized by the model"
+        ),
+        "site": Field(str, default="", static=True, doc="mount: a MuJoCo site, posed by the model"),
+        "body": Field(
+            str, default="", static=True, doc="mount: a MuJoCo body, with the sensor at 'pose'"
+        ),
+        "pose": Field(
+            dict,
+            default={},
+            static=True,
+            doc="the sensor in a body mount's frame, a geometry_msgs/Pose (omitted components "
+            "are 0); body mounts only",
+        ),
+        "config": Field(
+            dict,
+            default={},
+            static=True,
+            doc="field-of-view parameters for the adapter (fovy/width/height/far, range_max, ...)",
+        ),
+        "sample": Field(
+            dict,
+            schema={
+                "volume": Field(
+                    bool,
+                    default=True,
+                    doc="free-interior grid at 'resolution', one layer per height",
+                ),
+                "objects": Field(bool, default=False, doc="object surfaces, labelled per geom"),
+                "resolution": Field(
+                    float,
+                    default=0.25,
+                    unit="m",
+                    doc="grid pitch; also the cell the area figure is derived from",
+                ),
+                "heights": Field(list, default=[0.5], unit="m", doc="world z of the grid layers"),
+                "per_object": Field(int, default=64, minimum=1, doc="surface points per object"),
+            },
+            static=True,
+            doc="the fixed point set the union is accumulated over",
+        ),
+        "regions": Field(
+            (str, dict, list),
+            default="",
+            static=True,
+            doc="named regions: a JSON path beside the world, an inline spec, or a floorplan",
+        ),
+        "region_names": Field(list, default=[], static=True, doc="subset of 'regions' to keep"),
+        "restrict": Field(
+            bool, default=False, static=True, doc="sample only inside the regions' union"
+        ),
+        "compute_rate_hz": Field(
+            float, default=5.0, unit="Hz", doc="how often the field of view is evaluated"
+        ),
+        "rate_hz": Field(float, default=2.0, unit="Hz", doc="how often the endpoint publishes"),
+        "out": Field(
+            str,
+            default="",
+            static=True,
+            doc="directory for a report.json written at shutdown, beside the world when relative",
+        ),
+    }
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        self.sensor_type = str(self.config.get("type", ""))
-        self.camera = str(self.config.get("camera", ""))
-        self.site = str(self.config.get("site", ""))
-        self.body = str(self.config.get("body", ""))
-        # Same reason as `sample` below: read tolerantly so validate_config is the one that reports.
-        self.offset = _triple(self.config.get("offset"))
-        self.rpy = _triple(self.config.get("rpy"))
-        self.sensor_config = dict(self.config.get("config") or {})
-
-        # Construction runs BEFORE validate_config, so a mistyped block has to survive being read
-        # here to be reported there -- otherwise the one hook that collects every problem into a
-        # single report is bypassed by an AttributeError from the first one.
-        sample = self.config.get("sample")
-        sample = sample if isinstance(sample, dict) else {}
-        self.sample_volume = bool(sample.get("volume", True))
-        self.sample_objects = bool(sample.get("objects", False))
-        self.resolution = float(sample.get("resolution", 0.25))
-        heights = sample.get("heights", [0.5])
-        self.heights = (
-            tuple(float(h) for h in heights) if isinstance(heights, (list, tuple)) else ()
-        )
-        self.per_object = int(sample.get("per_object", 64))
-
-        self.regions_spec = self.config.get("regions") or ""
-        self.region_names = self.config.get("region_names") or []
-        self.restrict = bool(self.config.get("restrict", False))
-
-        self.compute_rate_hz = float(self.config.get("compute_rate_hz", 5.0))
-        self.rate_hz = float(self.config.get("rate_hz", 2.0))
-        self.out = str(self.config.get("out", ""))
-
+        # The endpoint's publish rate is named by attribute; the rest is read at configure, after
+        # the config was checked.
+        self.rate_hz = self.settings.rate_hz
+        self.sensor_type = ""
         self._ctx: SimContext | None = None
         self._fov = None  # the SensorFov, built once and re-posed each evaluation
         self._mount_pose: Callable[[], tuple[np.ndarray, np.ndarray]] | None = None
         self._local_pos = np.zeros(3)  # sensor origin in the mount frame
         self._local_rot = np.eye(3)  # sensor rotation in the mount frame
+        self._fov_start = (np.zeros(3), np.eye(3))  # the FoV's pose at configure
+        self._resolution = 0.25
         self._points = np.zeros((0, 3))
         self._labels = np.zeros(0, dtype=int)
         self._label_names: list[str] = []
@@ -228,54 +274,62 @@ class SweptCoverageMonitorPlugin(Plugin):
         self._n_cells = 0
         self._mount_desc = ""  # filled once the mount resolves; used in the log and the report
         self._evaluations = 0
+        self._period = 0.2
         self._next_due = 0.0
 
     # -- validation --------------------------------------------------------------------------------
 
     def validate_config(self, config: dict) -> list[str]:
+        # Types, defaults and unknown keys come from CONFIG_SCHEMA; this checks what it cannot say.
         errors = self.validate_topics(config)
-        if not str(config.get("type", "")):
+        settings = self.settings_for(config)
+        if settings.type == "":
             # There is no sensible default: which adapter builds the FoV decides the whole geometry,
             # so guessing one would report coverage for a device the world does not carry.
             from ..coverage.adapters import registered_types
 
             errors.append(f"'type' is required; known sensor types: {registered_types()}")
-        mounted = [key for key in _MOUNT_KEYS if str(config.get(key, ""))]
+        mounted = [key for key in _MOUNT_KEYS if config.get(key)]
         if len(mounted) != 1:
             errors.append(
                 f"exactly one of {list(_MOUNT_KEYS)} names the mount, got {mounted or 'none'}"
             )
-        for key in ("compute_rate_hz", "rate_hz"):
-            default = 5.0 if key == "compute_rate_hz" else 2.0
-            if float(config.get(key, default)) <= 0:
+        if "pose" in config:
+            if not settings.body:
+                errors.append(
+                    "'pose' places the sensor in a body mount's frame; a camera or site mount is "
+                    "posed by the model"
+                )
+            elif isinstance(settings.pose, dict):
+                try:
+                    parse_pose(settings.pose, relative=True)
+                except PoseError as exc:
+                    errors.append(str(exc))
+        for key, value in (
+            ("compute_rate_hz", settings.compute_rate_hz),
+            ("rate_hz", settings.rate_hz),
+        ):
+            if _is_number(value) and value <= 0:
                 errors.append(f"'{key}' must be > 0")
-        sample = config.get("sample") or {}
-        if not isinstance(sample, dict):
-            # Reported here rather than left to blow up in __init__: this hook exists to collect
-            # every problem into one report, and an AttributeError from a mistyped block escapes it.
-            errors.append("'sample' must be a mapping of volume/objects/resolution/heights")
-            return errors
-        if not (sample.get("volume", True) or sample.get("objects", False)):
+        if not isinstance(config.get("sample", {}), dict):
+            return errors  # the schema reports the type; the block's rules need a mapping
+        sample = settings.sample
+        if not (sample.volume or sample.objects):
             errors.append("'sample' must enable at least one of volume/objects")
-        if float(sample.get("resolution", 0.25)) <= 0:
+        if _is_number(sample.resolution) and sample.resolution <= 0:
             errors.append("sample 'resolution' must be > 0")
-        heights = sample.get("heights", [0.5])
-        if not isinstance(heights, (list, tuple)) or not heights:
+        if isinstance(sample.heights, list) and not sample.heights:
             errors.append("sample 'heights' must be a non-empty list of world z values")
-        for key in ("offset", "rpy"):
-            value = config.get(key)
-            if value is None:
-                continue
-            if not isinstance(value, (list, tuple)) or len(value) != 3:
-                errors.append(f"'{key}' must be 3 numbers")
-        if config.get("region_names") is not None and not isinstance(config["region_names"], list):
-            errors.append("'region_names' must be a list of region names")
         return errors
 
     # -- lifecycle ---------------------------------------------------------------------------------
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
+        settings = self.settings
+        self.sensor_type = settings.type
+        self._resolution = settings.sample.resolution
+        self._period = 1.0 / settings.compute_rate_hz
         model, data = ctx.model, ctx.data
         # The sample set and the mount pose are both read out of `data`, and neither exists until a
         # forward pass has populated the world's geom/camera/site poses.
@@ -283,7 +337,6 @@ class SweptCoverageMonitorPlugin(Plugin):
 
         entity = ctx.entities.get(self.entity) if self.entity else None
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         self._build_fov(model, data, prefix)
         self._build_points(model, data)
@@ -298,26 +351,6 @@ class SweptCoverageMonitorPlugin(Plugin):
                 visits=lambda: self._visits.copy(),
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="coverage",
-                direction="out",
-                owner=self.entity or "",
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        # Float32 and the running FRACTION: the series is the coverage-over-time
-                        # curve a reader wants, and the final value is the last sample of it. The
-                        # areas and the visit counts stay readable in-process, where an array can go.
-                        "type": "std_msgs.msg.Float32",
-                        "field": "fraction",
-                        "topic": self.topic_override("coverage") or "coverage_fraction",
-                    }
-                },
-            )
-        )
         _log.info(
             "swept_coverage_monitor[%s]: %s FoV on %s, %d sample point(s), %d grid cell(s), "
             "evaluating at %.1f Hz",
@@ -326,8 +359,19 @@ class SweptCoverageMonitorPlugin(Plugin):
             self._mount_desc,
             len(self._points),
             self._n_cells,
-            self.compute_rate_hz,
+            settings.compute_rate_hz,
         )
+
+    # Float32 and the running FRACTION: the series is the coverage-over-time curve a reader wants,
+    # and the final value is the last sample of it. The areas and the visit counts stay readable
+    # in-process, where an array can go.
+    @endpoint.out(
+        rate="rate_hz",
+        ros2={"type": "std_msgs.msg.Float32", "field": "fraction", "topic": "coverage_fraction"},
+    )
+    def coverage(self) -> SweptCoverageReport:
+        """The union as it stands: the covered fraction and area, and how it was accumulated."""
+        return self.read()
 
     # -- the mount ---------------------------------------------------------------------------------
 
@@ -339,14 +383,15 @@ class SweptCoverageMonitorPlugin(Plugin):
         every call, and none of that changes while a sensor moves. What changes is the pose, and the
         pose is two array reads.
         """
-        mounted = [key for key in _MOUNT_KEYS if getattr(self, key)]
+        settings = self.settings
+        mounted = [key for key in _MOUNT_KEYS if getattr(settings, key)]
         if len(mounted) != 1:
             raise RuntimeError(
                 f"swept_coverage_monitor[{self.label}]: exactly one of {list(_MOUNT_KEYS)} names "
                 f"the mount, got {mounted or 'none'}"
             )
         kind = mounted[0]
-        name = prefix + getattr(self, kind)
+        name = prefix + getattr(settings, kind)
         obj = {
             "camera": mujoco.mjtObj.mjOBJ_CAMERA,
             "site": mujoco.mjtObj.mjOBJ_SITE,
@@ -366,23 +411,25 @@ class SweptCoverageMonitorPlugin(Plugin):
         self._mount_desc = f"{kind} {name!r}"
 
         if kind == "camera":
-            placed = PlacedSensor(self.sensor_type, cam_id=mount_id, config=self.sensor_config)
+            placed = PlacedSensor(self.sensor_type, cam_id=mount_id, config=settings.config)
             self._mount_pose = lambda i=mount_id: (
                 self._ctx.data.cam_xpos[i],
                 self._ctx.data.cam_xmat[i].reshape(3, 3),
             )
         elif kind == "site":
-            placed = PlacedSensor(self.sensor_type, site_id=mount_id, config=self.sensor_config)
+            placed = PlacedSensor(self.sensor_type, site_id=mount_id, config=settings.config)
             self._mount_pose = lambda i=mount_id: (
                 self._ctx.data.site_xpos[i],
                 self._ctx.data.site_xmat[i].reshape(3, 3),
             )
         else:
-            # A body mount is the adapter's *hypothetical* placement form: offset/rpy are read in the
-            # mount frame, so the adapter's own conventions (a camera's optical axis, a lidar's
-            # boresight) are inherited rather than restated here.
+            # A body mount is the adapter's *hypothetical* placement form, built at the pose's
+            # position with no rotation, so the adapter's own conventions (a camera's optical axis, a
+            # lidar's boresight) are inherited rather than restated here; the pose's orientation is
+            # applied on top below, as the adapter applies a placement's own (rot = R @ base).
+            position, quat = parse_pose(settings.pose, relative=True)
             placed = PlacedSensor(
-                self.sensor_type, pos=self.offset, rpy=self.rpy, config=self.sensor_config
+                self.sensor_type, pos=np.asarray(position), rpy=np.zeros(3), config=settings.config
             )
             self._mount_pose = lambda i=mount_id: (
                 self._ctx.data.xpos[i],
@@ -400,10 +447,12 @@ class SweptCoverageMonitorPlugin(Plugin):
 
         # The sensor's pose in the mount frame. For a camera/site mount the adapter already resolved
         # the frame itself, so the sensor sits at its origin; for a body mount it is the configured
-        # offset and the rotation the adapter derived from `rpy`.
+        # pose, its orientation composed onto the adapter's base rotation.
         if kind == "body":
+            rotation = np.empty(9)
+            mujoco.mju_quat2Mat(rotation, np.asarray(quat, dtype=np.float64))
             self._local_pos = np.asarray(self._fov.origin, dtype=np.float64).copy()
-            self._local_rot = np.asarray(self._fov.rot, dtype=np.float64).copy()
+            self._local_rot = rotation.reshape(3, 3) @ np.asarray(self._fov.rot, dtype=np.float64)
             # A hypothetical placement excludes nothing, but a mounted sensor's origin sits inside
             # the housing it is bolted to -- the same correction the adapters make for a camera/site
             # mount via SensorFov.body_exclude.
@@ -411,6 +460,9 @@ class SweptCoverageMonitorPlugin(Plugin):
         else:
             self._local_pos = np.zeros(3)
             self._local_rot = np.eye(3)
+        # Posed at the mount as configured, which is where a reset puts it back.
+        self._repose()
+        self._fov_start = (self._fov.origin.copy(), self._fov.rot.copy())
 
     def _repose(self) -> None:
         """Move the field of view to the mount's pose as it stands. Physics thread only."""
@@ -421,14 +473,16 @@ class SweptCoverageMonitorPlugin(Plugin):
     # -- the sample set ----------------------------------------------------------------------------
 
     def _build_points(self, model, data) -> None:
+        sample = self.settings.sample
+        heights = tuple(float(h) for h in sample.heights)
         points, labels, names = sampling.sample_set(
             model,
             data,
-            volume=self.sample_volume,
-            objects=self.sample_objects,
-            resolution=self.resolution,
-            heights=self.heights,
-            per_object=self.per_object,
+            volume=sample.volume,
+            objects=sample.objects,
+            resolution=sample.resolution,
+            heights=heights,
+            per_object=sample.per_object,
         )
         if len(points) == 0:
             # A coverage fraction over zero points is the failure this refuses: `0/0` reported as a
@@ -439,12 +493,12 @@ class SweptCoverageMonitorPlugin(Plugin):
                 f"swept_coverage_monitor[{self.label}]: the sample set is empty, so there is "
                 f"nothing to accumulate coverage over. The volume sampler keeps only enclosed "
                 f"free-space points, so an unwalled world yields none at these heights "
-                f"({list(self.heights)}); enable 'objects', add heights inside the room, or "
+                f"({list(heights)}); enable 'objects', add heights inside the room, or "
                 f"coarsen 'resolution'."
             )
 
         self._regions = self._load_regions()
-        if self._regions and self.restrict:
+        if self._regions and self.settings.restrict:
             from ..coverage.regions import union_mask
 
             mask = union_mask(points, self._regions)
@@ -462,18 +516,19 @@ class SweptCoverageMonitorPlugin(Plugin):
         self._build_cells()
 
     def _load_regions(self) -> list:
-        if not self.regions_spec:
+        settings = self.settings
+        if not settings.regions:
             return []
         from ..coverage import regions as regionsmod
 
-        spec = self.regions_spec
+        spec = settings.regions
         if isinstance(spec, str):
             path = Path(spec)
             # A path in a world document names a file beside that document, not beside the CWD.
             spec = str(path if path.is_absolute() else (self.base_dir / path))
         regs = regionsmod.load_regions(spec)
-        if self.region_names:
-            regs = regionsmod.select(regs, self.region_names)
+        if settings.region_names:
+            regs = regionsmod.select(regs, settings.region_names)
         if not regs:
             raise RuntimeError(
                 f"swept_coverage_monitor[{self.label}]: 'regions' produced no regions, so a "
@@ -493,7 +548,7 @@ class SweptCoverageMonitorPlugin(Plugin):
             self._cell_of = np.zeros(0, dtype=np.int64)
             self._n_cells = 0
             return
-        cells = np.floor(self._points[self._grid_idx, :2] / self.resolution).astype(np.int64)
+        cells = np.floor(self._points[self._grid_idx, :2] / self._resolution).astype(np.int64)
         unique_cells, inverse = np.unique(cells, axis=0, return_inverse=True)
         self._cell_of = np.asarray(inverse).reshape(-1)
         self._n_cells = len(unique_cells)
@@ -508,15 +563,17 @@ class SweptCoverageMonitorPlugin(Plugin):
         # A reset is a new clock, so the old due time would skip the start of the run by however far
         # `data.time` had moved.
         self._next_due = 0.0
+        if self._fov is not None:
+            self._fov.origin, self._fov.rot = (a.copy() for a in self._fov_start)
 
     def post_step(self, ctx: SimContext) -> None:
         # A thousandth of a step short still counts: float drift in the summed clock would otherwise
         # push a period the timestep divides to the step after it.
         if ctx.sim_time < self._next_due - 1e-3 * ctx.model.opt.timestep:
             return
-        self._next_due = ctx.sim_time + 1.0 / self.compute_rate_hz
+        self._next_due = ctx.sim_time + self._period
         self._repose()
-        result = coverage(ctx.model, ctx.data, [self._fov], self._points)
+        result = evaluate_coverage(ctx.model, ctx.data, [self._fov], self._points)
         # The accumulation: a point covered in this evaluation gains a visit, and the union is
         # `visits > 0`. Monotone by construction -- nothing here ever subtracts.
         self._visits += result.by_sensor[:, 0]
@@ -529,7 +586,7 @@ class SweptCoverageMonitorPlugin(Plugin):
         covered_area = sampled_area = UNKNOWN_AREA
         cell_area = 0.0
         if self._n_cells:
-            cell_area = self.resolution * self.resolution
+            cell_area = self._resolution * self._resolution
             hit_cells = np.bincount(self._cell_of[covered[self._grid_idx]], minlength=self._n_cells)
             covered_area = float(np.count_nonzero(hit_cells) * cell_area)
             sampled_area = float(self._n_cells * cell_area)
@@ -548,10 +605,10 @@ class SweptCoverageMonitorPlugin(Plugin):
     # -- the optional file -------------------------------------------------------------------------
 
     def shutdown(self, ctx: SimContext) -> None:
-        if not self.out or self._fov is None:
+        if not self.settings.out or self._fov is None:
             return
         report = self.build_report()
-        out = Path(self.out)
+        out = Path(self.settings.out)
         if not out.is_absolute():
             out = self.base_dir / out
         out.mkdir(parents=True, exist_ok=True)
@@ -593,7 +650,7 @@ class SweptCoverageMonitorPlugin(Plugin):
         report = build_report(
             result,
             world=str((self._ctx.config.get("sim", {}) if self._ctx else {}).get("world", "")),
-            gap_resolution=self.resolution,
+            gap_resolution=self._resolution,
             per_region=per_region,
         )
         current = self.read()
@@ -607,7 +664,7 @@ class SweptCoverageMonitorPlugin(Plugin):
             "sampled_area_m2": current.sampled_area_m2,
             "cell_area_m2": current.cell_area_m2,
             "n_evaluations": current.n_evaluations,
-            "compute_rate_hz": self.compute_rate_hz,
+            "compute_rate_hz": self.settings.compute_rate_hz,
             "mean_visits": current.mean_visits,
             "max_visits": int(self._visits.max()) if len(self._visits) else 0,
             "sim_time": current.sim_time,

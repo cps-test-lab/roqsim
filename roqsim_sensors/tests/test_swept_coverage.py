@@ -415,12 +415,21 @@ def test_an_empty_sample_set_is_refused(tmp_path):
 
 def test_a_mistyped_sample_block_is_reported_not_raised(tmp_path):
     """`validate_config` collects every problem into one report; an AttributeError escapes it."""
-    with pytest.raises(PluginError, match="'sample' must be a mapping"):
+    with pytest.raises(PluginError, match="'sample' must be dict"):
         _engine(_world(tmp_path, sample="resolution=0.25"))
     with pytest.raises(PluginError, match="'heights' must be a non-empty list"):
         _engine(_world(tmp_path, sample={**SAMPLE, "heights": []}))
-    with pytest.raises(PluginError, match="'offset' must be 3 numbers"):
-        _engine(_world(tmp_path, offset=[0.2, 0.0]))
+
+
+def test_a_pose_is_stated_one_way_and_only_for_a_body_mount(tmp_path):
+    """The sensor's place on a body is a ``pose:``; a ``offset``/``rpy`` pair is not read, and a
+    camera or site mount is posed by the model, so a ``pose`` beside one would be ignored."""
+    with pytest.raises(PluginError, match="'offset' is not a setting"):
+        _engine(_world(tmp_path, camera="", body="base", offset=[0.2, 0.0, 0.0]))
+    with pytest.raises(PluginError, match="'pose' places the sensor in a body mount's frame"):
+        _engine(_world(tmp_path, pose={"position": {"x": 0.2}}))
+    with pytest.raises(PluginError, match="has no key"):
+        _engine(_world(tmp_path, camera="", body="base", pose={"pos": [0.2, 0.0, 0.0]}))
 
 
 def test_a_bad_rate_is_refused(tmp_path):
@@ -547,17 +556,15 @@ def test_a_lidar_on_a_site_sweeps_behind_itself_too(tmp_path):
         engine.shutdown()
 
 
-def test_a_body_mount_carries_the_offset_through_the_carrier_rotation(tmp_path):
+def test_a_body_mount_carries_the_pose_through_the_carrier_rotation(tmp_path):
     """The one piece of geometry this plugin composes itself: mount pose x sensor-in-mount pose.
 
-    ``offset`` is read in the mount frame, so a carrier yawed 90 degrees must put a +x offset on the
+    ``pose`` is read in the mount frame, so a carrier yawed 90 degrees must put a +x offset on the
     world +y axis. Getting that composition wrong (applying the offset in world, or transposing the
     rotation) still produces a moving sensor and a plausible coverage number, so the pose itself is
     asserted rather than only its effect.
     """
-    engine = _engine(
-        _world(tmp_path, camera="", body="base", offset=[0.2, 0.0, 0.0], rpy=[0.0, 0.0, 0.0])
-    )
+    engine = _engine(_world(tmp_path, camera="", body="base", pose={"position": {"x": 0.2}}))
     try:
         plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
         # Yaw the carrier a quarter turn about +z (MuJoCo quaternions are w, x, y, z).
@@ -569,11 +576,36 @@ def test_a_body_mount_carries_the_offset_through_the_carrier_rotation(tmp_path):
         engine.step()
 
         assert plugin._fov.origin == pytest.approx([3.0, 0.2, 0.5], abs=1e-6)
-        # rpy=0 points the adapter's camera along the mount's +x, which is now world +y.
+        # No orientation points the adapter's camera along the mount's +x, which is now world +y.
         assert plugin._fov.rot @ np.array([0.0, 0.0, -1.0]) == pytest.approx(
             [0.0, 1.0, 0.0], abs=1e-6
         )
         assert _reader(engine).read().n_covered > 0
+    finally:
+        engine.shutdown()
+
+
+def test_a_body_mount_turns_the_sensor_by_the_pose_orientation(tmp_path):
+    """The pose's orientation is applied on top of the adapter's base rotation, in the mount frame:
+    a quarter turn of yaw on an unrotated carrier points the camera along world +y."""
+    engine = _engine(
+        _world(
+            tmp_path,
+            camera="",
+            body="base",
+            pose={"position": {"x": 0.2}, "orientation": {"yaw": float(np.pi / 2)}},
+        )
+    )
+    try:
+        plugin = next(p for p in engine.plugins if isinstance(p, SweptCoverageMonitorPlugin))
+        engine.step()
+        pos, mat = plugin._mount_pose()
+        assert plugin._fov.origin == pytest.approx(pos + mat @ [0.2, 0.0, 0.0], abs=1e-6)
+        # The carrier's own +y, which is world +y while it has not turned.
+        assert plugin._fov.rot @ np.array([0.0, 0.0, -1.0]) == pytest.approx(
+            mat @ [0.0, 1.0, 0.0], abs=1e-6
+        )
+        assert mat @ [0.0, 1.0, 0.0] == pytest.approx([0.0, 1.0, 0.0], abs=1e-3)
     finally:
         engine.shutdown()
 

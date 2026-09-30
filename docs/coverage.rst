@@ -79,14 +79,15 @@ geometry at ``compute_rate_hz`` while the world runs and accumulate the union of
 
 The mount is given as exactly one of ``camera:``, ``site:`` or ``body:`` — naming a mount on a moving
 entity is the whole point, and the pose is re-read from the model on every evaluation rather than
-captured once.
+captured once. A body mount places the sensor at ``pose`` in the body's frame, a
+``geometry_msgs/Pose`` whose omitted components are 0; a camera or site is posed by the model.
 
 .. code:: yaml
 
    components:
      - swept_coverage_monitor:
          type: lidar              # which adapter builds the field of view
-         site: lidar              # or camera: <name> / body: <name> (+ offset, rpy)
+         site: lidar              # or camera: <name> / body: <name> (+ pose)
          config: {angle_min: -0.51, angle_max: 0.51, max_range: 1.3}
          sample: {volume: true, resolution: 0.05, heights: [0.05]}
          compute_rate_hz: 5.0     # how often the union is updated
