@@ -116,6 +116,7 @@ def rig(built):
         arms[name] = ArmControllerPlugin(cfg, entity="robot")
     for p in (drive, *arms.values()):
         p.configure(ctx)
+        p.register_endpoints(ctx)
         p.on_reset(ctx)
     return _Rig(model, data, ctx, drive, arms)
 

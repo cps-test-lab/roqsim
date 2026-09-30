@@ -149,7 +149,7 @@ physics and sensors; that division is what makes the result mean something about
 
 ```yaml
 components:
-  - spawn_robot: {model: x500, prefix: "x500_", pos: [0.0, 0.0], namespace: drone}
+  - spawn_robot: {model: x500, prefix: "x500_", namespace: drone}
     name: drone
     components:
       - multirotor_motors: {}
@@ -162,8 +162,8 @@ ROS 2 then talks to **PX4**, not to roqsim: a uXRCE-DDS agent bridges PX4's uORB
 `/fmu/in/*` and `/fmu/out/*` as `px4_msgs`, and a node commands offboard flight there. The roqsim
 `ros2_bridge` above serves only what this world's plugins declare: the GNSS `fix`
 (`sensor_msgs/NavSatFix`), the `motor_cmd` input and `/clock`. It publishes no odometry. To measure
-the estimator's error against the truth, add `ground_truth_pose` to the drone's components
-(`docs/ground_truth.rst`).
+the estimator's error against the truth, read the drone's true pose from the run's recording or
+from its core pose endpoint `sim/entities/<name>/pose` (`docs/ground_truth.rst`).
 
 `pymavlink` carries the wire format and is an extra, not a hard dependency:
 
