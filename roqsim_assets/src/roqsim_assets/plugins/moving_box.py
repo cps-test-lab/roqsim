@@ -16,15 +16,12 @@ Two motion modes, and they are mutually exclusive:
 
 ``waypoints`` — a fixed route, the reproducible default. Deterministic, inspectable, diffable.
 
-``random_walk`` — a seeded random walk for papers that specify only "moves randomly". The box drives
-straight until it is about to hit something, then picks a new heading. Obstacles are found by
-**ray-casting the compiled model**, so it respects whatever geometry the world contains (baked scene,
-`box` props, other movers) without a map file, and it needs no wall list to be configured. Every
-heading is drawn through ``ctx.rng_for``, so the walk is a function of the run's seed, the episode and
-sim time, like every other draw in roqsim: a run replays exactly from its recorded seed, and each
-repetition of a trial in one process walks its own path rather than replaying the first. The
-config's ``seed`` selects the mover's own stream within that, so two cells differing only in it walk
-differently under one run seed.
+``random_walk`` — for papers that specify only "moves randomly". The box drives straight until it
+is about to hit something, then picks a new heading. Obstacles are found by **ray-casting the
+compiled model**, so it respects whatever geometry the world contains (baked scene, `box` props, other
+movers) without a map file, and it needs no wall list to be configured. The walk follows the run's
+seed (``sim.seed`` / ``roqsim sim --seed``) through ``ctx.rng_for``, keyed on the mover's address:
+one run seed replays one walk, and two movers in a run walk differently.
 
 Config::
 
@@ -44,9 +41,8 @@ Config::
       loop: true                # true -> cycle the route forever; false -> stop at the last point
       ping_pong: false          # true -> reverse at the end instead of jumping back to the start
 
-      # -- mode B: a seeded random walk -----------------------------------------------------------
+      # -- mode B: a random walk (every key optional: `random_walk: {}`) -------------------------
       random_walk:
-        seed: 1                 # REQUIRED — this mover's stream within the run's seed
         clearance: 0.5          # m of free space required ahead; below it, a new heading is picked
         bounds: [x0, y0, x1, y1]   # optional axis-aligned box the centre must stay inside
         turn_deg: [60, 300]     # heading change sampled uniformly from this range, in degrees
@@ -97,7 +93,7 @@ class MovingBoxPlugin(Plugin):
         self.loop = bool(self.config.get("loop", True))
         self.ping_pong = bool(self.config.get("ping_pong", False))
 
-        walk = self.config.get("random_walk") or None
+        walk = self.config.get("random_walk")
         self.random_walk = dict(walk) if isinstance(walk, dict) else None
 
         self._body_name = self.prefix + _ROOT_BODY
@@ -202,26 +198,25 @@ class MovingBoxPlugin(Plugin):
 
         has_wp = bool(config.get("waypoints"))
         walk = config.get("random_walk")
+        has_walk = walk is not None
         # Fail loudly rather than picking a motion for the author: a silently-chosen obstacle
         # trajectory is exactly the kind of invisible experiment change this substrate refuses.
-        if has_wp and walk:
+        if has_wp and has_walk:
             errors.append("give either 'waypoints' or 'random_walk', not both")
-        if not has_wp and not walk:
+        if not has_wp and not has_walk:
             errors.append("a mover needs a motion: give 'waypoints' or 'random_walk'")
         if has_wp and not self._waypoints(config["waypoints"]):
             errors.append("'waypoints' must be a list of [x, y] pairs in world metres")
-        if walk is not None:
+        if has_walk:
             if not isinstance(walk, dict):
                 errors.append("'random_walk' must be a mapping")
-            elif "seed" not in walk:
-                errors.append(
-                    "'random_walk' requires a 'seed' — an unseeded obstacle is not reproducible"
-                )
             else:
-                try:
-                    int(walk["seed"])
-                except (TypeError, ValueError):
-                    errors.append("'random_walk.seed' must be an integer")
+                if "seed" in walk:
+                    errors.append(
+                        "'random_walk.seed' is not a key here: the walk draws from the run's seed "
+                        "(sim.seed / roqsim sim --seed) through ctx.rng_for, so the whole world "
+                        "reproduces together"
+                    )
                 if "bounds" in walk:
                     try:
                         b = [float(v) for v in walk["bounds"]]
@@ -288,7 +283,7 @@ class MovingBoxPlugin(Plugin):
                     "pos": list(self.pos),
                     "quat": list(self.quat),
                     "speed": self.speed,
-                    "motion": "random_walk" if self.random_walk else "waypoints",
+                    "motion": "random_walk" if self.random_walk is not None else "waypoints",
                 },
             )
         )
@@ -371,10 +366,9 @@ class MovingBoxPlugin(Plugin):
     def _draw(self, ctx: SimContext, what: str):
         """This step's generator for *what*, from ``ctx.rng_for`` -- never a held one.
 
-        Keyed on the entity's address and the config's ``seed``, so two movers, and two values of the
-        seed, draw independent streams under one run seed.
+        Keyed on the entity's address, so two movers draw independent streams under one run seed.
         """
-        return ctx.rng_for(f"{self.address}.random_walk.{int(self.random_walk['seed'])}.{what}")
+        return ctx.rng_for(f"{self.address}.random_walk.{what}")
 
     def _turn_range(self, value) -> tuple[float, float]:
         try:

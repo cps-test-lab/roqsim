@@ -1,9 +1,10 @@
 """`moving_box`: the kinematically driven rectangular obstacle.
 
 What is worth pinning: it is a MOCAP body (physics may not move it), it travels at exactly the
-configured speed, a seeded random walk is reproducible AND stays out of walls, and `on_reset` restores
-the pose, and the walk draws through ``ctx.rng_for`` -- so it is a function of the run's seed, the
-episode and sim time, and repetition N of a campaign cell is independent of whatever ran before it.
+configured speed, the random walk stays out of walls, `on_reset` restores the pose, and the walk
+draws through ``ctx.rng_for`` -- a function of the run's seed, the mover's address, the episode and
+sim time, with no seed of its own -- so repetition N of a campaign cell is independent of whatever
+ran before it.
 """
 
 from __future__ import annotations
@@ -135,15 +136,42 @@ def test_ping_pong_reverses_instead_of_jumping_home():
 # --------------------------------------------------------------------------- random walk
 
 
-def test_random_walk_is_reproducible_per_seed():
-    """Same seed -> identical track; different seed -> a different one. This is what lets a campaign
-    vary obstacle motion by varying the seed and still replay any trial exactly."""
-    a = _build(**_cfg(random_walk={"seed": 7}))
-    b = _build(**_cfg(random_walk={"seed": 7}))
-    c = _build(**_cfg(random_walk={"seed": 8}))
-    ta, tb, tc = (_run(x[2], x[3], 6.0) for x in (a, b, c))
-    assert np.allclose(ta, tb), "same seed produced different motion"
-    assert not np.allclose(ta, tc), "different seeds produced identical motion"
+def test_the_same_run_seed_reproduces_the_walk():
+    """A run replays exactly from its recorded seed."""
+    a = _build(seed=7, **_cfg(random_walk={}))
+    b = _build(seed=7, **_cfg(random_walk={}))
+    assert np.allclose(_run(*a[2:], 6.0), _run(*b[2:], 6.0)), "same run seed, different walk"
+
+
+def test_two_boxes_in_one_run_walk_differently():
+    """Identical movers differ by their addresses, so one run seed gives each its own walk."""
+    spec = mujoco.MjSpec()
+    floor = spec.worldbody.add_geom()
+    floor.type = mujoco.mjtGeom.mjGEOM_PLANE
+    floor.size = [20, 20, 0.05]
+    ctx = SimContext(config={})
+    ctx.seed = 7
+    boxes = [
+        MovingBoxPlugin(
+            _cfg(prefix=f"{label}_", pose={"position": {"x": x, "y": 0.0}}, random_walk={}),
+            label=label,
+        )
+        for label, x in (("cube_1", -5.0), ("cube_2", 5.0))
+    ]
+    for box in boxes:
+        box.build(spec, ctx)
+    ctx.model = spec.compile()
+    ctx.data = mujoco.MjData(ctx.model)
+    mujoco.mj_forward(ctx.model, ctx.data)
+    for box in boxes:
+        box.configure(ctx)
+    tracks = [[], []]
+    for _ in range(int(3.0 / ctx.model.opt.timestep)):
+        for box, track in zip(boxes, tracks, strict=True):
+            box.pre_step(ctx)
+            track.append(ctx.data.mocap_pos[box._mocapid][:2] - np.array(box.pos[:2]))
+        mujoco.mj_step(ctx.model, ctx.data)
+    assert not np.allclose(*tracks), "two movers in one run walked the same path"
 
 
 def test_random_walk_stays_inside_a_room():
@@ -152,7 +180,7 @@ def test_random_walk_stays_inside_a_room():
     Corridor-scale room (4 x 4 m) with 1 m-tall walls; the mover is 0.3 m and drives for 60 s.
     """
     walls = ((0, 2.15, 4.6, 0.3), (0, -2.15, 4.6, 0.3), (2.15, 0, 0.3, 4.6), (-2.15, 0, 0.3, 4.6))
-    _, _, plugin, ctx = _build(walls, **_cfg(speed=0.4, random_walk={"seed": 3, "clearance": 0.3}))
+    _, _, plugin, ctx = _build(walls, **_cfg(speed=0.4, random_walk={"clearance": 0.3}))
     track = _run(plugin, ctx, 60.0)
     assert np.abs(track).max() < 2.0, f"escaped the room: max |xy| = {np.abs(track).max():.3f}"
     # And it actually moved around rather than idling in a corner.
@@ -160,9 +188,7 @@ def test_random_walk_stays_inside_a_room():
 
 
 def test_random_walk_respects_explicit_bounds():
-    _, _, plugin, ctx = _build(
-        **_cfg(speed=0.5, random_walk={"seed": 5, "bounds": [-1.0, -1.0, 1.0, 1.0]})
-    )
+    _, _, plugin, ctx = _build(**_cfg(speed=0.5, random_walk={"bounds": [-1.0, -1.0, 1.0, 1.0]}))
     track = _run(plugin, ctx, 30.0)
     assert track[:, 0].min() >= -1.001 and track[:, 0].max() <= 1.001
     assert track[:, 1].min() >= -1.001 and track[:, 1].max() <= 1.001
@@ -170,7 +196,7 @@ def test_random_walk_respects_explicit_bounds():
 
 def test_random_walk_moves_at_the_configured_speed():
     """Per-step displacement is speed*dt except on the steps where a new heading is sampled."""
-    model, _, plugin, ctx = _build(**_cfg(speed=0.3, random_walk={"seed": 11}))
+    model, _, plugin, ctx = _build(**_cfg(speed=0.3, random_walk={}))
     track = _run(plugin, ctx, 10.0)
     steps = np.linalg.norm(np.diff(track, axis=0), axis=1)
     expected = 0.3 * model.opt.timestep
@@ -193,7 +219,7 @@ def test_reset_restores_the_pose_and_a_repeated_episode_repeats_the_walk():
     """Repetition N must not inherit repetition N-1's obstacle position, and the walk is a function
     of (run seed, episode, sim time) -- so the same episode replayed is the same walk."""
     _, data, plugin, ctx = _build(
-        **_cfg(pose={"position": {"x": 1.0, "y": 2.0}}, speed=0.5, random_walk={"seed": 4})
+        **_cfg(pose={"position": {"x": 1.0, "y": 2.0}}, speed=0.5, random_walk={})
     )
     first = _run(plugin, ctx, 5.0)
     _reset(plugin, ctx, next_episode=False)
@@ -206,7 +232,7 @@ def test_each_episode_walks_its_own_path():
     """The walk draws through ctx.rng_for, keyed on the episode: repetitions of a trial in one
     process are samples, not one walk replayed."""
     walls = ((0, 2.15, 4.6, 0.3), (0, -2.15, 4.6, 0.3), (2.15, 0, 0.3, 4.6), (-2.15, 0, 0.3, 4.6))
-    _, _, plugin, ctx = _build(walls, **_cfg(speed=0.4, random_walk={"seed": 3, "clearance": 0.3}))
+    _, _, plugin, ctx = _build(walls, **_cfg(speed=0.4, random_walk={"clearance": 0.3}))
     first = _run(plugin, ctx, 20.0)
     _reset(plugin, ctx)
     second = _run(plugin, ctx, 20.0)
@@ -216,8 +242,7 @@ def test_each_episode_walks_its_own_path():
 def test_the_runs_seed_varies_the_walk():
     walls = ((0, 2.15, 4.6, 0.3), (0, -2.15, 4.6, 0.3), (2.15, 0, 0.3, 4.6), (-2.15, 0, 0.3, 4.6))
     tracks = [
-        _run(*_build(walls, seed=s, **_cfg(speed=0.4, random_walk={"seed": 3}))[2:], 20.0)
-        for s in (1, 2)
+        _run(*_build(walls, seed=s, **_cfg(speed=0.4, random_walk={}))[2:], 20.0) for s in (1, 2)
     ]
     assert not np.allclose(*tracks), "two runs with different seeds walked identically"
 
@@ -248,15 +273,19 @@ def test_reset_restores_waypoint_progress():
                 size=[0.3, 0.3, 0.3],
                 speed=0.5,
                 waypoints=[[1, 0]],
-                random_walk={"seed": 1},
+                random_walk={},
             ),
             "not both",
         ),
         (
             dict(
-                pose={"position": {"x": 0, "y": 0}}, size=[0.3, 0.3, 0.3], speed=0.5, random_walk={}
+                pose={"position": {"x": 0, "y": 0}},
+                size=[0.3, 0.3, 0.3],
+                speed=0.5,
+                random_walk={"seed": 1},
             ),
-            "requires a 'seed'",
+            "'random_walk.seed' is not a key here: the walk draws from the run's seed "
+            "(sim.seed / roqsim sim --seed)",
         ),
         (
             dict(
@@ -281,7 +310,7 @@ def test_reset_restores_waypoint_progress():
                 pose={"position": {"x": 0, "y": 0}},
                 size=[0.3, 0.3, 0.3],
                 speed=0.5,
-                random_walk={"seed": 1, "bounds": [1, 1, 0, 0]},
+                random_walk={"bounds": [1, 1, 0, 0]},
             ),
             "bounds",
         ),
@@ -296,6 +325,7 @@ def test_config_errors_are_reported_not_guessed(cfg, needle):
 def test_a_valid_config_has_no_errors():
     for cfg in (
         _cfg(waypoints=[[1.0, 0.0], [1.0, 1.0]]),
-        _cfg(random_walk={"seed": 2, "clearance": 0.4, "bounds": [-2, -2, 2, 2]}),
+        _cfg(random_walk={}),
+        _cfg(random_walk={"clearance": 0.4, "bounds": [-2, -2, 2, 2]}),
     ):
         assert MovingBoxPlugin(cfg).validate_config(cfg) == []
