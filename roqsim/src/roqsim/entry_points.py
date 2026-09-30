@@ -17,7 +17,4 @@ from importlib import metadata
 @functools.cache
 def entry_points(group: str) -> tuple:
     """Every entry point registered in ``group``, in the order the metadata lists them."""
-    eps = metadata.entry_points()
-    if hasattr(eps, "select"):  # Python 3.10+
-        return tuple(eps.select(group=group))
-    return tuple(eps.get(group, ()))  # pragma: no cover - legacy
+    return tuple(metadata.entry_points(group=group))
