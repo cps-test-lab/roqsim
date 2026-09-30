@@ -91,7 +91,7 @@ refused for an MJCF ``--world``.
 ``placements.json`` is a list of ``{type, pose, config?, label?}`` using catalog types, or
 ``{"placements": [...]}``, which is what ``greedy`` writes. A placement is a ``pose`` only: a world
 pose as ``SpawnEntity`` states one (:doc:`plugins`), with ``position.z`` given, since a mounted sensor
-has no resting height; ``pos``/``rpy`` are refused with the ``pose`` they mean. The
+has no resting height; any other key is refused. The
 ``estimate`` report carries ``achieved`` (coverage fractions), ``uncovered_regions`` (where to add a
 sensor), ``per_sensor_contribution`` (redundant sensors have ``unique_points: 0``), and ``per_object``.
 To refine a layout, evaluate, read the gaps, adjust ``placements.json`` and evaluate again.

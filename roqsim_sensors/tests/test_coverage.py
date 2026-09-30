@@ -20,6 +20,7 @@ from roqsim_sensors.models import MODELS_DIR
 from roqsim import exit_status
 from roqsim.manifest import manifest_fov
 from roqsim.models import resolve_model
+from roqsim.pose import rpy_to_quat
 from roqsim.registry import resolve_plugin
 
 MODEL_NAMES = sorted(
@@ -76,11 +77,11 @@ def test_frustum_projection_front_and_back():
         PlacedSensor(
             "camera",
             pos=[0, 0, 0],
-            rpy=[0, 0, 0],
+            quat=[1, 0, 0, 0],
             config={"fovy": 60, "width": 640, "height": 480, "far": 10},
         ),
     )
-    # rpy=0 points the optical axis along +x (world).
+    # the identity points the optical axis along +x (world).
     assert np.allclose(cam.rot @ np.array([0, 0, -1.0]), [1, 0, 0], atol=1e-9)
     local = cam.to_local(np.array([[5, 0, 0.0], [-5, 0, 0.0], [0, 0, 5.0]]))
     assert in_fov(cam, local).tolist() == [True, False, False]
@@ -90,7 +91,7 @@ def test_frustum_projection_front_and_back():
 
 
 def test_lidar_adapter_uses_plugin_defaults():
-    fov = build_fov(None, None, PlacedSensor("lidar", pos=[0, 0, 0], rpy=[0, 0, 0], config={}))
+    fov = build_fov(None, None, PlacedSensor("lidar", pos=[0, 0, 0], quat=[1, 0, 0, 0], config={}))
     assert fov.kind is FovKind.CONE_BAND
     assert fov.range_is_physical is True
     assert fov.h_fov == (0.0, 2 * math.pi)
@@ -100,7 +101,7 @@ def test_lidar_adapter_uses_plugin_defaults():
 
 def test_livox_adapter_uses_plugin_defaults():
     fov = build_fov(
-        None, None, PlacedSensor("livox_mid360", pos=[0, 0, 0], rpy=[0, 0, 0], config={})
+        None, None, PlacedSensor("livox_mid360", pos=[0, 0, 0], quat=[1, 0, 0, 0], config={})
     )
     assert math.degrees(fov.v_fov[0]) == pytest.approx(-7.0, abs=1e-3)
     assert math.degrees(fov.v_fov[1]) == pytest.approx(52.0, abs=1e-3)
@@ -109,14 +110,14 @@ def test_livox_adapter_uses_plugin_defaults():
 
 def test_camera_far_is_not_physical():
     fov = build_fov(
-        None, None, PlacedSensor("oakd_camera", pos=[0, 0, 0], rpy=[0, 0, 0], config={})
+        None, None, PlacedSensor("oakd_camera", pos=[0, 0, 0], quat=[1, 0, 0, 0], config={})
     )
     assert fov.range_is_physical is False
 
 
 def test_unknown_sensor_type_raises():
     with pytest.raises(KeyError):
-        build_fov(None, None, PlacedSensor("mystery_sensor", pos=[0, 0, 0], rpy=[0, 0, 0]))
+        build_fov(None, None, PlacedSensor("mystery_sensor", pos=[0, 0, 0], quat=[1, 0, 0, 0]))
 
 
 def test_registered_types_cover_bundled_sensors():
@@ -148,7 +149,7 @@ def _occlusion_world():
         PlacedSensor(
             "camera",
             pos=[0, 0, 0.5],
-            rpy=[0, 0, 0],
+            quat=[1, 0, 0, 0],
             config={"fovy": 90, "width": 640, "height": 480, "far": 10, "near": 0.05},
         ),
     )
@@ -229,7 +230,10 @@ def test_build_report_schema_and_gaps():
         m,
         d,
         PlacedSensor(
-            "camera", pos=[0, 0, 2.5], rpy=[0, math.pi / 2, 0], config={"fovy": 90, "far": 6}
+            "camera",
+            pos=[0, 0, 2.5],
+            quat=rpy_to_quat(0, math.pi / 2, 0),
+            config={"fovy": 90, "far": 6},
         ),
     )
     from roqsim_sensors.coverage import sampling
@@ -822,11 +826,10 @@ _DOWN_POSE = {"position": {"x": 1.0, "y": 2.0, "z": 2.5}, "orientation": {"pitch
     [
         (
             {"type": "livox_mid360", "pos": [3, 1, 2.4], "rpy": [math.pi, 0, 0]},
-            r"'pos' and 'rpy' are not read -- a placement is stated as 'pose'.*"
-            r"pose: \{position: \{x: 3\.0, y: 1\.0, z: 2\.4\}, orientation: \{roll: 3\.14",
+            r"unknown key\(s\) 'pos' \(did you mean 'pose'\?\), 'rpy'; it takes config, label, pose, type",
         ),
-        ({"type": "oakd_camera", "pos": [0, 0, 2]}, r"'pos' is not read.*'pose'"),
-        ({"type": "oakd_camera", "rpy": [0, 1, 0], "pose": _DOWN_POSE}, r"'rpy' is not read"),
+        ({"type": "oakd_camera", "rpy": [0, 1, 0], "pose": _DOWN_POSE}, r"unknown key\(s\) 'rpy'"),
+        ({"type": "oakd_camera", "pose": _DOWN_POSE, "lable": "a"}, r"did you mean 'label'"),
         ({"type": "oakd_camera"}, r"'pose' is required"),
         (
             {"type": "oakd_camera", "pose": {"position": {"x": 1, "y": 2}}},
@@ -842,6 +845,15 @@ def test_a_placement_that_is_not_a_pose_is_refused(placement, expect):
         placed_from_proposal(placement)
 
 
+def _fixed_axis(roll, pitch, yaw):
+    """world<-sensor rotation of a fixed-axis XYZ roll/pitch/yaw (ROS/URDF), i.e. Rz @ Ry @ Rx."""
+    cr, sr, cp, sp, cy, sy = (f(a) for a in (roll, pitch, yaw) for f in (np.cos, np.sin))
+    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+    return rz @ ry @ rx
+
+
 def test_a_pose_places_the_sensor_as_the_same_rpy_does():
     """The pose's orientation reaches the field of view: identical to the fixed-axis roll/pitch/yaw
     it spells, and a pitch of 90 degrees turns a camera's optical axis straight down."""
@@ -852,32 +864,27 @@ def test_a_pose_places_the_sensor_as_the_same_rpy_does():
         "position": {"x": 1.0, "y": 2.0, "z": 2.5},
         "orientation": dict(zip(("roll", "pitch", "yaw"), rpy, strict=True)),
     }
-    for stype in ("oakd_camera", "livox_mid360"):
+    for stype, base in (("oakd_camera", adapters._CAMERA_BASE), ("livox_mid360", np.eye(3))):
         got = build_fov(None, None, placed_from_proposal({"type": stype, "pose": pose}))
-        want = build_fov(
-            None,
-            None,
-            PlacedSensor(
-                stype, pos=[1.0, 2.0, 2.5], rpy=rpy, config=dict(CATALOG[stype].fov_template)
-            ),
-        )
-        assert np.allclose(got.rot, want.rot, atol=1e-12)
+        assert np.allclose(got.rot, _fixed_axis(*rpy) @ base, atol=1e-12)
         assert np.allclose(got.origin, [1.0, 2.0, 2.5])
     down = build_fov(None, None, placed_from_proposal({"type": "oakd_camera", "pose": _DOWN_POSE}))
     assert np.allclose(down.rot @ np.array([0, 0, -1.0]), [0, 0, -1], atol=1e-9)
 
 
-def test_the_probe_refuses_a_pos_rpy_placement_at_load():
+def test_the_probe_refuses_an_unknown_placement_key_at_load():
     from roqsim_sensors.plugins.sensor_coverage_probe import SensorCoverageProbePlugin
 
     config = {"sensors": [{"type": "livox_mid360", "pos": [3, 1, 2.4], "rpy": [3.14159, 0, 0]}]}
     errors = SensorCoverageProbePlugin(config).validate_config(config)
-    assert len(errors) == 1 and "'pose'" in errors[0] and "'pos' and 'rpy'" in errors[0], errors
+    assert len(errors) == 1 and "unknown key(s) 'pos' (did you mean 'pose'?), 'rpy'" in errors[0], (
+        errors
+    )
     good = {"sensors": [{"type": "livox_mid360", "pose": _DOWN_POSE}]}
     assert SensorCoverageProbePlugin(good).validate_config(good) == []
 
 
-def test_estimate_refuses_a_pos_rpy_placements_file(tmp_path, capsys):
+def test_estimate_refuses_an_unknown_placement_key(tmp_path, capsys):
     from roqsim_sensors.coverage import cli
 
     (tmp_path / "w.xml").write_text(
@@ -889,7 +896,7 @@ def test_estimate_refuses_a_pos_rpy_placements_file(tmp_path, capsys):
     argv = _estimate_argv(tmp_path, str(tmp_path / "w.xml"), str(tmp_path / "p.json"))
     assert cli.main(argv) == exit_status.BAD_INPUT
     err = capsys.readouterr().err.strip().splitlines()
-    assert len(err) == 1 and "'pos' and 'rpy' are not read" in err[0], err
+    assert len(err) == 1 and "unknown key(s) 'pos' (did you mean 'pose'?)" in err[0], err
 
 
 def test_generated_candidates_are_poses_the_evaluator_reads():

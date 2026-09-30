@@ -16,7 +16,7 @@ Config::
                                #   - {type: livox_mid360,
                                #      pose: {position: {x: 3, y: 1, z: 2.4},
                                #             orientation: {roll: 3.14159}}}
-                               #   `pose` is a world pose with z stated; `pos`/`rpy` are refused.
+                               #   `pose` is a world pose with z stated; any other key is refused.
       camera_far: 10.0         # detection range assumed for 'auto' cameras (metres; not physics)
       target: {k: 1, frac: 0.95}
       sample:

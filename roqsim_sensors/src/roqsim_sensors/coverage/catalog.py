@@ -29,9 +29,10 @@ import mujoco
 import numpy as np
 
 from roqsim.config import parse_plugin_entry
+from roqsim.document import refuse_unknown_keys
 from roqsim.manifest import load_manifest, manifest_fov
 from roqsim.models import resolve_model
-from roqsim.pose import PoseError, parse_pose, pose_spelling
+from roqsim.pose import PoseError, parse_pose
 
 from .adapters import PlacedSensor
 
@@ -214,26 +215,24 @@ def catalog_as_dict() -> dict:
     return out
 
 
+#: The keys of a placement proposal; any other is refused rather than ignored.
+PLACEMENT_KEYS = ("type", "pose", "config", "label")
+
+
 def placed_from_proposal(proposal: dict, *, index: int = 0) -> PlacedSensor:
     """Build a hypothetical :class:`PlacedSensor` from a placement proposal dict.
 
     ``proposal`` = ``{"type": str, "pose": {...}, "config": {..}, "label": str}``. ``pose`` is a
     world pose as :func:`roqsim.pose.parse_pose` reads one, with ``position.z`` stated: a sensor on a
-    wall or a ceiling has no resting height to fall back on. ``pos``/``rpy`` are refused with the
-    ``pose`` they mean. The catalog's ``fov_template`` supplies defaults; ``config`` overrides them
-    per placement.
+    wall or a ceiling has no resting height to fall back on. Any other key is refused. The catalog's
+    ``fov_template`` supplies defaults; ``config`` overrides them per placement.
     """
     if not isinstance(proposal, dict):
         raise ValueError(
             f"placement {index}: expected a mapping with 'type' and 'pose', got {proposal!r}"
         )
     where = f"placement {index} ({proposal.get('label') or proposal.get('type')!r})"
-    if given := [k for k in ("pos", "rpy") if k in proposal]:
-        raise ValueError(
-            f"{where}: {' and '.join(map(repr, given))} {'is' if len(given) == 1 else 'are'} not "
-            "read -- a placement is stated as 'pose', a world pose as SpawnEntity states one, "
-            f"with position.z given: {pose_spelling(proposal.get('pos'), proposal.get('rpy'))}"
-        )
+    refuse_unknown_keys(proposal, PLACEMENT_KEYS, where)
     if "type" not in proposal:
         raise ValueError(f"{where}: 'type' is required -- a catalog sensor type")
     stype = proposal["type"]

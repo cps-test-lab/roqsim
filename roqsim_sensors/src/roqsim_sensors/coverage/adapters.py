@@ -57,10 +57,7 @@ class PlacedSensor:
 
     sensor_type: str
     pos: np.ndarray | None = None  # (3,) world position -- hypothetical placement
-    rpy: np.ndarray | None = (
-        None  # (3,) roll/pitch/yaw [rad], fixed-axis XYZ -- hypothetical placement
-    )
-    quat: np.ndarray | None = None  # (4,) w, x, y, z -- hypothetical placement; wins over `rpy`
+    quat: np.ndarray | None = None  # (4,) w, x, y, z world orientation -- hypothetical placement
     cam_id: int = -1  # in-world MuJoCo camera id (pose + intrinsics from the model)
     site_id: int = -1  # in-world MuJoCo site id (pose from the model)
     config: dict = field(
@@ -101,26 +98,12 @@ def build_fov(model: mujoco.MjModel, data: mujoco.MjData, placed: PlacedSensor) 
     return adapter(model, data, placed)
 
 
-def rpy_to_mat(rpy) -> np.ndarray:
-    """world<-sensor rotation from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF), i.e. Rz@Ry@Rx."""
-    roll, pitch, yaw = (float(v) for v in rpy)
-    cr, sr = np.cos(roll), np.sin(roll)
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    return rz @ ry @ rx
-
-
 def _require_pose(placed: PlacedSensor) -> tuple[np.ndarray, np.ndarray]:
-    if placed.pos is None or (placed.quat is None and placed.rpy is None):
+    if placed.pos is None or placed.quat is None:
         raise ValueError(
             f"sensor {placed.label or placed.sensor_type!r} has no in-world id and no pose"
         )
     pos = np.asarray(placed.pos, dtype=np.float64).reshape(3)
-    if placed.quat is None:
-        return pos, rpy_to_mat(placed.rpy)
     mat = np.zeros(9)
     mujoco.mju_quat2Mat(mat, np.asarray(placed.quat, dtype=np.float64))
     return pos, mat.reshape(3, 3)
