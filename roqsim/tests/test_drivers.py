@@ -43,7 +43,7 @@ def test_pacer_factor_parsing():
 # requested rate, which against a live stack is worse than being slow. Counting it is what
 # stops that absorption from being silent -- uncounted, a run holding 0.34x realtime for five
 # minutes reports nothing until its job deadline kills it, and the shortfall has to be
-# reconstructed from run.clock_map.csv afterwards.
+# reconstructed from the recording's clock channel afterwards.
 
 
 def test_pacer_reports_no_shortfall_when_it_keeps_up():
@@ -161,7 +161,7 @@ def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
             raise RecordingError("disk full")
 
     monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
-    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.npz"))
+    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.mcap"))
     sim = MujocoSim(world=_write_world(tmp_path))
     sim.setup()
     sim.reset()
