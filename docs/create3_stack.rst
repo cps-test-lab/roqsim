@@ -50,10 +50,11 @@ and only the physics is roqsim's:
      - The Gazebo TurtleBot 4 supplies it as
      - roqsim supplies it as
    * - ``diffdrive_controller/cmd_vel`` (``TwistStamped``) in; ``odom`` + ``odom -> base_link`` out
-       at 62 Hz; 0.46 m/s, 1.9 rad/s, 0.9 m/s²; a 0.5 s command timeout
-     - ``ros2_control`` ``diff_drive_controller``
-     - ``diff_drive`` with the limits, ``cmd_vel_timeout`` and ``odom_rate_hz`` the manifest states;
-       the world points it at ``diffdrive_controller/cmd_vel`` as a ``TwistStamped``
+       at 62 Hz; 0.46 m/s, 1.9 rad/s, an acceleration limit; a 0.5 s command timeout
+     - ``ros2_control`` ``diff_drive_controller``, limiting the body to 0.9 m/s² and 7.725 rad/s²
+     - ``diff_drive`` with the limits, ``cmd_vel_timeout`` and ``odom_rate_hz`` the manifest states,
+       limiting each wheel to 0.9 m/s²; the world points it at ``diffdrive_controller/cmd_vel`` as a
+       ``TwistStamped``
    * - ``joint_states`` carrying every joint in one message, wheels and wheel-drop suspension
      - ``joint_state_broadcaster``
      - ``joint_state_publisher``, the base's own switched off
@@ -103,7 +104,12 @@ simulator adapters stamp a wheel-drop event with its joint's name and a cliff ev
 ``cliff_<sensor>`` -- the hazards themselves (four ``CLIFF``, two ``WHEEL_DROP``) are on
 ``hazard_detection`` when the robot is lifted, in both simulators. The firmware's
 ``wheel_accel_limit`` is not a parameter of the simulated ``motion_control``: the ramp is the base's
-``diff_drive: {wheel_accel_limit}``.
+``diff_drive: {wheel_accel_limit}``, per wheel as the firmware states it.
+
+**The acceleration limit differs between the two simulators.** The reference simulator limits the
+body's linear and angular acceleration separately; roqsim limits each wheel. Both agree driving
+straight or turning on the spot. Accelerating while turning, a wheel reaches up to about 1.8 m/s²
+there and at most 0.9 m/s² here, and roqsim's ramp does not hold the turning radius.
 
 On the real robot
 -----------------
