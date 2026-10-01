@@ -51,7 +51,7 @@ ARGUMENTS = [
         default_value="false",
         choices=["true", "false"],
         description="Also run the reference simulator's ros2_control diffdrive_controller "
-        "(create3_control.launch.py), which publishes the TurtleBot 4's limited command on "
+        "(create3_control.launch.py), which publishes its limited command on "
         "diffdrive_controller/cmd_vel_out",
     ),
 ]

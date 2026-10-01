@@ -3,10 +3,10 @@
 
 """The Create 3's ros2_control diffdrive_controller beside a roqsim TurtleBot 4.
 
-The reference simulator limits the base's velocity and acceleration in this controller, with
-irobot_create_control's control.yaml. roqsim's base limits itself, so without this file the robot's
-software limits and the simulated base's limits are one setting. With it, the released controller
-and its released parameters sit between ``motion_control`` and the base:
+On the robot, the Create 3 firmware's motion_control caps and ramps the velocity command; there is
+no ros2_control. roqsim models that in the base's diff_drive. The reference simulator models it in
+this controller, with irobot_create_control's control.yaml, and this file runs the released
+controller and its released parameters between ``motion_control`` and the base:
 
     motion_control -> diffdrive_controller/cmd_vel -> diffdrive_controller -> diffdrive_controller/cmd_vel_out
 

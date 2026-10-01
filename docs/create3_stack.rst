@@ -114,10 +114,10 @@ there and at most 0.9 m/s² here, and roqsim's ramp does not hold the turning ra
 The reference controller's limits
 ---------------------------------
 
-roqsim's base is the controller and the simulated hardware at once, so its limits are both the
-TurtleBot 4's software limits and the base's. To keep the software limits fixed while the base's
-are varied, or to check that a stack respects them, launch the reference simulator's own
-``diffdrive_controller`` beside the stack:
+The robot has no ros2_control: its velocity cap and acceleration ramp are the Create 3 firmware's,
+in its ``motion_control``. roqsim models them in the base's ``diff_drive``; the reference simulator
+models them in a ros2_control ``diffdrive_controller``. To compare against the reference simulator,
+or to keep its limits fixed while the base's are varied, launch that controller beside the stack:
 
 .. code-block:: bash
 
@@ -129,7 +129,7 @@ It is the released controller with ``irobot_create_control``'s ``control.yaml``:
 world decides what that command is:
 
 * **a reference** -- the base stays on ``diffdrive_controller/cmd_vel``, and a stack whose commands
-  exceed the TurtleBot 4's limits shows as a difference between ``cmd_vel_out`` and ``odom``;
+  exceed the controller's limits shows as a difference between ``cmd_vel_out`` and ``odom``;
 * **in the command path**, as in the reference simulator -- point the base at it with
   ``--set components.robot.diff_drive.topics.cmd_vel=diffdrive_controller/cmd_vel_out``, and raise
   the base's own limits above the controller's so that the controller is what limits.
@@ -160,6 +160,6 @@ tool that rewrites a parameter file per configuration addresses
 ``motion_control.ros__parameters.safety_override`` and nothing else; the base's and the sensors'
 keys are world keys (``components.robot.diff_drive.wheel_accel_limit``,
 ``components.robot.cliff_front_left.max_range``) and are varied as any world key is -- with the
-reference controller in the command path, without moving the TurtleBot 4's own limits; and the
+reference controller in the command path, without moving the controller's limits; and the
 Create 3 topics are recorded and converted like any other, given ``irobot_create_msgs`` wherever
 the bags are read.
