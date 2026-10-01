@@ -111,6 +111,35 @@ body's linear and angular acceleration separately; roqsim limits each wheel. Bot
 straight or turning on the spot. Accelerating while turning, a wheel reaches up to about 1.8 m/s²
 there and at most 0.9 m/s² here, and roqsim's ramp does not hold the turning radius.
 
+The reference controller's limits
+---------------------------------
+
+roqsim's base is the controller and the simulated hardware at once, so its limits are both the
+TurtleBot 4's software limits and the base's. To keep the software limits fixed while the base's
+are varied, or to check that a stack respects them, launch the reference simulator's own
+``diffdrive_controller`` beside the stack:
+
+.. code-block:: bash
+
+   ros2 launch roqsim_create3_toolbox turtlebot4_nodes.launch.py ros2_control:=true
+
+It is the released controller with ``irobot_create_control``'s ``control.yaml``: 0.46 m/s and
+1.9 rad/s, 0.9 m/s² and 7.725 rad/s² on the body. It takes ``diffdrive_controller/cmd_vel`` from
+``motion_control`` and publishes the limited command on ``diffdrive_controller/cmd_vel_out``. The
+world decides what that command is:
+
+* **a reference** -- the base stays on ``diffdrive_controller/cmd_vel``, and a stack whose commands
+  exceed the TurtleBot 4's limits shows as a difference between ``cmd_vel_out`` and ``odom``;
+* **in the command path**, as in the reference simulator -- point the base at it with
+  ``--set components.robot.diff_drive.topics.cmd_vel=diffdrive_controller/cmd_vel_out``, and raise
+  the base's own limits above the controller's so that the controller is what limits.
+
+Three things differ from the reference simulator (``launch/create3_control.launch.py``): the
+controller drives ros2_control's mock hardware, since roqsim owns the wheels, so its own odometry on
+``diffdrive_controller/odom`` integrates the commands rather than the wheels; the
+``joint_state_broadcaster`` is not started, because it would publish the mock wheels beside the
+simulator's ``joint_states``; and the controller runs at 62 Hz rather than 1000 Hz.
+
 On the real robot
 -----------------
 
@@ -130,6 +159,7 @@ Varying it in a campaign
 tool that rewrites a parameter file per configuration addresses
 ``motion_control.ros__parameters.safety_override`` and nothing else; the base's and the sensors'
 keys are world keys (``components.robot.diff_drive.wheel_accel_limit``,
-``components.robot.cliff_front_left.max_range``) and are varied as any world key is; and the
+``components.robot.cliff_front_left.max_range``) and are varied as any world key is -- with the
+reference controller in the command path, without moving the TurtleBot 4's own limits; and the
 Create 3 topics are recorded and converted like any other, given ``irobot_create_msgs`` wherever
 the bags are read.

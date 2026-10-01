@@ -15,6 +15,10 @@ TurtleBot 4's node is the released `turtlebot4_node`. This package adds:
 - `launch/create3_nodes.launch.py` -- the Create 3 node graph, the reference simulator's node set
   with its shipped parameter files (`config/`, copied with attribution);
 - `launch/turtlebot4_nodes.launch.py` -- the above plus `turtlebot4_node`;
+- `launch/create3_control.launch.py` -- the reference simulator's ros2_control
+  `diffdrive_controller` with its released `control.yaml`, on mock hardware, publishing the
+  TurtleBot 4's limited command on `diffdrive_controller/cmd_vel_out` (`ros2_control:=true` on
+  either launch file above);
 - `config/create3_params.yaml` -- the `motion_control` parameters (`safety_override`) as one file a
   campaign varies;
 - `worlds/turtlebot4_create3.yaml` -- the robot with the base's contract to the stack

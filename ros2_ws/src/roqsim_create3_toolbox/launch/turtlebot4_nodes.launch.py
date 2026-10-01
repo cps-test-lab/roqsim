@@ -34,6 +34,12 @@ ARGUMENTS = [
         ),
         description="motion_control parameters (safety_override); a campaign's varied copy",
     ),
+    DeclareLaunchArgument(
+        "ros2_control",
+        default_value="false",
+        choices=["true", "false"],
+        description="Also run the ros2_control diffdrive_controller (create3_nodes.launch.py)",
+    ),
 ]
 
 
@@ -44,6 +50,7 @@ def generate_launch_description():
         launch_arguments=[
             ("namespace", LaunchConfiguration("namespace")),
             ("params_file", LaunchConfiguration("params_file")),
+            ("ros2_control", LaunchConfiguration("ros2_control")),
         ],
     )
     turtlebot4_node = Node(
