@@ -65,6 +65,8 @@ Apache License 2.0
   Maker's Pet oomwoo! One         (c) Ilia O. (makerspet.com)
   Maker's Pet Mini                (c) Ilia O. (makerspet.com)
   Intel RealSense D415/D435/D455 meshes
+  TurtleBot3 World scene          (c) ROBOTIS, via turtlebot3_simulations. See
+                                  roqsim_scenes/src/roqsim_scenes/scenes/tb3_world/CREDITS.txt
 
 --------------------------------------------------------------------------------
 Mozilla Public License 2.0  --  file-level copyleft; these notices must be retained
