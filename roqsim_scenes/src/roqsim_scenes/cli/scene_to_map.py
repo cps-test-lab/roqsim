@@ -82,24 +82,16 @@ def _robot_geoms(model, ctx) -> set[int]:
     """
     import mujoco
 
+    from roqsim.presence import subtree_geom_ids
+
     roots: list[int] = []
     for entity in ctx.entities.all():
         if entity.kind != "robot" or not entity.body:
             continue
         bid = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body))
-        if bid >= 0:
+        if bid > 0:
             roots.append(bid)
-    if not roots:
-        return set()
-
-    def in_subtree(body: int) -> bool:
-        while body > 0:
-            if body in roots:
-                return True
-            body = int(model.body_parentid[body])
-        return False
-
-    return {g for g in range(model.ngeom) if in_subtree(int(model.geom_bodyid[g]))}
+    return {g for root in roots for g in subtree_geom_ids(model, root)}
 
 
 def _load_world(
@@ -418,7 +410,8 @@ def main(argv: list | None = None) -> int:
     free = int((grid == _FREE).sum())
     unk = int((grid == _UNKNOWN).sum())
     print(
-        f"MAP_OK {w}x{hgt} @ {args.resolution} m/cell origin={list(np.round(origin, 3))}\n"
+        f"MAP_OK {w}x{hgt} @ {args.resolution} m/cell "
+        f"origin=[{', '.join(str(round(float(v), 3)) for v in origin)}]\n"
         f"  segments={len(segs)} occupied={occ_before} free={free} unknown={unk} "
         f"({100 * free / (w * hgt):.1f}% free)"
     )

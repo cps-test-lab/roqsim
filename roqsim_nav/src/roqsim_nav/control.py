@@ -38,17 +38,6 @@ def approach_angle(cur: float, target: float, max_step: float) -> float:
     return cur + math.copysign(max_step, d)
 
 
-def yaw_to_quat(yaw: float) -> list[float]:
-    """MuJoCo ``(w, x, y, z)`` for a rotation about +Z."""
-    return [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]
-
-
-def yaw_from_quat(q) -> float:
-    """Yaw (rad) from a MuJoCo ``(w, x, y, z)`` quaternion."""
-    w, x, y, z = (float(v) for v in q)
-    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-
-
 def unicycle(
     pref_vel, yaw: float, *, gain: float, max_w: float, turn_in_place: float
 ) -> tuple[float, float, float]:

@@ -38,6 +38,7 @@ import mujoco
 import numpy as np
 
 from roqsim import raycast
+from roqsim.presence import subtree_geom_ids
 
 from .control import STOPPED
 
@@ -68,15 +69,7 @@ def subtree_geoms(model, body_id: int) -> set[int]:
     wheels plus sensor mounts, so excluding only its root would leave it seeing its own wheels a few
     centimetres ahead and concluding it was permanently blocked.
     """
-    bodies = {int(body_id)}
-    for b in range(model.nbody):
-        parent = b
-        while parent > 0:
-            if parent in bodies:
-                bodies.add(b)
-                break
-            parent = int(model.body_parentid[parent])
-    return {g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies}
+    return set(subtree_geom_ids(model, body_id))
 
 
 def is_dynamic_body(model, body_id: int) -> bool:

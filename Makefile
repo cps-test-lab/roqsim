@@ -138,7 +138,7 @@ venv:  ## Create .venv (--system-site-packages) and install packages + dev tooli
 	$(EXTERNAL) convert --resource spot_locomotion_policy  # fetch the NVIDIA Spot policy (external asset; fail-soft)
 	@echo
 	@echo "venv ready. For ROS/nav2: 'source /opt/ros/jazzy/setup.bash' then 'make test'."
-	@echo "nav2 demos: 'ros2 launch roqsim_nav2_example nav2_g1.launch.py' (or nav2_spot / nav2_turtlebot)."
+	@echo "nav2: 'ros2 launch roqsim_nav2_example nav2_turtlebot_depot.launch.py' (see docs/nav2_example.rst)."
 
 .PHONY: build-ros
 build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
