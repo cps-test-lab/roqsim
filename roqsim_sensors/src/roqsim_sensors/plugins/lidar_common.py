@@ -402,9 +402,11 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             dist = dist.copy()
         if noisy:
             # One generator per (sensor, step), not per draw: counter-based, so the same noise is
-            # reproducible from a recording without replaying the run. Keyed on this plugin's own
-            # name so two sensors on one robot get independent streams.
-            rng = ctx.rng_for(self.name or self.PLUGIN_LABEL)
+            # reproducible from a recording without replaying the run. Keyed on this instance's
+            # ADDRESS (entity and label), not its name: a manifest-injected sensor has no `name:`
+            # and falls back to its class name, which two robots' scanners would share -- and a
+            # shared key is one noise stream drawn twice.
+            rng = ctx.rng_for(self.draw_key("noise"))
             if self.range_stddev > 0.0 or self.range_stddev_relative > 0.0:
                 true = dist[hit]
                 sigma = np.full(true.shape, self.range_stddev)
