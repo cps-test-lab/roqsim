@@ -15,6 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .paths import address_path
+
 if TYPE_CHECKING:  # avoid importing mujoco / context at module import time
     import mujoco
 
@@ -138,6 +140,12 @@ class Plugin:
         would otherwise register one entity that hid the other.
         """
         return f"{self.entity}.{self.label}" if self.entity else self.label
+
+    def draw_key(self, what: str) -> str:
+        """The ``ctx.rng_for`` key of this instance's draw *what*: its address as a path, then the
+        draw's name (``robot/lidar/noise``). Unique to the instance and to the draw, so no two share
+        a stream."""
+        return f"{address_path(self.address)}/{what}"
 
     # -- plugin-spec expansion (optional) -----------------------------------------------------
     @classmethod

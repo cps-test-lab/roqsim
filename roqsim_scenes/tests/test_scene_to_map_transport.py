@@ -8,6 +8,7 @@ overlay nobody sourced, which is how a campaign's input generator runs.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -40,7 +41,7 @@ def test_a_world_declaring_the_bridge_maps_without_it(ros_world: Path, capsys):
     assert "skipping" in out.out + out.err
 
 
-def test_the_command_writes_a_map_for_it(ros_world: Path, tmp_path: Path):
+def test_the_command_writes_a_map_for_it(ros_world: Path, tmp_path: Path, capsys):
     out = tmp_path / "map"
     rc = scene_to_map.main(
         [
@@ -58,4 +59,7 @@ def test_the_command_writes_a_map_for_it(ros_world: Path, tmp_path: Path):
         ]
     )
     assert rc == 0
+    summary = capsys.readouterr().out
+    # The origin is two plain numbers a reader can paste into a map.yaml, not numpy's repr of them.
+    assert re.search(r"origin=\[-?\d+(\.\d+)?, -?\d+(\.\d+)?\]", summary), summary
     assert out.with_suffix(".pgm").is_file() and out.with_suffix(".yaml").is_file()
