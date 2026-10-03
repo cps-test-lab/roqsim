@@ -43,7 +43,7 @@ class OrcaModel(AvoidanceModel):
     def configure(self, ctx, params: dict) -> None:
         try:
             import rvo2
-        except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        except ImportError as exc:
             raise ImportError(
                 "the 'orca' avoidance model needs rvo2, the optional extra roqsim_nav[avoidance]. "
                 "It publishes no wheel and builds from source against Cython, which pip's build "
