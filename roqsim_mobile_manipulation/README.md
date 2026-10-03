@@ -15,8 +15,8 @@ python -m pytest roqsim_mobile_manipulation/tests
 ```
 
 Each model ships one folder — `models/<name>/` holds its MJCF, `<name>.manifest.yaml`, the licence
-of the upstream it was ported from (`<name>_LICENSE`), thumbnail and its own `meshes/`. The comments
-in the MJCF and the manifest say where the load-bearing numbers come from.
+of the upstream it was ported from (`<name>_LICENSE`), thumbnail and its own `meshes/`. The
+manifest's comments say where its load-bearing numbers come from.
 
 ## Why this package exists
 
