@@ -318,6 +318,88 @@ def test_every_gain_declares_its_unit():
         assert GAIN_SCHEMA[name].unit, name
 
 
+# -- limits the override does not state ----------------------------------------------------------
+
+#: A lift: a position servo on a vertical slide whose drive can only push, and a symmetric one
+#: beside it. The one-sided range is the model's statement that the drive cannot pull.
+_LIFT = """
+<mujoco model="lift">
+  <worldbody>
+    <body name="carriage">
+      <joint name="lift_joint" type="slide" axis="0 0 1"/><geom size="0.1" mass="150"/>
+      <body name="side" pos="0.3 0 0">
+        <joint name="side_joint" type="slide" axis="1 0 0"/><geom size="0.1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <general name="lift" joint="lift_joint" gaintype="fixed" biastype="affine"
+             gainprm="20000" biasprm="0 -20000 -4000" forcerange="0 25000" ctrlrange="-0.9 0.9"/>
+    <general name="side" joint="side_joint" gaintype="fixed" biastype="affine"
+             gainprm="500" biasprm="0 -500 -50" forcerange="-120 120" ctrlrange="-0.5 0.5"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def _forcerange(spec, name):
+    m = spec.compile()
+    return list(m.actuator_forcerange[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, name)])
+
+
+def test_a_gains_only_override_keeps_a_single_acting_drives_one_sided_range():
+    spec = _spec(_LIFT)
+    resolve(spec, {"control": "position", "p": 30000.0, "d": 5000.0}, model_name="lift")
+    assert _forcerange(spec, "lift") == [0.0, 25000.0]
+
+
+def test_effort_limit_on_a_single_acting_drive_scales_it_and_keeps_its_side():
+    spec = _spec(_LIFT)
+    rows = _by_name(
+        resolve(spec, {"each": {"lift": {"effort_limit": 30000.0}}}, model_name="lift")
+    )
+    assert _forcerange(spec, "lift") == [0.0, 30000.0]
+    assert rows["lift"].effort_limit == 30000.0
+
+
+def test_a_symmetric_drive_is_unchanged_by_a_gains_only_override_and_symmetric_under_a_limit():
+    spec = _spec(_LIFT)
+    resolve(spec, {"control": "position", "p": 800.0}, model_name="lift")
+    assert _forcerange(spec, "side") == [-120.0, 120.0]
+    spec = _spec(_LIFT)
+    resolve(spec, {"each": {"side": {"effort_limit": 60.0}}}, model_name="lift")
+    assert _forcerange(spec, "side") == [-60.0, 60.0]
+
+
+def test_effort_limit_on_an_unlimited_drive_is_symmetric():
+    spec = _spec(_LIFT.replace('forcerange="-120 120" ', ""))
+    resolve(spec, {"each": {"side": {"effort_limit": 60.0}}}, model_name="lift")
+    assert _forcerange(spec, "side") == [-60.0, 60.0]
+
+
+def test_limits_the_model_leaves_off_stay_off_under_a_gains_only_override():
+    """A range with its flag set false is not in force; stating gains must not switch it on."""
+    xml = _LIFT.replace('forcerange="-120 120" ctrlrange="-0.5 0.5"',
+                        'forcerange="-120 120" forcelimited="false" '
+                        'ctrlrange="-0.5 0.5" ctrllimited="false"')
+    spec = _spec(xml)
+    rows = _by_name(resolve(spec, {"control": "position", "p": 800.0}, model_name="lift"))
+    m = spec.compile()
+    side = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "side")
+    assert not m.actuator_forcelimited[side] and not m.actuator_ctrllimited[side]
+    assert rows["side"].effort_limit is None and rows["side"].ctrlrange is None
+
+
+def test_gravity_compensation_bounds_a_single_acting_joint_by_its_one_sided_drive():
+    """The joint limit the compensation derives is read from the drive after the override."""
+    spec = _spec(_LIFT)
+    rows = resolve(spec, {"control": "position", "p": 30000.0}, model_name="lift")
+    apply_gravity_compensation(spec, rows)
+    m = spec.compile()
+    lift = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")
+    assert list(m.jnt_actfrcrange[lift]) == [0.0, 25000.0]
+
+
 # -- the body-level half of impedance ------------------------------------------------------------
 
 
