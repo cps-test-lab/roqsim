@@ -68,3 +68,13 @@ def test_two_unnamed_lidars_on_two_robots_draw_different_noise():
         assert not np.array_equal(a, b), "both sensors drew one noise stream"
     finally:
         engine.shutdown()
+
+
+def test_a_draw_key_is_the_instance_address_as_a_path_then_the_draw():
+    """One shape for every key, so an instance's draw cannot land on another's: the address with
+    its dots as slashes, then the draw's name."""
+    nested = LidarPlugin({}, name=None, entity="robot_a.mast", label="lidar")
+    assert nested.draw_key("noise") == "robot_a/mast/lidar/noise"
+    assert (
+        Plugin({}, name=None, entity=None, label="wind").draw_key("turbulence") == "wind/turbulence"
+    )

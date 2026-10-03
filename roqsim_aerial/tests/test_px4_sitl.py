@@ -582,5 +582,5 @@ def test_the_sensor_noise_is_keyed_on_the_instance_address():
     finally:
         px4.close()
         plugin.shutdown(ctx)
-    assert keys == [f"px4_sitl:{plugin.address}"]
+    assert keys == ["drone/px4/sensors"]
     assert plugin.address == "drone.px4"

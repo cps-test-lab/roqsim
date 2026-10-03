@@ -171,7 +171,7 @@ class ObjectDetectorPlugin(Plugin):
             or self.dropout_percent > 0.0
             or any(self.position_bias)
         )
-        rng = ctx.rng_for(self.address) if noisy else None
+        rng = ctx.rng_for(self.draw_key("noise")) if noisy else None
 
         out = []
         for class_id, bid, size in self._objects:

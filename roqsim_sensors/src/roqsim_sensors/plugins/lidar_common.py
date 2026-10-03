@@ -406,7 +406,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             # ADDRESS (entity and label), not its name: a manifest-injected sensor has no `name:`
             # and falls back to its class name, which two robots' scanners would share -- and a
             # shared key is one noise stream drawn twice.
-            rng = ctx.rng_for(self.address)
+            rng = ctx.rng_for(self.draw_key("noise"))
             if self.range_stddev > 0.0 or self.range_stddev_relative > 0.0:
                 true = dist[hit]
                 sigma = np.full(true.shape, self.range_stddev)

@@ -394,7 +394,7 @@ class DiffDrivePlugin(Plugin):
             # drifts. One draw per step for both terms, keyed on the time it happens (§9.1) and on
             # this instance's address, so two robots' drives draw independent streams.
             lin_sd, ang_sd, lin_scale, ang_scale = self._odom_noise
-            n = ctx.rng_for(f"{self.address}.odometry").standard_normal(2)
+            n = ctx.rng_for(self.draw_key("odometry")).standard_normal(2)
             v = v * lin_scale + lin_sd * float(n[0])
             w = w * ang_scale + ang_sd * float(n[1])
         o = self._odom
