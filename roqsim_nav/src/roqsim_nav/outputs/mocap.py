@@ -18,7 +18,9 @@ import math
 import mujoco
 import numpy as np
 
-from ..control import approach_angle, yaw_from_quat, yaw_to_quat
+from roqsim.pose import yaw_of, yaw_to_quat
+
+from ..control import approach_angle
 from . import NavOutput, OutputUnavailable
 
 
@@ -51,7 +53,7 @@ class MocapOutput(NavOutput):
         pos = data.mocap_pos[self._mocapid]
         speed = float(math.hypot(pref_vel[0], pref_vel[1]))
         # Keep z: the prop owns its own height (its spawn pose put it there), and re-deriving it
-        # here would silently disagree with a `pos: [x, y, z]` a world wrote.
+        # here would silently disagree with the `pose` z a world wrote.
         data.mocap_pos[self._mocapid] = [
             pos[0] + float(pref_vel[0]) * dt,
             pos[1] + float(pref_vel[1]) * dt,
@@ -65,7 +67,7 @@ class MocapOutput(NavOutput):
 
     def pose(self, ctx) -> tuple[float, float, float]:
         pos = ctx.data.mocap_pos[self._mocapid]
-        return float(pos[0]), float(pos[1]), yaw_from_quat(ctx.data.mocap_quat[self._mocapid])
+        return float(pos[0]), float(pos[1]), yaw_of(ctx.data.mocap_quat[self._mocapid])
 
     def stop(self, ctx) -> None:
         """Nothing to do: a pose-written body is already at rest whenever it is not being written."""
