@@ -80,6 +80,11 @@ flex_material = "roqsim.plugins.flex_material:FlexMaterialPlugin"
 # (force * velocity) is the same for a wheel, a joint and a rotor.
 energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 
+# Carrying something and letting go of it: a weld equality switched at run time (Gazebo's
+# DetachableJoint). Core, beside payload, because "the load rides along" is not a robot family --
+# a forklift, a deck and a drone's release hook are the same constraint.
+attachment = "roqsim.plugins.attachment:AttachmentPlugin"
+
 # Ground that is not flat. Without it everything this substrate can stand a robot on is a plane, while
 # four of its ported platforms are outdoor machines whose papers are about what happens when it is not.
 heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"

@@ -1182,6 +1182,42 @@ nothing to drive.
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
 collision -- a scenario reads the endpoint and stops the run itself.
 
+Carrying something, and letting go of it
+----------------------------------------
+
+``attachment`` is the transport half of manipulation without the manipulation: a forklift with a
+pallet, a deck with a parcel, a drone with a release hook. The trial's question is *did the load
+arrive*, and simulating the grasp that holds it is a different experiment with a different failure
+mode::
+
+   components:
+     - spawn_model:
+         model: graspable_carton
+         motion: physics
+         pose: {position: {x: 0.6, y: 0, z: 0.05}}
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - attachment: {body: graspable_carton, attached: false}
+
+The load is listed before the robot: the weld names both bodies when the model is built, so the
+body it carries has to be built already.
+
+It is MuJoCo's weld equality switched at run time -- Gazebo's ``DetachableJoint``, expressed the way
+this simulator already offers it. Two properties are what make it usable rather than a curiosity.
+It attaches the load **where the load is**, rewriting the weld's relative pose from the current
+state, so "drive up to it and pick it up" works without the world spawning the parcel in its carried
+pose; activating the weld alone would snap it back to whatever the MJCF declared. And it releases the
+load **with the velocity it has**, so a parcel let go from a moving deck carries on and slides off
+it.
+
+Like ``model_override`` and a sensor's ``fault:``, it owns no trigger: ``robot/attachment/attach`` is
+a command a scenario sends when its own condition says to
+(``entity_call(entity: 'robot.attachment', command: 'attach', value: 'true')``), served over ROS as a
+``std_srvs/SetBool``, and the initial state is config -- so "does the robot start loaded" is an
+ordinary campaign factor rather than a second world file. ``robot/attachment/attached`` reports the
+state for a stack that only wants to watch.
+
 Ground that is not flat
 -----------------------
 
