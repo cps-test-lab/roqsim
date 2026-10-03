@@ -14,8 +14,9 @@ roqsim sim roqsim_mobile_manipulation:tiago_pro_demo
 python -m pytest roqsim_mobile_manipulation/tests
 ```
 
-Each model ships one folder — `models/<name>/` holds its MJCF, `manifest.yaml`, licence, thumbnail
-and its own `meshes/`. The manifest and the MJCF comments state where each number comes from.
+Each model ships one folder — `models/<name>/` holds its MJCF, `<name>.manifest.yaml`, the licence
+of the upstream it was ported from (`<name>_LICENSE`), thumbnail and its own `meshes/`. The
+manifest's comments say where its load-bearing numbers come from.
 
 ## Why this package exists
 
@@ -37,8 +38,9 @@ provenance are all that ships here; what an experiment measures with them belong
 ## No new plugins, on purpose
 
 Both platforms are assembled from general-purpose plugins: `spawn_robot`, `diff_drive` /
-`omni_drive`, `arm_controller`, `lidar`. A composite robot that needs a *new* plugin would be
-evidence the composition mechanism is missing something rather than evidence of a hard robot.
+`omni_drive`, `arm_controller`, and `spawn_sensor` with its `lidar`. A composite robot that needs a
+*new* plugin would be evidence the composition mechanism is missing something rather than evidence of
+a hard robot.
 
 `tests/test_mounted_arm_composition.py` is what that claim is measured by: it bolts a stock `ur10e`
 onto a stock `husky_a200` from world YAML alone and checks the arm really joins the base's kinematic

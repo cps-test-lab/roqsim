@@ -1,8 +1,8 @@
 """Bundled mobile-manipulator MJCF models and meshes, one folder per model.
 
 Layout is ``models/<name>/<name>.xml`` with that model's meshes in its own ``meshes/`` subdir --
-referenced bare via ``<compiler meshdir="meshes">`` -- and its manifest, licence and
-thumbnail beside it. The same shape ``roqsim_mobile``, ``roqsim_manipulation_assets``, ``roqsim_sensors`` and
+referenced bare via ``<compiler meshdir="meshes">`` -- and its manifest, licence and thumbnail
+beside it. The same shape ``roqsim_mobile``, ``roqsim_manipulation_assets``, ``roqsim_sensors`` and
 ``roqsim_assets`` use, and a form :func:`roqsim.models.resolve_model` accepts directly.
 
 Each model ships a ``<model>.manifest.yaml`` listing the plugins intrinsic to it -- for these robots

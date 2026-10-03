@@ -391,9 +391,10 @@ class DiffDrivePlugin(Plugin):
         w = self.r * (wr - wl) / (self.L * self.slip)
         if self._odom_noise is not None:
             # Wrong the way wheel odometry is wrong: on the readings, before integration, so the pose
-            # drifts. One draw per step for both terms, keyed on the time it happens (§9.1).
+            # drifts. One draw per step for both terms, keyed on the time it happens (§9.1) and on
+            # this instance's address, so two robots' drives draw independent streams.
             lin_sd, ang_sd, lin_scale, ang_scale = self._odom_noise
-            n = ctx.rng_for(f"{self.name or 'diff_drive'}.odometry").standard_normal(2)
+            n = ctx.rng_for(self.draw_key("odometry")).standard_normal(2)
             v = v * lin_scale + lin_sd * float(n[0])
             w = w * ang_scale + ang_sd * float(n[1])
         o = self._odom
