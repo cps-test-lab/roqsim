@@ -4,7 +4,7 @@
 # experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 #
 # Tuned for this example's robot: base frame 'base_link', odom '/odom', scan '/scan' (published in
-# base_link), robot radius ~0.18 m. Controller = Regulated Pure Pursuit (light + robust for diff
+# rplidar_link), robot radius ~0.18 m. Controller = Regulated Pure Pursuit (light + robust for diff
 # drive); planner = NavFn. use_sim_time is set per-node from the launch file.
 
 bt_navigator:
