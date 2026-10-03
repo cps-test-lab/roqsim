@@ -287,8 +287,8 @@ def test_a_trial_that_was_never_near_anything_names_nothing(world):
 
 
 def test_a_reset_starts_the_reduction_again(world):
-    """The reduction is one trial's. The report a repetition publishes must not name the
-    previous trial's near-miss, which on a packed job is every trial after the first."""
+    """The reduction is one trial's: the report a repetition publishes does not name the
+    previous trial's near-miss."""
     engine = _engine(world)
     try:
         _drive_to(engine, 1.6)

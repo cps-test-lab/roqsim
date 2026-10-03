@@ -101,6 +101,7 @@ def test_a_payload_that_is_not_a_dataclass_is_refused():
 def test_the_clearance_report_travels_as_a_diagnostic_status():
     """The report's row in the type table, which the ``clearance_report`` endpoint binds through."""
     from diagnostic_msgs.msg import DiagnosticStatus
+
     from roqsim.plugins.clearance_monitor import ClearanceReport
 
     (wire,) = typemap.lookup(ClearanceReport).wires
