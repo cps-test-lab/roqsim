@@ -56,7 +56,9 @@ def test_folder_has_credits_naming_its_licence(folder):
         f"licence and attribution beside it, and our own work says {OWN_WORK!r}"
     )
     text = credits.read_text(encoding="utf-8")
-    assert not EXCLUDED.search(text), f"{credits.relative_to(PACKAGE_DIR)}: NC/ND content is not admitted"
+    assert not EXCLUDED.search(text), (
+        f"{credits.relative_to(PACKAGE_DIR)}: NC/ND content is not admitted"
+    )
     assert OWN_WORK in text or REDISTRIBUTABLE.search(text), (
         f"{credits.relative_to(PACKAGE_DIR)} names no licence: expected {OWN_WORK!r} for our own "
         f"work, or CC0 1.0 / CC Attribution / CC-BY for third-party content"
