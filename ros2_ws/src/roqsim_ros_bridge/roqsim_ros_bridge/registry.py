@@ -817,12 +817,6 @@ def decode_pose_stamped(msg) -> dict[str, Any]:
     }
 
 
-def yaw_of(quat) -> float:
-    """Yaw from a ``(w, x, y, z)`` quaternion, for a consumer that commands only heading."""
-    w, x, y, z = quat
-    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-
-
 @decoder("geometry_msgs.msg.WrenchStamped")
 def decode_wrench_stamped(msg) -> dict[str, tuple[float, ...]]:
     """Wrench setpoint -> ``force`` and ``torque`` (x, y, z), the shape a wrench reader reads out."""
