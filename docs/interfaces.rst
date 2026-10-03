@@ -74,6 +74,8 @@ nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not j
 
 The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
 interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
+That is a magnitude: it sets the larger bound of the model's ``forcerange`` and keeps the range's
+shape, so a single-acting drive's ``0 F`` becomes ``0 effort_limit`` and still cannot pull.
 ``impedance`` is joint-impedance control — a position law that also carries the arm's own weight, so
 a soft stiffness holds a pose instead of folding; at zero gravity it is identical to ``position``.
 Which law and gains every joint ended up with is written into the run's recording, so a result can
