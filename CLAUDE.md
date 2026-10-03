@@ -84,6 +84,9 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
   downstream (`docs/plugins.rst`, "where a workpiece lives").
 - **Only `scenario_execution_roqsim` imports `scenario_execution`**, and no package that does not
   import `scenario_execution` may import it. Its actions work unedited in a stepped run and a ROS run.
+- **An asset is credited beside itself**: in the `CREDITS.txt` that ships in its folder, and in its
+  package's `THIRD_PARTY.md`. `NOTICE` and the README's licence table summarise by licence and point
+  there; they gain no entry per asset, or they grow with every import.
 - **Docs split:** user guide and internals are separate toctree sections in `docs/index.rst`; put new
   content in the right one and split a page that mixes both.
 - **Docs follow every change:** update what the change made stale in `docs/` (especially
