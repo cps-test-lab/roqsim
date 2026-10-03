@@ -70,7 +70,9 @@ needed ORCA, the interface would have been shaped around ORCA.
 entity without one is the subject, and joins as a non-yielding agent whose state is overwritten from
 ground truth — so the others go round it and it is never pushed by them.
 
-`orca` needs `rvo2`, built from source: `pip install 'roqsim_nav[avoidance]'`. Without a model
+`orca` needs `rvo2`, built from source. An extra cannot express its build dependency, so the
+install is two commands: `pip install Cython`, then
+`pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git`. Without a model
 declared, everyone simply executes what they wanted.
 
 Known limit, stated rather than smuggled: an agent is a **disc**. A long cart is its circumscribed
