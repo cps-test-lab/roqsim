@@ -207,7 +207,8 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
 * **doors** — standard-width **openings** attached to a wall by ``line_id`` + fraction ``t`` (so a
   door rides along its wall and is removed with it); the generator cuts a **2 m-high** hole out of the
   wall and leaves a solid **lintel** above it up to the ceiling. Height is the generator's
-  ``--opening-h`` (default 2 m), overridable per door with an optional ``height_m``. Two openings may
+  ``--opening-h`` (default 2 m), overridable per door with an optional ``height_m``, which the window
+  carries through a seeded sketch unchanged (it draws no heights). Two openings may
   abut but not overlap on the same wall (the hover preview turns red where it would). Each opening is
   then fitted with a **swing-door leaf** (the ``door`` plugin — a hinged leaf with a position
   actuator, ROS-controllable as an automatic door); ``roqsim scenes floorplan-to-world``'s ``--doors-map``
