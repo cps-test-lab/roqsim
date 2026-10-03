@@ -53,7 +53,9 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
   `roqsim/src/roqsim/gl.py` import mujoco. Tests without a camera cannot catch a regression. Architecture §8.
 - **Draw randomness from `ctx.rng_for(name)`**, once per (sensor, step), never from `np.random` or a
   held generator. It is keyed on `(seed, episode, sim_time, name)`, so a draw is a function of the world
-  and not of how many draws came before; that keeps a value reproducible and a replay exact.
+  and not of how many draws came before; that keeps a value reproducible and a replay exact. Build
+  `name` from `self.address`: `self.name` is the class name on every instance without a `name:`, and
+  two instances sharing a key draw one stream twice.
 - **A seed is driver-owned; an unresolved one raises** (`roqsim.seed.SeedError`), never defaults to 0.
   A driver resolves it with `roqsim.seed.resolve_seed` and sets `ctx.seed` before `setup()`; a preview
   pins `roqsim.seed.PREVIEW_SEED`. `python -m pydoc roqsim.seed`.
