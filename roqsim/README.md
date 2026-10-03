@@ -23,7 +23,7 @@ repository extends it without a change here.
 | `plugin.py` | The `Plugin` base class and its hooks — `validate_config`, `build`, `configure`, `on_reset`, `pre_step`, `post_step`, `shutdown`. A plugin implements any subset. |
 | `config.py` | The single-YAML config layer: `extends` inheritance, `--set` dotted overrides, per-plugin `validate_config`, and validation of the run-level `sim:` block. |
 | `context.py` | `SimContext` — the one object plugins share: time, the command queue (`ctx.post`), the interface registry, the blackboard, deterministic RNG, and the stop request. |
-| `registry.py`, `models.py`, `world.py`, `textures.py` | Resolution of plugins, models, worlds and textures by name across installed packages. |
+| `registry.py`, `models.py`, `world.py`, `textures.py` | Resolution of plugins, models, worlds and textures by name across installed packages; `entry_points.py` is the one cached scan of the installed entry points they all read. |
 | `runner.py` | The standalone driver (`roqsim sim`): loop, pacing, recording, and the optional viewer. |
 | `scenario_adapter.py` | The `scenario-execution` `SimulationInterface` driver. |
 | `capture.py`, `recording.py`, `state.py`, `render.py` | State recording and everything read or drawn from it afterwards — driver-level, not plugins. |
