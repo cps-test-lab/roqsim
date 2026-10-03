@@ -14,7 +14,7 @@ output this package registers — so a pedestrian, a robot and a driven prop are
 plugin and differ only in what the motion is written into. This package owns the body: the skeleton,
 the skin, the blueprints and the motion clips.
 
-It either **patrols** a configured route, or is **driven to goals** through a backend-neutral
+Its navigator either **patrols** a configured route, or **drives it to goals** through a backend-neutral
 endpoint — which the ROS 2 bridge serves as `nav2_msgs/NavigateToPose` and
 `NavigateThroughPoses` (see `ros2_ws/src/roqsim_nav_ros`).
 
@@ -31,27 +31,29 @@ roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_patrol.yaml
 components:
   - walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
-      namespace: ""            # transport scope for the goal endpoint
+      namespace: ""            # transport scope of the walker's endpoints and its navigator's
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals (fast; no mesh load)
-      speed: 1.2               # m/s; past ~1.7 the run clip blends in
-      pose:                    # where a goal-driven walker stands at the start (no `waypoints`):
-        position: {x: 0.0, y: 0.0}  #   a world pose with no z (a walker stands on the floor)
-        orientation: {yaw: 0.0}     #   and a heading only; `pos` is refused
-      waypoints:               # patrol route; the walker starts at waypoints[0], so no `pose`
-        - [-2.0, -2.0]
-        - [ 2.0, -2.0, [2, 4]] # optional dwell: seconds, or [lo, hi] random pause
-        - [ 2.0,  2.0]
-      loop: true               # cycle the patrol forever
-      arrival_radius: 0.25
-      avoidance: false         # true -> steers round others through the shared local model
-      action_name: navigate_through_poses
-      orca:     {radius: 0.26, max_speed: 1.6}   # the disc it presents to avoidance; speed cap
-      planner:  {inflation_radius: 0.3, waypoint_radius: 0.3}
-      recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
-      motion:   {walk: /abs/walk.npz}   # override a resolved locomotion clip
+      pose:                    # where the walker stands at the start and after every reset:
+        position: {x: -2.0, y: -2.0}  # a world pose with no z (a walker stands on the floor)
+        orientation: {yaw: 0.0}       # and a heading only; `pos` is refused
+      motion: {walk: /abs/walk.npz}   # override a resolved locomotion clip
     name: pedestrian           # entity name (a sibling of the plugin ref, not config)
+    components:
+      - navigator:             # where it goes: roqsim_nav's navigator, as for any mover
+          output: walker
+          speed: 1.2           # m/s; past ~1.7 the run clip blends in
+          goals: [[2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]]   # the route after the start
+          loop: true           # cycle the patrol forever
+          dwell: [[0, 0], [2, 4], [0, 0], [1, 3]]   # per route point, the start first
+          radius: 0.26         # the walker's disc to avoidance and the planner
+          avoidance: {steer: none, stop: false}
 ```
+
+Navigation is stated on the nested `navigator` only; a walker's own block refuses `speed`,
+`waypoints`, `loop`, `dwell`, `avoidance`, `action_name`, `orca` and the rest by name, saying where
+each lives on the navigator. A walker with no nested `navigator` gets one that is goal-driven only:
+`output: walker`, `speed: 1.0`, `radius: 0.26` and `avoidance: {stop: false}`.
 
 ### Navigation layers
 
@@ -67,10 +69,10 @@ legs. A `floorplan` mesh adds its own walls the same way.
 
 ### Avoidance
 
-`avoidance: true` gives the walker's navigator `roqsim_nav`'s default local model, `give_way`
-(pure Python, no extra), with `stop: false`: it steers round the robot and other walkers, and never
-stops for them. For ORCA, write a `navigator` for the walker with
-`avoidance: {steer: orca}` and install `rvo2` the way `roqsim_nav`'s README gives it.
+`avoidance: {steer: give_way, stop: false}` on the walker's navigator gives it `roqsim_nav`'s default
+local model (pure Python, no extra): it steers round the robot and other walkers, and never stops for
+them. `stop: true` makes it look ahead and halt as a robot does. For ORCA, use `steer: orca` and
+install `rvo2` the way `roqsim_nav`'s README gives it.
 
 ### Goals at runtime
 
