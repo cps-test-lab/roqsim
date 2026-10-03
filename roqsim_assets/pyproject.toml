@@ -74,6 +74,9 @@ workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
 ceiling_panels = "roqsim_assets.plugins.ceiling_panels:CeilingPanelsPlugin"
 duct = "roqsim_assets.plugins.duct:DuctPlugin"
 strip_light = "roqsim_assets.plugins.strip_light:StripLightPlugin"
+# Paint on the floor: a rectangle or its outline in diagonal warning stripes, for a set-down place
+# or a keep-clear zone. Visual-only, so a wheel rolls over it and no scanner returns from it.
+hazard_marking = "roqsim_assets.plugins.hazard_marking:HazardMarkingPlugin"
 
 # Props + the conveyor model are a roqsim.models provider, so they resolve by short name
 # (resolve_model) and can be placed from a world YAML via the generic `spawn_model` plugin -- besides
