@@ -50,10 +50,11 @@ and only the physics is roqsim's:
      - The Gazebo TurtleBot 4 supplies it as
      - roqsim supplies it as
    * - ``diffdrive_controller/cmd_vel`` (``TwistStamped``) in; ``odom`` + ``odom -> base_link`` out
-       at 62 Hz; 0.46 m/s, 1.9 rad/s, 0.9 m/s²; a 0.5 s command timeout
-     - ``ros2_control`` ``diff_drive_controller``
-     - ``diff_drive`` with the limits, ``cmd_vel_timeout`` and ``odom_rate_hz`` the manifest states;
-       the world points it at ``diffdrive_controller/cmd_vel`` as a ``TwistStamped``
+       at 62 Hz; 0.46 m/s, 1.9 rad/s, an acceleration limit; a 0.5 s command timeout
+     - ``ros2_control`` ``diff_drive_controller``, limiting the body to 0.9 m/s² and 7.725 rad/s²
+     - ``diff_drive`` with the limits, ``cmd_vel_timeout`` and ``odom_rate_hz`` the manifest states,
+       limiting each wheel to 0.9 m/s²; the world points it at ``diffdrive_controller/cmd_vel`` as a
+       ``TwistStamped``
    * - ``joint_states`` carrying every joint in one message, wheels and wheel-drop suspension
      - ``joint_state_broadcaster``
      - ``joint_state_publisher``, the base's own switched off
@@ -103,7 +104,41 @@ simulator adapters stamp a wheel-drop event with its joint's name and a cliff ev
 ``cliff_<sensor>`` -- the hazards themselves (four ``CLIFF``, two ``WHEEL_DROP``) are on
 ``hazard_detection`` when the robot is lifted, in both simulators. The firmware's
 ``wheel_accel_limit`` is not a parameter of the simulated ``motion_control``: the ramp is the base's
-``diff_drive: {wheel_accel_limit}``.
+``diff_drive: {wheel_accel_limit}``, per wheel as the firmware states it.
+
+**The acceleration limit differs between the two simulators.** The reference simulator limits the
+body's linear and angular acceleration separately; roqsim limits each wheel. Both agree driving
+straight or turning on the spot. Accelerating while turning, a wheel reaches up to about 1.8 m/s²
+there and at most 0.9 m/s² here, and roqsim's ramp does not hold the turning radius.
+
+The reference controller's limits
+---------------------------------
+
+The robot has no ros2_control: its velocity cap and acceleration ramp are the Create 3 firmware's,
+in its ``motion_control``. roqsim models them in the base's ``diff_drive``; the reference simulator
+models them in a ros2_control ``diffdrive_controller``. To compare against the reference simulator,
+or to keep its limits fixed while the base's are varied, launch that controller beside the stack:
+
+.. code-block:: bash
+
+   ros2 launch roqsim_create3_toolbox turtlebot4_nodes.launch.py ros2_control:=true
+
+It is the released controller with ``irobot_create_control``'s ``control.yaml``: 0.46 m/s and
+1.9 rad/s, 0.9 m/s² and 7.725 rad/s² on the body. It takes ``diffdrive_controller/cmd_vel`` from
+``motion_control`` and publishes the limited command on ``diffdrive_controller/cmd_vel_out``. The
+world decides what that command is:
+
+* **a reference** -- the base stays on ``diffdrive_controller/cmd_vel``, and a stack whose commands
+  exceed the controller's limits shows as a difference between ``cmd_vel_out`` and ``odom``;
+* **in the command path**, as in the reference simulator -- point the base at it with
+  ``--set components.robot.diff_drive.topics.cmd_vel=diffdrive_controller/cmd_vel_out``, and raise
+  the base's own limits above the controller's so that the controller is what limits.
+
+Three things differ from the reference simulator (``launch/create3_control.launch.py``): the
+controller drives ros2_control's mock hardware, since roqsim owns the wheels, so its own odometry on
+``diffdrive_controller/odom`` integrates the commands rather than the wheels; the
+``joint_state_broadcaster`` is not started, because it would publish the mock wheels beside the
+simulator's ``joint_states``; and the controller runs at 62 Hz rather than 1000 Hz.
 
 On the real robot
 -----------------
@@ -124,6 +159,7 @@ Varying it in a campaign
 tool that rewrites a parameter file per configuration addresses
 ``motion_control.ros__parameters.safety_override`` and nothing else; the base's and the sensors'
 keys are world keys (``components.robot.diff_drive.wheel_accel_limit``,
-``components.robot.cliff_front_left.max_range``) and are varied as any world key is; and the
+``components.robot.cliff_front_left.max_range``) and are varied as any world key is -- with the
+reference controller in the command path, without moving the controller's limits; and the
 Create 3 topics are recorded and converted like any other, given ``irobot_create_msgs`` wherever
 the bags are read.

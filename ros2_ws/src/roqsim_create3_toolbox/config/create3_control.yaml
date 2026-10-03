@@ -1,0 +1,15 @@
+# Overrides on irobot_create_control's config/control.yaml for create3_control.launch.py: the
+# released diffdrive_controller runs beside a simulator that owns the base and its odometry.
+/**:
+  controller_manager:
+    ros__parameters:
+      # control.yaml's 1000 Hz sends the simulator a command per millisecond; the base's odometry
+      # rate is enough for a limiter whose output is a velocity target.
+      update_rate: 62
+  diffdrive_controller:
+    ros__parameters:
+      # The limited command is this controller's output here. control.yaml asks for it as
+      # `publish_cmd`, which the Jazzy controller does not read.
+      publish_limited_velocity: true
+      # odom -> base_link is the simulator's; this controller only integrates its mock wheels.
+      enable_odom_tf: false

@@ -23,6 +23,13 @@
   <exec_depend>irobot_create_nodes</exec_depend>
   <exec_depend>irobot_create_gz_toolbox</exec_depend>
   <exec_depend>turtlebot4_node</exec_depend>
+  <!-- create3_control.launch.py: the reference simulator's diffdrive_controller with its released
+       control.yaml, on ros2_control's mock hardware. -->
+  <exec_depend>irobot_create_control</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>diff_drive_controller</exec_depend>
+  <exec_depend>hardware_interface</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
