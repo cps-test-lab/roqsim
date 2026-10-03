@@ -195,5 +195,5 @@ class WindFieldPlugin(Plugin):
         # Clamped: a timestep past the correlation time is memoryless, not unstable.
         a = min(convection * ctx.dt / length, 1.0)
         scale = np.array([sigma, sigma, sigma * vertical])
-        draw = ctx.rng_for(f"wind_field:{self.name}").standard_normal(3)
+        draw = ctx.rng_for(self.draw_key("turbulence")).standard_normal(3)
         self._turb = (1.0 - a) * self._turb + scale * np.sqrt(2.0 * a) * draw
