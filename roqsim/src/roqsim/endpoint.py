@@ -938,10 +938,10 @@ def _describe_option(cls: type, value: _Option, literal: type):
 
 def describe_transports(ep: Endpoint) -> dict:
     """How each installed transport (:data:`TRANSPORTS_GROUP`) carries *ep*."""
-    from .registry import _entry_points
+    from .entry_points import entry_points
 
     out = {}
-    for entry in _entry_points(TRANSPORTS_GROUP):
+    for entry in entry_points(TRANSPORTS_GROUP):
         try:
             out[entry.name] = entry.load()(ep)
         except Exception as exc:  # noqa: BLE001 - a transport that cannot say is reported, not fatal

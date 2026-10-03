@@ -29,8 +29,10 @@ import mujoco
 import numpy as np
 
 from roqsim.config import parse_plugin_entry
+from roqsim.document import refuse_unknown_keys
 from roqsim.manifest import load_manifest, manifest_fov
 from roqsim.models import resolve_model
+from roqsim.pose import PoseError, parse_pose
 
 from .adapters import PlacedSensor
 
@@ -213,21 +215,45 @@ def catalog_as_dict() -> dict:
     return out
 
 
+#: The keys of a placement proposal; any other is refused rather than ignored.
+PLACEMENT_KEYS = ("type", "pose", "config", "label")
+
+
 def placed_from_proposal(proposal: dict, *, index: int = 0) -> PlacedSensor:
     """Build a hypothetical :class:`PlacedSensor` from a placement proposal dict.
 
-    ``proposal`` = ``{"type": str, "pos": [x,y,z], "rpy": [r,p,y], "config": {..}}``. The catalog's
+    ``proposal`` = ``{"type": str, "pose": {...}, "config": {..}, "label": str}``. ``pose`` is a
+    world pose as :func:`roqsim.pose.parse_pose` reads one, with ``position.z`` stated: a sensor on a
+    wall or a ceiling has no resting height to fall back on. Any other key is refused. The catalog's
     ``fov_template`` supplies defaults; ``config`` overrides them per placement.
     """
+    if not isinstance(proposal, dict):
+        raise ValueError(
+            f"placement {index}: expected a mapping with 'type' and 'pose', got {proposal!r}"
+        )
+    where = f"placement {index} ({proposal.get('label') or proposal.get('type')!r})"
+    refuse_unknown_keys(proposal, PLACEMENT_KEYS, where)
+    if "type" not in proposal:
+        raise ValueError(f"{where}: 'type' is required -- a catalog sensor type")
     stype = proposal["type"]
     if stype not in CATALOG:
         raise KeyError(f"unknown sensor type {stype!r}; catalog has {sorted(CATALOG)}")
+    if "pose" not in proposal:
+        raise ValueError(f"{where}: 'pose' is required -- where the sensor is, in the world frame")
+    try:
+        pos, quat = parse_pose(proposal["pose"])
+    except PoseError as exc:
+        raise ValueError(f"{where}: {exc}") from None
+    if pos[2] is None:
+        raise ValueError(
+            f"{where}: 'pose.position.z' is required -- a mounted sensor has no resting height"
+        )
     config = dict(CATALOG[stype].fov_template)
     config.update(proposal.get("config") or {})
     return PlacedSensor(
         sensor_type=stype,
-        pos=np.asarray(proposal["pos"], dtype=np.float64),
-        rpy=np.asarray(proposal.get("rpy", [0.0, 0.0, 0.0]), dtype=np.float64),
+        pos=np.asarray(pos, dtype=np.float64),
+        quat=np.asarray(quat, dtype=np.float64),
         config=config,
         label=proposal.get("label", f"{stype}_{index}"),
     )

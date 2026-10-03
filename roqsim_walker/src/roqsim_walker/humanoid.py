@@ -14,12 +14,13 @@ This module owns the single source of truth for the skeleton (joint hierarchy + 
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+
+from roqsim.pose import yaw_to_quat
 
 # Pelvis standing height (m): with the leg offsets below the feet rest near z=0.
 ROOT_HEIGHT = 0.93
@@ -105,11 +106,6 @@ _TERMINALS = {
 
 
 # -- quaternion helpers (w, x, y, z) ----------------------------------------------------------
-def quat_yaw(yaw: float) -> np.ndarray:
-    h = yaw / 2.0
-    return np.array([math.cos(h), 0.0, 0.0, math.sin(h)])
-
-
 def quat_mul(a, b) -> np.ndarray:
     aw, ax, ay, az = a
     bw, bx, by, bz = b
@@ -258,7 +254,7 @@ def forward_kinematics(root_xyz, yaw: float, joint_rot: dict, skeleton=None) -> 
     skel = skeleton or DEFAULT_SKELETON
     out: dict = {}
     root_xyz = np.asarray(root_xyz, dtype=float)
-    pelvis_q = quat_mul(quat_yaw(yaw), joint_rot["pelvis"])
+    pelvis_q = quat_mul(yaw_to_quat(yaw), joint_rot["pelvis"])
     out["pelvis"] = (root_xyz, pelvis_q)
     for j in SKELETON[1:]:  # parents precede children
         pp, pq = out[j.parent]

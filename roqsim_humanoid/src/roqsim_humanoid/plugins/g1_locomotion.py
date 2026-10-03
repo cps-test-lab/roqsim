@@ -84,6 +84,7 @@ from roqsim.context import RobotHandle, SimContext
 from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
 from roqsim.policy import ObservationState, PolicySpec
+from roqsim.pose import yaw_of
 from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 from ..policy import DEFAULT_CONFIG, DEFAULT_POLICY, find_spec
@@ -360,8 +361,7 @@ class G1LocomotionPlugin(Plugin):
             return self._cmd
 
         x, y, _ = d.xpos[self._base_bid]
-        qw, qx, qy, qz = d.xquat[self._base_bid]
-        yaw = float(np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
+        yaw = yaw_of(d.xquat[self._base_bid])
         if self._hold is None:
             self._hold = np.array([x, y, yaw], dtype=np.float32)
             return self._cmd
