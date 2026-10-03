@@ -6,7 +6,7 @@
 ``roqsim sim`` serves every endpoint of its world at a control address (:mod:`roqsim.ipc`); this
 backend is a client of it (:class:`roqsim.control_client.Client`), under the ROS runner or any
 other that hands an action no in-process simulation. The simulator is found as ``roqsim ls`` finds
-it -- ``ROQSIM_CONTROL``, the run directory's socket, or the only one running -- and until one
+it -- ``ROQSIM_CONTROL``, or the only one running -- and until one
 answers, :meth:`IpcAccess.ready` is false, so a simulator that is still starting is waited for.
 
 **Nothing blocks.** Every request is sent and then polled with a zero wait, one in flight per

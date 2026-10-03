@@ -72,7 +72,11 @@ because nothing can address them.
 
 **Body tree.** ``--body-tree GLOB`` answers a different question than ``--overridable``: not "what
 can I change on named objects" but "what is actually *nested under* this body" -- its descendant
-bodies and each one's attached geoms/joints/sites, as a tree rather than a flat list. Same discipline
+bodies and each one's attached geoms/joints/sites/cameras, as a tree rather than a flat list. The
+nodes carry MuJoCo's names, which a model prefix may lengthen; each body, site and camera that a
+frame path names (:mod:`roqsim.paths`) also carries that path as its ``frame`` -- the string
+``pose_publisher`` or :func:`roqsim.frames.resolve_frame` accepts for it -- and one no single path
+names (a body and a site of one name) carries none. Same discipline
 as ``--overridable``: a glob is required (there is no "the whole world" mode), and each matched body's
 subtree is capped in node count, reporting ``truncated`` rather than silently handing back a partial
 tree with no indication it was cut.
@@ -230,7 +234,8 @@ _MAX_TREE_NODES = 200
 
 def _body_tree(ctx, pattern: str) -> list[dict]:
     """Each body matching *pattern*, with its kinematic subtree -- descendant bodies plus each
-    one's attached geoms/joints/sites -- as ``{name, type, children}`` nodes.
+    one's attached geoms/joints/sites/cameras -- as ``{name, type, children}`` nodes, a body, site
+    or camera with its frame path as ``frame`` where one path names it alone.
 
     Unlike ``_overridable_targets``, which lists named objects flat, this nests them the way the
     model actually does: a gripper's pads and finger joint show up *under* the gripper body, not
@@ -238,6 +243,25 @@ def _body_tree(ctx, pattern: str) -> list[dict]:
     subtree is capped (``_MAX_TREE_NODES``) rather than risking "the scene" on a broad glob.
     """
     import mujoco
+
+    from roqsim.frames import frame_offers
+
+    # (type, id) -> the frame path that names it. A root's path names its entity, not the body, and
+    # a path two offers share resolves to neither, so both are left out.
+    by_path: dict[str, list] = {}
+    for offer in frame_offers(ctx):
+        by_path.setdefault(offer.path, []).append(offer.target)
+    frame_of: dict[tuple[str, int], str] = {}
+    for path, targets in by_path.items():
+        if len(targets) == 1 and targets[0].kind != "root":
+            kind = targets[0].kind
+            frame_of[("site" if kind == "frame" else kind, targets[0].index)] = path
+
+    def _node(name: str, kind: str, oid: int) -> dict:
+        node = {"name": name, "type": kind}
+        if (kind, oid) in frame_of:
+            node["frame"] = frame_of[(kind, oid)]
+        return node
 
     children_of: dict[int, list[int]] = {}
     for body_id in range(1, ctx.model.nbody):  # body 0 is the worldbody; it has no parent
@@ -252,6 +276,9 @@ def _body_tree(ctx, pattern: str) -> list[dict]:
     sites_of: dict[int, list[int]] = {}
     for site_id in range(ctx.model.nsite):
         sites_of.setdefault(int(ctx.model.site_bodyid[site_id]), []).append(site_id)
+    cameras_of: dict[int, list[int]] = {}
+    for cam_id in range(ctx.model.ncam):
+        cameras_of.setdefault(int(ctx.model.cam_bodyid[cam_id]), []).append(cam_id)
 
     def _name(kind, oid) -> str:
         return mujoco.mj_id2name(ctx.model, kind, oid) or ""
@@ -261,7 +288,7 @@ def _body_tree(ctx, pattern: str) -> list[dict]:
         if budget[0] <= 0:
             return None
         budget[0] -= 1
-        node = {"name": _name(mujoco.mjtObj.mjOBJ_BODY, body_id), "type": "body"}
+        node = _node(_name(mujoco.mjtObj.mjOBJ_BODY, body_id), "body", body_id)
         children = []
         for geom_id in sorted(
             geoms_of.get(body_id, []), key=lambda g: _name(mujoco.mjtObj.mjOBJ_GEOM, g)
@@ -283,7 +310,14 @@ def _body_tree(ctx, pattern: str) -> list[dict]:
             if budget[0] <= 0:
                 break
             budget[0] -= 1
-            children.append({"name": _name(mujoco.mjtObj.mjOBJ_SITE, site_id), "type": "site"})
+            children.append(_node(_name(mujoco.mjtObj.mjOBJ_SITE, site_id), "site", site_id))
+        for cam_id in sorted(
+            cameras_of.get(body_id, []), key=lambda c: _name(mujoco.mjtObj.mjOBJ_CAMERA, c)
+        ):
+            if budget[0] <= 0:
+                break
+            budget[0] -= 1
+            children.append(_node(_name(mujoco.mjtObj.mjOBJ_CAMERA, cam_id), "camera", cam_id))
         for child_id in sorted(
             children_of.get(body_id, []), key=lambda b: _name(mujoco.mjtObj.mjOBJ_BODY, b)
         ):
@@ -360,8 +394,9 @@ def main(argv=None) -> int:
         "--body-tree",
         metavar="GLOB",
         default="",
-        help="also nest the descendant bodies (and their geoms/joints/sites) under each body "
-        "matching GLOB, as a tree rather than a flat list (builds the model)",
+        help="also nest the descendant bodies (and their geoms/joints/sites/cameras) under each "
+        "body matching GLOB, as a tree rather than a flat list, each body, site and camera with "
+        "the frame path that names it (builds the model)",
     )
     args = parser.parse_args(argv)
 
