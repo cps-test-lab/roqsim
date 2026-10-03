@@ -300,25 +300,23 @@ class AttachmentPlugin(Plugin):
         the load snaps back to wherever the MJCF happened to declare it, which for a parcel the robot
         drove up to is metres away.
 
-        ``eq_data[3:10]`` is the pose of **body1 in body2's frame** -- here the load in the carrier's
-        -- which is the layout the compiler fills from the model's reference configuration. Written
-        the other way round the solver drives the load to twice its offset, so a parcel 0.5 m to the
-        side is snatched to 1.5 m. ``tests/test_attachment.py`` pins the direction with a load the carrier
-        both moves AND rotates, because a translation-only test cannot tell the two apart.
+        The weld holds two points together and one orientation fixed: ``eq_data[0:3]`` is the weld
+        point in body2's frame (the carrier's), ``eq_data[3:6]`` the same point in body1's (the
+        load's), and ``eq_data[6:10]`` body2's orientation in body1's frame. The point is the
+        carrier's origin. A pose stored from the other side agrees with this one only while both
+        bodies are unrotated, and an anchor left at its default only at one offset, so
+        ``tests/test_attachment.py`` attaches a tilted load to a turned carrier.
         """
         d, m = ctx.data, ctx.model
-        rot_carrier = np.array(d.xmat[self._carrier_bid]).reshape(3, 3)
-        quat_load, quat_carrier, inverse, relative = (np.zeros(4) for _ in range(4))
-        mujoco.mju_mat2Quat(
-            quat_load, np.ascontiguousarray(np.array(d.xmat[self._load_bid])).reshape(-1)
-        )
-        mujoco.mju_mat2Quat(quat_carrier, np.ascontiguousarray(rot_carrier).reshape(-1))
-        mujoco.mju_negQuat(inverse, quat_carrier)
-        mujoco.mju_mulQuat(relative, inverse, quat_load)
+        # The poses of the state as it is now, not as the last step's kinematics left them.
+        mujoco.mj_kinematics(m, d)
+        load, carrier = self._load_bid, self._carrier_bid
+        inverse, relative = np.zeros(4), np.zeros(4)
+        mujoco.mju_negQuat(inverse, d.xquat[load])
+        mujoco.mju_mulQuat(relative, inverse, d.xquat[carrier])
         eq = m.eq_data[self._eq_id]
-        eq[3:6] = rot_carrier.T @ (d.xpos[self._load_bid] - d.xpos[self._carrier_bid])
+        eq[0:3] = 0.0
+        eq[3:6] = d.xmat[load].reshape(3, 3).T @ (d.xpos[carrier] - d.xpos[load])
         eq[6:10] = relative
-        # Torque scale: how hard the orientation half of the weld is enforced. The compiler's default
-        # is 1 (a rigid hold); a spec-built equality starts at 0, which constrains the position and
-        # lets the load spin freely in the carrier's grip -- a bug that looks like a physics quirk.
+        # Torque scale 1: the orientation is held as firmly as the position.
         eq[10] = 1.0

@@ -152,6 +152,29 @@ def test_attaching_does_not_move_the_load():
     assert np.allclose(_pos(engine, "parcel"), before, atol=2e-3)
 
 
+def test_attaching_holds_a_load_at_any_offset_and_orientation():
+    """Neither body is where the model declared it: the turntable has turned, and the parcel stands
+    off its axis, tilted. A relative pose stored for the wrong body, or from the wrong side, agrees
+    with the right one only at particular offsets and while both bodies are unrotated."""
+    engine = _engine(scene=f"{__name__}:_TurntableScene")
+    data, model = engine.ctx.data, engine.ctx.model
+    parcel = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "parcel")
+    free = model.jnt_qposadr[model.body_jntadr[parcel]]
+    tilt = np.zeros(4)
+    mujoco.mju_axisAngle2Quat(tilt, np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0), 0.9)
+    data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "spin")]] = 0.7
+    data.qpos[free : free + 3] = [0.3, -0.2, 0.45]
+    data.qpos[free + 3 : free + 7] = tilt
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
+
+    _plugin(engine).set_attached(True, engine.ctx.sim_time)
+    for _ in range(200):
+        engine.step()
+    assert np.allclose(data.xpos[parcel], [0.3, -0.2, 0.45], atol=2e-3)
+    assert abs(float(np.dot(data.xquat[parcel], tilt))) == pytest.approx(1.0, abs=1e-4)
+
+
 def test_an_attached_load_travels_with_the_carrier():
     engine = _engine()
     parcel_before, cart_before = _pos(engine, "parcel"), _pos(engine, "base_link")
@@ -163,13 +186,13 @@ def test_an_attached_load_travels_with_the_carrier():
     # A weld is a solver constraint, not a rigid link, so the load lags by a little under
     # acceleration. What must not happen is it staying behind or being flung somewhere else.
     assert moved_parcel == pytest.approx(moved_cart, abs=0.15)
-    # And it keeps its OFFSET: the direction of the stored relative pose is what decides this, and
-    # written the other way round the solver drives the parcel to twice its offset.
+    # And it keeps its OFFSET beside the cart.
     assert _pos(engine, "parcel")[1] == pytest.approx(0.5, abs=0.05)
 
 
 def test_a_rotating_carrier_swings_its_load_around_with_it():
-    """A translation-only check cannot tell the relative pose's direction from its negation.
+    """A translation-only check cannot tell a load held in the carrier's frame from one held in the
+    world's.
 
     The turntable rotates a quarter turn with the parcel held off-axis: held correctly the parcel
     swings to where that offset now points, and its own orientation follows the carrier's.
