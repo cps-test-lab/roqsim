@@ -108,8 +108,8 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 | Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, Maker's Pet oomwoo! One and Mini |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
 | MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |
-| CC0-1.0 | the MaleVisitorWalk character (Fuel) |
-| CC-BY-4.0 | the warehouse scene and the FemaleVisitorWalk character (Gazebo Fuel), locomotion clips (CARLA) |
+| CC-BY-4.0 | the warehouse scene (Gazebo Fuel), locomotion clips (CARLA) |
+| CC0-1.0 or CC-BY-4.0 | pedestrian characters (Gazebo Fuel), each as the `CREDITS.txt` beside it states |
 
 Props and surface textures in `roqsim_assets` carry their licence and attribution in the
 `CREDITS.txt` beside each, which ships with the package.
