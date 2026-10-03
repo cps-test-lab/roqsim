@@ -54,4 +54,4 @@ package may depend on.
 entity's prefix — which on a mobile manipulator includes the wheel motors. It then writes arm position
 targets into wheel drives that `diff_drive`/`omni_drive` own, and the robot simply will not drive.
 Both manifests name their `joints:` explicitly to prevent it, and both test suites assert the
-controllers hold disjoint actuator sets. Read the manifest's comments before changing its `joints:`.
+controllers hold disjoint actuator sets. Keep the sets disjoint when changing a manifest's `joints:`.

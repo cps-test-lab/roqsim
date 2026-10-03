@@ -6,7 +6,7 @@ Two arms, one generator: the **ViperX 300 6DOF** (``vx300s``) and the **WidowX 2
 almost nothing once the first is right.
 
 Provenance is unusually direct. Trossen Robotics *is* Interbotix, and Menagerie's models are derived
-from exactly the ``interbotix_xsarm_descriptions`` xacro the platform survey ranked -- so this takes
+from exactly the vendor's ``interbotix_xsarm_descriptions`` xacro -- so this takes
 the curated MJCF path (as the xArm's converter does) rather than expanding the xacro ourselves (as
 the ROSbot's converter must). Every mass, inertia, joint limit, actuator gain, coupling and contact
 parameter is upstream's, passed through unchanged.

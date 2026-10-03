@@ -20,7 +20,7 @@ components:
   - diff_drive:
       # Not the vendor's declared inertia, which is 1/2 m r^2 for r = 0.15 m -- the wheel's DIAMETER
       # in the radius's place. The collision sphere, the joint's 0.075 m mounting height and the
-      # 0.1499 m visual mesh all agree on 0.075 m. See rox_diff.xml and the port log.
+      # 0.1499 m visual mesh all agree on 0.075 m. See rox_diff.xml.
       wheel_radius: 0.075
       wheel_separation: 0.634        # rox.urdf.xacro, the diff branch's wheel_separation property
       max_linear_vel: 0.8            # navigation_diff.yaml FollowPath max_vel_x

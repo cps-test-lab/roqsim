@@ -10,7 +10,7 @@ components:
   #
   # The steering is OBSERVATIONAL, like every other wheel treatment here -- geometrically right, and
   # not the motive force. A paper measuring steer rate limits or the reorientation delay at a
-  # direction change needs real steer actuation, which this is not. See the port log.
+  # direction change needs real steer actuation, which this is not.
   - omni_drive:
       base_joint: base_free
       vx_actuator: base_vx
@@ -65,7 +65,7 @@ components:
   # description's steering axes (+-0.24, +-0.18) share, so they apply unchanged in base_link; the
   # description's joints write +-0.338 / +-0.288, 11 mm further out on each axis. There the sick_s300
   # device, which collides as the convex hulls of its housing block and optics head, clears the corner
-  # wheel by 7 mm at every steer angle -- see the port log.
+  # wheel by 7 mm at every steer angle.
   #
   # The wheels collide as the same page's 30 mm wide wheel (B), not the vendor's 180 mm tyre sphere,
   # which reaches the housings even at this pose; test_mpo_700_scene.py asserts no housing touches a tyre.
