@@ -90,7 +90,7 @@ def test_the_marking_lies_on_the_floor_where_its_pose_says_and_collides_with_not
         assert np.abs(world[:, 0] - 3.0).max() == pytest.approx(0.55, abs=1e-6)
         assert np.abs(world[:, 1] + 2.0).max() == pytest.approx(0.75, abs=1e-6)
         assert world[:, 2].min() == pytest.approx(0.0, abs=1e-6)
-        assert world[:, 2].max() == pytest.approx(0.002, abs=1e-6)
+        assert world[:, 2].max() == pytest.approx(0.0005, abs=1e-6)
     assert engine.ctx.entities.get("spot").body == "m_hazard_marking"
 
 
@@ -102,7 +102,7 @@ def test_a_ray_aimed_at_the_floor_returns_from_the_paint(tmp_path):
     distance = mujoco.mj_ray(
         engine.ctx.model,
         engine.ctx.data,
-        np.array([0.0, 0.0, 1.0]),
+        np.array([0.02, 0.0, 1.0]),  # inside a stripe: the centre lies on the edge between two
         np.array([0.0, 0.0, -1.0]),
         VISIBLE_GROUPS,
         1,
@@ -111,7 +111,7 @@ def test_a_ray_aimed_at_the_floor_returns_from_the_paint(tmp_path):
     )
     name = mujoco.mj_id2name(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, int(hit[0]))
     assert name.startswith("m_stripes_")
-    assert distance == pytest.approx(0.998, abs=1e-6)
+    assert distance == pytest.approx(0.9995, abs=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -131,3 +131,16 @@ def test_a_wrong_value_is_named(config, word):
 
 def test_an_outline_is_five_centimetres_wide_unless_told():
     assert HazardMarkingPlugin({}).band == 0.05
+
+
+def test_stripes_are_in_proportion_to_the_band_unless_told():
+    assert HazardMarkingPlugin({}).stripe == pytest.approx(0.035)
+    assert HazardMarkingPlugin({"band": 0.1}).stripe == pytest.approx(0.07)
+    assert HazardMarkingPlugin({"band": 0}).stripe == pytest.approx(0.1)
+    assert HazardMarkingPlugin({"band": 0.1, "stripe": 0.2}).stripe == pytest.approx(0.2)
+
+
+def test_the_coat_covers_unless_a_colour_states_an_alpha(tmp_path):
+    assert [c[3] for c in HazardMarkingPlugin({}).colors] == [1.0, 1.0]
+    worn = HazardMarkingPlugin({"colors": [[1, 1, 0, 0.6], [0, 0, 0]]})
+    assert [c[3] for c in worn.colors] == [0.6, 1.0]

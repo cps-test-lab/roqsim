@@ -5,9 +5,14 @@ a hand-over position between two vehicles, a keep-clear zone before a door. Eith
 the rectangle alone (``band``), which is how a set-down place is painted so the load stands on bare
 floor inside it, or the whole rectangle (``band: 0``).
 
-It is paint: a couple of millimetres thick and without contact, so a wheel rolls over it without
-a bump and nothing rests on it. A camera sees it, and a ray aimed at the floor returns from the
-paint as it would from the floor, that thickness nearer.
+It is paint: half a millimetre thick and without contact, so a wheel rolls over it without a bump
+and nothing rests on it. A camera sees it, and a ray aimed at the floor returns from the paint as
+it would from the floor, that thickness nearer.
+
+It is drawn as paint on a floor looks, not as a sign: a traffic yellow and an anthracite instead of
+pure yellow and black, stripes in proportion to the band as marking tape has them, and the sheen
+of a trowelled floor, so a lamp's highlight runs across floor and paint alike. The coat covers:
+a colour given with an alpha below 1 is paint worn thin, and the floor shows through it.
 
 The stripes are not a texture. Each stripe is cut to the marked area and all stripes of one colour
 are one mesh, so the edges are sharp at any distance and the stripes run through the corners of an
@@ -27,12 +32,13 @@ Config::
       length: 1.4         # along yaw, m, over the outer edges
       width: 1.0          # across it, m, over the outer edges
       band: 0.05          # width of the striped outline, m; 0 stripes the whole rectangle
-      stripe: 0.1         # width of one stripe, m, measured across the stripe
+      stripe: 0.035       # width of one stripe, m, measured across the stripe; by default 0.7 of
+                          #   'band', and 0.1 where the whole rectangle is striped
       angle: 45.0         # the stripes' slant against 'length', degrees, in (0, 180)
       colors:             # the two paints, each [r, g, b] or [r, g, b, a]
-        - [0.98, 0.80, 0.05]
-        - [0.05, 0.05, 0.05]
-      thickness: 0.002    # how far the paint stands above the floor, m
+        - [0.90, 0.66, 0.06]
+        - [0.13, 0.13, 0.14]
+      thickness: 0.0005   # how far the paint stands above the floor, m
 """
 
 from __future__ import annotations
@@ -45,8 +51,11 @@ from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
 from roqsim.pose import config_pose, config_pose_errors, yaw_of
 
-_YELLOW = [0.98, 0.80, 0.05, 1.0]
-_BLACK = [0.05, 0.05, 0.05, 1.0]
+_YELLOW = [0.90, 0.66, 0.06]
+_BLACK = [0.13, 0.13, 0.14]
+#: A stripe's width as a share of the band's, as marking tape is printed.
+_STRIPE_PER_BAND = 0.7
+_FILLED_STRIPE = 0.1
 
 Point = tuple[float, float]
 
@@ -148,16 +157,19 @@ class HazardMarkingPlugin(Plugin):
         self.length = self._float(self.config.get("length"), 1.4)
         self.width = self._float(self.config.get("width"), 1.0)
         self.band = self._float(self.config.get("band"), 0.05)
-        self.stripe = self._float(self.config.get("stripe"), 0.1)
+        outlined = len(marked_rectangles(self.length, self.width, self.band)) > 1
+        self.stripe = self._float(
+            self.config.get("stripe"),
+            _STRIPE_PER_BAND * self.band if outlined else _FILLED_STRIPE,
+        )
         self.angle = math.radians(self._float(self.config.get("angle"), 45.0))
-        self.thickness = self._float(self.config.get("thickness"), 0.002)
+        self.thickness = self._float(self.config.get("thickness"), 0.0005)
         colors = self.config.get("colors")
-        if isinstance(colors, (list, tuple)) and len(colors) == 2:
-            self.colors = [
-                self._rgba(c) or d for c, d in zip(colors, (_YELLOW, _BLACK), strict=True)
-            ]
-        else:
-            self.colors = [_YELLOW, _BLACK]
+        if not (isinstance(colors, (list, tuple)) and len(colors) == 2):
+            colors = (_YELLOW, _BLACK)
+        self.colors = [
+            self._rgba(c) or self._rgba(d) for c, d in zip(colors, (_YELLOW, _BLACK), strict=True)
+        ]
 
     @staticmethod
     def _float(value, default: float) -> float:
@@ -239,7 +251,9 @@ class HazardMarkingPlugin(Plugin):
             mat = child.add_material()
             mat.name = f"paint_{name}"
             mat.rgba = rgba
-            mat.specular = 0.1
+            # A trowelled floor's sheen, so a lamp's highlight runs across floor and paint alike.
+            mat.specular = 0.3
+            mat.shininess = 0.6
 
             verts, faces = _prisms(polygons, self.thickness)
             mesh = child.add_mesh()
