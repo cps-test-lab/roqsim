@@ -1260,6 +1260,9 @@ The things the readers rely on:
   fails on a literal key that neither the block nor the schema publishes, since a caller that checks
   a world against the catalog would refuse that key in a valid world. A key read only to be refused
   with a reason (``seed`` on a sensor that draws from the run's seed) is not a setting and stays out.
+  The scan is public, ``roqsim.introspection.undeclared_config_reads(cls)``: it returns the keys a
+  plugin class reads and does not publish, so a package that registers plugins of its own can hold
+  them to the same rule in its tests.
 
 Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
 cannot be validated, so it drifts, and this block is read by a caller writing a world.

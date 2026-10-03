@@ -48,6 +48,7 @@ from roqsim.kinematics import body_twist
 from roqsim.placement import PLACEABLE_MODES_HINT, place_body
 from roqsim.plugin import Plugin
 from roqsim.presence import set_present
+from roqsim.schema import Field
 
 from .physics import DEFAULT_TIMEOUT_S, run_on_physics
 
@@ -226,6 +227,14 @@ class SimInterfacesPlugin(Plugin):
     # scene consumer (render, review, export) may drop it. See Plugin.transport_only.
     transport_only = True
 
+    CONFIG_SCHEMA = {
+        "node_name": Field(
+            str,
+            default="roqsim_interfaces",
+            doc="name of the node the services are served on, where no ros2_bridge node is shared",
+        ),
+    }
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self._ctx = None
@@ -242,7 +251,7 @@ class SimInterfacesPlugin(Plugin):
             if not rclpy.ok():
                 rclpy.init()
                 self._we_inited_rclpy = True
-            node = Node(self.config.get("node_name", "roqsim_interfaces"))
+            node = Node(self.settings.node_name)
             self._own_node = True
         self._node = node
 

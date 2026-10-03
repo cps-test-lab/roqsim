@@ -47,6 +47,15 @@ Config::
       strip_namespace: null    # namespace(s) to DROP from topics/frames so the served robot presents
                                # CLEAN local names (/odom, base_link) on its domain -- a name or list.
                                # Non-stripped owners (e.g. walkers) keep their prefixed frames.
+      frame_prefix: ""         # outer prefix of every frame id, before the endpoint's own
+                               # namespace; defaults to namespace
+      tf_namespace: ""         # publish TF on /<tf_namespace>/tf and /<tf_namespace>/tf_static
+                               # rather than /tf; frame ids are unchanged (see frame_prefix)
+      publish_static_tf: true  # publish producers' fixed sensor-mount transforms on /tf_static;
+                               # off where a robot_state_publisher publishes the same links
+      merged_joint_states: auto  # which joint_states endpoints get one merged publisher: auto (by
+                               # entity), true (all into /joint_states), false, or a list of
+                               # {topic, owners} groups -- see "Merged joint_states" below
 
 **The /clock grid must divide every gated publish period.** A subscriber running on sim time cannot
 resolve an event finer than the last ``/clock`` it received, so ``/clock``'s own period is the grid
