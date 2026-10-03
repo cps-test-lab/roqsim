@@ -25,8 +25,8 @@ theirs.
 
 The same holds for a simulation that is running: ``roqsim.control_client``'s plain-JSON calls
 list, describe, read and call its endpoints and pause, resume and step it, over the control socket
-``roqsim sim`` serves. Each finds the simulator the way ``roqsim ls`` does (``ROQSIM_CONTROL``, the
-run directory, or the only one running) unless given ``control``; an error is a ``{"error": ...}``
+``roqsim sim`` serves. Each finds the simulator the way ``roqsim ls`` does (``ROQSIM_CONTROL``, or
+the only one running) unless given ``control``; an error is a ``{"error": ...}``
 answer, and an array of more than a few dozen numbers is summarised rather than listed.
 
 Runnable via ``roqsim mcp serve``, the ``roqsim-mcp`` console script, or

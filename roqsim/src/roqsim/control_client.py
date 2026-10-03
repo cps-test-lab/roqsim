@@ -4,7 +4,7 @@
 
     from roqsim.control_client import Client
 
-    sim = Client()                                   # ROQSIM_CONTROL, the run dir, or the only one
+    sim = Client()                                   # ROQSIM_CONTROL, or the only one running
     sim.endpoints()                                  # [{'path': 'robot/lidar/scan', 'kind': 'out', ...}]
     sim.read("robot/diff_drive/odom")                # the value, numpy arrays included
     sim.read("sim/run_control/state", field="sim_time")

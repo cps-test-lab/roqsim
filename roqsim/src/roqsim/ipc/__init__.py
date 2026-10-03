@@ -2,8 +2,8 @@
 
 ``roqsim sim`` serves every endpoint over ZeroMQ (:class:`roqsim.ipc.bridge.IpcBridge`) at one URI:
 
-* ``ipc://<path>`` -- a Unix socket; the default is ``roqsim-control.sock`` in the run directory
-  (``RUN_OUTPUT_DIR``, else ``OUTPUT_DIR``, else the working directory).
+* ``ipc://<path>`` -- a Unix socket; the default is ``<pid>.sock`` in the per-user runtime
+  directory (:func:`runtime_dir`), beside the simulator's registration.
 * ``tcp://<host>:<port>`` -- ``tcp://:<port>`` binds ``127.0.0.1``; name another address to open it
   beyond this machine.
 
@@ -13,9 +13,10 @@ for ``tcp://``. Each running simulator also leaves a small JSON file in a per-us
 running" without being told.
 
 A client resolves the address in this order (:func:`discover`): the URI it was given, then
-``ROQSIM_CONTROL``, then the run directory's socket if a running simulator serves it, then the only
-simulator running. Several
-running and none named is refused with the list, never guessed.
+``ROQSIM_CONTROL``, then the only simulator running. Several running and none named is refused
+with the list, never guessed. Where a simulator and its clients do not share a runtime directory --
+separate containers -- whoever starts them names the address, with ``--control`` or
+``ROQSIM_CONTROL``, for both.
 
 Nothing here imports ZeroMQ: finding a simulator costs a directory listing.
 """
@@ -29,14 +30,10 @@ import tempfile
 import time
 from pathlib import Path
 
-#: The file name of the default control socket in the run directory.
-SOCKET_NAME = "roqsim-control.sock"
 #: The environment variable naming the control URI, for ``roqsim sim`` and for a client alike.
 ENV = "ROQSIM_CONTROL"
 #: What ``--control`` / ``ROQSIM_CONTROL`` take to serve nothing.
 NONE = "none"
-#: The run directory's anchors, most specific first (shared with ``roqsim sim``'s output paths).
-OUTPUT_DIR_VARS = ("RUN_OUTPUT_DIR", "OUTPUT_DIR")
 #: A Unix socket path longer than this cannot be bound (``sun_path`` holds 108 bytes with its NUL).
 IPC_PATH_MAX = 107
 #: The protocol version a server states in ``hello``.
@@ -69,15 +66,6 @@ class ControlError(RuntimeError):
         self.detail = detail or {}
 
 
-def run_dir() -> Path:
-    """The directory a run's outputs land in: the first output variable set, else the CWD."""
-    for var in OUTPUT_DIR_VARS:
-        base = os.environ.get(var)
-        if base:
-            return Path(base)
-    return Path.cwd()
-
-
 def runtime_dir() -> Path:
     """Per-user directory where each running simulator leaves its registration file."""
     base = os.environ.get("XDG_RUNTIME_DIR")
@@ -87,8 +75,9 @@ def runtime_dir() -> Path:
 
 
 def default_uri() -> str:
-    """``ipc://`` + the control socket in the run directory."""
-    return "ipc://" + str((run_dir() / SOCKET_NAME).resolve())
+    """``ipc://`` + this process's control socket in :func:`runtime_dir`: one per simulator, so
+    any number run side by side."""
+    return "ipc://" + str(runtime_dir() / f"{os.getpid()}.sock")
 
 
 def normalize(value: str) -> str | None:
@@ -123,33 +112,29 @@ def pub_uri(uri: str) -> str:
 
 
 def bind_uri(value: str | None, logger: logging.Logger | None = None) -> str | None:
-    """The URI ``roqsim sim`` serves: *value* (``--control``), else ``ROQSIM_CONTROL``, else the
-    default in the run directory. ``None`` when either says :data:`NONE`.
+    """The URI ``roqsim sim`` serves: *value* (``--control``), else ``ROQSIM_CONTROL``, else
+    :func:`default_uri`. ``None`` when either says :data:`NONE`.
 
-    A default whose path is too long for a Unix socket (a deep run directory) moves to
-    :func:`runtime_dir`, with a warning naming both -- the printed ``control:`` line and the
-    registration carry the address it moved to. A path given explicitly is refused instead.
+    The address is the caller's to state wherever another process has to find it: a runner that
+    starts a simulator and its clients in separate places sets ``ROQSIM_CONTROL`` for all of them.
+    The default serves a simulator and its clients on one machine, which find it through its
+    registration. An ``ipc://`` path too long for a Unix socket is refused, naming the limit.
     """
     explicit = value if value is not None else os.environ.get(ENV) or None
-    uri = normalize(explicit) if explicit is not None else default_uri()
+    if explicit is None:
+        runtime_dir().mkdir(parents=True, exist_ok=True)
+        uri = default_uri()
+    else:
+        uri = normalize(explicit)
     if uri is None or not uri.startswith("ipc://"):
         return uri
     for path in (uri[len("ipc://") :], pub_uri(uri)[len("ipc://") :]):
         if len(path.encode()) > IPC_PATH_MAX:
-            if explicit is not None:
-                raise ValueError(
-                    f"{uri}: a Unix socket path is at most {IPC_PATH_MAX} bytes and {path!r} is "
-                    f"{len(path.encode())}. Name a shorter path, or a tcp:// address."
-                )
-            moved = "ipc://" + str(runtime_dir() / f"{os.getpid()}.sock")
-            (logger or log).warning(
-                "control: the run directory's socket path %s is too long for a Unix socket; "
-                "serving at %s instead",
-                uri,
-                moved,
+            raise ValueError(
+                f"{uri}: a Unix socket path is at most {IPC_PATH_MAX} bytes and {path!r} is "
+                f"{len(path.encode())}. Name a shorter path with --control or {ENV}, or a "
+                "tcp:// address."
             )
-            runtime_dir().mkdir(parents=True, exist_ok=True)
-            return moved
     return uri
 
 
@@ -227,17 +212,12 @@ def discover(explicit: str | None = None) -> str:
     if env and env.strip().lower() != NONE:
         return normalize(env)
     live = running()
-    local = "ipc://" + str((run_dir() / SOCKET_NAME).resolve())
-    if any(entry.get("uri") == local for entry in live):
-        # Only a registered one: a process killed outright leaves its socket file behind.
-        return local
     if len(live) == 1:
         return live[0]["uri"]
     if not live:
         raise ControlError(
-            f"no running simulator found: none registered in {runtime_dir()}, no {SOCKET_NAME} "
-            f"in {run_dir()}, and {ENV} is not set. Start one with `roqsim sim <world>`, or name "
-            "its address with --control.",
+            f"no running simulator found: none registered in {runtime_dir()}, and {ENV} is not "
+            "set. Start one with `roqsim sim <world>`, or name its address with --control.",
             "not_found",
         )
     listed = "; ".join(f"{e['uri']} (pid {e['pid']}, {e.get('world', '')})" for e in live)
