@@ -1,4 +1,7 @@
-# nav2 params for the roqsim Unitree G1 example.
+# nav2 params for the roqsim Unitree G1 test setup (worlds/g1_nav2.yaml).
+#
+# For testing only: the built-in empty room, localized by a static map->odom transform. An
+# experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 #
 # Same structure as nav2_params.yaml (the TurtleBot 4 base frame 'base_link', odom '/odom', scan
 # '/scan'); differences are the wider humanoid footprint and a walking speed matched to the G1

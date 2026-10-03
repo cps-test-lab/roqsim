@@ -5,12 +5,14 @@ Scene builder (human 2D floorplan + 3D review)
 MCP server exposes two native-window tools a *human* answers in —
 
 * ``review_scene_by_human`` — a **3D** window showing whatever ``roqsim`` can load; the human
-  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass or
-  Fail. Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
-  placement, a world under review.
+  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass,
+  Fail, or a neutral comment (Enter in the comment box: a note without a call). Use it when a
+  single rendered image cannot convey a 3D layout — a ported scene, a robot placement, a world
+  under review.
 * ``sketch_floorplan_by_human`` — a **2D** top-view window for authoring a floorplan's walls; it
-  returns a finished **structured sketch** (rooms + lines + doors) that the deterministic generator
-  ``roqsim scenes floorplan-to-world`` turns into a world. The floorplan is the single
+  returns a finished **structured sketch** (rooms + lines + doors + prop markers, plus free-text
+  descriptions) that the deterministic generator ``roqsim scenes floorplan-to-world`` turns into a
+  world. The floorplan is the single
   source of truth: the generator writes it to the scene's ``floorplan.json`` and the generated
   ``scene.json`` only **references** it (its ``floorplan`` field is the relative path
   ``floorplan.json``, never an embedded copy), so ``roqsim scenes scene-to-floorplan``
@@ -27,8 +29,8 @@ MCP server exposes two native-window tools a *human* answers in —
   ``roqsim sim --record``, rendered headless. It is how an *agent* looks at a scene, where the two
   tools above are how it asks a *human* to. See :ref:`render-scene-tool` below.
 
-The sketch window is not the only source of that JSON. Two tools in ``roqsim_scenes`` produce the same
-schema from something that already exists, leaving the generator downstream unchanged:
+The sketch window is not the only source of that JSON. Three tools in ``roqsim_scenes`` produce the
+same schema from something that already exists, leaving the generator downstream unchanged:
 
 * ``roqsim scenes mapimage-to-floorplan`` — when the layout exists only as a *picture* (an
   occupancy-grid screenshot, a published top view). It measures a figure rather than reading a world,
@@ -43,8 +45,9 @@ schema from something that already exists, leaving the generator downstream unch
 Every ``roqsim scenes`` tool, including the SDF/USD/json-ld importers and ``fuel-fetch``, is listed
 with where it is covered in ``roqsim_scenes/README.md`` (*Commands*).
 
-Both emit axis-aligned walls only. A hand-drawn plan, or a world with diagonal walls, still belongs
-in the sketch window — the generator itself places a wall at any angle.
+The image and grid tools emit axis-aligned walls only; the DXF tool keeps each drawn LINE/LWPOLYLINE
+segment at its own angle. A hand-drawn plan still belongs in the sketch window — the generator itself
+places a wall at any angle.
 
 To *look* at a floorplan without opening a window — a review of what a sketch produced, or the layout an
 agent needs before placing anything — ``roqsim-floorplan-to-png`` (in ``roqsim_scenes``) renders it as a
@@ -107,7 +110,7 @@ The ``review_scene_by_human`` tool
 
 Returns::
 
-    {"verdict": "pass" | "fail", "comment": str,
+    {"verdict": "pass" | "fail" | "comment", "comment": str,   # "comment": a neutral note, no call
      "annotations": [{"id": 1, "world": [1.2, 0.3, 0.8],
                       "target": {"geom": "shelf_top", "body": "shelf"}, "comment": "…",
                       "yaw_deg": 90}],   # yaw_deg only present when a heading was dragged
@@ -137,14 +140,14 @@ CLI (debugging)
     roqsim-scene-builder review-scene roqsim_assets:industrial_table -m "Right scale?"
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
-It prints the verdict JSON and exits **0** (pass), **1** (fail), **2** (no display / load error),
-**3** (window closed without a verdict). The reason for a 2 is one line on stderr, which is what the
-MCP tool relays when the window produced no result.
+It prints the verdict JSON and exits **0** (pass, or a neutral comment), **1** (fail), **2** (no
+display / load error), **3** (window closed without a verdict). The reason for a 2 is one line on
+stderr, which is what the MCP tool relays when the window produced no result.
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
 not around a pivot in front of it), **WASD walks** — or the **arrow keys**, whichever hand is free —
 ``Q``/``E`` (or Page Up/Down) drop and rise, **Shift** is faster and **Ctrl** slower, the **wheel
-flies** forward/back along the view, and right-drag still pans. That is
+flies** forward/back along the view, and right-drag pans. That is
 how a building-sized world gets inspected from the inside instead of only circled from outside.
 ``W``/``S`` follow where you look (look down, fly down) while ``A``/``D`` stay level. The keys act
 while the pointer is over the 3D view — typing in the comment box stays text.
@@ -154,7 +157,8 @@ the geom/body it hit and is drawn as a colour-coded marker **sphere in the 3D sc
 camera (moves, zooms, occludes) rather than floating as a 2D overlay. **Hold that second click and drag** to give the dot a heading
 (``yaw_deg``), drawn as an arrow on the ground plane; a plain double-click leaves it headingless.
 Each dot gets a comment field and a ✕ to remove it (the rest renumber). Type an overall comment,
-then Pass or Fail.
+then Pass or Fail -- or press Enter in the comment box (with text) for a neutral ``"comment"``
+verdict, a note without a call.
 
 Toggle the **Move Objects** button (its hover tooltip carries the hint) to reposition props instead of
 annotating: left-press a ``spawn_model`` prop and drag it — the prop's own mesh follows the cursor on
@@ -203,7 +207,8 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
 * **doors** — standard-width **openings** attached to a wall by ``line_id`` + fraction ``t`` (so a
   door rides along its wall and is removed with it); the generator cuts a **2 m-high** hole out of the
   wall and leaves a solid **lintel** above it up to the ceiling. Height is the generator's
-  ``--opening-h`` (default 2 m), overridable per door with an optional ``height_m``. Two openings may
+  ``--opening-h`` (default 2 m), overridable per door with an optional ``height_m``, which the window
+  carries through a seeded sketch unchanged (it draws no heights). Two openings may
   abut but not overlap on the same wall (the hover preview turns red where it would). Each opening is
   then fitted with a **swing-door leaf** (the ``door`` plugin — a hinged leaf with a position
   actuator, ROS-controllable as an automatic door); ``roqsim scenes floorplan-to-world``'s ``--doors-map``
@@ -245,9 +250,11 @@ The ``render_scene`` tool
 
 .. code-block:: text
 
-    render_scene(target: str = "", state: str = "", at: float | None = None, out: str = "",
-                 size: str = "960x540", view: list[str] | None = None, focus: str = "",
-                 camera: str = "", no_ceiling: bool = False, inline: bool = False) -> dict
+    render_scene(target: str = "", state: str = "", at: float | str | None = None, out: str = "",
+                 size: str = "960x540", view: list[str] | None = None,
+                 focus: list[str] | None = None, camera: str = "", no_ceiling: bool = False,
+                 geomgroup: list[int] | None = None, set: list[str] | None = None,
+                 inline: bool = False) -> dict
 
 The one tool here with **no window and no human**: it renders and returns where the picture is. Use it
 for "does this world look right", "where did the robot end up", "what did the run look like at
@@ -256,7 +263,8 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
 * **target** — the same shapes as above (world / MJCF / model ref), plus a raw mesh. Optional when
   ``state`` is given, because a recording names the world it came from.
 * **state** / **at** — render a moment from a run recorded with ``roqsim sim --record``, at ``at``
-  *simulated* seconds. It snaps to the nearest recorded sample and reports which one it used, so a
+  *simulated* seconds or at a named moment (``"onset"``, where the run first moves, or
+  ``"onset+2.5"``). It snaps to the nearest recorded sample and reports which one it used, so a
   caller sees it landed a few milliseconds off rather than assuming it did not. Omit ``at`` for the
   last sample.
 * **view** / **focus** / **camera** — ``KEY=VALUE`` overrides in the world's own ``sim.view``
@@ -264,6 +272,8 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
   frame on, searching for a clear line of sight (what you want indoors); or a fixed MJCF ``<camera>``
   to look through. ``camera`` owns its pose, so it excludes the other two.
 * **no_ceiling** — drop a roofed world's ceiling to look into it from above.
+* **geomgroup** / **set** — draw only these geom groups (``[3]`` is the collision model alone,
+  ``[2, 3]`` the collider over the visual mesh), and world overrides as ``PATH=VALUE`` strings.
 * **out** / **size** / **inline** — where to write the PNG (default a temp file), ``WxH``, and
   whether to return the image itself.
 
@@ -277,7 +287,8 @@ appear in the conversation itself -- it comes back as an image content block bes
 which stays the result's structured content; the default costs about forty tokens.
 
 CLI: this is ``roqsim render`` — the tool shells out to it rather than importing it (see *Internals*),
-so every flag above is that command's own.
+so every flag above is that command's own. Video (``--from``/``--to``, ``--camera-path``,
+``--overlay``) stays on the CLI: a clip is a file to watch, not a picture to look at here.
 
 Internals
 ---------

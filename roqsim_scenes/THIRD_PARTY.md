@@ -35,7 +35,7 @@ and the ROS 2 **TurtleBot3 World**, brought in from ROBOTIS `turtlebot3_simulati
 
 The floor/wall textures used by generated floorplans are not vendored here -- they come from the
 shared `roqsim_assets` package (`roqsim_assets:Concrete030` / `Concrete046` / `PlasteredWall04`,
-ambientCG CC0). See that package's `THIRD_PARTY.md`.
+ambientCG and Poly Haven, CC0). See that package's `THIRD_PARTY.md`.
 
 ## What is this package's own (Apache-2.0)
 
