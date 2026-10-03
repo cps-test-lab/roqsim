@@ -31,7 +31,8 @@ The vocabulary is the robot's, not MuJoCo's: ``control`` names a ros2_control co
 the gains are the ones a real controller's yaml carries. That is deliberate -- a port transcribing a
 paper reads its numbers out of a controller config, and a key it has to translate is a key it can get
 wrong. ``effort_limit`` is URDF's ``<limit effort=>``, which :mod:`roqsim.export_urdf` already emits
-from ``actuator_forcerange``, so the key a world writes is the key roqsim exports.
+from the joint's force range (:func:`joint_force_range`), so the key a world writes is the key roqsim
+exports.
 
 Four laws, and what each compiles to::
 
@@ -703,6 +704,41 @@ def _drive_supplies_gravity(joint, actuators) -> None:
     if lo < hi:
         joint.actfrclimited = mujoco.mjtLimited.mjLIMITED_TRUE
         joint.actfrcrange = [lo, hi]
+
+
+_JOINT_TRN = (int(mujoco.mjtTrn.mjTRN_JOINT), int(mujoco.mjtTrn.mjTRN_JOINTINPARENT))
+
+
+def joint_force_range(model, jid: int) -> tuple[float, float] | None:
+    """The generalised force a joint's drives can deliver on it, as ``(lower, upper)``.
+
+    Each actuator driving *jid* through a joint transmission contributes its ``forcerange`` times
+    gear, summed as :func:`_drive_supplies_gravity` sums them, and the joint's own
+    ``actuatorfrcrange``, where limited, bounds that sum as MuJoCo does -- so each side is the
+    tighter of the two. ``None`` when no actuator drives the joint, or when neither an actuator
+    range nor the joint's bounds it.
+    """
+    lo = hi = 0.0
+    driven = unlimited = False
+    for a in range(model.nu):
+        if (
+            int(model.actuator_trntype[a]) not in _JOINT_TRN
+            or int(model.actuator_trnid[a, 0]) != jid
+        ):
+            continue
+        driven = True
+        if not model.actuator_forcelimited[a]:
+            unlimited = True
+            continue
+        gear = float(model.actuator_gear[a, 0])
+        ends = sorted(gear * float(v) for v in model.actuator_forcerange[a])
+        lo, hi = lo + ends[0], hi + ends[1]
+    if not driven:
+        return None
+    if model.jnt_actfrclimited[jid]:
+        jlo, jhi = (float(v) for v in model.jnt_actfrcrange[jid])
+        return (jlo, jhi) if unlimited else (max(lo, jlo), min(hi, jhi))
+    return None if unlimited else (lo, hi)
 
 
 def joint_effort(model, data, dof: int) -> float:
