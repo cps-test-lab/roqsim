@@ -37,6 +37,7 @@ nothing.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -60,13 +61,13 @@ SAMPLE_EVERY = 50
 #: enough to survive a legitimate reassociation of floating-point arithmetic during a refactor.
 TOLERANCE = 1e-6
 
-_BASE = {
-    "walker": "MaleVisitorWalk",
+_NAVIGATOR = {
+    "output": "walker",
     "speed": 1.2,
     "loop": True,
     "arrival_radius": 0.25,
-    "avoidance": False,
-    "skin": False,  # capsules: the skin is a 5 MB OBJ and does not move the bones
+    "radius": 0.26,
+    "avoidance": {"steer": "none", "stop": False},
 }
 
 CASES = {
@@ -107,6 +108,17 @@ def _drift(recorded: np.ndarray, expected: np.ndarray) -> np.ndarray:
     return np.concatenate([pos, quat], axis=-1).reshape(len(recorded), -1)
 
 
+def _walker(waypoints) -> dict:
+    """A walker standing at the first waypoint, facing the second, patrolling the rest."""
+    (x0, y0), (x1, y1) = waypoints[0], waypoints[1]
+    pose = {"position": {"x": x0, "y": y0}, "orientation": {"yaw": math.atan2(y1 - y0, x1 - x0)}}
+    return {
+        "walker": {"walker": "MaleVisitorWalk", "skin": False, "pose": pose},
+        "name": "ped",
+        "components": [{"navigator": {**_NAVIGATOR, "goals": waypoints[1:]}}],
+    }
+
+
 def _record(world, waypoints) -> np.ndarray:
     """``(samples, bones * 7)`` of mocap position + quaternion, sampled along one run."""
     sim = {"pacing": "asap"}
@@ -116,7 +128,7 @@ def _record(world, waypoints) -> np.ndarray:
         load_config_from_dict(
             {
                 "sim": sim,
-                "components": [{"walker": {**_BASE, "waypoints": waypoints}, "name": "ped"}],
+                "components": [_walker(waypoints)],
             }
         )
     )
