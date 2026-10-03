@@ -26,13 +26,18 @@ def test_the_mock_description_gives_the_controller_its_two_wheels():
         assert states == ["position", "velocity"]
 
 
-def test_the_wheels_are_the_ones_the_released_control_yaml_names():
+def _released_control_share() -> Path:
+    """irobot_create_control's share directory; skips the test where it is not installed."""
     ament = pytest.importorskip("ament_index_python.packages")
     try:
-        share = ament.get_package_share_directory("irobot_create_control")
+        return Path(ament.get_package_share_directory("irobot_create_control"))
     except ament.PackageNotFoundError:
         pytest.skip("irobot_create_control is not installed")
-    with open(Path(share) / "config" / "control.yaml", encoding="utf-8") as handle:
+
+
+def test_the_wheels_are_the_ones_the_released_control_yaml_names():
+    share = _released_control_share()
+    with open(share / "config" / "control.yaml", encoding="utf-8") as handle:
         params = yaml.safe_load(handle)["/**"]["diffdrive_controller"]["ros__parameters"]
     robot = ET.parse(CONFIG / "create3_control.urdf").getroot()
     mocked = sorted(j.get("name") for j in robot.findall("ros2_control/joint"))
@@ -50,6 +55,7 @@ def test_the_launch_file_spawns_the_controller_and_not_the_joint_state_broadcast
     from launch_ros.actions import Node
     from roqsim_create3_toolbox_launch import create3_control
 
+    _released_control_share()  # the launch file reads its control.yaml
     nodes = [
         a for a in create3_control.generate_launch_description().entities if isinstance(a, Node)
     ]
