@@ -601,15 +601,18 @@ class Ros2Bridge(BridgeBase):
         # The controller_manager surface, for every robot that registered controllers. No world
         # entry asks for this: on real hardware nobody opts into a controller_manager, it is there
         # because ros2_control is -- and a world with no controllers gets no services, which is the
-        # same answer. Imported here so a deployment without controller_manager_msgs still brings
-        # the bridge up for every world that does not need them.
+        # same answer. controller_manager_msgs is a declared dependency, so a failed import is a
+        # broken install and fails the start rather than dropping the surface.
         try:
             from .controller_manager import serve as _serve_controller_manager
 
             self._controller_managers = _serve_controller_manager(node, ctx)
-        except ImportError:
-            self._controller_managers = []
-            ctx.logger.info("controller_manager_msgs absent; not serving the controller surface")
+        except ImportError as exc:
+            raise ImportError(
+                f"ros2 bridge: the controller_manager surface cannot start: "
+                f"{exc.name or 'a module'} failed to import: {exc}",
+                name=exc.name,
+            ) from exc
 
         self._executor.add_node(node)
         self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)

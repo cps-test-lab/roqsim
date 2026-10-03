@@ -568,3 +568,19 @@ def test_an_entity_with_no_body_at_all_still_fails_loudly():
     ctx.entities.add(Entity(name="drone", kind="robot", body=None, meta={"prefix": ""}))
     with pytest.raises(RuntimeError, match="no body to fly"):
         _plugin({"port": _free_port(), "connect_timeout": 0.2}).configure(ctx)
+
+
+def test_the_sensor_noise_is_keyed_on_the_instance_address():
+    """Two drones' unnamed bridges share a class name; only the address tells their draws apart."""
+    ctx = _ctx()
+    plugin, px4, _ = _connected(ctx)
+    keys = []
+    draw = ctx.rng_for
+    ctx.rng_for = lambda key: (keys.append(key), draw(key))[1]
+    try:
+        plugin._send_sensors(ctx)
+    finally:
+        px4.close()
+        plugin.shutdown(ctx)
+    assert keys == ["drone/px4/sensors"]
+    assert plugin.address == "drone.px4"

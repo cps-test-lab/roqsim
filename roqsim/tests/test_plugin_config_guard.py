@@ -52,6 +52,7 @@ REFUSED = {
     ("moving_box", "yaw"): "the pose is stated under 'pose'",
     ("spawn_model", "pos"): "the pose is stated under 'pose'",
     ("spawn_model", "yaw"): "the pose is stated under 'pose'",
+    ("walker", "pos"): "the start is stated under 'pose'",
 }
 
 #: Keys a plugin writes into its own config at load and reads back, which no world writes.

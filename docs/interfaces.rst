@@ -636,8 +636,9 @@ A port known only at run time is registered by hand in ``configure``:
   action handlers come from per-type registries in ``roqsim_ros_bridge`` (``services.py`` /
   ``actions.py``), so a new srv or action type is a handler there and no change here. A handler,
   converter or decoder in another package is registered by naming its module in the
-  ``roqsim_ros_bridge.extensions`` entry-point group, which the bridge imports at start-up (see
-  ``roqsim_ros_bridge/extensions.py``; ``roqsim_nav_ros`` is an example).
+  ``roqsim_ros_bridge.extensions`` entry-point group, which the bridge imports at start-up; a module
+  that fails to import fails the start (see ``roqsim_ros_bridge/extensions.py``; ``roqsim_nav_ros``
+  is an example).
 * ``owner`` — the entity the port belongs to, so a bridge can serve one robot in a many-robot world.
 * ``backend`` — inert per-backend hints keyed by backend name. Naming the message *type as a string*
   (resolved by the bridge) means the robot package imports nothing transport-specific. Anything
