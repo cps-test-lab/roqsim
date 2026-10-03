@@ -98,7 +98,7 @@ def test_noise_is_a_function_of_sim_time_not_of_call_count(world):
 
 
 def test_two_sensors_get_independent_streams(world):
-    """Keyed on the plugin's own name, so two lidars on one robot do not share noise."""
+    """Keyed on the plugin's own address, so two lidars on one robot do not share noise."""
     engine = Engine(load_config_from_dict(world))
     engine.ctx.seed = 5
     engine.setup()
