@@ -43,9 +43,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from importlib import import_module, metadata
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from .entry_points import entry_points
 
 if TYPE_CHECKING:
     import mujoco
@@ -197,11 +199,8 @@ def available_worlds() -> list[str]:
 
 
 def _world_entry_points():
-    """Entry points for the ``roqsim.worlds`` group across Python versions (see models._entry_points)."""
-    eps = metadata.entry_points()
-    if hasattr(eps, "select"):  # Python 3.10+
-        return list(eps.select(group=WORLDS_ENTRY_POINT_GROUP))
-    return list(eps.get(WORLDS_ENTRY_POINT_GROUP, []))  # pragma: no cover - legacy
+    """Every provider registered in the ``roqsim.worlds`` group."""
+    return entry_points(WORLDS_ENTRY_POINT_GROUP)
 
 
 def _find_world(worlds_dir: Path, world: str) -> Path | None:
