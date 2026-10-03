@@ -1,4 +1,7 @@
-"""nav2 + roqsim Unitree G1 humanoid bring-up.
+"""nav2 + roqsim Unitree G1 humanoid test bring-up.
+
+For testing only: the built-in empty room, localized by a static map->odom transform. An
+experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 
 Starts: the sim + ROS bridge (roqsim_ros_bridge) running the g1_nav2.yaml world (the G1 walks via
 its RL locomotion policy, driven by /cmd_vel), a static map->odom transform (localization stand-in),
