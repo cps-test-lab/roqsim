@@ -645,8 +645,8 @@ it is a robot, a prop or a walker, and nothing recovers that from the model, so 
 again whenever it changes, and a reader takes the last one: a trial that spawns an obstacle mid-run
 is described by it rather than by the world it started in.
 
-Neither have the bodies a **flex** creates for its vertices or nodes (``block_0``, ``block_1``, ... of
-a ``<flexcomp>``): one entry each per sample that no success rule reads by name. The run log names each
+The bodies a **flex** creates for its vertices or nodes (``block_0``, ``block_1``, ... of a
+``<flexcomp>``) have no ``poses`` entry either: one each per sample that no success rule reads by name. The run log names each
 flex left out; the body it is declared in keeps its entry, and the ``state`` channel carries the rest.
 
 Two reasons the pose channel exists rather than leaving callers to difference the state. A velocity

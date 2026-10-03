@@ -75,7 +75,7 @@ class Recording:
     #: The one provenance shape this reader understands. A record written by a newer roqsim is
     #: REFUSED rather than read with the keys that happen to overlap: it was written to a contract
     #: this code has not seen, and guessing produces a plausible-looking replay of something else.
-    #: An older one has no reader here at all: versions 1 and 2 were numpy archives.
+    #: An older one is refused too: this version is the only one with a reader.
     READER_VERSION = FORMAT_VERSION
 
     def __init__(
@@ -90,8 +90,8 @@ class Recording:
     ) -> None:
         self.path = path
         self.meta = meta
-        # A newer record is refused here, and so is an older one: formats 1 and 2 were numpy
-        # archives, which have no reader. A provenance without a version is not a recording.
+        # Only READER_VERSION is read: a newer record and an older one are both refused, and a
+        # provenance without a version is not a recording.
         if "format_version" not in meta:
             raise RecordingError(
                 f"{path} names no recording format version, so it cannot be read as one."
@@ -599,9 +599,9 @@ def open_recording(path: str | Path) -> Recording:
 
     Reads the file with :mod:`roqsim.mcap_format`'s own framing loop, so a file left by a killed run
     -- no summary, possibly a torn last chunk -- opens and yields every sample of the chunks that were
-    closed. What is refused, by name: a numpy archive (the recording formats before this one, which
-    have no reader here), a file that is not mcap at all, a profile other than ``roqsim``, and a
-    provenance whose version or layout this reader does not know.
+    closed. What is refused, by name: an ``.npz`` path (a numpy archive is not a recording), a file
+    that is not mcap at all, a profile other than ``roqsim``, and a provenance whose version or
+    layout this reader does not know.
     """
     path = Path(path)
     if path.suffix.lower() == ".npz":
