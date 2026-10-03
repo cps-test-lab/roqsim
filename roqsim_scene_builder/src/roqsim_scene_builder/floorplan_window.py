@@ -114,6 +114,10 @@ class Door:
     line_id: int
     t: float
     width_m: float = _DOOR_WIDTH_M
+    #: Opening height the generator cuts (``floorplan-to-world --opening-h`` when ``None``). Not
+    #: drawn or edited here -- a plan view has no height -- but carried, so a seeded floorplan's
+    #: full-height gates survive the round trip instead of coming back as standard doorways.
+    height_m: float | None = None
     comment: str = ""  # unused; present so door rows reuse build_point_rows
 
     @property
@@ -377,8 +381,20 @@ class SketchModel:
         self.doors = [d for d in self.doors if d.line_id != line_id]
         renumber(self.doors)
 
-    def add_door(self, line_id: int, t: float, width_m: float = _DOOR_WIDTH_M) -> Door:
-        d = Door(id=len(self.doors) + 1, line_id=int(line_id), t=float(t), width_m=float(width_m))
+    def add_door(
+        self,
+        line_id: int,
+        t: float,
+        width_m: float = _DOOR_WIDTH_M,
+        height_m: float | None = None,
+    ) -> Door:
+        d = Door(
+            id=len(self.doors) + 1,
+            line_id=int(line_id),
+            t=float(t),
+            width_m=float(width_m),
+            height_m=None if height_m is None else float(height_m),
+        )
         self.doors.append(d)
         return d
 
@@ -692,7 +708,9 @@ def load_sketch(initial: dict | None) -> tuple[SketchModel, str]:
             entry["x0_m"], entry["y0_m"], entry["x1_m"], entry["y1_m"], line_id=entry.get("id")
         )
     for entry in initial.get("doors") or []:
-        model.add_door(entry["line_id"], entry["t"], entry.get("width_m", _DOOR_WIDTH_M))
+        model.add_door(
+            entry["line_id"], entry["t"], entry.get("width_m", _DOOR_WIDTH_M), entry.get("height_m")
+        )
     for entry in initial.get("markers") or []:
         m = model.add_marker(entry["x_m"], entry["y_m"], marker_id=entry.get("id"))
         m.comment = entry.get("comment", "")
@@ -755,7 +773,13 @@ def write_result(json_out: str | None, comment: str, sketch: SketchModel) -> dic
             for line in sketch.lines
         ],
         "doors": [
-            {"id": d.id, "line_id": d.line_id, "t": round(d.t, 2), "width_m": d.width_m}
+            {
+                "id": d.id,
+                "line_id": d.line_id,
+                "t": round(d.t, 2),
+                "width_m": d.width_m,
+                **({"height_m": d.height_m} if d.height_m is not None else {}),
+            }
             for d in sketch.doors
         ],
         "markers": [

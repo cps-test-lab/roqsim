@@ -53,7 +53,10 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
   `roqsim/src/roqsim/gl.py` import mujoco. Tests without a camera cannot catch a regression. Architecture §8.
 - **Draw randomness from `ctx.rng_for(name)`**, once per (sensor, step), never from `np.random` or a
   held generator. It is keyed on `(seed, episode, sim_time, name)`, so a draw is a function of the world
-  and not of how many draws came before; that keeps a value reproducible and a replay exact.
+  and not of how many draws came before; that keeps a value reproducible and a replay exact. Pass
+  `self.draw_key(what)` as `name` (`robot/lidar/noise`): it is built from the address, where
+  `self.name` is the class name on every instance without a `name:`, and two instances sharing a key
+  draw one stream twice.
 - **A seed is driver-owned; an unresolved one raises** (`roqsim.seed.SeedError`), never defaults to 0.
   A driver resolves it with `roqsim.seed.resolve_seed` and sets `ctx.seed` before `setup()`; a preview
   pins `roqsim.seed.PREVIEW_SEED`. `python -m pydoc roqsim.seed`.
@@ -81,6 +84,9 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
   downstream (`docs/plugins.rst`, "where a workpiece lives").
 - **Only `scenario_execution_roqsim` imports `scenario_execution`**, and no package that does not
   import `scenario_execution` may import it. Its actions work unedited in a stepped run and a ROS run.
+- **An asset is credited beside itself**: in the `CREDITS.txt` that ships in its folder, and in its
+  package's `THIRD_PARTY.md`. `NOTICE` and the README's licence table summarise by licence and point
+  there; they gain no entry per asset, or they grow with every import.
 - **Docs split:** user guide and internals are separate toctree sections in `docs/index.rst`; put new
   content in the right one and split a page that mixes both.
 - **Docs follow every change:** update what the change made stale in `docs/` (especially
