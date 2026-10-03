@@ -43,10 +43,12 @@ class OrcaModel(AvoidanceModel):
     def configure(self, ctx, params: dict) -> None:
         try:
             import rvo2
-        except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        except ImportError as exc:
             raise ImportError(
-                "the 'orca' avoidance model needs rvo2, which is an optional extra because it "
-                "publishes no wheel and is built from source: pip install 'roqsim_nav[avoidance]'. "
+                "the 'orca' avoidance model needs rvo2, the optional extra roqsim_nav[avoidance]. "
+                "It publishes no wheel and builds from source against Cython, which pip's build "
+                "isolation hides, so it installs in two commands: pip install Cython, then pip "
+                "install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git. "
                 "A world that must run without a compiler should declare no `avoidance:` entry -- "
                 "movers then execute their own preferred velocity and nobody yields."
             ) from exc

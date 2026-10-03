@@ -68,7 +68,7 @@ legs. A `floorplan` mesh adds its own walls the same way.
 `avoidance: true` gives the walker's navigator `roqsim_nav`'s default local model, `give_way`
 (pure Python, no extra), with `stop: false`: it steers round the robot and other walkers, and never
 stops for them. For ORCA, write a `navigator` for the walker with
-`avoidance: {steer: orca}` and install `roqsim_nav[avoidance]` (see `roqsim_nav`'s README).
+`avoidance: {steer: orca}` and install `rvo2` the way `roqsim_nav`'s README gives it.
 
 ### Goals at runtime
 
