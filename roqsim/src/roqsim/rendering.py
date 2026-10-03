@@ -24,7 +24,7 @@ import numpy as np
 
 from . import raycast
 from .exit_status import NO_GL
-from .presence import ABSENT_GEOM_GROUP
+from .presence import ABSENT_GEOM_GROUP, subtree_body_ids
 
 _logger = logging.getLogger(__name__)
 
@@ -83,13 +83,8 @@ def bounding_sphere(model: mujoco.MjModel, data: mujoco.MjData, body_ids):
     """
     roots = {int(b) for b in body_ids if int(b) >= 0}
     keep = set(roots)
-    for b in range(model.nbody):  # pull in descendants so a robot's links count, not just its root
-        p = b
-        while p > 0:
-            if p in roots:
-                keep.add(b)
-                break
-            p = int(model.body_parentid[p])
+    for root in roots - {0}:  # pull in descendants so a robot's links count, not just its root
+        keep.update(subtree_body_ids(model, root))
 
     spheres = [
         (data.geom_xpos[g], float(model.geom_rbound[g]))

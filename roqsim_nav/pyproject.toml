@@ -41,10 +41,8 @@ test = ["pytest>=7.0", "roqsim_mobile", "roqsim_walker", "roqsim_assets"]
 #
 # It gates the `orca` model ONLY: this package stays wheel-installable, and a world using a
 # pure-Python avoidance model needs no toolchain at all.
-# The DISTRIBUTION is `pyrvo2`; the module it installs is `rvo2`. Naming it `rvo2` here made pip
-# resolve metadata for one project against a requirement for another and refuse the install
-# outright, so the extra could not be installed at all -- which is worth knowing, because it is the
-# reason `give_way` above is the default rather than a fallback.
+# The DISTRIBUTION is `pyrvo2`; the module it installs is `rvo2`. A requirement named `rvo2` makes
+# pip resolve one project's metadata against a requirement for another and refuse the install.
 #
 # It also needs its build dependency present, and pip's build isolation hides one that is merely
 # installed. An extra cannot express that, so the install is two commands:
