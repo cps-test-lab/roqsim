@@ -19,7 +19,10 @@ from roqsim.plugins.spawn_model import SpawnModelPlugin
 #: plugin class -> {endpoint name: (kind, payload type)}
 EXPECTED = {
     BumperPlugin: {"bumper/{item}": ("out", "bool")},
-    ClearanceMonitorPlugin: {"clearance": ("out", "ClearanceReport")},
+    ClearanceMonitorPlugin: {
+        "clearance": ("out", "ClearanceReport"),
+        "clearance_report": ("out", "ClearanceReport"),
+    },
     ContactImpulsePlugin: {"contact_impulse": ("out", "ContactImpulseReport")},
     ContactLocationPlugin: {"contact_location": ("out", "ContactLocation")},
     ContactMonitorPlugin: {"contact": ("out", "ContactReport")},

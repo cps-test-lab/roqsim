@@ -18,7 +18,9 @@ import mujoco
 import pytest
 
 from roqsim.config import PluginError, load_config_from_dict
+from roqsim.endpoint import hints_for, topic_of
 from roqsim.engine import Engine
+from roqsim.plugins.clearance_monitor import ClearanceReport
 
 # A world with something to avoid, and a robot spawned as its own entity -- the monitor
 # watches an entity's subtree, so it is nested under the entry that provides one.
@@ -191,6 +193,112 @@ def test_it_publishes_an_endpoint_a_bridge_can_serve(world):
             e for e in engine.ctx.interface.all() if e.direction == "out" and "clearance" in e.name
         ]
         assert out, "clearance must be observable outside the process"
+    finally:
+        engine.shutdown()
+
+
+# -- what leaves the process ------------------------------------------------
+#
+# A series and a reduction are two observables, and two of the report's fields are in neither a
+# series nor anything derivable from one: a distance does not say what it was measured to, or
+# whether it is a measurement at all. These pin what a recorded table can read back.
+
+
+def _endpoint(engine, name):
+    return next(e for e in engine.ctx.interface.all() if e.name == name)
+
+
+def test_the_distance_endpoint_publishes_the_current_distance_alone(world):
+    """The series, unchanged: one float, named, and what a reader plots and reduces."""
+    engine = _engine(world)
+    try:
+        endpoint = _endpoint(engine, "clearance")
+        assert hints_for(endpoint, "ros2") == {"type": "std_msgs.msg.Float32", "field": "current"}
+        assert topic_of(endpoint, "ros2") == "clearance"
+        _drive_to(engine, 0.0)
+        assert endpoint.read().current == pytest.approx(1.7, abs=0.02)
+    finally:
+        engine.shutdown()
+
+
+def test_the_report_endpoint_carries_every_field_of_the_report(world):
+    """Beside the series, not instead of it: the same report, with the fields named."""
+    engine = _engine(world)
+    try:
+        endpoint = _endpoint(engine, "clearance_report")
+        # The payload type decides the message; the hints only say who is reporting about what.
+        assert endpoint.result.cls is ClearanceReport
+        assert hints_for(endpoint, "ros2") == {
+            "name": "clearance_monitor: robot.clearance_monitor",
+            "hardware_id": "base",
+        }
+        assert topic_of(endpoint, "ros2") == "clearance_report"
+        _drive_to(engine, 0.0)
+        # One report, read twice: the two endpoints cannot describe different approaches.
+        assert endpoint.read() is _report(engine)
+    finally:
+        engine.shutdown()
+
+
+def test_the_report_names_what_the_closest_approach_was_to(world):
+    """The field a series cannot carry: a near miss is a number with nothing beside it unless
+    what it was near leaves the process."""
+    engine = _engine(world)
+    try:
+        for x in (0.0, 1.0, 1.6, 0.0):
+            _drive_to(engine, x)
+        report = _endpoint(engine, "clearance_report").read()
+        assert report.geom == "post_geom"
+        assert report.minimum == pytest.approx(0.1, abs=0.03)  # at x=1.6
+        assert 0.0 < report.at_time <= engine.ctx.sim_time
+        assert report.current == pytest.approx(1.7, abs=0.02)  # back at the start
+    finally:
+        engine.shutdown()
+
+
+def test_a_reading_at_the_cutoff_says_so_rather_than_looking_measured(world):
+    """The other field a series cannot carry: at the cutoff the distance is unknown, and a
+    consumer comparing against `distmax` itself has to know the configured value to do it."""
+    world["components"][0]["components"][0]["clearance_monitor"]["distmax"] = 0.5
+    engine = _engine(world)
+    try:
+        _drive_to(engine, 0.0)  # the post is 1.7 m away, far outside the cutoff
+        report = _endpoint(engine, "clearance_report").read()
+        assert report.current == pytest.approx(0.5)
+        assert report.saturated is True
+    finally:
+        engine.shutdown()
+
+
+def test_a_trial_that_was_never_near_anything_names_nothing(world):
+    """`saturated` is about `current`; an empty `geom` is the same statement about `minimum`.
+    The reduction is then the cutoff rather than an approach that happened."""
+    world["components"][0]["components"][0]["clearance_monitor"]["distmax"] = 0.5
+    engine = _engine(world)
+    try:
+        _drive_to(engine, 0.0)
+        report = _endpoint(engine, "clearance_report").read()
+        assert report.geom == ""
+        assert report.minimum == pytest.approx(0.5)
+        # A measured moment, not the -1.0 of a report that never ran: the first measurement.
+        assert 0.0 < report.at_time < 0.05
+    finally:
+        engine.shutdown()
+
+
+def test_a_reset_starts_the_reduction_again(world):
+    """The reduction is one trial's: the report a repetition publishes does not name the
+    previous trial's near-miss."""
+    engine = _engine(world)
+    try:
+        _drive_to(engine, 1.6)
+        assert _endpoint(engine, "clearance_report").read().geom == "post_geom"
+        engine.reset()
+        _drive_to(engine, 0.0)
+        report = _endpoint(engine, "clearance_report").read()
+        assert report.minimum == pytest.approx(1.7, abs=0.02)
+        assert report.geom == "post_geom"  # measured again, from this trial
+        assert report.at_time < 0.05
     finally:
         engine.shutdown()
 
