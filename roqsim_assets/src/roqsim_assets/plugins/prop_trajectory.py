@@ -91,6 +91,8 @@ class PropTrajectoryPlugin(Plugin):
             errors.append("prop_trajectory: `units` must be 'mm' or 'm'")
         if float(config.get("speed", 0.03)) <= 0.0:
             errors.append("prop_trajectory: `speed` must be > 0")
+        if int(config.get("start_index", 0)) < 0:
+            errors.append("prop_trajectory: `start_index` must be >= 0 (a CSV row, counted from 0)")
         plate = config.get("plate", [0.07, 0.07, 0.006])
         if len(plate) != 3:
             errors.append("prop_trajectory: `plate` must be [hx, hy, hz]")
@@ -150,11 +152,25 @@ class PropTrajectoryPlugin(Plugin):
         arr = np.asarray(pts, dtype=float)
         if self.config.get("units", "mm") == "mm":
             arr /= 1000.0
-        arr = arr[self.start_index :] if self.start_index < len(arr) else arr[-2:]
+        if self.start_index > len(arr) - 2:
+            # Refused rather than clamped: starting on a different row is a different, translated
+            # path, and a stage that runs one nobody asked for is a different experiment.
+            raise RuntimeError(
+                f"prop_trajectory: start_index {self.start_index} leaves fewer than 2 of the "
+                f"{len(arr)} points in {path}; it must be at most {len(arr) - 2}"
+            )
+        arr = arr[self.start_index :]
         arr -= arr[0]  # the path starts at the origin, whatever row we began on
         arr[:, 0] = np.clip(arr[:, 0], -self.travel[0], self.travel[0])
         arr[:, 1] = np.clip(arr[:, 1], -self.travel[1], self.travel[1])
         seg = np.linalg.norm(np.diff(arr, axis=0), axis=1)
+        if float(seg.sum()) <= 0.0:
+            # A path of one repeated point (or one the travel limits collapsed) has no length to
+            # run, so it could never finish and a trial gated on `stage_progress` would wait for ever.
+            raise RuntimeError(
+                f"prop_trajectory: the path in {path} has zero length after start_index and the "
+                f"travel limits {self.travel}; the stage would never move or finish"
+            )
         self._pts = arr
         self._cum = np.concatenate([[0.0], np.cumsum(seg)])
 
