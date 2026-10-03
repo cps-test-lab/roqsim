@@ -18,8 +18,10 @@ Two placement sources feed the adapters through :class:`PlacedSensor`:
 
 * *in-world* -- the sensor is spawned; ``cam_id``/``site_id`` resolve pose (and camera intrinsics) from
   the model. Used by the ``sensor_coverage_probe`` plugin's ``sensors: auto`` discovery.
-* *hypothetical* -- ``pos``/``rpy`` give the pose; FOV parameters come from config. Used by the CLI's
-  placement search, which evaluates candidate mounts that are not (and need not be) spawned.
+* *hypothetical* -- a world position and an orientation give the pose; FOV parameters come from
+  config. A placement document states it as ``pose:`` (:func:`.catalog.placed_from_proposal`). Used
+  by the CLI's placement search, which evaluates candidate mounts that are not (and need not be)
+  spawned.
 """
 
 from __future__ import annotations
@@ -35,10 +37,11 @@ from ..plugins.lidar import LidarPlugin
 from ..plugins.livox_mid360 import LivoxMid360Plugin
 from .fov import FovKind, SensorFov
 
-# Camera optics look along -z (MuJoCo convention). For a *hypothetical* placement we want rpy to read
-# consistently with the lidars, where rpy=0 points the sensor along +x (world) with world-up as up.
-# This base rotation maps the camera frame so that, at rpy=0, the optical axis (-z) points along +x
-# and +y (up) points along +z_world; the placement's rpy is then applied on top (rot = R_rpy @ BASE).
+# Camera optics look along -z (MuJoCo convention). For a *hypothetical* placement we want an
+# orientation to read consistently with the lidars, where the identity points the sensor along +x
+# (world) with world-up as up. This base rotation maps the camera frame so that, at the identity, the
+# optical axis (-z) points along +x and +y (up) points along +z_world; the placement's orientation is
+# then applied on top (rot = R @ BASE).
 _CAMERA_BASE = np.array(
     [
         [0.0, 0.0, -1.0],
@@ -54,9 +57,7 @@ class PlacedSensor:
 
     sensor_type: str
     pos: np.ndarray | None = None  # (3,) world position -- hypothetical placement
-    rpy: np.ndarray | None = (
-        None  # (3,) roll/pitch/yaw [rad], fixed-axis XYZ -- hypothetical placement
-    )
+    quat: np.ndarray | None = None  # (4,) w, x, y, z world orientation -- hypothetical placement
     cam_id: int = -1  # in-world MuJoCo camera id (pose + intrinsics from the model)
     site_id: int = -1  # in-world MuJoCo site id (pose from the model)
     config: dict = field(
@@ -97,30 +98,21 @@ def build_fov(model: mujoco.MjModel, data: mujoco.MjData, placed: PlacedSensor) 
     return adapter(model, data, placed)
 
 
-def rpy_to_mat(rpy) -> np.ndarray:
-    """world<-sensor rotation from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF), i.e. Rz@Ry@Rx."""
-    roll, pitch, yaw = (float(v) for v in rpy)
-    cr, sr = np.cos(roll), np.sin(roll)
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    return rz @ ry @ rx
-
-
 def _require_pose(placed: PlacedSensor) -> tuple[np.ndarray, np.ndarray]:
-    if placed.pos is None or placed.rpy is None:
+    if placed.pos is None or placed.quat is None:
         raise ValueError(
-            f"sensor {placed.label or placed.sensor_type!r} has no in-world id and no pos/rpy"
+            f"sensor {placed.label or placed.sensor_type!r} has no in-world id and no pose"
         )
-    return np.asarray(placed.pos, dtype=np.float64).reshape(3), rpy_to_mat(placed.rpy)
+    pos = np.asarray(placed.pos, dtype=np.float64).reshape(3)
+    mat = np.zeros(9)
+    mujoco.mju_quat2Mat(mat, np.asarray(placed.quat, dtype=np.float64))
+    return pos, mat.reshape(3, 3)
 
 
 def _own_body(model, *, cam_id: int = -1, site_id: int = -1) -> int:
     """The body a sensor is mounted on, for :attr:`SensorFov.body_exclude`; ``-1`` if unmounted.
 
-    A *hypothetical* placement (pos/rpy, no in-world id) has no body and needs none: nothing of it
+    A *hypothetical* placement (a pose, no in-world id) has no body and needs none: nothing of it
     exists to occlude. A spawned one always does, and its housing is in the way -- see
     :attr:`SensorFov.body_exclude`.
     """

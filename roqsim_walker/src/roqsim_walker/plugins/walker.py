@@ -14,8 +14,10 @@ Config::
       skin: true               # false -> capsule visuals instead of the character mesh
       rgba: [r, g, b, a]       # colour of the capsule visuals (default: the humanoid's own)
       speed: 1.2               # m/s; past ~1.7 the run clip blends in
-      pos: [0.0, 0.0]          # spawn, used when `waypoints` is empty (goal-driven only)
-      waypoints:               # patrol route; the walker starts at waypoints[0]
+      pose:                    # where a goal-driven walker stands at the start (no `waypoints`):
+        position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
+        orientation: {yaw: 0.0}     #   walker stands on the floor -- and a heading only
+      waypoints:               # patrol route; the walker starts at waypoints[0], so no `pose`
         - [-2.5, -2.5]
         - [ 2.5, -2.5, [3, 6]] # optional per-waypoint dwell: secs, or [lo, hi] random pause
       loop: true               # cycle the patrol forever
@@ -48,6 +50,7 @@ from roqsim import endpoint
 from roqsim.config import PluginSpec
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin, PluginError
+from roqsim.pose import PoseError, parse_pose, pose_spelling, rpy_to_quat, yaw_of
 from roqsim.types import Transform, Transforms
 from roqsim_nav.avoidance import DEFAULT_MODEL
 from roqsim_walker.animation import (
@@ -61,6 +64,30 @@ from roqsim_walker.animation import (
 from roqsim_walker.blueprint import BlueprintError, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
+
+
+def start_of(config: dict) -> tuple[float, float, float] | None:
+    """``(x, y, yaw)`` a walker's ``pose`` places it at, or ``None`` when it states none.
+
+    Raises :class:`~roqsim.pose.PoseError` for a pose a walker cannot take: one with a ``z`` (it
+    stands on the floor, where its soles put it) or one that is not a heading.
+    """
+    if "pose" not in config:
+        return None
+    pos, quat = parse_pose(config["pose"])
+    if pos[2] is not None:
+        raise PoseError(
+            "'pose.position.z' is not read -- a walker stands on the floor, at the height its "
+            "soles put it; state x and y"
+        )
+    yaw = yaw_of(quat)
+    flat = rpy_to_quat(0.0, 0.0, yaw)
+    if abs(sum(a * b for a, b in zip(quat, flat, strict=True))) < 1.0 - 1e-9:
+        raise PoseError(
+            "'pose.orientation' tilts the walker -- a walker stands upright, so its orientation "
+            "is a heading: orientation: {yaw: ...}"
+        )
+    return pos[0], pos[1], yaw
 
 
 @dataclass
@@ -214,8 +241,21 @@ class WalkerPlugin(Plugin):
             )
             if not ok:
                 errors.append(f"waypoints[{i}] must be [x, y], [x, y, dwell] or {{pos: [x, y]}}")
-        if not config.get("waypoints") and len(config.get("pos", [0.0, 0.0])) != 2:
-            errors.append("'pos' must be [x, y]")
+        if "pos" in config:
+            errors.append(
+                "walker: 'pos' is not read -- a walker's start is stated as 'pose', a world pose "
+                "as SpawnEntity states one (x and y, and a heading): "
+                f"{pose_spelling(config['pos'])}"
+            )
+        if "pose" in config and config.get("waypoints"):
+            errors.append(
+                "walker: 'pose' and 'waypoints' both place the walker -- a patrolling walker "
+                "starts at waypoints[0]; state one of them"
+            )
+        try:
+            start_of(config)
+        except PoseError as exc:
+            errors.append(f"walker: {exc}")
         return errors
 
     # -- lifecycle -----------------------------------------------------------------------------
@@ -244,7 +284,8 @@ class WalkerPlugin(Plugin):
         # What the animation state is built from: where the walker starts + what the blueprint
         # resolved.
         self._spec = {
-            **{k: cfg[k] for k in ("waypoints", "pos") if k in cfg},
+            **({"waypoints": cfg["waypoints"]} if "waypoints" in cfg else {}),
+            **({"start": start} if (start := start_of(cfg)) is not None else {}),
             "name": self.walker_name,
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
@@ -330,7 +371,10 @@ class WalkerPlugin(Plugin):
         """
         st = self._anim
         st.pos = st.patrol_wps[0].copy()
-        st.yaw = _heading(st.patrol_wps[0], st.patrol_wps[1]) if len(st.patrol_wps) > 1 else st.yaw
+        start_yaw = float((self._spec.get("start") or (0.0, 0.0, 0.0))[2])
+        st.yaw = (
+            _heading(st.patrol_wps[0], st.patrol_wps[1]) if len(st.patrol_wps) > 1 else start_yaw
+        )
         st.phase = st.phase_run = st.phase_short = st.phase_turn = 0.0
         st.t_idle = 0.0
         st.disp_speed = 0.0
