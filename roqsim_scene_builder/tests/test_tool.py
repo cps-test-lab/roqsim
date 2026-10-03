@@ -169,3 +169,14 @@ def test_window_size_reaches_the_window_with_the_clis_default(monkeypatch, call,
     assert seen["cmd"][seen["cmd"].index("--size") + 1] == default
     call(size="1280x800")
     assert seen["cmd"][seen["cmd"].index("--size") + 1] == "1280x800"
+
+
+def test_the_server_instructions_state_what_the_tools_return():
+    """A client reads the instructions once and plans on them: a sketch that carries markers and
+    descriptions, and a review that can end in a neutral comment, must be said there."""
+    from roqsim_scene_builder.server import create_server
+
+    instructions = create_server().instructions or ""
+    assert "markers" in instructions
+    assert "description" in instructions
+    assert '"comment"' in instructions
