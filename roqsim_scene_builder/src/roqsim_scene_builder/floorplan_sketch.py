@@ -71,10 +71,11 @@ def sketch_floorplan_by_human(
 
     **Merge descriptions/names back by wall-set, do not overwrite the file wholesale.** The window
     re-detects rooms from the walls, so a room that is not a clean closed loop can vanish from the
-    returned ``rooms`` and ids can be renumbered; coordinates are also rounded and a door's ``height_m``
-    can drop. When the human only edited descriptions/names, match each returned room to the existing
-    floorplan by its ``line_ids`` set and copy the ``name``/``description`` across, leaving the
-    geometry (all rooms, door ``height_m``, exact coordinates) untouched.
+    returned ``rooms`` and ids can be renumbered, and coordinates are rounded. When the human only
+    edited descriptions/names, match each returned room to the existing floorplan by its ``line_ids``
+    set and copy the ``name``/``description`` across, leaving the geometry (all rooms, exact
+    coordinates) untouched. A door's ``height_m`` is carried through unchanged: the window neither
+    draws nor edits it, but a seeded full-height gate comes back as one.
 
     ``initial`` uses the exact schema this tool returns. Minimal example (one 12x10 m room with a
     door on the south wall)::
@@ -119,7 +120,8 @@ def sketch_floorplan_by_human(
         non-empty).
         Each **line** is ``{"id", "x0_m", "y0_m", "x1_m", "y1_m"}`` (independent wall segment). Each
         **door** is ``{"id", "line_id", "t", "width_m"}`` -- a standard-width OPENING attached to a
-        wall at fraction ``t`` (the generator cuts it out). Each **marker** is
+        wall at fraction ``t`` (the generator cuts it out) -- plus ``height_m`` **only when the seed
+        carried one** (the generator's ``--opening-h`` otherwise). Each **marker** is
         ``{"id", "x_m", "y_m", "comment", "in_room"}`` -- a prop point whose ``comment`` names the
         model to place, and ``in_room`` is the id of the room containing it (computed, ``null`` if
         outside every room) -- plus ``yaw_deg`` **only when a heading was dragged** (degrees about +Z,
