@@ -18,7 +18,9 @@ import math
 import mujoco
 import numpy as np
 
-from ..control import approach_angle, yaw_from_quat, yaw_to_quat
+from roqsim.pose import yaw_of, yaw_to_quat
+
+from ..control import approach_angle
 from . import NavOutput, OutputUnavailable
 
 
@@ -65,7 +67,7 @@ class MocapOutput(NavOutput):
 
     def pose(self, ctx) -> tuple[float, float, float]:
         pos = ctx.data.mocap_pos[self._mocapid]
-        return float(pos[0]), float(pos[1]), yaw_from_quat(ctx.data.mocap_quat[self._mocapid])
+        return float(pos[0]), float(pos[1]), yaw_of(ctx.data.mocap_quat[self._mocapid])
 
     def stop(self, ctx) -> None:
         """Nothing to do: a pose-written body is already at rest whenever it is not being written."""
