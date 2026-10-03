@@ -74,6 +74,7 @@ import mujoco
 import numpy as np
 
 from . import exit_status, logging_setup
+from .actuators import joint_force_range
 from .export_mesh import _quat_to_mat
 from .override_options import (
     add_override_options,
@@ -705,7 +706,7 @@ class UrdfExporter:
         ET.SubElement(joint, "axis", xyz=" ".join(f"{v:.9g}" for v in axis))
         lo, hi = (float(v) for v in self.m.jnt_range[jid])
         # Effort/velocity are required by URDF but are not MJCF concepts in the same units; take
-        # effort from the driving actuator's forcerange where there is one. MoveIt's own
+        # effort from what the joint's drives can deliver where there are any. MoveIt's own
         # joint_limits.yaml is the place velocity/acceleration limits are meant to be set.
         effort = self._actuator_effort(jid)
         attrs = {"effort": f"{effort:.9g}", "velocity": "3.14"}
@@ -714,15 +715,12 @@ class UrdfExporter:
         ET.SubElement(joint, "limit", **attrs)
 
     def _actuator_effort(self, jid: int) -> float:
-        for a in range(self.m.nu):
-            if (
-                self.m.actuator_trntype[a] == mujoco.mjtTrn.mjTRN_JOINT
-                and int(self.m.actuator_trnid[a, 0]) == jid
-            ):
-                lo, hi = (float(v) for v in self.m.actuator_forcerange[a])
-                if hi > 0.0:
-                    return hi
-        return 1000.0
+        # URDF's effort is one magnitude, so a one-sided range (a single-acting cylinder) exports
+        # its larger bound: the most the drive delivers in the direction it can push.
+        limits = joint_force_range(self.m, jid)
+        if limits is None or not any(limits):
+            return 1000.0
+        return max(abs(v) for v in limits)
 
     def _collect_meshes(self, members) -> None:
         """Write each referenced mesh to ``mesh_dir`` as an STL the URDF can point at."""
