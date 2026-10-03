@@ -25,7 +25,7 @@ Output (all in ``--out``):
 Deformable geometry travels as **skins**: a MuJoCo ``<skin>`` as itself, and a **flex** (a
 ``<flexcomp>``: a soft solid, a sheet, a cable) as a skin whose bones are the bodies its vertices
 follow (``roqsim.flex_skin``). A viewer that animates skins from bone poses therefore replays a flex's
-deformation from the run capture's pose tracks for those bodies, with no flex-specific code.
+deformation from the pose tracks of those bodies, with no flex-specific code.
 
 What we deliberately do NOT export: lighting (the browser keeps its own three.js lights) and
 collision-only geoms (``geom_group == 3``). FK metadata (joint axis/anchor/qposadr) rides in

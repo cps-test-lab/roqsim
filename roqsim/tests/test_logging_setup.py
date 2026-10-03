@@ -27,11 +27,14 @@ def test_the_stamped_format_needs_no_clock_call_of_its_own():
     assert "%(created)" in logging_setup.STAMPED_FORMAT
 
 
-@pytest.mark.parametrize("value,expected", [
-    (None, logging_setup.PLAIN_FORMAT),
-    ("plain", logging_setup.PLAIN_FORMAT),
-    ("stamped", logging_setup.STAMPED_FORMAT),
-])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, logging_setup.PLAIN_FORMAT),
+        ("plain", logging_setup.PLAIN_FORMAT),
+        ("stamped", logging_setup.STAMPED_FORMAT),
+    ],
+)
 def test_the_environment_selects_the_format(monkeypatch, value, expected):
     monkeypatch.delenv(logging_setup.FORMAT_ENV, raising=False)
     if value is not None:
@@ -47,10 +50,13 @@ def test_an_unknown_format_raises_rather_than_falling_back(monkeypatch):
         logging_setup.log_format()
 
 
-@pytest.mark.parametrize("env,expected", [
-    ({}, "INFO roqsim.engine: seed 42"),
-    ({"ROQSIM_LOG_FORMAT": "stamped"}, "[INFO] ["),
-])
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({}, "INFO roqsim.engine: seed 42"),
+        ({"ROQSIM_LOG_FORMAT": "stamped"}, "[INFO] ["),
+    ],
+)
 def test_a_configured_logger_prints_that_format(env, expected, tmp_path):
     """End to end through a real process, because `basicConfig` is a no-op once the root logger
     has a handler -- an in-process test can pass while the CLI prints something else."""
@@ -60,9 +66,12 @@ def test_a_configured_logger_prints_that_format(env, expected, tmp_path):
         "logging_setup.configure(verbose=False)\n"
         "logging.getLogger('roqsim.engine').info('seed 42')\n"
     )
-    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
-                         env={"PATH": "/usr/bin:/bin", "PYTHONPATH": ":".join(sys.path),
-                             **env})
+    out = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": ":".join(sys.path), **env},
+    )
     assert out.returncode == 0, out.stderr
     assert expected in out.stderr
 
@@ -72,14 +81,13 @@ def test_every_cli_uses_the_helper_rather_than_its_own_basicConfig():
     rediscover it in its own three-line call -- so a new `basicConfig` here is a
     regression even though it would work.
 
-    `export_capture` is excluded deliberately: its format is bare `%(message)s` because that
-    CLI's contract is one line of JSON on stdout.
     """
     from pathlib import Path
+
     src = Path(logging_setup.__file__).parent
     offenders = sorted(
-        p.name for p in src.glob("*.py")
-        if p.name not in ("logging_setup.py", "export_capture.py")
-        and "logging.basicConfig" in p.read_text()
+        p.name
+        for p in src.glob("*.py")
+        if p.name != "logging_setup.py" and "logging.basicConfig" in p.read_text()
     )
     assert offenders == []

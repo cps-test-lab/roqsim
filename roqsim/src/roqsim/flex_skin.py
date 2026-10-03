@@ -1,7 +1,7 @@
 """A compiled flex as a skin: which bodies move its vertices, and with what weights.
 
 A flex has no mesh of its own that a viewer could animate. MuJoCo computes each vertex position
-(``flexvert_xpos``) from bodies every step, and those bodies are all a run capture records. This
+(``flexvert_xpos``) from bodies every step, and those bodies' poses are all a replay needs. This
 module states that dependency in the one form a viewer already animates -- linear-blend skinning
 over named bodies, at most four per vertex -- so :mod:`roqsim.export_web` can ship a flex as an
 ordinary skin, and a replay deforms it from the bodies' pose tracks alone.
@@ -27,8 +27,8 @@ and sum to one. That keeps the rest pose, every rigid motion and every affine de
 leaves only curvature between the nodes approximate; the vertices it touched are reported.
 
 :func:`owned_bodies` answers the other half: which bodies exist only to carry a flex. They are one per
-vertex or node, so a table of named bodies (``sim_poses.csv``) leaves them out; a run capture keeps
-them, because they are what a skin's bones are.
+vertex or node, so a recording's ``poses`` channel of named bodies leaves them out (its ``state``
+channel carries them); a web export keeps them, because they are what a skin's bones are.
 """
 
 from __future__ import annotations

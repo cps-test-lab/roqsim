@@ -9,11 +9,10 @@ worlds and 0.02 m/s in others, so no threshold separates a fall from a drive -- 
 
 from __future__ import annotations
 
-import json
-
 import mujoco
 import numpy as np
 import pytest
+from synthetic_recording import write_state_recording
 
 from roqsim.capture import STATE_FIELDS, STATE_SPEC, RecordingError, record_dtype
 from roqsim.motion import MotionError, actuated_joints, base_free_joint, motion_onset
@@ -71,7 +70,7 @@ _FIXED_XML = """
 """
 
 
-def _write(tmp_path, xml, qvel_of, *, seconds=6.0, actuators=None, name="run.npz"):
+def _write(tmp_path, xml, qvel_of, *, seconds=6.0, actuators=None, name="run.mcap"):
     """A recording of ``xml`` whose velocities are whatever ``qvel_of(t)`` says.
 
     Written by hand rather than simulated so a test can state the motion it is testing -- "falls for
@@ -87,7 +86,6 @@ def _write(tmp_path, xml, qvel_of, *, seconds=6.0, actuators=None, name="run.npz
         samples["s"][i, 0] = t
         samples["s"][i, 1 + model.nq : 1 + model.nq + model.nv] = qvel_of(float(t), model)
     meta = {
-        "format_version": 2,
         "state_size": size,
         "state_fields": list(STATE_FIELDS),
         "capture_fps": [FPS, 1],
@@ -95,8 +93,7 @@ def _write(tmp_path, xml, qvel_of, *, seconds=6.0, actuators=None, name="run.npz
         "model": {"nq": int(model.nq), "nv": int(model.nv), "nu": int(model.nu)},
         "actuators": actuators if actuators is not None else {},
     }
-    path = tmp_path / name
-    np.savez(path, meta=np.array(json.dumps(meta)), samples=samples)
+    path = write_state_recording(tmp_path / name, meta, samples)
     return open_recording(path), model
 
 
@@ -311,10 +308,10 @@ def test_samples_are_handed_out_read_only(tmp_path):
 def test_the_onset_names_the_robot_so_a_picture_can_be_framed_on_it(tmp_path):
     """``body`` is the root the actuated joints hang from -- the arm, not the parcel beside it."""
     fixed, _ = _write(
-        tmp_path, _FIXED_XML, lambda t, m: np.zeros(m.nv), actuators=_ARM, name="a.npz"
+        tmp_path, _FIXED_XML, lambda t, m: np.zeros(m.nv), actuators=_ARM, name="a.mcap"
     )
     mobile, model = _write(
-        tmp_path, _MOBILE_XML, lambda t, m: np.zeros(m.nv), actuators=_WHEELS, name="b.npz"
+        tmp_path, _MOBILE_XML, lambda t, m: np.zeros(m.nv), actuators=_WHEELS, name="b.mcap"
     )
 
     assert motion_onset(fixed, model=mujoco.MjModel.from_xml_string(_FIXED_XML)).body == "arm_base"

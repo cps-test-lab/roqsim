@@ -6,7 +6,7 @@ to "how do I compute something you did not think of":
 
     from roqsim.recording import open_recording
 
-    with open_recording("run.npz") as rec:      # closes the rebuilt world's plugins on the way out
+    with open_recording("run.mcap") as rec:     # closes the rebuilt world's plugins on the way out
         for sample in rec.range(8.0, 20.0):
             sample.sim_time, sample.wall_time, sample.index, sample.data
             ...                   # any numpy/mujoco computation over a real restored state
@@ -15,10 +15,12 @@ Everything subtle lives here exactly once, so the two commands cannot drift on i
 the provenance check, nearest-sample selection by time, and reporting *which* sample a request actually
 landed on.
 
-The file itself is a plain ``.npz`` with a ``meta`` member (JSON provenance) and a ``samples`` member
-(one structured record per sample: ``t`` sim seconds, ``w`` elapsed wall seconds, ``s`` state, and
-``cam`` when the camera was tracked), so a reader with numpy and no ``roqsim`` at all can open it:
-``np.load("run.npz")`` returns both.
+The file is one mcap (see :mod:`roqsim.mcap_format`): a ``state`` channel holding the MuJoCo state
+vector per sample (``t`` sim seconds, ``w`` elapsed wall seconds, the state, and the camera when it
+was tracked), three JSON channels -- ``poses``, ``joints``, ``clock`` -- a reader without the model
+can use, and the provenance and entity roster as metadata. :func:`open_recording` reads it with its
+own framing loop rather than the library's reader, so a file left by a killed run -- every chunk
+closed before the kill, no summary -- opens like a finished one and yields every sample it holds.
 """
 
 from __future__ import annotations
@@ -34,6 +36,19 @@ import numpy as np
 
 from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
 from .document import check_version
+from .mcap_format import (
+    CHANNEL_CLOCK,
+    CHANNEL_JOINTS,
+    CHANNEL_POSES,
+    CHANNEL_STATE,
+    FORMAT_VERSION,
+    MAGIC,
+    META_ENTITIES,
+    META_RECORDING,
+    PROFILE,
+    Message,
+    read_contents,
+)
 
 log = logging.getLogger(__name__)
 
@@ -57,16 +72,30 @@ class Sample:
 class Recording:
     """An opened recording, with its world rebuilt and checked against what produced it."""
 
-    #: Provenance shapes this reader understands. A record written by a newer roqsim is REFUSED
-    #: rather than read with the keys that happen to overlap: it was written to a contract this code
-    #: has not seen, and guessing produces a plausible-looking replay of something else.
-    READER_VERSION = 2
+    #: The one provenance shape this reader understands. A record written by a newer roqsim is
+    #: REFUSED rather than read with the keys that happen to overlap: it was written to a contract
+    #: this code has not seen, and guessing produces a plausible-looking replay of something else.
+    #: An older one is refused too: this version is the only one with a reader.
+    READER_VERSION = FORMAT_VERSION
 
-    def __init__(self, path: Path, meta: dict, samples: np.ndarray) -> None:
+    def __init__(
+        self,
+        path: Path,
+        meta: dict,
+        samples: np.ndarray,
+        *,
+        entities: list[dict] | None = None,
+        channels: dict[str, list[Message]] | None = None,
+        finished: bool = True,
+    ) -> None:
         self.path = path
         self.meta = meta
-        # A newer record is refused here; an older one still reads, and is refused only where it
-        # would be rebuilt (see `build`).
+        # Only READER_VERSION is read: a newer record and an older one are both refused, and a
+        # provenance without a version is not a recording.
+        if "format_version" not in meta:
+            raise RecordingError(
+                f"{path} names no recording format version, so it cannot be read as one."
+            )
         self._version = check_version(
             meta,
             "format_version",
@@ -75,7 +104,15 @@ class Recording:
             where=str(path),
             error=RecordingError,
         )
+        if self._version < self.READER_VERSION:
+            raise RecordingError(
+                f"{path} was written with recording format v{self._version}, which has no reader "
+                f"in this roqsim: it reads v{self.READER_VERSION} mcap files only. Re-record the run."
+            )
         self._samples = samples
+        self._entities = entities
+        self._channels = channels or {}
+        self.finished = finished
         self._model: mujoco.MjModel | None = None
         self._ctx = None
         self._data: mujoco.MjData | None = None
@@ -126,7 +163,7 @@ class Recording:
 
     @property
     def samples(self) -> np.ndarray:
-        """The recording's rows as they sit on disk -- ``t``, ``w``, ``s``, and ``cam`` when tracked.
+        """The ``state`` channel as one structured array -- ``t``, ``w``, ``s``, and ``cam`` when tracked.
 
         Read-only, and the counterpart to :meth:`range`: no world is built and no state restored, so
         scanning a whole recording costs one array read rather than an ``mj_forward`` per sample. That
@@ -226,6 +263,60 @@ class Recording:
         """
         return self._view
 
+    @property
+    def entities(self) -> list[dict] | None:
+        """The entity roster as the recording last wrote it, or ``None`` when the run kept none.
+
+        Each entry is ``{"name", "kind", "body", "present"}`` from the registry: what the ``poses``
+        channel's body names *are*, which a body name alone does not say.
+        """
+        return None if self._entities is None else [dict(e) for e in self._entities]
+
+    def message(self, topic: str, index: int) -> Message | None:
+        """The raw message of a JSON channel at ``index``, or ``None`` where the file holds none.
+
+        A killed run can hold one more ``state`` message than ``poses`` message: a chunk may close
+        between the two, and the kill fall between the chunks. The last sample then has its state and
+        not its decoded channels, which is reported here as ``None`` rather than as an error.
+        """
+        messages = self._channels.get(topic) or []
+        return messages[index] if 0 <= index < len(messages) else None
+
+    def message_times(self, topic: str) -> list[tuple[int, int]]:
+        """``(log_time, publish_time)`` in nanoseconds for every message of ``topic``."""
+        return [(m.log_time, m.publish_time) for m in self._channels.get(topic) or []]
+
+    def _json(self, topic: str, index: int) -> dict:
+        message = self.message(topic, index)
+        if message is None:
+            raise RecordingError(
+                f"{self.path} has no {topic!r} message at sample {index} "
+                f"({len(self._channels.get(topic) or [])} of them for {len(self)} samples)."
+            )
+        try:
+            return json.loads(message.data)
+        except ValueError as err:
+            raise RecordingError(
+                f"{self.path}: {topic!r} message {index} is not JSON ({err})"
+            ) from err
+
+    def poses(self, index: int) -> dict:
+        """The ``poses`` message at ``index``: ``{"t", "w", "bodies": {name: [x, y, z, qx, qy, qz, qw, vx, vy, vz, wx, wy, wz]}}``.
+
+        World frame, quaternion ``(x, y, z, w)``, the twist from the solver. Decoded from the file
+        rather than derived from a restored state, so it needs no world rebuild.
+        """
+        return self._json(CHANNEL_POSES, index)
+
+    def joints(self, index: int) -> dict:
+        """The ``joints`` message at ``index``: ``{"t", "w", "q": {joint: value}}`` for every scalar joint."""
+        return self._json(CHANNEL_JOINTS, index)
+
+    @property
+    def clock(self) -> list[dict]:
+        """Every ``clock`` message: ``{"wall_ts": epoch seconds, "sim_ts": sim seconds}``."""
+        return [json.loads(m.data) for m in self._channels.get(CHANNEL_CLOCK) or []]
+
     def describe(self) -> dict:
         """A JSON-safe summary -- what ``--check`` reports, and what an MCP caller can read cheaply."""
         t0, t1 = self.span
@@ -239,6 +330,7 @@ class Recording:
             "fps": float(self.fps),
             "world": self.world,
             "camera_track": self.has_camera,
+            "finished": bool(self.finished),
             "model": self.meta.get("model", {}),
             "packages": self.meta.get("packages", {}),
         }
@@ -256,13 +348,6 @@ class Recording:
         if self._model is not None:
             return self._model, self._ctx
 
-        if self._version < self.READER_VERSION and target is None:
-            raise RecordingError(
-                f"{self.path} predates components being addressed by path, so the overrides it "
-                f"carries would resolve differently against this world -- a run rebuilt from them "
-                f"would be a different one while looking correct. Re-record it, or pass the world "
-                f"explicitly to rebuild it without them."
-            )
         ref = target or self.world
         if not ref:
             raise RecordingError(
@@ -294,7 +379,6 @@ class Recording:
             ctx.seed = int(self.meta["seed"])
         # The episode is half of the same key, and restoring one without the other reproduces the
         # bug in miniature: the right seed at the wrong episode draws noise that never happened.
-        # Absent in a recording written before the episode existed, and 0 is what such a run had.
         if ctx is not None:
             ctx.episode = int(self.meta.get("episode") or 0)
         self._model, self._ctx, self._data, self._view = model, ctx, data, view
@@ -511,33 +595,74 @@ def _reads_from(read, plugin) -> bool:
 
 
 def open_recording(path: str | Path) -> Recording:
-    """Open a ``.npz`` recording, validating its shape before anything expensive happens."""
+    """Open a recording, validating its shape before anything expensive happens.
+
+    Reads the file with :mod:`roqsim.mcap_format`'s own framing loop, so a file left by a killed run
+    -- no summary, possibly a torn last chunk -- opens and yields every sample of the chunks that were
+    closed. What is refused, by name: an ``.npz`` path (a numpy archive is not a recording), a file
+    that is not mcap at all, a profile other than ``roqsim``, and a provenance whose version or
+    layout this reader does not know.
+    """
     path = Path(path)
+    if path.suffix.lower() == ".npz":
+        raise RecordingError(
+            f"{path} is a numpy archive. A roqsim recording is one .mcap file per run (recording "
+            f"format {FORMAT_VERSION}); the numpy archives of formats 1 and 2 are not read. "
+            "Re-record the run."
+        )
     if not path.exists():
         raise RecordingNotFoundError(f"{path}: no such recording")
+    data = path.read_bytes()
+    if not data:
+        raise RecordingError(
+            f"{path} is empty: a recording's header lands at the first sample, so a run killed "
+            "before that left nothing to read."
+        )
+    if not data.startswith(MAGIC):
+        what = "a zip archive" if data[:2] == b"PK" else "not an mcap file"
+        raise RecordingError(
+            f"{path} is {what}: a recording is an mcap file starting with its magic bytes. "
+            "A run written by a version before recording format 3 is a numpy archive, which has "
+            "no reader here; re-record it."
+        )
     try:
-        archive = np.load(path, allow_pickle=False)
-    except Exception as err:
+        contents = read_contents(data)
+    except RecordingError as err:
+        raise RecordingError(f"{path}: {err}") from err
+    if contents.profile != PROFILE:
         raise RecordingError(
-            f"{path} is not a readable recording ({type(err).__name__}: {err}). A run killed with "
-            "SIGKILL leaves an unreadable archive, because an .npz writes its index at the end."
-        ) from err
-
-    missing = {"meta", "samples"} - set(archive.files)
-    if missing:
-        raise RecordingError(
-            f"{path} is missing {', '.join(sorted(missing))}; it has {sorted(archive.files)}. "
-            "A recording holds a JSON 'meta' member and a structured 'samples' member."
+            f"{path} is an mcap file with profile {contents.profile!r}, not a roqsim recording "
+            f"(profile {PROFILE!r})."
         )
-    meta = json.loads(str(archive["meta"]))
-    samples = archive["samples"]
-    if len(samples) == 0:
+    meta = contents.json_metadata(META_RECORDING)
+    if not isinstance(meta, dict):
+        raise RecordingError(
+            f"{path} carries no {META_RECORDING!r} metadata, so nothing says what its samples are. "
+            "A run killed before its first sample leaves no recording at all; this file was written "
+            "by something else."
+        )
+    roster = contents.json_metadata(META_ENTITIES)
+    entities = roster.get("entities") if isinstance(roster, dict) else None
+    states = contents.messages.get(CHANNEL_STATE) or []
+    if not states:
         raise RecordingError(f"{path} holds no samples")
-
-    expected = record_dtype(int(meta["state_size"]), bool(meta.get("camera_track")))
-    if samples.dtype != expected:
+    # The layout must be what the provenance says, or every column is read as a different one.
+    dtype = record_dtype(int(meta["state_size"]), bool(meta.get("camera_track")))
+    bad = [i for i, m in enumerate(states) if len(m.data) != dtype.itemsize]
+    if bad:
         raise RecordingError(
-            f"{path}: samples are {samples.dtype}, but its provenance describes {expected}. "
-            "The file and its declared layout disagree."
+            f"{path}: state message {bad[0]} is {len(states[bad[0]].data)} bytes, but its "
+            f"provenance describes {dtype.itemsize}-byte records ({dtype}). The file and its "
+            "declared layout disagree."
         )
-    return Recording(path, meta, samples)
+    samples = np.frombuffer(b"".join(m.data for m in states), dtype=dtype).copy()
+    if contents.unknown_channel:
+        log.debug("%s: %d messages on unknown channels ignored", path, contents.unknown_channel)
+    channels = {
+        topic: contents.messages.get(topic) or []
+        for topic in (CHANNEL_POSES, CHANNEL_JOINTS, CHANNEL_CLOCK)
+    }
+    channels[CHANNEL_STATE] = states
+    return Recording(
+        path, meta, samples, entities=entities, channels=channels, finished=contents.finished
+    )
