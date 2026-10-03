@@ -27,14 +27,14 @@ frame width, or pixels when over 1) and ``margin`` (pixels); an overlay defines 
 
 from __future__ import annotations
 
-import functools
 import json
 import logging
 from dataclasses import dataclass
-from importlib import metadata
 from pathlib import Path
 
 import numpy as np
+
+from .entry_points import entry_points
 
 log = logging.getLogger(__name__)
 
@@ -179,12 +179,8 @@ class ClockOverlay:
 BUILTIN = {"clock": ClockOverlay}
 
 
-@functools.cache
 def _entry_points():
-    eps = metadata.entry_points()
-    if hasattr(eps, "select"):  # Python 3.10+
-        return tuple(eps.select(group=ENTRY_POINT_GROUP))
-    return tuple(eps.get(ENTRY_POINT_GROUP, ()))  # pragma: no cover - legacy
+    return entry_points(ENTRY_POINT_GROUP)
 
 
 def available() -> dict[str, str]:

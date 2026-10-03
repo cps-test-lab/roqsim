@@ -33,12 +33,12 @@ import shutil
 import subprocess
 import sys
 from functools import cache
-from importlib.metadata import entry_points
 from pathlib import Path
 
 import click
 
 from . import exit_status
+from .entry_points import entry_points
 
 COMMAND_GROUP = "roqsim.commands"
 
@@ -282,7 +282,7 @@ def load_groups(root: click.Group) -> None:
     it, though -- its group is skipped with a warning, and every other group still loads.
     """
     seen: dict[str, str] = {}
-    for ep in entry_points(group=COMMAND_GROUP):
+    for ep in entry_points(COMMAND_GROUP):
         origin = getattr(getattr(ep, "dist", None), "name", "?")
         if ep.name in seen:
             raise click.ClickException(
