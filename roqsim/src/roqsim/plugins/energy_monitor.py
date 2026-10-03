@@ -109,6 +109,7 @@ from roqsim.context import SimContext
 from roqsim.endpoint import Unit
 from roqsim.frames import entity_body
 from roqsim.plugin import Plugin
+from roqsim.presence import subtree_body_ids
 from roqsim.schema import Field
 
 #: Joules per watt-hour, so a datasheet number (Wh) and the integral (J) can be one quantity.
@@ -336,10 +337,7 @@ class EnergyMonitorPlugin(Plugin):
         joint. The subtree is the same notion ``contact_monitor`` watches: a robot is its base and
         everything descended from it.
         """
-        subtree = {root}
-        for body in range(root + 1, m.nbody):
-            if int(m.body_parentid[body]) in subtree:
-                subtree.add(body)
+        subtree = set(subtree_body_ids(m, root))
 
         ids = []
         for aid in range(m.nu):

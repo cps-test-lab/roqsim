@@ -8,7 +8,7 @@ shaped around ORCA, and the next model would discover that the hard way.
 
 from __future__ import annotations
 
-import importlib.util
+import sys
 from pathlib import Path
 
 import mujoco
@@ -117,20 +117,24 @@ def test_an_unknown_model_lists_what_is_available():
         resolve_model("magic")
 
 
-def test_orca_resolves_without_rvo2_and_fails_only_when_used():
+def test_orca_resolves_without_rvo2_and_fails_only_when_used(monkeypatch):
     """The optional extra is imported lazily, in ``configure``, not at module import.
 
     That is deliberate and it is what this pins: ``roqsim plugins`` and a world *listing* orca must
     work on a machine with no compiler, and the failure must arrive when something actually tries to
-    run it -- naming the extra to install, rather than as a bare ImportError from inside rvo2.
+    run it -- naming the extra and the install that works, rather than as a bare ImportError from
+    inside rvo2. A plain ``pip install 'roqsim_nav[avoidance]'`` fails to build, so the message must
+    carry ``--no-build-isolation``.
     """
     from roqsim_nav.avoidance import available
 
     assert "orca" in available()
     cls = resolve_model("orca")  # resolvable regardless
-    if importlib.util.find_spec("rvo2") is None:
-        with pytest.raises(ImportError, match="roqsim_nav\\[avoidance\\]"):
-            cls().configure(None, {})
+    monkeypatch.setitem(sys.modules, "rvo2", None)  # absent, whether or not this machine has it
+    with pytest.raises(ImportError, match="roqsim_nav\\[avoidance\\]") as err:
+        cls().configure(None, {})
+    assert "pip install Cython" in str(err.value)
+    assert "--no-build-isolation" in str(err.value)
 
 
 # -- the ordering contract -------------------------------------------------------------------------

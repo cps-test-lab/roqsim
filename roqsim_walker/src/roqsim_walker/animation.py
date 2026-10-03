@@ -269,11 +269,11 @@ class AnimState:
 
 
 def spec_waypoints(spec) -> list:
-    """The spec's patrol waypoints, or a single spawn point when it is goal-driven only."""
+    """The spec's patrol waypoints, or its single start point when it is goal-driven only."""
     wps = list(spec.get("waypoints") or [])
     if wps:
         return wps
-    return [list(spec.get("pos") or (0.0, 0.0))]
+    return [list((spec.get("start") or (0.0, 0.0, 0.0))[:2])]
 
 
 def make_anim_state(model, spec) -> AnimState:
@@ -297,7 +297,8 @@ def make_anim_state(model, spec) -> AnimState:
         patrol_wps=wps.copy(),
     )
     st.pos = wps[0].copy()
-    st.yaw = _heading(wps[0], wps[1]) if len(wps) > 1 else 0.0
+    start_yaw = float((spec.get("start") or (0.0, 0.0, 0.0))[2])
+    st.yaw = _heading(wps[0], wps[1]) if len(wps) > 1 else start_yaw
     return st
 
 
