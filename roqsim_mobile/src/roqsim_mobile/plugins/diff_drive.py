@@ -23,7 +23,7 @@ sits rather than a config key::
       left_joints: []              # skid-steer: every left wheel's joint, instead of left_joint
       right_joints: []             #   likewise for the right side
       slip_factor: 1.0             # skid-steer ICR slip compensation (1.0 = ideal diff-drive)
-      base_body: base_link         # body the wheel axes are expressed in to derive their roll signs
+      base_body: ""                # body the wheel axes are expressed in (default: the robot's root)
       odom_child_frame: base_link   # frame the odometry TF points at (see below)
       odom_rate_hz: 50.0           # publish rate of odom (and its TF) and joint_states
       stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)
@@ -103,6 +103,7 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
+from roqsim.frames import entity_body
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
@@ -130,8 +131,9 @@ class DiffDrivePlugin(Plugin):
         # to full speed in one step and the robot lurches on the first cmd_vel.
         # https://iroboteducation.github.io/create3_docs/api/safety/
         self.wheel_accel = float(self.config.get("wheel_accel_limit", 0.9))
-        # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
-        self.base_body = self.config.get("base_body", "base_link")
+        # Body the wheel axes are expressed in when deriving their roll signs, as a path within the
+        # robot; empty is the root the robot registered (see configure()).
+        self.base_body = self.config.get("base_body", "")
         # Link the odometry TF points at: the root of the robot description published alongside,
         # which differs per platform (base_link on a TurtleBot 4, base_footprint on a TurtleBot 3).
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
@@ -264,12 +266,8 @@ class DiffDrivePlugin(Plugin):
         # straight to the actuator would silently require +y, and a model that states the other
         # convention then drives backwards -- a fault visible only in the base's motion, which is
         # where it is hardest to attribute to a sign.
-        base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
-        if base_b < 0:
-            raise RuntimeError(
-                f"diff_drive: base body {prefix + self.base_body!r} not found; the wheel roll signs "
-                f"are read off the wheel axes expressed in it"
-            )
+        base_b = entity_body(ctx, self.robot, self.base_body, who="diff_drive").index
+        self.base_body = m.body(base_b).name.removeprefix(prefix)
         d0 = mujoco.MjData(m)
         mujoco.mj_forward(m, d0)
         rb = d0.xmat[base_b].reshape(3, 3)

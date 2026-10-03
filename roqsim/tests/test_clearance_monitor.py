@@ -18,7 +18,9 @@ import mujoco
 import pytest
 
 from roqsim.config import PluginError, load_config_from_dict
+from roqsim.context import Entity, SimContext
 from roqsim.engine import Engine
+from roqsim.plugin import Plugin
 
 # A world with something to avoid, and a robot spawned as its own entity -- the monitor
 # watches an entity's subtree, so it is nested under the entry that provides one.
@@ -203,6 +205,38 @@ def test_a_body_that_does_not_exist_is_refused(world):
     indistinguishable from a safe run and would pass every trial."""
     world["components"][0]["components"][0]["clearance_monitor"]["body"] = "nosuch"
     with pytest.raises(RuntimeError, match="nosuch"):
+        _engine(world)
+
+
+def test_a_body_outside_the_entity_is_refused(world):
+    """`body` is a path within the entity: the post is the world's, and naming it does not make
+    the monitor measure the robot from there."""
+    world["components"][0]["components"][0]["clearance_monitor"]["body"] = "post"
+    with pytest.raises(RuntimeError, match="no frame 'robot/post'"):
+        _engine(world)
+
+
+class _Bodiless(Plugin):
+    """An entity that registers no body, in a model that has a `base_link` all the same."""
+
+    provides_entity = True
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        body = spec.worldbody.add_body(name="base_link", pos=[0, 0, 0.2])
+        body.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.2, 0, 0])
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(Entity(name=self.name, kind="robot"))
+
+
+def test_an_entity_that_registered_no_body_is_refused(world):
+    """The monitor measures what the entity registered; a body found by its name is a guess."""
+    world["components"][0] = {
+        f"{__name__}:_Bodiless": {},
+        "name": "robot",
+        "components": [{"clearance_monitor": {}}],
+    }
+    with pytest.raises(RuntimeError, match="entity 'robot' registered no body"):
         _engine(world)
 
 

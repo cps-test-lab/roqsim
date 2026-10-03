@@ -141,9 +141,7 @@ def test_an_entity_that_is_only_a_flex_owns_it():
     assert entity_flex_ids(model, "soft") == [0]
     assert entity_flex_ids(model, "world") == [0]
     assert entity_flex_ids(model, "robot") == []
-    scope = resolve_contact_scope(
-        model, Entity(name="soft", kind="object", body="soft"), plugin="t"
-    )
+    scope = resolve_contact_scope(_ctx(model, None), "soft", plugin="t")
     assert not scope.watched.any()
     assert list(scope.watched_flex) == [True]
 
@@ -187,9 +185,7 @@ def test_ignore_may_name_a_flex(caplog):
 
 def test_a_flex_touching_itself_is_not_an_external_contact():
     model, _ = _model()
-    scope = resolve_contact_scope(
-        model, Entity(name="soft", kind="object", body="soft"), plugin="t"
-    )
+    scope = resolve_contact_scope(_ctx(model, None), "soft", plugin="t")
     crate = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "crate")
     geom = np.array([[-1, -1], [crate, -1]])
     flex = np.array([[0, 0], [-1, 0]])
@@ -198,9 +194,7 @@ def test_a_flex_touching_itself_is_not_an_external_contact():
 
 def test_a_side_naming_neither_a_geom_nor_a_flex_is_refused():
     model, _ = _model()
-    scope = resolve_contact_scope(
-        model, Entity(name="soft", kind="object", body="soft"), plugin="t"
-    )
+    scope = resolve_contact_scope(_ctx(model, None), "soft", plugin="t")
     with pytest.raises(RuntimeError, match="neither a geom nor a flex"):
         scope.qualifying(np.array([[0, -1]]), np.array([[-1, -1]]))
     with pytest.raises(ValueError, match="neither a geom nor a flex"):
