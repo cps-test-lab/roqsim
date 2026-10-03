@@ -2,7 +2,7 @@
 #
 # roqsim-ros (full) — ROS 2 Jazzy + nav2 + full MoveIt2 + rviz2, with every roqsim package except
 # those container/packages.py excludes for this image (incl. quadruped/humanoid + CPU-only torch), and
-# a colcon-built ros2_ws (bridge, nav2 example, walker_ros).
+# a colcon-built ros2_ws (bridge, nav2 example, navigator actions).
 #
 # The roqsim_* pip packages are installed into the ROS *system* interpreter (via
 # --break-system-packages) so nodes launched with /usr/bin/python3 can import them — this mirrors the
