@@ -3,7 +3,7 @@
 The pedestrian stack in the roqsim plugin model: this plugin builds one walker's mocap bodies + skin
 into the ``MjSpec``, registers it as an ``Entity(kind='pedestrian')``, and declares a
 backend-neutral goal :class:`~roqsim.context.Endpoint` any bridge can serve (the ROS 2 bridge serves
-it as ``nav2_msgs/NavigateThroughPoses`` -- see ``roqsim_walker_ros``).
+it as ``nav2_msgs/NavigateThroughPoses`` -- see ``roqsim_nav_ros``).
 
 Config::
 
