@@ -195,6 +195,11 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   picks the drawer side, `superstructure: false` leaves a bare table. The uprights and light frame are
   floor-referenced; the tool panel and monitor mount ride with the worktop (0.20 m / 0.40 m above it,
   the catalogue's mounting positions), so the reach ergonomics hold at either column setting.
+- **`table`** — a **parametric** four-legged table: `height` (the top's surface), `width` × `depth`,
+  `top_thickness`, square `leg` and `leg_inset`, an optional `apron` under the edges, colours and the
+  top's `friction` are config. For the places a scene needs a table at a given height and size — a
+  hand-over stand at a mobile robot's transfer height, a bench to pick from, a table a conveyor stands
+  on — where scaling a mesh table would change its legs with its top.
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers

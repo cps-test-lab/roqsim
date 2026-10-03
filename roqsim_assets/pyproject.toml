@@ -69,6 +69,9 @@ palm_tree = "roqsim_assets.plugins.palm_tree:PalmTreePlugin"
 door = "roqsim_assets.plugins.door:DoorPlugin"
 window = "roqsim_assets.plugins.window:WindowPlugin"
 workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
+# A plain four-legged table whose top size, height and legs are separate keys: a hand-over stand at a
+# transfer height, a bench to pick from, a table a conveyor stands on.
+table = "roqsim_assets.plugins.table:TablePlugin"
 # Ceiling fittings: what hangs under a soffit. All three sit above head height, so the core
 # `ceiling` plugin (roqsim) removes them together with the slab when a world opens its roof.
 ceiling_panels = "roqsim_assets.plugins.ceiling_panels:CeilingPanelsPlugin"
