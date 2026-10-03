@@ -198,8 +198,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 - **`hazard_marking`** — paint on the floor in diagonal warning stripes, yellow and black: the
   outline of a rectangle (`band`), which marks a set-down place and leaves bare floor for the load
   inside it, or the whole rectangle (`band: 0`) for a keep-clear zone. `pose` is its centre and yaw,
-  `length` / `width` its outer size, `stripe` / `angle` / `colors` the pattern. Visual-only and 2 mm
-  thick: a wheel rolls over it and no scanner returns from it, a camera sees it. The stripes are cut
+  `length` / `width` its outer size, `stripe` / `angle` / `colors` the pattern. Without contact and 2 mm
+  thick: a wheel rolls over it, a camera sees it, and a ray aimed at the floor returns from it. The stripes are cut
   geometry, not a texture, so they stay sharp at any distance and run through an outline's corners.
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle

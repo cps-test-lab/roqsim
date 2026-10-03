@@ -5,8 +5,9 @@ a hand-over position between two vehicles, a keep-clear zone before a door. Eith
 the rectangle alone (``band``), which is how a set-down place is painted so the load stands on bare
 floor inside it, or the whole rectangle (``band: 0``).
 
-It is paint: visual-only and a couple of millimetres thick, so a wheel rolls over it without a
-bump, nothing rests on it and no scanner returns from it. A camera sees it.
+It is paint: a couple of millimetres thick and without contact, so a wheel rolls over it without
+a bump and nothing rests on it. A camera sees it, and a ray aimed at the floor returns from the
+paint as it would from the floor, that thickness nearer.
 
 The stripes are not a texture. Each stripe is cut to the marked area and all stripes of one colour
 are one mesh, so the edges are sharp at any distance and the stripes run through the corners of an

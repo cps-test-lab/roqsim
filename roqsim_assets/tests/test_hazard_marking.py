@@ -14,6 +14,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.raycast import VISIBLE_GROUPS
 from roqsim_assets.plugins.hazard_marking import (
     HazardMarkingPlugin,
     _area,
@@ -91,6 +92,26 @@ def test_the_marking_lies_on_the_floor_where_its_pose_says_and_collides_with_not
         assert world[:, 2].min() == pytest.approx(0.0, abs=1e-6)
         assert world[:, 2].max() == pytest.approx(0.002, abs=1e-6)
     assert engine.ctx.entities.get("spot").body == "m_hazard_marking"
+
+
+def test_a_ray_aimed_at_the_floor_returns_from_the_paint(tmp_path):
+    """Paint has no contact, but it is in the groups a scanner's rays see: a downward ray returns
+    from its top, the paint's thickness above the floor."""
+    engine = _built(tmp_path, band=0.0)
+    hit = np.zeros(1, dtype=np.int32)
+    distance = mujoco.mj_ray(
+        engine.ctx.model,
+        engine.ctx.data,
+        np.array([0.0, 0.0, 1.0]),
+        np.array([0.0, 0.0, -1.0]),
+        VISIBLE_GROUPS,
+        1,
+        -1,
+        hit,
+    )
+    name = mujoco.mj_id2name(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, int(hit[0]))
+    assert name.startswith("m_stripes_")
+    assert distance == pytest.approx(0.998, abs=1e-6)
 
 
 @pytest.mark.parametrize(
