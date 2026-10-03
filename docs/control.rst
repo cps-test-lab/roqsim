@@ -12,12 +12,12 @@ Examples
 Start a simulation. It says where it can be reached::
 
    $ roqsim sim roqsim_mobile:husky_demo --headless
-   control: ipc:///home/me/runs/roqsim-control.sock
+   control: ipc:///run/user/1000/roqsim/41213.sock
 
 From another shell, in the same directory or anywhere else on the machine::
 
    $ roqsim ls
-   ipc:///home/me/runs/roqsim-control.sock  pid 41213  up 12 s  roqsim_mobile:husky_demo
+   ipc:///run/user/1000/roqsim/41213.sock  pid 41213  up 12 s  roqsim_mobile:husky_demo
 
    $ roqsim endpoints
    robot/diff_drive/cmd_vel      stream             Body-frame velocity command, applied once per step.
