@@ -51,10 +51,12 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from importlib import import_module, metadata
+from importlib import import_module
 from pathlib import Path
 
 import yaml
+
+from .entry_points import entry_points as _entry_points
 
 ENTRY_POINT_GROUP = "roqsim.models"
 
@@ -129,19 +131,6 @@ def apply_assets(spec, asset: ModelAsset) -> None:
             resolved = _resolve(fname, texturedirs)
             if resolved is not None:
                 tex.file = str(resolved)
-
-
-@functools.cache
-def _entry_points(group: str):
-    """Return entry points for ``group`` across Python versions (see registry._entry_points).
-
-    Cached for the same reason as there: the scan is ~30 ms and spawn-heavy worlds trigger it
-    once per spawn plugin (validate + build), which dominated world loading.
-    """
-    eps = metadata.entry_points()
-    if hasattr(eps, "select"):  # Python 3.10+
-        return tuple(eps.select(group=group))
-    return tuple(eps.get(group, ()))  # pragma: no cover - legacy
 
 
 def _provider_dirs(module) -> tuple[Path, Path, Path]:

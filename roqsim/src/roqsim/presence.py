@@ -87,8 +87,31 @@ _SAVED_GRAVCOMP = "_presence_saved_gravcomp"
 _SAVED_FLEX = "_presence_saved_flex"
 
 
+def subtree_body_ids(model, root: int) -> list[int]:
+    """Body ``root`` and every body below it, ascending.
+
+    The one subtree walk in the tree: an entity's absence, its contact scope, a camera's class
+    mask, an arm's collapsed links and a robot's own geoms all mean "this body and its
+    descendants", and each answering it with its own loop is how two of them come to disagree on
+    a walker's limbs or a prop welded to a shelf.
+    """
+    bodies = {int(root)}
+    # bodyid is topologically ordered (a parent precedes its children), so one forward pass
+    # collects the whole subtree.
+    for body in range(int(root) + 1, model.nbody):
+        if int(model.body_parentid[body]) in bodies:
+            bodies.add(body)
+    return sorted(bodies)
+
+
+def subtree_geom_ids(model, root: int) -> list[int]:
+    """Every geom of body ``root`` and its descendants, ascending."""
+    bodies = set(subtree_body_ids(model, root))
+    return [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies]
+
+
 def entity_body_ids(model, body_name: str) -> list[int]:
-    """*body_name* and every body below it.
+    """*body_name* and every body below it; empty when no body has that name.
 
     Descendants included because an entity is rarely one body -- a prop with a free joint, a
     walker's limbs -- and leaving a child behind would make "absent" mean "mostly absent".
@@ -96,21 +119,15 @@ def entity_body_ids(model, body_name: str) -> list[int]:
     root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
     if root < 0:
         return []
-    bodies = {root}
-    # bodyid is topologically ordered (a parent precedes its children), so one forward pass
-    # collects the whole subtree.
-    for body in range(root + 1, model.nbody):
-        if int(model.body_parentid[body]) in bodies:
-            bodies.add(body)
-    return sorted(bodies)
+    return subtree_body_ids(model, root)
 
 
 def entity_geom_ids(model, body_name: str) -> list[int]:
-    """Every geom of *body_name* and its descendants."""
-    bodies = set(entity_body_ids(model, body_name))
-    if not bodies:
+    """Every geom of *body_name* and its descendants; empty when no body has that name."""
+    root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+    if root < 0:
         return []
-    return [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies]
+    return subtree_geom_ids(model, root)
 
 
 def arm_gravity_compensation(spec) -> None:
