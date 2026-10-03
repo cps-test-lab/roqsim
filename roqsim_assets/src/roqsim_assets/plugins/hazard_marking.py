@@ -26,7 +26,7 @@ Config::
         orientation: {yaw: 0.0}              #   direction of 'length', rad; no roll or pitch
       length: 1.4         # along yaw, m, over the outer edges
       width: 1.0          # across it, m, over the outer edges
-      band: 0.1           # width of the striped outline, m; 0 stripes the whole rectangle
+      band: 0.05          # width of the striped outline, m; 0 stripes the whole rectangle
       stripe: 0.1         # width of one stripe, m, measured across the stripe
       angle: 45.0         # the stripes' slant against 'length', degrees, in (0, 180)
       colors:             # the two paints, each [r, g, b] or [r, g, b, a]
@@ -147,7 +147,7 @@ class HazardMarkingPlugin(Plugin):
         self.yaw = yaw_of(quat)
         self.length = self._float(self.config.get("length"), 1.4)
         self.width = self._float(self.config.get("width"), 1.0)
-        self.band = self._float(self.config.get("band"), 0.1)
+        self.band = self._float(self.config.get("band"), 0.05)
         self.stripe = self._float(self.config.get("stripe"), 0.1)
         self.angle = math.radians(self._float(self.config.get("angle"), 45.0))
         self.thickness = self._float(self.config.get("thickness"), 0.002)

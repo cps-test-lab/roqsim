@@ -127,3 +127,7 @@ def test_a_ray_aimed_at_the_floor_returns_from_the_paint(tmp_path):
 )
 def test_a_wrong_value_is_named(config, word):
     assert any(word in e for e in HazardMarkingPlugin(config).validate_config(config))
+
+
+def test_an_outline_is_five_centimetres_wide_unless_told():
+    assert HazardMarkingPlugin({}).band == 0.05
