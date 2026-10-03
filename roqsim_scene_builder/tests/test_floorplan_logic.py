@@ -289,6 +289,24 @@ def test_doors_roundtrip_and_cascade():
     assert model.doors == []  # the door died with its wall
 
 
+def test_a_doors_height_survives_the_round_trip():
+    """The generator reads ``height_m`` per door; the window carries it without drawing it."""
+    model, _ = load_sketch(
+        {
+            "lines": [{"id": 1, "x0_m": 0, "y0_m": 0, "x1_m": 4, "y1_m": 0}],
+            "doors": [
+                {"id": 1, "line_id": 1, "t": 0.25, "width_m": 0.9, "height_m": 2.5},
+                {"id": 2, "line_id": 1, "t": 0.75, "width_m": 0.9},
+            ],
+        }
+    )
+    result = write_result(None, "", model)
+    assert result["doors"] == [
+        {"id": 1, "line_id": 1, "t": 0.25, "width_m": 0.9, "height_m": 2.5},
+        {"id": 2, "line_id": 1, "t": 0.75, "width_m": 0.9},  # no height: the generator's default
+    ]
+
+
 # -- erase / hit --
 
 
