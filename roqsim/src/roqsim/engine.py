@@ -54,6 +54,8 @@ from .context import SimContext
 from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
 from .interpenetration import Interpenetration, interpenetrations, summary
+from .lights import summary as lights_summary
+from .lights import undrawn_lights
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
@@ -325,6 +327,11 @@ class Engine:
             self.ctx.model = spec.compile()
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
+        # Lights past the renderer's eight compile and are never drawn; every image of the world is
+        # then lit otherwise than it reads. Reported, never refused.
+        undrawn = undrawn_lights(self.ctx.model)
+        if undrawn:
+            self.logger.warning("%s", lights_summary(undrawn, self.ctx.model))
         self._gravity_reaction = GravityReaction.of(self.ctx.model)
         if self._gravity_reaction is not None and self.integrator.resolved == "rk4":
             # mj_step2 integrates RK4 as Euler, so stepping in two halves would run a different
