@@ -16,7 +16,7 @@ both use :func:`urdf_source.link_primitives`.
 joints carry ``rpy="-pi/2 0 0"``, the scanner ``rpy="0 -pi 0"`` (an inverted puck between the decks)
 and the tablet a 20-degree pitch. Reading only the xyz -- which suffices for the Clearpath, Husarion
 and RT generators, because those vendors put their rotations on the *visual* -- leaves the wheels as
-flat discs clear of the floor and the robot resting on its body. See the OOMWOO port log.
+flat discs clear of the floor and the robot resting on its body.
 
 Usage::
 
@@ -285,13 +285,13 @@ TEMPLATE = """<mujoco model="{model}">
     The scan frame is INVERTED (the description's scan_joint carries rpy="0 -pi 0"), and kept: it is
     the frame the robot stamps its scan in. Its height is not the description's 0.0704 but the
     manufacturer's CAD, the LD14P's optical block {cad_mm} mm above the floor - see
-    build_makerspet_mjcf.CAD_SCAN_HEIGHT, the manifest and the port log.
+    build_makerspet_mjcf.CAD_SCAN_HEIGHT and the manifest.
 
     DEVIATION: the head ends at z {gap} in base_link, the bottom face of the scanner puck. The
     description's head encloses the scan plane; the real robot carries its LiDAR in an open gap. The
     collision cylinder is shortened to that height and the hemisphere visual ships cut there as
     {head_mesh}.stl; the head's mass and inertia are the description's. See
-    build_makerspet_mjcf.open_scan_gap and the port log.
+    build_makerspet_mjcf.open_scan_gap.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
@@ -343,7 +343,7 @@ TEMPLATE = """<mujoco model="{model}">
     <!-- Velocity servos, one per wheel. ctrlrange is the robot's own navigation.yaml top speed over
          its wheel radius, doubled for headroom; forcerange is its motor_stall_torque. kv is kept
          paired with the wheel class's armature so kv*dt/I stays just under 1 - see the wheel
-         default above, and the port log for the measurement. -->
+         default above. -->
     <velocity name="wheel_left_motor" joint="wheel_left_joint" kv="1.0" ctrlrange="-{wheel_ctrl} {wheel_ctrl}" forcerange="-0.49 0.49"/>
     <velocity name="wheel_right_motor" joint="wheel_right_joint" kv="1.0" ctrlrange="-{wheel_ctrl} {wheel_ctrl}" forcerange="-0.49 0.49"/>
   </actuator>
@@ -363,7 +363,7 @@ def copy_meshes(source: Path, package: Path, meshes: dict[str, str],
     The URDF references ``package://<pkg>/mesh/head.stl``, but the file lives at
     ``sdf/<pkg>/mesh/head.stl`` and ``CMakeLists.txt`` installs ``sdf``, not ``mesh`` -- so that
     reference does not resolve in an installed package. Upstream's, not ours; matched by basename
-    and recorded in the port log rather than papered over.
+    and recorded here rather than papered over.
     """
     found = {p.stem: p for p in source.rglob("*.stl") if ".git" not in p.parts}
     (package / "meshes").mkdir(parents=True, exist_ok=True)

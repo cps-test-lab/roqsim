@@ -23,9 +23,9 @@ Fixtures are PAL's numbers, not the model's:
 
 **The scanners look out through the base's waist.** PAL's collision box at the scan height encloses
 both scan origins; PAL's visual body is recessed there, and both scanners stand outside that recess.
-The model's box takes the visual waist's extent (a deviation from PAL's collision, recorded in the
-port log), so every ray of both scans leaves the base and reads the room's wall at its true range, with
-no robot geometry anywhere in either fan.
+The model's box takes the visual waist's extent (a deviation from PAL's collision), so every ray of
+both scans leaves the base and reads the room's wall at its true range, with no robot geometry
+anywhere in either fan.
 """
 
 from __future__ import annotations

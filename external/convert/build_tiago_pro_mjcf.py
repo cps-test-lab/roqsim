@@ -167,7 +167,7 @@ LOOP_ANCHOR = "0.017 -0.0057 -0.004"
 
 # Position-servo gains: (kp, forcerange). Every forcerange is the URDF <limit effort>, so the model
 # saturates where the real joint does. kp is sized to hold the pose against gravity and is the one
-# genuinely tuned number (see port log A4); `dampratio=1` lets MuJoCo derive the matching damping
+# genuinely tuned number; `dampratio=1` lets MuJoCo derive the matching damping
 # from the joint's own effective inertia instead of hand-tuned per-joint damping.
 POS_GAINS = {
     "torso_lift_joint": (60000, 2000),  # slide: carries the whole ~28 kg upper body
@@ -299,7 +299,7 @@ def compile_base(urdf: Path, work: Path) -> Path:
 
 
 def postprocess(base: Path, out: Path) -> None:
-    """Everything URDF cannot express. See the module docstring and the port log."""
+    """Everything URDF cannot express. See the module docstring."""
     root = ET.parse(base).getroot()
     root.set("model", MODEL)
 
@@ -373,8 +373,8 @@ def postprocess(base: Path, out: Path) -> None:
     band[0].set("size", BASE_WAIST_HALF_EXTENTS)
 
     # ---- wheels: near-frictionless load carriers -----------------------------------------
-    # The real base runs 4 mecanum wheels. Their rollers are NOT modelled (see the port log's
-    # drive-model decision): the holonomic motion comes from the planar actuators below, and the
+    # The real base runs 4 mecanum wheels. Their rollers are NOT modelled (a drive-model
+    # decision): the holonomic motion comes from the planar actuators below, and the
     # wheel cylinders only carry the vertical load. mu=0.02 is the honest idealisation of an omni
     # wheel -- free to slide in every direction -- and keeps the planar drive authoritative.
     for w in WHEELS:
@@ -397,7 +397,7 @@ def postprocess(base: Path, out: Path) -> None:
         # and the wheels spin chaotically without either. `armature` is the principled fix -- it is
         # the motor's rotor inertia reflected through the gearbox, which a real geared wheel drive
         # genuinely has and the source URDF simply omits. 0.05 kg.m^2 leaves kv=5 an order of
-        # magnitude inside the stability bound. Substrate assumption; see port log A5.
+        # magnitude inside the stability bound. Substrate assumption.
         for j in bodies[f"{w}_link"].findall("joint"):
             j.attrib.pop("damping", None)
             j.attrib.pop("frictionloss", None)
@@ -416,7 +416,7 @@ def postprocess(base: Path, out: Path) -> None:
     # that resolved anything.
     #
     # STILL OPEN: these links collide via their vendor mesh CONVEX HULLS, which is what makes the pinch
-    # 2-point (see the port log). The fix is a pad collision primitive, and it belongs on the
+    # 2-point. The fix is a pad collision primitive, and it belongs on the
     # `fingertip_*` links -- they are the geometry that straddles the TCP. Pads on `inner_finger_*`
     # instead (tempting, because it carries the largest jaw-facing facet, 11 x 43 mm) are WRONG:
     # that link is proximal, its pad sits ~60 mm
@@ -447,7 +447,7 @@ def postprocess(base: Path, out: Path) -> None:
                     g.set("solref", "0.004 1")
                     # solimp stiffer than the graspable props' own 0.9 0.95: a held object CREEPS
                     # downward through this gripper's contact under sustained load, because the pads
-                    # meet it on an edge (see the port log) and a soft friction constraint drifts.
+                    # meet it on an edge and a soft friction constraint drifts.
                     # Measured with a static arm and both pads in contact, 0.15 kg: 0.9/0.95 creeps at
                     # -8.6 mm/s, 0.95/0.99 at -3.7 mm/s. Stiffer still is worse, not better --
                     # 0.99/0.999 chatters and ejects the object outright.

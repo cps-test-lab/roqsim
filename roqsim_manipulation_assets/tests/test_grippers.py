@@ -47,7 +47,7 @@ GRIPPERS = [
         (-0.0301, 0.001),
         0.0301,
         0.005,
-        61.2,  # PILZ's URDF stroke, NOT the PG+70 datasheet's 70 mm -- see the port log
+        61.2,  # PILZ's URDF stroke, NOT the PG+70 datasheet's 70 mm
         id="schunk_pg70",
     ),
 ]

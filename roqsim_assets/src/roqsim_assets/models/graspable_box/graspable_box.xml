@@ -24,8 +24,7 @@
            are; the torsional/rolling terms follow the conveyor package's values.
          * solimp/solref soften the contact slightly (0.9 0.95 0.001 / 0.005 1) so the fingers settle
            into a few tenths of a millimetre of penetration instead of chattering against a rigid face.
-           A perfectly stiff pinch at 0.002 s timestep bounces.
-       See the port log beside the pick world for the grasp measurements these were tuned against. -->
+           A perfectly stiff pinch at 0.002 s timestep bounces. -->
   <default>
     <geom condim="4" friction="1.2 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.005 1"/>
   </default>
@@ -37,7 +36,7 @@
   <worldbody>
     <!-- 0.08 x 0.06 x 0.05 m, 0.5 kg. Mass is on the geom so `spawn_model`'s `mass:` override has a
          single value to scale, and light enough that carrying it does not upset a humanoid's balance
-         policy (see the G1 port log, A5). -->
+         policy. -->
     <body name="graspable_box">
       <geom name="graspable_box" type="box" size="0.04 0.03 0.025" mass="0.5"
             material="graspable_box"/>

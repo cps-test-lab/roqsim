@@ -21,7 +21,7 @@
        coefficients' sign, and the manifest's `gripper_ctrl` (a raw ctrl) and the gripper tests' ctrl
        values are stated for it.
 
-       APERTURE (measured, see the port log): 61.2 mm open (ctrl -0.0301) down to 0 mm (ctrl 0.001).
+       APERTURE (measured): 61.2 mm open (ctrl -0.0301) down to 0 mm (ctrl 0.001).
        That is the URDF's stroke, NOT the PG+70 datasheet's 70 mm -- PILZ caps each jaw at 30.1 mm.
        The vendor kinematics are kept exactly rather than widened to the datasheet, so MoveIt's joint
        limits and MuJoCo's agree; the consequence is that this gripper takes a narrower payload than
@@ -46,7 +46,7 @@
            settle into a few tenths of a millimetre instead of chattering at a 2 ms timestep (the
            same reasoning as robotiq_2f85's pad boxes). Friction 1.0 stands for a rubber-faced jaw:
            the PG+70 ships without fingers and the URDF's bare boxes are PILZ's own, so the surface
-           is an application choice either way -- see the port log. -->
+           is an application choice either way. -->
       <default class="pg70_jaw">
         <geom type="box" size="0.015 0.005 0.005" friction="1.0 0.005 0.0001" condim="4"
           priority="1" solimp="0.95 0.99 0.001" solref="0.004 1" rgba="0.15 0.15 0.15 1"/>
@@ -57,7 +57,7 @@
            URDF implies (~0) and dt=0.002 the servo goes into a two-step limit cycle -- 3.6 mm of
            ripple, and the jaw parks 12 mm off its commanded stop, on BOTH Euler and implicitfast.
            armature 0.02 with kp 5000 leaves ~5x margin and tracks both stops to 0.000 mm. Re-measure
-           these together if either changes; see the port log. -->
+           these together if either changes. -->
       <default class="pg70_finger">
         <joint type="slide" range="-0.001 0.0301" armature="0.02" damping="2.0"
           solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
@@ -75,7 +75,7 @@
       <!-- Mass is NOT the URDF's. It carries 1 kg on the palm and 1 kg on EACH finger (3 kg total,
            with placeholder 0.01 diagonal inertias) -- clearly unset defaults rather than data, and a
            1 kg jaw on a position servo makes the gripper dominate the arm's dynamics. Datasheet
-           PG+70 mass is 1.4 kg; split 1.3 kg palm + 0.05 kg per jaw. See the port log. -->
+           PG+70 mass is 1.4 kg; split 1.3 kg palm + 0.05 kg per jaw. -->
       <inertial pos="0 0 0.0315" mass="1.3" diaginertia="0.0015 0.0011 0.0013"/>
       <geom class="pg70_visual" mesh="pg70_body"/>
       <!-- The URDF's collision primitive: a box, not the mesh. It is the mesh's AABB inflated ~2 mm
@@ -129,7 +129,7 @@
   <actuator>
     <!-- The gripper's single DOF: ctrl is a target tendon length in metres, -0.0301 (open) .. 0.001
          (closed). kp/kv are MEASURED against the jaw armature above, not guessed (kp 30000 is
-         unstable; see the port log for the sweep). forcerange is the datasheet grip force -- note it
+         unstable). forcerange is the datasheet grip force -- note it
          is the TENDON force, and the tendon's 0.5 coefficients halve it at each jaw, so 200 N here is
          ~100 N per jaw. Commanding closed against a held 45 mm parcel leaves ~23 mm of servo error,
          so the grip saturates the force limit rather than relying on gain. -->

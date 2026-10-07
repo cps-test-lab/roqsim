@@ -28,7 +28,7 @@ components:
   # (husarion_ugv_description config/components.yaml:5-14 @ 559e784b, the file urdf/panther.urdf.xacro:26
   # loads by default). That file ships the entry commented out: Husarion includes no lidar with the
   # base platform and offers several (Panther options manual), so this is the sample, not a standard
-  # fit. The alternatives are in the port log.
+  # fit.
   #
   # Husarion's macro names the mount link and the scan frame after the component
   # (slamtec_rplidar.urdf.xacro:249-278 @ 5f783f8): `second_lidar_link` at the joint origin, declared

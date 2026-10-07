@@ -17,7 +17,7 @@
            inertia reflected through its 353:1 gearbox. 0.01 kg-m^2 is the standard
            Menagerie order for a geared hobby servo; damping comes from the URDF. -->
       <joint axis="0 1 0" armature="0.01"/>
-      <!-- Position servo. Gains are a substrate calibration (port log S1), not a
+      <!-- Position servo. Gains are a substrate calibration, not a
            vendor number; forcerange is the XM430-W350's 4.1 N-m stall torque. -->
       <general gaintype="fixed" biastype="affine" gainprm="150"
                biasprm="0 -150 -10" forcerange="-4.1 4.1"/>

@@ -40,10 +40,10 @@ OUT = (
     / "roqsim_manipulation_assets/src/roqsim_manipulation_assets/models/open_manipulator_x/open_manipulator_x.xml"
 )
 
-#: The four actuated arm joints, in chain order. The gripper is deliberately absent -- see the
-#: `gripper` note in the port log: the fingers are welded at their URDF-zero pose because the arm's
-#: only consumer (the palm-harvesting benchmark) states the gripper is out of scope, and an
-#: unactuated prismatic joint is a numerical nuisance that buys nothing.
+#: The four actuated arm joints, in chain order. The gripper is deliberately absent: the fingers
+#: are welded at their URDF-zero pose because the arm's only consumer (the palm-harvesting
+#: benchmark) states the gripper is out of scope, and an unactuated prismatic joint is a numerical
+#: nuisance that buys nothing.
 HEADLINE = "ROBOTIS OpenMANIPULATOR-X (4-joint serial arm + parallel gripper) for MuJoCo."
 
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4"]
@@ -61,7 +61,7 @@ CAMERA_POS = (0.070, 0.032, 0.052)
 
 #: XM430-W350-T stall torque at 12 V (ROBOTIS e-Manual). The URDF's `effort="1000"` is a placeholder,
 #: so the actuator force range comes from the datasheet instead. Servo gains are a substrate
-#: calibration, not a vendor number -- see the port log.
+#: calibration, not a vendor number.
 JOINT_TORQUE_NM = 4.1
 #: Servo gains: the LARGEST gain at which the actuator never reaches the XM430's stall torque during
 #: a 3 s ramp across the workspace. Criterion fixed before the sweep; measured (lag during ramp /
@@ -219,7 +219,7 @@ def build(urdf: Path, srdf: Path) -> str:
         "           Menagerie order for a geared hobby servo; damping comes from the URDF. -->"
     )
     L.append('      <joint axis="0 1 0" armature="0.01"/>')
-    L.append("      <!-- Position servo. Gains are a substrate calibration (port log S1), not a")
+    L.append("      <!-- Position servo. Gains are a substrate calibration, not a")
     L.append("           vendor number; forcerange is the XM430-W350's 4.1 N-m stall torque. -->")
     L.append(f'      <general gaintype="fixed" biastype="affine" gainprm="{GAIN:g}"')
     L.append(

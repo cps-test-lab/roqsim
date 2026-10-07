@@ -9,7 +9,7 @@ pinned by commit, and a converter names what it needs rather than where it happe
 A checkout is reused if it is already at the requested commit, so re-running a converter costs
 nothing. Anything unexpected -- no network, a moved commit, a missing subdirectory -- raises with the
 command to run by hand, rather than silently falling back to a stale or partial tree: a converter
-that quietly builds from the wrong revision produces a model whose port log lies about its provenance.
+that quietly builds from the wrong revision produces a model whose recorded provenance is a lie.
 """
 
 from __future__ import annotations
@@ -66,8 +66,8 @@ def resolve_source(
                 f"Remove it and re-run, or prepare it by hand:\n{manual}"
             ) from exc
         if not head.startswith(commit) and not commit.startswith(head):
-            # A tree at the wrong revision is the dangerous case: it builds, and the port log then
-            # records a commit the model was not built from. Refuse rather than silently re-point.
+            # A tree at the wrong revision is the dangerous case: it builds, and its recorded
+            # provenance names a commit it was not built from. Refuse rather than silently re-point.
             raise RuntimeError(
                 f"{dest} is at {head}, but {name} is pinned to {commit}.\n"
                 f"Update it deliberately:\n  git -C {dest} fetch origin {commit}\n"

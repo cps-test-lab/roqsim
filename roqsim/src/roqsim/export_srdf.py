@@ -222,8 +222,8 @@ def unmask_self_collision(spec: mujoco.MjSpec) -> int:
     Why it is needed at all: contype/conaffinity is a SIMULATION choice, while the collision matrix
     asks a GEOMETRIC question. Robot models here routinely disable self-collision on purpose --
     ``contype=2 / conaffinity=1`` on every collision geom, because the vendor's collision primitives of
-    neighbouring links overlap at rest and would fight (the TIAGo Pro's port log calls it A7; the G2
-    port does the same). Sampling such a model finds no contacts at all, so every pair is marked
+    neighbouring links overlap at rest and would fight (the TIAGo Pro and the G2
+    ports both do this). Sampling such a model finds no contacts at all, so every pair is marked
     ``Never`` and the SRDF switches MoveIt's self-collision checking off entirely.
 
     Visual-only geoms (both flags already 0) are left alone: they carry no ``<collision>`` in the

@@ -425,7 +425,7 @@ editing Python. Omit the key and the controller uses its bundled default, unchan
 
 Note the envelope is recorded, not enforced: outside it a policy does not fail, it balances worse. Check
 it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than trusting a
-port log to be read.
+written note to be read.
 
 Navigation: a mover the simulator drives itself
 -----------------------------------------------

@@ -47,8 +47,8 @@ from collision_fit import fit_collision_primitive, mesh_vertices  # noqa: E402
 from sources import resolve_source  # noqa: E402
 
 MENAGERIE_URL = "https://github.com/google-deepmind/mujoco_menagerie.git"
-# Pinned. If this moves, the port log and roqsim_manipulation_assets/THIRD_PARTY.md move with it --
-# a converter that quietly builds from another revision makes the port log lie about its provenance.
+# Pinned. If this moves, roqsim_manipulation_assets/THIRD_PARTY.md moves with it -- a converter
+# that quietly builds from another revision makes that record lie about its provenance.
 MENAGERIE_COMMIT = "da76818e269b82289eba39808e2fb91d679d6994"
 MENAGERIE_SUBDIR = "ufactory_xarm7"
 
