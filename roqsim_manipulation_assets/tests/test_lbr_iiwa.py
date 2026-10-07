@@ -317,8 +317,7 @@ def test_self_collision_rate(name):
     assert colliding / trials < 0.22, f"self-collision on {colliding / trials:.1%} of random poses"
 
 
-#: The drive test's poses, rad. Each moves several axes at once and stays inside every limit; the
-#: RoboVAST campaign that verified the port commands the same four over ROS 2.
+#: The drive test's poses, rad. Each moves several axes at once and stays inside every limit.
 POSES = [
     [0.0, 0.5236, 0.0, -1.0472, 0.0, 1.0472, 0.0],
     [0.7854, 0.7854, 0.0, -0.7854, 0.0, 0.7854, 0.7854],
