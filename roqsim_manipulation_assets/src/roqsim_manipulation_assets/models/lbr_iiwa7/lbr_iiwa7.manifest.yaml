@@ -1,0 +1,45 @@
+# Default controller shipped with the KUKA LBR iiwa 7 R800 description.
+#
+# `spawn_arm: {model: lbr_iiwa7}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
+# out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
+# spawn_arm `name`.
+#
+# The ROS 2 interface is lbr_fri_ros2_stack's, the stack KUKA FRI users run on the real arm
+# (lbr_ros2_control/config/controllers/*.yaml there), so a client written against it drives this
+# model unchanged:
+#
+#   /lbr/joint_states                                             joint_state_broadcaster
+#   /lbr/joint_trajectory_controller/follow_joint_trajectory      FollowJointTrajectory action
+#   /lbr/joint_trajectory_controller/joint_trajectory             streamed JointTrajectory topic
+#   /lbr/joint_trajectory_controller/controller_state             JointTrajectoryControllerState
+#
+# with joints named lbr_A1 .. lbr_A7. Not served: lbr-stack's forward_position_controller
+# (a JointGroupPositionController, which the substrate has no controller type for) and the
+# FRI-specific state and command topics of the hardware driver. See the port log.
+components:
+  # No gripper keys: this model is the arm alone. A world that wants a tool welds one at
+  # `attachment_site`, lbr-stack's `link_ee` (the media flange, z out of the flange).
+  - arm_controller:
+      # `lbr` is lbr-stack's default `robot_name`, which is both its namespace and its joint-name
+      # prefix. A world with two iiwas overrides `namespace` for the second one.
+      namespace: lbr
+      joint_prefix: lbr_
+      controller_name: joint_trajectory_controller
+      joint_state_broadcaster_name: joint_state_broadcaster
+      stream_commands: true
+      # KUKA's maximum axis speeds (KUKA "LBR iiwa technical data", axis table), which the description's
+      # joint_limits.yaml carries too. A trajectory timed faster than the real arm can move is
+      # executed no faster than the real arm, and arrives late rather than early.
+      max_velocity:
+        A1: 1.7104   # 98 deg/s
+        A2: 1.7104   # 98 deg/s
+        A3: 1.7453   # 100 deg/s
+        A4: 2.2689   # 130 deg/s
+        A5: 2.4435   # 140 deg/s
+        A6: 3.1416   # 180 deg/s
+        A7: 3.1416   # 180 deg/s
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. The flange.
+end_effector:
+  site: attachment_site
