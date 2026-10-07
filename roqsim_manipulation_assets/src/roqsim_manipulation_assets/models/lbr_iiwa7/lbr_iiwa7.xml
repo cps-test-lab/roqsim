@@ -31,8 +31,7 @@
            that the rated payload at the flange, arm stretched out horizontally, sags no axis by more
            than a degree (a proportional servo has a steady-state error under load; KUKA's controller
            does not show one). Armature stands in for the reflected rotor inertia of the harmonic
-           drives, which the description does not carry. Both are substrate choices; see the port
-           log. -->
+           drives, which the description does not carry. Both are substrate choices. -->
       <default class="shoulder">
         <joint damping="20" armature="0.5"/>
         <position kp="10000" kv="300"/>

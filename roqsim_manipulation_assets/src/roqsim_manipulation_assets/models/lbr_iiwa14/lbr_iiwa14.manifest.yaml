@@ -16,7 +16,7 @@
 #
 # with joints named lbr_A1 .. lbr_A7. Not served: lbr-stack's forward_position_controller
 # (a JointGroupPositionController, which the substrate has no controller type for) and the
-# FRI-specific state and command topics of the hardware driver. See the port log.
+# FRI-specific state and command topics of the hardware driver.
 components:
   # No gripper keys: this model is the arm alone. A world that wants a tool welds one at
   # `attachment_site`, lbr-stack's `link_ee` (the media flange, z out of the flange).

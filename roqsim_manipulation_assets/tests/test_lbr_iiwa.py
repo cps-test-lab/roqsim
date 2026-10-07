@@ -8,7 +8,7 @@ load:
   constant below is taken from, never measured from the model, so no test is tautological;
 - the kinematics, checked against a product-of-exponentials chain built from the datasheet's
   link lengths alone, which shares nothing with the MJCF's body tree (MuJoCo Menagerie's
-  independently derived iiwa 14 agrees with this model to 1e-15 m; see the port log);
+  independently derived iiwa 14 agrees with this model to 1e-15 m);
 - the arm battery of the robot-porting skill, run through ``spawn_arm`` and the manifest's
   ``arm_controller`` as a world runs it: gravity hold, joint-limit sweep, payload, speed limits;
 - the ROS 2 interface, which is lbr_fri_ros2_stack's so a client written for the real arm drives
