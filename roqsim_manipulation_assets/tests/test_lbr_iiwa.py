@@ -9,7 +9,7 @@ load:
 - the kinematics, checked against a product-of-exponentials chain built from the datasheet's
   link lengths alone, which shares nothing with the MJCF's body tree (MuJoCo Menagerie's
   independently derived iiwa 14 agrees with this model to 1e-15 m);
-- the arm battery of the robot-porting skill, run through ``spawn_arm`` and the manifest's
+- the arm checks, run through ``spawn_arm`` and the manifest's
   ``arm_controller`` as a world runs it: gravity hold, joint-limit sweep, payload, speed limits;
 - the ROS 2 interface, which is lbr_fri_ros2_stack's so a client written for the real arm drives
   this one unchanged.
@@ -203,7 +203,7 @@ def test_ros_interface_is_lbr_stacks(name):
 
 @variants
 def test_gravity_hold(name):
-    """E1: at home and stretched out horizontally (the worst case for A2), the arm must not sag."""
+    """At home and stretched out horizontally (the worst case for A2), the arm must not sag."""
     engine = _engine(name)
     try:
         arm = engine.ctx.blackboard.get("arm:iiwa")
@@ -224,7 +224,7 @@ def test_gravity_hold(name):
 
 @variants
 def test_joint_limit_sweep(name):
-    """E2: commanded past each limit, every joint stops at KUKA's limit."""
+    """Commanded past each limit, every joint stops at KUKA's limit."""
     engine = _engine(name)
     try:
         arm = engine.ctx.blackboard.get("arm:iiwa")
@@ -244,7 +244,7 @@ def test_joint_limit_sweep(name):
 
 @variants
 def test_rated_payload_held_stretched_out(name):
-    """E4: the rated payload at the flange, arm horizontal, held without saturating an axis.
+    """The rated payload at the flange, arm horizontal, held without saturating an axis.
 
     The payload is a downward force at the flange (``xfrc_applied``) rather than a welded body, so
     that spawn_arm's gravity compensation cannot carry it: the actuators must.
