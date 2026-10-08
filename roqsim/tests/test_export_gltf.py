@@ -7,6 +7,7 @@ numpy), so every check is on what a glTF loader would see, not on the exporter's
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import struct
@@ -260,7 +261,9 @@ def _web_geoms(scene: dict) -> Counter:
     for g in scene["geoms"]:
         if g.get("skin") is not None:
             continue
-        rgba = scene["materials"][g["matid"]]["rgba"] if g["matid"] >= 0 else g["rgba"]
+        own = [round(c, 6) for c in g["rgba"]]
+        mat = g["matid"] >= 0 and own == [0.5, 0.5, 0.5, 1.0]
+        rgba = scene["materials"][g["matid"]]["rgba"] if mat else g["rgba"]  # as MuJoCo draws it
         pose = tuple(np.round(np.r_[g["pos"], g["quat"]], 6))
         out[(scene["bodies"][g["body"]]["name"], g["type"], pose, _colour(rgba))] += 1
     return out
@@ -584,6 +587,282 @@ def test_a_flex_in_the_collision_group_is_not_drawn(tmp_path):
     model, data = _compile(_flex_world(_GRID3.replace('name="blk"', 'name="blk" group="3"')))
     glb = _export(model, data, tmp_path)
     assert not _skin_nodes(glb)
+
+
+# -- T6: materials and textures --------------------------------------------------------------------
+
+
+def _image(glb, texture_index):
+    from PIL import Image
+
+    tex = glb.json["textures"][texture_index]
+    image = glb.json["images"][tex["source"]]
+    view = glb.json["bufferViews"][image["bufferView"]]
+    data = glb.bin[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+    return image["mimeType"], Image.open(io.BytesIO(data))
+
+
+def _write_png(path, pixels):
+    from PIL import Image
+
+    Image.fromarray(np.asarray(pixels, np.uint8)).save(path)
+    return path
+
+
+def _textured_world(tmp_path, pixels, *, material='rgba="1 1 1 1"', geom="", name="tex"):
+    # A file name per image: MuJoCo caches a texture by its path.
+    png = _write_png(tmp_path / f"{name}.png", pixels)
+    channels = np.asarray(pixels).shape[2]
+    return f"""
+    <mujoco>
+      <asset>
+        <texture name="t" type="2d" file="{png}" nchannel="{channels}"/>
+        <material name="m" texture="t" {material}/>
+      </asset>
+      <worldbody><geom name="g" type="box" size="0.2 0.3 0.1" material="m" {geom}/></worldbody>
+    </mujoco>
+    """
+
+
+def _quadrants(h=64, w=96, alpha=None):
+    px = np.zeros((h, w, 3 if alpha is None else 4), np.uint8)
+    px[: h // 2, : w // 2, :3] = (220, 30, 30)
+    px[: h // 2, w // 2 :, :3] = (30, 200, 40)
+    px[h // 2 :, : w // 2, :3] = (40, 60, 210)
+    px[h // 2 :, w // 2 :, :3] = (230, 210, 40)
+    if alpha is not None:
+        px[..., 3] = alpha
+    return px
+
+
+def _material_of(glb, geom_name):
+    n = next(n for n in glb.geom_nodes() if glb.nodes[n]["extras"].get("geom") == geom_name)
+    return glb.json["materials"][glb.primitive(n)["material"]], glb.primitive(n)
+
+
+def test_an_embedded_image_is_the_compiled_texture(tmp_path):
+    model, data = _compile(_textured_world(tmp_path, _quadrants()))
+    glb = _export(model, data, tmp_path, max_tex_dim=0)
+    material, prim = _material_of(glb, "g")
+    assert "TEXCOORD_0" in prim["attributes"]
+    mime, img = _image(glb, material["pbrMetallicRoughness"]["baseColorTexture"]["index"])
+    assert mime == "image/png"
+    tid = model.texture("t").id
+    want = model.tex_data[model.tex_adr[tid] : model.tex_adr[tid] + 64 * 96 * 3].reshape(64, 96, 3)
+    np.testing.assert_array_equal(np.asarray(img.convert("RGB")), want)
+    # The compiled pixels are the file's, top row first: glTF's image origin is MuJoCo's.
+    np.testing.assert_array_equal(want, _quadrants())
+
+
+def test_a_large_texture_is_downscaled(tmp_path):
+    model, data = _compile(_textured_world(tmp_path, _quadrants(64, 96)))
+    glb = _export(model, data, tmp_path, max_tex_dim=24)
+    material, _ = _material_of(glb, "g")
+    _mime, img = _image(glb, material["pbrMetallicRoughness"]["baseColorTexture"]["index"])
+    assert img.size == (24, 16)
+
+
+def test_jpeg_is_for_opaque_images_only(tmp_path):
+    for alpha, want in ((255, "image/jpeg"), (128, "image/png")):
+        model, data = _compile(_textured_world(tmp_path, _quadrants(alpha=alpha), name=f"a{alpha}"))
+        glb = _export(model, data, tmp_path, name=f"{alpha}.glb", texture_format="jpeg")
+        material, _ = _material_of(glb, "g")
+        mime, _img = _image(glb, material["pbrMetallicRoughness"]["baseColorTexture"]["index"])
+        assert mime == want
+
+
+def test_a_tint_above_one_is_folded_into_the_image(tmp_path):
+    model, data = _compile(_textured_world(tmp_path, _quadrants(), material='rgba="2 1 0.5 1"'))
+    glb = _export(model, data, tmp_path, max_tex_dim=0)
+    material, _ = _material_of(glb, "g")
+    pbr = material["pbrMetallicRoughness"]
+    assert pbr["baseColorFactor"] == [1.0, 1.0, 1.0, 1.0]
+    _mime, img = _image(glb, pbr["baseColorTexture"]["index"])
+    want = np.clip(np.rint(_quadrants() * np.array([2.0, 1.0, 0.5])), 0, 255)
+    np.testing.assert_array_equal(np.asarray(img.convert("RGB")), want)
+
+
+def test_an_untextured_colour_above_one_is_clamped_and_named(tmp_path, caplog):
+    xml = """<mujoco><asset><material name="hot" rgba="1.5 0.5 0.2 1"/></asset>
+    <worldbody><geom type="sphere" size=".1" material="hot"/></worldbody></mujoco>"""
+    model, data = _compile(xml)
+    with caplog.at_level("WARNING"):
+        glb = _export(model, data, tmp_path)
+    assert "material 'hot'" in caplog.text
+    (material,) = glb.json["materials"]
+    assert material["pbrMetallicRoughness"]["baseColorFactor"] == pytest.approx(
+        [1.0, 0.5, 0.2, 1.0]
+    )
+
+
+def test_a_geoms_own_colour_wins_over_its_materials_as_mujoco_draws_it(tmp_path):
+    xml = """<mujoco><asset><material name="m" rgba="0 0 1 1"/></asset><worldbody>
+    <geom name="plain" type="sphere" size=".1" material="m"/>
+    <geom name="tinted" type="sphere" size=".1" material="m" rgba="1 0 0 1" pos="1 0 0"/>
+    </worldbody></mujoco>"""
+    model, data = _compile(xml)
+    glb = _export(model, data, tmp_path)
+    plain, _ = _material_of(glb, "plain")
+    tinted, _ = _material_of(glb, "tinted")
+    assert plain["pbrMetallicRoughness"]["baseColorFactor"] == [0.0, 0.0, 1.0, 1.0]
+    assert tinted["pbrMetallicRoughness"]["baseColorFactor"] == [1.0, 0.0, 0.0, 1.0]
+
+
+def test_a_cube_texture_is_refused_by_name(tmp_path, capsys):
+    xml = """<mujoco><asset>
+    <texture name="cube" type="cube" builtin="checker" width="8" height="8" rgb1="1 0 0" rgb2="0 0 1"/>
+    <material name="dice" texture="cube"/></asset>
+    <worldbody><geom type="box" size=".1 .1 .1" material="dice"/></worldbody></mujoco>"""
+    scene = tmp_path / "cube.xml"
+    scene.write_text(xml)
+    model, data = _compile(xml)
+    with pytest.raises(
+        export_gltf.GltfExportError, match="material 'dice'.*'cube', a cube texture"
+    ):
+        _export(model, data, tmp_path)
+    status = export_gltf.main(["--mjcf", str(scene), "--out", str(tmp_path / "x.glb")])
+    assert status == exit_status.BAD_INPUT
+    assert "cube texture" in capsys.readouterr().err
+
+
+# -- T8: the texture coordinates MuJoCo projects ----------------------------------------------------
+#
+# MuJoCo renders the scene with ambient light only, so a pixel is its texel. The same pixel's ray is
+# cast with mj_ray; where it meets a geom, the exported mesh of that geom is found under the hit
+# point, the exported texture coordinate interpolated there, and the embedded image sampled. Pixels
+# whose coordinate falls near a cell edge of the test texture are skipped: filtering blends there.
+
+_CELLS = 4  # the test texture is a 4 x 4 grid of distinct colours, asymmetric in both directions
+_PALETTE = np.array(
+    [
+        [230, 25, 75], [60, 180, 75], [255, 225, 25], [0, 130, 200],
+        [245, 130, 48], [145, 30, 180], [70, 240, 240], [240, 50, 230],
+        [210, 245, 60], [250, 190, 212], [0, 128, 128], [220, 190, 255],
+        [170, 110, 40], [255, 250, 200], [128, 0, 0], [0, 0, 128],
+    ],
+    np.uint8,
+)  # fmt: skip
+
+
+def _grid_texture(cell=32):
+    idx = np.arange(_CELLS * _CELLS).reshape(_CELLS, _CELLS)
+    return np.kron(_PALETTE[idx], np.ones((cell, cell, 1), np.uint8)).astype(np.uint8)
+
+
+_PROJECTED = """
+<mujoco>
+  <visual>
+    <headlight ambient="1 1 1" diffuse="0 0 0" specular="0 0 0"/>
+    <quality shadowsize="0" numslices="64" numstacks="32"/>
+  </visual>
+  <asset>
+    <texture name="grid" type="2d" file="{png}"/>
+    <material name="plain" texture="grid" specular="0" shininess="0" reflectance="0"/>
+    <material name="rep" texture="grid" texrepeat="2 1.5" specular="0" shininess="0" reflectance="0"/>
+    <material name="uni" texture="grid" texrepeat="0.5 0.5" texuniform="true" specular="0"
+              shininess="0" reflectance="0"/>
+    <material name="dense" texture="grid" texrepeat="4 4" texuniform="true" specular="0"
+              shininess="0" reflectance="0"/>
+    <mesh name="block" vertex="-0.3 -0.2 0  0.3 -0.2 0  0.3 0.2 0  -0.3 0.2 0
+                               -0.3 -0.2 0.25  0.3 -0.2 0.25  0.3 0.2 0.25  -0.3 0.2 0.25"/>
+  </asset>
+  <worldbody>
+    <camera name="look" pos="0 -3.2 3.0" xyaxes="1 0 0 0 0.68 0.73" fovy="50"/>
+    <geom name="floor" type="plane" size="2 1.5 0.1" material="uni"/>
+    <geom name="box" type="box" size="0.35 0.3 0.2" pos="-1 0.4 0.2" euler="0 0 20"
+          material="plain"/>
+    <geom name="cylinder" type="cylinder" size="0.2 0.2" pos="0 0.6 0.2" material="plain"/>
+    <geom name="sphere" type="sphere" size="0.25" pos="1 0.3 0.25" material="plain"/>
+    <geom name="capsule" type="capsule" size="0.18 0.3" pos="-0.5 -0.6 0.18" euler="0 90 30"
+          material="rep"/>
+    <geom name="mesh" type="mesh" mesh="block" pos="0.7 -0.6 0" material="dense"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _surface_uv(glb, n, local):
+    """The exported texture coordinate of mesh node ``n`` at the point ``local`` on it, or None."""
+    verts, _normals, faces = _triangles(glb, n)
+    uv = glb.accessor(glb.primitive(n)["attributes"]["TEXCOORD_0"]).astype(float)
+    a, b, c = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
+    normal = np.cross(b - a, c - a)
+    area2 = np.einsum("ij,ij->i", normal, normal)
+    ok = area2 > 0
+    unit = normal / np.sqrt(np.where(ok, area2, 1.0))[:, None]
+    dist = np.abs(np.einsum("ij,ij->i", local - a, unit))
+    proj = local - dist[:, None] * unit * np.sign(np.einsum("ij,ij->i", local - a, unit))[:, None]
+    w_a = np.einsum("ij,ij->i", np.cross(c - b, proj - b), normal) / np.where(ok, area2, 1.0)
+    w_b = np.einsum("ij,ij->i", np.cross(a - c, proj - c), normal) / np.where(ok, area2, 1.0)
+    w_c = 1.0 - w_a - w_b
+    inside = ok & (w_a >= -1e-6) & (w_b >= -1e-6) & (w_c >= -1e-6)
+    if not inside.any():
+        return None
+    k = np.flatnonzero(inside)[np.argmin(dist[inside])]
+    if dist[k] > 0.01:
+        return None
+    f = faces[k]
+    return w_a[k] * uv[f[0]] + w_b[k] * uv[f[1]] + w_c[k] * uv[f[2]]
+
+
+def test_projected_texture_coordinates_draw_what_mujoco_draws(tmp_path):
+    from roqsim.rendering import FrameRenderer, GLBackendError
+
+    png = _write_png(tmp_path / "grid.png", _grid_texture())
+    model, data = _compile(_PROJECTED.format(png=png))
+    width, height = 320, 240
+    try:
+        frame = FrameRenderer(model, width, height, camera="look").render(data)
+    except (GLBackendError, mujoco.FatalError) as err:
+        pytest.skip(f"no usable offscreen GL here: {err}")
+    glb = _export(model, data, tmp_path, max_tex_dim=0)  # segments: the model's own 64
+    texture = np.asarray(_image(glb, 0)[1].convert("RGB"))
+    th, tw = texture.shape[:2]
+    node_of = {glb.nodes[n]["extras"]["geom_id"]: n for n in glb.geom_nodes()}
+
+    cam = model.camera("look").id
+    origin = data.cam_xpos[cam]
+    axes = data.cam_xmat[cam].reshape(3, 3)
+    tan = np.tan(np.radians(model.cam_fovy[cam]) / 2)
+    geomid = np.zeros(1, np.int32)
+    hits = {}
+    which = np.full((height, width), -1)
+    for i in range(height):
+        for j in range(width):
+            x = ((j + 0.5) / width * 2 - 1) * tan * width / height
+            y = (1 - (i + 0.5) / height * 2) * tan
+            ray = axes @ np.array([x, y, -1.0])
+            ray /= np.linalg.norm(ray)
+            dist = mujoco.mj_ray(model, data, origin, ray, None, 1, -1, geomid)
+            if dist >= 0:
+                which[i, j] = int(geomid[0])
+                hits[i, j] = origin + dist * ray
+    uvs = {}
+    for (i, j), hit in hits.items():
+        g = int(which[i, j])
+        if g in node_of:
+            local = data.geom_xmat[g].reshape(3, 3).T @ (hit - data.geom_xpos[g])
+            uvs[i, j] = _surface_uv(glb, node_of[g], local)
+    checked, wrong = Counter(), Counter()
+    for (i, j), uv in uvs.items():
+        g = int(which[i, j])
+        around = which[max(i - 1, 0) : i + 2, max(j - 1, 0) : j + 2]
+        neighbours = [uvs.get((i, j + 1)), uvs.get((i + 1, j))]
+        if uv is None or (around != g).any() or any(n is None for n in neighbours):
+            continue  # a silhouette pixel is blended with what lies behind it
+        # MuJoCo samples a mipmap: over a footprint this many cells wide, the colour is a blend.
+        footprint = max(np.abs(n - uv).max() for n in neighbours) * _CELLS
+        cell = (uv % 1.0) * _CELLS
+        if footprint > 0.25 or (np.abs(cell - np.rint(cell)) < 0.15 + footprint).any():
+            continue  # near a cell edge, or a footprint too wide: filtering decides the colour
+        texel = texture[int((uv[1] % 1.0) * th), int((uv[0] % 1.0) * tw)].astype(int)
+        name = model.geom(g).name
+        checked[name] += 1
+        if np.abs(frame[i, j].astype(int) - texel).max() > 40:
+            wrong[name] += 1
+    for name in ("floor", "box", "cylinder", "sphere", "capsule", "mesh"):
+        assert checked[name] >= 15, f"{name}: only {checked[name]} pixels to compare"
+        assert wrong[name] <= 0.03 * checked[name], f"{name}: {wrong[name]}/{checked[name]} wrong"
 
 
 # -- T7: the command line ---------------------------------------------------------------------------

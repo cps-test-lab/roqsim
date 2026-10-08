@@ -194,6 +194,24 @@ def geom_drawn(model: mujoco.MjModel, g: int) -> bool:
     return not (gtype == int(mujoco.mjtGeom.mjGEOM_MESH) and int(model.geom_dataid[g]) < 0)
 
 
+#: A geom's ``rgba`` when the MJCF gives none. MuJoCo draws a geom in its material's colour unless
+#: its own differs from this.
+DEFAULT_RGBA = (0.5, 0.5, 0.5, 1.0)
+
+
+def resolved_rgba(model: mujoco.MjModel, matid: int, rgba) -> list[float]:
+    """The colour MuJoCo draws a geom in (``setMaterial`` in its visualiser).
+
+    The material's ``rgba``, unless the geom's own differs from :data:`DEFAULT_RGBA` -- then the
+    geom's, which is how a geom tints or hides (alpha 0) one instance of a shared material. With no
+    material, the geom's own.
+    """
+    own = [float(c) for c in rgba]
+    if matid < 0 or any(abs(a - b) > 1e-6 for a, b in zip(own, DEFAULT_RGBA, strict=True)):
+        return own
+    return [float(c) for c in model.mat_rgba[matid]]
+
+
 # -- strings ---------------------------------------------------------------------------------------
 
 
