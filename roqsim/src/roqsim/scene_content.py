@@ -3,21 +3,26 @@
 ``roqsim export web`` and ``roqsim export gltf`` write the same scene in two formats. What the scene
 *contains* -- which bodies, where each sits, which geoms are drawn, the meshes with their texture
 coordinates, the skins and the flexes drawn as skins, the materials and the textures they use -- is
-decided here, once, so the two files cannot disagree about it. A writer decides only how to spell it.
+decided here, once, so the two files cannot disagree about it. A writer decides only how to spell
+it.
 
 :func:`walk` reads a compiled :class:`mujoco.MjModel` and the :class:`mujoco.MjData` holding the
 state to export, and returns a :class:`SceneContent`:
 
-* **bodies**, in MuJoCo's order, each with its parent and its local pose at the exported state:
-  a free body's from ``qpos``, a mocap body's from ``xpos``/``xquat``, every other body's from
-  ``body_pos``/``body_quat`` (:func:`body_poses`);
-* **joints**, with the configured value of each named hinge and slide;
-* **geoms** that are drawn (:func:`geom_drawn`), with the dense index of the mesh each mesh geom uses;
+* **bodies**, in MuJoCo's order, each with its parent and the local pose a format with joints
+  starts from: a free body's from ``qpos``, a mocap body's from ``xpos``/``xquat``, every other
+  body's from ``body_pos``/``body_quat``, its joints at rest (:func:`body_poses`);
+* **joints**, with the configured value of each named hinge and slide, which a format with joints
+  applies to those poses;
+* **geoms** that are drawn (:func:`geom_drawn`), with the dense index of the mesh each mesh geom
+  uses;
 * **meshes**, one per mesh a drawn geom uses, with per-vertex texture coordinates where the mesh has
   them (:func:`mesh_geometry`);
-* **skins**: every drawn MuJoCo ``<skin>``, then every drawn flex as a skin whose bones are the bodies
-  its vertices follow (:mod:`roqsim.flex_skin`);
-* **materials** and the RGB-role **textures** they reference, in first-use order.
+* **skins**: every drawn MuJoCo ``<skin>``, then every drawn flex as a skin whose bones are the
+  bodies its vertices follow (:mod:`roqsim.flex_skin`);
+* **materials** and the RGB-role **textures** they reference, in first-use order;
+* every body's **world pose** at the exported state (:func:`exported_state`), for a format that
+  places bodies rather than joints.
 
 A geom, skin or flex in the collision group (:data:`COLLISION_GROUP`) is not drawn. That is the
 whole drawn-or-not rule, and :func:`drawn_group` is the only place it is spelled.
@@ -163,6 +168,8 @@ class SceneContent:
     skins: list[Skin] = field(default_factory=list)
     materials: list[Material] = field(default_factory=list)
     textures: list[Texture] = field(default_factory=list)
+    #: Every body's world (pos, wxyz quat) at :func:`exported_state`.
+    world_poses: list[tuple[list, list]] = field(default_factory=list)
 
     @property
     def flex_count(self) -> int:
@@ -276,7 +283,7 @@ def joints(model: mujoco.MjModel, data: mujoco.MjData) -> tuple[list[Joint], dic
         )
         # An unnamed joint has no key a viewer could look its value up by: every unnamed joint would
         # share the key "", and the last one's value would seat them all. Left out, it rests at its
-        # reference position (the flex bind state relies on that).
+        # reference position (:func:`exported_state` relies on that).
         if jtype in ("hinge", "slide") and name:
             initial[name] = float(data.qpos[qadr])
     return out, initial
@@ -407,14 +414,15 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
     return skins
 
 
-def flex_bind_state(model: mujoco.MjModel, data: mujoco.MjData) -> mujoco.MjData:
-    """The state a flex skin binds at: the one a scene seats every body at before any track.
+def exported_state(model: mujoco.MjModel, data: mujoco.MjData) -> mujoco.MjData:
+    """The state a scene shows before any track: ``data`` with every unnamed joint at rest.
 
-    That is ``data`` (free bodies, mocap bodies and named joints, as :func:`body_poses` and
-    :func:`joints` read them) with every unnamed hinge and slide joint at its reference position --
-    where a viewer shows it, having no value for it. A flex's vertex bodies move on unnamed slide
-    joints, so its bind shape is the flex at rest on its posed parent, whatever it had settled into
-    in ``data``.
+    That is ``data`` -- free bodies, mocap bodies and named joints, as :func:`body_poses` and
+    :func:`joints` read them -- with every unnamed hinge and slide joint at its reference position,
+    where a viewer of ``roqsim.web_scene`` shows it, having no value for it. A flex binds here (its
+    vertex bodies move on unnamed slide joints, so its bind shape is the flex at rest on its posed
+    parent, whatever it had settled into in ``data``), and a format with no joints, such as glTF,
+    places each body where this state puts it.
     """
     bind = mujoco.MjData(model)
     bind.qpos[:] = data.qpos
@@ -473,11 +481,11 @@ def _flex_uv(model: mujoco.MjModel, flex: int, nvert: int) -> np.ndarray | None:
     return model.flex_texcoord[adr:end]
 
 
-def _flexes(model: mujoco.MjModel, data: mujoco.MjData, logger: logging.Logger) -> list[Skin]:
+def _flexes(model: mujoco.MjModel, bind: mujoco.MjData, logger: logging.Logger) -> list[Skin]:
     """Every drawn flex as a skin, so a viewer that animates skins needs nothing new.
 
     A flex's bones are the bodies its vertices follow, with measured weights
-    (:mod:`roqsim.flex_skin`), bound at :func:`flex_bind_state`. What is drawn:
+    (:mod:`roqsim.flex_skin`), bound at :func:`exported_state` (``bind``). What is drawn:
 
     * a solid (``dim=3``): its boundary triangles, ``flex_shell``, facing outward;
     * a sheet (``dim=2``): its elements, twice -- once per side, over a second copy of the vertices,
@@ -492,7 +500,6 @@ def _flexes(model: mujoco.MjModel, data: mujoco.MjData, logger: logging.Logger) 
     skins: list[Skin] = []
     if not model.nflex:
         return skins
-    bind = flex_bind_state(model, data)
     for f in range(model.nflex):
         name = flex_skin.flex_name(model, f)
         if not drawn_group(model.flex_group[f]):
@@ -590,7 +597,8 @@ def walk(model: mujoco.MjModel, data: mujoco.MjData, logger: logging.Logger) -> 
 
     # Skins (deformable character meshes) are rigged to bones, not walked as geoms; flexes have no
     # mesh at all and are drawn as skins whose bones are the bodies their vertices follow.
-    scene.skins = _skins(model, logger) + _flexes(model, data, logger)
+    state = exported_state(model, data)
+    scene.skins = _skins(model, logger) + _flexes(model, state, logger)
 
     # Materials carry only their RGB-role texture. Textures are pruned to those an RGB role
     # references, remapped to a dense 0..N-1 -- normal maps and unused textures are dropped.
@@ -619,4 +627,7 @@ def walk(model: mujoco.MjModel, data: mujoco.MjData, logger: logging.Logger) -> 
         )
     scene.joints, scene.initial_joints = joints(model, data)
     scene.bodies = body_poses(model, data)
+    scene.world_poses = [
+        (state.xpos[i].tolist(), state.xquat[i].tolist()) for i in range(model.nbody)
+    ]
     return scene
