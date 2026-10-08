@@ -796,9 +796,10 @@ def main(argv: list | None = None) -> int:
         prog="roqsim export gltf",
         description="Export a compiled MuJoCo world as one binary glTF 2.0 file (.glb).",
         epilog=(
-            "The file is Y-up. Its root node `world` carries the turn from roqsim's Z-up world, so a "
-            "point in the frame of node `world` is a point in roqsim world coordinates. Every body is "
-            "a node named as the body is.\n\n" + exit_status.epilog(exit_status.BAD_INPUT)
+            "The file is Y-up. Its root node `world` carries the turn from roqsim's Z-up\n"
+            "world, so a point in the frame of node `world` is a point in roqsim world\n"
+            "coordinates. Every body is a node named as the body is.\n\n"
+            + exit_status.epilog(exit_status.BAD_INPUT)
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

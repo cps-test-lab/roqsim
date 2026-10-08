@@ -27,7 +27,7 @@ repository extends it without a change here.
 | `runner.py` | The standalone driver (`roqsim sim`): loop, pacing, recording, and the optional viewer. |
 | `scenario_adapter.py` | The `scenario-execution` `SimulationInterface` driver. |
 | `capture.py`, `recording.py`, `state.py`, `render.py` | State recording and everything read or drawn from it afterwards — driver-level, not plugins. |
-| `export_web.py`, `export_capture.py`, `export_urdf.py`, `export_srdf.py` | A compiled world or a recorded run out to a browser scene descriptor, a run capture, a URDF, or a MoveIt SRDF. |
+| `export_web.py`, `export_gltf.py`, `export_capture.py`, `export_urdf.py`, `export_srdf.py` | A compiled world or a recorded run out to a browser scene descriptor, a glTF 2.0 file, a run capture, a URDF, or a MoveIt SRDF. |
 | `scene_source.py`, `scene_content.py`, `tessellate.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, and the primitives as triangles. |
 | `commands.py` | The `roqsim` command tree. |
 
