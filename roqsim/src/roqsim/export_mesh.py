@@ -63,16 +63,15 @@ from xml.sax.saxutils import escape, quoteattr
 import mujoco
 import numpy as np
 
-from . import exit_status, logging_setup
+from . import exit_status, logging_setup, tessellate
 from .override_options import (
     add_override_options,
     overrides_from_options,
     refuse_world_options,
 )
+from .scene_content import COLLISION_GROUP
 
 logger = logging.getLogger(__name__)
-
-_COLLISION_GROUP = 3  # the repo convention: group-3 geoms are collision-only, never drawn
 
 #: Unit name -> multiplier applied to metres. MuJoCo is metric; CAD tools conventionally read
 #: millimetres, and an STL carries no unit at all, so a model imported as 0.35 mm tall is the classic
@@ -100,89 +99,6 @@ def _quat_to_mat(quat) -> np.ndarray:
     m = np.zeros(9)
     mujoco.mju_quat2Mat(m, np.asarray(quat, dtype=float))
     return m.reshape(3, 3)
-
-
-# --------------------------------------------------------------------------------------------------
-# Primitive tessellation. Poles and seams are emitted as duplicated vertices and left for the weld
-# pass to merge; the degenerate triangles that produces are dropped there too, so each generator stays
-# a readable ring-and-cap construction instead of carrying its own special cases.
-# --------------------------------------------------------------------------------------------------
-
-
-def _rings(rows, segments: int) -> tuple[np.ndarray, np.ndarray]:
-    """Triangulate a stack of ``(radius, z)`` rings into (vertices, faces), closing in longitude."""
-    lon = np.linspace(0.0, 2.0 * np.pi, segments, endpoint=False)
-    verts = np.concatenate(
-        [
-            np.stack([r * np.cos(lon), r * np.sin(lon), np.full(segments, z)], axis=1)
-            for r, z in rows
-        ]
-    )
-    faces = []
-    for i in range(len(rows) - 1):
-        for j in range(segments):
-            k = (j + 1) % segments
-            a, b = i * segments + j, i * segments + k
-            c, d = (i + 1) * segments + j, (i + 1) * segments + k
-            # Wound so the normal points AWAY from the axis: with rows ordered bottom-to-top and
-            # longitude increasing, (a,c,d) faces inward. An inverted primitive renders as a hole and
-            # CAD reads it as a void, and nothing about the file looks wrong -- test_closed_geoms
-            # _wind_outward is the guard.
-            faces += [[a, d, c], [a, b, d]]
-    return verts, np.asarray(faces, dtype=int)
-
-
-def _cylinder(radius: float, half_length: float, segments: int) -> tuple[np.ndarray, np.ndarray]:
-    """A closed cylinder about local z (MuJoCo's convention), as (vertices, faces)."""
-    rows = [(0.0, -half_length), (radius, -half_length), (radius, half_length), (0.0, half_length)]
-    return _rings(rows, segments)
-
-
-def _box(size) -> tuple[np.ndarray, np.ndarray]:
-    """An axis-aligned box of half-extents ``size``, as (vertices, faces)."""
-    sx, sy, sz = (float(v) for v in size)
-    verts = np.array(
-        [[x, y, z] for x in (-sx, sx) for y in (-sy, sy) for z in (-sz, sz)], dtype=float
-    )
-    faces = np.array(
-        [
-            [0, 1, 3],
-            [0, 3, 2],
-            [4, 7, 5],
-            [4, 6, 7],
-            [0, 4, 5],
-            [0, 5, 1],
-            [2, 3, 7],
-            [2, 7, 6],
-            [0, 2, 6],
-            [0, 6, 4],
-            [1, 5, 7],
-            [1, 7, 3],
-        ],
-        dtype=int,
-    )
-    return verts, faces
-
-
-def _sphere(radius: float, segments: int) -> tuple[np.ndarray, np.ndarray]:
-    lat = np.linspace(-np.pi / 2, np.pi / 2, max(3, segments // 2 + 1))
-    rows = [(radius * np.cos(a), radius * np.sin(a)) for a in lat]
-    return _rings(rows, segments)
-
-
-def _capsule(radius: float, half_length: float, segments: int) -> tuple[np.ndarray, np.ndarray]:
-    """A cylinder about local z closed by two hemispheres -- MuJoCo's capsule."""
-    n = max(2, segments // 4)
-    lower = np.linspace(-np.pi / 2, 0.0, n + 1)
-    upper = np.linspace(0.0, np.pi / 2, n + 1)
-    rows = [(radius * np.cos(a), -half_length + radius * np.sin(a)) for a in lower]
-    rows += [(radius * np.cos(a), half_length + radius * np.sin(a)) for a in upper]
-    return _rings(rows, segments)
-
-
-def _ellipsoid(size, segments: int) -> tuple[np.ndarray, np.ndarray]:
-    verts, faces = _sphere(1.0, segments)
-    return verts * np.asarray(size, dtype=float)[:3], faces
 
 
 def _weld(verts: np.ndarray, faces: np.ndarray, tol: float) -> tuple[np.ndarray, np.ndarray]:
@@ -313,7 +229,7 @@ class MeshExporter:
         self.groups = (
             {int(g) for g in groups}
             if groups
-            else {int(g) for g in set(model.geom_group.tolist()) if int(g) != _COLLISION_GROUP}
+            else {int(g) for g in set(model.geom_group.tolist()) if int(g) != COLLISION_GROUP}
         )
         self.skipped: list[str] = []
         self.geoms: list[dict] = []
@@ -379,15 +295,15 @@ class MeshExporter:
             faces = model.mesh_face[fstart : fstart + fcount].reshape(-1, 3).astype(int)
             return verts, faces
         if gtype == int(mujoco.mjtGeom.mjGEOM_BOX):
-            return _box(size[:3])
+            return tessellate.box(size[:3])
         if gtype == int(mujoco.mjtGeom.mjGEOM_CYLINDER):
-            return _cylinder(float(size[0]), float(size[1]), self.segments)
+            return tessellate.cylinder(float(size[0]), float(size[1]), self.segments)
         if gtype == int(mujoco.mjtGeom.mjGEOM_SPHERE):
-            return _sphere(float(size[0]), self.segments)
+            return tessellate.sphere(float(size[0]), self.segments)
         if gtype == int(mujoco.mjtGeom.mjGEOM_CAPSULE):
-            return _capsule(float(size[0]), float(size[1]), self.segments)
+            return tessellate.capsule(float(size[0]), float(size[1]), self.segments)
         if gtype == int(mujoco.mjtGeom.mjGEOM_ELLIPSOID):
-            return _ellipsoid(size[:3], self.segments)
+            return tessellate.ellipsoid(size[:3], self.segments)
         raise MeshExportError(
             f"geom {_name(self.model, mujoco.mjtObj.mjOBJ_GEOM, gid) or gid!r} on body "
             f"{_name(self.model, mujoco.mjtObj.mjOBJ_BODY, int(self.model.geom_bodyid[gid]))!r} is a "
@@ -718,7 +634,7 @@ def main(argv: list | None = None) -> int:
         type=int,
         nargs="+",
         default=None,
-        help=f"geom groups to include (default: every group except {_COLLISION_GROUP}, which is "
+        help=f"geom groups to include (default: every group except {COLLISION_GROUP}, which is "
         f"collision-only by convention)",
     )
     parser.add_argument(
@@ -794,14 +710,14 @@ def main(argv: list | None = None) -> int:
         label = asset.path.stem
         inputs = [str(asset.path)]
     else:
-        from .export_web import _compile_from_mjcf, _compile_from_world
+        from .scene_source import compile_from_mjcf, compile_from_world
 
         if args.mjcf:
-            model, _data, _view = _compile_from_mjcf(Path(args.mjcf))
+            model, _data, _view = compile_from_mjcf(Path(args.mjcf))
             label, inputs = Path(args.mjcf).stem, [str(Path(args.mjcf).resolve())]
         else:
             skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
-            model, _data, _view = _compile_from_world(
+            model, _data, _view = compile_from_world(
                 args.world, skip, overrides_from_options(args), log
             )
             label, inputs = Path(args.world).stem, None

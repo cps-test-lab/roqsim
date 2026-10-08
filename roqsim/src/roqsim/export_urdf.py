@@ -1171,13 +1171,13 @@ def main(argv: list | None = None) -> int:
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_urdf")
 
-    from .export_web import _compile_from_mjcf, _compile_from_world
+    from .scene_source import compile_from_mjcf, compile_from_world
 
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
     if args.mjcf:
-        model, _data, _view = _compile_from_mjcf(Path(args.mjcf))
+        model, _data, _view = compile_from_mjcf(Path(args.mjcf))
     else:
-        model, _data, _view = _compile_from_world(
+        model, _data, _view = compile_from_world(
             args.world, skip, overrides_from_options(args), log
         )
 
