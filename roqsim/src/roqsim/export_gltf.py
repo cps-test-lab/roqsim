@@ -37,6 +37,11 @@ the export logs).
 outside ``world`` with ``extras: {"roqsim": "view"}``, placed where ``roqsim render`` puts its
 default camera.
 
+**Skins.** A MuJoCo skin, and a flex drawn as one (as ``export web`` draws it), is a glTF skinned
+mesh whose joints are its bone bodies' nodes, so a viewer that moves bodies by name deforms it. Its
+node is a root of the scene (glTF ignores a skinned mesh's node transform), with ``extras`` naming
+the skin's index and, for a flex, the flex.
+
 Left out: lights and the skybox (a viewer brings its own), joint metadata (``export web`` and
 ``export urdf`` carry the kinematics), and collision-only geometry (group 3), as for ``export web``.
 """
@@ -57,7 +62,7 @@ import numpy as np
 
 from . import exit_status, logging_setup, tessellate
 from .rendering import view_forward
-from .scene_content import Geom, Mesh, SceneContent, walk
+from .scene_content import Geom, Mesh, SceneContent, Skin, walk
 from .scene_source import (
     add_manifest_option,
     add_source_options,
@@ -508,6 +513,9 @@ def export_gltf(
             extent,
         )
 
+    for i, skin in enumerate(content.skins):
+        _skin(doc, skin, i, body_node, materials)
+
     cam = _camera_node(view or {}, model)
     if cam is not None:
         cam["camera"] = doc.add("cameras", cam.pop("camera_def"))
@@ -517,15 +525,124 @@ def export_gltf(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(blob)
     log.info(
-        "exported %d bodies, %d geoms, %d meshes, %d materials -> %s (%d KiB)",
+        "exported %d bodies, %d geoms, %d skins (%d of them flexes), %d meshes, %d materials "
+        "-> %s (%d KiB)",
         len(content.bodies),
         len(content.geoms),
+        len(content.skins),
+        content.flex_count,
         len(doc.gltf["meshes"]),
         len(doc.gltf["materials"]),
         out,
         len(blob) // 1024,
     )
     return doc.gltf
+
+
+def vertex_normals(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Smooth per-vertex normals: the area-weighted mean of the faces around each vertex."""
+    tri = verts[faces]
+    cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    normals = np.zeros_like(verts, dtype=float)
+    for k in range(3):
+        np.add.at(normals, faces[:, k], cross)
+    length = np.linalg.norm(normals, axis=1, keepdims=True)
+    # A vertex no face uses (a solid flex's interior) gets any unit normal; nothing draws it.
+    normals[length[:, 0] == 0] = [0.0, 0.0, 1.0]
+    return normals / np.where(length > 0, length, 1.0)
+
+
+def _skin(doc: _Document, skin: Skin, i: int, body_node: list[int], materials: _Materials) -> None:
+    """One skin (or flex) as a glTF skinned mesh whose joints are its bone bodies' nodes.
+
+    The vertices are written turned into the scene's Y-up frame, and each bone's inverse bind
+    matrix is ``inv(W @ B)``, ``W`` the ``world`` node's turn and ``B`` the bone's world bind pose,
+    so a vertex lands at ``J @ inv(W @ B) @ (W @ v) = W @ (J' @ inv(B) @ v)``: the bone's motion since
+    the bind, in world coordinates, seen in the scene. The node is a root of the scene, because glTF
+    ignores the transform of a skinned mesh's node and its parents.
+    """
+    mesh = skin.mesh
+    faces = np.asarray(mesh.index, int).reshape(-1, 3)
+    verts = np.asarray(mesh.vert, float).reshape(-1, 3)
+    normals = vertex_normals(verts, faces)
+    joints, weights, dropped = skin_attributes(skin.skin_index, skin.skin_weight)
+    if dropped:
+        logger.warning(
+            "%s: %d negative skin weights set to 0 (glTF allows none); exact at rest, "
+            "approximate under deformation",
+            f"flex {skin.flex!r}" if skin.flex is not None else f"skin {i}",
+            dropped,
+        )
+    attributes = {
+        "POSITION": doc.accessor(zup_to_yup(verts), "VEC3", minmax=True),
+        "NORMAL": doc.accessor(zup_to_yup(normals), "VEC3"),
+        "JOINTS_0": doc.raw_accessor(joints, _USHORT, "VEC4", _ARRAY_BUFFER),
+        "WEIGHTS_0": doc.accessor(weights, "VEC4"),
+    }
+    if mesh.uv is not None:
+        attributes["TEXCOORD_0"] = doc.accessor(np.asarray(mesh.uv).reshape(-1, 2), "VEC2")
+    primitive = {
+        "attributes": attributes,
+        "indices": doc.indices(faces, len(verts)),
+        "material": materials.get(skin.matid, skin.rgba),
+    }
+    turn = np.eye(4)
+    turn[:3, :3] = _quat_to_mat([WORLD_ROTATION[3], *WORLD_ROTATION[:3]])
+    inverse_bind = []
+    for pos, quat in zip(skin.bindpos, skin.bindquat, strict=True):
+        bind = np.eye(4)
+        bind[:3, :3] = _quat_to_mat(quat)
+        bind[:3, 3] = pos
+        inverse_bind.append(np.linalg.inv(turn @ bind).T.ravel())  # glTF matrices are column-major
+    skin_index = doc.add(
+        "skins",
+        {
+            "joints": [body_node[b] for b in skin.bone_ids],
+            "inverseBindMatrices": doc.raw_accessor(
+                np.asarray(inverse_bind, "<f4"), _FLOAT, "MAT4", None
+            ),
+            "skeleton": body_node[0],
+        },
+    )
+    extras = {"skin": i} if skin.flex is None else {"skin": i, "flex": skin.flex}
+    node = doc.node(
+        {
+            "mesh": doc.add("meshes", {"primitives": [primitive]}),
+            "skin": skin_index,
+            "extras": extras,
+        }
+    )
+    doc.gltf["scenes"][0]["nodes"].append(node)
+
+
+def skin_attributes(index, weight) -> tuple[np.ndarray, np.ndarray, int]:
+    """``JOINTS_0`` and ``WEIGHTS_0`` as glTF requires them, and how many negative weights it dropped.
+
+    glTF wants each weight in [0, 1], each row summing to 1 in float32, and no joint named by a zero
+    weight. A flex with ``dof="quadratic"`` has truly negative weights (its basis functions dip
+    below zero) and float noise leaves others a hair below zero; both are set to 0 and the row
+    renormalised. That keeps the rest shape exact -- at the bind pose any weights summing to 1 give
+    back the vertex -- and makes a deformation approximate, as the four-bone cap already does.
+    """
+    joints = np.asarray(index, np.int64).reshape(-1, 4).copy()
+    w = np.asarray(weight, np.float64).reshape(-1, 4).copy()
+    dropped = int((w < -1e-6).sum())
+    w[w < 0] = 0.0
+    total = w.sum(axis=1, keepdims=True)
+    w = w / np.where(total > 0, total, 1.0)
+    w32 = w.astype(np.float32)
+    # Put the float32 rounding of each row on its largest weight, so the row sums to 1 exactly.
+    rows = np.arange(len(w32))
+    big = np.argmax(w32, axis=1)
+    w32[rows, big] += np.float32(1.0) - w32.sum(axis=1, dtype=np.float32)
+    joints[w32 == 0] = 0
+    return joints.astype("<u2"), w32, dropped
+
+
+def _quat_to_mat(wxyz) -> np.ndarray:
+    m = np.zeros(9)
+    mujoco.mju_quat2Mat(m, np.asarray(wxyz, dtype=float))
+    return m.reshape(3, 3)
 
 
 def _geom_mesh(
