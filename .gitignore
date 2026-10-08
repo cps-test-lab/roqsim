@@ -58,3 +58,6 @@ roqsim_scenes/src/roqsim_scenes/scenes/tb3_world/meshes/
 # `roqsim sensors coverage` / the sensor_coverage_probe plugin write their report here by default
 # (report.json + the 2D/3D figures). Anchored: roqsim_sensors/src/roqsim_sensors/coverage/ is source.
 /coverage/
+
+# `make test-gltf` installs the pinned Khronos glTF Validator here (tools/gltf_validator/package.json).
+/tools/gltf_validator/node_modules/

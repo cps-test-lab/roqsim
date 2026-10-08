@@ -160,6 +160,20 @@ test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when R
 		echo "ROS not sourced -> skipped the ros2_ws tests (source ROS to include them)."; \
 	fi
 
+# The Khronos glTF Validator is a Node.js program, so it is not part of `make test`: there, the export
+# gltf test of a small world runs only when the validator is installed, and says so when it is not.
+# This target installs the pinned validator and holds an export of every bundled world and of a bare
+# MJCF to it, failing when Node.js is missing rather than skipping.
+GLTF_VALIDATOR := tools/gltf_validator
+
+.PHONY: test-gltf
+test-gltf:  ## Khronos glTF Validator over an `export gltf` of every bundled world (needs Node.js)
+	@command -v node >/dev/null && command -v npm >/dev/null || \
+		{ echo "make test-gltf needs Node.js (node and npm on PATH)"; exit 1; }
+	cd $(GLTF_VALIDATOR) && npm ci --silent --no-audit --no-fund
+	ROQSIM_GLTF_VALIDATOR=required $(PYTEST) -q -k khronos \
+		roqsim/tests/test_export_gltf.py roqsim_scenes/tests/test_worlds_export_gltf.py
+
 # One package's tests, e.g. `make test-roqsim_sensors`. Not just a convenience: the full set in one
 # process is the memory peak described above, so this is how to bisect an OOM -- and how to re-run
 # only what you are editing without paying for the rest.

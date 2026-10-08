@@ -10,8 +10,12 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
+import shutil
 import struct
+import subprocess
 from collections import Counter
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -863,6 +867,60 @@ def test_projected_texture_coordinates_draw_what_mujoco_draws(tmp_path):
     for name in ("floor", "box", "cylinder", "sphere", "capsule", "mesh"):
         assert checked[name] >= 15, f"{name}: only {checked[name]} pixels to compare"
         assert wrong[name] <= 0.03 * checked[name], f"{name}: {wrong[name]}/{checked[name]} wrong"
+
+
+# -- T9: the Khronos glTF Validator ----------------------------------------------------------------
+#
+# The validator is a Node.js program, pinned in tools/gltf_validator (`make test-gltf` installs it).
+# Under `make test` this runs where it is installed and says it skipped where it is not; under
+# `make test-gltf` (ROQSIM_GLTF_VALIDATOR=required) a missing validator fails.
+
+_VALIDATOR = Path(__file__).resolve().parents[2] / "tools" / "gltf_validator"
+
+
+def khronos(paths) -> dict:
+    """The Khronos glTF Validator's report on each of ``paths``."""
+    missing = shutil.which("node") is None or not (_VALIDATOR / "node_modules").is_dir()
+    if missing:
+        why = (
+            "the Khronos glTF Validator is not installed: `make test-gltf` installs it "
+            f"({_VALIDATOR / 'package.json'}), and needs Node.js"
+        )
+        if os.environ.get("ROQSIM_GLTF_VALIDATOR") == "required":
+            pytest.fail(why)
+        pytest.skip(why)
+    run = subprocess.run(
+        ["node", str(_VALIDATOR / "validate.mjs"), *map(str, paths)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.stdout, run.stderr
+    return json.loads(run.stdout)
+
+
+def test_khronos_validator_finds_nothing_wrong_with_a_small_world(tmp_path):
+    """Bodies, joints, every primitive, meshes, a texture, a skin and the flexes, through the CLI
+    and from a bare MJCF: no error and no warning."""
+    paths = []
+    textured = _PROJECTED.format(png=_write_png(tmp_path / "grid.png", _grid_texture()))
+    for name, xml in {
+        "mixed": _MJCF,
+        "names": _NAMES,
+        "primitives": _PRIMITIVES,
+        "textured": textured,
+        "skin": _SKIN,
+        "solid": _flex_world(_GRID3),
+        "sheet": _flex_world(_SHEET),
+        "cable": _flex_world(_CABLE),
+    }.items():
+        scene = tmp_path / f"{name}.xml"
+        scene.write_text(xml, encoding="utf-8")
+        out = tmp_path / f"{name}.glb"
+        assert export_gltf.main(["--mjcf", str(scene), "--out", str(out)]) == exit_status.OK
+        paths.append(out)
+    for path, report in khronos(paths).items():
+        assert report["errors"] == 0 and report["warnings"] == 0, (path, report["messages"])
 
 
 # -- T7: the command line ---------------------------------------------------------------------------
