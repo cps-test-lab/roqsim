@@ -32,8 +32,8 @@ def _parser(name: str, doc: str) -> argparse.ArgumentParser:
         "--control",
         metavar="URI",
         default=None,
-        help="the simulator's control URI (default: $ROQSIM_CONTROL, the run directory's socket, "
-        "or the only simulator running; `roqsim ls` lists them)",
+        help="the simulator's control URI (default: $ROQSIM_CONTROL, or the only simulator "
+        "running; `roqsim ls` lists them)",
     )
     return parser
 

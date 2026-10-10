@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from roqsim.pose import PoseError, parse_pose, rpy_to_quat, yaw_of
+from roqsim.pose import PoseError, parse_pose, rpy_to_quat, yaw_of, yaw_to_quat
 
 IDENTITY = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
 
@@ -152,3 +152,13 @@ def test_yaw_of_the_identity_is_zero():
 def test_yaw_survives_the_round_trip(yaw):
     _, quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": _quat(yaw)})
     assert yaw_of(quat) == pytest.approx(yaw)
+
+
+@pytest.mark.parametrize("yaw", [-3.0, -1.2, 0.0, 0.3, math.pi / 2, 3.0])
+def test_a_heading_is_one_convention_whichever_way_it_is_written(yaw):
+    """``yaw_to_quat`` inverts ``yaw_of`` and agrees with the Euler reading of the same heading:
+    a planar consumer and a full pose reader cannot disagree on which way a body faces."""
+    quat = yaw_to_quat(yaw)
+    assert yaw_of(quat) == pytest.approx(yaw)
+    assert quat == pytest.approx(rpy_to_quat(0.0, 0.0, yaw))
+    assert math.sqrt(sum(c * c for c in quat)) == pytest.approx(1.0)

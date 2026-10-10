@@ -57,7 +57,6 @@ def test_every_tool_is_registered():
 
 def test_a_simulation_tool_with_no_simulator_answers_with_an_error(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    monkeypatch.setenv("RUN_OUTPUT_DIR", str(tmp_path))
     monkeypatch.delenv("ROQSIM_CONTROL", raising=False)
 
     async def _call():

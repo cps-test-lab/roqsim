@@ -280,7 +280,10 @@ def cmd_greedy(args) -> int:
 
             from . import regions as regionsmod
 
-            keep = regionsmod.footprint_mask(_np.array([c["pos"] for c in candidates]), regions)
+            keep = regionsmod.footprint_mask(
+                _np.array([[c["pose"]["position"][a] for a in "xyz"] for c in candidates]),
+                regions,
+            )
             candidates = [c for c, k in zip(candidates, keep, strict=True) if k]
         print(f"generated {len(candidates)} candidate mounts", file=sys.stderr)
     if not candidates:

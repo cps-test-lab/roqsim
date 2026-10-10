@@ -1071,16 +1071,24 @@ last segment, or the rest, is a name that component offers:
   declares, or a device's frame chain, each named as TF shows it, without the model prefix:
   ``tb4/base_link``, ``tb4/mouse``, ``tb4/oakd_camera_bracket``,
   ``tb4/oakd/oakd_rgb_camera_optical_frame``, ``ur5e/tool_site``. The entity's path alone,
-  ``tb4``, is its root: the pose of the entity itself.
+  ``tb4``, is its root: the pose of the entity itself. Its cameras are frames too
+  (``tb4/oakd/oakd_rgb``), and a :class:`roqsim.frames.Frame` says it is one (``is_camera``), so a
+  consumer can read its intrinsics. A camera's frame is MuJoCo's: it looks along -z with +y up, not
+  along +z with +y down as an optical frame does.
+* **A frame no entity owns**: a named body, site or camera of the world's own MJCF, by its MuJoCo
+  name alone: ``gantry``, ``gantry_cam``. Its pose is always there, read from the physics state.
 
 The caller says which kind it wants, so an endpoint and a frame of one name never collide. Within a
-kind, a path that names two things -- a body and a site of one name -- is refused naming both, and an
-unknown path is refused with the nearest known one and what its component offers. In a plugin
-nested under an entity, a frame path is relative to that entity: ``.`` is the entity itself, and a
-leading ``/`` starts at the top of the world. A plugin resolves one with
+kind, a path that names two things -- a body and a site of one name, or an unowned body spelt as an
+entity's path -- is refused naming both, and an unknown path is refused with the nearest known one
+and what its component offers. In a plugin nested under an entity, a frame path is relative to that
+entity: ``.`` is the entity itself, and a leading ``/`` starts at the top of the world, where an
+unowned frame is (``/gantry``). A plugin resolves one with
 :func:`roqsim.frames.resolve_frame` and reads its pose with :func:`roqsim.frames.frame_pose`, which
 takes both from the core pose data: an entity's root from its pose endpoint
-``sim/entities/<name>/pose``, a body from ``data.xpos``/``xquat``, a site from ``site_xpos``/``xmat``.
+``sim/entities/<name>/pose``, a body from ``data.xpos``/``xquat``, a site from
+``site_xpos``/``xmat``, a camera from ``cam_xpos``/``cam_xmat``. ``roqsim scenes describe
+--body-tree`` shows each body's, site's and camera's path as its ``frame``.
 
 Publishing true poses (``pose_publisher``)
 ------------------------------------------

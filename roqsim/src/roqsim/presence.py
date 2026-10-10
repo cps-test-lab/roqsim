@@ -54,6 +54,21 @@ compensates the subtree's gravity and zeroes its velocity (:func:`_freeze`), whi
 passive entity exactly where it was. The gravity half needs :func:`arm_gravity_compensation` to have
 run before the world compiled; that is the engine's job, once per world.
 
+Parking a visual-only body
+--------------------------
+
+The defect above is a property of a body with physics. A **visual-only mocap body** -- one whose
+geoms collide with nothing, laid by a plugin as a marker or a deposit -- has neither: nothing
+integrates its pose, so it stays exactly where it is put. A plugin that keeps a fixed pool of them,
+because the model cannot grow at run time, keeps the unused ones at :data:`PARK_Z`, out of every
+camera's view, and moves one into place when it is used. Being plain ``mocap_pos``, that is in the
+recorded state, so a replay shows the same bodies in the same places.
+
+Everything that frames the scene skips a geom below :data:`PARKED_BELOW_Z`
+(:func:`roqsim.rendering.scene_corners`, :func:`roqsim.rendering.bounding_sphere`), so a parked pool
+pulls no camera a hundred metres down to frame it. Compile such a pool at its place of use, not at
+:data:`PARK_Z`: the model's extent is taken at compile and sets every camera's clipping planes.
+
 Who calls this
 --------------
 
@@ -77,6 +92,13 @@ _log = logging.getLogger(__name__)
 #: ``[1,1,1,0,0,0]``, so no renderer draws it without being told to.
 ABSENT_GEOM_GROUP = 4
 
+#: Height at which a visual-only mocap body waits while unused (see "Parking a visual-only body").
+PARK_Z = -100.0
+
+#: A geom whose world position lies below this height is parked and frames nothing. Well above
+#: :data:`PARK_Z`, and well below the floor of any world a robot stands in.
+PARKED_BELOW_Z = -50.0
+
 #: Key under which an entity's saved geom appearance lives while it is absent.
 _SAVED = "_presence_saved"
 
@@ -87,8 +109,31 @@ _SAVED_GRAVCOMP = "_presence_saved_gravcomp"
 _SAVED_FLEX = "_presence_saved_flex"
 
 
+def subtree_body_ids(model, root: int) -> list[int]:
+    """Body ``root`` and every body below it, ascending.
+
+    The one subtree walk in the tree: an entity's absence, its contact scope, a camera's class
+    mask, an arm's collapsed links and a robot's own geoms all mean "this body and its
+    descendants", and each answering it with its own loop is how two of them come to disagree on
+    a walker's limbs or a prop welded to a shelf.
+    """
+    bodies = {int(root)}
+    # bodyid is topologically ordered (a parent precedes its children), so one forward pass
+    # collects the whole subtree.
+    for body in range(int(root) + 1, model.nbody):
+        if int(model.body_parentid[body]) in bodies:
+            bodies.add(body)
+    return sorted(bodies)
+
+
+def subtree_geom_ids(model, root: int) -> list[int]:
+    """Every geom of body ``root`` and its descendants, ascending."""
+    bodies = set(subtree_body_ids(model, root))
+    return [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies]
+
+
 def entity_body_ids(model, body_name: str) -> list[int]:
-    """*body_name* and every body below it.
+    """*body_name* and every body below it; empty when no body has that name.
 
     Descendants included because an entity is rarely one body -- a prop with a free joint, a
     walker's limbs -- and leaving a child behind would make "absent" mean "mostly absent".
@@ -96,21 +141,15 @@ def entity_body_ids(model, body_name: str) -> list[int]:
     root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
     if root < 0:
         return []
-    bodies = {root}
-    # bodyid is topologically ordered (a parent precedes its children), so one forward pass
-    # collects the whole subtree.
-    for body in range(root + 1, model.nbody):
-        if int(model.body_parentid[body]) in bodies:
-            bodies.add(body)
-    return sorted(bodies)
+    return subtree_body_ids(model, root)
 
 
 def entity_geom_ids(model, body_name: str) -> list[int]:
-    """Every geom of *body_name* and its descendants."""
-    bodies = set(entity_body_ids(model, body_name))
-    if not bodies:
+    """Every geom of *body_name* and its descendants; empty when no body has that name."""
+    root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+    if root < 0:
         return []
-    return [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies]
+    return subtree_geom_ids(model, root)
 
 
 def arm_gravity_compensation(spec) -> None:
@@ -154,12 +193,11 @@ def set_present(ctx, entity, present: bool) -> bool:
         _hide_flexes(ctx.model, entity, flexes)
         _freeze(ctx.model, ctx.data, entity)
     entity.present = bool(present)
-    # A transition leaves NO other trace. It writes model fields, while a recording stores
-    # `mjData` state (roqsim.capture's STATE_SPEC is MuJoCo's keyframe notion), and the pose
-    # deliberately does not move -- so afterwards nothing in a run's recorded data can say
-    # whether an obstacle ever appeared, and "did it spawn?" is unanswerable on a campaign
-    # whose service call returned OK. Until presence rides in the capture, this line is
-    # the record: stamped with sim time, so it lands on the run's clock like every other event.
+    # A transition writes model fields, while a recording's samples store `mjData` state
+    # (roqsim.capture's STATE_SPEC is MuJoCo's keyframe notion), and the pose deliberately does
+    # not move. A recording carries it in its provenance (StateRecorder notes the absent set per
+    # sample); a run without one has this line, stamped with sim time so it lands on the run's
+    # clock like every other event.
     _log.info(
         "presence: %s %s at t=%.3f (%d geoms, %d flexes)",
         entity.name,

@@ -23,7 +23,8 @@ Its own module, and free of ROS imports, so that a registry which needs no ROS t
 from __future__ import annotations
 
 import logging
-from importlib import metadata
+
+from roqsim.entry_points import entry_points
 
 logger = logging.getLogger(__name__)
 
@@ -33,24 +34,27 @@ EXTENSION_GROUP = "roqsim_ros_bridge.extensions"
 _loaded = False
 
 
-def load_extensions() -> None:
-    """Import every module registered in :data:`EXTENSION_GROUP` (idempotent).
+class ExtensionError(RuntimeError):
+    """A module registered in :data:`EXTENSION_GROUP` failed to import."""
 
-    A broken extension is logged and skipped rather than taking the whole bridge down with it.
+
+def load_extensions() -> None:
+    """Import every module registered in :data:`EXTENSION_GROUP` (idempotent once it succeeds).
+
+    A module that fails to import raises :class:`ExtensionError`, naming the entry point and chained
+    to the original exception, and the bridge does not start: a bridge without the extension would
+    run without the handlers and converters it registers.
     """
     global _loaded
     if _loaded:
         return
-    _loaded = True
-    eps = metadata.entry_points()
-    found = (
-        eps.select(group=EXTENSION_GROUP)
-        if hasattr(eps, "select")
-        else eps.get(EXTENSION_GROUP, [])
-    )
-    for ep in found:
+    for ep in entry_points(EXTENSION_GROUP):
         try:
             ep.load()
-            logger.info("bridge extension loaded: %s (%s)", ep.name, ep.value)
-        except Exception:  # noqa: BLE001 - one bad extension must not kill the bridge
-            logger.exception("failed to load bridge extension %r (%s)", ep.name, ep.value)
+        except Exception as exc:
+            raise ExtensionError(
+                f"bridge extension {ep.name!r} ({ep.value}) in the {EXTENSION_GROUP!r} entry-point "
+                f"group failed to load: {type(exc).__name__}: {exc}"
+            ) from exc
+        logger.info("bridge extension loaded: %s (%s)", ep.name, ep.value)
+    _loaded = True

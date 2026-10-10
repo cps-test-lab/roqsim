@@ -55,7 +55,12 @@ Six stages, each of which can fail without the next being meaningless:
     every plugin's ``on_reset`` runs, as it does before each trial, and leaves the state the trial
     starts from: keyframes and home poses applied, props re-seated.
 
-What it does **not** do is step the simulation. A world that passes here can still behave wrongly;
+What it does **not** do is start a transport: a plugin that declares ``transport_only`` (the ROS
+bridge, an autopilot link) has its config validated and is then left out, with a ``transport``
+warning naming it, because its ``configure`` would connect to -- or wait for -- a process a check
+does not run.
+
+Nor does it step the simulation. A world that passes here can still behave wrongly;
 what it cannot do is fail to start, which is the failure worth catching before a campaign queues a
 thousand of them.
 
@@ -140,7 +145,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
     probably did not mean.
     """
-    from roqsim.config import PluginError, input_errors, load_config
+    from roqsim.config import PluginError, drop_transport, input_errors, load_config
 
     overrides = overrides or {}
     report: dict = {
@@ -193,6 +198,26 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
     report["reached"] = "config"
+
+    # A transport plugin is config-checked above with the rest, and then left out of the load: its
+    # `configure` opens a middleware node or waits for a peer (an autopilot dialling in), which is a
+    # run's business. Checking a world must not block on a process that is not there, and the
+    # transport adds nothing to what the world IS. Said in the report, so nobody reads the
+    # inventory as "the bridge came up".
+    transport = drop_transport(cfg)
+    if transport:
+        report["warnings"].append(
+            _warning(
+                "transport",
+                f"not started: {', '.join(transport)} -- a transport plugin connects to processes a "
+                f"check does not run, so its config was validated and nothing else",
+            )
+        )
+        try:
+            engine = Engine(cfg, preview=True)
+        except Exception as exc:  # noqa: BLE001 - as above: the world's problem, reported
+            report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
+            return report
 
     with contextlib.ExitStack() as stack:
         try:

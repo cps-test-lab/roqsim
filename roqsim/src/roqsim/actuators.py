@@ -31,7 +31,8 @@ The vocabulary is the robot's, not MuJoCo's: ``control`` names a ros2_control co
 the gains are the ones a real controller's yaml carries. That is deliberate -- a port transcribing a
 paper reads its numbers out of a controller config, and a key it has to translate is a key it can get
 wrong. ``effort_limit`` is URDF's ``<limit effort=>``, which :mod:`roqsim.export_urdf` already emits
-from ``actuator_forcerange``, so the key a world writes is the key roqsim exports.
+from the joint's force range (:func:`joint_force_range`), so the key a world writes is the key roqsim
+exports.
 
 Four laws, and what each compiles to::
 
@@ -172,7 +173,10 @@ GAIN_SCHEMA: dict[str, Field] = {
         float, minimum=0.0, unit="N*m*s/rad", doc="joint damping (control: impedance)"
     ),
     "effort_limit": Field(
-        float, minimum=0.0, unit="N*m", doc="torque magnitude cap; URDF's <limit effort=>"
+        float,
+        minimum=0.0,
+        unit="N*m",
+        doc="torque magnitude cap; URDF's <limit effort=>. A one-sided forcerange keeps its side",
     ),
     "ctrlrange": Field(
         list,
@@ -414,12 +418,16 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
         act.gainprm = _prm(k)
         act.biasprm = _prm(0.0, -k, -c)
 
-    effort_limit = merged.get("effort_limit", row.effort_limit)
-    if effort_limit is not None:
-        act.forcerange = [-float(effort_limit), float(effort_limit)]
+    # A limit the override does not state stays exactly as the model has it, flag included: a
+    # single-acting drive's one-sided forcerange is the model's to state, not the table's.
+    effort_limit = row.effort_limit
+    if "effort_limit" in merged:
+        effort_limit = float(merged["effort_limit"])
+        act.forcerange = _scaled_forcerange(act, effort_limit)
         act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
-    ctrlrange = merged.get("ctrlrange", row.ctrlrange)
-    if ctrlrange is not None:
+    ctrlrange = row.ctrlrange
+    if "ctrlrange" in merged:
+        ctrlrange = merged["ctrlrange"]
         act.ctrlrange = [float(ctrlrange[0]), float(ctrlrange[1])]
         act.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
 
@@ -445,6 +453,21 @@ _TRN_LABEL = {
 }
 
 
+def _scaled_forcerange(act, effort_limit: float) -> list[float]:
+    """The model's ``forcerange`` with its larger bound's magnitude set to *effort_limit*.
+
+    ``effort_limit`` is a magnitude, as URDF's effort is, so it rescales the range and keeps its
+    shape: a single-acting ``[0, F]`` becomes ``[0, effort_limit]``, never a drive that also pulls.
+    An actuator the model leaves unlimited has no side to keep and gets the symmetric range.
+    """
+    if _is_limited(act.forcelimited, act.forcerange):
+        lo, hi = float(act.forcerange[0]), float(act.forcerange[1])
+        magnitude = max(abs(lo), abs(hi))
+        if magnitude > 0.0:
+            return [effort_limit * (lo / magnitude), effort_limit * (hi / magnitude)]
+    return [-effort_limit, effort_limit]
+
+
 def _is_joint(act) -> bool:
     return act.trntype in (mujoco.mjtTrn.mjTRN_JOINT, mujoco.mjtTrn.mjTRN_JOINTINPARENT)
 
@@ -468,8 +491,10 @@ def _model_row(act) -> ResolvedActuator:
         joint=act.target if _is_joint(act) else "",
         control=control,
         source="model",
-        effort_limit=_limit(act.forcerange),
-        ctrlrange=_range(act.ctrlrange),
+        effort_limit=_limit(act.forcerange)
+        if _is_limited(act.forcelimited, act.forcerange)
+        else None,
+        ctrlrange=_range(act.ctrlrange) if _is_limited(act.ctrllimited, act.ctrlrange) else None,
     )
     if control == "position":
         return replace(row, p=gain, d=damping)
@@ -494,7 +519,10 @@ def _model_control(act) -> str:
 
 
 def _limit(forcerange) -> float | None:
-    """The magnitude of a symmetric ``forcerange``, or ``None`` for MuJoCo's "unlimited" zeros."""
+    """The larger bound's magnitude of a ``forcerange``, or ``None`` for MuJoCo's "unlimited" zeros.
+
+    A one-sided range reads as the force it delivers in the direction it can push.
+    """
     lo, hi = float(forcerange[0]), float(forcerange[1])
     if lo == 0.0 and hi == 0.0:
         return None
@@ -676,6 +704,41 @@ def _drive_supplies_gravity(joint, actuators) -> None:
     if lo < hi:
         joint.actfrclimited = mujoco.mjtLimited.mjLIMITED_TRUE
         joint.actfrcrange = [lo, hi]
+
+
+_JOINT_TRN = (int(mujoco.mjtTrn.mjTRN_JOINT), int(mujoco.mjtTrn.mjTRN_JOINTINPARENT))
+
+
+def joint_force_range(model, jid: int) -> tuple[float, float] | None:
+    """The generalised force a joint's drives can deliver on it, as ``(lower, upper)``.
+
+    Each actuator driving *jid* through a joint transmission contributes its ``forcerange`` times
+    gear, summed as :func:`_drive_supplies_gravity` sums them, and the joint's own
+    ``actuatorfrcrange``, where limited, bounds that sum as MuJoCo does -- so each side is the
+    tighter of the two. ``None`` when no actuator drives the joint, or when neither an actuator
+    range nor the joint's bounds it.
+    """
+    lo = hi = 0.0
+    driven = unlimited = False
+    for a in range(model.nu):
+        if (
+            int(model.actuator_trntype[a]) not in _JOINT_TRN
+            or int(model.actuator_trnid[a, 0]) != jid
+        ):
+            continue
+        driven = True
+        if not model.actuator_forcelimited[a]:
+            unlimited = True
+            continue
+        gear = float(model.actuator_gear[a, 0])
+        ends = sorted(gear * float(v) for v in model.actuator_forcerange[a])
+        lo, hi = lo + ends[0], hi + ends[1]
+    if not driven:
+        return None
+    if model.jnt_actfrclimited[jid]:
+        jlo, jhi = (float(v) for v in model.jnt_actfrcrange[jid])
+        return (jlo, jhi) if unlimited else (max(lo, jlo), min(hi, jhi))
+    return None if unlimited else (lo, hi)
 
 
 def joint_effort(model, data, dof: int) -> float:
