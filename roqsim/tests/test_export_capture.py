@@ -196,6 +196,50 @@ def test_unnamed_mover_is_reported_not_dropped_silently(tmp_path, caplog):
     assert "cannot express" in caplog.text
 
 
+def test_a_parked_pool_costs_nothing_per_sample_and_a_used_body_keeps_its_track(tmp_path):
+    """Bodies that never leave their first pose are not held per sample; a mover's track is exact.
+
+    A plugin may keep thousands of visual-only mocap bodies parked for a whole run. Holding every
+    body's pose per sample before choosing the movers costs memory in proportion to the pool, not
+    to what moved; here that is 2000 bodies over 200 samples, some 20 MB.
+    """
+    import tracemalloc
+
+    from roqsim.presence import PARK_Z
+
+    pool = "".join(
+        f'<body name="p{i}" mocap="true" pos="0 0 0"><geom type="sphere" size="0.01" '
+        f'contype="0" conaffinity="0"/></body>'
+        for i in range(2000)
+    )
+    model = mujoco.MjModel.from_xml_string(f"<mujoco><worldbody>{pool}</worldbody></mujoco>")
+    data = mujoco.MjData(model)
+    data.mocap_pos[:] = [0.0, 0.0, PARK_Z]
+    n = 200
+
+    def samples():
+        for k in range(n):
+            if k >= n // 2:  # one body of the pool is put to use halfway through
+                data.mocap_pos[7] = [0.5, 0.01 * k, 0.0]
+            mujoco.mj_forward(model, data)
+            yield 0.04 * k, data
+
+    tracemalloc.start()
+    try:
+        manifest = write_capture(model, samples(), tmp_path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 5e6, f"{peak / 1e6:.1f} MB held for a pool that did not move"
+
+    poses = [t for t in manifest["tracks"] if t["kind"] == "pose"]
+    assert [t["name"] for t in poses] == ["p7"]
+    track = _read(tmp_path / "capture.bin", poses[0]).reshape(n, 7)
+    assert track[: n // 2, :3] == pytest.approx(np.tile([0.0, 0.0, PARK_Z], (n // 2, 1)))
+    used = np.array([[0.5, 0.01 * k, 0.0] for k in range(n // 2, n)])
+    assert track[n // 2 :, :3] == pytest.approx(used, abs=1e-6)
+
+
 def test_empty_recording_refuses(tmp_path):
     model, _ = _compile()
     with pytest.raises(CaptureExportError, match="no samples"):
