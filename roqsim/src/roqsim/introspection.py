@@ -43,7 +43,8 @@ import re
 import sys
 
 from roqsim import exit_status
-from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
+from roqsim.entry_points import entry_points
+from roqsim.registry import ENTRY_POINT_GROUP
 
 # Some plugins qualify the header ("Config (in addition to camera_common.CameraPlugin's)::",
 # "Config (same keys as livox_mid360; only the defaults differ)::") rather than writing a bare
@@ -410,7 +411,7 @@ def list_plugins() -> dict:
     and :func:`roqsim.registry.resolve_plugin` already follow.
     """
     items = []
-    for ep in _entry_points(ENTRY_POINT_GROUP):
+    for ep in entry_points(ENTRY_POINT_GROUP):
         try:
             cls = ep.load()
         except Exception as exc:  # noqa: BLE001 - one broken plugin must not sink the rest
@@ -475,7 +476,7 @@ def get_plugin_details(name: str) -> dict:
     name the backends rather than their contents, and ``conditional`` marks an endpoint a config
     may switch off. Endpoints a plugin adds by hand with ``ctx.interface.add`` are not listed.
     """
-    matches = [ep for ep in _entry_points(ENTRY_POINT_GROUP) if ep.name == name]
+    matches = [ep for ep in entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
         return {"error": f"no roqsim.plugins entry named {name!r}"}
     ep = matches[0]

@@ -108,6 +108,7 @@ from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.presence import subtree_body_ids
 from roqsim.schema import Field
 
 #: Joules per watt-hour, so a datasheet number (Wh) and the integral (J) can be one quantity.
@@ -344,10 +345,7 @@ class EnergyMonitorPlugin(Plugin):
                 f"energy_monitor[{self.label}]: entity {self.robot!r} registered no base body, so "
                 f"the actuators that drive it cannot be found. Name them with 'actuators:'."
             )
-        subtree = {root}
-        for body in range(root + 1, m.nbody):
-            if int(m.body_parentid[body]) in subtree:
-                subtree.add(body)
+        subtree = set(subtree_body_ids(m, root))
 
         ids = []
         for aid in range(m.nu):

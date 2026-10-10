@@ -118,3 +118,36 @@ def test_a_good_block_is_accepted():
         "angular_scale": 0.98,
     }
     assert not DiffDrivePlugin({}).validate_config({"odom_noise": good})
+
+
+def test_two_unnamed_drives_on_two_robots_draw_different_noise():
+    """A manifest-injected ``diff_drive`` has no ``name:``; the draw is keyed on its address."""
+    world = {
+        "sim": {"timestep": 0.002},
+        "components": [
+            {
+                "spawn_robot": {
+                    "model": MODEL,
+                    "prefix": f"{label}_",
+                    "pose": {"position": {"x": 0.0, "y": y}},
+                },
+                "name": label,
+                "components": [{"diff_drive": {"odom_noise": NOISE}}],
+            }
+            for label, y in (("a", 0.0), ("b", 2.0))
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 7
+    engine.setup()
+    engine.reset()
+    try:
+        handles = [engine.ctx.blackboard.get(f"robot:{label}") for label in ("a", "b")]
+        for handle in handles:
+            handle.drive(SPEED, 0.0, 0.0)
+        for _ in range(200):
+            engine.step()
+        a, b = (np.array(handle.read_odom()[:3]) for handle in handles)
+        assert not np.allclose(a, b), "both drives drew one noise stream"
+    finally:
+        engine.shutdown()

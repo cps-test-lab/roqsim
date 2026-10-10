@@ -336,7 +336,7 @@ class MujocoSim(_Base):
         scene, world_overrides included, ships as a run artifact for browser viewers. Called after
         ``engine.reset()`` so mocap-driven bodies (walkers) and re-seated robot bases are captured
         at their true initial pose; the forward pass propagates the re-posed mocap into
-        ``data.xpos`` first (mirrors ``export_web._compile_from_world``).
+        ``data.xpos`` first (mirrors ``scene_source.compile_from_world``).
         """
         self._scene_export_pending = False
         out = os.environ.get("ROQSIM_SCENE_EXPORT_DIR")

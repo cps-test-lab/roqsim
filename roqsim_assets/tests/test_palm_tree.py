@@ -141,3 +141,17 @@ def test_yaw_rotates_the_crown(tmp_path):
     assert np.linalg.norm(frond_xy(a)) == pytest.approx(
         float(np.linalg.norm(frond_xy(b))), abs=1e-9
     )
+
+
+def test_bunch_positions_follow_a_yawed_tree(tmp_path):
+    """The advertised bunch positions are the sites' -- through the tree's rotation, not beside it."""
+    engine = _built(
+        tmp_path,
+        pose={"position": {"x": 0.5, "y": 0.2}, "orientation": {"yaw": math.pi / 2}},
+    )
+    m, d = engine.ctx.model, engine.ctx.data
+    mujoco.mj_forward(m, d)
+    palm = engine.ctx.entities.get("palm")
+    for i in range(len(BUNCHES)):
+        sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"palm_bunch_{i}")
+        np.testing.assert_allclose(palm.meta["bunch_world_pos"][i], d.site_xpos[sid], atol=1e-9)

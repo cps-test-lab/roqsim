@@ -1086,3 +1086,107 @@ def test_every_sample_lands_on_the_capture_grid_over_a_long_run(tmp_path, moving
             off_grid.append((step, float(data.time)))
     rec.close()
     assert not off_grid, f"{len(off_grid)} samples taken a step late, first at {off_grid[:2]}"
+
+
+# -- presence: a model field the samples cannot hold -----------------------------------------------
+
+_TOGGLE = '''
+from roqsim.plugin import Plugin
+from roqsim.presence import set_present
+
+
+class Toggle(Plugin):
+    """Makes the entity ``crate`` absent from 0.2 s of sim time and present again from 0.4 s."""
+
+    def pre_step(self, ctx):
+        set_present(ctx, ctx.entities.get("crate"), not 0.2 <= ctx.sim_time < 0.4)
+'''
+
+
+@pytest.fixture
+def presence_run(tmp_path):
+    """A recorded run whose one prop leaves the world and comes back."""
+    import yaml
+
+    from roqsim.runner import run
+
+    (tmp_path / "toggle.py").write_text(_TOGGLE)
+    (tmp_path / "box.xml").write_text(
+        "<mujoco><worldbody><body name='box'><geom type='box' size='.2 .2 .2'/></body>"
+        "</worldbody></mujoco>"
+    )
+    world = {
+        "sim": {"pacing": "asap"},
+        "components": [
+            {
+                "roqsim.plugins.spawn_model:SpawnModelPlugin": {
+                    "model": str(tmp_path / "box.xml"),
+                    "pose": {"position": {"x": 1.0, "y": 0.0, "z": 0.2}},
+                    "motion": "static",
+                },
+                "name": "crate",
+            },
+            {f"{tmp_path / 'toggle.py'}:Toggle": {}, "name": "toggle"},
+        ],
+    }
+    (tmp_path / "w.yaml").write_text(yaml.safe_dump(world))
+    out = tmp_path / "run.mcap"
+    run(
+        str(tmp_path / "w.yaml"),
+        headless=True,
+        pacing="asap",
+        seconds=0.6,
+        record=str(out),
+        capture_fps=25,
+        seed=1,
+    )
+    return out
+
+
+def test_a_recording_carries_presence_and_a_replay_applies_it(presence_run):
+    from roqsim.presence import ABSENT_GEOM_GROUP, entity_geom_ids
+
+    with open_recording(presence_run) as rec:
+        changes = rec.meta["presence"]
+        assert [c["absent"] for c in changes] == [[], ["crate"], []]
+        assert [c["t"] for c in changes] == pytest.approx([0.0, 0.2, 0.4], abs=0.041)
+        for when, present in ((0.1, True), (0.3, False), (0.5, True), (0.3, False), (0.0, True)):
+            sample = rec.at(when)
+            model, ctx = rec.build()
+            assert ctx.entities.get("crate").present is present, when
+            groups = {int(model.geom_group[g]) for g in entity_geom_ids(model, "box")}
+            assert (ABSENT_GEOM_GROUP in groups) is not present, when
+            assert sample.sim_time == pytest.approx(when, abs=0.021)
+
+
+def test_a_recording_without_presence_replays_the_world_as_declared(presence_run):
+    with open_recording(presence_run) as rec:
+        rec.meta.pop("presence")
+        rec.at(0.3)
+        _, ctx = rec.build()
+        assert ctx.entities.get("crate").present is True
+
+
+def test_a_killed_run_keeps_the_presence_changes_its_chunks_can_replay(tmp_path, monkeypatch):
+    """A change rewrites the provenance at once, so a file without a summary still carries it."""
+    monkeypatch.setattr(capture, "CHUNK_SECONDS", 0.0)
+    model, ctx = _arm()
+    rec = StateRecorder(ctx, tmp_path / "run.mcap", snap_fps(50, model.opt.timestep))
+    for step in range(60):
+        ctx.entities.get("crate").present = step < 30
+        mujoco.mj_step(model, ctx.data)
+        rec.sample(ctx)
+    frames = rec.frames
+    del rec
+    killed = open_recording(tmp_path / "run.mcap")
+    assert not killed.finished
+    changes = killed.meta["presence"]
+    assert [c["absent"] for c in changes] == [[], ["crate"]]
+    assert [c["index"] for c in changes] == [0, frames // 2]
+    assert changes[1]["t"] == pytest.approx(killed.times[frames // 2])
+    assert killed.entities[1] == {
+        "name": "crate",
+        "kind": "object",
+        "body": "crate",
+        "present": False,
+    }

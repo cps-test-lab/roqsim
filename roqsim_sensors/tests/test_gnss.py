@@ -203,7 +203,8 @@ def test_the_bias_is_correlated_rather_than_white():
     """A pure-white GNSS averages away and flatters an estimator; the drift is the thing a
     navigation experiment is about, so it must actually be there."""
     config = {"datum": DATUM, "rate": 50.0, "bias_time": 2.0, "horizontal_noise": 1.0}
-    track = _track(7, ticks=4000, config=config)  # 400 updates at 50 Hz
+    # 4000 updates at 50 Hz: forty correlation times, so the estimate does not hang on the seed.
+    track = _track(7, ticks=40000, config=config)
     error = (track - DATUM["lat"]) * R_EARTH * math.pi / 180.0  # back to metres north
     # Successive updates of a white sequence are uncorrelated; a slow bias makes them not.
     unique = error[np.diff(error, prepend=np.nan) != 0]

@@ -1,7 +1,10 @@
-# Minimal nav2 params for the roqsim TurtleBot 4 example.
+# nav2 params for the roqsim TurtleBot 4 test setup (worlds/turtlebot_nav2.yaml).
+#
+# For testing only: the built-in empty room, localized by a static map->odom transform. An
+# experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 #
 # Tuned for this example's robot: base frame 'base_link', odom '/odom', scan '/scan' (published in
-# base_link), robot radius ~0.18 m. Controller = Regulated Pure Pursuit (light + robust for diff
+# rplidar_link), robot radius ~0.18 m. Controller = Regulated Pure Pursuit (light + robust for diff
 # drive); planner = NavFn. use_sim_time is set per-node from the launch file.
 
 bt_navigator:
