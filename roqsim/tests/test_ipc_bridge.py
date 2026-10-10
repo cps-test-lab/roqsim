@@ -429,3 +429,24 @@ def test_describe_names_the_endpoint_on_the_other_transports(uri):
     with Sim(uri, Hinted({}, entity="box", label="base"), Wire({})), Client(uri) as sim:
         entry = sim.describe("box/base/odom")
         assert entry["bridges"] == {"wire": {"topic": "/resolved/odom"}}
+
+
+def test_ctl_refuses_a_count_only_step_takes(capsys):
+    from roqsim.control_cli.ctl import main as ctl_main
+
+    with pytest.raises(SystemExit) as exc:
+        ctl_main(["pause", "5", "--control", "ipc:///nonexistent.sock"])
+    assert exc.value.code == 2
+    assert "pause takes no count" in capsys.readouterr().err
+
+
+def test_an_interrupted_command_does_not_exit_as_a_success(monkeypatch):
+    import roqsim.control_client as control_client
+    from roqsim import exit_status
+
+    class _Interrupted:
+        def __init__(self, *a, **k):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(control_client, "Client", _Interrupted)
+    assert call_main(["box/tank/drain", "3"]) == exit_status.INTERRUPTED == 130
