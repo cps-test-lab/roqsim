@@ -18,6 +18,8 @@ from roqsim.presence import (
     arm_gravity_compensation,
     entity_geom_ids,
     set_present,
+    subtree_body_ids,
+    subtree_geom_ids,
     visible_geomgroup_mask,
 )
 
@@ -295,7 +297,8 @@ def test_impedance_survives_being_made_absent_and_present_again(ctx, prop):
     the arm folding under its own weight from the first trial that hid anything.
     """
     bodies = [
-        mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name) for name in ("prop", "prop_lid")
+        mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name)
+        for name in ("prop", "prop_lid")
     ]
     for body in bodies:
         ctx.model.body_gravcomp[body] = 1.0  # as `roqsim.actuators` leaves them
@@ -304,3 +307,32 @@ def test_impedance_survives_being_made_absent_and_present_again(ctx, prop):
     set_present(ctx, prop, True)
 
     assert [float(ctx.model.body_gravcomp[b]) for b in bodies] == [1.0, 1.0]
+
+
+def test_a_subtree_is_the_root_and_every_descendant_and_nothing_beside_it():
+    """The one subtree walk: a child under a child is in, a sibling of the root is not, and the
+    name-keyed readers answer with the same ids as the id-keyed ones."""
+    spec = mujoco.MjSpec()
+    root = spec.worldbody.add_body(name="root")
+    root.add_geom(name="root_g", size=[0.1, 0.1, 0.1])
+    child = root.add_body(name="child")
+    child.add_geom(name="child_g", size=[0.1, 0.1, 0.1])
+    grandchild = child.add_body(name="grandchild")
+    grandchild.add_geom(name="grandchild_g", size=[0.1, 0.1, 0.1])
+    other = spec.worldbody.add_body(name="other")
+    other.add_geom(name="other_g", size=[0.1, 0.1, 0.1])
+    model = spec.compile()
+
+    def body(name):
+        return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+
+    def geom(name):
+        return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+
+    assert subtree_body_ids(model, body("root")) == sorted(
+        [body("root"), body("child"), body("grandchild")]
+    )
+    assert subtree_body_ids(model, body("other")) == [body("other")]
+    assert subtree_geom_ids(model, body("child")) == sorted([geom("child_g"), geom("grandchild_g")])
+    assert entity_geom_ids(model, "root") == subtree_geom_ids(model, body("root"))
+    assert entity_geom_ids(model, "no_such_body") == []
