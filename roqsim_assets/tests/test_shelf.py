@@ -1,6 +1,6 @@
 """The parametric chipboard shelf: it builds from box geoms so the number of layers (and the
 board dimensions) are config -- ``layers: 8`` yields an eight-board shelf, ``depth: 0.40`` the
-half-depth footprint -- unlike the fixed 5-board baked mesh model."""
+half-depth footprint."""
 
 from __future__ import annotations
 
@@ -44,11 +44,24 @@ def _board_z(engine, i):
 
 
 def test_default_five_boards(tmp_path):
-    # Defaults reproduce the baked free_chipboard_shelf: 5 boards, ~0.80 x 1.51 m, + 4 uprights.
+    # Defaults: 5 boards, 0.80 x 1.51 m, + 4 uprights.
     engine = _built(tmp_path)
     assert _count(engine, "board") == 5
     assert _count(engine, "leg") == 4
     assert np.allclose(_geom_size(engine, "board_0"), [0.40, 0.755, 0.01])
+
+
+def test_a_shelf_needs_no_other_model(tmp_path, caplog):
+    """The shelf is the same wherever roqsim_assets is installed: it looks up no other model's files,
+    so nothing about it depends on what else a machine has installed, and nothing is logged."""
+    with caplog.at_level("WARNING"):
+        engine = _built(tmp_path)
+    model = engine.ctx.model
+    mat = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MATERIAL, "shelf_chipboard")
+    assert mat >= 0
+    assert (model.mat_texid[mat] == -1).all(), "the boards carry no texture from another model"
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "shelf") >= 0
+    assert not [r for r in caplog.records if r.name.startswith("roqsim_assets")]
 
 
 def test_layers_eight_evenly_spaced(tmp_path):
