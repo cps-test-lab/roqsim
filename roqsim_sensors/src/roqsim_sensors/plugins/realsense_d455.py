@@ -18,7 +18,7 @@ along the baseline from the colour one) with the depth stream's own 87 x 58 deg,
 below is the D455's own -- which is what decides whether a wall 4 m away is a depth return or a "no
 return". Attach it to a robot or mount it standalone with ``spawn_sensor``.
 
-Config: see ``camera_common.CameraPlugin`` (``robot``/``arm``, ``camera``, ``width``/``height``,
+Config: see ``camera_common.CameraPlugin`` (``camera``, ``width``/``height``,
 ``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``) plus
 ``depth``/``points``/``clip_near``/``clip_far``/``depth_camera``/``depth_frame_id``. Defaults below
 match the D455's 640x400@30fps colour profile (the native 1280x800 colour aspect, downscaled to fit

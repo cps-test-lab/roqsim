@@ -18,7 +18,7 @@ Topic/frame naming approximates the ``zivid-ros`` driver (``color/...``, ``depth
 stream with its own ``camera_info``,
 ``zivid_optical_frame``); the exact driver names (e.g. ``color/image_color``, ``points/xyzrgba``) can
 be set via the ``topics:`` override (see ``camera_common.CameraPlugin``). Config: see
-``camera_common.CameraPlugin`` (``robot``, ``camera``, ``width``/``height``, ``fovy``,
+``camera_common.CameraPlugin`` (``camera``, ``width``/``height``, ``fovy``,
 ``rate_hz``, ``frame_id``) and ``depth_camera.DepthCameraPlugin`` (``clip_near``, ``clip_far``,
 ``depth_encoding``).
 
