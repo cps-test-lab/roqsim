@@ -225,12 +225,18 @@ def _deaf_to_stop_signals(logger: logging.Logger):
             logger.debug("teardown complete; stop signals handled normally again")
 
 
-def _tick(engine: Engine, pacer: Pacer) -> bool:
-    """Honor run-control; return True if a physics step was taken this iteration."""
+def _tick(engine: Engine, pacer: Pacer, recorder=None) -> bool:
+    """Honor run-control; return True if a physics step was taken this iteration.
+
+    A reset restarts sim time, so a *recorder* starts its sample schedule over with it; otherwise
+    the next sample would be due at the sim time the run had reached before the reset.
+    """
     c = engine.ctx.control
     if c.take_reset():
         engine.reset()
         pacer.reset()
+        if recorder is not None:
+            recorder.on_reset()
     if c.state == ctl.QUITTING:
         return False
     if c.should_step():
@@ -251,7 +257,7 @@ def _run_headless(
     while max_steps is None or step < max_steps:
         if engine.ctx.stop_requested:
             break
-        took = _tick(engine, pacer)
+        took = _tick(engine, pacer, recorder)
         if took is False:
             break
         if took:
@@ -380,7 +386,7 @@ def _run_windowed(
         while viewer.is_running() and (max_steps is None or step < max_steps):
             if engine.ctx.stop_requested:
                 break
-            took = _tick(engine, pacer)
+            took = _tick(engine, pacer, recorder)
             if took is False:
                 break
             # F9 and F8 are acted on here, on the physics thread: the UI-thread callbacks only set a

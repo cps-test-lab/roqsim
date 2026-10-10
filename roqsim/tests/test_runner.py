@@ -507,3 +507,49 @@ def test_a_recording_that_cannot_be_written_still_shuts_the_engine_down(probe, m
     with pytest.raises(RecordingError, match="disk full"):
         runner.run(str(world), headless=True, max_steps=1, record="r.npz", pacing="asap")
     assert module.LOG == ["shutdown"]
+
+
+# -- a reset over run control restarts the recording's schedule ----------------------------------
+def _recorded_across_a_reset(tmp_path, make_recorder):
+    """Samples taken in the half second after a reset requested over run control."""
+    from roqsim.capture import snap_fps
+    from roqsim.clock import Pacer
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict({"sim": {}, "components": [{"dummy": {}, "name": "d0"}]})
+    with Engine(cfg, preview=True) as engine:
+        engine.reset()
+        recorder = make_recorder(engine.ctx, tmp_path / "run.npz", snap_fps(25, engine.dt))
+        pacer = Pacer(engine.dt, factor=1.0, realtime=False)
+        steps = int(round(1.0 / engine.dt))
+        runner._run_headless(engine, pacer, steps, recorder)
+        before = recorder.frames
+        engine.ctx.control.request_reset()  # what `roqsim ctl reset` does
+        runner._run_headless(engine, pacer, steps // 2, recorder)
+        after = recorder.frames - before
+        recorder.close()
+    return after
+
+
+def test_a_reset_restarts_a_recordings_sample_schedule(tmp_path):
+    from roqsim.capture import StateRecorder
+
+    # 25 fps for half a second of sim time; the schedule must not wait for the pre-reset time.
+    assert _recorded_across_a_reset(tmp_path, StateRecorder) >= 12
+
+
+def test_a_reset_restarts_a_running_takes_sample_schedule(tmp_path):
+    from roqsim.capture import TakeRecorder
+
+    class _Take(TakeRecorder):
+        @property
+        def frames(self):
+            return self._active.frames if self._active is not None else 0
+
+    def make(ctx, path, rate):
+        take = _Take(ctx, path, rate)
+        take.start()
+        return take
+
+    assert _recorded_across_a_reset(tmp_path, make) >= 12
