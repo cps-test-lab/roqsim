@@ -64,6 +64,23 @@ def test_a_world_whose_bridge_is_not_installed_still_loads(tmp_path):
         engine.shutdown()
 
 
+def test_focus_names_an_object_in_the_scene_or_is_refused():
+    """The window opens on the object asked for; a name the scene lacks is an error, never another view.
+
+    No GL needed: the lookup runs on the built model, before any frame is drawn.
+    """
+    from roqsim_scene_builder.scene_window import focus_body_id, load_engine
+
+    engine, _view = load_engine("roqsim_assets:industrial_table")
+    try:
+        (name,) = engine.ctx.entities.names()
+        assert focus_body_id(engine.ctx, name) > 0
+        with pytest.raises(ValueError, match=f"no object 'nosuch' in scene.*available: {name}"):
+            focus_body_id(engine.ctx, "nosuch")
+    finally:
+        engine.shutdown()
+
+
 def test_render_mjcf(_egl_ok, tmp_path):
     xml = tmp_path / "scene.xml"
     xml.write_text(

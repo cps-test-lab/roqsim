@@ -103,8 +103,8 @@ The ``review_scene_by_human`` tool
   ``moves``) to point the initial camera at: the window opens zoomed to fill the view with that
   object, from a viewing angle picked to have a **clear line of sight** to it (it looks over/around
   walls so the object is not hidden behind one). Empty (default) keeps the automatic camera — a
-  model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An
-  unknown name is not an error: it warns and falls back to the automatic camera.
+  model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. A
+  name the scene does not have opens no window: the tool raises, naming the objects there are.
 * **timeout_s** — seconds to wait for a verdict before ``TimeoutError`` (default 600).
 * **size** — the 3D view in pixels, ``WxH`` (default ``960x720``), the CLI's ``--size``.
 
@@ -141,7 +141,7 @@ CLI (debugging)
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
 It prints the verdict JSON and exits **0** (pass, or a neutral comment), **1** (fail), **2** (no
-display / load error), **3** (window closed without a verdict). The reason for a 2 is one line on
+display / load error / no ``--focus-object`` in the scene), **3** (window closed without a verdict). The reason for a 2 is one line on
 stderr, which is what the MCP tool relays when the window produced no result.
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
