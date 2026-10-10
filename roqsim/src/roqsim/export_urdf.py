@@ -856,7 +856,7 @@ def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
     faces = model.mesh_face[fadr : fadr + fnum].reshape(-1, 3)
     # Whole-mesh at a time, not triangle at a time. A per-face Python loop calling np.cross was
     # ~200k calls for one mobile manipulator and made a single export take four seconds -- most of
-    # the cost of `roqsim export-urdf`, and of every test that exercises it.
+    # the cost of `roqsim export urdf`, and of every test that exercises it.
     #
     # Every VERTEX this writes is bit-identical to what the loop wrote (checked over all 205k faces
     # of a husky+ur10e+robotiq). The face NORMAL can differ by one float32 ulp on a minority of
