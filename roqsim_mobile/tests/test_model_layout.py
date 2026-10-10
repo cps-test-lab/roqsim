@@ -1,6 +1,6 @@
 """The one-folder-per-model layout holds, and every shipped model's meshes actually resolve.
 
-Three failures this catches, none of which the per-model drive tests would:
+Four failures this catches, none of which the per-model drive tests would:
 
 * a model whose ``<compiler meshdir=...>`` points anywhere but its own ``models/<name>/meshes/``
   -- MuJoCo does not error on an unresolvable mesh path, it compiles
@@ -9,6 +9,7 @@ Three failures this catches, none of which the per-model drive tests would:
   from an editable checkout and fails at RUN time inside a campaign container, where the checkout is
   not there to paper over it -- the reason those globs are patterns rather than an enumeration;
 * a vendor mesh redistributed without the licence sidecar that permits it.
+* a mesh shipped in a model's ``meshes/`` that its MJCF never loads.
 
 Named ``test_model_layout`` rather than the siblings' ``test_layout`` because pytest cannot import two
 same-named test modules in one run: ``roqsim_sensors`` and ``roqsim_manipulation_assets`` both ship a
@@ -65,6 +66,32 @@ def test_model_resolves_with_all_meshes(name):
         assert Path(mesh.file).is_absolute() and Path(mesh.file).exists(), (
             f"{name}: unresolved mesh {mesh.file!r}"
         )
+
+
+#: What a model folder's ``meshes/`` ships for the MJCF to load; ``*.materials.json`` sidecars are
+#: provenance, read by no model.
+_LOADED = (".obj", ".stl", ".png")
+
+
+@pytest.mark.parametrize("name", MODEL_NAMES)
+def test_every_shipped_mesh_is_one_the_model_loads(name):
+    """A file in ``meshes/`` that the MJCF never names is weight in every wheel and a reader's
+    false lead: it looks like the geometry the robot has, and the robot has none of it."""
+    asset = resolve_model(f"roqsim_mobile:{name}")
+    spec = mujoco.MjSpec.from_file(str(asset.path))
+    apply_assets(spec, asset)
+    loaded = {
+        Path(f).resolve()
+        for f in [m.file for m in spec.meshes] + [t.file for t in spec.textures]
+        if f
+    }
+    shipped = MODELS_DIR / name / "meshes"
+    unused = sorted(
+        p.name
+        for p in (shipped.iterdir() if shipped.is_dir() else [])
+        if p.suffix.lower() in _LOADED and p.resolve() not in loaded
+    )
+    assert not unused, f"{name}: meshes/ ships files its MJCF never loads: {unused}"
 
 
 @pytest.mark.parametrize("name", ROBOTS)
