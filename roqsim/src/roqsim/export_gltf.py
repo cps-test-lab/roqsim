@@ -63,7 +63,7 @@ import numpy as np
 
 from . import exit_status, logging_setup, tessellate
 from .rendering import view_forward
-from .scene_content import Geom, Mesh, SceneContent, Skin, resolved_rgba, walk
+from .scene_content import Geom, Mesh, SceneContent, Skin, reindex, resolved_rgba, walk
 from .scene_source import (
     add_manifest_option,
     add_source_options,
@@ -124,17 +124,6 @@ def zup_to_yup(points: np.ndarray) -> np.ndarray:
 # -- geometry --------------------------------------------------------------------------------------
 
 
-def primitive_triangles(
-    gtype: str, size, segments: int, extent: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """A primitive geom of ``size`` as ``(verts, normals, uv, faces)`` in the geom's frame.
-
-    The surface, its exact normals and MuJoCo's own texture coordinates
-    (:func:`roqsim.tessellate.textured_surface`), before ``texrepeat`` scales them.
-    """
-    return tessellate.textured_surface(gtype, size, segments, extent)
-
-
 def texture_scale(gtype: str, size, texrepeat, texuniform: bool, explicit: bool) -> np.ndarray:
     """What MuJoCo's renderer multiplies a geom's texture coordinates by (``settexture``).
 
@@ -189,8 +178,6 @@ def mesh_triangles(
     takes the unique (position, normal, texcoord) triples the faces use. The normals are MuJoCo's,
     so its smoothing and creases are what a viewer shades.
     """
-    from .scene_content import reindex
-
     mid = mesh.source
     va = int(model.mesh_vertadr[mid])
     fa, fn = int(model.mesh_faceadr[mid]), int(model.mesh_facenum[mid])
@@ -766,7 +753,9 @@ def _geom_mesh(
             else:
                 uv = uv * texture_scale("mesh", geom.size, mat.texrepeat, mat.texuniform, True)
     else:
-        verts, normals, uv, faces = primitive_triangles(geom.type, geom.size, segments, extent)
+        verts, normals, uv, faces = tessellate.textured_surface(
+            geom.type, geom.size, segments, extent
+        )
         if tex is None:
             uv = None
         else:

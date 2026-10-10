@@ -142,7 +142,7 @@ def _pose(T):
 _W = np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, -1, 0, 0], [0, 0, 0, 1]], dtype=float)
 
 
-# -- T1: bodies are nodes, named as the bodies are --------------------------------------------------
+# -- bodies are nodes, named as the bodies are -----------------------------------------------------
 
 _NAMES = """
 <mujoco>
@@ -193,7 +193,7 @@ def test_every_body_is_a_node_named_as_the_body_in_the_body_tree(tmp_path):
         assert node["extras"].get("geom", "") == model.geom(g).name
 
 
-# -- T2: a point in the world node's frame is a world coordinate ------------------------------------
+# -- a point in the world node's frame is a world coordinate ---------------------------------------
 
 
 def test_the_world_node_turns_z_up_onto_y_up(tmp_path):
@@ -238,7 +238,7 @@ def test_a_point_in_the_world_nodes_frame_is_a_world_coordinate(tmp_path, qh, qs
     np.testing.assert_allclose(scene, expect @ _W[:3, :3].T, atol=1e-6)
 
 
-# -- T3: the same content as export web -------------------------------------------------------------
+# -- the same content as export web ----------------------------------------------------------------
 
 
 def _web_world_poses(scene: dict) -> list[np.ndarray]:
@@ -314,7 +314,7 @@ def test_gltf_and_web_exports_hold_the_same_scene(tmp_path, fixture):
     assert _glb_geoms(glb, model) == _web_geoms(web)
 
 
-# -- T4: tessellation and normals -------------------------------------------------------------------
+# -- tessellation and normals ----------------------------------------------------------------------
 
 _PRIMITIVES = """
 <mujoco>
@@ -451,7 +451,7 @@ def test_the_authored_view_is_a_camera_where_render_puts_its_own(tmp_path):
     assert yfov == pytest.approx(np.radians(model.vis.global_.fovy))
 
 
-# -- T5: skins and flexes ---------------------------------------------------------------------------
+# -- skins and flexes ------------------------------------------------------------------------------
 #
 # A glTF viewer skins a vertex as ``sum_k w_k * J_k * IBM_k * v``, ``J_k`` the joint node's matrix in
 # the scene. Here the joint nodes are posed the way a viewer replaying a run poses them -- each body
@@ -593,7 +593,7 @@ def test_a_flex_in_the_collision_group_is_not_drawn(tmp_path):
     assert not _skin_nodes(glb)
 
 
-# -- T6: materials and textures --------------------------------------------------------------------
+# -- materials and textures ------------------------------------------------------------------------
 
 
 def _image(glb, texture_index):
@@ -729,7 +729,7 @@ def test_a_cube_texture_is_refused_by_name(tmp_path, capsys):
     assert "cube texture" in capsys.readouterr().err
 
 
-# -- T8: the texture coordinates MuJoCo projects ----------------------------------------------------
+# -- the texture coordinates MuJoCo projects -------------------------------------------------------
 #
 # MuJoCo renders the scene with ambient light only, so a pixel is its texel. The same pixel's ray is
 # cast with mj_ray; where it meets a geom, the exported mesh of that geom is found under the hit
@@ -869,7 +869,7 @@ def test_projected_texture_coordinates_draw_what_mujoco_draws(tmp_path):
         assert wrong[name] <= 0.03 * checked[name], f"{name}: {wrong[name]}/{checked[name]} wrong"
 
 
-# -- T9: the Khronos glTF Validator ----------------------------------------------------------------
+# -- the Khronos glTF Validator --------------------------------------------------------------------
 #
 # The validator is a Node.js program, pinned in tools/gltf_validator (`make test-gltf` installs it).
 # Under `make test` this runs where it is installed and says it skipped where it is not; under
@@ -923,7 +923,7 @@ def test_khronos_validator_finds_nothing_wrong_with_a_small_world(tmp_path):
         assert report["errors"] == 0 and report["warnings"] == 0, (path, report["messages"])
 
 
-# -- T7: the command line ---------------------------------------------------------------------------
+# -- the command line ------------------------------------------------------------------------------
 
 _BARE = "<mujoco><worldbody><body name='box'><geom type='box' size='.1 .1 .1'/></body></worldbody></mujoco>"
 

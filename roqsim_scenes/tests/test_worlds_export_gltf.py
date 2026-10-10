@@ -23,8 +23,6 @@ _WORLDS = sorted((Path(roqsim_scenes.__file__).parent / "worlds").glob("*.yaml")
 
 
 def _khronos(paths) -> dict:
-    if os.environ.get("ROQSIM_GLTF_VALIDATOR") != "required":
-        pytest.skip("every bundled world through the Khronos glTF Validator: `make test-gltf`")
     if shutil.which("node") is None or not (_VALIDATOR / "node_modules").is_dir():
         pytest.fail(
             "the Khronos glTF Validator is not installed: `make test-gltf` installs it "
