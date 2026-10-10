@@ -60,6 +60,7 @@ from __future__ import annotations
 import math
 
 import mujoco
+import numpy as np
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
@@ -205,8 +206,12 @@ class PalmTreePlugin(Plugin):
         # two drifting apart is how a "goal at the bunch" silently becomes a goal in mid-air.
         centres = []
         for bunch in self.bunches:
-            local = [float(v) for v in bunch["pos"]]
-            centres.append([self.pos[i] + local[i] for i in range(3)])
+            local = np.array([float(v) for v in bunch["pos"]])
+            # Through the tree's own orientation: the sites are built inside the rotated body, so a
+            # translation alone would put a yawed tree's bunches where its unrotated twin has them.
+            rotated = np.zeros(3)
+            mujoco.mju_rotVecQuat(rotated, local, np.array(self.quat, dtype=float))
+            centres.append([float(self.pos[i] + rotated[i]) for i in range(3)])
         ctx.entities.add(
             Entity(
                 name=self.entity_name,

@@ -35,8 +35,10 @@ components:
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals (fast; no mesh load)
       speed: 1.2               # m/s; past ~1.7 the run clip blends in
-      pos: [0.0, 0.0]          # spawn, used when `waypoints` is empty (goal-driven only)
-      waypoints:               # patrol route; the walker starts at waypoints[0]
+      pose:                    # where a goal-driven walker stands at the start (no `waypoints`):
+        position: {x: 0.0, y: 0.0}  #   a world pose with no z (a walker stands on the floor)
+        orientation: {yaw: 0.0}     #   and a heading only; `pos` is refused
+      waypoints:               # patrol route; the walker starts at waypoints[0], so no `pose`
         - [-2.0, -2.0]
         - [ 2.0, -2.0, [2, 4]] # optional dwell: seconds, or [lo, hi] random pause
         - [ 2.0,  2.0]
@@ -68,7 +70,7 @@ legs. A `floorplan` mesh adds its own walls the same way.
 `avoidance: true` gives the walker's navigator `roqsim_nav`'s default local model, `give_way`
 (pure Python, no extra), with `stop: false`: it steers round the robot and other walkers, and never
 stops for them. For ORCA, write a `navigator` for the walker with
-`avoidance: {steer: orca}` and install `roqsim_nav[avoidance]` (see `roqsim_nav`'s README).
+`avoidance: {steer: orca}` and install `rvo2` the way `roqsim_nav`'s README gives it.
 
 ### Goals at runtime
 
