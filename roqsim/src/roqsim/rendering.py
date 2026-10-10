@@ -24,7 +24,7 @@ import numpy as np
 
 from . import raycast
 from .exit_status import NO_GL
-from .presence import ABSENT_GEOM_GROUP, subtree_body_ids
+from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, subtree_body_ids
 
 _logger = logging.getLogger(__name__)
 
@@ -79,7 +79,8 @@ def bounding_sphere(model: mujoco.MjModel, data: mujoco.MjData, body_ids):
     (only planes, ``rbound`` 0, or nothing). Each geom is taken as its own world sphere -- centre
     ``geom_xpos``, radius ``geom_rbound`` -- which is the placement-correct bound even for a mesh
     MuJoCo recentred on its inertia frame (a box built from ``geom_aabb`` is not: it is stated in that
-    rotated local frame). ``data`` must be forward-kinematics-current (call ``mj_forward`` first).
+    rotated local frame). A parked geom (below :data:`~roqsim.presence.PARKED_BELOW_Z`) is skipped.
+    ``data`` must be forward-kinematics-current (call ``mj_forward`` first).
     """
     roots = {int(b) for b in body_ids if int(b) >= 0}
     keep = set(roots)
@@ -89,7 +90,9 @@ def bounding_sphere(model: mujoco.MjModel, data: mujoco.MjData, body_ids):
     spheres = [
         (data.geom_xpos[g], float(model.geom_rbound[g]))
         for g in range(model.ngeom)
-        if int(model.geom_bodyid[g]) in keep and float(model.geom_rbound[g]) > 0.0
+        if int(model.geom_bodyid[g]) in keep
+        and float(model.geom_rbound[g]) > 0.0
+        and float(data.geom_xpos[g][2]) >= PARKED_BELOW_Z
     ]
     if not spheres:  # e.g. the bodies carry only planes (rbound 0) or no geometry at all
         return None
@@ -119,13 +122,14 @@ def scene_corners(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray | No
     Each geom's own ``geom_aabb`` (stated in its rotated frame) is carried into world space corner by
     corner, so a wall stays a wall and not the sphere around it -- which is what makes this tight for
     the rooms recordings are made in. Planes have no bound and are skipped; the geoms that stand on
-    them say where the scene is. ``data`` must be forward-kinematics-current.
+    them say where the scene is, and parked geoms (below :data:`~roqsim.presence.PARKED_BELOW_Z`)
+    are no part of it. ``data`` must be forward-kinematics-current.
     """
     lo = np.full(3, np.inf)
     hi = np.full(3, -np.inf)
     signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
     for g in range(model.ngeom):
-        if float(model.geom_rbound[g]) <= 0.0:
+        if float(model.geom_rbound[g]) <= 0.0 or float(data.geom_xpos[g][2]) < PARKED_BELOW_Z:
             continue
         center, half = model.geom_aabb[g, :3], model.geom_aabb[g, 3:]
         xmat = data.geom_xmat[g].reshape(3, 3)

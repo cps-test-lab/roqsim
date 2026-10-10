@@ -31,7 +31,9 @@ What travels, and what does not:
   than configuration, so a world that gains a walker or a movable prop captures it with no config
   change.
 * Static bodies are omitted -- the geometry already carries their rest pose, and a track per wall
-  would dwarf the file.
+  would dwarf the file. They are not held in memory either: a sample keeps only the poses that
+  differ from the first sample's, so a pool of bodies parked for the whole run costs nothing per
+  sample (:class:`_Poses`).
 
 Poses are the simulator's **world** frame, matching the exported geometry 1:1, and the manifest says
 so (``frame``). That is not a detail: a nav stack's ``base_link`` lives in the *map* frame, which can
@@ -143,8 +145,55 @@ def _body_joints(model: mujoco.MjModel) -> list[list[int]]:
     return per
 
 
+class _Poses:
+    """Every body's world pose over the samples, holding only what differs from the first sample.
+
+    A sample keeps ``(ids, pos, quat)`` for the bodies whose pose is not exactly the first sample's;
+    every other body is at its first pose, which is kept once. A body that never leaves its first
+    pose -- a wall, a parked pool -- therefore costs nothing per sample, and :meth:`series` gives a
+    moving body's full track back exactly.
+    """
+
+    def __init__(self) -> None:
+        self._pos0: np.ndarray | None = None
+        self._quat0: np.ndarray | None = None
+        self._changed: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+        self._deviation: np.ndarray | None = None
+
+    def add(self, xpos: np.ndarray, xquat: np.ndarray) -> None:
+        if self._pos0 is None:
+            self._pos0 = np.array(xpos, dtype=np.float64)
+            self._quat0 = np.array(xquat, dtype=np.float64)
+            self._deviation = np.zeros(len(self._pos0))
+        dpos = np.abs(xpos - self._pos0).max(axis=1)
+        dquat = np.abs(xquat - self._quat0).max(axis=1)
+        self._deviation = np.maximum(self._deviation, np.maximum(dpos, dquat))
+        ids = np.flatnonzero((dpos > 0.0) | (dquat > 0.0))
+        self._changed.append(
+            (ids, np.array(xpos[ids], dtype=np.float64), np.array(xquat[ids], dtype=np.float64))
+        )
+
+    def moved(self) -> np.ndarray:
+        """Per body, whether its pose ever left its first sample's by more than ``_STATIC_EPS``."""
+        return self._deviation > _STATIC_EPS
+
+    def series(self, bids: list[int]) -> np.ndarray:
+        """The poses of bodies ``bids`` in every sample, ``(n, len(bids), 7)``: pos xyz, quat wxyz."""
+        bids = np.asarray(bids, dtype=int)
+        rest = np.concatenate([self._pos0[bids], self._quat0[bids]], axis=1)
+        out = np.repeat(rest[None], len(self._changed), axis=0)
+        column = np.full(len(self._pos0), -1)
+        column[bids] = np.arange(len(bids))
+        for k, (ids, pos, quat) in enumerate(self._changed):
+            col = column[ids]
+            keep = col >= 0
+            out[k, col[keep], :3] = pos[keep]
+            out[k, col[keep], 3:] = quat[keep]
+        return out
+
+
 def _pose_bodies(
-    model: mujoco.MjModel, xpos: np.ndarray, xquat: np.ndarray
+    model: mujoco.MjModel, moved: np.ndarray
 ) -> tuple[list[tuple[str, int]], list[str]]:
     """Bodies needing a world-pose track, as ``(name, body_id)``, plus the names of any holes.
 
@@ -166,9 +215,6 @@ def _pose_bodies(
     That ordering is part of the format's contract, not an accident: a consumer turning a world pose
     into a local transform needs its parent already seated.
     """
-    moved = (np.abs(xpos - xpos[0]).max(axis=(0, 2)) > _STATIC_EPS) | (
-        np.abs(xquat - xquat[0]).max(axis=(0, 2)) > _STATIC_EPS
-    )
     body_joints = _body_joints(model)
     reconstructable = [False] * model.nbody
     reconstructable[0] = True  # the world body
@@ -238,15 +284,15 @@ def write_capture(
 
         packages = package_versions()
 
+    joints = _scalar_joints(model)
+    joint_adr = np.array([adr for _, adr, _ in joints], dtype=int)
     times: list[float] = []
     qpos: list[np.ndarray] = []
-    xpos: list[np.ndarray] = []
-    xquat: list[np.ndarray] = []
+    poses = _Poses()
     for t, data in samples:
         times.append(float(t))
-        qpos.append(np.array(data.qpos, dtype=np.float64))
-        xpos.append(np.array(data.xpos, dtype=np.float64))
-        xquat.append(np.array(data.xquat, dtype=np.float64))
+        qpos.append(np.array(data.qpos[joint_adr], dtype=np.float64))
+        poses.add(data.xpos, data.xquat)
 
     if not times:
         raise CaptureExportError(
@@ -255,12 +301,9 @@ def write_capture(
         )
 
     t_arr = np.asarray(times, dtype=np.float64)
-    qpos_arr = np.stack(qpos)  # (n, nq)
-    xpos_arr = np.stack(xpos)  # (n, nbody, 3)
-    xquat_arr = np.stack(xquat)  # (n, nbody, 4)
+    qpos_arr = np.stack(qpos)  # (n, len(joints))
 
-    joints = _scalar_joints(model)
-    bodies, holes = _pose_bodies(model, xpos_arr, xquat_arr)
+    bodies, holes = _pose_bodies(model, poses.moved())
     if holes:
         lg.warning(
             "run capture cannot express %d moving body/bodies: %s. They will replay at their rest "
@@ -274,7 +317,7 @@ def write_capture(
     time_track = {"off": binw.add(t_arr, "<f8"), "dtype": "f8", "samples": n, "width": 1}
 
     tracks: list[dict] = []
-    for name, adr, jtype in joints:
+    for column, (name, _adr, jtype) in enumerate(joints):
         tracks.append(
             {
                 "kind": "joint",
@@ -283,13 +326,14 @@ def write_capture(
                 "width": 1,
                 "samples": n,
                 "dtype": "f4",
-                "off": binw.add(qpos_arr[:, adr], "<f4"),
+                "off": binw.add(qpos_arr[:, column], "<f4"),
             }
         )
-    for name, bid in bodies:
+    series = poses.series([bid for _, bid in bodies])
+    for column, (name, _bid) in enumerate(bodies):
         # (n, 7) sample-major: pos xyz then quat wxyz, which is MuJoCo's own quaternion order and
         # what the geometry's rest transforms already use.
-        pose = np.concatenate([xpos_arr[:, bid, :], xquat_arr[:, bid, :]], axis=1)
+        pose = series[:, column, :]
         tracks.append(
             {
                 "kind": "pose",
