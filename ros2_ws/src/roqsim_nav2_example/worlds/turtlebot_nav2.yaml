@@ -1,4 +1,7 @@
-# TurtleBot 4 world for the nav2 example.
+# TurtleBot 4 test world for the nav2 example.
+#
+# For testing only: the built-in empty room, localized by a static map->odom transform. An
+# experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 #
 # spawn_robot pulls in the turtlebot4 robot description (its diff_drive + RPLIDAR mount), so this
 # world only places the robot and wires transport. The ros2_bridge publishes clock/odom/

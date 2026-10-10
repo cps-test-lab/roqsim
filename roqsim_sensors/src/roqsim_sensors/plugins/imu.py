@@ -462,7 +462,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         if self.accel_stddev or self.gyro_stddev or self.orientation_stddev or self.yaw_stddev:
             # One counter-based generator per (sensor, step): every reader in this step sees the same
             # reading, and it is reproducible from a recording without replaying the run.
-            rng = self._ctx.rng_for(f"imu:{self.address}")
+            rng = self._ctx.rng_for(self.draw_key("noise"))
             if self.accel_stddev:
                 accel = accel + rng.normal(0.0, self.accel_stddev, 3)
             if self.gyro_stddev:

@@ -83,10 +83,11 @@ MIT
   Neobotix MP-400                 (c) 2021 Neobotix GmbH, via neo_simulation2
 
 --------------------------------------------------------------------------------
-CC0 1.0 Universal  --  public domain, no attribution required
+Props and surface textures (roqsim_assets)
 --------------------------------------------------------------------------------
-  Surface textures from ambientCG (https://ambientcg.com) and
-  Poly Haven (https://polyhaven.com)
+  Third-party props and textures carry their licence and attribution in the CREDITS.txt beside
+  them (roqsim_assets/src/roqsim_assets/models/<name>/, .../assets/<name>/), which ships with the
+  package. Where that licence is CC-BY, the CREDITS.txt must travel with the files.
 
 --------------------------------------------------------------------------------
 CC-BY 4.0  --  ATTRIBUTION REQUIRED ON REDISTRIBUTION

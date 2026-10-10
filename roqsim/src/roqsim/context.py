@@ -587,6 +587,11 @@ class SimContext:
         time) but would be absurd per beam. Noise draws are vectorised anyway, so the natural shape is
         already the right one.
 
+        ``name`` must be unique to the instance that draws: two callers passing the same one get the
+        same numbers at the same ``sim_time``. A plugin passes :meth:`roqsim.plugin.Plugin.draw_key`, which
+        builds it from the instance's address (``robot/lidar/noise``), not from its ``name``, which is
+        the class name on every instance without a ``name:``.
+
         **An unset seed raises.** A seed is driver-owned, so a run without one is missing a required
         input, and standing in a default would be the worst possible failure here: every trial of
         every run draws the same numbers, each run still looks like its own, the recording still

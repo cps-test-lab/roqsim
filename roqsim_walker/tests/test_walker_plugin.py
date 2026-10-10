@@ -7,6 +7,8 @@ until it reports finished, and check the walker actually got there.
 
 from __future__ import annotations
 
+import re
+
 import mujoco
 import numpy as np
 import pytest
@@ -211,8 +213,8 @@ def test_a_newer_route_supersedes_an_older_one(sim):
 
 
 # -- goal-driven only (no patrol) --------------------------------------------------------------
-def test_walker_without_waypoints_stands_at_pos_until_commanded():
-    engine = Engine(_world(waypoints=[], pos=[1.0, 1.0]))
+def test_walker_without_waypoints_stands_at_its_pose_until_commanded():
+    engine = Engine(_world(waypoints=[], pose={"position": {"x": 1.0, "y": 1.0}}))
     engine.setup()
     engine.reset()
     try:
@@ -319,7 +321,11 @@ def test_a_world_may_write_the_walkers_navigator_itself(tmp_path):
                 "sim": {"pacing": "asap"},
                 "components": [
                     {
-                        "walker": {"walker": "MaleVisitorWalk", "skin": False, "pos": [0.0, 0.0]},
+                        "walker": {
+                            "walker": "MaleVisitorWalk",
+                            "skin": False,
+                            "pose": {"position": {"x": 0.0, "y": 0.0}},
+                        },
                         "name": "pedestrian",
                         "components": [
                             {
@@ -442,3 +448,55 @@ def test_a_walker_with_no_dwell_says_nothing_about_it():
     engine.setup()
     engine.reset()
     assert _walker_navigator(engine)._core.st.dwell == [(0.0, 0.0), (0.0, 0.0)]
+
+
+# -- the start is a pose ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expect"),
+    [
+        (
+            {"waypoints": [], "pos": [1.0, 2.0]},
+            r"'pos' is not read -- a walker's start is stated as 'pose'.*"
+            r"pose: \{position: \{x: 1\.0, y: 2\.0\}\}",
+        ),
+        (
+            {"pose": {"position": {"x": 1.0, "y": 2.0}}},
+            r"'pose' and 'waypoints' both place the walker",
+        ),
+        (
+            {"waypoints": [], "pose": {"position": {"x": 1.0, "y": 2.0, "z": 0.5}}},
+            r"'pose\.position\.z' is not read",
+        ),
+        (
+            {"waypoints": [], "pose": {"position": {"x": 0, "y": 0}, "orientation": {"roll": 0.2}}},
+            r"tilts the walker",
+        ),
+    ],
+)
+def test_a_start_that_is_not_a_walker_pose_is_refused(overrides, expect):
+    from roqsim_walker.plugins.walker import WalkerPlugin
+
+    config = {"walker": "MaleVisitorWalk", "skin": False, "waypoints": WAYPOINTS, **overrides}
+    errors = WalkerPlugin(config).validate_config(config)
+    assert any(re.search(expect, e) for e in errors), errors
+
+
+def test_a_goal_driven_walker_starts_at_its_pose_heading_every_episode():
+    from roqsim_walker.output import STATE_KEY
+
+    pose = {"position": {"x": 1.0, "y": -1.0}, "orientation": {"yaw": 1.2}}
+    engine = Engine(_world(waypoints=[], pose=pose))
+    engine.setup()
+    try:
+        for _ in range(2):
+            engine.reset()
+            state = engine.ctx.blackboard.get(STATE_KEY)["pedestrian"]
+            assert state.yaw == pytest.approx(1.2)
+            np.testing.assert_allclose(_xy(engine), [1.0, -1.0], atol=1e-6)
+            handle = engine.ctx.blackboard.get("walker:pedestrian")
+            handle.send_route([(-1.0, -1.0)])
+            _run(engine, 1.0)
+    finally:
+        engine.shutdown()

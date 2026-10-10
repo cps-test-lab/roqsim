@@ -1,4 +1,7 @@
-"""Minimal nav2 + roqsim TurtleBot 4 bring-up.
+"""nav2 + roqsim TurtleBot 4 test bring-up.
+
+For testing only: the built-in empty room, localized by a static map->odom transform. An
+experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 
 Starts: the sim + ROS bridge (roqsim_ros_bridge), a static map->odom transform (localization stand-in),
 nav2 map_server + planner_server + controller_server + behavior_server + bt_navigator, and a

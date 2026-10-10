@@ -85,3 +85,16 @@ def test_a_blank_image_fails_loudly_rather_than_emitting_an_empty_plan(tmp_path)
     Image.fromarray(np.full((40, 40, 3), 255, np.uint8)).save(png)
     with pytest.raises(SystemExit, match="no wall pixels"):
         m2f.derotate(m2f.load_mask(png, None, 110, []), max_deg=1.0)
+
+
+def test_the_grid_report_prints_plain_numbers(tmp_path, capsys):
+    """The gaps are read off the terminal as a ``--scale`` candidate, so numpy's repr must not show."""
+    rgb = np.full((120, 120, 3), 255, dtype=np.uint8)
+    for k in range(10, 120, 20):
+        rgb[:, k] = 200
+        rgb[k, :] = 200
+    path = tmp_path / "grid.png"
+    Image.fromarray(rgb).save(path)
+    m2f.report_grid(path, None)
+    out = capsys.readouterr().out
+    assert "gaps [20.0, 20.0, 20.0, 20.0, 20.0]" in out, out

@@ -40,7 +40,8 @@
   <exec_depend>vision_msgs</exec_depend>
 
   <!-- roqsim is a plain pip package (not a ROS package); install it into the
-       same environment (pip install -e .). It is intentionally not a ROS dep. -->
+       same environment (pip install -e .). It is declared in setup.py's
+       install_requires rather than here, where rosdep would look it up. -->
 
   <test_depend>python3-pytest</test_depend>
 

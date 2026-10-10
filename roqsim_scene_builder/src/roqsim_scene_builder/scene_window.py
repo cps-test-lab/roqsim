@@ -65,6 +65,7 @@ from roqsim import (
     walk_delta,
 )  # the camera-walk vocabulary is shared with the roqsim viewer
 from roqsim.pose import parse_pose, yaw_of
+from roqsim.presence import subtree_geom_ids
 from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in one module
     BG,
     FAIL_BG,
@@ -1009,16 +1010,7 @@ class _ReviewApp:
     def _prop_geom_ids(self, root_id: int) -> set[int]:
         """Every geom id under a prop's root body (its whole subtree), so its mesh can be redrawn at a
         dragged pose in the render scene without recompiling the model."""
-        model = self.engine.ctx.model
-        bodies = set()
-        for b in range(model.nbody):
-            p = b
-            while p > 0:
-                if p == root_id:
-                    bodies.add(b)
-                    break
-                p = int(model.body_parentid[p])
-        return {g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies}
+        return set(subtree_geom_ids(self.engine.ctx.model, root_id))
 
     def _spec_for(self, entity):
         """The ``spawn_model`` config entry that placed ``entity`` (matched by prefix + model), so its

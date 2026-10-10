@@ -16,23 +16,16 @@ I add one" a different answer depending on which one you are adding.
 
 from __future__ import annotations
 
-import functools
 import importlib
 import importlib.util
 import sys
-from importlib import metadata
 from pathlib import Path
+
+from roqsim.entry_points import entry_points
 
 
 class RegistryError(Exception):
     """A name in a world could not be resolved to an implementation."""
-
-
-@functools.cache
-def entry_points(group: str) -> tuple:
-    """Entry points in ``group``, scanned once per process (the scan walks every distribution)."""
-    eps = metadata.entry_points()
-    return tuple(eps.select(group=group) if hasattr(eps, "select") else eps.get(group, ()))
 
 
 def registered(group: str) -> list[str]:

@@ -74,6 +74,8 @@ nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not j
 
 The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
 interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
+That is a magnitude: it sets the larger bound of the model's ``forcerange`` and keeps the range's
+shape, so a single-acting drive's ``0 F`` becomes ``0 effort_limit`` and still cannot pull.
 ``impedance`` is joint-impedance control — a position law that also carries the arm's own weight, so
 a soft stiffness holds a pose instead of folding; at zero gravity it is identical to ``position``.
 Which law and gains every joint ended up with is written into the run's recording, so a result can
@@ -634,8 +636,9 @@ A port known only at run time is registered by hand in ``configure``:
   action handlers come from per-type registries in ``roqsim_ros_bridge`` (``services.py`` /
   ``actions.py``), so a new srv or action type is a handler there and no change here. A handler,
   converter or decoder in another package is registered by naming its module in the
-  ``roqsim_ros_bridge.extensions`` entry-point group, which the bridge imports at start-up (see
-  ``roqsim_ros_bridge/extensions.py``; ``roqsim_nav_ros`` is an example).
+  ``roqsim_ros_bridge.extensions`` entry-point group, which the bridge imports at start-up; a module
+  that fails to import fails the start (see ``roqsim_ros_bridge/extensions.py``; ``roqsim_nav_ros``
+  is an example).
 * ``owner`` — the entity the port belongs to, so a bridge can serve one robot in a many-robot world.
 * ``backend`` — inert per-backend hints keyed by backend name. Naming the message *type as a string*
   (resolved by the bridge) means the robot package imports nothing transport-specific. Anything

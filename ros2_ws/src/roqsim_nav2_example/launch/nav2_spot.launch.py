@@ -1,4 +1,7 @@
-"""nav2 + roqsim Boston Dynamics Spot quadruped bring-up.
+"""nav2 + roqsim Boston Dynamics Spot quadruped test bring-up.
+
+For testing only: the built-in empty room, localized by a static map->odom transform. An
+experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 
 Starts: the sim + ROS bridge (roqsim_ros_bridge) running the spot_nav2.yaml world (Spot walks via
 its RL locomotion policy, driven by /cmd_vel), a static map->odom transform (localization stand-in),

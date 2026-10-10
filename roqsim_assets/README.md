@@ -133,13 +133,15 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   *diameter* at a shared height, and a modelled asset scaled uniformly cannot change one without the
   other — so a family of radii is only expressible as a list of parametric entries.
 - **`moving_box`** — the same anonymous box, but **moving**: a mocap body the plugin drives at a
-  constant `speed`, either along `waypoints` (fixed route, `loop` / `ping_pong`) or as a seeded
+  constant `speed`, either along `waypoints` (fixed route, `loop` / `ping_pong`) or as a
   `random_walk` that ray-casts the compiled model ahead of itself and picks a new heading before it
   hits anything — no map file, no wall list, works in whatever geometry the world contains. Mocap
   rather than free-jointed on purpose: physics must not shove aside the obstacle that exists to
   obstruct, and a commanded motion should define the experiment rather than fight the solver. The
-  `random_walk` seed is **required** (an unseeded obstacle is not reproducible) and `on_reset`
-  re-seats the box *and* re-seeds it, so repetition N of a campaign cell never inherits N-1's state.
+  walk follows the run's seed (`sim.seed` / `roqsim sim --seed`) through `ctx.rng_for`, keyed on
+  the mover's address, so it has no seed of its own: one run seed replays one walk, and two movers
+  in a run walk differently. `on_reset` re-seats the box, so repetition N of a campaign cell never
+  inherits N-1's state.
   Use `walker` (in `roqsim_walker`) when the mover should be a pedestrian; use this when the paper says
   "a box crosses the corridor at v m/s".
 - **`prop_trajectory`** — an XY **stage** that carries a prop along a path read from a 2-column CSV

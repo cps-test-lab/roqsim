@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from roqsim.pose import pose_mapping
+
 from . import sampling
 from .adapters import build_fov
 from .catalog import placed_from_proposal
@@ -47,11 +49,7 @@ def generate_candidates(model, data, *, types, spacing=3.0, z=3.0) -> list[dict]
         for t in types:
             t = t.strip()
             candidates.append(
-                {
-                    "type": t,
-                    "pos": [float(v) for v in pos],
-                    "rpy": _DOWN_RPY.get(t, [0.0, 0.0, 0.0]),
-                }
+                {"type": t, "pose": pose_mapping(pos, _DOWN_RPY.get(t, [0.0, 0.0, 0.0]))}
             )
     return candidates
 

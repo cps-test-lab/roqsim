@@ -138,7 +138,7 @@ venv:  ## Create .venv (--system-site-packages) and install packages + dev tooli
 	$(EXTERNAL) convert --resource spot_locomotion_policy  # fetch the NVIDIA Spot policy (external asset; fail-soft)
 	@echo
 	@echo "venv ready. For ROS/nav2: 'source /opt/ros/jazzy/setup.bash' then 'make test'."
-	@echo "nav2 demos: 'ros2 launch roqsim_nav2_example nav2_g1.launch.py' (or nav2_spot / nav2_turtlebot)."
+	@echo "nav2: 'ros2 launch roqsim_nav2_example nav2_turtlebot_depot.launch.py' (see docs/nav2_example.rst)."
 
 .PHONY: build-ros
 build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
@@ -159,6 +159,20 @@ test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when R
 	else \
 		echo "ROS not sourced -> skipped the ros2_ws tests (source ROS to include them)."; \
 	fi
+
+# The Khronos glTF Validator is a Node.js program, so it is not part of `make test`: there, the export
+# gltf test of a small world runs only when the validator is installed, and says so when it is not.
+# This target installs the pinned validator and holds an export of every bundled world and of a bare
+# MJCF to it, failing when Node.js is missing rather than skipping.
+GLTF_VALIDATOR := tools/gltf_validator
+
+.PHONY: test-gltf
+test-gltf:  ## Khronos glTF Validator over an `export gltf` of every bundled world (needs Node.js)
+	@command -v node >/dev/null && command -v npm >/dev/null || \
+		{ echo "make test-gltf needs Node.js (node and npm on PATH)"; exit 1; }
+	cd $(GLTF_VALIDATOR) && npm ci --silent --no-audit --no-fund
+	ROQSIM_GLTF_VALIDATOR=required $(PYTEST) -q -k khronos \
+		roqsim/tests/test_export_gltf.py roqsim_scenes/tests/test_worlds_export_gltf.py
 
 # One package's tests, e.g. `make test-roqsim_sensors`. Not just a convenience: the full set in one
 # process is the memory peak described above, so this is how to bisect an OOM -- and how to re-run
