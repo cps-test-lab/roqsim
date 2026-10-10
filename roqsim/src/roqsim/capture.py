@@ -675,6 +675,9 @@ class StateRecorder:
         self._entities_path = (self.path.parent / ENTITIES_FILENAME) if sim_poses else None
         #: Last roster written, so the file is rewritten when it changes and not once per sample.
         self._entities_sig: tuple | None = None
+        #: Each change of the absent set, as ``{"index", "t", "absent"}``; see :meth:`_note_presence`.
+        self._presence: list[dict] = []
+        self._absent: tuple | None = None
         self._provenance = {
             "format_version": FORMAT_VERSION,
             # The seed belongs in the provenance because it is what makes a *sensor* replay exact: a
@@ -773,7 +776,25 @@ class StateRecorder:
         self._last_t, self._last_w = float(now), wall
         self._write_clock_sample(wall, float(now))
         self._write_sim_pose_sample(ctx, wall, float(now))
+        self._note_presence(ctx, float(now))
         return True
+
+    def _note_presence(self, ctx, sim: float) -> None:
+        """Note the absent entities when they differ from the last sample's.
+
+        Presence is a ``model`` field (:mod:`roqsim.presence`), which the state samples cannot hold, so
+        the changes travel in the provenance as ``presence``: from sample ``index`` on, the entities
+        named in ``absent`` are absent and every other is present. :class:`roqsim.recording.Recording`
+        applies them to each sample it restores.
+        """
+        registry = getattr(ctx, "entities", None)
+        if registry is None:
+            return
+        absent = tuple(sorted(e.name for e in registry.all() if not e.present))
+        if absent == self._absent:
+            return
+        self._absent = absent
+        self._presence.append({"index": self._stream.count - 1, "t": sim, "absent": list(absent)})
 
     def _write_clock_sample(self, wall: float, sim: float) -> None:
         """Append one ``(epoch wall, sim)`` pair to the streamed clock record.
@@ -960,6 +981,8 @@ class StateRecorder:
             )
             return None
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Additive, like `actuators`: a reader that does not know the key replays without it.
+        self._provenance["presence"] = self._presence
         _write_archive(self.path, self._provenance, samples)
         sim_span = self._last_t - self._first_t
         wall_span = self._last_w - self._first_w
