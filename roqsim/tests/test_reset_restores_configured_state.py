@@ -248,6 +248,7 @@ PAYLOADS: dict[str, Any] = {
     "cmd": 1.0,
     "door": 1.0,
     "tare": None,
+    "zero_ftsensor": None,
     "override": True,
 }
 
@@ -390,6 +391,7 @@ CASES: dict[str, Case] = {
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
+    "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller,),

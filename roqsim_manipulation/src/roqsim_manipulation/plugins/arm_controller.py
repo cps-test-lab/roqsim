@@ -46,6 +46,12 @@ sits rather than a config key::
       topics: {joint_states: /joint_states}  # optional: rename an endpoint, here to an absolute
                                  #   name that overrides the namespace (see Plugin.topic_override)
       controller_name: arm_controller   # action at <controller_name>/follow_joint_trajectory
+      controller_type: joint_trajectory_controller/JointTrajectoryController
+                                 # the type list_controllers reports: this, or
+                                 #   ur_controllers/ScaledJointTrajectoryController, the UR driver's
+                                 #   trajectory controller, whose speed scaling a simulated arm holds
+                                 #   at 100 % (it has no teach pendant slider) -- so its behaviour here
+                                 #   is the plain controller's, and only the name a stack checks differs
       initial_state: active      # active | inactive -- `inactive` is ros2_control's
                                  #   `spawner --inactive`: registered, but not holding the arm
       joint_state_broadcaster_name: joint_state_broadcaster  # the robot's one broadcaster; a
@@ -239,6 +245,15 @@ def ctrl_direction_on_joint(model, actuator_id: int, joint_id: int) -> int:
     return (slope > 0.0) - (slope < 0.0)
 
 
+#: Trajectory controller types this plugin can stand for. The UR driver's scaled controller is the
+#: plain one scaled by the pendant's speed slider; a simulated arm has no slider, so the scaling is
+#: 100 % and the two behave alike. The first is the default.
+_TRAJECTORY_TYPES = (
+    "joint_trajectory_controller/JointTrajectoryController",
+    "ur_controllers/ScaledJointTrajectoryController",
+)
+
+
 @dataclass
 class JointVelocities:
     """Target velocities for named joints.
@@ -352,6 +367,11 @@ class ArmControllerPlugin(Plugin):
             errors.append(
                 "arm_controller: `gripper_actuator` only applies together with `joints`; "
                 "without it the prefix scan picks up tendon actuators itself"
+            )
+        if config.get("controller_type", _TRAJECTORY_TYPES[0]) not in _TRAJECTORY_TYPES:
+            errors.append(
+                f"arm_controller: `controller_type` is one of {', '.join(_TRAJECTORY_TYPES)} -- the "
+                "trajectory controllers whose behaviour this plugin has"
             )
         errors += self._validate_tolerances(config)
         errors += self._validate_limits(config)
@@ -622,7 +642,7 @@ class ArmControllerPlugin(Plugin):
         self._registered = registry.register(
             Controller(
                 name=controller,
-                type="joint_trajectory_controller/JointTrajectoryController",
+                type=self.config.get("controller_type", _TRAJECTORY_TYPES[0]),
                 claims=tuple(f"{j}/position" for j in self._ctrl_names),
                 state=ACTIVE if self._active else INACTIVE,
                 namespace=ns,
