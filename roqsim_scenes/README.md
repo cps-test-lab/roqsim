@@ -340,7 +340,9 @@ Each marker becomes a `spawn_model` in the world YAML. `--markers-map` maps a ma
 to place — either a bare name (`"single_bed"`) or `{"model": "single_bed", "yaw_deg": 180}` to also
 set the prop's heading (about +Z, 0 = +x, CCW → the yaw of `spawn_model`'s `pose`). A heading the human dragged in
 the 2D window (the marker's own `yaw_deg`) is honoured too; a `--markers-map` `yaw_deg` overrides it.
-An unmapped marker is a hard error — props are never silently dropped.
+An unmapped marker is a hard error — props are never silently dropped. So is a map entry for a
+marker or door the floorplan does not have, or a key the generator does not read (`--doors-map`
+lists its keys in `--help`): nothing would read it, so it would be ignored.
 
 ## Look at a floorplan: `roqsim-floorplan-to-png`
 
