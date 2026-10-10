@@ -38,7 +38,7 @@ Config::
     bumper:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # base body override; default: the entity's registered base body
+      body: ""               # a body of the entity, as a path within it; default: its root
       namespace: ""          # transport scope for the endpoints
       zones:                 # bearing sectors, radians in the base frame, counter-clockwise from
         front: [-0.52, 0.52] #   +x: {<zone>: [from, to]}. A sector with from > to wraps through
@@ -108,9 +108,8 @@ def _in_sector(bearing: float, lo: float, hi: float) -> bool:
 class BumperPlugin(Plugin):
     parallel_safe = True  # post_step only reads data.contact and writes its own state
     # It watches an ENTITY, so it must be nested under the entry that provides one -- same reason
-    # as contact_monitor: at the top of a document `self.entity` is None and the base body would
-    # fall back to a bare "base_link", resolving by accident for some robots and obscurely failing
-    # for the rest.
+    # as contact_monitor: at the top of a document `self.entity` is None and there is no
+    # registered body to watch.
     requires_owner = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -181,8 +180,8 @@ class BumperPlugin(Plugin):
         # Which contacts are this entity's: the rule shared with every other contact observable,
         # so the bumper and contact_monitor can never disagree about whose contact it was.
         scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="bumper",
             body=self.body,
             ignore=self.ignore,

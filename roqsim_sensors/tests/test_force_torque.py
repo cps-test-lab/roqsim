@@ -17,7 +17,7 @@ import pytest
 from roqsim_sensors.plugins.force_torque import ForceTorquePlugin
 
 from roqsim.config import load_config_from_dict
-from roqsim.context import SimContext
+from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
 
 LINK_MASS = 0.5
@@ -389,3 +389,41 @@ def test_all_three_doors_zero_the_same_sensor():
         assert plugin.read()[0][2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)
         press()
         assert np.allclose(plugin.read()[0], 0.0, atol=1e-9)
+
+
+# -- the base frame is the entity's registered root ----------------------------------------------
+
+
+class _BodilessEntityScene(_ArmScene):
+    """The arm as an entity that registers no body, in a model that has a body called ``base``."""
+
+    provides_entity = True
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        spec.worldbody.add_body(name="base", pos=[1, 0, 0])
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(Entity(name=self.name, kind="robot", meta={"prefix": "", "namespace": ""}))
+
+
+def test_the_base_frame_of_an_entity_that_registered_no_body_is_refused():
+    """Rotated into a body found by its name, the wrench would be in some other body's frame."""
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {
+                    f"{__name__}:_BodilessEntityScene": {},
+                    "name": "arm",
+                    "components": [{"force_torque": {"site": "fts_site", "frame": "base"}}],
+                }
+            ],
+        }
+    )
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    with pytest.raises(RuntimeError, match="entity 'arm' registered no body"):
+        engine.setup()
