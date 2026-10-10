@@ -1,9 +1,10 @@
 # Default plugins shipped with the OpenMANIPULATOR-X arm description.
 #
 # `spawn_arm: {model: open_manipulator_x}` pulls this in automatically, so a world does not
-# re-declare the arm's controller. To override, declare arm_controller for the same arm in the world
-# (it wins); to opt out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is
-# filled in from the spawn_arm `name`.
+# re-declare the arm's controller. To override a default, nest an entry with the same label under
+# that spawn_arm's `components:` (it merges into this one, per key); to opt out, set `spawn_arm`
+# config `default_plugins: false`. Each entry below attaches to the spawned arm because it is nested
+# under it -- there is no ownership key to fill in.
 components:
   # No gripper keys: the two fingers are welded geometry in the MJCF (no joint, no actuator), so
   # there is nothing for arm_controller to expose a GripperCommand action for. See the port log.
