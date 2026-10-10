@@ -49,6 +49,12 @@ sits rather than a config key::
                                 #   captured at.
       noise_force_stddev: 0.0   # N, additive Gaussian white noise on the three force channels
       noise_torque_stddev: 0.0  # Nm, likewise on the three torque channels
+      bias_force: 0.0           # N, bound of a per-episode zero offset, uniform per channel
+      bias_torque: 0.0          # Nm, likewise
+      drift_force: 0.0          # N/s, bound of a per-episode linear drift rate, uniform per channel
+      drift_torque: 0.0         # Nm/s, likewise
+      range_force: null         # N, the measuring range: each force channel saturates at +-range
+      range_torque: null        # Nm, likewise for torque; null (default) never saturates
       rate_hz: 100.0            # endpoint publish rate
       namespace: ""             # transport scope (default: inherited from the entity)
       topics: {wrench: /ft}     # optional absolute-topic hardwire
@@ -116,6 +122,19 @@ the sensed subtree enters with its force and its moment about the site
 The correction is applied to the raw pair, before the tare and the frame, so the reading is what a
 real sensor at that cut measures. A flex lying partly inside the subtree and partly outside is
 refused: its contacts cannot be assigned to one side of the cut.
+
+**Bias, drift and range are the transducer's, so they come before the tare.** A real sensor's zero
+offset and its slow thermal drift are in what it measures, and its zero button removes whatever of
+them has accumulated -- which is why a contact task tares at the pose it is about to press in. So
+``bias_*`` (a constant per episode) and ``drift_*`` (a rate per episode, the offset growing
+linearly from zero at the episode's start) are added to the raw pair, and a tare captures them with
+it. Both are drawn once per episode and per channel, uniformly within the stated bound, from
+``ctx.rng_for(..., per_episode=True)``: a function of the run's seed and the episode, so a value at
+any sim time is reproducible from that time alone, as the noise is. Linear rather than a random
+walk for that reason -- a walk's value depends on every step before it -- and because a trial lasts
+minutes, over which a thermal drift is close to a line. ``range_*`` saturates each raw channel, bias
+and drift included, as the transducer's range does; the noise is added after, in the reported
+frame, as before. All default to zero or none.
 
 **Noise is per-sensor config, deliberately.** There is no generic error-model framework in roqsim (see
 ``docs/architecture.rst`` §9); a sensor that wants noise declares its own, as the lidar's
@@ -195,6 +214,16 @@ class ForceTorquePlugin(Plugin):
         self.invert = bool(self.config.get("invert", True))
         self.noise_f = float(self.config.get("noise_force_stddev", 0.0))
         self.noise_t = float(self.config.get("noise_torque_stddev", 0.0))
+        self.bias_f = float(self.config.get("bias_force", 0.0))
+        self.bias_t = float(self.config.get("bias_torque", 0.0))
+        self.drift_f = float(self.config.get("drift_force", 0.0))
+        self.drift_t = float(self.config.get("drift_torque", 0.0))
+        rf, rt = self.config.get("range_force"), self.config.get("range_torque")
+        self.range_f = None if rf is None else float(rf)
+        self.range_t = None if rt is None else float(rt)
+        #: This episode's draws: (bias force, bias torque, drift force, drift torque), each [3].
+        self._transducer: tuple[np.ndarray, ...] | None = None
+        self._transducer_episode = -1
         tare_at = self.config.get("tare_at_s")
         self.tare_at_s = None if tare_at is None else float(tare_at)
         #: The captured zero, in the RAW sensor frame and before the sign convention is applied --
@@ -221,9 +250,19 @@ class ForceTorquePlugin(Plugin):
             errors.append(f"'frame' must be one of {', '.join(_FRAMES)}")
         if float(config.get("rate_hz", 100.0)) <= 0:
             errors.append("'rate_hz' must be > 0")
-        for key in ("noise_force_stddev", "noise_torque_stddev"):
+        for key in (
+            "noise_force_stddev",
+            "noise_torque_stddev",
+            "bias_force",
+            "bias_torque",
+            "drift_force",
+            "drift_torque",
+        ):
             if float(config.get(key, 0.0)) < 0:
                 errors.append(f"'{key}' must be >= 0")
+        for key in ("range_force", "range_torque"):
+            if config.get(key) is not None and float(config[key]) <= 0:
+                errors.append(f"'{key}' must be > 0, or null for a sensor that never saturates")
         if config.get("tare_at_s") is not None and float(config["tare_at_s"]) < 0:
             errors.append("'tare_at_s' must be >= 0: it is a sim time, not an offset")
         if "flex_reaction" in config:
@@ -411,7 +450,8 @@ class ForceTorquePlugin(Plugin):
         )
 
     def _raw(self) -> tuple[np.ndarray, np.ndarray]:
-        """The site pair in the sensor frame, with the flex contacts MuJoCo leaves out added.
+        """The transducer's pair in the sensor frame: MuJoCo's site pair with the flex contacts it
+        leaves out added, then this episode's bias and drift, saturated at the range.
 
         MuJoCo's site sensor reports the subtree's balance as ``-(external wrench)``, so a missing
         external contact wrench ``(F, M)`` (world, at the site) is subtracted, rotated into the site.
@@ -424,7 +464,30 @@ class ForceTorquePlugin(Plugin):
             rot = np.array(d.site_xmat[self._site_id]).reshape(3, 3)
             force = force - rot.T @ f_world
             torque = torque - rot.T @ m_world
+        if self.bias_f or self.bias_t or self.drift_f or self.drift_t:
+            bias_f, bias_t, drift_f, drift_t = self._episode_transducer()
+            t = self._ctx.sim_time
+            force = force + bias_f + drift_f * t
+            torque = torque + bias_t + drift_t * t
+        if self.range_f is not None:
+            force = np.clip(force, -self.range_f, self.range_f)
+        if self.range_t is not None:
+            torque = np.clip(torque, -self.range_t, self.range_t)
         return force, torque
+
+    def _episode_transducer(self) -> tuple[np.ndarray, ...]:
+        """This episode's bias and drift rate per channel, drawn once from the episode's key."""
+        episode = int(self._ctx.episode)
+        if self._transducer is None or self._transducer_episode != episode:
+            rng = self._ctx.rng_for(f"ft-transducer:{self.name}", per_episode=True)
+            self._transducer = (
+                rng.uniform(-self.bias_f, self.bias_f, 3),
+                rng.uniform(-self.bias_t, self.bias_t, 3),
+                rng.uniform(-self.drift_f, self.drift_f, 3),
+                rng.uniform(-self.drift_t, self.drift_t, 3),
+            )
+            self._transducer_episode = episode
+        return self._transducer
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
         """``(force[3], torque[3])`` in the configured frame. Runs on the physics thread."""
