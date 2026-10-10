@@ -299,13 +299,14 @@ class GnssPlugin(Plugin):
         sigma_vel = float(self.cfg("velocity_noise"))
         rng = ctx.rng_for(self.draw_key("noise"))
 
-        # Ornstein-Uhlenbeck bias. `a` is the fraction of the correlation that decays per UPDATE
-        # (not per physics tick -- the bias only advances when the receiver reports), and the
-        # sqrt(2a) keeps the stationary spread at sigma whatever the rate, so lowering the receiver
-        # rate does not quietly make the world's GNSS better.
+        # Ornstein-Uhlenbeck bias, discretised exactly. `phi` is the fraction of the correlation
+        # that survives one UPDATE (not one physics tick -- the bias only advances when the
+        # receiver reports), and sqrt(1 - phi^2) keeps the stationary spread at sigma whatever the
+        # rate, so lowering the receiver rate does not quietly make the world's GNSS better or
+        # worse, and an update interval past `bias_time` gives memoryless draws of the same spread.
         scale = np.array([sigma_h, sigma_h, sigma_v])
-        a = min((1.0 / float(self.cfg("rate"))) / float(self.cfg("bias_time")), 1.0)
-        self._bias = (1.0 - a) * self._bias + scale * math.sqrt(2.0 * a) * rng.standard_normal(3)
+        phi = math.exp(-(1.0 / float(self.cfg("rate"))) / float(self.cfg("bias_time")))
+        self._bias = phi * self._bias + scale * math.sqrt(1.0 - phi * phi) * rng.standard_normal(3)
         white = scale * rng.standard_normal(3)
         east, north, up = pos + self._bias + white
 
