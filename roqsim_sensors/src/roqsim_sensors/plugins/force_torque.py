@@ -227,8 +227,8 @@ class ForceTorquePlugin(Plugin):
         if config.get("tare_at_s") is not None and float(config["tare_at_s"]) < 0:
             errors.append("'tare_at_s' must be >= 0: it is a sim time, not an offset")
         if "flex_reaction" in config:
-            # A world that states it expects a reading blind to flex contacts; the reading now
-            # carries them, so the statement no longer describes the run and must not pass silently.
+            # A world that states it expects a reading blind to flex contacts states something untrue
+            # of this reading, so it must not pass silently.
             errors.append(
                 "'flex_reaction' is not a force_torque setting: the reading includes the contacts "
                 "of a flex in or against the sensed subtree. Remove the key, and re-read any result "
