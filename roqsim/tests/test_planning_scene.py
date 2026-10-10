@@ -368,7 +368,7 @@ def test_a_robot_that_is_not_welded_down_is_refused(tmp_path, capsys):
                     "model": "ur10e",
                     "prefix": "ur10e_",
                     "mount": {"robot": "h", "body": "base_link"},
-                    "pose": pose_mapping([0.25, 0.0, 0.2587]),
+                    "pose": pose_mapping([0.17, 0.0, 0.23035]),
                 },
                 "name": "arm",
             },
