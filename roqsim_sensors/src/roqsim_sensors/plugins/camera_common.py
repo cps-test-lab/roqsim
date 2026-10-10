@@ -228,6 +228,9 @@ class CameraPlugin(Plugin):
                                  #   coefficients, so camera_info keeps describing its own pixels
           noise: null            # {gaussian_sigma: grey levels, blur_sigma: px}: the colour image's
                                  #   blur, then additive noise from ctx.rng_for (after `distortion`)
+          on_demand: false       # render only for a consumer that asks -- a transport subscriber or
+                                 #   an in-process claim (Endpoint.claim); without a transport, a
+                                 #   stepped run then renders nothing until a plugin claims a frame
           rate_hz: <DEFAULT_RATE_HZ>
           frame_id: <DEFAULT_FRAME_ID>
           color: true            # publish the colour stream at all -- see PUBLISHES_COLOR
@@ -275,6 +278,7 @@ class CameraPlugin(Plugin):
         self._fovy_cfg = self.config.get("fovy")
         self._intr_cfg = {k: self.config.get(k) for k in ("fx", "fy", "cx", "cy")}
         self._distortion_cfg = self.config.get("distortion")
+        self.on_demand = bool(self.config.get("on_demand", False))
         noise = self.config.get("noise") or {}
         self._noise_sigma = float(noise.get("gaussian_sigma", 0.0))
         self._blur_sigma = float(noise.get("blur_sigma", 0.0))
@@ -434,6 +438,10 @@ class CameraPlugin(Plugin):
         if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return False
         gates = self._gate_endpoints()
+        if self.on_demand:
+            # Only for a consumer that asks: an in-process claim, or a transport subscriber. With no
+            # transport able to tell, nothing renders until something claims a frame.
+            return any(ep.claims > 0 or (ep.has_subscribers is not None and ep.has_subscribers()) for ep in gates)
         # `wanted()`: an in-process claim, a transport subscriber, or no transport able to tell
         # (`has_subscribers is None`) -- then render, because the alternative is a sensor that never
         # produces anything.

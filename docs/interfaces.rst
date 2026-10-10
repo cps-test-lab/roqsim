@@ -666,7 +666,9 @@ A port known only at run time is registered by hand in ``configure``:
   pose from a camera frame), is a consumer no transport can count, so with a bridge loaded and no
   transport subscriber the producer would skip the work it needs. It calls ``claim()`` once (and
   ``release()`` when done); ``wanted()`` is true for a claim, a transport subscriber, or
-  ``has_subscribers is None``, and is what the camera plugins' render gate asks. A rendered
+  ``has_subscribers is None``, and is what the camera plugins' render gate asks. A camera with
+  ``on_demand: true`` drops the last case: with no transport able to tell, it renders only while a
+  plugin holds a claim, so a stepped run pays for the frames it reads and no others. A rendered
   ``Image`` carries ``stamp``, the sim time of its capture, so such a reader tells a fresh frame from
   the one it already has.
 * ``lazy`` — opt this endpoint out of *publishing* while ``has_subscribers`` reports nobody listening,

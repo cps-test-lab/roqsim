@@ -837,3 +837,19 @@ def test_noise_config_is_checked():
     assert any("noise" in e for e in plugin.validate_config({"noise": {"sigma": 1}}))
     assert any("noise" in e for e in plugin.validate_config({"noise": {"gaussian_sigma": -1}}))
     assert not plugin.validate_config({"noise": {"gaussian_sigma": 2.0, "blur_sigma": 0.5}})
+
+
+def test_on_demand_renders_only_for_a_consumer_that_asks():
+    """No transport and no claim: nothing renders; a claim (or a subscriber) brings frames."""
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0, "on_demand": True})
+    plugin._last_capture = 0.0
+    image_ep = _FakeEndpoint(has_subscribers=None)
+    plugin._rendered = [image_ep]
+    assert plugin._due(_FakeCtx(0.2)) is False
+    image_ep.claim()
+    assert plugin._due(_FakeCtx(0.2)) is True
+    image_ep.release()
+    image_ep.has_subscribers = lambda: True
+    assert plugin._due(_FakeCtx(0.2)) is True
+    image_ep.has_subscribers = lambda: False
+    assert plugin._due(_FakeCtx(0.2)) is False
