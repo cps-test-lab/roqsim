@@ -345,17 +345,21 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.npz --out run.webm        # the whole run as video
 
 With nothing said about the camera, a recording is shown as **the whole scene from above**: every
-geom in the world, angled rather than top-down, as close as the field of view allows -- and with the
-ceiling removed where the world had one, since a view from above would otherwise be a view of a
-roof. That is the video you get with no flags at all. A ``--view``, ``--focus`` or ``--camera``
-frames it otherwise and keeps the world as it is (``--no-ceiling`` is then yours to add), and a
-recording made in a window keeps the camera the person watched it through.
+geom in the world except the parked ones (below ``roqsim.presence.PARKED_BELOW_Z``), angled rather
+than top-down, as close as the field of view allows -- and with the ceiling removed where the world
+had one, since a view from above would otherwise be a view of a roof. That is the video you get with
+no flags at all. A ``--view``, ``--focus`` or ``--camera`` frames it otherwise and keeps the world
+as it is (``--no-ceiling`` is then yours to add), and a recording made in a window keeps the camera
+the person watched it through.
 
 Those three commands name no world, and that is not a shorthand: a recording carries the **resolved**
 component tree rather than a recipe, so it rebuilds from itself and needs only the model packages it
 referred to. What ran is recorded outright — including the actuator table, which says what control
 law and gains every joint ran under and whether each value came from the model or from the world's
-``actuators:`` block, so a result can state its gains without anyone reopening the MJCF.
+``actuators:`` block, so a result can state its gains without anyone reopening the MJCF. So is
+**which entities were present** at each sample: presence is a model field the state cannot hold, so
+the recording notes each change (``presence`` in its provenance) and a replay applies it, and an
+entity a trial brought in or took away appears and disappears in the render as it did in the run.
 
 Without ``--at`` you get the **last** sample, and the command says so on stderr along with the sample's
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
@@ -682,13 +686,15 @@ viewer, alongside the geometry ``roqsim export web`` emits:
    roqsim export capture --state run.npz --out capture/
 
 It writes ``capture.json`` + ``capture.bin``: one track per joint value and one per body pose that
-actually moved, each keyed by the name the scene descriptor uses, so the two artifacts address each other
-without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
-where it is defined — and roqsim is one producer of it, the same relationship this package has with
-URDF and SRDF. Both files state what they are: ``capture.json`` carries the consumer's
-``format``/``version`` pair, and ``scene.json`` carries roqsim's own (``roqsim.web_scene``, version
-1), so a viewer can refuse a descriptor written to a contract it has not seen rather than draw it
-wrong, and can tell it from the ``roqsim_scenes`` scene manifest that shares its file name.
+actually moved (and only those poses are held while it reads the recording, so a pool of bodies
+parked for the whole run costs it nothing), each keyed by the name the scene descriptor uses, so the
+two artifacts address each other without either knowing about MuJoCo. The format is the consumer's —
+whichever tool replays these is where it is defined — and roqsim is one producer of it, the same
+relationship this package has with URDF and SRDF. Both files state what they are: ``capture.json``
+carries the consumer's ``format``/``version`` pair, and ``scene.json`` carries roqsim's own
+(``roqsim.web_scene``, version 1), so a viewer can refuse a descriptor written to a contract it has
+not seen rather than draw it wrong, and can tell it from the ``roqsim_scenes`` scene manifest that
+shares its file name.
 
 A **flex** needs nothing of its own in either artifact. ``export web`` draws it as a skin whose bones
 are the bodies its vertices follow — a solid by its boundary, a sheet from both sides, a line flex as a

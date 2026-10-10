@@ -34,6 +34,7 @@ import numpy as np
 
 from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
 from .document import check_version
+from .presence import set_present
 
 log = logging.getLogger(__name__)
 
@@ -352,6 +353,7 @@ class Recording:
     def _restore(self, index: int) -> Sample:
         model, ctx = self.build()
         row = self._samples[index]
+        self._apply_presence(index, ctx, float(row["t"]))
         self._buf[:] = row["s"]  # float32 on disk -> float64 for mj_setState
         mujoco.mj_setState(
             model, self._data, self._buf, int(self.meta.get("state_spec", STATE_SPEC))
@@ -365,6 +367,32 @@ class Recording:
 
             cam = camera_from_row(row["cam"])
         return Sample(float(row["t"]), int(index), self._data, cam, float(row["w"]))
+
+    def _apply_presence(self, index: int, ctx, sim_time: float) -> None:
+        """Make each entity present or absent as it was at sample ``index``.
+
+        Presence is a ``model`` field the samples cannot hold, so the recorder writes each change of
+        the absent set into the provenance (``presence``) and this puts it back -- before the state is
+        restored, since making an entity absent zeroes its velocities. A recording without the key
+        replays every entity as the rebuilt world declares it.
+        """
+        changes = self.meta.get("presence")
+        if not changes or ctx is None:
+            return
+        absent: set[str] = set()
+        for change in changes:  # in sample order
+            if int(change["index"]) > index:
+                break
+            absent = set(change["absent"])
+        unknown = absent - set(ctx.entities.names())
+        if unknown:
+            raise RecordingError(
+                f"{self.path} records {sorted(unknown)} as absent, but the rebuilt world has no "
+                f"such entity -- it is not the world this run was recorded in."
+            )
+        self._data.time = sim_time  # so presence's log line carries the sample's time
+        for entity in ctx.entities.all():
+            set_present(ctx, entity, entity.name not in absent)
 
     def index_at(self, when: float) -> int:
         """The index of the sample **nearest** ``when``; ties resolve to the earlier one.

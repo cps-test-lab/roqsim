@@ -151,11 +151,10 @@ def test_the_renderer_excludes_the_absent_group():
 
 
 def test_a_transition_says_so_in_the_log(ctx, prop, caplog):
-    """The only trace a flip leaves, until presence rides in the capture.
+    """The trace a flip leaves in a run that is not recorded.
 
-    It writes model fields while a recording stores ``mjData`` state, and the pose deliberately
-    does not move -- so without this line nothing in a run's recorded data can answer "did the
-    obstacle ever appear?", on a campaign whose service call returned OK.
+    It writes model fields and the pose deliberately does not move, so a run without a recording
+    answers "did the obstacle ever appear?" from this line alone.
     """
     with caplog.at_level("INFO", logger="roqsim.presence"):
         assert set_present(ctx, prop, False)
