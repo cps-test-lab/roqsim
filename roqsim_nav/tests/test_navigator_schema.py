@@ -146,3 +146,45 @@ def test_the_ros_walker_world_loads_and_names_its_action():
         instantiate_plugins(load_config_from_dict(doc, base_dir=WALKER_NAV2.parent))
     )
     assert nav.config["action_names"] == {"navigate_through_poses": "navigate_through_poses"}
+
+
+STUB_OUTPUT = f"{Path(__file__).parent / 'stub_output.py'}:StubOutput"
+
+
+@pytest.mark.parametrize(
+    ("output", "config"),
+    [
+        ("mocap", {"kinematics": "unicycle"}),
+        ("mocap", {"heading_gain": 3.0}),
+        ("drive", {"yaw_rate": 2.0}),
+        # An out-of-tree output declares no keys unless it reads them, so none is accepted for it.
+        (STUB_OUTPUT, {"yaw_rate": 2.0}),
+    ],
+)
+def test_an_output_key_the_named_output_does_not_read_is_refused(tmp_path, output, config):
+    (key,) = config
+    with pytest.raises(PluginError) as exc:
+        _load(tmp_path, output=output, **config)
+    assert f"'{key}' has no meaning with output: {output}" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("output", "config"),
+    [
+        ("drive", {"kinematics": "unicycle", "heading_gain": 3.0, "face": "hold"}),
+        ("mocap", {"yaw_rate": 0.0}),
+        # Under `auto` the output is chosen per entity at configure, so nothing can be refused yet.
+        ("auto", {"kinematics": "unicycle", "yaw_rate": 2.0}),
+    ],
+)
+def test_an_output_key_the_output_reads_is_accepted(tmp_path, output, config):
+    _load(tmp_path, output=output, **config)
+
+
+def test_every_output_key_is_read_by_some_shipped_output():
+    from roqsim_nav.outputs.drive import DriveOutput
+    from roqsim_nav.outputs.mocap import MocapOutput
+
+    declared = set(DriveOutput.config_keys) | set(MocapOutput.config_keys)
+    assert declared == set(navigator.OUTPUT_KEYS)
+    assert set(navigator.OUTPUT_KEYS) <= set(NavigatorPlugin.CONFIG_SCHEMA)
