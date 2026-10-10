@@ -567,8 +567,13 @@ class SimContext:
 
     # -- deterministic randomness -------------------------------------------------------------
 
-    def rng_for(self, name: str):  # -> numpy.random.Generator (imported lazily below)
+    def rng_for(self, name: str, *, per_episode: bool = False):  # -> numpy.random.Generator
         """A generator whose draws are a pure function of ``(seed, episode, sim_time, name)``.
+
+        ``per_episode=True`` drops ``sim_time`` from the key: the draw is the episode's, the same
+        whenever in the episode it is made. That is the generator for a quantity a trial holds
+        constant -- a sensor's bias, a drift rate -- which a time-keyed draw would make depend on
+        the moment it was first read.
 
         **Counter-based, not stateful**, and that is the whole point. A shared stateful generator's
         position depends on how many draws happened before it -- sensor rates, step count, and for
@@ -618,7 +623,10 @@ class SimContext:
                 "there is no run to reproduce and a picture is not a measurement."
             )
         seed = int(self.seed)
-        step = 0 if self.model is None or self.data is None else round(self.sim_time / self.dt)
+        if per_episode or self.model is None or self.data is None:
+            step = 0
+        else:
+            step = round(self.sim_time / self.dt)
         # A stable hash of the sensor name: Python's hash() is salted per process, which would make a
         # run irreproducible across processes -- exactly what this exists to prevent.
         import zlib

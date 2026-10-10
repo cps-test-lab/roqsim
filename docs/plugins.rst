@@ -2311,9 +2311,10 @@ Four things decide whether such a world measures anything at all:
 * **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
   probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
   the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
-  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
-  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
-  docstring.
+  ``force_torque`` adds those contacts back (:class:`roqsim.flex.FlexContactWrench`), so a soft tool
+  pressing a table and a rigid tool pressing a soft object read what a sensor at that cut measures.
+  A flex lying partly inside the sensed subtree is refused, since its contacts cannot be split
+  across the cut -- the measurement is in the plugin's docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
 outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
