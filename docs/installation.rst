@@ -27,8 +27,7 @@ roqsim consists of multiple packages:
   scenario-execution's own convention rather than ours, because that is the project it plugs into.
 * ``ros2_ws/`` — colcon packages: ``roqsim_ros_bridge`` (the ROS 2 bridge), ``roqsim_nav2_example``
   (a nav2 example + test), ``roqsim_create3_toolbox`` (the Create 3 / TurtleBot 4 stack, see
-  :doc:`create3_stack`), ``roqsim_nav_ros`` with its ``roqsim_nav_interfaces``, and
-  ``roqsim_walker_ros``.
+  :doc:`create3_stack`), and ``roqsim_nav_ros`` with its ``roqsim_nav_interfaces``.
 
 Install what you need: every package pulls its own dependencies, and ``make venv`` installs them all
 in editable mode.
