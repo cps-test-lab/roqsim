@@ -2401,6 +2401,17 @@ numbers (``roqsim export moveit --max-velocity … --max-acceleration …``): a 
 the limits arrives late and is graded by ``goal_time_tolerance``. The module docstring of
 ``roqsim_manipulation.plugins.arm_controller`` has the profile and what each command path does.
 
+**A planned trajectory, in-process.** A plugin that plans a whole motion -- a time-optimal profile, a
+strike, a replayed demonstration -- hands it to ``ArmHandle.follow_trajectory(names, times, positions,
+velocities, accelerations)``. The controller samples it on simulated time every step (quintic between
+knots carrying accelerations, as ros2_control's controller does), holds the last knot, and gives way
+to any other command. Unlike the bridge's ``follow_joint_trajectory`` handler, which feeds waypoints
+on wall-clock time, this is deterministic in a stepped run. A position servo handed only the positions
+trails them at speed by ``d·qd/p``; ``trajectory_feedforward: velocity`` cancels that, and ``dynamics``
+also adds the inverse dynamics, so a joint swept at a real arm's speed limit tracks to a hundredth of
+a degree. Where tracking is part of what a trial measures, still report the gains and the feed-forward
+with the setup.
+
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
