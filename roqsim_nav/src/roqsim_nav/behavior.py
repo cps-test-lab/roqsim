@@ -234,7 +234,7 @@ class NavCore:
         st.path_idx = 0
         return True
 
-    def follow_path(self) -> bool:
+    def follow_path(self, depth: int = 0) -> bool:
         """Steer toward the next path point; advance through the path and on to the next goal
         (loop-aware). Resets the recovery counter on progress."""
         st = self.st
@@ -263,7 +263,20 @@ class NavCore:
                         return True
                     st.path = None
                     st.path_idx = 0
-                    return self.ensure_path() and self.follow_path()
+                    if not self.ensure_path():
+                        return False
+                    # Bounded, as follow_path_pure_pursuit is: a looping route whose every goal is
+                    # already within reach (one waypoint looped onto itself) would otherwise pass
+                    # goals for ever and blow the Python stack from inside a physics step.
+                    if depth >= _MAX_GOALS_PER_TICK:
+                        logger.warning(
+                            "navigator passed %d goals in one tick; holding. Every goal is reading "
+                            "as already reached, which is a route with nowhere to go, not progress.",
+                            depth,
+                        )
+                        self.pref_vel = np.zeros(2)
+                        return True
+                    return self.follow_path(depth=depth + 1)
                 st.path_idx += 1
             else:
                 break

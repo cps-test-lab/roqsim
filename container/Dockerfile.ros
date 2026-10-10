@@ -64,9 +64,12 @@ RUN apt-get update && \
 
 # Pin numpy to the version ROS/apt already provides so pip never tries to replace the debian-managed
 # numpy (which has no RECORD and can't be uninstalled) or upgrade it to a numpy-2 ABI that would break
-# rclpy/nav2. PIP_CONSTRAINT makes every pip install below honour this automatically.
+# rclpy/nav2. cryptography is pinned the same way: the base image ships it for sros2, equally without a
+# RECORD, and a dependency of fastmcp otherwise resolves to a release that needs a newer one.
+# PIP_CONSTRAINT makes every pip install below honour this automatically.
 RUN NUMPY_VER=$(python3 -c 'import numpy; print(numpy.__version__)') && \
-    echo "numpy==${NUMPY_VER}" > /etc/pip-constraints.txt && \
+    CRYPTOGRAPHY_VER=$(python3 -c 'import cryptography; print(cryptography.__version__)') && \
+    printf 'numpy==%s\ncryptography==%s\n' "${NUMPY_VER}" "${CRYPTOGRAPHY_VER}" > /etc/pip-constraints.txt && \
     cat /etc/pip-constraints.txt
 ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
 

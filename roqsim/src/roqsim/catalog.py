@@ -66,9 +66,10 @@ from pathlib import Path
 import yaml
 
 from roqsim import exit_status
+from roqsim.entry_points import entry_points
 from roqsim.manifest import manifest_license, manifest_path
 from roqsim.models import ENTRY_POINT_GROUP as MODELS_GROUP
-from roqsim.models import _entry_points, _provider_dirs
+from roqsim.models import _provider_dirs
 from roqsim.world import _world_entry_points, available_worlds
 
 #: Files that ship beside a model to say where it came from. Reported rather than read: a model
@@ -148,7 +149,7 @@ def list_models() -> dict:
     visible instead of merely absent.
     """
     items: list[dict] = []
-    for ep in sorted(_entry_points(MODELS_GROUP), key=lambda e: e.name):
+    for ep in sorted(entry_points(MODELS_GROUP), key=lambda e: e.name):
         package = _dist_name(ep)
         try:
             module = import_module(

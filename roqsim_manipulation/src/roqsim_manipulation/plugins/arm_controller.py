@@ -574,7 +574,9 @@ class ArmControllerPlugin(Plugin):
                 if jp + joint not in self._ctrl_names:
                     raise RuntimeError(
                         f"arm_controller[{self.arm}]: `{key}` names joint {joint!r}, which is not "
-                        f"one of this arm's controllable joints {self._ctrl_names}"
+                        f"one of this arm's controllable joints "
+                        f"{[n[len(jp) :] for n in self._ctrl_names]} (named as `joints:` names "
+                        f"them, without `joint_prefix`)"
                     )
                 limits[jp + joint] = float(v)
 
@@ -864,6 +866,10 @@ class ArmControllerPlugin(Plugin):
             self._target[jn] = float(ang)
             self._goal[jn] = float(ang)
             self._sp_vel[jn] = 0.0
+        # The stance is state the hooks after this one read in the same reset -- a Cartesian
+        # controller anchors on the tool's pose -- so the kinematics are brought up to date here,
+        # not left to the engine's closing forward pass, which runs after every plugin's on_reset.
+        mujoco.mj_forward(m, ctx.data)
 
     def _hold_where_targeted(self) -> None:
         """Make every joint's goal its held target, at rest: nothing is on its way anywhere."""

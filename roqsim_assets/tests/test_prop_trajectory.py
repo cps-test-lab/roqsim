@@ -184,3 +184,25 @@ def test_non_looping_path_finishes_and_stops(square_csv):
         plugin.pre_step(ctx)
         mujoco.mj_step(model, data)
     assert np.allclose(_stage_xy(data, plugin), end, atol=1e-4), "stage moved after finishing"
+
+
+def test_a_zero_length_path_is_refused(tmp_path):
+    """It could never move or finish, so a trial gated on its progress would wait for ever."""
+    p = tmp_path / "still.csv"
+    p.write_text("10,10\n10,10\n10,10\n")
+    with pytest.raises(RuntimeError, match="zero length"):
+        _rig(p)
+
+
+@pytest.mark.parametrize("start_index", [4, 99])
+def test_a_start_index_past_the_path_is_refused(square_csv, start_index):
+    """Clamping it would run a different, translated path under the same config."""
+    with pytest.raises(RuntimeError, match="start_index"):
+        _rig(square_csv, start_index=start_index)
+
+
+def test_a_negative_start_index_is_refused():
+    errors = PropTrajectoryPlugin({"path": "x.csv"}).validate_config(
+        {"path": "x.csv", "start_index": -3}
+    )
+    assert any("start_index" in e for e in errors)
