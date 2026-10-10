@@ -134,7 +134,7 @@ any sim time is reproducible from that time alone, as the noise is. Linear rathe
 walk for that reason -- a walk's value depends on every step before it -- and because a trial lasts
 minutes, over which a thermal drift is close to a line. ``range_*`` saturates each raw channel, bias
 and drift included, as the transducer's range does; the noise is added after, in the reported
-frame, as before. All default to zero or none.
+frame. All default to zero or none.
 
 **Noise is per-sensor config, deliberately.** There is no generic error-model framework in roqsim (see
 ``docs/architecture.rst`` §9); a sensor that wants noise declares its own, as the lidar's
@@ -479,7 +479,7 @@ class ForceTorquePlugin(Plugin):
         """This episode's bias and drift rate per channel, drawn once from the episode's key."""
         episode = int(self._ctx.episode)
         if self._transducer is None or self._transducer_episode != episode:
-            rng = self._ctx.rng_for(f"ft-transducer:{self.name}", per_episode=True)
+            rng = self._ctx.rng_for(self.draw_key("transducer"), per_episode=True)
             self._transducer = (
                 rng.uniform(-self.bias_f, self.bias_f, 3),
                 rng.uniform(-self.bias_t, self.bias_t, 3),
