@@ -117,8 +117,7 @@ ARM_JOINTS = tuple(
 # Position-actuator gains by joint group. STARTING values, not vendor data: upstream ships no arm PD
 # gains (the Menagerie G1 README says outright that its position actuators "need tuning"). Scaled to
 # each group's actuatorfrcrange -- the waist carries the whole upper body, the wrists have only
-# +-5 Nm. These are a substrate artifact and are recorded as such in the port log; expect to revisit
-# them after the drive test.
+# +-5 Nm. These are a substrate artifact; expect to revisit them after the drive test.
 GAINS = {
     "waist": (300.0, 10.0),
     "shoulder": (120.0, 4.0),

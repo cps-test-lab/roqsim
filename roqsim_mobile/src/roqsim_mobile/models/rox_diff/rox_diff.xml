@@ -13,8 +13,7 @@
     THE WHEEL INERTIA IS FOUR TIMES TOO LARGE, and provably so rather than suspiciously: the declared
     izz 0.05625 at 5 kg is 1/2 m r^2 for r = 0.15 m, the wheel's DIAMETER used where its radius
     belongs. The collision sphere, the 0.075 m axle height and the 0.1499 m visual mesh all agree the
-    radius is 0.075 m. The vendor's value is kept so the mass audit checks the description; see the
-    port log.
+    radius is 0.075 m. The vendor's value is kept so the mass audit checks the description.
 
     THE MASSES ARE THE VENDOR'S PLACEHOLDERS. Every inertial in this description is commented "These
     are not accurate value", and the ROX data sheet publishes payload (300 kg) but no dead weight, so
@@ -56,8 +55,8 @@
              the vertical split between wheels and casters is indeterminate, and MuJoCo settles it
              with the great majority of the weight on the four casters rather than the drive tyres.
              At the 0.04 its siblings carry, caster drag then EXCEEDS the traction those tyres can
-             generate and the robot under-rotates by 11% at 0.3 rad/s. See the port log: the load
-             split is the finding, this is the coefficient that is honest about it.
+             generate and the robot under-rotates by 11% at 0.3 rad/s. The load split is the
+             finding, this is the coefficient that is honest about it.
 
              The sphere itself is the caster WHEEL from the vendor's mesh, not their collision
              primitive -- see CASTER_WHEEL_RADIUS in the generator for why theirs cannot be used. -->

@@ -106,7 +106,7 @@ def test_the_caster_masses_are_upstream_nonsense():
         casters = 4 * CASTER_MASS
         assert casters / TOTAL_MASS > 0.5, (
             f"{casters} kg of {TOTAL_MASS} kg is in the casters; if that share has changed the "
-            f"port log's 'navigation, not dynamics' boundary needs revisiting")
+            f"model's 'navigation, not dynamics' boundary needs revisiting")
     finally:
         engine.shutdown()
 

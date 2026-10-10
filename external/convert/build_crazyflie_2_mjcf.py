@@ -39,8 +39,8 @@ Five deltas. Four are roqsim conventions; the fifth is a tuning upstream asks fo
    (0.066 N is the per-rotor hover thrust, 0.027 kg * 9.81 / 4, so the differential is what the
    rotors can actually give up or add about hover; 0.0325 m is the 92 mm motor-to-motor diagonal
    resolved for an X configuration.) The collective-thrust range is left at upstream's [0, 0.35] N,
-   which is a thrust-to-weight of 1.32 -- low for a Crazyflie but not disabling, and noted in the
-   port log rather than changed.
+   which is a thrust-to-weight of 1.32 -- low for a Crazyflie but not disabling, and noted
+   here rather than changed.
 
 The collision geometry is deliberately NOT touched. Upstream already ships a 32-piece convex
 decomposition of the airframe, which is exactly what the porting playbook asks for -- the xArm's
@@ -64,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 
 MENAGERIE_URL = "https://github.com/google-deepmind/mujoco_menagerie.git"
-# Pinned; the port log and README licence table move with it.
+# Pinned; the README licence table moves with it.
 MENAGERIE_COMMIT = "da76818e269b82289eba39808e2fb91d679d6994"
 MENAGERIE_SUBDIR = "bitcraze_crazyflie_2"
 

@@ -10,7 +10,7 @@ Shares the pinned source, Collada pipeline, palette convention and MuJoCo quirks
 through :mod:`neobotix`; only the body tree, the drive and the actuators are here.
 
 **Read the mass table before using this model for dynamics.** The description's inertials are not
-trustworthy, and it is possible to say why rather than merely suspect it -- see the port log. Each
+trustworthy, and it is possible to say why rather than merely suspect it. Each
 38 mm caster sphere is declared at **12.7 kg**, which is exactly the mass of the MPO-700's steering
 modules in the same repository: 50.8 kg of an 84.4 kg robot sits in four casters. The geometry and
 kinematics are sound; the mass distribution is upstream copy-paste.
@@ -141,7 +141,7 @@ TEMPLATE = """<mujoco model="mp_400">
     THE MASSES ARE NOT TRUSTWORTHY, and provably so rather than suspiciously: each 38 mm caster
     sphere is declared at 12.7 kg, which is exactly the mass of the MPO-700's steering modules in the
     same repository. 50.8 kg of this 84.4 kg robot sits in four casters. Geometry and kinematics are
-    sound; use this model for navigation, not for dynamics. See the port log.
+    sound; use this model for navigation, not for dynamics.
 
     The casters are FIXED in the description - passive spheres, not articulated wheels - so they
     slide rather than roll. They carry a low-friction contact class with `priority`, without which

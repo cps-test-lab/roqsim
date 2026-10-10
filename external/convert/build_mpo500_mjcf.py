@@ -19,7 +19,7 @@ so unlike the MPO-700 the wheels are articulated without our intervention.
 **Not consolidated with `build_mpo700_mjcf.py`, deliberately.** The two share the wrapper pattern and
 the mesh pipeline but differ in body structure (steer layer or not), and the two remaining Neobotix
 platforms are *differential*, a third shape again. Consolidating two of four shapes now and reworking
-for the third is worse than consolidating once when all three are known -- see the port log.
+for the third is worse than consolidating once when all three are known.
 
 **The two SICK microScan3s are not in this model.** The manifest mounts the ``sick_microscan3`` device
 model at each of the vendor's ``lidar_1_joint`` and ``lidar_2_joint``, and those devices carry the

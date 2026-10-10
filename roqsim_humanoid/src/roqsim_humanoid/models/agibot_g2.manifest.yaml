@@ -18,14 +18,14 @@ license: LICENSE.genie_sim
 components:
   # Base: planar diff-drive over the four wheel roll actuators (left pair / right pair together).
   # Limits are a documented assumption (G2 is a slow indoor manipulator; the source gives no base
-  # kinematic limits). slip_factor compensates MuJoCo skid-steer scrub -- calibrated, see port log.
+  # kinematic limits). slip_factor compensates MuJoCo skid-steer scrub -- calibrated.
   - diff_drive:
       wheel_radius: 0.07             # wheel collision cylinder radius (source URDF)
       wheel_separation: 0.436        # track = 2 * 0.218 m (source URDF)
       max_linear_vel: 0.5            # assumption: slow indoor mobile manipulator
-      max_angular_vel: 0.6           # assumption; in-place yaw is scrub-limited (see port log)
+      max_angular_vel: 0.6           # assumption; in-place yaw is scrub-limited
       wheel_accel_limit: 8.0         # rad/s^2-ish ramp; low values never reach the turn command
-      slip_factor: 6.0               # skid-steer ICR slip compensation; calibrated (see port log)
+      slip_factor: 6.0               # skid-steer ICR slip compensation; calibrated
       left_actuators:  [m_112_chassis_lwheel_front_joint2, m_122_chassis_lwheel_rear_joint2]
       right_actuators: [m_132_chassis_rwheel_front_joint2, m_142_chassis_rwheel_rear_joint2]
       left_joints:  [idx112_chassis_lwheel_front_joint2, idx122_chassis_lwheel_rear_joint2]
@@ -45,7 +45,7 @@ components:
         idx62_arm_r_joint2: -1.6
         idx64_arm_r_joint4: 0.0
   # 2D nav lidar. The source has no lidar; site pose is a documented assumption (chassis front,
-  # 0.30 m) -- see port log. Publishes /scan for nav2 exactly like the G1 / turtlebot.
+  # 0.30 m). Publishes /scan for nav2 exactly like the G1 / turtlebot.
   - lidar:
       site: lidar
       rays: 360

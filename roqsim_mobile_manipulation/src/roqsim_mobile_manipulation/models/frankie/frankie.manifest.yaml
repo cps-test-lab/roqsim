@@ -45,8 +45,8 @@ components:
       gripper_close: 0.0
       velocity_commands: true       # joint-velocity input (rad/s), integrated into the held target
       stream_commands: true         # also keep the high-rate position-stream path available
-      # Rest stance = `qr`, the ready pose the Robotics Toolbox Frankie model ships (see the port log
-      # for the source). Declaring it is NOT optional here: spawn_robot sets only the base pose,
+      # Rest stance = `qr`, the ready pose the Robotics Toolbox Frankie model ships. Declaring it
+      # is NOT optional here: spawn_robot sets only the base pose,
       # so without a stance the arm falls back to qpos0 (all joints zero) -- a pose where the stock
       # Panda's link5 and hand collision geoms overlap by 0.030 m. `rest` seeds the spawn qpos AND the
       # held target, and is re-seated on reset so repeated trials start identically.

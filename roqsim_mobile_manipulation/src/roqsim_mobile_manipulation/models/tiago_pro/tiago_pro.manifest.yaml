@@ -28,8 +28,8 @@ components:
   # omni_drive_controller/OmniDriveController on it), so it strafes -- which is why it uses
   # `omni_drive` and not `diff_drive`. The mecanum rollers are not modelled; the commanded twist is
   # applied to the base free joint and the wheels are near-frictionless load carriers. That is a
-  # substrate approximation with real consequences (no wheel slip, hence no odometry drift) --
-  # see the port log's drive-model section before using this base for a traction or odometry study.
+  # substrate approximation with real consequences (no wheel slip, hence no odometry drift)
+  # for any traction or odometry study run on this base.
   # ---------------------------------------------------------------------------------------------
   - omni_drive:
       base_joint: base_free
@@ -45,7 +45,7 @@ components:
       # it, pal-robotics/omni_drive_controller, is not public, so the formula cannot be checked.
       # Guessing it would silently change every achievable speed. Consequence: a diagonal here can
       # reach 1.41 m/s where the real stack is slower. `omni_drive` supports
-      # `max_combined_linear_vel:` if you want the resultant capped; see the port log (A6).
+      # `max_combined_linear_vel:` if you want the resultant capped.
       max_angular_vel: 2.09         # mobile_base_controller: angular.z max_velocity (120 deg/s)
       accel_limit: 1.0              # mobile_base_controller: linear max_acceleration
       angular_accel_limit: 2.09     # mobile_base_controller: angular.z max_acceleration
@@ -82,11 +82,11 @@ components:
   # whole linkage. `gripper_actuator` names its POSITION actuator, which arm_controller then holds
   # as an auxiliary actuator and exposes as a GripperCommand action.
   #
-  # Aperture, measured on the model between the FINGERTIP PAD inner faces (the port log has the full
-  # travel -> aperture table and the two ways of measuring it wrong): travel 0.070 = 59.7 mm (fully
-  # open), 0.030 = 29.5 mm, 0.000 = 5.0 mm. Usable object width is therefore <~ 55 mm. Command a travel
-  # just inside the object's width for a force-limited squeeze (capped at the URDF's 10 N) -- that is
-  # what holds it; commanding 0 asks for the whole remaining overshoot at full force.
+  # Aperture, measured on the model between the FINGERTIP PAD inner faces: travel 0.070 = 59.7 mm
+  # (fully open), 0.030 = 29.5 mm, 0.000 = 5.0 mm. Usable object width is therefore <~ 55 mm.
+  # Command a travel just inside the object's width for a force-limited squeeze (capped at the
+  # URDF's 10 N) -- that is what holds it; commanding 0 asks for the whole remaining overshoot at
+  # full force.
   # ---------------------------------------------------------------------------------------------
   - arm_controller:
       joints: [arm_left_1_joint, arm_left_2_joint, arm_left_3_joint, arm_left_4_joint,
@@ -152,7 +152,7 @@ components:
   # encloses both scan origins, while PAL's visual body (base_link.stl) is a 0.500 x 0.318 m waist
   # across that band. The model's box takes the waist's extent, so each fan leaves the base where the
   # real one does. A scanner skips only its own housing; nothing of the base is in either fan. That
-  # box is a deviation from PAL's collision geometry -- see the port log.
+  # box is a deviation from PAL's collision geometry.
   #
   # Topics are PAL's `ros_topic`s, relative, so the spawn's namespace scopes them.
   # ---------------------------------------------------------------------------------------------

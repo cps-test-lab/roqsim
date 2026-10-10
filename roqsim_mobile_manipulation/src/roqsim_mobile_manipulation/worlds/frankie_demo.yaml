@@ -17,7 +17,7 @@
 sim:
   pacing: realtime         # realtime | asap | {factor: N}
   # 0.5 ms, not the 2 ms default. The stock panda's PD servos ring at 2 ms and inject end-effector
-  # acceleration noise of ~0.94 m/s^2 at rest (measured; see the port log, A1) -- larger than most
+  # acceleration noise of ~0.94 m/s^2 at rest (measured) -- larger than most
   # published smoothness signals, so anything measuring arm acceleration or effort needs this step.
   # Harmless for a demo, and it is the step the port was verified at, so the demo shows the real
   # dynamics rather than a cheaper approximation of them.

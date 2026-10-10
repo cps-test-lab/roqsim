@@ -1,12 +1,12 @@
 # external/convert — per-model conversion & build scripts
 
 One-off, per-model mesh conversion / model-build scripts live **here**, never inside a
-`roqsim_*/tools/` directory. The robot-family and sensor packages ship only the model, meshes,
-port log, and runtime policy — they stay clean of rebuild tooling, which is a `external/` concern
+`roqsim_*/tools/` directory. The robot-family and sensor packages ship only the model, meshes
+and runtime policy — they stay clean of rebuild tooling, which is a `external/` concern
 (these run alongside the fetched-asset converters driven by `external/external_resources.py` and
 `external/external_assets.yaml`).
 
-- **New per-model converter → write it here** and reference it from docs/port logs as
+- **New per-model converter → write it here** and reference it from docs as
   `external/convert/<script>.py` (paths are relative to the roqsim dir).
 - A script that needs to anchor back into a package must go up through `external/`'s parent (a
   sibling of the packages), e.g. `Path(__file__).resolve().parents[2] / "<pkg>/src/..."` — not

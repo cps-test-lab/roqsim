@@ -41,7 +41,7 @@ MANIFEST = MODEL_DIR / "frankie.manifest.yaml"
 # From the source URDF (authoritative)
 MOUNT = np.array([0.15, 0.0, 0.38])
 BOX = np.array([0.68, 0.47, 0.38])
-# Substrate assumptions (port log)
+# Substrate assumptions
 WHEEL_R = 0.0625
 TRACK = 0.36
 ARM_REST = (0.0, -0.3, 0.0, -2.2, 0.0, 2.0, math.pi / 4)
@@ -211,7 +211,7 @@ def test_a4_footprint_matches_declared_box(rig):
     """The simulated chassis footprint equals the URDF's declared collision box in x/y.
 
     Planner-facing and simulated footprints must agree. Height deliberately
-    differs: the box is raised clear of the wheels — see the port log.
+    differs: the box is raised clear of the wheels.
     """
     model, _, *_ = rig
     half = model.geom_size[model.geom("chassis").id]

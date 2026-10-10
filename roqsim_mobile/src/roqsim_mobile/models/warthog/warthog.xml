@@ -10,8 +10,7 @@
 
     The largest robot in roqsim_mobile: 260 kg against the Husky's 50, on 0.3 m wheels over a
     1.136 m track. It is a skid-steer, so it turns by scrubbing and carries a slip_factor - see the
-    manifest, where the measured achieved/commanded ratios are recorded, and the port log for why
-    the vendor's own number could not simply be adopted.
+    manifest, where the measured achieved/commanded ratios are recorded.
 
     The rocker/differential suspension is FIXED in this description. Nothing articulates but the
     four wheels, so a Warthog crossing rough ground here will not articulate its rockers the way the

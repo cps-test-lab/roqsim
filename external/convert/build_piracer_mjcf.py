@@ -54,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/piracer"
 
 #: Physical quantities the upstream description does not honestly supply, so they come from the
-#: hardware instead. Each carries how it was obtained, and the manifest and port log repeat it for as
+#: hardware instead. Each carries how it was obtained, and the manifest repeats it for as
 #: long as it holds: ASSUMED is a placeholder awaiting a measurement, VENDOR is derived from a
 #: published component figure and is stated as the bound it is.
 MEASURED = {
@@ -396,7 +396,7 @@ def main() -> int:
     print(f"wrote {target.relative_to(ROOT)}")
     for key, (value, provenance) in MEASURED.items():
         if provenance != "MEASURED":
-            print(f"  note: {key}={value} is {provenance}, not measured -- see the port log")
+            print(f"  note: {key}={value} is {provenance}, not measured -- see the manifest")
     return 0
 
 
