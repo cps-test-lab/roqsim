@@ -516,7 +516,7 @@ class WorldAccess(ABC):
 
     @abstractmethod
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
-        """Send ``name`` through ``goal_poses`` (world-frame ``(x, y, yaw)``). Never blocks.
+        """Send ``name`` through ``goal_poses`` (world-frame ``(x, y)``). Never blocks.
 
         ``goal_poses`` must not be empty; running the route the entity was configured with is
         :meth:`start_route`, not a route with no poses.
