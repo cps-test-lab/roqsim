@@ -229,6 +229,12 @@ Solver options (``sim.solver`` and friends)
 
 ``sim`` carries five optional passthroughs to MuJoCo's ``<option>``: ``solver`` (``newton``/``cg``/``pgs``), ``iterations``, ``ls_iterations``, ``noslip_iterations`` and ``impratio``. Each is left at MuJoCo's default unless a world sets it, because the right value is a property of the *experiment*, not of the framework: a navigation world wants the cheapest solve that keeps wheels stable, a manipulation world needs contacts that hold.
 
+The values the engine writes onto ``<option>``, and ``pacing``, are checked when the world loads,
+before anything builds: an unknown ``solver``, ``integrator`` or ``cone`` name, a ``gravity`` or
+``wind`` that is not three numbers, an iteration count that is not a whole number, a negative
+``impratio``, ``density`` or ``viscosity``, a ``timestep`` that is not positive and a ``pacing``
+factor that is not a positive number are refused naming the key.
+
 The integrator is ``sim.integrator``. Its default, ``auto``, resolves after every plugin's ``build``
 and before compile: to ``discrete`` for a model with a flex that has elasticity or passive contact,
 which MuJoCo refuses to compile under ``implicit``/``implicitfast``, and to ``implicitfast`` for any
