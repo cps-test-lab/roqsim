@@ -3,7 +3,7 @@ the model's wall footprints (:mod:`~roqsim_nav.obstacles`).
 
 The grid is just the raster the :mod:`~roqsim_nav.planner` A* searches:
 ``occupied[r, c]`` is ``True`` where a wall covers that cell. It is derived from
-the same polygons fed to ORCA, so the planner avoids exactly what ORCA does.
+the same polygons fed to the avoidance model, so both layers avoid the same walls.
 Row 0 is the top; ``origin`` is the world position of the grid's lower-left corner.
 """
 

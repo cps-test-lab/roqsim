@@ -1,10 +1,10 @@
 """Grid-based global path planning on an :class:`~roqsim_nav.occupancy.OccupancyGrid`.
 
-ORCA only avoids *imminent* collisions; it cannot route around a wall. This is the
-global layer: 8-connected A* over the (inflated) occupancy grid finds a wall-safe
-cell path to a goal, then line-of-sight string-pulling collapses it to a handful
-of sparse world waypoints the behaviour tree / ORCA can chase. The two layers are
-the textbook "global planner + local controller" split.
+Local avoidance only handles *imminent* collisions; it cannot route around a wall.
+This is the global layer: 8-connected A* over the (inflated) occupancy grid finds a
+wall-safe cell path to a goal, then line-of-sight string-pulling collapses it to a
+handful of sparse world waypoints the behaviour tree follows. The two layers are the
+textbook "global planner + local controller" split.
 
 The grid itself holds static walls and never changes. **Blockages are the one thing a planner knows
 that its grid does not**: a mover with ``avoidance.reroute`` reports where it was stopped,

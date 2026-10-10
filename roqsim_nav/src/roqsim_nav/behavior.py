@@ -1,8 +1,8 @@
-"""Per-walker behaviour: navigate to goals, recover when stuck.
+"""Per-mover behaviour: navigate to goals, recover when stuck.
 
-The high-level decisions a walker makes each step live here, on top of the controller's global plan
-(where to route) and ORCA (how to avoid collisions right now). The behaviour is a small py-trees
-tree::
+The high-level decisions a mover makes each tick live here, between the global plan (where to
+route) and the local avoidance model (how to avoid collisions right now). The behaviour is a small
+py-trees tree::
 
     Selector "root"
     |-- Sequence "recovery"     (higher priority)
@@ -13,8 +13,8 @@ tree::
         '-- FollowPath          steer to the next path point; advance goals (loop)
 
 All leaves are thin wrappers over :class:`NavCore`, which holds the state and the actual logic. Each
-tick the chosen branch writes ``NavCore.pref_vel`` (the ORCA preferred velocity); the controller
-reads it after ticking.
+tick the chosen branch writes ``NavCore.pref_vel`` (the preferred velocity the avoidance model
+shapes); the navigator reads it after ticking.
 """
 
 from __future__ import annotations
@@ -42,9 +42,9 @@ _PROGRESS_EPS = 0.01
 
 @dataclass
 class NavParams:
-    """Navigation / recovery tuning (sane defaults; overridable per walker)."""
+    """Navigation / recovery tuning (sane defaults; overridable per mover)."""
 
-    inflation_radius: float = 0.0  # A* clearance; defaults to the walker radius
+    inflation_radius: float = 0.0  # A* clearance; defaults to the mover's radius
     waypoint_radius: float = 0.3  # "reached" radius for intermediate points
     stuck_time: float = 1.5  # s of no progress before declaring stuck
     stuck_eps: float = 0.10  # m travelled within stuck_time -> stuck
