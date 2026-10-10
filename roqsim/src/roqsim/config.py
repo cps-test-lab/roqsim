@@ -714,10 +714,8 @@ def load_config(
     """
     # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. Resolved only by
     # `roqsim sim` and the scenario adapter, the ref would be a property of those two entry points
-    # rather than of a world -- and `roqsim-export-web` (which no human types, but which a consumer's
-    # scene cache runs to build a run view's geometry) would get the ref verbatim and report
-    # "world config /abs/cwd/pick_cell:pick_cell_ros2 does not exist". Downstream that surfaces
-    # as "no 3D geometry" for every run, so the whole batch looks broken rather than one caller.
+    # rather than of a world, and every other loader (an exporter, a scene cache) would read it as a
+    # path that does not exist.
     #
     # Guarded on the path not existing, the same way `extends` and `sim.world` decide: a real file
     # whose name contains a colon is still a file.
@@ -842,11 +840,8 @@ def world_sources(path: str | Path, *, skipped: list | None = None) -> list[Path
 def _plugin_sources(cfg, leaf: Path, problems: list) -> list:
     """What the world's components say they point at, asked component by component.
 
-    Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts. It did not
-    use to: expansion happened inside the engine, so this walked the declared entries only, and
-    ``prop_trajectory`` -- whose ``expand`` exists purely to hand its ``sources()`` the directory the
-    world lives in -- resolved its CSV against the caller's working directory instead, against what
-    its own docstring promises.
+    Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts, resolved
+    against the directory the world lives in rather than the caller's working directory.
 
     Still **per spec, skipping what does not resolve**: this function's contract is best-effort (see
     :func:`world_sources`), the same tolerance the ``extends`` walk has, and a ROS world in a
@@ -1650,10 +1645,7 @@ def with_transport(
     makes it standalone-runnable. Transport is a property of *how a run is deployed*,
     not of the experiment, so it is added here rather than authored into the world.
 
-    This replaces hand-rolled rewrites that appended the same plugin to a temporary copy
-    of the world -- one of them implemented twice, in bash and in Python, in a single
-    experiment. Those also had to re-resolve the scene's relative path because the copy
-    lived elsewhere; nothing is copied here, so that problem does not arise.
+    Nothing is copied, so the world's relative paths resolve against its own directory.
 
     ``control`` additionally serves the ``simulation_interfaces`` control plane, which is
     what a scenario's ``osc.sim`` actions are clients of. Off by default: it is a handful
@@ -1804,8 +1796,7 @@ def expand_document(
     Runs while the document loads, so what a consumer gets back is what will actually run: a model's
     manifest components are in the list, not conjured later inside the engine. That is what lets
     ``roqsim scenes describe`` name a sensor the document never declared, and what makes a
-    manifest-supplied plugin's ``sources()`` visible to :func:`world_sources` -- which it was not,
-    so a prop trajectory's CSV resolved against the caller's working directory.
+    manifest-supplied plugin's ``sources()`` visible to :func:`world_sources`.
 
     Injected specs (a spawn plugin's manifest) land right after the entry that produced them, so
     build order still falls out of the document's shape. Whether to skip a default the document
