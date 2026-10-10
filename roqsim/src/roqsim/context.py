@@ -238,6 +238,33 @@ class Endpoint:
     #: default mapping; a hint block of ``None`` keeps it off that backend. Set for every decorated
     #: endpoint. ``False``: served only by a backend whose hint block it carries.
     transport: bool = False
+    #: In-process consumers holding this endpoint open (:meth:`claim`). A transport's subscriber count
+    #: cannot see a consumer that reads ``read`` directly -- another plugin on the physics thread -- so
+    #: such a consumer says so here, and a producer that skips work while nobody listens asks
+    #: :meth:`wanted`, which counts it.
+    claims: int = 0
+
+    def claim(self) -> None:
+        """Declare an in-process consumer of this endpoint; the producer keeps producing for it.
+
+        Pair it with :meth:`release`. Without a claim, a producer gated on ``has_subscribers`` -- a
+        camera, whose render a bridge switches off while no transport subscriber listens -- leaves
+        an in-process reader with nothing, or the last frame, whenever a bridge is loaded.
+        """
+        self.claims += 1
+
+    def release(self) -> None:
+        if self.claims <= 0:
+            raise RuntimeError(f"endpoint {self.name!r}: release() without a matching claim()")
+        self.claims -= 1
+
+    def wanted(self) -> bool:
+        """Whether anyone consumes this endpoint: an in-process claim, or a transport subscriber.
+
+        ``has_subscribers is None`` (no transport could tell) counts as yes, so an endpoint stays live
+        by default.
+        """
+        return self.claims > 0 or self.has_subscribers is None or bool(self.has_subscribers())
     #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
     #: :func:`endpoint_kind` infers from its direction and hints.
     kind: str = ""

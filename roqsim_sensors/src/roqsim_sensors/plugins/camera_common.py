@@ -224,6 +224,8 @@ class CameraPlugin(Plugin):
           cy: null
           distortion: null       # [k1, k2, p1, p2, k3] -- WARPS the render and publishes these
                                  #   coefficients, so camera_info keeps describing its own pixels
+          noise: null            # {gaussian_sigma: grey levels, blur_sigma: px}: the colour image's
+                                 #   blur, then additive noise from ctx.rng_for (after `distortion`)
           rate_hz: <DEFAULT_RATE_HZ>
           frame_id: <DEFAULT_FRAME_ID>
           color: true            # publish the colour stream at all -- see PUBLISHES_COLOR
@@ -271,6 +273,10 @@ class CameraPlugin(Plugin):
         self._fovy_cfg = self.config.get("fovy")
         self._intr_cfg = {k: self.config.get(k) for k in ("fx", "fy", "cx", "cy")}
         self._distortion_cfg = self.config.get("distortion")
+        noise = self.config.get("noise") or {}
+        self._noise_sigma = float(noise.get("gaussian_sigma", 0.0))
+        self._blur_sigma = float(noise.get("blur_sigma", 0.0))
+        self._stamp: float | None = None
         # The forward-distortion remap, built once in configure() -- see _build_distortion_map().
         self._dist_map: tuple[np.ndarray, np.ndarray] | None = None
         self._prefix = ""
@@ -295,6 +301,16 @@ class CameraPlugin(Plugin):
         for key in ("fx", "fy"):
             if config.get(key) is not None and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
+        noise = config.get("noise")
+        if noise is not None:
+            if not isinstance(noise, dict) or set(noise) - {"gaussian_sigma", "blur_sigma"}:
+                errors.append("'noise' is {gaussian_sigma: <grey levels>, blur_sigma: <pixels>}")
+            else:
+                for k, v in noise.items():
+                    if float(v) < 0:
+                        errors.append(f"'noise.{k}' must be >= 0")
+                if float(noise.get("blur_sigma", 0) or 0) > 0 and _cv2_import_error() is not None:
+                    errors.append(f"'noise.blur_sigma' needs OpenCV, which is not installed ({_cv2_import_error()})")
         distortion = config.get("distortion")
         if distortion is not None:
             if not isinstance(distortion, (list, tuple)) or len(distortion) != 5:
@@ -359,7 +375,7 @@ class CameraPlugin(Plugin):
     )
     def image(self) -> Image | None:
         """The colour frame; nothing before the first capture of a trial."""
-        return None if self._rgb is None else Image(self._rgb, "rgb8")
+        return None if self._rgb is None else Image(self._rgb, "rgb8", self._stamp)
 
     # Same payload as `image` -- one array, two wire formats. The bridge's converter owns the codec,
     # so this plugin never imports one, and `lazy` means the encode is paid only while something
@@ -416,14 +432,16 @@ class CameraPlugin(Plugin):
         if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return False
         gates = self._gate_endpoints()
-        # `has_subscribers is None` = no introspection available (no bridge, or a backend that cannot
-        # tell); then render, because the alternative is a sensor that never produces anything.
-        return any(ep.has_subscribers is None or ep.has_subscribers() for ep in gates)
+        # `wanted()`: an in-process claim, a transport subscriber, or no transport able to tell
+        # (`has_subscribers is None`) -- then render, because the alternative is a sensor that never
+        # produces anything.
+        return any(ep.wanted() for ep in gates)
 
     def post_step(self, ctx: SimContext) -> None:
         if not self._due(ctx):
             return
         self._last_capture = ctx.sim_time
+        self._stamp = float(ctx.sim_time)
         if self._frames is None:
             self._frames = FrameRenderer(
                 ctx.model, self._intr.width, self._intr.height, camera=self._cam_id
@@ -448,7 +466,25 @@ class CameraPlugin(Plugin):
                     cv2.INTER_LINEAR,
                     borderMode=cv2.BORDER_CONSTANT,
                 )
+            if self._blur_sigma > 0 or self._noise_sigma > 0:
+                self._rgb = self._degrade(ctx, self._rgb)
             self._capture_extra(ctx, r)
+
+    def _degrade(self, ctx: SimContext, rgb: np.ndarray) -> np.ndarray:
+        """Blur, then additive Gaussian noise: the colour stream's own errors, after the lens.
+
+        Drawn from ``ctx.rng_for`` keyed on this camera, so a frame's noise is a function of the
+        world (seed, sim time, sensor) and a replay reproduces it.
+        """
+        import cv2
+
+        out = rgb
+        if self._blur_sigma > 0:
+            out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
+        if self._noise_sigma > 0:
+            rng = ctx.rng_for(f"camera:{self.address}")
+            out = np.clip(out.astype(np.float32) + rng.normal(0.0, self._noise_sigma, out.shape), 0, 255).astype(np.uint8)
+        return out
 
     def _capture_extra(self, ctx: SimContext, renderer: mujoco.Renderer) -> None:
         """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer."""
@@ -469,6 +505,7 @@ class CameraPlugin(Plugin):
         """
         self._last_capture = float("-inf")
         self._rgb = None
+        self._stamp = None
         self._reset_extra(ctx)
 
     def _reset_extra(self, ctx: SimContext) -> None:

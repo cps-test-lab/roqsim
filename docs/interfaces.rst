@@ -661,6 +661,14 @@ A port known only at run time is registered by hand in ``configure``:
   rendered camera frame) may check it in ``post_step`` and skip the work when it's ``False``; ``None``
   (no bridge loaded, or one that doesn't report this) means "assume yes". See ``roqsim_sensors``'s
   camera plugins.
+* ``claims`` / ``claim()`` / ``release()`` / ``wanted()`` — the in-process side of the same question.
+  A plugin that reads another's endpoint directly, on the physics thread (a task plugin estimating a
+  pose from a camera frame), is a consumer no transport can count, so with a bridge loaded and no
+  transport subscriber the producer would skip the work it needs. It calls ``claim()`` once (and
+  ``release()`` when done); ``wanted()`` is true for a claim, a transport subscriber, or
+  ``has_subscribers is None``, and is what the camera plugins' render gate asks. A rendered
+  ``Image`` carries ``stamp``, the sim time of its capture, so such a reader tells a fresh frame from
+  the one it already has.
 * ``lazy`` — opt this endpoint out of *publishing* while ``has_subscribers`` reports nobody listening,
   so its payload is never even read. Distinct from the check above, and both are needed: the producer's
   own check is an OR over every endpoint one render feeds (one depth subscriber justifies the whole GL

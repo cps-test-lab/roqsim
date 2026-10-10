@@ -10,6 +10,7 @@ import pytest
 from roqsim_sensors.plugins.camera_common import (
     Intrinsics,
     _build_distortion_map,
+    _cv2_import_error,
     intrinsics_from_model,
 )
 from roqsim_sensors.plugins.realsense_d435 import RealsenseD435Plugin
@@ -371,9 +372,11 @@ def test_d455_model_fov_matches_datasheet():
 # -- subscriber-gated rendering (unit-level; no ctx/render needed) --------------------------
 
 
-class _FakeEndpoint:
-    def __init__(self, has_subscribers=None):
-        self.has_subscribers = has_subscribers
+def _FakeEndpoint(has_subscribers=None):
+    """A bare output port, as a bridge leaves it: only its subscriber hook set."""
+    from roqsim.context import Endpoint
+
+    return Endpoint(name="image", direction="out", has_subscribers=has_subscribers)
 
 
 class _FakeCtx:
@@ -754,3 +757,80 @@ def test_a_rate_the_timestep_divides_renders_on_every_period():
             due.append(step)
     gaps = {b - a for a, b in zip(due, due[1:], strict=False)}
     assert gaps == {50}, f"capture spacing in steps: {sorted(gaps)}"
+
+
+def test_an_in_process_claim_keeps_the_render_on():
+    """A plugin reading the image on the physics thread is a consumer no transport can count.
+
+    With a bridge loaded and no subscriber, the gate closes; an in-process reader that claimed the
+    endpoint keeps it open, and releasing the claim closes it again.
+    """
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})
+    plugin._last_capture = 0.0
+    image_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    plugin._rendered = [image_ep]
+    assert plugin._due(_FakeCtx(0.2)) is False
+    image_ep.claim()
+    assert plugin._due(_FakeCtx(0.2)) is True
+    image_ep.release()
+    assert plugin._due(_FakeCtx(0.2)) is False
+    with pytest.raises(RuntimeError):
+        image_ep.release()
+
+
+def test_a_frame_carries_the_sim_time_it_was_captured_at():
+    engine = Engine(_world("roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin", rate_hz=100.0))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    engine.step()
+    first = _endpoint(engine, "image").read()
+    assert first.stamp == pytest.approx(engine.ctx.sim_time)
+    for _ in range(int(0.02 / engine.ctx.model.opt.timestep)):
+        engine.step()
+    later = _endpoint(engine, "image").read()
+    assert later.stamp > first.stamp
+    engine.shutdown()
+
+
+def _frame(noise=None, seed=1):
+    cfg = {"rate_hz": 100.0}
+    if noise is not None:
+        cfg["noise"] = noise
+    engine = Engine(_world("roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin", **cfg))
+    engine.ctx.seed = seed
+    engine.setup()
+    engine.reset()
+    engine.step()
+    rgb = _read(engine, "image").copy()
+    engine.shutdown()
+    return rgb
+
+
+def test_zero_noise_is_the_clean_frame_bit_for_bit():
+    assert np.array_equal(_frame(), _frame({"gaussian_sigma": 0.0, "blur_sigma": 0.0}))
+
+
+def test_noise_is_a_function_of_the_seed_and_degrades_the_frame():
+    clean = _frame()
+    a = _frame({"gaussian_sigma": 3.0}, seed=1)
+    b = _frame({"gaussian_sigma": 3.0}, seed=1)
+    c = _frame({"gaussian_sigma": 3.0}, seed=2)
+    assert np.array_equal(a, b)
+    assert not np.array_equal(a, c)
+    assert 1.5 < float(np.std(a.astype(float) - clean.astype(float))) < 4.0
+
+
+@pytest.mark.skipif(_cv2_import_error() is not None, reason="blur needs OpenCV")
+def test_blur_smooths_edges():
+    clean = _frame().astype(float)
+    blurred = _frame({"blur_sigma": 1.5}).astype(float)
+    grad = lambda im: np.abs(np.diff(im, axis=1)).max()  # noqa: E731
+    assert grad(blurred) < grad(clean)
+
+
+def test_noise_config_is_checked():
+    plugin = RealsenseD435Plugin({})
+    assert any("noise" in e for e in plugin.validate_config({"noise": {"sigma": 1}}))
+    assert any("noise" in e for e in plugin.validate_config({"noise": {"gaussian_sigma": -1}}))
+    assert not plugin.validate_config({"noise": {"gaussian_sigma": 2.0, "blur_sigma": 0.5}})
