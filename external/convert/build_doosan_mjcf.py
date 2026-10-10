@@ -27,7 +27,7 @@ forearm), and shrinking the radius to compensate stops containing the mesh long 
 right rate -- which would let a planner drive links through each other. The playbook says as much:
 a tighter envelope needs *several* primitives per link, not a smaller scale. Hulls of the decimated
 meshes give the ground-truth rate exactly, at 4000 triangles per part rather than the vendor's full
-CAD. Multi-primitive fitting is the better long-term answer and is noted in the port log.
+CAD. Multi-primitive fitting is the better long-term answer.
 
 Three further things the tree makes awkward, all handled here:
 
@@ -170,8 +170,8 @@ def build(urdf: ET.Element, materials: dict[str, list]) -> str:
     # Chain neighbours must be excluded explicitly. MuJoCo's `filterparent` would normally drop a
     # parent/child contact, but it does not apply when the parent is the world body -- and base_link
     # is welded to world, so the whole chain is measured against a world-welded root. Without this,
-    # base_link vs link_1 penetrates in every configuration and self-collision reads 100%. Same fix
-    # open_manipulator_x needed, for the same reason its port log records.
+    # base_link vs link_1 penetrates in every configuration and self-collision reads 100%. The
+    # open_manipulator_x generator excludes its chain neighbours for the same reason.
     chain = ["base_link"] + [joints[j].find("child").get("link") for j in JOINTS]
     excludes = "".join(
         f'    <exclude body1="{a}" body2="{b}"/>\n' for a, b in zip(chain, chain[1:])
@@ -197,7 +197,7 @@ TEMPLATE = """<mujoco model="m1013">
 
     Collision is FITTED primitives, not the vendor's meshes: dsr_description2's *_collision files are
     byte-for-byte copies of its full-detail visual CAD (~7 MB), which is the porting playbook's first
-    anti-pattern. See external/convert/collision_fit.py and the port log.
+    anti-pattern. See external/convert/collision_fit.py.
 
     Visual meshes are Collada converted through pycollada (MuJoCo cannot load .dae, and stock Linux
     Blender has no OpenCOLLADA), split per material and decimated. They are authored in MILLIMETRES;

@@ -1,7 +1,7 @@
 """Bundled arm/gripper MJCF models and meshes, one folder per model.
 
 Layout is ``models/<name>/<name>.xml`` with that model's meshes in its own ``meshes/`` subdir and its
-manifest, licence, port log and thumbnail beside it -- the same one-folder-per-model shape
+manifest, licence and thumbnail beside it -- the same one-folder-per-model shape
 ``roqsim_assets`` uses for props, and a form :func:`roqsim.models.resolve_model` accepts directly. The
 alternative (every MJCF flat in this directory over one shared ``meshes/``) scatters a model's
 files across four globs, and Menagerie link meshes with generic names

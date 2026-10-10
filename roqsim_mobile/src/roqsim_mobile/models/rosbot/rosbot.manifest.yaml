@@ -23,7 +23,7 @@ components:
       # chi=1.5 -> achieved/commanded 0.995/0.978/1.004/1.003 at w = 0.3/0.5/0.8/1.0 rad/s.
       # Much smaller than husky_a200's 3.0: this chassis is short (0.106 m wheelbase) relative to its
       # 0.192 m track, so it scrubs far less. Re-measure if friction, actuator kv, mass or timestep
-      # change. See the port log.
+      # change.
       slip_factor: 1.5
       left_actuators:  [fl_wheel_motor, rl_wheel_motor]
       right_actuators: [fr_wheel_motor, rr_wheel_motor]
@@ -34,7 +34,7 @@ components:
   # `components_config` of urdf/rosbot.urdf.xacro). The device model carries the datasheet values and
   # the vendor chain rplidar_link -> laser; Husarion builds it with use_tf_prefix False, so the scan
   # frame is the bare `laser`. The C1 skips only its own housing, so the camera-mount post of the
-  # body mesh beside it is a real return -- see the port log.
+  # body mesh beside it is a real return.
   #
   # The scan is the device's, as sllidar_ros2 publishes it; only the topic is overridden. Husarion's
   # C1 block gives a Gazebo std_dev of 0.02 m (slamtec_rplidar.urdf.xacro:126 @ 5f783f8), a

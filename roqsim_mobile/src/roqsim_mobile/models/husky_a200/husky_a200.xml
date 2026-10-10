@@ -145,7 +145,7 @@
          slightly softened (solref) for stable stepping at dt=2 ms. A skid-steer scrubs mostly
          laterally when turning, so MuJoCo point-contact yaw is a small fraction of the commanded
          rate; the diff_drive `slip_factor` restores navigable, odom-consistent yaw.
-         See port log. friction = [slide1, slide2, spin, roll1, roll2]. -->
+         friction = [slide1, slide2, spin, roll1, roll2]. -->
     <pair geom1="front_left_wheel_geom"  geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>
     <pair geom1="front_right_wheel_geom" geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>
     <pair geom1="rear_left_wheel_geom"   geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>

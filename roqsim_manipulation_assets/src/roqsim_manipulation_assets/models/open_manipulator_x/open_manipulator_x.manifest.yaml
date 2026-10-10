@@ -6,7 +6,7 @@
 # filled in from the spawn_arm `name`.
 components:
   # No gripper keys: the two fingers are welded geometry in the MJCF (no joint, no actuator), so
-  # there is nothing for arm_controller to expose a GripperCommand action for. See the port log.
+  # there is nothing for arm_controller to expose a GripperCommand action for.
   - arm_controller: {}
 
   # The eye-in-hand RealSense D435i is NOT in this manifest, even though the model ships the
