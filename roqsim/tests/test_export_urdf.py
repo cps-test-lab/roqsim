@@ -96,7 +96,7 @@ def _mobile_manipulator(tmp_path, gripper="robotiq_2f85"):
                         "model": "ur10e",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
-                        "pose": pose_mapping([0.25, 0.0, 0.2587]),
+                        "pose": pose_mapping([0.17, 0.0, 0.23035]),
                         "end_effector": {"model": gripper, "replaces": ["ee_plate"]},
                     },
                     "name": "arm",
