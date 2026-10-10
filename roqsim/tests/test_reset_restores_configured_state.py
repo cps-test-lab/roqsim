@@ -382,8 +382,11 @@ CASES: dict[str, Case] = {
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
         {
-            "walker": {"walker": "MaleVisitorWalk", "waypoints": [[-1.0, 0.0], [1.0, 0.0]]},
+            "walker": {"walker": "MaleVisitorWalk", "pose": {"position": {"x": -1.0, "y": 0.0}}},
             "name": "ped",
+            "components": [
+                {"navigator": {"output": "walker", "speed": 1.0, "goals": [[1.0, 0.0]]}}
+            ],
         }
     ),
     # manipulation

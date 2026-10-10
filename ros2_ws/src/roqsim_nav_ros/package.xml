@@ -17,6 +17,9 @@
   <exec_depend>roqsim_nav_interfaces</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>roqsim_ros_bridge</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

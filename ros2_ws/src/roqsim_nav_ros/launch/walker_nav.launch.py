@@ -1,7 +1,7 @@
 """Launch a roqsim walker world with the ROS 2 bridge, serving NavigateThroughPoses.
 
-    ros2 launch roqsim_walker_ros walker_nav.launch.py
-    ros2 launch roqsim_walker_ros walker_nav.launch.py world:=/abs/world.yaml headless:=false
+    ros2 launch roqsim_nav_ros walker_nav.launch.py
+    ros2 launch roqsim_nav_ros walker_nav.launch.py world:=/abs/world.yaml headless:=false
 
 Send the walker through a route:
 
@@ -21,7 +21,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    share = get_package_share_directory("roqsim_walker_ros")
+    share = get_package_share_directory("roqsim_nav_ros")
     default_world = os.path.join(share, "worlds", "walker_nav2.yaml")
 
     world = LaunchConfiguration("world")
@@ -31,8 +31,8 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "world", default_value=default_world, description="Path to the roqsim world YAML"
             ),
-            # The bridge launcher from roqsim_ros_bridge runs any world; this package only adds
-            # the NavigateThroughPoses handler (auto-imported via the extensions entry point).
+            # The bridge launcher from roqsim_ros_bridge runs any world; this package adds the
+            # navigation action handlers (imported through the extensions entry point).
             Node(
                 package="roqsim_ros_bridge",
                 executable="roqsim_bridge",

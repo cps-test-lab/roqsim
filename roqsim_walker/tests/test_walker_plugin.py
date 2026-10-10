@@ -15,28 +15,32 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.plugin import PluginError
 
 WAYPOINTS = [[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0]]
 
+#: The patrol: the walker stands at the first waypoint facing the second, and its navigator cycles
+#: through the rest.
+START = {"position": {"x": -2.0, "y": -2.0}, "orientation": {"yaw": 0.0}}
+PATROL = {
+    "output": "walker",
+    "speed": 1.2,
+    "loop": True,
+    "arrival_radius": 0.25,
+    "avoidance": {"steer": "none", "stop": False},
+    "goals": WAYPOINTS[1:],
+}
 
-def _world(*, name="pedestrian", **walker_overrides):
-    walker = {
-        "walker": "MaleVisitorWalk",
-        "speed": 1.2,
-        "loop": True,
-        "arrival_radius": 0.25,
-        "avoidance": False,
-        "skin": False,  # capsules: keeps the test fast (no 5 MB OBJ load / skin rig)
-        "waypoints": WAYPOINTS,
+
+def _world(*, pose=START, navigator=PATROL):
+    """A walker at ``pose``; with ``navigator=None`` it nests none and gets the default one."""
+    entry = {
+        # capsules: keeps the test fast (no 5 MB OBJ load / skin rig)
+        "walker": {"walker": "MaleVisitorWalk", "skin": False, "pose": pose},
+        "name": "pedestrian",
     }
-    walker.update(walker_overrides)
-    return load_config_from_dict(
-        {
-            "sim": {"pacing": "asap"},
-            "components": [{"walker": walker, "name": name}],
-        }
-    )
+    if navigator is not None:
+        entry["components"] = [{"navigator": navigator}]
+    return load_config_from_dict({"sim": {"pacing": "asap"}, "components": [entry]})
 
 
 @pytest.fixture(scope="module")
@@ -122,7 +126,7 @@ def test_plugin_registers_entity_handle_and_goal_endpoint(sim):
     assert single.backend["ros2"]["action"] == "nav2_msgs.action.NavigateToPose"
 
 
-def test_walker_spawns_at_the_first_waypoint(sim):
+def test_walker_spawns_at_its_pose(sim):
     np.testing.assert_allclose(_xy(sim), WAYPOINTS[0], atol=1e-6)
 
 
@@ -213,8 +217,8 @@ def test_a_newer_route_supersedes_an_older_one(sim):
 
 
 # -- goal-driven only (no patrol) --------------------------------------------------------------
-def test_walker_without_waypoints_stands_at_its_pose_until_commanded():
-    engine = Engine(_world(waypoints=[], pose={"position": {"x": 1.0, "y": 1.0}}))
+def test_a_walker_with_the_default_navigator_stands_at_its_pose_until_commanded():
+    engine = Engine(_world(pose={"position": {"x": 1.0, "y": 1.0}}, navigator=None))
     engine.setup()
     engine.reset()
     try:
@@ -273,12 +277,7 @@ def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
                 "components": [{"clearance_monitor": {"ignore": ["floor"], "distmax": 8.0}}],
             },
             {
-                "walker": {
-                    "walker": "MaleVisitorWalk",
-                    "speed": 0.0,
-                    "waypoints": [[1.0, 0.0]],
-                    "avoidance": False,
-                },
+                "walker": {"walker": "MaleVisitorWalk", "pose": {"position": {"x": 1.0, "y": 0.0}}},
                 "name": "pedestrian",
             },
         ],
@@ -308,13 +307,10 @@ def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
         engine.shutdown()
 
 
-def test_a_world_may_write_the_walkers_navigator_itself(tmp_path):
-    """The escape hatch from the compatibility expansion, for the navigator's newer options.
-
-    It builds the humanoid exactly once. `expand` contributes entries *beside* the walker, and the
-    caller keeps the walker -- so returning it from the branch that steps aside built the skeleton
-    twice and MuJoCo refused the duplicate body names.
-    """
+def test_a_nested_navigator_replaces_the_default_one(tmp_path):
+    """It builds the humanoid exactly once. `expand` contributes entries *beside* the walker, and
+    the caller keeps the walker -- so returning it from the branch that steps aside would build the
+    skeleton twice, and MuJoCo refuses the duplicate body names."""
     engine = Engine(
         load_config_from_dict(
             {
@@ -355,99 +351,47 @@ def test_a_world_may_write_the_walkers_navigator_itself(tmp_path):
         engine.shutdown()
 
 
-def test_writing_navigation_in_both_places_is_refused(tmp_path):
-    """One place or the other, so a reader does not have to guess which one won."""
-    with pytest.raises(PluginError, match="both in its own block and in a nested"):
-        Engine(
-            load_config_from_dict(
-                {
-                    "sim": {},
-                    "components": [
-                        {
-                            "walker": {"walker": "MaleVisitorWalk", "speed": 1.0},
-                            "name": "pedestrian",
-                            "components": [{"navigator": {"output": "walker", "speed": 2.0}}],
-                        }
-                    ],
-                }
-            )
-        )
-
-
-# -- the per-waypoint dwell reaches the navigator --------------------------------------------------
-
-
 def _walker_navigator(engine):
     return next(p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin")
 
 
-def _engine_with_waypoints(waypoints, **walker):
-    cfg = {"walker": "MaleVisitorWalk", "skin": False, "speed": 1.0, "loop": True}
-    cfg["waypoints"] = waypoints
-    cfg.update(walker)
-    engine = Engine(
-        load_config_from_dict(
-            {"sim": {"pacing": "asap"}, "components": [{"walker": cfg, "name": "pedestrian"}]}
+def test_the_default_navigator_is_goal_driven_and_never_stops_the_walker():
+    """What a walker without a nested navigator gets: no route, its own disc, and an avoidance
+    that never stops it, since a walker does not look ahead."""
+    from roqsim_walker.plugins.walker import WalkerPlugin
+
+    engine = Engine(_world(navigator=None))
+    engine.setup()
+    engine.reset()
+    try:
+        config = _walker_navigator(engine).config
+        assert {key: config.get(key) for key in WalkerPlugin.DEFAULT_NAVIGATOR} == (
+            WalkerPlugin.DEFAULT_NAVIGATOR
         )
-    )
-    engine.ctx.seed = 5  # before setup: the navigator draws its generator in `configure`
-    return engine
+        assert "goals" not in config
+        assert not _walker_navigator(engine)._caution.enabled
+    finally:
+        engine.shutdown()
 
 
-def test_a_per_waypoint_dwell_reaches_the_navigator():
-    """`[x, y, dwell]` is what the walker's config block documents and its validator accepts.
+@pytest.mark.parametrize(
+    ("key", "value", "there"),
+    [
+        ("speed", 1.2, r"navigator's 'speed'"),
+        ("waypoints", [[0.0, 0.0], [1.0, 0.0]], r"navigator's 'goals', with the walker starting"),
+        ("dwell", 1.5, r"navigator's 'dwell'"),
+        ("avoidance", True, r"\{steer: give_way\} for true"),
+        ("orca", {"radius": 0.3}, r"navigator's 'radius' and 'max_speed'"),
+        ("action_name", "go", r"action_names"),
+    ],
+)
+def test_a_navigation_key_on_the_walker_is_refused_naming_the_navigators(key, value, there):
+    """Where a walker goes is stated once, on its navigator; the walker's block names where."""
+    from roqsim_walker.plugins.walker import WalkerPlugin
 
-    Truncated to `(x, y)` on the way to the navigator, a world's pause would never arrive and the
-    crowd would simply never stop walking -- with no warning, because nothing
-    rejects the value. It cannot ride along as a goal's third element (that position is the goal's
-    yaw), so it travels as the navigator's own `dwell`.
-    """
-    engine = _engine_with_waypoints([[0.0, 0.0, [0.0, 3.0]], [2.0, 0.0, [1.0, 2.0]]])
-    engine.setup()
-    engine.reset()
-    # One entry per route point, in order, starting with where the walker stands.
-    assert _walker_navigator(engine)._core.st.dwell == [(0.0, 3.0), (1.0, 2.0)]
-
-
-def test_a_dwell_on_only_some_waypoints_reaches_the_navigator():
-    """The shape the shipped `walker_patrol` world writes: a pause at two of four waypoints. The
-    per-point list is then a MIX of bare numbers and pairs."""
-    engine = _engine_with_waypoints(
-        [[-2.0, -2.0], [2.0, -2.0, [2.0, 4.0]], [2.0, 2.0], [-2.0, 2.0, [1.0, 3.0]]]
-    )
-    engine.setup()
-    engine.reset()
-    assert _walker_navigator(engine)._core.st.dwell == [
-        (0.0, 0.0),
-        (2.0, 4.0),
-        (0.0, 0.0),
-        (1.0, 3.0),
-    ]
-
-
-def test_two_bare_per_waypoint_dwells_are_not_read_as_one_random_pause():
-    """The navigator reads two bare numbers as `[lo, hi]`; the walker knows its values are
-    per-waypoint, so it normalises them to pairs and never relies on that tie-break."""
-    engine = _engine_with_waypoints([[0.0, 0.0, 1.0], [2.0, 0.0, 3.0]])
-    engine.setup()
-    engine.reset()
-    assert _walker_navigator(engine)._core.st.dwell == [(1.0, 1.0), (3.0, 3.0)]
-
-
-def test_the_walkers_default_dwell_applies_to_every_waypoint():
-    """`dwell:` on the walker block is the other half of the same feature."""
-    engine = _engine_with_waypoints([[0.0, 0.0], [2.0, 0.0]], dwell=1.5)
-    engine.setup()
-    engine.reset()
-    assert _walker_navigator(engine)._core.st.dwell == [(1.5, 1.5), (1.5, 1.5)]
-
-
-def test_a_walker_with_no_dwell_says_nothing_about_it():
-    """The common case must not start carrying a dwell of zeros into every navigator's config."""
-    engine = _engine_with_waypoints([[0.0, 0.0], [2.0, 0.0]])
-    engine.setup()
-    engine.reset()
-    assert _walker_navigator(engine)._core.st.dwell == [(0.0, 0.0), (0.0, 0.0)]
+    config = {"walker": "MaleVisitorWalk", key: value}
+    errors = WalkerPlugin(config).validate_config(config)
+    assert any(re.search(rf"'{key}' is not read.*{there}", e) for e in errors), errors
 
 
 # -- the start is a pose ----------------------------------------------------------------------
@@ -457,20 +401,16 @@ def test_a_walker_with_no_dwell_says_nothing_about_it():
     ("overrides", "expect"),
     [
         (
-            {"waypoints": [], "pos": [1.0, 2.0]},
+            {"pos": [1.0, 2.0]},
             r"'pos' is not read -- a walker's start is stated as 'pose'.*"
             r"pose: \{position: \{x: 1\.0, y: 2\.0\}\}",
         ),
         (
-            {"pose": {"position": {"x": 1.0, "y": 2.0}}},
-            r"'pose' and 'waypoints' both place the walker",
-        ),
-        (
-            {"waypoints": [], "pose": {"position": {"x": 1.0, "y": 2.0, "z": 0.5}}},
+            {"pose": {"position": {"x": 1.0, "y": 2.0, "z": 0.5}}},
             r"'pose\.position\.z' is not read",
         ),
         (
-            {"waypoints": [], "pose": {"position": {"x": 0, "y": 0}, "orientation": {"roll": 0.2}}},
+            {"pose": {"position": {"x": 0, "y": 0}, "orientation": {"roll": 0.2}}},
             r"tilts the walker",
         ),
     ],
@@ -478,7 +418,7 @@ def test_a_walker_with_no_dwell_says_nothing_about_it():
 def test_a_start_that_is_not_a_walker_pose_is_refused(overrides, expect):
     from roqsim_walker.plugins.walker import WalkerPlugin
 
-    config = {"walker": "MaleVisitorWalk", "skin": False, "waypoints": WAYPOINTS, **overrides}
+    config = {"walker": "MaleVisitorWalk", "skin": False, **overrides}
     errors = WalkerPlugin(config).validate_config(config)
     assert any(re.search(expect, e) for e in errors), errors
 
@@ -487,7 +427,7 @@ def test_a_goal_driven_walker_starts_at_its_pose_heading_every_episode():
     from roqsim_walker.output import STATE_KEY
 
     pose = {"position": {"x": 1.0, "y": -1.0}, "orientation": {"yaw": 1.2}}
-    engine = Engine(_world(waypoints=[], pose=pose))
+    engine = Engine(_world(pose=pose, navigator=None))
     engine.setup()
     try:
         for _ in range(2):

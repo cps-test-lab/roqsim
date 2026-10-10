@@ -1,39 +1,38 @@
-"""Scene + controller plugin: a kinematic pedestrian that patrols a route or is driven to goals.
+"""Scene plugin: a kinematic pedestrian, moved by the navigator nested under it.
 
 The pedestrian stack in the roqsim plugin model: this plugin builds one walker's mocap bodies + skin
-into the ``MjSpec``, registers it as an ``Entity(kind='pedestrian')``, and declares a
-backend-neutral goal :class:`~roqsim.context.Endpoint` any bridge can serve (the ROS 2 bridge serves
-it as ``nav2_msgs/NavigateThroughPoses`` -- see ``roqsim_walker_ros``).
+into the ``MjSpec``, registers it as an ``Entity(kind='pedestrian')``, and publishes the animation
+state the ``walker`` output of ``roqsim_nav`` moves. Where it goes is the navigator's, as for every
+mover roqsim navigates, and so is its goal endpoint (served over ROS 2 by ``roqsim_nav_ros``).
 
 Config::
 
     walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
-      namespace: ""            # transport scope for the goal endpoint
+      namespace: ""            # transport scope of the walker's endpoints and its navigator's
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals instead of the character mesh
       rgba: [r, g, b, a]       # colour of the capsule visuals (default: the humanoid's own)
-      speed: 1.2               # m/s; past ~1.7 the run clip blends in
-      pose:                    # where a goal-driven walker stands at the start (no `waypoints`):
+      pose:                    # where the walker stands at the start and after every reset:
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
         orientation: {yaw: 0.0}     #   walker stands on the floor -- and a heading only
-      waypoints:               # patrol route; the walker starts at waypoints[0], so no `pose`
-        - [-2.5, -2.5]
-        - [ 2.5, -2.5, [3, 6]] # optional per-waypoint dwell: secs, or [lo, hi] random pause
-      loop: true               # cycle the patrol forever
-      dwell: 0.0               # default dwell applied to every waypoint
-      arrival_radius: 0.25
-      avoidance: false         # true -> the shared local model gives way for it. A walker
-                               #   steers or does nothing; it has never looked ahead, so this
-                               #   never makes it stop. Write a `navigator` with
-                               #   `avoidance: {stop: true}` for one that should.
-      goal_endpoint: true      # false -> patrol only; declares no goal endpoint, so a bridge needs
-                               #   no handler for it (a patrol-only world drops the nav2_msgs dep)
-      action_name: navigate_through_poses   # relative action name of the goal endpoint
-      orca: {radius: 0.26, max_speed: 1.6}  # the disc it presents to avoidance; speed cap
-      planner: {inflation_radius: 0.3, waypoint_radius: 0.3}
-      recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
-      motion: {walk: /abs/walk.npz}         # override a resolved locomotion clip
+      motion: {walk: /abs/walk.npz}  # override a resolved locomotion clip
+
+A walker with no nested ``navigator`` gets one that is goal-driven only: ``output: walker``,
+``speed: 1.0``, its 0.26 m disc as ``radius``, and ``avoidance: {stop: false}``, since a walker does
+not look ahead. A patrol, a pause, avoidance or a goal endpoint's name is stated on a navigator
+nested under it::
+
+    - walker: {walker: MaleVisitorWalk, pose: {position: {x: -2.0, y: -2.0}}}
+      name: pedestrian
+      components:
+        - navigator:
+            output: walker
+            speed: 1.2
+            goals: [[2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]]
+            loop: true
+            dwell: [[0, 0], [2, 4], [0, 0], [1, 3]]   # per route point, the start first
+            avoidance: {steer: give_way, stop: false}
 """
 
 from __future__ import annotations
@@ -49,18 +48,13 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.config import PluginSpec
 from roqsim.context import Entity, SimContext
-from roqsim.plugin import Plugin, PluginError
+from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose, pose_spelling, rpy_to_quat, yaw_of
 from roqsim.types import Transform, Transforms
-from roqsim_nav.avoidance import DEFAULT_MODEL
 from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.animation import (
-    _heading,
-    make_anim_state,
-    write_pose,
-)
+from roqsim_walker.animation import make_anim_state, write_pose
 from roqsim_walker.blueprint import BlueprintError, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
@@ -122,107 +116,45 @@ class WalkerPlugin(Plugin):
         self._seq_lock = threading.Lock()
 
     # -- expansion -----------------------------------------------------------------------------
-    #: Navigation keys a ``walker:`` block accepts, and where they live on the nested ``navigator``.
-    #: The walker owns the body, and one navigator serves it, a robot and a prop alike; mapping the
-    #: keys here lets a world state navigation on the walker without writing the navigator.
-    _NAV_KEYS = {
-        "speed": "speed",
-        "loop": "loop",
-        "arrival_radius": "arrival_radius",
-        "avoidance": "avoidance",
-        "planner": "planner",
-        "recovery": "recovery",
-        "update_hz": "update_hz",
-        "goal_endpoint": "goal_endpoint",
-        "namespace": "namespace",
+    #: The navigator a walker gets when the world nests none: goal-driven only, its own disc, and
+    #: an avoidance that never stops it, since a walker does not look ahead.
+    DEFAULT_NAVIGATOR = {
+        "output": "walker",
+        "speed": 1.0,
+        "radius": 0.26,
+        "avoidance": {"stop": False},
+    }
+
+    #: Keys a walker's own block refuses: each is the navigator's, and where it lives there.
+    NAVIGATION_KEYS = {
+        "speed": "'speed'",
+        "waypoints": "'goals', with the walker starting at its own 'pose'",
+        "loop": "'loop'",
+        "dwell": "'dwell', one entry per route point with the start first",
+        "arrival_radius": "'arrival_radius'",
+        "avoidance": "'avoidance': {steer: give_way} for true, {steer: none} for false",
+        "goal_endpoint": "'goal_endpoint'",
+        "action_name": "'action_names': {navigate_through_poses: ...}",
+        "orca": "'radius' and 'max_speed'",
+        "planner": "'planner'",
+        "recovery": "'recovery'",
+        "update_hz": "'update_hz'",
     }
 
     @classmethod
     def expand(cls, spec, world, base_dir):
-        """Give this walker a ``navigator`` component, unless the world already wrote one.
+        """Give this walker the default ``navigator`` component, unless the world nests one.
 
-        The same mechanism ``spawn_robot`` uses to attach a model manifest's controllers. A world
-        that says nothing about navigation gets a default navigator; a world that wants
-        the navigator's newer options -- ``route_mode``, ``autostart``, a different tracker -- writes
-        the component itself and this steps aside.
+        The same mechanism ``spawn_robot`` uses to attach a model manifest's controllers.
         """
-        cfg = spec.config or {}
         if any(child.ref == "navigator" for child in spec.children):
-            if any(k in cfg for k in ("speed", "waypoints", "loop")):
-                raise PluginError(
-                    f"walker {spec.name!r} configures navigation both in its own block and in a "
-                    f"nested `navigator`. Put it in one place -- the navigator, for anything new."
-                )
             # NOTHING, not this spec: `expand` contributes entries *beside* the one it was called
             # for, and the caller keeps that one. Returning it here builds the humanoid twice and
             # MuJoCo refuses the duplicate body names.
             return []
-
-        nav = {dst: cfg[src] for src, dst in cls._NAV_KEYS.items() if src in cfg}
-        nav["output"] = "walker"
-        if "action_name" in cfg:
-            # The walker's goal endpoint is the navigator's `navigate_through_poses`.
-            nav["action_names"] = {"navigate_through_poses": cfg["action_name"]}
-        # `waypoints` become the navigator's `goals`, minus the first: a walker starts *at* its first
-        # waypoint, and the navigator's route already begins wherever the body is.
-        raw = cfg.get("waypoints") or []
-        wps = [list(w)[:2] if not isinstance(w, dict) else list(w["pos"])[:2] for w in raw]
-        if len(wps) > 1:
-            nav["goals"] = wps[1:]
-        elif wps:
-            nav["goals"] = wps
-        # ...and the per-waypoint dwell travels with them. It cannot ride along as a third element
-        # of a goal, because there that position is the goal's YAW -- so it goes as the navigator's
-        # own `dwell`, one entry per route point in the same order. Truncating the waypoints to
-        # (x, y) and stopping there dropped every pause a world asked for, silently: the walker
-        # still validated `[x, y, dwell]` and still documented it, and the crowd simply never
-        # stopped walking.
-        default = cfg.get("dwell", 0.0)
-        dwells = [
-            (w.get("dwell", default) if isinstance(w, dict) else (w[2] if len(w) > 2 else default))
-            for w in raw
-        ]
-        if dwells and dwells != [0.0] * len(dwells):
-            # The navigator's route is the mover's start followed by `goals`, and a walker starts at
-            # its first waypoint -- so the two lists already line up entry for entry. The values are
-            # passed through as written and coerced there, so the dwell format has one owner.
-            # Normalised to `[lo, hi]` pairs rather than passed through as written. The walker
-            # KNOWS these are one-per-waypoint, and a two-waypoint route whose dwells are two bare
-            # numbers would otherwise hit the navigator's documented tie-break and be read as a
-            # single random pause applied to both.
-            nav["dwell"] = [list(d) if isinstance(d, (list, tuple)) else [d, d] for d in dwells]
-        if isinstance(nav.get("avoidance"), bool):
-            # A walker's own block spells this as a yes/no. The navigator names a model instead,
-            # because there is more than one and "yes" does not say which -- so the walker's
-            # spelling is translated here.
-            #
-            # `stop: false` is the load-bearing half. A walker does not look ahead: it gives way
-            # through the local model or not at all, and `avoidance: true` means "steers, never
-            # stops". A forward probe here would change how every pedestrian world with that key
-            # behaves -- and it is why the three capabilities are independent rather than a ladder.
-            nav["avoidance"] = {
-                "steer": DEFAULT_MODEL if nav["avoidance"] else "none",
-                "stop": False,
-            }
-        if "goals" not in nav:
-            # A goal-driven-only walker has no patrol, so there is nothing to cycle through.
-            nav.pop("loop", None)
-        nav.setdefault("speed", 1.0)
-        # Same reason, for a walker that named no avoidance at all. It is a default worth knowing
-        # about rather than one to rely on: a walker is a mocap body, so the solver treats it as
-        # immovable and it will shove anything free it walks into, however politely that thing
-        # stopped. A world that puts a walker in a room with a robot should write a `navigator` for
-        # it and ask for `avoidance: {stop: true}`.
-        nav.setdefault("avoidance", {"stop": False})
-        # A walker's own footprint, so it presents its own disc to avoidance.
-        nav.setdefault("radius", float((cfg.get("orca") or {}).get("radius", 0.26)))
-        if (cfg.get("orca") or {}).get("max_speed") is not None:
-            nav["max_speed"] = float(cfg["orca"]["max_speed"])
-        # Returned as an ADDITIONAL spec, not a rewritten owner: `expand` contributes entries
-        # beside the one it was called for (the caller keeps that one), so returning the walker
-        # again builds its skeleton twice and MuJoCo refuses the duplicate body names.
+        config = {**cls.DEFAULT_NAVIGATOR, "avoidance": dict(cls.DEFAULT_NAVIGATOR["avoidance"])}
         return [
-            PluginSpec(ref="navigator", name=None, config=nav, children=[], entity=spec.address)
+            PluginSpec(ref="navigator", name=None, config=config, children=[], entity=spec.address)
         ]
 
     # -- validation ----------------------------------------------------------------------------
@@ -235,22 +167,18 @@ class WalkerPlugin(Plugin):
                 resolve_walker(config["walker"], outfit=config.get("outfit"))
             except BlueprintError as exc:
                 errors.append(str(exc))
-        for i, wp in enumerate(config.get("waypoints") or []):
-            ok = (isinstance(wp, dict) and len(wp.get("pos", ())) == 2) or (
-                isinstance(wp, (list, tuple)) and len(wp) >= 2
-            )
-            if not ok:
-                errors.append(f"waypoints[{i}] must be [x, y], [x, y, dwell] or {{pos: [x, y]}}")
+        for key, there in self.NAVIGATION_KEYS.items():
+            if key in config:
+                errors.append(
+                    f"walker: {key!r} is not read -- where a walker goes is its navigator's: state "
+                    f"it as the nested navigator's {there} (components: [{{navigator: {{output: "
+                    f"walker, ...}}}}])"
+                )
         if "pos" in config:
             errors.append(
                 "walker: 'pos' is not read -- a walker's start is stated as 'pose', a world pose "
                 "as SpawnEntity states one (x and y, and a heading): "
                 f"{pose_spelling(config['pos'])}"
-            )
-        if "pose" in config and config.get("waypoints"):
-            errors.append(
-                "walker: 'pose' and 'waypoints' both place the walker -- a patrolling walker "
-                "starts at waypoints[0]; state one of them"
             )
         try:
             start_of(config)
@@ -284,7 +212,6 @@ class WalkerPlugin(Plugin):
         # What the animation state is built from: where the walker starts + what the blueprint
         # resolved.
         self._spec = {
-            **({"waypoints": cfg["waypoints"]} if "waypoints" in cfg else {}),
             **({"start": start} if (start := start_of(cfg)) is not None else {}),
             "name": self.walker_name,
             "skeleton": blueprint["skeleton"],
@@ -311,12 +238,7 @@ class WalkerPlugin(Plugin):
                 name=self.walker_name,
                 kind="pedestrian",
                 body=f"{self.walker_name}/pelvis",
-                meta={
-                    "walker": self.blueprint,
-                    "namespace": ns,
-                    "waypoints": list(self.config.get("waypoints") or []),
-                    "avoidance": bool(self.config.get("avoidance", False)),
-                },
+                meta={"walker": self.blueprint, "namespace": ns},
             )
         )
         ctx.blackboard.set(
@@ -337,8 +259,7 @@ class WalkerPlugin(Plugin):
         # The goal endpoint is NOT declared here: the nested `navigator` declares it, for
         # both nav2 action types, from one place. Two declarations of the same capability would mean
         # two handlers racing to register for one type in the bridge, where the loser is silently
-        # overwritten. `goal_endpoint` and `action_name` still work in this block -- `expand` passes
-        # them through.
+        # overwritten.
 
     @property
     def endpoint_owner(self) -> str:
@@ -370,11 +291,8 @@ class WalkerPlugin(Plugin):
         rather than one still standing where the last episode left it.
         """
         st = self._anim
-        st.pos = st.patrol_wps[0].copy()
-        start_yaw = float((self._spec.get("start") or (0.0, 0.0, 0.0))[2])
-        st.yaw = (
-            _heading(st.patrol_wps[0], st.patrol_wps[1]) if len(st.patrol_wps) > 1 else start_yaw
-        )
+        st.pos = st.start[:2].copy()
+        st.yaw = float(st.start[2])
         st.phase = st.phase_run = st.phase_short = st.phase_turn = 0.0
         st.t_idle = 0.0
         st.disp_speed = 0.0
