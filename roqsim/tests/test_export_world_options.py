@@ -2,14 +2,21 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""``roqsim export urdf/srdf/mesh/moveit`` take ``--set``/``--override`` for a world, and refuse the
-world-only options for a bare MJCF or a model rather than ignoring them."""
+"""``roqsim export urdf/srdf/mesh/moveit/gltf`` take ``--set``/``--override`` for a world, and
+refuse the world-only options for a bare MJCF or a model rather than ignoring them."""
 
 from __future__ import annotations
 
 import pytest
 
-from roqsim import exit_status, export_mesh, export_moveit, export_srdf, export_urdf
+from roqsim import (
+    exit_status,
+    export_gltf,
+    export_mesh,
+    export_moveit,
+    export_srdf,
+    export_urdf,
+)
 from roqsim.engine import Engine
 
 _MJCF = "<mujoco><worldbody><body name='box'><geom type='box' size='.1 .1 .1'/></body></worldbody></mujoco>"
@@ -40,8 +47,15 @@ _REQUIRED = {
     ],
     export_mesh: [],
     export_moveit: [],
+    export_gltf: [],
 }
-_OUT = {export_urdf: "r.urdf", export_srdf: "r.srdf", export_mesh: "r.stl", export_moveit: "cfg"}
+_OUT = {
+    export_urdf: "r.urdf",
+    export_srdf: "r.srdf",
+    export_mesh: "r.stl",
+    export_moveit: "cfg",
+    export_gltf: "r.glb",
+}
 
 
 class _Compiled(Exception):
@@ -91,6 +105,7 @@ _REFUSING = [
     (export_mesh, "--mjcf"),
     (export_mesh, "--model"),
     (export_moveit, "--mjcf"),
+    (export_gltf, "--mjcf"),
 ]
 
 
