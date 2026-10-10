@@ -149,8 +149,12 @@ def _alive(pid: int) -> bool:
 
 
 def running() -> list[dict]:
-    """The simulators running for this user, oldest first. Registrations of dead processes are
-    removed on the way."""
+    """The simulators running for this user, oldest first.
+
+    A dead process's registration is removed on the way, with the default sockets it left in the
+    runtime directory (``<pid>.sock`` and its ``.pub``): a simulator killed outright never ran its
+    own cleanup, and only its pid names them.
+    """
     found = []
     directory = runtime_dir()
     if not directory.is_dir():
@@ -163,6 +167,8 @@ def running() -> list[dict]:
             continue
         if not _alive(pid):
             path.unlink(missing_ok=True)
+            for leftover in (f"{pid}.sock", f"{pid}.sock.pub"):
+                (directory / leftover).unlink(missing_ok=True)
             continue
         found.append(entry)
     return sorted(found, key=lambda e: e.get("started", 0.0))
