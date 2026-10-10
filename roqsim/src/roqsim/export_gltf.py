@@ -833,6 +833,8 @@ def main(argv: list | None = None) -> int:
         parser.error(f"--jpeg-quality takes 1-95, got {args.jpeg_quality}")
     if args.max_tex_dim < 0:
         parser.error(f"--max-tex-dim takes 0 or more, got {args.max_tex_dim}")
+    if args.segments is not None and args.segments < 3:
+        parser.error(f"--segments takes 3 or more, got {args.segments}")
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_gltf")

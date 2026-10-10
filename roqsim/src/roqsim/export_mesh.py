@@ -679,6 +679,8 @@ def main(argv: list | None = None) -> int:
     add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.segments < 3:
+        parser.error(f"--segments takes 3 or more, got {args.segments}")
     if not args.world:
         source = "--model" if args.model else "--mjcf"
         refuse_world_options(

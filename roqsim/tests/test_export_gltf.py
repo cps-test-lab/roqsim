@@ -966,6 +966,18 @@ def test_out_must_be_a_glb(tmp_path, capsys):
     assert ".glb" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("segments", ["0", "2", "-8"])
+def test_too_few_segments_is_bad_input(tmp_path, capsys, segments):
+    scene = tmp_path / "scene.xml"
+    scene.write_text(_BARE, encoding="utf-8")
+    out = tmp_path / "out.glb"
+    with pytest.raises(SystemExit) as exit_info:
+        export_gltf.main(["--mjcf", str(scene), "--out", str(out), "--segments", segments])
+    assert exit_info.value.code == exit_status.BAD_INPUT
+    assert "--segments takes 3 or more" in capsys.readouterr().err
+    assert not out.exists()
+
+
 def test_help_states_the_frame(capsys):
     with pytest.raises(SystemExit):
         export_gltf.main(["--help"])
