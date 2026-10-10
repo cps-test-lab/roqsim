@@ -596,7 +596,7 @@ class WorldAccess(ABC):
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""
 
 
-def select(kwargs: dict, *, what: str) -> WorldAccess:
+def select(kwargs: dict) -> WorldAccess:
     """Pick the backend from the setup kwargs the RUNNER provided.
 
     Not from configuration: which transport is present is a property of how the scenario is being
