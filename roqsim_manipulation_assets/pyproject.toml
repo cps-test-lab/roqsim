@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_manipulation_assets"
 version = "0.1.0"
-description = "Manipulator ASSETS for roqsim: arm and gripper models plus their meshes (UR10e, UR5e, Franka Panda, Kinova Gen3, OpenManipulator-X, Robotiq 2F-85, Schunk PG+70). Real robots only -- workpieces ship with the experiments that define them."
+description = "Manipulator ASSETS for roqsim: arm and gripper models plus their meshes (UR10e, UR5e, Franka Panda, Kinova Gen3, UFACTORY xArm 7, KUKA LBR iiwa 7 R800 / 14 R820, Doosan M1013, Interbotix ViperX 300 / WidowX 250, OpenManipulator-X, Robotiq 2F-85, Schunk PG+70). Real robots only -- workpieces ship with the experiments that define them."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
