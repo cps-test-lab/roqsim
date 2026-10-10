@@ -51,6 +51,7 @@ REFUSED = {
     ("px4_sitl", "seed"): "sensor noise draws from the run's seed",
     ("imu", "quat"): "the mount is stated under 'pose'",
     ("strip_light", "yaw"): "the run's direction is the yaw of 'pose'",
+    ("hazard_marking", "yaw"): "the rectangle's direction is the yaw of 'pose'",
     ("box", "pos"): "the pose is stated under 'pose'",
     ("box", "yaw"): "the pose is stated under 'pose'",
     ("cylinder", "pos"): "the pose is stated under 'pose'",
