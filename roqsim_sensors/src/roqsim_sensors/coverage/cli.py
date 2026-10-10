@@ -128,7 +128,9 @@ def _build_samples(model, data, args):
     want = args.sample
     if want in ("volume", "both"):
         heights = tuple(float(h) for h in args.heights)
-        vol = sampling.room_volume_points(model, data, resolution=args.resolution, heights=heights)
+        vol = sampling.room_volume_points(
+            model, data, resolution=args.resolution, heights=heights, enclosed_only=not getattr(args, "open", False)
+        )
         if len(vol):
             points_list.append(vol)
             labels_list.append(np.full(len(vol), -1))
@@ -346,6 +348,12 @@ def _add_common_sampling(sp):
         nargs="+",
         default=[0.3, 1.0, 1.7],
         help="volume sample heights [m]",
+    )
+    sp.add_argument(
+        "--open",
+        action="store_true",
+        help="an open world (no walls, e.g. a cell on a table): keep volume points a horizontal ray "
+        "leaves without meeting anything, which the default room test drops",
     )
     sp.add_argument("--per-object", type=int, default=64, help="max surface points per object")
     sp.add_argument("--target", default=None, help="e.g. 'k=1,frac=0.95'")

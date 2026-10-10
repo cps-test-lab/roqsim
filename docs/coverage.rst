@@ -29,7 +29,10 @@ Concepts
   below). ``k=1`` means "seen by ≥1 sensor"; ``k=2`` is
   redundant coverage.
 * **Sample targets.** ``volume`` is a 3D grid of free interior points (room coverage); ``objects`` are
-  points on object surfaces, labelled by geom name (are these objects seen?).
+  points on object surfaces, labelled by geom name (are these objects seen?). "Interior" is a room
+  test -- a point keeps a sample only when a horizontal ray meets something on every side -- so in an
+  open world (a cell on a table, a yard) with no walls every volume point is dropped; ``--open``
+  keeps them, still dropping points inside a geom.
 * **Orientation matters.** With ``rpy = 0`` a sensor points along **+x** (world), up = +z. To look
   **down**, a camera needs ``rpy: [0, 1.5708, 0]``; an upright Livox (vertical band −7°..+52°) must be
   **inverted** (``rpy: [3.14159, 0, 0]``) or it sees almost nothing below it. Near-zero coverage is

@@ -212,6 +212,29 @@ def test_room_volume_points_are_interior():
     assert np.all(np.abs(pts[:, 0]) < 3.0) and np.all(np.abs(pts[:, 1]) < 3.0)
 
 
+def test_an_open_world_keeps_its_volume_points_only_when_asked():
+    """A cell on a table has no walls: the room test drops every point, `enclosed_only=False` keeps
+    them, still dropping the points inside a geom."""
+    from roqsim_sensors.coverage import sampling
+
+    m = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody>
+             <geom type="plane" size="5 5 0.1"/>
+             <geom name="table" type="box" size="0.5 0.5 0.4" pos="0 0 0.4"/>
+           </worldbody></mujoco>"""
+    )
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    bounds = (np.array([-1.0, -1.0, 0.0]), np.array([1.0, 1.0, 1.0]))
+    room = sampling.room_volume_points(m, d, resolution=0.1, heights=(0.3, 0.9), bounds=bounds)
+    assert len(room) == 0
+    open_ = sampling.room_volume_points(m, d, resolution=0.1, heights=(0.3, 0.9), bounds=bounds, enclosed_only=False)
+    assert len(open_) > 0
+    inside = (np.abs(open_[:, 0]) < 0.45) & (np.abs(open_[:, 1]) < 0.45) & (open_[:, 2] < 0.8)
+    assert not inside.any()
+    assert (open_[:, 2] == 0.9).sum() > (open_[:, 2] == 0.3).sum()  # above the table nothing is embedded
+
+
 def test_object_surface_points_label_the_table_not_walls():
     from roqsim_sensors.coverage import sampling
 
