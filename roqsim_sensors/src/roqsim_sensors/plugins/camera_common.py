@@ -135,16 +135,18 @@ def intrinsics_from_model(
         # cam_intrinsic is [focal_x_m, focal_y_m, principal_x_m, principal_y_m]; dividing by the
         # sensor size gives the fraction of the frame, so scaling by the pixel count converts to
         # pixels at whatever resolution this plugin renders -- the MJCF's own `resolution` need not
-        # be the one in use. The `cy` sign flips because MJCF's principal +y points UP the image
-        # while ROS's cy counts DOWN from the top row.
+        # be the one in use. MuJoCo renders the optical axis at (W/2 - ppx, H/2 - ppy) in edge
+        # coordinates from the frame's top-left corner; ROS's (cx, cy) count pixel centres, half a
+        # pixel less (see SpawnSensorPlugin._apply_intrinsics, which writes the inverse).
         fpx, fpy, ppx, ppy = (float(v) for v in model.cam_intrinsic[cam_id])
         m_fx, m_fy = fpx / sw * width, fpy / sh * height
-        m_cx, m_cy = width / 2.0 + ppx / sw * width, height / 2.0 - ppy / sh * height
+        m_cx, m_cy = width / 2.0 - 0.5 - ppx / sw * width, height / 2.0 - 0.5 - ppy / sh * height
     else:
         fovy_deg = float(fovy) if fovy is not None else float(model.cam_fovy[cam_id])
         f = height / (2.0 * math.tan(math.radians(fovy_deg) / 2.0))
         m_fx = m_fy = f
-        m_cx, m_cy = width / 2.0, height / 2.0
+        # A symmetric frustum's axis is the frame's centre: (W - 1) / 2 in pixel-centre coordinates.
+        m_cx, m_cy = (width - 1) / 2.0, (height - 1) / 2.0
 
     return Intrinsics(
         width=width,

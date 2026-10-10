@@ -1047,10 +1047,13 @@ class SpawnSensorPlugin(Plugin):
         if not (sw > 0.0 and sh > 0.0):
             cam.sensor_size = [width * _PIXEL_PITCH_M, height * _PIXEL_PITCH_M]
         cam.focal_pixel = [fx, fy]
-        # MJCF's principal point is an OFFSET from the image centre with +y pointing UP the image,
-        # while a calibration's cy counts DOWN from the top row. This flip is the one sign in the
-        # file that a reader cannot check by eye, so a test pins it against the reader that undoes it.
-        cam.principal_pixel = [cx - width / 2.0, height / 2.0 - cy]
+        # MJCF's principal point is an OFFSET from the sensor's centre, and MuJoCo renders the optical
+        # axis at (W/2 - ppx, H/2 - ppy) in edge coordinates counted from the top-left corner of the
+        # delivered frame: a positive offset moves the axis left and up in both axes. A calibration's
+        # (cx, cy) are pixel-CENTRE coordinates (OpenCV, ROS: pixel 0 spans [-0.5, 0.5]), half a pixel
+        # less than the edge coordinate. Hence one form for both axes; measured on rendered dots, and
+        # pinned by test_the_rendered_pixels_are_where_camera_info_projects_them.
+        cam.principal_pixel = [width / 2.0 - 0.5 - cx, height / 2.0 - 0.5 - cy]
 
     def _lens_camera(self, child: mujoco.MjSpec):
         """The camera ``intrinsics:`` describes: the named one, or the only one there is.

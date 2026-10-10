@@ -80,7 +80,8 @@ def test_intrinsics_from_model_matches_pinhole_formula():
     expected_f = 48 / (2.0 * math.tan(math.radians(60) / 2.0))
     assert intr.width == 64 and intr.height == 48
     assert math.isclose(intr.fx, expected_f) and intr.fx == intr.fy
-    assert intr.cx == 32.0 and intr.cy == 24.0
+    # The centre of a 64 x 48 frame in pixel-centre coordinates: pixel 0 spans [-0.5, 0.5].
+    assert intr.cx == 31.5 and intr.cy == 23.5
 
 
 def test_intrinsics_from_model_falls_back_when_resolution_unset():
@@ -110,9 +111,11 @@ def test_intrinsics_come_from_the_mjcf_lens_when_sensorsize_is_set():
     assert math.isclose(intr.fx, 1330.2327, rel_tol=1e-4)
     assert math.isclose(intr.fy, 1329.3745, rel_tol=1e-4)
     assert intr.fx != intr.fy
-    # cy is BELOW centre for a positive principalpixel y: MJCF counts it up the image, ROS down.
-    assert math.isclose(intr.cx, 974.25, abs_tol=0.01)
-    assert math.isclose(intr.cy, 538.99, abs_tol=0.01)
+    # MuJoCo renders the axis at (W/2 - ppx, H/2 - ppy) in edge coordinates from the top-left
+    # corner; ROS counts pixel centres, half a pixel less. Measured on rendered points:
+    # test_spawn_sensor.py::test_the_rendered_pixels_are_where_camera_info_projects_them.
+    assert math.isclose(intr.cx, 960 - 0.5 - 14.25, abs_tol=0.01)
+    assert math.isclose(intr.cy, 540 - 0.5 - 1.01, abs_tol=0.01)
 
 
 def test_an_explicit_fovy_still_wins_over_the_mjcf_lens():
@@ -125,7 +128,7 @@ def test_an_explicit_fovy_still_wins_over_the_mjcf_lens():
     m = mujoco.MjModel.from_xml_string(xml)
     intr = intrinsics_from_model(m, 0, fovy=60)
     assert math.isclose(intr.fx, 48 / (2.0 * math.tan(math.radians(60) / 2.0)))
-    assert intr.fx == intr.fy and intr.cx == 32.0 and intr.cy == 24.0
+    assert intr.fx == intr.fy and intr.cx == 31.5 and intr.cy == 23.5
 
 
 def test_intrinsics_can_be_stated_field_by_field():
@@ -138,7 +141,7 @@ def test_intrinsics_can_be_stated_field_by_field():
     assert intr.fx == 100.0 and intr.cy == 20.0
     # The ones not stated still come from the model.
     assert math.isclose(intr.fy, 48 / (2.0 * math.tan(math.radians(60) / 2.0)))
-    assert intr.cx == 32.0
+    assert intr.cx == 31.5
 
 
 def test_distortion_defaults_to_zero_because_a_render_is_an_ideal_pinhole():
