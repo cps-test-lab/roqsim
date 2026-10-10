@@ -13,6 +13,7 @@ import mujoco
 import numpy as np
 import pytest
 
+from roqsim.presence import PARK_Z
 from roqsim.rendering import (
     _line_of_sight_clear,
     autoframe,
@@ -23,6 +24,7 @@ from roqsim.rendering import (
     focus_camera,
     look_in_place,
     preview_camera,
+    scene_corners,
     walk_delta,
 )
 
@@ -112,6 +114,38 @@ def test_bounding_sphere_encloses_the_prop_and_none_when_empty(model_data):
     assert list(center) == pytest.approx([0.0, 0.0, 0.5], abs=1e-3)
     assert radius == pytest.approx(math.sqrt(0.25**2 + 0.25**2 + 0.5**2), rel=0.05)
     assert bounding_sphere(model, data, []) is None
+
+
+def _with_pool(z):
+    """The room and prop of ``_XML``, plus a visual-only mocap marker placed at height ``z``."""
+    xml = _XML.replace(
+        "</worldbody>",
+        '<body name="marker" mocap="true" pos="0 0 0.5">'
+        '<geom type="sphere" size="0.05" contype="0" conaffinity="0"/></body></worldbody>',
+    )
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    data.mocap_pos[0] = [0.0, 0.0, z]
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def test_a_parked_body_frames_nothing(model_data):
+    """A marker parked at PARK_Z is not part of the scene's box or of an entity's sphere."""
+    model, data = model_data
+    parked_model, parked_data = _with_pool(PARK_Z)
+    assert scene_corners(parked_model, parked_data) == pytest.approx(scene_corners(model, data))
+    both = [_bid(parked_model, "prop"), _bid(parked_model, "marker")]
+    alone = bounding_sphere(model, data, [_bid(model, "prop")])
+    center, radius = bounding_sphere(parked_model, parked_data, both)
+    assert center == pytest.approx(alone[0]) and radius == pytest.approx(alone[1])
+    assert bounding_sphere(parked_model, parked_data, [_bid(parked_model, "marker")]) is None
+
+
+def test_a_body_in_use_frames_as_any_other():
+    """Moved out of the park, the same marker counts again."""
+    model, data = _with_pool(3.0)
+    assert scene_corners(model, data)[:, 2].max() == pytest.approx(3.05)
 
 
 def _focus_los_clear(model, data, cam):
