@@ -54,8 +54,6 @@ sits rather than a config key::
       topics: {wrench: /ft}     # optional absolute-topic hardwire
       controller_name: ft_broadcaster  # name of the broadcaster it registers with the controller
                                 #   manager (default: <entry label>_broadcaster)
-      flex_reaction: excluded   # accept a reading blind to flex contacts (see "A flex the sensor
-                                #   cannot see" below); refused without it where one could occur
 
 Endpoint ``tare`` (a command) is that zero button, a ``std_srvs/Trigger`` service on
 ``<name>/tare`` over ROS; it takes no argument and its reply is what lets a scenario fail rather
@@ -103,23 +101,21 @@ rather than the noise plus one sample's worth of it -- a real tare averages many
 is that average exactly. Capture happens on the first read at or after ``tare_at_s``, so a sensor
 nobody reads is never tared and one read at 100 Hz tares within a step of the time asked for.
 
-**A flex the sensor cannot see.** MuJoCo's site force/torque sensor does not see a contact with a
-flex (:mod:`roqsim.flex`, rule 6): the reading carries on as though the contact were not there.
-Measured on MuJoCo 3.14.0 (``tests/test_force_torque_flex.py``): a rigid probe pressed 9 mm into a
-block reads its weight minus the 5.5 N contact against a rigid block, and its weight alone against a
-flex block of the same size that pushes back with 4.8 N; a pinned elastic cantilever below the
-sensor, propped up by a support carrying 1.5 N of it, still reads its whole weight. The rest of what
-a flex does reaches the sensor -- its weight, its elastic reaction at rest and in motion, a force
-applied to a vertex -- so a tool that deforms is not invisible, only its contacts are, and a contact
-is what a contact task measures.
+**A flex's contacts are added to the reading.** MuJoCo's site force/torque sensor reads the sensed
+subtree's momentum balance against its external forces and leaves a contact with a flex out of them
+(:mod:`roqsim.flex`, "the wrench a flex's contacts put into a subtree"). Measured on MuJoCo 3.14.0
+(``tests/test_force_torque_flex.py``): a rigid probe pressing a flex block read its weight alone, and
+a support carrying 1.5 N of a pinned elastic cantilever was absent from the reading. The rest of
+what a flex does already reaches the sensor -- its weight, its inertia and its elastic forces, which
+act on its vertex DOFs as joint forces between each vertex body and the body it hangs from.
 
-So ``configure`` refuses a sensor where a flex contact could fall into the reading: a colliding flex
-in the sensed subtree (a soft pad on the tool, whose every contact would be missing) or one whose
-contact mask pairs with a geom there (a tool that presses into a soft object). Stating
-``flex_reaction: excluded`` accepts the reading as it is -- for a world whose wrench of interest does
-not pass through a flex contact, say, or one that reads the flex's contacts some other way -- and
-the world then says so where a reader of its results can see it. A flex with collision disabled
-(``contype``/``conaffinity`` both zero) makes no contact and needs neither.
+So the plugin adds the missing term: every contact that involves a flex and has exactly one side in
+the sensed subtree enters with its force and its moment about the site
+(:class:`roqsim.flex.FlexContactWrench`). That covers a soft tool below the sensor touching anything
+-- an elastic block pinned to a flange pressing a table -- and a rigid tool pressing a soft object.
+The correction is applied to the raw pair, before the tare and the frame, so the reading is what a
+real sensor at that cut measures. A flex lying partly inside the subtree and partly outside is
+refused: its contacts cannot be assigned to one side of the cut.
 
 **Noise is per-sensor config, deliberately.** There is no generic error-model framework in roqsim (see
 ``docs/architecture.rst`` §9); a sensor that wants noise declares its own, as the lidar's
@@ -147,15 +143,12 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, Controller, registry_for
-from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
+from roqsim.flex import FlexContactWrench
 from roqsim.plugin import Plugin
 from roqsim.presence import entity_body_ids
 from roqsim.types import Wrench
 
 _FRAMES = ("sensor", "base", "world")
-
-#: The one value ``flex_reaction`` takes: the world accepts a reading without flex contacts.
-_FLEX_EXCLUDED = "excluded"
 
 
 @dataclass
@@ -218,7 +211,7 @@ class ForceTorquePlugin(Plugin):
         self._site_id = -1
         self._ref_bid = -1  # body whose frame the wrench is rotated into (frame: base)
         self._resolved_site = ""  # set in build(), reused in configure()
-        self.flex_reaction = self.config.get("flex_reaction")
+        self._flex_contacts: FlexContactWrench | None = None
 
     def validate_config(self, config: dict) -> list[str]:
         errors = self.validate_topics(config)
@@ -233,11 +226,13 @@ class ForceTorquePlugin(Plugin):
                 errors.append(f"'{key}' must be >= 0")
         if config.get("tare_at_s") is not None and float(config["tare_at_s"]) < 0:
             errors.append("'tare_at_s' must be >= 0: it is a sim time, not an offset")
-        if config.get("flex_reaction", _FLEX_EXCLUDED) != _FLEX_EXCLUDED:
+        if "flex_reaction" in config:
+            # A world that states it expects a reading blind to flex contacts states something untrue
+            # of this reading, so it must not pass silently.
             errors.append(
-                f"'flex_reaction' takes one value, {_FLEX_EXCLUDED!r} -- it states that the world "
-                "accepts a reading without the contacts of a flex, which MuJoCo's sensor does not "
-                "see. Remove it where no flex can touch the sensed tool."
+                "'flex_reaction' is not a force_torque setting: the reading includes the contacts "
+                "of a flex in or against the sensed subtree. Remove the key, and re-read any result "
+                "that relied on the sensor being blind to them."
             )
         if "seed" in config:
             # Silently ignoring it would leave a world believing it pinned the noise stream.
@@ -308,7 +303,7 @@ class ForceTorquePlugin(Plugin):
                 )
             setattr(self, attr, int(m.sensor_adr[sid]))
         self._refuse_a_tool_it_cannot_see(m, site_name, entity)
-        self._refuse_a_flex_contact_it_cannot_see(m, site_name)
+        self._flex_contacts = FlexContactWrench(m, self._sensed_bodies(m))
 
         if self.frame == "base":
             body_name = entity.body if entity and entity.body else f"{prefix}base"
@@ -415,53 +410,25 @@ class ForceTorquePlugin(Plugin):
             f"or measure at a site the tool hangs below."
         )
 
-    def _refuse_a_flex_contact_it_cannot_see(self, m, site_name: str) -> None:
-        """Refuse a sensor a flex contact could reach unseen, unless ``flex_reaction`` accepts it.
+    def _raw(self) -> tuple[np.ndarray, np.ndarray]:
+        """The site pair in the sensor frame, with the flex contacts MuJoCo leaves out added.
 
-        See "A flex the sensor cannot see" in the module docstring for the measurement.
+        MuJoCo's site sensor reports the subtree's balance as ``-(external wrench)``, so a missing
+        external contact wrench ``(F, M)`` (world, at the site) is subtracted, rotated into the site.
         """
-        if self.flex_reaction == _FLEX_EXCLUDED or not m.nflex:
-            return
-        sensed = self._sensed_bodies(m)
-        geoms = [g for g in range(m.ngeom) if int(m.geom_bodyid[g]) in sensed]
-        carried, touchable = [], []
-        for f in range(m.nflex):
-            if not flex_collides(m, f):
-                continue
-            if set(flex_dof_body_ids(m, f)) & sensed:
-                carried.append(flex_label(m, f))
-            elif any(
-                (int(m.flex_contype[f]) & int(m.geom_conaffinity[g]))
-                or (int(m.geom_contype[g]) & int(m.flex_conaffinity[f]))
-                for g in geoms
-            ):
-                touchable.append(flex_label(m, f))
-        if not carried and not touchable:
-            return
-        where = []
-        if carried:
-            where.append(
-                f"flex {', '.join(map(repr, carried))} hangs below it, so every contact that flex "
-                "makes would be missing"
-            )
-        if touchable:
-            where.append(
-                f"flex {', '.join(map(repr, touchable))} can collide with the geometry below it, so "
-                "a contact between the two would be missing"
-            )
-        raise RuntimeError(
-            f"force_torque[{self.name}]: site {site_name!r} measures a subtree a flex contact can "
-            f"reach, and MuJoCo's site force/torque sensor does not see a contact with a flex: "
-            f"{'; '.join(where)} from the reading, with nothing to say so. State "
-            f"`flex_reaction: {_FLEX_EXCLUDED}` on this sensor to accept that reading, or disable "
-            f"the flex's collision (contype/conaffinity 0) where it plays no part."
-        )
-
-    def read(self) -> tuple[np.ndarray, np.ndarray]:
-        """``(force[3], torque[3])`` in the configured frame. Runs on the physics thread."""
         d = self._ctx.data
         force = np.array(d.sensordata[self._force_adr : self._force_adr + 3], dtype=float)
         torque = np.array(d.sensordata[self._torque_adr : self._torque_adr + 3], dtype=float)
+        if self._flex_contacts is not None and self._flex_contacts.active:
+            f_world, m_world = self._flex_contacts(d, d.site_xpos[self._site_id])
+            rot = np.array(d.site_xmat[self._site_id]).reshape(3, 3)
+            force = force - rot.T @ f_world
+            torque = torque - rot.T @ m_world
+        return force, torque
+
+    def read(self) -> tuple[np.ndarray, np.ndarray]:
+        """``(force[3], torque[3])`` in the configured frame. Runs on the physics thread."""
+        force, torque = self._raw()
         if not self._tared and self.tare_at_s is not None and self._ctx.sim_time >= self.tare_at_s:
             # Captured here, from the raw pair, so the offset is the reading's MEAN: the noise is
             # added below and is what remains after the subtraction. A tare taken after the noise
@@ -511,16 +478,10 @@ class ForceTorquePlugin(Plugin):
         way to use this on a tool that turns, and refusing the second call would make that the one
         thing it cannot do.
         """
-        d = self._ctx.data
         # From the raw pair rather than through `read`, which has already subtracted whatever
         # offset is standing -- taring twice would otherwise capture the residual and leave the
         # first tare's offset in place forever.
-        self._offset_force = np.array(
-            d.sensordata[self._force_adr : self._force_adr + 3], dtype=float
-        )
-        self._offset_torque = np.array(
-            d.sensordata[self._torque_adr : self._torque_adr + 3], dtype=float
-        )
+        self._offset_force, self._offset_torque = self._raw()
         self._tared = True
 
     def on_reset(self, ctx: SimContext) -> None:

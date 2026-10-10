@@ -1,10 +1,14 @@
-"""A site force/torque sensor does not see a flex's contacts, so one that could is refused.
+"""A flex's contacts reach the ``force_torque`` reading, which MuJoCo's own site sensor leaves out.
 
-The first half measures MuJoCo 3.14 itself (:mod:`roqsim.flex`, rule 6), on the smallest scenes that
-show it: a rigid probe pressed into a block, and a soft cantilever hanging off a sensed mount. A
-contact with a flex never reaches the sensor; the flex's weight, its elastic reaction and a force
-applied to one of its vertices do. A MuJoCo that starts transmitting the contact fails here, and the
-refusal in the second half can go.
+The first half measures MuJoCo 3.14 itself, on the smallest scenes that show it: a rigid probe
+pressed into a block, and a soft cantilever hanging off a sensed mount. A contact with a flex never
+reaches MuJoCo's site sensor; the flex's weight, its elastic reaction and a force applied to one of
+its vertices do. These are the guard on the correction: a MuJoCo that starts transmitting the contact
+fails here, and :class:`roqsim.flex.FlexContactWrench` must then go, or the plugin counts it twice.
+
+The second half is the plugin, which adds the missing contacts: a flex tool and a rigid tool of the
+same size, pressed to the same contact force, read the same wrench; a support under a hanging flex
+and a probe pressing a flex balance; a flex across the cut is refused.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from roqsim_sensors.plugins.force_torque import ForceTorquePlugin
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim.engine import Engine
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 
 G = 9.81
 _OPTION = '<option integrator="discrete" timestep="0.0005" solver="Newton"/>'
@@ -145,7 +149,7 @@ def test_in_motion_the_reading_is_the_vertices_momentum_balance():
     assert worst < 1e-6
 
 
-# -- the plugin: refused where a flex contact could fall into the reading -------------------------
+# -- the plugin: the reading carries the flex's contacts ---------------------------------------
 
 
 class _Scene(Plugin):
@@ -159,44 +163,78 @@ class _Scene(Plugin):
         )
 
 
-def _tool(flex_below: str = "", contype: int = 1) -> str:
-    return f"""<mujoco><worldbody><body name="link" pos="0 0 0.5">
-      <joint type="slide" axis="0 0 1" damping="100"/>
-      <geom type="box" size=".02 .02 .02" mass="0.5"/>
-      <site name="fts_site"/>
-      <body name="tool" pos="0 0 -.05"><geom type="box" size=".02 .02 .02" mass="0.2"/>{flex_below}</body>
-    </body>
-    <body name="elsewhere" pos="1 0 .05">
-      <flexcomp name="blob" type="grid" count="3 3 3" spacing=".02 .02 .02" dim="3" radius=".002"
-                mass=".1"><contact contype="{contype}" conaffinity="{contype}" selfcollide="none"/>
-        <edge equality="true"/></flexcomp></body>
-    </worldbody></mujoco>"""
+_TOOL_MASS = 0.2
+_TOOL_OFFSET_X = 0.03  # the tool hangs off-axis, so the contact also has a moment about the site
+_RIGID_TOOL = f'<geom type="box" size=".03 .03 .03" pos="0 0 -.03" mass="{_TOOL_MASS}"/>'
+_FLEX_TOOL = (
+    f'<flexcomp name="pad" type="grid" count="4 4 4" spacing=".02 .02 .02" dim="3" '
+    f'radius=".001" mass="{_TOOL_MASS}" pos="0 0 -.03"><pin gridrange="0 0 3 3 3 3"/>'
+    '<edge equality="false"/><elasticity young="2e5" poisson="0.3" damping="0.002"/>'
+    '<contact condim="3" solref="0.005 1" selfcollide="none"/></flexcomp>'
+)
 
 
-class _TouchableFlex(_Scene):
-    XML = _tool()
+def _pressing(tool: str) -> str:
+    """A sensed link on a damped slide, a tool below it, a motor pressing it onto a ground plane.
+
+    The ground stands 0.3 m above the world's own floor, so the tool touches one plane only.
+    """
+    return f"""<mujoco><option integrator="discrete" timestep="0.0005" solver="Newton"/>
+    <worldbody><geom name="ground" type="plane" size="1 1 .1" pos="0 0 .3"/>
+      <body name="link" pos="0 0 .42">
+        <joint name="z" type="slide" axis="0 0 1" damping="40"/>
+        <geom type="box" size=".02 .02 .01" mass="0.5" contype="0" conaffinity="0"/>
+        <site name="fts_site"/>
+        <body name="tool" pos="{_TOOL_OFFSET_X} 0 -.02">
+          <geom type="box" size=".005 .005 .005" mass="0.01" contype="0" conaffinity="0"/>
+          {tool}
+        </body>
+      </body></worldbody>
+      <actuator><motor joint="z"/></actuator></mujoco>"""
 
 
-class _CarriedFlex(_Scene):
-    XML = _tool(
-        flex_below='<flexcomp name="pad" type="grid" count="3 3 2" spacing=".01 .01 .01" dim="3" '
-        'radius=".001" mass=".02" pos="0 0 -.03"><pin gridrange="0 0 1 2 2 1"/>'
-        '<edge equality="true"/><contact selfcollide="none"/></flexcomp>',
-        contype=0,
-    )
+class _RigidPress(_Scene):
+    XML = _pressing(_RIGID_TOOL)
 
 
-class _NoFlexContact(_Scene):
-    XML = _tool(contype=0)
+class _FlexPress(_Scene):
+    XML = _pressing(_FLEX_TOOL)
+
+
+class _ProbeOnFlex(_Scene):
+    XML = _probe_world(_FLEX_BLOCK)
+
+
+class _ProbeOnRigid(_Scene):
+    XML = _probe_world(_RIGID_BLOCK)
+
+
+class _HangingOnSupport(_Scene):
+    XML = _cantilever(support=True)
+
+
+class _Straddling(_Scene):
+    """One flex strung between the sensed body and a sibling outside its subtree."""
+
+    XML = """<mujoco><worldbody>
+      <body name="a" pos="0 0 .5"><freejoint/><geom type="box" size=".01 .01 .01" mass=".1"/>
+        <body name="b" pos="0 0 0"><joint type="slide" axis="0 0 1"/><site name="fts_site"/>
+          <geom type="box" size=".01 .01 .01" mass=".1" contype="0" conaffinity="0"/></body>
+        <body name="c" pos=".05 0 0"><joint type="slide" axis="0 0 1"/>
+          <geom type="box" size=".01 .01 .01" mass=".1" contype="0" conaffinity="0"/></body>
+      </body></worldbody>
+      <deformable><flex name="rope" dim="1" body="b c" vertex="0 0 0 0 0 0" element="0 1"
+                        radius=".002"/></deformable></mujoco>"""
 
 
 def _setup(scene: str, **ft):
+    # An attached model's <option> is dropped (the world's wins), so the step is stated here.
     cfg = load_config_from_dict(
         {
-            "sim": {},
+            "sim": {"timestep": 0.0005, "integrator": "discrete", "solver": "newton"},
             "components": [
                 {f"{__name__}:{scene}": {}},
-                {"force_torque": {"site": "fts_site", **ft}, "name": "ft"},
+                {"force_torque": {"site": ft.pop("site", "fts_site"), **ft}, "name": "ft"},
             ],
         }
     )
@@ -206,26 +244,108 @@ def _setup(scene: str, **ft):
     return engine
 
 
-def test_a_sensed_tool_that_can_touch_a_flex_is_refused():
-    with pytest.raises(RuntimeError, match=r"'blob' can collide.*flex_reaction: excluded"):
-        _setup("_TouchableFlex")
+def _plugin(engine) -> ForceTorquePlugin:
+    return next(p for p in engine.plugins if isinstance(p, ForceTorquePlugin))
 
 
-def test_a_flex_carried_below_the_sensor_is_refused():
-    with pytest.raises(RuntimeError, match=r"'pad' hangs below it"):
-        _setup("_CarriedFlex")
+def _floor_contact(engine) -> np.ndarray:
+    """The summed world force the ground applies to whatever it touches."""
+    m, d = engine.ctx.model, engine.ctx.data
+    floor = m.geom("ground").id
+    total, f6 = np.zeros(3), np.zeros(6)
+    for i in range(d.ncon):
+        c = d.contact[i]
+        if floor not in (int(c.geom[0]), int(c.geom[1])):
+            continue
+        mujoco.mj_contactForce(m, d, i, f6)
+        world = c.frame.reshape(3, 3).T @ f6[:3]  # on the second side
+        total += world if int(c.geom[0]) == floor else -world
+    return total
 
 
-@pytest.mark.parametrize("scene", ["_TouchableFlex", "_CarriedFlex"])
-def test_stating_the_exclusion_accepts_the_reading(scene):
-    engine = _setup(scene, flex_reaction="excluded")
-    assert any(isinstance(p, ForceTorquePlugin) for p in engine.plugins)
+def _press_with(scene: str, push: float = 10.0, steps: int = 8000):
+    engine = _setup(scene, frame="world")
+    engine.ctx.data.ctrl[0] = -push
+    for _ in range(steps):
+        engine.step()
+    mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
+    return engine
 
 
-def test_a_flex_that_makes_no_contact_needs_no_statement():
-    _setup("_NoFlexContact")
+def test_a_flex_tool_and_a_rigid_tool_pressed_alike_read_the_same_wrench():
+    """Same size, same mass, same contact force: the same wrench within 5 %, and the static case
+    balances against the floor's contact."""
+    readings = {}
+    for scene in ("_RigidPress", "_FlexPress"):
+        engine = _press_with(scene)
+        force, torque = _plugin(engine).read()
+        contact = _floor_contact(engine)
+        below = float(engine.ctx.model.body_subtreemass[engine.ctx.model.body("link").id]) * G
+        # Environment on tool, world frame: the floor's push minus what the cut carries of weight.
+        assert contact[2] > 15.0
+        assert force[2] == pytest.approx(contact[2] - below, rel=0.05)
+        readings[scene] = (force, torque)
+    (f_rigid, t_rigid), (f_flex, t_flex) = readings["_RigidPress"], readings["_FlexPress"]
+    assert f_flex[2] == pytest.approx(f_rigid[2], rel=0.05)
+    # The contact sits off the site's axis, so it carries a moment the reading must also see.
+    assert abs(t_rigid[1]) > 0.1
+    assert t_flex[1] == pytest.approx(t_rigid[1], rel=0.05)
 
 
-def test_flex_reaction_takes_one_value():
-    errors = ForceTorquePlugin({"site": "s"}).validate_config({"site": "s", "flex_reaction": "on"})
-    assert any("flex_reaction" in e for e in errors)
+def test_the_raw_mujoco_sensor_still_misses_the_flex_press():
+    """The correction's guard, on the scene the plugin is tested on."""
+    engine = _press_with("_FlexPress")
+    m, d = engine.ctx.model, engine.ctx.data
+    raw_fz = float(d.sensordata[m.sensor("fts_site_force").adr[0] + 2])
+    below = float(m.body_subtreemass[m.body("link").id]) * G
+    assert raw_fz == pytest.approx(below, rel=0.01)
+
+
+def test_a_probe_pressing_a_flex_reads_like_one_pressing_a_rigid_block():
+    reads = {}
+    for scene in ("_ProbeOnRigid", "_ProbeOnFlex"):
+        engine = _setup(scene, site="ft", frame="world")
+        engine.ctx.data.ctrl[0] = -0.057
+        for _ in range(6000):
+            engine.step()
+        mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
+        force, _ = _plugin(engine).read()
+        weight = float(engine.ctx.model.body_mass[engine.ctx.model.body("probe").id]) * G
+        reads[scene] = force[2] + weight  # the block's push on the probe
+    assert reads["_ProbeOnRigid"] > 4.0 and reads["_ProbeOnFlex"] > 4.0
+
+
+def test_a_support_under_a_hanging_flex_is_in_the_reading():
+    engine = _setup("_HangingOnSupport", site="ft", frame="world")
+    for _ in range(8000):
+        engine.step()
+    mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
+    m, d = engine.ctx.model, engine.ctx.data
+    weight = float(m.body_mass[1:].sum()) * G
+    carried, f6 = 0.0, np.zeros(6)
+    for i in range(d.ncon):
+        mujoco.mj_contactForce(m, d, i, f6)
+        carried += f6[0]
+    force, _ = _plugin(engine).read()
+    assert carried > 1.0
+    assert force[2] == pytest.approx(-(weight - carried), abs=0.005)
+
+
+def test_a_tare_in_contact_zeroes_the_corrected_reading():
+    engine = _press_with("_FlexPress")
+    plugin = _plugin(engine)
+    plugin.tare()
+    force, torque = plugin.read()
+    assert np.allclose(force, 0.0, atol=1e-9) and np.allclose(torque, 0.0, atol=1e-9)
+
+
+def test_a_flex_across_the_cut_is_refused():
+    with pytest.raises(PluginError, match=r"'rope' lies partly inside"):
+        _setup("_Straddling")
+
+
+def test_flex_reaction_is_refused_now_that_the_reading_carries_the_contacts():
+    errors = ForceTorquePlugin({"site": "s"}).validate_config(
+        {"site": "s", "flex_reaction": "excluded"}
+    )
+    assert any("includes the contacts" in e for e in errors)

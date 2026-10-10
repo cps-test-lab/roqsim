@@ -6,7 +6,7 @@ compiles under the integrator ``auto`` picks for it, and gravity compensation --
 where it was sent -- leaves the pad's vertices to their weight, so it sags the way a real pad on a
 still arm does. Measured on the running arm rather than read off ``body_gravcomp``. And mounted
 where the arm's manifest puts a tool, a pad that makes contact hangs below the arm's force/torque
-site, so the sensor's refusal of a flex contact it cannot see applies to it.
+site, so the sensor counts the pad's contacts in its reading.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def test_the_arm_holds_its_pose_and_the_pad_sags_under_its_own_weight(tmp_path):
     assert vertex_bodies and all(model.body_gravcomp[b] == 0.0 for b in vertex_bodies)
 
 
-#: The same pad, making contact -- the case a force_torque above it cannot measure.
+#: The same pad, making contact -- the case MuJoCo's own site sensor leaves out.
 COLLIDING_PAD = PINNED_IN_A_BODY.replace(
     'contype="0" conaffinity="0"', 'contype="1" conaffinity="1"'
 )
@@ -133,13 +133,13 @@ def _sensed(tmp_path, **ft):
     return engine
 
 
-def test_a_colliding_pad_mounted_by_default_is_below_the_sensor_and_refused(tmp_path):
-    """Mounted where the arm's manifest puts a tool, the pad is under ``fts_site``: its contacts
-    would be missing from the wrench, so the flex refusal applies to it."""
-    with pytest.raises(RuntimeError, match=r"'ur5e_pad' hangs below it"):
-        _sensed(tmp_path)
+def test_a_colliding_pad_mounted_by_default_is_below_the_sensor_and_counted(tmp_path):
+    """Mounted where the arm's manifest puts a tool, the pad is under ``fts_site``: the sensor
+    counts the pad's contacts, which MuJoCo's site sensor alone would leave out."""
+    from roqsim_sensors.plugins.force_torque import ForceTorquePlugin
 
-
-def test_a_colliding_pad_is_accepted_once_the_world_states_it(tmp_path):
-    engine = _sensed(tmp_path, flex_reaction="excluded")
+    engine = _sensed(tmp_path)
     assert engine.ctx.entities.get("arm").meta["end_effector"]["site"] == "ur5e_tool_site"
+    ft = next(p for p in engine.plugins if isinstance(p, ForceTorquePlugin))
+    pad = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_FLEX, "ur5e_pad")
+    assert ft._flex_contacts.active and ft._flex_contacts._flex_in[pad]
