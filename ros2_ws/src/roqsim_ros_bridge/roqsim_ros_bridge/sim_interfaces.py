@@ -23,6 +23,7 @@ Reuses the ``rclpy`` node created by :class:`~roqsim_ros_bridge.ros2_bridge.Ros2
 from __future__ import annotations
 
 import math
+import re
 import threading
 
 import rclpy
@@ -69,6 +70,20 @@ _POSE_EPS = 1e-6
 _WORLD_FRAMES = ("", "world")
 
 
+def _unit_quat(o):
+    """``(w, x, y, z)`` of a ``geometry_msgs/Quaternion``, normalised; ``None`` for zero length.
+
+    A zero-norm quaternion is the one value that cannot be a rotation, and the services that take a
+    pose have a code saying so (``INVALID_POSE``), so it is reported rather than repaired.
+    Normalised because MuJoCo reads a free joint's quaternion as a unit one; a caller's near-unit
+    value would otherwise scale the body's orientation.
+    """
+    norm = math.sqrt(o.w * o.w + o.x * o.x + o.y * o.y + o.z * o.z)
+    if norm < _POSE_EPS:
+        return None
+    return (o.w / norm, o.x / norm, o.y / norm, o.z / norm)
+
+
 def _pose_of(req):
     """``initial_pose`` as ``(pos, quat)``, or ``None`` when the quaternion is not a rotation.
 
@@ -76,18 +91,43 @@ def _pose_of(req):
     default-constructed request carries the origin and, because ``geometry_msgs/Quaternion``
     declares ``w 1``, the IDENTITY. So every request asks for a pose, and this reads the one it
     asks for rather than guessing which fields the caller meant to fill in.
-
-    A zero-norm quaternion is the one thing that cannot be a rotation, and the service has a code
-    saying so (``INVALID_POSE``), so it is reported rather than repaired.
     """
     p = req.initial_pose.pose.position
-    o = req.initial_pose.pose.orientation
-    norm = math.sqrt(o.w * o.w + o.x * o.x + o.y * o.y + o.z * o.z)
-    if norm < _POSE_EPS:
+    quat = _unit_quat(req.initial_pose.pose.orientation)
+    return None if quat is None else ((p.x, p.y, p.z), quat)
+
+
+def _foreign_frame(stamped) -> str:
+    """The frame a stamped request states, when it is not the world frame this simulator knows."""
+    frame_id = getattr(getattr(stamped, "header", None), "frame_id", "")
+    return frame_id if frame_id and frame_id not in _WORLD_FRAMES else ""
+
+
+def _unsupported_entity_filters(filters):
+    """``(result_code, message)`` for a ``GetEntities`` filter this simulator cannot apply, else
+    ``None``.
+
+    Entities carry no category, no tags and no bounds here, which ``get_simulator_features`` says
+    by advertising none of ENTITY_CATEGORIES, ENTITY_TAGS and ENTITY_BOUNDS. Answering such a query
+    with every entity would hand the caller a list it asked to have narrowed.
+    """
+    if filters is None:
         return None
-    # Normalised because MuJoCo reads the free joint's quaternion as a unit one; a caller's
-    # near-unit value would otherwise scale the body's orientation.
-    return (p.x, p.y, p.z), (o.w / norm, o.x / norm, o.y / norm, o.z / norm)
+    unsupported = []
+    if list(getattr(filters, "categories", []) or []):
+        unsupported.append("'categories'")
+    if list(getattr(getattr(filters, "tags", None), "tags", []) or []):
+        unsupported.append("'tags'")
+    bounds = getattr(filters, "bounds", None)
+    if bounds is not None and (bounds.type != 0 or list(bounds.points)):
+        unsupported.append("'bounds'")
+    if unsupported:
+        return Result.RESULT_FEATURE_UNSUPPORTED, (
+            f"filters {', '.join(unsupported)} cannot be applied: entities here carry no "
+            "category, tags or bounds (get_simulator_features advertises none). Filter by name "
+            "with 'filter'."
+        )
+    return None
 
 
 def _already_at(state, pose) -> bool:
@@ -212,8 +252,8 @@ def _unsupported_spawn_request(req):
             "compiled under this name, so an existing name is what the request needs rather than "
             "a collision to rename around. Ask for the name you want."
         )
-    frame_id = getattr(getattr(req.initial_pose, "header", None), "frame_id", "")
-    if frame_id and frame_id not in _WORLD_FRAMES:
+    frame_id = _foreign_frame(req.initial_pose)
+    if frame_id:
         return SpawnEntity.Response.INVALID_POSE, (
             f"initial_pose is stated in frame {frame_id!r}, which this simulator does not know. "
             "It places entities in the world frame, which the empty default already names."
@@ -308,9 +348,32 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _get_entities(self, req, resp):
+        """The present entities, narrowed by the request's name ``filter``.
+
+        ``filter`` is a regular expression searched in each name; a filter this simulator cannot
+        apply is refused by name (:func:`_unsupported_entity_filters`).
+        """
+        filters = getattr(req, "filters", None)
+        unsupported = _unsupported_entity_filters(filters)
+        if unsupported:
+            code, message = unsupported
+            resp.result = Result(result=code, error_message=message)
+            return resp
         # Present ones only: an absent entity is compiled into the model but nothing can see
         # or touch it, so listing it would make this disagree with every sensor.
-        resp.entities = self._ctx.entities.names(present_only=True)
+        names = self._ctx.entities.names(present_only=True)
+        pattern = getattr(filters, "filter", "") if filters is not None else ""
+        if pattern:
+            try:
+                regex = re.compile(pattern)
+            except re.error as exc:
+                resp.result = Result(
+                    result=Result.RESULT_OPERATION_FAILED,
+                    error_message=f"'filter' {pattern!r} is not a regular expression: {exc}",
+                )
+                return resp
+            names = [name for name in names if regex.search(name)]
+        resp.entities = names
         resp.result = Result(result=Result.RESULT_OK)
         return resp
 
@@ -465,9 +528,26 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
             )
             return resp
+        # The pose and twist are stated in the header's frame, and this simulator knows only the
+        # world frame, which the empty default names.
+        frame_id = _foreign_frame(req.state)
+        if frame_id:
+            resp.result = Result(
+                result=SetEntityState.Response.INVALID_POSE,
+                error_message=f"the state is stated in frame {frame_id!r}, which this simulator "
+                "does not know. It places entities in the world frame, which the empty default "
+                "already names.",
+            )
+            return resp
         p = req.state.pose.position
-        o = req.state.pose.orientation
-        quat = (o.w, o.x, o.y, o.z) if any([o.w, o.x, o.y, o.z]) else (1.0, 0.0, 0.0, 0.0)
+        quat = _unit_quat(req.state.pose.orientation)
+        if quat is None:
+            resp.result = Result(
+                result=SetEntityState.Response.INVALID_POSE,
+                error_message="the pose carries a zero-length quaternion, which is not a "
+                "rotation. Send a unit quaternion; the identity is w=1.",
+            )
+            return resp
         pose = ((p.x, p.y, p.z), quat)
         # The twist is part of the state: `EntityState` carries one and the GETTER reports one, so
         # answering RESULT_OK while ignoring whatever was asked for would let a caller read a

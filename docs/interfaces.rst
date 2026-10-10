@@ -687,6 +687,10 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 
 * ``GetSimulatorFeatures`` — advertised capabilities.
 * ``GetEntities``, ``GetEntityState``, ``SetEntityState`` — list and read/teleport entities.
+  ``GetEntities`` narrows by its name ``filter`` (a regular expression searched in each name) and
+  refuses a ``categories``, ``tags`` or ``bounds`` filter, which entities here do not carry.
+  ``SetEntityState`` takes a state in the world frame (an empty ``frame_id`` or ``world``) and
+  refuses any other frame and a zero-length quaternion with ``INVALID_POSE``.
 * ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
