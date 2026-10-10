@@ -75,6 +75,15 @@ serial path if a parallel run ever looks flaky:
    make test JOBS=1           # serial; the fallback when a parallel run looks wrong
    make test-roqsim_sensors   # just one package, for the edit/run loop
 
+``roqsim export gltf`` is checked by the Khronos glTF Validator, a Node.js program pinned in
+``tools/gltf_validator``. ``make test`` runs it over an export of a small world when it is installed
+and reports a skip when it is not; ``make test-gltf`` installs it (``npm ci``), requires it, and holds
+an export of every world ``roqsim_scenes`` ships to no error and no warning:
+
+.. code-block:: bash
+
+   make test-gltf             # needs node and npm on PATH
+
 .. _adding-a-tool:
 
 Adding a tool

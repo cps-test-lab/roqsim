@@ -270,6 +270,7 @@ _STATES_ITS_EXIT_STATUS = {
     "catalog",
     "plugins",
     "export web",
+    "export gltf",
     "export urdf",
     "export srdf",
     "export mesh",
@@ -319,6 +320,8 @@ def _missing_input_cases(root: Path) -> dict[str, list[str]]:
         "plugins": ["describe", "nope_xyz"],
         "export web": ["--world", f"{nope}.yaml", "--out", str(root / "web")],
         "export web --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "web")],
+        "export gltf": ["--world", f"{nope}.yaml", "--out", str(root / "x.glb")],
+        "export gltf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.glb")],
         "export urdf": ["--world", f"{nope}.yaml", "--out", str(root / "x.urdf")],
         "export urdf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.urdf")],
         "export srdf --mjcf": [

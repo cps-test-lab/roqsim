@@ -122,7 +122,7 @@ def report_grid(path: Path, crop, thresh_lo: int = 170, thresh_hi: int = 235) ->
             folded = [g / max(1, round(g / base)) for g in gaps]
             period = float(np.median(folded))
         print(
-            f"grid {label}: {len(centres)} lines, gaps {list(np.round(gaps, 1))}, period ~{period}"
+            f"grid {label}: {len(centres)} lines, gaps {np.round(gaps, 1).tolist()}, period ~{period}"
         )
 
 

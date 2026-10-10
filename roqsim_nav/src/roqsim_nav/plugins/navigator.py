@@ -528,7 +528,7 @@ class NavigatorPlugin(Plugin):
         # function of when the mover arrived. A generator held from here would be a stateful stream
         # whose position depends on how many draws preceded it, and would draw at configure time --
         # before this plugin's own arrival, and before a driver need have resolved the seed.
-        stream = f"navigator:{self.entity}"
+        stream = self.draw_key("dwell")
         self._core = NavCore(
             self._state,
             planner,

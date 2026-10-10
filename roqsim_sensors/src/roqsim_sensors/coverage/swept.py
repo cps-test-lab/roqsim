@@ -258,7 +258,11 @@ def swept_coverage(
         # The adapter's hypothetical form, at the origin with no rotation, so its own conventions (a
         # camera's optical axis, a lidar's boresight) are inherited; the frame's pose goes on top.
         placed = PlacedSensor(
-            sensor_type, pos=np.zeros(3), rpy=np.zeros(3), config=config, label=mount.path
+            sensor_type,
+            pos=np.zeros(3),
+            quat=np.array([1.0, 0.0, 0.0, 0.0]),
+            config=config,
+            label=mount.path,
         )
     try:
         fov = build_fov(model, first.data, placed)

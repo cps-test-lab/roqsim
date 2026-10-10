@@ -72,7 +72,7 @@ components:
   # unless it is asked for, because turning one on by default would change how every existing walker
   # behaves. So this one is given a navigator of its own asking for `stop`, and it holds for the
   # traffic instead of walking through it. Worth knowing before putting a walker near a robot.
-  - walker: {walker: MaleVisitorWalk, pos: [-4.3, 3.5]}
+  - walker: {walker: MaleVisitorWalk, pose: {position: {x: -4.3, y: 3.5}}}
     name: visitor
     components:
       - navigator:
@@ -92,7 +92,7 @@ components:
     components:
       - navigator: {speed: 0.4, goals: [[2.5, 4.0]], avoidance: {steer: give_way}}
 
-  - walker: {walker: MaleVisitorWalk, pos: [2.5, 4.0]}
+  - walker: {walker: MaleVisitorWalk, pose: {position: {x: 2.5, y: 4.0}}}
     name: pedestrian
     components:
       - navigator:

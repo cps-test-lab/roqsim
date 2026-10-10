@@ -12,7 +12,8 @@ setup(
         ("share/" + package_name + "/launch", ["launch/turtlebot.launch.py"]),
         ("share/" + package_name + "/worlds", ["worlds/turtlebot_ros2.yaml"]),
     ],
-    install_requires=["setuptools"],
+    # roqsim is a pip package rather than a ROS package, so it is declared here, not in package.xml.
+    install_requires=["setuptools", "roqsim"],
     zip_safe=True,
     maintainer="Frederik Pasch",
     maintainer_email="frederik.pasch@h-ka.de",

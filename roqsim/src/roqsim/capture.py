@@ -62,6 +62,7 @@ from .mcap_format import (
 from .mcap_format import (
     RecordingNotFoundError as RecordingNotFoundError,  # re-exported: the error a caller catches
 )
+from .presence import subtree_body_ids
 from .rates import (
     SNAP_NOTABLE,
     SNAP_QUIET,
@@ -375,15 +376,6 @@ def _entities_of(model, registry) -> list[tuple[str, str, set[int]]]:
         entities = list(registry.all())
     except Exception:  # noqa: BLE001 - a driver with no usable registry records unnamed tracks
         return []
-    parents = [int(p) for p in model.body_parentid]
-
-    def under(bid: int, root: int) -> bool:
-        while bid > 0:
-            if bid == root:
-                return True
-            bid = parents[bid]
-        return False
-
     out = []
     for entity in entities:
         if not entity.body:
@@ -392,8 +384,9 @@ def _entities_of(model, registry) -> list[tuple[str, str, set[int]]]:
         if root < 0:
             continue
         meta = entity.meta if isinstance(getattr(entity, "meta", None), dict) else {}
-        subtree = {bid for bid in range(1, model.nbody) if under(bid, root)}
-        out.append((str(entity.name), str(meta.get("prefix") or ""), subtree))
+        out.append(
+            (str(entity.name), str(meta.get("prefix") or ""), set(subtree_body_ids(model, root)))
+        )
     return out
 
 
@@ -645,6 +638,9 @@ class StateRecorder:
         _, self._flexes = _flex_bodies(ctx.model)
         #: Last roster written, so the record is rewritten when it changes and not once per sample.
         self._entities_sig: tuple | None = None
+        #: Each change of the absent set, as ``{"index", "t", "absent"}``; see :meth:`_note_presence`.
+        self._presence: list[dict] = []
+        self._absent: tuple | None = None
         self._ctx = ctx
         self._writer: ChunkedWriter | None = None
         self._channels: dict[str, int] = {}
@@ -717,6 +713,9 @@ class StateRecorder:
                 "bodies": [name for _, name in self._bodies],
                 "joints": [name for _, name, _ in self._joints],
             },
+            # Which entities were absent from which sample on: a model field the state cannot hold.
+            # The list itself, so every write of the provenance carries the changes so far.
+            "presence": self._presence,
             "model": {
                 "name": _model_name(ctx.model),
                 "nbody": int(ctx.model.nbody),
@@ -855,6 +854,7 @@ class StateRecorder:
             publish_time,
         )
         self._write_entities()
+        self._note_presence(ctx, sim)
         # Judged against the clock now rather than the sample's stamp: on the first sample the file
         # was opened between the two, and the reference was taken at the open.
         now = time.perf_counter()
@@ -923,6 +923,28 @@ class StateRecorder:
             return
         self._writer.add_json_metadata(META_ENTITIES, {"entities": roster})
         self._entities_sig = signature
+
+    def _note_presence(self, ctx, sim: float) -> None:
+        """Note the absent entities when they differ from the last sample's.
+
+        Presence is a ``model`` field (:mod:`roqsim.presence`), which the state samples cannot hold, so
+        the changes travel in the provenance as ``presence``: from sample ``index`` on, the entities
+        named in ``absent`` are absent and every other is present. :class:`roqsim.recording.Recording`
+        applies them to each sample it restores.
+
+        A change rewrites the provenance record at once rather than waiting for :meth:`close`, so a
+        killed run keeps every change its closed chunks can be replayed with. Changes are rare, so
+        the record is rewritten rarely.
+        """
+        registry = getattr(ctx, "entities", None)
+        if registry is None:
+            return
+        absent = tuple(sorted(e.name for e in registry.all() if not e.present))
+        if absent == self._absent:
+            return
+        self._absent = absent
+        self._presence.append({"index": self._count, "t": sim, "absent": list(absent)})
+        self._writer.add_json_metadata(META_RECORDING, self._provenance)
 
     def on_reset(self) -> None:
         """Start the schedule over. A rebuilt or reset world is a new series, not a continuation.

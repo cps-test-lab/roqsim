@@ -131,8 +131,10 @@ def test_refuses_a_second_wind_owner():
     # sim.wind and wind_field are two owners of one global: the compiled model would say one thing
     # and the first tick another, and the run's provenance would record the overwritten value.
     ctx = _ctx(wind=[1.0, 0.0, 0.0])
-    with pytest.raises(RuntimeError, match="One owner per knob"):
+    with pytest.raises(RuntimeError, match="One owner per knob") as refusal:
         _plugin({"steady": [1.0, 0.0, 0.0]}).configure(ctx)
+    # The vector is to be moved into `steady:` as written, so it reads as plain numbers.
+    assert "([1.0, 0.0, 0.0])" in str(refusal.value)
 
 
 def test_refuses_a_seed_of_its_own():

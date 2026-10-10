@@ -13,13 +13,13 @@ import mujoco
 import numpy as np
 import pytest
 
+from roqsim.pose import yaw_to_quat
 from roqsim_walker.blueprint import available_walkers, resolve_walker
 from roqsim_walker.humanoid import (
     DEFAULT_SKELETON,
     JOINT_NAMES,
     build_humanoid,
     forward_kinematics,
-    quat_yaw,
     to_skeleton,
 )
 from roqsim_walker.motion import Clip, procedural_idle, procedural_walk, smoothstep
@@ -44,7 +44,7 @@ def test_forward_kinematics_yaw_rotates_the_body():
     turned = forward_kinematics(root, math.pi / 2, IDENT)
     # pelvis is the root: position pinned, orientation follows yaw.
     np.testing.assert_allclose(turned["pelvis"][0], root)
-    np.testing.assert_allclose(turned["pelvis"][1], quat_yaw(math.pi / 2), atol=1e-9)
+    np.testing.assert_allclose(turned["pelvis"][1], yaw_to_quat(math.pi / 2), atol=1e-9)
     # the left hip, offset along +Y at rest, swings to -X after a +90 deg yaw.
     dx = straight["hip_l"][0] - np.array(root)
     dy = turned["hip_l"][0] - np.array(root)

@@ -1,0 +1,10 @@
+{
+  "name": "roqsim-gltf-validator",
+  "private": true,
+  "description": "The Khronos glTF Validator, pinned, for `make test-gltf` and the export gltf tests.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "gltf-validator": "2.0.0-dev.3.10"
+  }
+}

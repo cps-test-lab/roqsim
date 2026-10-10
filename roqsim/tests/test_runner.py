@@ -278,7 +278,7 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
 #
 # A supervised run ends on SIGTERM, not Ctrl+C: a container teardown, `docker stop`, a scheduler
 # eviction and a campaign timeout all send it. Its *default* action kills the process outright, so no
-# `finally` runs and the recording and the run capture are both lost -- a campaign then finishes 1/1
+# `finally` runs and the recording's open chunk and summary are lost -- a campaign then finishes 1/1
 # clean and produces no finished `run.mcap` at all. These pin that both signals flip run-control
 # instead, and that the driver leaves the process's handlers as it found them.
 

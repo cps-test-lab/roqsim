@@ -42,8 +42,8 @@ MAGIC = b"\x89MCAP0\r\n"
 #: The profile the header names. A reader refuses any other: the channels below are this profile's.
 PROFILE = "roqsim"
 
-#: The recording's own format version, carried in the ``roqsim.recording`` metadata. Versions 1 and
-#: 2 were numpy archives and have no reader here; a version above this one is refused by name.
+#: The recording's own format version, carried in the ``roqsim.recording`` metadata. It is the only
+#: one with a reader: any other version is refused by name.
 FORMAT_VERSION = 3
 
 #: The suffix a recording carries. What ``is_recording`` tests and what a bare ``--record out``
