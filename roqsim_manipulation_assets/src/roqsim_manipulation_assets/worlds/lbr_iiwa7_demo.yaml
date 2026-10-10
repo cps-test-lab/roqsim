@@ -1,0 +1,25 @@
+# KUKA LBR iiwa 7 R800 on the floor — standalone demo world (roqsim_manipulation_assets).
+#
+# Standalone: roqsim sim roqsim_manipulation_assets:lbr_iiwa7_demo
+# A `test_target` drives the arm to a pose so the standalone scene shows motion.
+#
+# Over ROS 2 (add --ros, or the ros2_bridge plugin from roqsim_ros_bridge) the arm speaks
+# lbr_fri_ros2_stack's interface, from its manifest: /lbr/joint_states and
+# /lbr/joint_trajectory_controller/follow_joint_trajectory, joints lbr_A1 .. lbr_A7. Remove
+# `test_target` first, or it holds the arm against every command.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+components:
+  # arm_controller comes from the model manifest (models/lbr_iiwa7/lbr_iiwa7.manifest.yaml).
+  - spawn_arm:
+      model: lbr_iiwa7
+      prefix: "lbr_"
+    name: lbr
+
+  # Override the manifest's arm_controller only to add test_target. Inside every axis's limits
+  # (A2, A4, A6 at +-120 deg); the manifest's max_velocity paces the move at KUKA's axis speeds.
+    components:
+      - arm_controller:
+          test_target: [0.5, 0.6, 0.0, -1.2, 0.0, 0.9, 0.0]
