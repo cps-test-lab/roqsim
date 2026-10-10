@@ -317,6 +317,18 @@ def test_a_refused_export_writes_nothing(tmp_path, capsys):
     assert not out.exists()
 
 
+@pytest.mark.parametrize("segments", ["0", "2", "-8"])
+def test_too_few_segments_is_a_usage_error(tmp_path, capsys, segments):
+    mjcf = tmp_path / "fixture.xml"
+    mjcf.write_text(MJCF.format(tet=_TET, base_pos="0 0 0", base_quat="1 0 0 0"))
+    out = tmp_path / "robot.stl"
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--mjcf", str(mjcf), "--out", str(out), "--segments", segments])
+    assert exit_info.value.code == exit_status.BAD_INPUT
+    assert "--segments takes 3 or more" in capsys.readouterr().err
+    assert not out.exists()
+
+
 def test_the_manifest_names_the_source(tmp_path, capsys):
     manifest = tmp_path / "gen.json"
     mjcf = tmp_path / "fixture.xml"

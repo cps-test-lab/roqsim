@@ -68,15 +68,23 @@ SELF_WRITTEN = {
 }
 
 
-def _plugins() -> list[tuple[str, type]]:
-    """Every installed plugin entry, loaded. One that fails to import fails the guard, loudly."""
-    return sorted(
-        ((ep.name, ep.load()) for ep in entry_points(group=ENTRY_POINT_GROUP)),
-        key=lambda item: item[0],
-    )
+def _plugins() -> tuple[list[tuple[str, type]], dict[str, str]]:
+    """Every installed plugin entry, loaded, and the ones that would not load with their errors.
+
+    A failure is recorded rather than raised: raised here, at collection, one plugin whose
+    dependencies are missing would abort every test in this package. It still fails the guard,
+    loudly and by name, in :func:`test_every_plugin_entry_loads`.
+    """
+    loaded, failed = [], {}
+    for ep in entry_points(group=ENTRY_POINT_GROUP):
+        try:
+            loaded.append((ep.name, ep.load()))
+        except Exception as err:  # noqa: BLE001 - reported per plugin by the test below
+            failed[ep.name] = f"{ep.value}: {type(err).__name__}: {err}"
+    return sorted(loaded, key=lambda item: item[0]), failed
 
 
-PLUGINS = _plugins()
+PLUGINS, UNLOADABLE = _plugins()
 
 
 def _own_classes(cls: type) -> list[type]:
@@ -180,6 +188,9 @@ def _unpublished(name: str, cls: type, published: set[str]) -> list[str]:
 def test_every_plugin_entry_loads():
     """The guard covers what is installed; an entry it could not load would be one it skipped."""
     assert PLUGINS, "no roqsim.plugins entries are installed"
+    assert not UNLOADABLE, "plugin entries that do not load, so the guard cannot check them:\n" + (
+        "\n".join(f"  {name}: {why}" for name, why in sorted(UNLOADABLE.items()))
+    )
 
 
 @pytest.mark.parametrize(
