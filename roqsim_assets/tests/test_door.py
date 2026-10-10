@@ -8,10 +8,12 @@ import math
 
 import mujoco
 import numpy as np
+import pytest
 
 from roqsim import entity_pose
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import PluginError
 
 
 def _plugin_endpoints(engine):
@@ -124,6 +126,24 @@ def test_frame_welded_by_default_and_optional(tmp_path):
     # frame: false leaves a bare opening.
     without = _built(tmp_path, {"model": "door", "frame": False})
     assert _id(without, mujoco.mjtObj.mjOBJ_MESH, "frame_door_frame") < 0
+
+
+@pytest.mark.parametrize(
+    ("config", "expect"),
+    [
+        ({"frame_model": "no_such_frame"}, "frame model 'no_such_frame' could not be resolved"),
+        (
+            {"frame_model": "no_such_frame", "leaf": False},
+            "frame model 'no_such_frame' could not be resolved",
+        ),
+        ({"model": "no_such_leaf"}, "leaf model 'no_such_leaf' could not be resolved"),
+    ],
+)
+def test_a_model_that_does_not_resolve_is_a_plugin_error(tmp_path, config, expect):
+    """A misspelt frame or leaf model is refused as bad input, never left out: a missing frame would
+    leave a bare opening, and a leafless door would register on a casing body that is not there."""
+    with pytest.raises(PluginError, match=expect):
+        _built(tmp_path, config)
 
 
 def _body_rgba(engine, body_name):
