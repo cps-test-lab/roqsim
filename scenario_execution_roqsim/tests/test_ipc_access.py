@@ -720,3 +720,61 @@ def test_without_its_until_the_keep_out_rule_fails_the_run(routes, tmp_path):
     (_local, engine), _socket = routes
     run = _where_scenario(tmp_path, until=False)
     assert not _run_stepped(run, engine)
+
+
+# -- no simulator to talk to ------------------------------------------------------------------------
+_HERE = {"x": 0.0, "y": 0.0, "z": 0.0}
+_POSE = {"position": {"x": 1.0, "y": 0.0, "z": 0.0}}
+
+#: Valid arguments per registered action, so each one gets past ``execute`` to its first tick.
+NOT_READY_ARGS = {
+    "entity_moved": dict(
+        entities=["crate"], threshold=0.05, mode="distance", dwell=0.0, require="all"
+    ),
+    "entity_rotated": dict(entities=["crate"], angle=0.5, dwell=0.0, require="all"),
+    "entity_near": dict(entity="crate", target="cart", distance=0.5, mode="planar"),
+    "entity_near_position": dict(entity="crate", position=_HERE, distance=0.5, mode="planar"),
+    "entity_in_region": dict(entity="crate", region=[_HERE, {"x": 1.0, "y": 1.0}], outside=False),
+    "entity_monitor": dict(entity="parcel", value="tank.full", target_variable=None),
+    "entity_navigate": dict(entity="cart", goal_poses=[_POSE], success_on_acceptance=False),
+    "entity_navigate_start": dict(entity="cart", success_on_acceptance=False),
+    "spawn_entity": dict(entity="crate", pose=_POSE),
+    "delete_entity": dict(entity="crate"),
+    "set_entity_state": dict(entity="crate", pose=_POSE, twist=None),
+    "entity_call": dict(entity="grip_fault", command="override", value="true"),
+}
+
+
+def _registered_actions() -> dict[str, str]:
+    from pathlib import Path
+
+    tomllib = pytest.importorskip("tomllib", reason="the standard library's from Python 3.11")
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    return project["project"]["entry-points"]["scenario_execution.actions"]
+
+
+def test_every_registered_action_has_arguments_here():
+    assert set(NOT_READY_ARGS) == set(_registered_actions())
+
+
+@pytest.mark.parametrize("name", sorted(NOT_READY_ARGS))
+def test_an_action_with_no_simulator_to_reach_says_why_it_waits(name, tmp_path, monkeypatch):
+    """Over the socket, "not ready" may never end -- none running, or several and none named --
+    so every action's waiting message carries the reason the transport gives, not only that it waits."""
+    pytest.importorskip("scenario_execution")
+    import importlib
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.delenv("ROQSIM_CONTROL", raising=False)
+    module, _, cls = _registered_actions()[name].partition(":")
+    action = getattr(importlib.import_module(module), cls)()
+    args = dict(NOT_READY_ARGS[name])
+    if "target_variable" in args:
+        args["target_variable"] = _variable("not_ready", False)
+    action.setup(clock=_HostClock())
+    try:
+        action.execute(**args)
+        assert action.update().name == "RUNNING"
+        assert "no running simulator found" in action.feedback_message, action.feedback_message
+    finally:
+        action.shutdown()

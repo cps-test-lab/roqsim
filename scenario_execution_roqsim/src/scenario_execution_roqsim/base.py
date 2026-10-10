@@ -83,6 +83,14 @@ class SimAction(BaseAction):
         )
         return py_trees.common.Status.RUNNING
 
+    def not_ready(self) -> py_trees.common.Status:
+        """RUNNING while the world cannot be asked yet, with the transport's reason where it has one.
+
+        Over the control socket that reason may be one that never resolves on its own -- no
+        simulator registered, or several and none named -- so it is shown from the first tick.
+        """
+        return self.waiting("waiting for the simulation", self._access)
+
     def failed(self, message: str) -> py_trees.common.Status:
         """A statement about THIS TRIAL. Returned, so the run still produces a result row."""
         self.feedback_message = message  # pylint: disable=attribute-defined-outside-init
