@@ -22,12 +22,31 @@ idioms are shared here:
 from __future__ import annotations
 
 import os
+import re
 import textwrap
 from pathlib import Path
 
 from docutils import nodes
 from docutils.parsers.rst import Directive  # noqa: F401 - re-exported for the directive modules
 from docutils.statemachine import StringList
+
+
+def rst_text(text: str) -> str:
+    """``text`` escaped to read as itself in RST, for prose copied out of an installed package.
+
+    A model's header comment, its ``CREDITS.txt`` and a distribution's summary are plain text that
+    any package -- ours or a third party's -- writes without RST in mind: ``"Crate_ Lid Open"``
+    parses as a reference to a target nobody defined, and the ``-W`` build fails on it. Every
+    inline-markup character is backslash-escaped, as is a non-alphanumeric first character (which
+    could open a list, a directive or a comment) and a closing ``::`` (which announces a literal
+    block that never comes). URLs keep their colons, so they stay links.
+    """
+    escaped = re.sub(r"([\\*`_|])", r"\\\1", text)
+    if escaped.endswith("::"):
+        escaped = escaped[:-1] + "\\:"
+    if escaped and not escaped[0].isalnum() and escaped[0] != "\\":
+        escaped = "\\" + escaped
+    return escaped
 
 
 def rubric(text: str) -> list[str]:
