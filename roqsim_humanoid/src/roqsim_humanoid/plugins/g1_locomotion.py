@@ -15,6 +15,9 @@ The observation/action conventions, PD gains, default angles, scales and timing 
 from unitree_rl_gym's ``deploy/deploy_mujoco/deploy_mujoco.py`` + ``configs/g1.yaml`` (bundled in this
 package under ``policy/``), so the policy runs on exactly what it was trained on.
 
+The world must step at the deploy config's ``simulation_dt`` (0.002 s); ``configure`` refuses any
+other timestep for the bundled walk policy.
+
 Config -- a component of the entry that spawns the robot, since ownership is where the entry
 sits rather than a config key::
 
@@ -237,6 +240,15 @@ class G1LocomotionPlugin(Plugin):
             self._decimation = int(cfg["control_decimation"])
             self._obs = np.zeros(self._num_obs, dtype=np.float32)
             self._target_q = self._default_angles.copy()
+            # The decimation counts physics steps and the gains are tuned for the step, so at
+            # another timestep the policy acts at another rate through another PD loop.
+            trained_dt = float(cfg["simulation_dt"])
+            if abs(ctx.dt - trained_dt) > 1e-9:
+                raise RuntimeError(
+                    f"g1_locomotion ({self.robot}): the world steps at {ctx.dt:g} s, but the "
+                    f"policy was trained at {trained_dt:g} s (`simulation_dt` in "
+                    f"{self.config_path}); set sim.timestep: {trained_dt:g}"
+                )
 
         # -- load the TorchScript policy -------------------------------------------------------
         # Pin torch to one thread: the policy is a small MLP run at 50 Hz, so single-threaded

@@ -28,9 +28,9 @@ pytestmark = pytest.mark.skipif(
 X0, Y0, YAW0 = 1.5, -1.0, 2.0
 
 
-def _engine(**loco):
+def _engine(timestep=0.002, **loco):
     world = {
-        "sim": {"timestep": 0.002},
+        "sim": {"timestep": timestep},
         "components": [
             {
                 "spawn_robot": {
@@ -104,3 +104,9 @@ def test_reset_clears_the_command_and_the_odometry():
         assert np.hypot(*handle.read_odom()[:2]) < 0.3
     finally:
         engine.shutdown()
+
+
+def test_a_timestep_the_policy_was_not_trained_at_is_refused():
+    # The decimation counts physics steps: at twice the step the policy would act at half its rate.
+    with pytest.raises(RuntimeError, match="trained at"):
+        _engine(timestep=0.004)
