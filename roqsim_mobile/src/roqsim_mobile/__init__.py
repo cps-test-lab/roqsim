@@ -1,8 +1,7 @@
 """roqsim mobile-robot plugins and assets: wheeled bases only.
 
-Plugins: ``floorplan`` (a room built from walls), ``spawn_robot``, ``diff_drive`` (differential and
-skid-steer), ``omni_drive`` (holonomic/mecanum). Models: ``turtlebot4``, ``husky_a200``,
-``clearpath_jackal``, ``turtlebot3_waffle``, each with a demo world under ``worlds/``.
+The plugins are the ``roqsim.plugins`` entry points in ``pyproject.toml``; the models are the folders
+under ``models/``, each robot with a demo world under ``worlds/`` (``roqsim catalog models`` lists them).
 
 A robot that is a base **and** an arm does not belong here -- it goes in a package that depends on
 both this and ``roqsim_manipulation`` (``roqsim_mobile_manipulation``). Keeping one here would force

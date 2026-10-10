@@ -50,10 +50,11 @@ floor and the caster drags — worth 48% of the robot's yaw rate). The comment b
 | `tricycle_drive` | **Tricycle** kinematics + odometry — one steered wheel on the centre line, front or rear (`steer_offset` signed), and a fixed axle through `base_link`; `drive: axle` drives the axle's two wheels split like a differential on the *measured* steering angle, `drive: steer_wheel` drives the steered wheel itself. For forklifts, tuggers, pallet trucks and AGVs. Like `ackermann_drive` it cannot turn in place: its lock must stay short of 90°, so `cmd_vel` with `v = 0` moves nothing. `steer_offset` and `track` are checked against the model at configure. Declares `cmd_vel` in, `odom` / `joint_states` out (steering, driven, then `passive_joints`). |
 | `floorplan` | Build the environment from walls: a room, corridors, obstacles, with textured floor/walls. Provides its own ground and overrides `sim.world`. |
 
-All the drive plugins integrate odometry from the **achieved** twist, so a robot held against a
-wall reports no progress. Note the consequence for experiment design: `omni_drive` has no wheel slip
-in the model at all, so encoder odometry and ground truth coincide by construction — it cannot be
-used to study odometry drift. `diff_drive`'s skid-steer models do drift (~0.3 m over a 5 s arc), and
+`omni_drive` integrates odometry from the base's **achieved** twist, so a base held against a wall
+reports no progress, and with no wheel slip in the model its odometry and ground truth coincide by
+construction — it cannot be used to study odometry drift. `diff_drive`, `ackermann_drive` and
+`tricycle_drive` integrate what the wheels report, as encoders do: a wheel spinning against a wall
+reports progress the base does not make. `diff_drive`'s skid-steer models drift (~0.3 m over a 5 s arc), and
 `ackermann_drive` and `tricycle_drive` drift on a curve where the tyres slip, deliberately
 uncorrected: a skid-steer's scrub is systematic enough for a `slip_factor`, while a tyre's slip angle
 varies with speed and load, so a constant would only make the estimate look better than the sensor
