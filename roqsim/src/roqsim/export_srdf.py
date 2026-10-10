@@ -689,11 +689,11 @@ def main(argv: list | None = None) -> int:
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_srdf")
 
-    from .export_web import _compile_from_world
+    from .scene_source import compile_from_world
 
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
     if args.mjcf:
-        # Compiled here rather than through `_compile_from_mjcf`, because the mask has to be cleared on
+        # Compiled here rather than through `compile_from_mjcf`, because the mask has to be cleared on
         # the SPEC: MuJoCo fixes what can collide at compile time, so a model whose robot geoms are
         # masked apart (the usual `contype=2 / conaffinity=1`) can never be made to self-collide
         # afterwards. This is a sampling model, not a simulation one.
@@ -708,7 +708,7 @@ def main(argv: list | None = None) -> int:
         # cannot be cleared on this path. `collision_matrix` refuses a masked model rather than
         # producing an SRDF that silently disables self-collision checking -- export a robot's
         # description from its MJCF (`--mjcf`) instead, which is where a robot description belongs.
-        model, _d, _v = _compile_from_world(args.world, skip, overrides_from_options(args), log)
+        model, _d, _v = compile_from_world(args.world, skip, overrides_from_options(args), log)
 
     links = links_from_urdf(model, Path(args.urdf), args.strip)
     if not links:
