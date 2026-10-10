@@ -46,6 +46,7 @@ REFUSED = {
     ("contact_impulse", "min_force"): "a force threshold belongs to contact_monitor",
     ("imu", "seed"): "noise draws from the run's seed",
     ("force_torque", "seed"): "noise draws from the run's seed",
+    ("force_torque", "flex_reaction"): "the reading includes a flex's contacts",
     ("wind_field", "seed"): "turbulence draws from the run's seed",
     ("gnss", "seed"): "noise draws from the run's seed",
     ("px4_sitl", "seed"): "sensor noise draws from the run's seed",
