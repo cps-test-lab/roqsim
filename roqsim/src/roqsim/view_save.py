@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -362,15 +363,19 @@ def save_view(path: Path, view: dict) -> None:
     """Write ``view`` into ``path``'s ``sim.view``, atomically.
 
     Replace-by-rename rather than truncate-and-write, because the alternative failure mode is an
-    emptied world file -- and the file being overwritten is hand-authored research input.
+    emptied world file -- and the file being overwritten is hand-authored research input. The
+    replacement takes the original's permission bits: ``mkstemp`` creates it owner-only, and a
+    world shared through a group-writable tree would otherwise lose that access on the first save.
     """
     path = Path(path)
     text = path.read_text()
     out = replace_sim_view(text, view)
+    mode = stat.S_IMODE(path.stat().st_mode)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(out)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
