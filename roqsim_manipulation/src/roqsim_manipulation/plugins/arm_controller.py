@@ -574,7 +574,9 @@ class ArmControllerPlugin(Plugin):
                 if jp + joint not in self._ctrl_names:
                     raise RuntimeError(
                         f"arm_controller[{self.arm}]: `{key}` names joint {joint!r}, which is not "
-                        f"one of this arm's controllable joints {self._ctrl_names}"
+                        f"one of this arm's controllable joints "
+                        f"{[n[len(jp) :] for n in self._ctrl_names]} (named as `joints:` names "
+                        f"them, without `joint_prefix`)"
                     )
                 limits[jp + joint] = float(v)
 

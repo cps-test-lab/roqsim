@@ -345,17 +345,21 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.npz --out run.webm        # the whole run as video
 
 With nothing said about the camera, a recording is shown as **the whole scene from above**: every
-geom in the world, angled rather than top-down, as close as the field of view allows -- and with the
-ceiling removed where the world had one, since a view from above would otherwise be a view of a
-roof. That is the video you get with no flags at all. A ``--view``, ``--focus`` or ``--camera``
-frames it otherwise and keeps the world as it is (``--no-ceiling`` is then yours to add), and a
-recording made in a window keeps the camera the person watched it through.
+geom in the world except the parked ones (below ``roqsim.presence.PARKED_BELOW_Z``), angled rather
+than top-down, as close as the field of view allows -- and with the ceiling removed where the world
+had one, since a view from above would otherwise be a view of a roof. That is the video you get with
+no flags at all. A ``--view``, ``--focus`` or ``--camera`` frames it otherwise and keeps the world
+as it is (``--no-ceiling`` is then yours to add), and a recording made in a window keeps the camera
+the person watched it through.
 
 Those three commands name no world, and that is not a shorthand: a recording carries the **resolved**
 component tree rather than a recipe, so it rebuilds from itself and needs only the model packages it
 referred to. What ran is recorded outright — including the actuator table, which says what control
 law and gains every joint ran under and whether each value came from the model or from the world's
-``actuators:`` block, so a result can state its gains without anyone reopening the MJCF.
+``actuators:`` block, so a result can state its gains without anyone reopening the MJCF. So is
+**which entities were present** at each sample: presence is a model field the state cannot hold, so
+the recording notes each change (``presence`` in its provenance) and a replay applies it, and an
+entity a trial brought in or took away appears and disappears in the render as it did in the run.
 
 Without ``--at`` you get the **last** sample, and the command says so on stderr along with the sample's
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
@@ -682,13 +686,15 @@ viewer, alongside the geometry ``roqsim export web`` emits:
    roqsim export capture --state run.npz --out capture/
 
 It writes ``capture.json`` + ``capture.bin``: one track per joint value and one per body pose that
-actually moved, each keyed by the name the scene descriptor uses, so the two artifacts address each other
-without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
-where it is defined — and roqsim is one producer of it, the same relationship this package has with
-URDF and SRDF. Both files state what they are: ``capture.json`` carries the consumer's
-``format``/``version`` pair, and ``scene.json`` carries roqsim's own (``roqsim.web_scene``, version
-1), so a viewer can refuse a descriptor written to a contract it has not seen rather than draw it
-wrong, and can tell it from the ``roqsim_scenes`` scene manifest that shares its file name.
+actually moved (and only those poses are held while it reads the recording, so a pool of bodies
+parked for the whole run costs it nothing), each keyed by the name the scene descriptor uses, so the
+two artifacts address each other without either knowing about MuJoCo. The format is the consumer's —
+whichever tool replays these is where it is defined — and roqsim is one producer of it, the same
+relationship this package has with URDF and SRDF. Both files state what they are: ``capture.json``
+carries the consumer's ``format``/``version`` pair, and ``scene.json`` carries roqsim's own
+(``roqsim.web_scene``, version 1), so a viewer can refuse a descriptor written to a contract it has
+not seen rather than draw it wrong, and can tell it from the ``roqsim_scenes`` scene manifest that
+shares its file name.
 
 A **flex** needs nothing of its own in either artifact. ``export web`` draws it as a skin whose bones
 are the bodies its vertices follow — a solid by its boundary, a sheet from both sides, a line flex as a
@@ -708,10 +714,65 @@ sample stream behind, buffered up to whatever the kill interrupted; nothing read
 The recording is written before the capture is derived from it, so a problem with the browser artifact
 costs you the numbers as well.
 
+Exporting a world as glTF
+-------------------------
+
+``roqsim export gltf`` writes a world as one binary glTF 2.0 file (``.glb``), the standard format for 3D
+scenes that three.js, Blender and every engine load. It takes the sources and options ``export web``
+takes, compiles the world the same way, and writes the same scene -- what a scene contains is decided
+once, by the walk both exports share:
+
+.. code-block:: bash
+
+   roqsim export gltf --world worlds/warehouse.yaml --out warehouse.glb
+   roqsim export gltf --mjcf model.xml --out model.glb
+   roqsim export gltf --world w.yaml --set sim.view.distance=8 --settle-steps 200 --out w.glb
+
+**The frame.** glTF is Y-up and a roqsim world is Z-up. The file's root node is named ``world`` and
+carries the turn between the two (-90 degrees about x), so **a point in the frame of node** ``world``
+**is a point in roqsim world coordinates**: the world point ``(x, y, z)`` is the scene point
+``(x, z, -y)``. A viewer that reports a clicked point in the frame of ``world`` reports it in the
+world's own coordinates, with nothing to convert.
+
+**Bodies.** Every body is a node, in MuJoCo's body tree, named exactly as the body is, so a viewer can
+name what was clicked and move a body by its name. A node's ``extras`` repeat the name as ``body``,
+with ``body_id``: three.js rewrites node names containing ``.``, ``:``, ``/`` or brackets, and the
+exact name then survives in the object's ``userData``. A body sits where the exported state puts it
+relative to its parent -- a free body where the world placed it, a jointed link at its configured
+value -- since glTF has no joints to apply one.
+
+**Geoms.** A drawn geom is an unnamed child node of its body's node, holding one mesh; its ``extras``
+carry ``geom`` (its name, where it has one), ``body`` and ``geom_id``. Primitives are tessellated
+(``--segments``, by default the model's own ``visual/quality numslices``), meshes keep MuJoCo's
+normals, and an infinite plane becomes a square of the model's extent. Collision-only geometry
+(group 3) is left out, as ``export web`` leaves it out. A MuJoCo skin, and a flex, are glTF skinned
+meshes whose joints are their bone bodies' nodes, so moving the bodies deforms them; a
+``dof="quadratic"`` flex loses its negative weights (glTF allows none), exact at rest and approximate
+under deformation, and the export says so.
+
+**What it looks like.** Colours are MuJoCo's resolved colours and textures its compiled pixels,
+embedded in the file. A texture lands where MuJoCo draws it: a primitive carries MuJoCo's own
+texture coordinates for it, and a mesh without coordinates gets the ones MuJoCo generates, so a
+UV-less wall is tiled as in the simulator; ``texrepeat`` and ``texuniform`` scale them as MuJoCo
+does. A tint above 1 is multiplied into the image, since glTF's colour stops at 1. A cube or skybox
+texture on a drawn geom is refused, naming the material. Lights and the skybox are not exported
+(a viewer brings its own), and a world's ``sim.view`` becomes a camera named in ``extras`` as
+``{"roqsim": "view"}``, outside ``world``.
+
+**Size.** Images are most of a large world's file, and the export logs how much. ``--max-tex-dim``
+caps every image's longest side (default 1024, 0 keeps them whole) and ``--texture-format jpeg``
+stores opaque images as JPEG (``--jpeg-quality``, default 85), several times smaller for photographic
+textures; images with transparency stay PNG. Only core glTF is written -- no compression extension a
+loader would need a decoder for -- so the bundled warehouse (``depot``) is about 13 MB at the defaults
+and about 8.5 MB with ``--texture-format jpeg``, most of it geometry.
+
+The export is checked with the Khronos glTF Validator: ``make test-gltf`` validates an export of every
+bundled world (see :doc:`developer_guide`).
+
 Exporting a model as one mesh
 -----------------------------
 
-``export web``, ``export urdf``, ``export srdf`` and ``export moveit`` all keep a model as a body tree,
+``export web``, ``export gltf``, ``export urdf``, ``export srdf`` and ``export moveit`` all keep a model as a body tree,
 because their consumers animate or plan it. A second class of consumer wants the opposite -- one rigid
 mesh and nothing else. A model-based 6D pose estimator takes a single mesh and returns the pose *of that
 mesh's frame*; a CAD tool imports one body and knows nothing about joints:

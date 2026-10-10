@@ -8,13 +8,14 @@ ship with that experiment, so what is here is what any user of the substrate can
 
 | kind | models |
 |---|---|
-| arms | `ur10e`, `ur5e`, `panda`, `gen3` (7-DOF + integrated Robotiq 2F-85), `open_manipulator_x` |
+| arms | `ur10e`, `ur5e`, `panda`, `gen3` (7-DOF + integrated Robotiq 2F-85), `xarm7`, `lbr_iiwa7`, `lbr_iiwa14` (KUKA LBR iiwa 7 R800 / 14 R820, with lbr_fri_ros2_stack's ROS 2 interface), `m1013`, `vx300s`, `wx250s`, `open_manipulator_x` |
 | grippers | `robotiq_2f85` (85 mm), `schunk_pg70` (61 mm) — standalone and attachable to any flange |
 
 ```sh
 roqsim sim roqsim_manipulation_assets:ur10e_demo
 roqsim sim roqsim_manipulation_assets:gen3_demo
 roqsim sim roqsim_manipulation_assets:open_manipulator_x_demo
+roqsim sim roqsim_manipulation_assets:lbr_iiwa14_demo
 python -m pytest roqsim_manipulation_assets/tests
 ```
 

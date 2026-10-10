@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from roqsim import check, export_capture, export_moveit, export_web, render, runner
+from roqsim import check, export_capture, export_gltf, export_moveit, export_web, render, runner
 from roqsim.engine import Engine
 
 WORLD = "sim:\n  timestep: 0.005\ncomponents:\n  - dummy: {}\n    name: d0\n"
@@ -66,6 +66,11 @@ def _export_web(world, out, monkeypatch):
     return export_web.main(["--world", world, "--out", str(out)])
 
 
+def _export_gltf(world, out, monkeypatch):
+    monkeypatch.setattr(Engine, "reset", _raise)
+    return export_gltf.main(["--world", world, "--out", str(out / "x.glb")])
+
+
 def _export_moveit(world, out, monkeypatch):
     # No injection: the dummy world has no arm, which the export refuses after setup.
     return export_moveit.main(["--world", world, "--out", str(out)])
@@ -83,6 +88,7 @@ ENTRY_POINTS = {
     "render --state": _render_state,
     "check": _check,
     "export web": _export_web,
+    "export gltf": _export_gltf,
     "export moveit": _export_moveit,
     "export capture": _export_capture,
 }
