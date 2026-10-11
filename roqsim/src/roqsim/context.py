@@ -573,7 +573,8 @@ class SimContext:
         ``per_episode=True`` drops ``sim_time`` from the key: the draw is the episode's, the same
         whenever in the episode it is made. That is the generator for a quantity a trial holds
         constant -- a sensor's bias, a drift rate -- which a time-keyed draw would make depend on
-        the moment it was first read.
+        the moment it was first read. It has a counter slot of its own, so it never repeats the
+        time-keyed draw of the same name at ``sim_time`` 0.
 
         **Counter-based, not stateful**, and that is the whole point. A shared stateful generator's
         position depends on how many draws happened before it -- sensor rates, step count, and for
@@ -637,7 +638,9 @@ class SimContext:
         # episode, step) addresses a draw directly, with no stream to replay. A reset restarts
         # `sim_time`, so without this slot trial 2 would re-draw trial 1's noise step for step.
         return np.random.Generator(
-            np.random.Philox(key=seed, counter=[step, stream, int(self.episode), 0])
+            np.random.Philox(
+                key=seed, counter=[step, stream, int(self.episode), 1 if per_episode else 0]
+            )
         )
 
     # -- time ---------------------------------------------------------------------------------
