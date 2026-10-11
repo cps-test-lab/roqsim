@@ -302,12 +302,14 @@ class RouteStatus:
         finished: whether that route has finished
         goals_left: goals of it not yet reached
         distance_left: path length still to drive
+        error: why the finished route did not reach every goal; empty for an arrival
     """
 
     seq: int
     finished: bool
     goals_left: int
     distance_left: Length
+    error: str = ""
 
 
 class NavigatorPlugin(Plugin):
@@ -398,6 +400,7 @@ class NavigatorPlugin(Plugin):
         self._configured_goals: list[tuple] = []
         self._commanded = False
         self._pose_snapshot = (0.0, 0.0, 0.0)
+        self._failure_logged = ""
 
     # -- validation ----------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
@@ -769,8 +772,12 @@ class NavigatorPlugin(Plugin):
         # nothing next to the seconds recovery waits for before it acts.
         self._core.observe(ctx.sim_time, self._state.pos, self._caution.blocker_xy)
         self._tree.tick()
+        if self._core.failure != self._failure_logged:
+            self._failure_logged = self._core.failure
+            if self._failure_logged:
+                logger.warning("navigator %s: %s", self.entity, self._failure_logged)
         if self._state.done and not self._seq.finished:
-            self._seq.finish()
+            self._seq.finish(self._core.failure)
             self._resume_configured_route()
 
         wanted = self._core.pref_vel
@@ -930,7 +937,8 @@ class NavigatorPlugin(Plugin):
 
     @endpoint.out(when="serves_goals", ros2=None)
     def route_status(self) -> RouteStatus:
-        """The route in hand: sequence applied, finished, goals and distance left."""
+        """The route in hand: sequence applied, finished, goals and distance left, and the error a
+        route that ended short of its goals finished with."""
         return RouteStatus(*self.status())
 
     @endpoint.command(when="serves_goals", ros2=None)
@@ -1023,10 +1031,8 @@ class NavigatorPlugin(Plugin):
     def start(self) -> int:
         """Release a route that was armed but held (``autostart: false``).
 
-        The route was planned at ``configure``, not here, so a route that cannot be planned fails at
-        load rather than halfway through a trial when a scenario finally triggers it. Starting an
-        already-running route is a no-op that returns the live sequence, so a caller can trigger
-        unconditionally without having to know whether it already ran.
+        Starting an already-running route is a no-op that returns the live sequence, so a caller can
+        trigger unconditionally without having to know whether it already ran.
 
         A mover configured with no route has nothing to release, and is refused like an empty
         ``send_goals``: returning the live sequence would read as an arrival that never happened.
@@ -1054,19 +1060,24 @@ class NavigatorPlugin(Plugin):
         self._ctx.post(lambda ctx: self._apply_cancel(seq))
         return seq
 
-    def status(self) -> tuple[int, bool, int, float]:
-        """``(applied sequence, finished, goals remaining, distance remaining)``.
+    def status(self) -> tuple[int, bool, int, float, str]:
+        """``(applied sequence, finished, goals remaining, distance remaining, error)``.
 
-        Read without a lock: every field is a plain int/float/bool latched on the physics thread, and
-        a caller that sees a half-updated pair polls again a moment later.
+        ``error`` is ``""`` unless the route finished without reaching every goal: a goal the planner
+        found no path to ends the route there, and one given up on after ``max_recovery`` recoveries
+        is skipped and reported when the route ends. Either way the caller sees a failure, never an
+        arrival.
+
+        Read without a lock: every field is a plain value latched on the physics thread, and a caller
+        that sees a half-updated pair polls again a moment later.
         """
         if self._seq.finished:
             # Nothing remains OF THE ROUTE that finished. The mover may well be busy again -- it
             # resumes its configured patrol on arrival -- but reporting that patrol's remaining
             # goals to a caller polling for its own completion would answer a different question.
-            return self._seq.applied, True, 0, 0.0
+            return self._seq.applied, True, 0, 0.0, self._seq.error
         goals_left, dist_left = self._core.remaining()
-        return self._seq.applied, self._seq.finished, goals_left, dist_left
+        return self._seq.applied, False, goals_left, dist_left, ""
 
     # -- applied on the physics thread -----------------------------------------------------------
     def _apply_start(self, seq: int) -> None:
