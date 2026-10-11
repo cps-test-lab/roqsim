@@ -125,13 +125,22 @@ class GridPlanner:
         Returns a simplified list of ``(x, y)`` world waypoints (start excluded,
         goal last), or ``None`` if the goal is unreachable. Plans at the full
         inflation first; if that disconnects the goal (a narrow doorway sealed by
-        inflation), retries with progressively less clearance -- ORCA still keeps
-        the body off the walls -- before giving up.
+        inflation), retries with progressively less clearance before giving up.
 
         Live blockages (:meth:`add_blockage`) are impassable for the whole ladder, and then the
         ladder is walked again **without** them. Without that second pass a goal that has since had
         something parked on it would become unreachable and the mover would give up entirely, which
-        is worse than driving up to it and stopping."""
+        is worse than driving up to it and stopping.
+
+        A start or goal beyond the grid's extent -- a goal sent at runtime, which the grid was not
+        built to cover -- first grows this planner's grid with free cells to cover it
+        (:meth:`~roqsim_nav.occupancy.OccupancyGrid.covering`)."""
+        grid = self.grid.covering((start_xy, goal_xy))
+        if grid is not self.grid:
+            # This planner's own copy: the raster it was given is shared with other movers.
+            self.grid = grid
+            self.height, self.width = grid.occupied.shape
+            self._occ_cache = {}
         radii, seen = [], set()
         for cand in (self.inflation_radius, self.inflation_radius * 0.5, 0.0):
             key = round(max(cand, 0.0), 4)
