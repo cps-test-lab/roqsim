@@ -12,6 +12,7 @@ service or action has a handler.
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 
 import pytest
@@ -29,6 +30,21 @@ from roqsim_ros_bridge.services import get_service_handler  # noqa: E402
 
 WORKSPACE = pathlib.Path(__file__).resolve().parents[2]
 WORLDS = sorted(WORKSPACE.glob("*/worlds/*.yaml"))
+
+
+def _unavailable(cfg) -> str | None:
+    """Why *cfg* cannot be built here: a file it needs is fetched, not committed, and is absent."""
+    for spec in cfg.plugins:
+        if spec.ref != "spot_locomotion":
+            continue
+        from roqsim_quadruped.policy import DEFAULT_POLICY
+
+        policy = (
+            spec.config.get("policy_path") or os.environ.get("SPOT_POLICY_PATH") or DEFAULT_POLICY
+        )
+        if not os.path.exists(policy):
+            return f"the Spot policy is fetched, not shipped, and is not present ({policy})"
+    return None
 
 
 def _unbindable(ep) -> str | None:
@@ -56,6 +72,8 @@ def _unbindable(ep) -> str | None:
 @pytest.mark.parametrize("world", WORLDS, ids=lambda p: f"{p.parent.parent.name}/{p.name}")
 def test_every_endpoint_of_a_shipped_world_binds_on_ros(world):
     cfg = load_config(world)
+    if (why := _unavailable(cfg)) is not None:
+        pytest.skip(why)
     drop_transport_plugins(cfg)  # what is bound is checked here, with no node on the graph
     engine = Engine(cfg)
     engine.ctx.seed = 0
