@@ -8,8 +8,10 @@ path through the simulator and cannot drift apart.
 stale one, and "finished" alone cannot: a navigator that has completed its configured route is
 already finished when a new route is queued, so a caller watching that flag would report an arrival
 that never happened. Every route is stamped with a monotonically increasing number, returned
-immediately; ``status`` reports which number is live. Equal and finished means you arrived. A larger
-number means something preempted you.
+immediately; ``status`` reports which number is live. Equal and finished with no error means you
+arrived; equal and finished with an error means the route ended without reaching its goals -- one the
+planner could not reach, or one given up on after repeated recoveries -- and the error says which. A
+larger number means something preempted you.
 """
 
 from __future__ import annotations
@@ -38,7 +40,9 @@ class NavHandle:
     send_goals: Callable[[list], int]  # [(x, y[, yaw]), ...] -> sequence number
     start: Callable[[], int]  # release an `autostart: false` route -> sequence number
     cancel: Callable[[], int]  # stop where it stands -> sequence number
-    status: Callable[[], tuple[int, bool, int, float]]  # (seq, finished, goals_left, dist_left)
+    #: ``(seq, finished, goals_left, dist_left, error)``; ``error`` is ``""`` unless the route
+    #: finished without reaching every goal.
+    status: Callable[[], tuple[int, bool, int, float, str]]
     #: ``(x, y, yaw)``, ground truth, safe to call from any thread.
     #:
     #: It is the pose as of the navigator's **last tick**, so it lags the live body by at most one
@@ -66,6 +70,8 @@ class Sequencer:
         #: navigator resumes its configured route on arrival -- so a state read a moment later would
         #: show it busy again, and a caller polling for its own completion would never see it.
         self.finished = False
+        #: Why the finished route did not reach every goal; ``""`` for an arrival.
+        self.error = ""
 
     def next(self) -> int:
         """A fresh number, without touching physics state. Safe from any thread."""
@@ -76,6 +82,10 @@ class Sequencer:
         """Called on the physics thread when the route stamped ``seq`` actually takes effect."""
         self.applied = seq
         self.finished = False
+        self.error = ""
 
-    def finish(self) -> None:
+    def finish(self, error: str = "") -> None:
+        """Latch the applied route as finished, with ``error`` when it did not reach every goal."""
+        # The error before the flag: an off-thread reader that sees `finished` sees its error too.
+        self.error = error
         self.finished = True

@@ -341,6 +341,71 @@ def test_an_entity_with_no_actuators_is_an_error_not_a_zero_reading():
         _engine(scene=f"{__name__}:_UnpoweredScene", steps=1, drive=0.0)
 
 
+class _BodilessScene(_RobotScene):
+    """The robot's model, its entity registered without a body; the model still has a `base_link`."""
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(Entity(name=self.name, kind="robot", meta={"prefix": "", "namespace": ""}))
+
+
+@pytest.mark.parametrize("config", [{}, {"actuators": ["wheel_motor"]}])
+def test_an_entity_that_registered_no_body_is_refused(config):
+    """The subtree metered and the frame the battery is stamped in are the root the entity
+    registered; a body that merely carries the name `base_link` is a guess, even with the
+    actuators named."""
+    with pytest.raises(RuntimeError, match="entity 'robot' registered no body"):
+        _engine(scene=f"{__name__}:_BodilessScene", steps=1, **config)
+
+
+class _PrefixedScene(_RobotScene):
+    """The robot spawned under a prefix and rooted at ``r_chassis``; another machine's body is
+    called ``base_link``."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        base = spec.worldbody.add_body(name="r_chassis", pos=[0, 0, 0.5])
+        base.add_joint(
+            name="r_wheel", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0], damping=DAMPING
+        )
+        base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.1], mass=2.0)
+        actuator = spec.add_actuator()
+        actuator.name = "r_wheel_motor"
+        actuator.target = "r_wheel"
+        actuator.trntype = mujoco.mjtTrn.mjTRN_JOINT
+
+        other = spec.worldbody.add_body(name="base_link", pos=[2, 0, 0.5])
+        other.add_joint(
+            name="belt", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0], damping=DAMPING
+        )
+        other.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.1], mass=2.0)
+        belt = spec.add_actuator()
+        belt.name = "belt_motor"
+        belt.target = "belt"
+        belt.trntype = mujoco.mjtTrn.mjTRN_JOINT
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(
+                name=self.name,
+                kind="robot",
+                body="r_chassis",
+                meta={"prefix": "r_", "namespace": ""},
+            )
+        )
+
+
+def test_the_registered_root_is_metered_and_stamps_the_battery_as_tf_names_it():
+    """TF knows the root without the model prefix; the bridge adds the namespace."""
+    engine = _engine(scene=f"{__name__}:_PrefixedScene", steps=1)
+    plugin = _plugin(engine)
+    metered = {
+        mujoco.mj_id2name(engine.ctx.model, mujoco.mjtObj.mjOBJ_ACTUATOR, int(a))
+        for a in plugin._actuators
+    }
+    assert metered == {"r_wheel_motor"}
+    endpoint = next(e for e in engine.ctx.interface.all() if e.name == "battery")
+    assert endpoint.backend["ros2"]["frame_id"] == "chassis"
+
+
 # -- the battery, where there is one ---------------------------------------------------------
 
 

@@ -8,8 +8,10 @@
 # the routes are unobstructed). A truly open world (e.g. a wall-less MJCF via `sim.world`) skips the
 # grid and the walkers follow straight-line legs.
 #
-# The shuttles cross in the centre; with `avoidance: false` (default) they pass through each other.
-# Flip it to `avoidance: true` and they steer round each other.
+# Each walker stands at its `pose` and is moved by the navigator nested under it: the route is its
+# `goals`, after the start, and `dwell` pauses there, one entry per route point with the start first.
+# `radius` is the walker's own disc. The shuttles cross in the centre; with `steer: none` they pass
+# through each other. Set `steer: give_way` and they steer round each other.
 
 sim:
   pacing: realtime
@@ -17,35 +19,45 @@ sim:
 components:
   - walker:
       walker: MaleVisitorWalk
-      speed: 1.2
-      loop: true
-      arrival_radius: 0.25
-      avoidance: false
-      waypoints:
-        - [-2.0, -2.0]
-        - [ 2.0, -2.0, [2, 4]]   # stand idle here for 2-4 s
-        - [ 2.0,  2.0]
-        - [-2.0,  2.0, [1, 3]]
+      pose: {position: {x: -2.0, y: -2.0}, orientation: {yaw: 0.0}}
     name: pedestrian
+    components:
+      - navigator:
+          output: walker
+          speed: 1.2
+          goals: [[2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]]
+          loop: true
+          dwell: [[0, 0], [2, 4], [0, 0], [1, 3]]   # stand idle 2-4 s at the second corner
+          arrival_radius: 0.25
+          radius: 0.26
+          avoidance: {steer: none, stop: false}
 
   - walker:
       walker: FemaleVisitorWalk    # Open-RMF actor (CC-BY 4.0); T-posed but +X-facing (flip: false)
-      speed: 1.0
-      loop: true
-      arrival_radius: 0.25
-      avoidance: false
-      waypoints:
-        - [-1.5,  0.0]
-        - [ 1.5,  0.0, [1, 3]]     # shuttle east-west across the middle
+      pose: {position: {x: -1.5, y: 0.0}, orientation: {yaw: 0.0}}
     name: visitor_f
+    components:
+      - navigator:
+          output: walker
+          speed: 1.0
+          goals: [[1.5, 0.0]]                   # shuttle east-west across the middle
+          loop: true
+          dwell: [[0, 0], [1, 3]]
+          arrival_radius: 0.25
+          radius: 0.26
+          avoidance: {steer: none, stop: false}
 
   - walker:
       walker: MaleVisitorWalk      # Open-RMF actor (CC0)
-      speed: 1.4
-      loop: true
-      arrival_radius: 0.25
-      avoidance: false
-      waypoints:
-        - [ 0.0, -1.5]
-        - [ 0.0,  1.5, [1, 3]]     # shuttle north-south, crossing the female's path
+      pose: {position: {x: 0.0, y: -1.5}, orientation: {yaw: 1.5708}}
     name: visitor_m
+    components:
+      - navigator:
+          output: walker
+          speed: 1.4
+          goals: [[0.0, 1.5]]                   # shuttle north-south, crossing the female's path
+          loop: true
+          dwell: [[0, 0], [1, 3]]
+          arrival_radius: 0.25
+          radius: 0.26
+          avoidance: {steer: none, stop: false}
