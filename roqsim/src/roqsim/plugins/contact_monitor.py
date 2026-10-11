@@ -20,7 +20,7 @@ Config::
     contact_monitor:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # base body override; default: the entity's registered base body
+      body: ""               # a body of the entity, as a path within it; default: its root
       namespace: ""          # transport scope for the endpoint
       ignore: [floor]        # geom or flex NAMES that never count as a collision (default: ['floor'])
       ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
@@ -103,9 +103,8 @@ class ContactReport:
 class ContactMonitorPlugin(Plugin):
     parallel_safe = True  # post_step only reads data.contact and writes its own state
     # It watches an ENTITY, so it must be nested under the entry that provides one. Declared
-    # rather than left implicit: at the top of a document `self.entity` is None, and the base
-    # body fell back to a bare "base_link" -- resolving by accident when a robot happened to
-    # use that name, and failing obscurely when one did not.
+    # rather than left implicit: at the top of a document `self.entity` is None and there is no
+    # registered body to watch.
     requires_owner = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -139,7 +138,6 @@ class ContactMonitorPlugin(Plugin):
     # -- lifecycle -----------------------------------------------------------------------------
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        model = ctx.model
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
@@ -147,8 +145,8 @@ class ContactMonitorPlugin(Plugin):
         # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
         # severity of the very contacts this reports, and a rule restated in each would be two.
         self._scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="contact_monitor",
             body=self.body,
             ignore=self.ignore,

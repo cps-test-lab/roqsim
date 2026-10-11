@@ -31,7 +31,7 @@ class EntityNavigate(SimAction):
     def __init__(self):
         super().__init__()
         self._entity = ""
-        self._poses: list[tuple[float, float, float]] = []
+        self._poses: list[tuple[float, float]] = []
         self._wait = True
         self._call = None
 
@@ -58,6 +58,14 @@ class EntityNavigate(SimAction):
                     "a capability to add to the navigator rather than a value to pass and ignore.",
                     action=self,
                 )
+            height = float(position.get("z", 0.0))
+            if height:
+                raise ActionError(
+                    f"entity_navigate: goal_poses[{i}].position.z is {height:g}. The navigator plans "
+                    "and drives in the floor plane, so a goal height would be accepted and then "
+                    "dropped. Give x and y only.",
+                    action=self,
+                )
             self._poses.append((float(position.get("x", 0.0)), float(position.get("y", 0.0))))
         if goal_poses is not None and not self._poses:
             raise ActionError(
@@ -72,7 +80,7 @@ class EntityNavigate(SimAction):
 
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():
-            return self.waiting("waiting for the simulation")
+            return self.not_ready()
 
         try:
             if self._call is None:
