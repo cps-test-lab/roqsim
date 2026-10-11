@@ -52,6 +52,14 @@ def _entity(body="base_link"):
     return Entity(name="robot", kind="robot", body=body, meta={"prefix": "", "namespace": ""})
 
 
+def _ctx(model, entity=None):
+    """A context holding *model* and the one entity, registered as its spawn would."""
+    ctx = SimContext(config={})
+    ctx.model = model
+    ctx.entities.add(entity or _entity())
+    return ctx
+
+
 def _gid(model, name):
     return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
 
@@ -73,14 +81,14 @@ def _names(model, mask):
 
 def test_the_watched_mask_is_the_whole_subtree():
     model, _ = _model()
-    scope = resolve_contact_scope(model, _entity(), plugin="test")
+    scope = resolve_contact_scope(_ctx(model), "robot", plugin="test")
     assert _names(model, scope.watched) == {"chassis", "wheel_geom"}
 
 
 def test_only_one_side_watched_qualifies():
     """Neither side is another pair's business; both sides is a self-contact."""
     model, _ = _model()
-    scope = resolve_contact_scope(model, _entity(), plugin="test", ignore=[])
+    scope = resolve_contact_scope(_ctx(model), "robot", plugin="test", ignore=[])
     chassis, wheel, wall = (_gid(model, n) for n in ("chassis", "wheel_geom", "wall"))
     pairs = _sides((chassis, wall), (chassis, wheel), (wall, wall))
     assert list(scope.qualifying(*pairs)) == [True, False, False]
@@ -88,7 +96,7 @@ def test_only_one_side_watched_qualifies():
 
 def test_an_ignored_geom_takes_its_contacts_out():
     model, _ = _model()
-    scope = resolve_contact_scope(model, _entity(), plugin="test", ignore=["wall"])
+    scope = resolve_contact_scope(_ctx(model), "robot", plugin="test", ignore=["wall"])
     chassis, wall, floor = (_gid(model, n) for n in ("chassis", "wall", "floor"))
     assert list(scope.qualifying(*_sides((chassis, wall), (chassis, floor)))) == [
         False,
@@ -98,14 +106,14 @@ def test_an_ignored_geom_takes_its_contacts_out():
 
 def test_ignore_prefixes_take_a_family_out():
     model, _ = _model()
-    scope = resolve_contact_scope(model, _entity(), plugin="test", ignore_prefixes=["ground"])
+    scope = resolve_contact_scope(_ctx(model), "robot", plugin="test", ignore_prefixes=["ground"])
     assert _names(model, scope.ignored) == {"floor", "ground_strip"}
 
 
 def test_indices_are_ascending_and_empty_without_contacts():
     """A caller reading the FIRST contact of a step depends on the order MuJoCo listed them in."""
     model, data = _model()
-    scope = resolve_contact_scope(model, _entity(), plugin="test")
+    scope = resolve_contact_scope(_ctx(model), "robot", plugin="test")
     assert list(scope.indices(data)) == []  # nothing has touched yet at t=0
 
     for _ in range(300):  # settle onto the floor, which this scope ignores
@@ -150,20 +158,41 @@ def test_a_body_that_does_not_resolve_fails_loudly():
     """Silently watching nothing would report a clean run forever -- and pass every trial."""
     model, _ = _model()
     with pytest.raises(RuntimeError, match="contact_monitor: base body 'nope' not found"):
-        resolve_contact_scope(model, _entity(body="nope"), plugin="contact_monitor")
+        resolve_contact_scope(_ctx(model, _entity(body="nope")), "robot", plugin="contact_monitor")
+
+
+def test_an_entity_that_registered_no_body_is_refused():
+    """The model has a `base_link`; an entity that did not register it does not get it by name."""
+    model, _ = _model()
+    with pytest.raises(RuntimeError, match="contact_monitor: entity 'robot' registered no body"):
+        resolve_contact_scope(_ctx(model, _entity(body=None)), "robot", plugin="contact_monitor")
+
+
+def test_a_body_override_is_a_path_within_the_entity():
+    model, _ = _model()
+    scope = resolve_contact_scope(_ctx(model), "robot", plugin="test", body="wheel")
+    assert scope.body == "wheel"
+    assert _names(model, scope.watched) == {"wheel_geom"}
+
+
+def test_a_body_override_outside_the_entity_is_refused():
+    """`marker` is a body of the world: naming it does not make it one of the robot's."""
+    model, _ = _model()
+    with pytest.raises(RuntimeError, match="no frame 'robot/marker'"):
+        resolve_contact_scope(_ctx(model), "robot", plugin="test", body="marker")
 
 
 def test_a_subtree_without_geoms_fails_loudly():
     """A body that resolves and carries nothing is the same blindness with a valid name."""
     model, _ = _model()
     with pytest.raises(RuntimeError, match="carry no geoms or flexes to watch"):
-        resolve_contact_scope(model, _entity(body="marker"), plugin="test")
+        resolve_contact_scope(_ctx(model, _entity(body="marker")), "robot", plugin="test")
 
 
 def test_an_ignore_entry_matching_nothing_is_warned_about(caplog):
     """How a ground plane starts counting as a collision: a renamed floor geom, silently unmatched."""
     model, _ = _model()
     with caplog.at_level(logging.WARNING, logger="roqsim.contact_scope"):
-        resolve_contact_scope(model, _entity(), plugin="test", ignore=["floor", "carpet"])
+        resolve_contact_scope(_ctx(model), "robot", plugin="test", ignore=["floor", "carpet"])
     assert "carpet" in caplog.text
     assert "floor" not in caplog.text.split("no matching geom or flex:")[-1]

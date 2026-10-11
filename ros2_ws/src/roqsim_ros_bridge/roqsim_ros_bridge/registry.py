@@ -23,6 +23,7 @@ one producer's attribute names.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import importlib
 import math
@@ -513,6 +514,52 @@ def fill_battery_state(msg, payload, stamp: Time, hints: dict) -> None:
     # The integral itself -- the number a paper actually quotes -- has no field here and is not
     # smuggled into one that means something else. A consumer that needs joules reads the endpoint's
     # payload in process, or the plugin's blackboard reader.
+
+
+def _status_value(value) -> str:
+    """One reading as the string a ``diagnostic_msgs/KeyValue`` carries.
+
+    ``repr`` for a float rather than a rounded format: the value is read back out of a recording and
+    compared with a threshold, so it round-trips exactly, and a non-finite reading stays ``inf`` or
+    ``nan``. Booleans are the lowercase spelling every parser already takes, instead of Python's
+    ``True``.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return repr(value)
+    return str(value)
+
+
+@converter("diagnostic_msgs.msg.DiagnosticStatus")
+def fill_diagnostic_status(msg, payload, stamp: Time, hints: dict) -> None:
+    """A whole structured report, as the named readings a recording can hold side by side.
+
+    Each field of the payload dataclass becomes one ``KeyValue`` keyed by the field's own name, in
+    declaration order, so a string field and a flag reach a recorded table, which no primitive topic
+    can carry and no reduction over a published series can reconstruct. The converter knows no
+    producer's field names; a report maps here through its row in :mod:`roqsim_ros_bridge.typemap`.
+
+    ``level`` is always ``OK``: these are readings, and a level above it would be a verdict about
+    them, which is a threshold the experiment states rather than the substrate. ``name``,
+    ``hardware_id`` and ``message`` come from hints, so a consumer can tell two monitors of one world
+    apart.
+    """
+    from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
+
+    if not dataclasses.is_dataclass(payload) or isinstance(payload, type):
+        raise TypeError(
+            "diagnostic_msgs.msg.DiagnosticStatus publishes the fields of a dataclass report, got "
+            f"{type(payload).__name__}"
+        )
+    msg.level = DiagnosticStatus.OK
+    msg.name = str(hints.get("name", ""))
+    msg.message = str(hints.get("message", ""))
+    msg.hardware_id = str(hints.get("hardware_id", ""))
+    msg.values = [
+        KeyValue(key=f.name, value=_status_value(getattr(payload, f.name)))
+        for f in dataclasses.fields(payload)
+    ]
 
 
 @converter("sensor_msgs.msg.JointState")
