@@ -160,9 +160,9 @@ action entity_navigate:
     # They stay separate actions because they prove different things -- a goal reached through nav2
     # says something about nav2; a goal reached through this says the traffic arrived on cue.
     #
-    # POSITIONS only: the navigator drives to a point and stops facing the way it arrived, so a
-    # nonzero orientation is REFUSED rather than accepted and dropped. A final heading is a
-    # capability to add to the navigator, not a value to pass and ignore.
+    # POSITIONS in the floor plane only: the navigator drives to a point and stops facing the way it
+    # arrived, so a nonzero orientation or z is REFUSED rather than accepted and dropped. A final
+    # heading is a capability to add to the navigator, not a value to pass and ignore.
     # The route replaces whatever the navigator was doing, and the entity's own configured route
     # resumes when it finishes, if it had one. A branch that is abandoned cancels the route rather
     # than leaving the mover driving to a goal the scenario has given up on. A goal the navigator
