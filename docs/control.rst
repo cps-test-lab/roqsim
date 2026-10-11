@@ -101,7 +101,9 @@ A client (the commands above, :class:`roqsim.control_client.Client`, the MCP too
 ``--control``/``control`` too, and without it looks in this order: ``ROQSIM_CONTROL``, then the
 only simulator running. Each running simulator registers itself in the per-user runtime directory,
 which is what ``roqsim ls`` lists; with several running and none named, a client refuses and lists
-them. A second simulator asked to serve an address one is already serving is refused at start-up.
+them. A registration whose process is gone -- a simulator killed outright -- is removed the
+next time a client looks, with the default sockets it left behind. A second simulator asked to
+serve an address one is already serving is refused at start-up.
 
 The default is found only where the simulator and the client share that runtime directory -- one
 machine, one user. Where they do not, as when they run in separate containers, whoever starts them

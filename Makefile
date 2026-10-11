@@ -217,7 +217,7 @@ doc:  ## Build the Sphinx HTML docs into build/html
 
 .PHONY: thumbnails
 thumbnails:  ## Render each model's preview as <model-dir>/<name>.thumb.png (run when models change)
-	$(PY) roqsim_assets/tools/render_thumbnails.py
+	$(VENV)/bin/roqsim assets render-thumbnails
 	@echo "thumbnails written beside each model (commit them; not a dependency of 'make doc')"
 
 .PHONY: view-doc

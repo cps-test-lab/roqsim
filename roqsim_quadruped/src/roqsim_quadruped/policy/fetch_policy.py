@@ -13,7 +13,8 @@ modifiable or redistributable**, so they are fetched locally and never committed
 fail-soft (the resource is marked ``optional``): a network error warns and returns 0 so ``make venv``
 and offline builds never break; the ``spot_locomotion`` plugin raises a clear error at load time if the
 policy is still missing. Point the plugin's ``policy_path`` / ``$SPOT_POLICY_PATH`` at your own copy to
-use a different one.
+use a different one. Outside a source checkout there is no runner to delegate to, and the fetch
+fails with a non-zero exit naming the command to run instead.
 """
 
 from __future__ import annotations
@@ -25,9 +26,8 @@ import sys
 from . import POLICY_DIR
 
 RESOURCE = "spot_locomotion_policy"
-# This file lives at <roqsim>/roqsim_quadruped/src/roqsim_quadruped/policy/ in the editable
-# source tree, so the external-resources runner is four parents up (works for both this repo and the
-# parent repo, which vendor the same roqsim tree).
+# This file lives at <roqsim>/roqsim_quadruped/src/roqsim_quadruped/policy/ in an editable source
+# checkout, so the external-resources runner is four parents up. An installed wheel has no runner.
 _RUNNER = POLICY_DIR.parents[3] / "external" / "external_resources.py"
 
 
@@ -38,7 +38,7 @@ def fetch(force: bool = False) -> int:
             f"[fetch_policy] From the roqsim tree run: make external-resources RESOURCE={RESOURCE}",
             file=sys.stderr,
         )
-        return 0
+        return 1
     cmd = [sys.executable, str(_RUNNER), "convert", "--resource", RESOURCE]
     if force:
         cmd.append("--force")

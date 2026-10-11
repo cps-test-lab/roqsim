@@ -34,7 +34,8 @@ and child both namespaced, stamp zero -- exactly as a ``static_tf`` hint's trans
 
 The reports of core plugins that a ROS stack reads as a standard message travel as that message:
 ``energy_monitor``'s ``EnergyReport`` as ``sensor_msgs/BatteryState``, ``contact_location``'s
-``ContactLocation`` as ``geometry_msgs/PointStamped`` (its centre).
+``ContactLocation`` as ``geometry_msgs/PointStamped`` (its centre), ``clearance_monitor``'s
+``ClearanceReport`` as ``diagnostic_msgs/DiagnosticStatus`` (each field one named reading).
 
 A package adds its own type once through the ``roqsim.ros2_types`` entry-point group
 (:data:`ENTRY_POINT_GROUP`): the entry loads a :class:`RosType`, or an iterable of them.
@@ -555,10 +556,21 @@ for _rostype in (
 
 
 def _core_reports() -> tuple[RosType, ...]:
+    from roqsim.plugins.clearance_monitor import ClearanceReport
     from roqsim.plugins.contact_location import ContactLocation
     from roqsim.plugins.energy_monitor import EnergyReport
 
     return (
+        RosType(
+            ClearanceReport,
+            (
+                Wire(
+                    "diagnostic_msgs.msg.DiagnosticStatus",
+                    _fill_with("fill_diagnostic_status"),
+                    _published_only("a clearance report"),
+                ),
+            ),
+        ),
         RosType(
             EnergyReport,
             (
