@@ -144,7 +144,7 @@ class GnssPlugin(Plugin):
         self.robot = self.entity
         self._bid = -1
         self._bias = np.zeros(3)
-        self._next_update = 0.0
+        self._last_sample = float("-inf")
         self._fix: dict | None = None
 
     def cfg(self, key):
@@ -240,14 +240,16 @@ class GnssPlugin(Plugin):
 
     def on_reset(self, ctx: SimContext) -> None:
         self._bias = np.zeros(3)
-        self._next_update = 0.0
+        self._last_sample = float("-inf")
         self._fix = None
 
     def post_step(self, ctx: SimContext) -> None:
         """Sample after the step, so the fix describes the state the tick produced."""
-        if ctx.sim_time + 1e-12 < self._next_update:
+        # A thousandth of a step short still counts, as for every other sensor: float drift in the
+        # summed clock would otherwise push a period the timestep divides to the step after it.
+        if ctx.sim_time - self._last_sample < 1.0 / float(self.cfg("rate")) - 1e-3 * ctx.dt:
             return
-        self._next_update = ctx.sim_time + 1.0 / float(self.cfg("rate"))
+        self._last_sample = ctx.sim_time
         self._fix = self._sample(ctx)
 
     @endpoint.out(rate=lambda self: float(self.cfg("rate")))

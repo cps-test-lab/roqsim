@@ -293,3 +293,22 @@ def test_velocity_is_the_antennas_own_not_the_subtree_centre_of_mass():
     assert fix["vel_e"] == pytest.approx(0.0, abs=1e-6)
     assert fix["vel_n"] == pytest.approx(0.5, abs=1e-6)
     assert fix["vel"] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_the_fix_keeps_its_rate_late_in_a_long_run():
+    """The gate fires on the period, as every other sensor's does, however long the run: an update
+    due at a sum of float steps that lands a hair short of it is still due."""
+    ctx = _ctx()
+    plugin = _plugin({**QUIET, "rate": 10.0})
+    plugin.configure(ctx)
+    plugin.on_reset(ctx)
+    ctx.data.time = 600.0
+    fired = []
+    for tick in range(2000):
+        ctx.data.time += ctx.dt
+        before = plugin._fix
+        plugin.post_step(ctx)
+        if plugin._fix is not before:
+            fired.append(tick)
+    period_ticks = int(round((1.0 / 10.0) / ctx.dt))
+    assert set(np.diff(fired)) == {period_ticks}
