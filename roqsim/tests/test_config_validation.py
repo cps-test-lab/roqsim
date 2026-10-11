@@ -209,3 +209,57 @@ def test_view_rejects_malformed_values():
         load_config_from_dict({"sim": {"view": {"distance": "near"}}, "components": []})
     with pytest.raises(PluginError, match="sim.view.track: expected an entity or body name"):
         load_config_from_dict({"sim": {"view": {"track": 3}}, "components": []})
+
+
+@pytest.mark.parametrize(
+    ("sim", "message"),
+    [
+        ({"cone": "eliptic"}, "sim.cone: unknown value 'eliptic'"),
+        ({"gravity": [0, 0]}, "sim.gravity: expected 3 numbers"),
+        ({"gravity": "down"}, "sim.gravity: expected 3 numbers"),
+        ({"wind": 3.0}, "sim.wind: expected 3 numbers"),
+        ({"iterations": 2.5}, "sim.iterations: expected a whole number"),
+        ({"noslip_iterations": -1}, "sim.noslip_iterations: expected a whole number"),
+        ({"density": "air"}, "sim.density: expected a number >= 0"),
+        ({"timestep": 0}, "sim.timestep: expected a number of seconds > 0"),
+        ({"dedup_assets": "no"}, "sim.dedup_assets: expected true or false"),
+        ({"pacing": "fast"}, "sim.pacing: invalid pacing 'fast'"),
+        ({"pacing": {"factor": 0}}, "sim.pacing: invalid pacing"),
+        ({"pacing": {"factr": 2}}, "sim.pacing: invalid pacing"),
+    ],
+)
+def test_a_malformed_sim_value_is_refused_at_load(sim, message):
+    """Each would otherwise load, and fail only once every plugin had built, as a bare error from
+    a MuJoCo setter or an enum lookup that names neither the key nor the file -- or, for pacing,
+    once the standalone driver divides by the factor."""
+    with pytest.raises(PluginError, match=message.replace("(", "\\(").replace("[", "\\[")):
+        load_config_from_dict({"sim": sim, "components": []})
+
+
+def test_the_engine_maps_exactly_the_names_the_loader_admits():
+    """Two tables name each enum -- the loader's, which refuses, and the engine's, which maps to
+    MuJoCo -- so a name in one and not the other is a world that loads and then fails to build."""
+    from roqsim import engine
+    from roqsim.config import SIM_CONES, SIM_INTEGRATORS, SIM_SOLVERS
+
+    assert set(engine._CONES) == set(SIM_CONES)
+    assert set(engine._SOLVERS) == set(SIM_SOLVERS)
+    assert set(engine._INTEGRATORS) == set(SIM_INTEGRATORS) - {"auto"}
+
+
+@pytest.mark.parametrize("factor", [0, -1.0, True, "4"])
+def test_the_pacer_refuses_a_factor_that_is_not_a_positive_number(factor):
+    """``--pacing 0`` reaches the pacer as ``{factor: 0.0}``, whose wait divides by it."""
+    from roqsim.clock import Pacer
+
+    with pytest.raises(ValueError, match="positive number"):
+        Pacer.from_config({"factor": factor}, dt=0.002)
+
+
+def test_a_number_yaml_read_as_text_is_named_as_such():
+    import yaml
+
+    sim = yaml.safe_load("viscosity: 1e-5")
+    assert sim == {"viscosity": "1e-5"}
+    with pytest.raises(PluginError, match="the string '1e-5' \\(YAML reads an exponent"):
+        load_config_from_dict({"sim": sim, "components": []})

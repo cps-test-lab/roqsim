@@ -377,6 +377,47 @@ def resolve_frame(ctx, path: str, *, within: str | None = None) -> Frame:
     return resolve(frame_offers(ctx), path, "frame").target
 
 
+def entity_body(ctx, entity: str | None, path: str = "", *, who: str) -> Frame:
+    """The body a component of *entity* measures or acts on, as a :class:`Frame` of kind ``root``
+    or ``body`` whose ``index`` is the body id.
+
+    Without *path* it is the root body the entity registered. With one, *path* is read as
+    :func:`resolve_frame` reads it within the entity (``base_link`` is ``<entity>/base_link``, a
+    leading ``/`` makes it absolute) and must name a body. *who* names the caller in the errors.
+
+    Raises :class:`RuntimeError` for an entity that is not registered, or that registered no body
+    while *path* is relative to it, and for a path that names no body: a component resolved to a
+    body chosen by naming convention measures whichever body happens to carry that name.
+    """
+    from .paths import PathError
+
+    absolute = path.startswith("/")
+    if not absolute:
+        registered = ctx.entities.get(entity) if entity else None
+        if registered is None:
+            raise RuntimeError(
+                f"{who}: no entity {entity!r} is registered, so there is no body to resolve. Nest "
+                f"this entry under the entry that spawns the entity; that entry registers it."
+            )
+        if not registered.body:
+            raise RuntimeError(
+                f"{who}: entity {entity!r} registered no body. The entry that creates it must "
+                f"register the entity with its root body (Entity.body) for {who} to resolve one."
+            )
+        if mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, registered.body) <= 0:
+            raise RuntimeError(
+                f"{who}: base body {registered.body!r} not found; entity {entity!r} registered "
+                f"it, and the compiled model has no body of that name."
+            )
+    try:
+        frame = resolve_frame(ctx, path, within=entity)
+    except PathError as err:
+        raise RuntimeError(f"{who}: {err}") from err
+    if frame.kind not in ("root", "body"):
+        raise RuntimeError(f"{who}: {frame.path!r} names a {frame.kind}, not a body.")
+    return frame
+
+
 def _world_pose(ctx, frame: Frame):
     """``(position, quaternion, rotation matrix)`` of *frame* in the world, or ``None`` while its
     entity is absent. A root's comes from its entity's core pose endpoint, a body's, a site's and a

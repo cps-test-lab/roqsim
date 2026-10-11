@@ -83,6 +83,21 @@ class SimAction(BaseAction):
         )
         return py_trees.common.Status.RUNNING
 
+    def not_ready(self) -> py_trees.common.Status:
+        """RUNNING while the world is being built; raises when there is no simulator to reach.
+
+        Over the control socket, no simulator registered, several and none named, or none answering
+        at the address never resolves on its own, so the action fails with the transport's reason
+        instead of waiting out the trial's timeout.
+        """
+        reason = self._access.unreachable()
+        if reason is not None:
+            raise ActionError(
+                f"{self.__class__.__name__} ({self.transport}): no simulator to reach: {reason}",
+                action=self,
+            )
+        return self.waiting("waiting for the simulation", self._access)
+
     def failed(self, message: str) -> py_trees.common.Status:
         """A statement about THIS TRIAL. Returned, so the run still produces a result row."""
         self.feedback_message = message  # pylint: disable=attribute-defined-outside-init
