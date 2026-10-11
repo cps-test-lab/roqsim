@@ -1051,8 +1051,8 @@ class SpawnSensorPlugin(Plugin):
         # axis at (W/2 - ppx, H/2 - ppy) in edge coordinates counted from the top-left corner of the
         # delivered frame: a positive offset moves the axis left and up in both axes. A calibration's
         # (cx, cy) are pixel-CENTRE coordinates (OpenCV, ROS: pixel 0 spans [-0.5, 0.5]), half a pixel
-        # less than the edge coordinate. Hence one form for both axes; measured on rendered dots, and
-        # pinned by test_the_rendered_pixels_are_where_camera_info_projects_them.
+        # less than the edge coordinate. Hence one form for both axes, pinned by
+        # test_the_rendered_pixels_are_where_camera_info_projects_them.
         cam.principal_pixel = [width / 2.0 - 0.5 - cx, height / 2.0 - 0.5 - cy]
 
     def _lens_camera(self, child: mujoco.MjSpec):

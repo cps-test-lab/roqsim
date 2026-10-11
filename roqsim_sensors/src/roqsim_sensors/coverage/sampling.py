@@ -220,7 +220,9 @@ def room_volume_points(
     kept: list[np.ndarray] = []
     for h in heights:
         pts = np.column_stack([flat, np.full(len(flat), float(h))])
-        mask = _classify_points(model, data, pts, max_dist=max_dist, geomgroup=geomgroup, enclosed_only=enclosed_only)
+        mask = _classify_points(
+            model, data, pts, max_dist=max_dist, geomgroup=geomgroup, enclosed_only=enclosed_only
+        )
         kept.append(pts[mask])
     if not kept:
         return np.zeros((0, 3))

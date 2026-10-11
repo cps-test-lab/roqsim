@@ -265,6 +265,7 @@ class Endpoint:
         by default.
         """
         return self.claims > 0 or self.has_subscribers is None or bool(self.has_subscribers())
+
     #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
     #: :func:`endpoint_kind` infers from its direction and hints.
     kind: str = ""

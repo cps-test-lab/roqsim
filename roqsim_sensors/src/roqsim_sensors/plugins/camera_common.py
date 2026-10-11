@@ -316,7 +316,9 @@ class CameraPlugin(Plugin):
                     if float(v) < 0:
                         errors.append(f"'noise.{k}' must be >= 0")
                 if float(noise.get("blur_sigma", 0) or 0) > 0 and _cv2_import_error() is not None:
-                    errors.append(f"'noise.blur_sigma' needs OpenCV, which is not installed ({_cv2_import_error()})")
+                    errors.append(
+                        f"'noise.blur_sigma' needs OpenCV, which is not installed ({_cv2_import_error()})"
+                    )
         distortion = config.get("distortion")
         if distortion is not None:
             if not isinstance(distortion, (list, tuple)) or len(distortion) != 5:
@@ -441,7 +443,10 @@ class CameraPlugin(Plugin):
         if self.on_demand:
             # Only for a consumer that asks: an in-process claim, or a transport subscriber. With no
             # transport able to tell, nothing renders until something claims a frame.
-            return any(ep.claims > 0 or (ep.has_subscribers is not None and ep.has_subscribers()) for ep in gates)
+            return any(
+                ep.claims > 0 or (ep.has_subscribers is not None and ep.has_subscribers())
+                for ep in gates
+            )
         # `wanted()`: an in-process claim, a transport subscriber, or no transport able to tell
         # (`has_subscribers is None`) -- then render, because the alternative is a sensor that never
         # produces anything.
@@ -483,8 +488,8 @@ class CameraPlugin(Plugin):
     def _degrade(self, ctx: SimContext, rgb: np.ndarray) -> np.ndarray:
         """Blur, then additive Gaussian noise: the colour stream's own errors, after the lens.
 
-        Drawn from ``ctx.rng_for`` keyed on this camera, so a frame's noise is a function of the
-        world (seed, sim time, sensor) and a replay reproduces it.
+        Drawn from ``ctx.rng_for`` keyed on this camera instance (:meth:`draw_key`), so a frame's
+        noise is a function of the world (seed, sim time, sensor) and a replay reproduces it.
         """
         import cv2
 
@@ -492,8 +497,10 @@ class CameraPlugin(Plugin):
         if self._blur_sigma > 0:
             out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
         if self._noise_sigma > 0:
-            rng = ctx.rng_for(f"camera:{self.address}")
-            out = np.clip(out.astype(np.float32) + rng.normal(0.0, self._noise_sigma, out.shape), 0, 255).astype(np.uint8)
+            rng = ctx.rng_for(self.draw_key("noise"))
+            out = np.clip(
+                out.astype(np.float32) + rng.normal(0.0, self._noise_sigma, out.shape), 0, 255
+            ).astype(np.uint8)
         return out
 
     def _capture_extra(self, ctx: SimContext, renderer: mujoco.Renderer) -> None:

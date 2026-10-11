@@ -129,7 +129,11 @@ def _build_samples(model, data, args):
     if want in ("volume", "both"):
         heights = tuple(float(h) for h in args.heights)
         vol = sampling.room_volume_points(
-            model, data, resolution=args.resolution, heights=heights, enclosed_only=not getattr(args, "open", False)
+            model,
+            data,
+            resolution=args.resolution,
+            heights=heights,
+            enclosed_only=not getattr(args, "open", False),
         )
         if len(vol):
             points_list.append(vol)
