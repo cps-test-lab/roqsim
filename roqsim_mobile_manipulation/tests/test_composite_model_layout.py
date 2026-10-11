@@ -5,9 +5,9 @@ Four failures this catches, none of which the per-robot drive tests would:
 * a model whose ``<compiler meshdir=...>`` points anywhere but its own ``models/<name>/meshes/``
   -- MuJoCo does not error on an unresolvable mesh path, it compiles
   the model with the reference as given, so the robot silently loses its geometry;
-* a mesh (or licence) that no ``[tool.setuptools.package-data]`` glob matches. That installs cleanly
-  from an editable checkout and fails at RUN time inside a container, where the checkout is not there
-  to paper over it -- the reason those globs are patterns rather than an enumeration;
+* a mesh, licence or thumbnail that no ``[tool.setuptools.package-data]`` glob matches. That installs
+  cleanly from an editable checkout and fails at RUN time inside a container, where the checkout is
+  not there to paper over it -- the reason those globs are patterns rather than an enumeration;
 * a vendor mesh redistributed without the licence sidecar that permits it.
 * a mesh shipped in a model's ``meshes/`` that its MJCF never loads.
 
@@ -107,8 +107,8 @@ def test_package_data_globs_cover_every_shipped_file():
         str(p.relative_to(pkg))
         for p in MODELS_DIR.rglob("*")
         if p.is_file()
-        # __init__.py is a module (and .pyc build litter); thumbnails are docs-only.
-        and p.suffix not in (".py", ".pyc", ".png")
+        # __init__.py is a module (and .pyc build litter).
+        and p.suffix not in (".py", ".pyc")
         and not any(fnmatch.fnmatch(str(p.relative_to(pkg)), g) for g in globs)
     ]
     assert not missing, f"not covered by package-data (would be absent from the wheel): {missing}"
