@@ -344,7 +344,7 @@ def test_a_flex_across_the_cut_is_refused():
         _setup("_Straddling")
 
 
-def test_flex_reaction_is_refused_now_that_the_reading_carries_the_contacts():
+def test_flex_reaction_is_refused():
     errors = ForceTorquePlugin({"site": "s"}).validate_config(
         {"site": "s", "flex_reaction": "excluded"}
     )
