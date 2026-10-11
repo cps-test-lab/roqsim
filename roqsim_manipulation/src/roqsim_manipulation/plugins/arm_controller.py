@@ -468,10 +468,8 @@ class ArmControllerPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        # Entity name. `spawn_arm` wires its manifest plugins with `arm: <name>`, `spawn_robot` with
-        # `robot: <name>` (roqsim.manifest.expand_manifest sets the spawn's own target key). Accepting
-        # either lets one controller serve a standalone arm and an arm carried by a robot, without the
-        # manifest having to hardcode the entity name the world happens to choose.
+        # Entity name: the spawn this controller is nested under, so one controller serves a
+        # standalone arm and an arm carried by a robot without the manifest naming either.
         self.arm = self.entity
         self.gripper_ctrl = float(self.config.get("gripper_ctrl", 255.0))
         self.stream_commands = bool(self.config.get("stream_commands", False))
