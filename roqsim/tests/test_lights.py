@@ -87,10 +87,9 @@ def _shot(tmp_path, xml: str, name: str) -> np.ndarray:
     return np.asarray(Image.open(out).convert("RGB"), dtype=int)
 
 
-def test_mujoco_draws_no_light_past_the_ones_named(tmp_path, monkeypatch):
+def test_mujoco_draws_no_light_past_the_ones_named(tmp_path):
     """What the module claims about the renderer, checked against it: switching off a light it calls
     undrawn changes no pixel, switching off one it draws does."""
-    monkeypatch.setenv("MUJOCO_GL", __import__("os").environ.get("MUJOCO_GL", "egl"))
     base = _shot(tmp_path, _row_of_lamps(10), "all")
     assert np.array_equal(base, _shot(tmp_path, _row_of_lamps(10, inactive=(9,)), "last_off"))
     assert not np.array_equal(
