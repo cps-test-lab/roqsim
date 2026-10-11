@@ -23,10 +23,10 @@ CASES = {
 }
 
 
-def _engine(case, **loco):
-    model, plugin, timestep, _ = CASES[case]
+def _engine(case, timestep=None, **loco):
+    model, plugin, trained, _ = CASES[case]
     world = {
-        "sim": {"timestep": timestep},
+        "sim": {"timestep": timestep or trained},
         "components": [
             {
                 "spawn_robot": {
@@ -111,3 +111,10 @@ def test_reset_clears_the_command_and_the_odometry(case):
         assert _speed(engine, handle) < 0.35 * speed
     finally:
         engine.shutdown()
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_a_timestep_the_policy_was_not_trained_at_is_refused(case):
+    # The decimation counts physics steps: at twice the step the policy would act at half its rate.
+    with pytest.raises(RuntimeError, match="trained at"):
+        _engine(case, timestep=2 * CASES[case][2])

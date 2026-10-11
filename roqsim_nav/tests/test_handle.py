@@ -69,7 +69,7 @@ def _run_until_finished(engine, seq, timeout=40.0):
     deadline = engine.ctx.sim_time + timeout
     while engine.ctx.sim_time < deadline:
         _run(engine, 0.1)
-        applied, finished, _, _ = handle.status()
+        applied, finished, _, _, _ = handle.status()
         if applied > seq:
             return "preempted"
         if applied == seq and finished:
@@ -125,7 +125,7 @@ def test_a_stale_completion_is_never_reported_as_a_new_ones(sim):
     assert _run_until_finished(sim, first) == "finished"
 
     second = handle.send_goals([(-2.0, 0.0)])
-    applied, finished, _, _ = handle.status()
+    applied, finished, _, _, _ = handle.status()
     assert not (applied == second and finished), (
         "reported arrival before the route was even applied"
     )
@@ -168,11 +168,11 @@ def test_pose_is_a_latched_snapshot_from_the_last_tick(sim):
 
 def test_progress_shrinks_as_it_drives(sim):
     handle = _handle(sim)
-    handle.send_goals([(6.0, 0.0)])
+    handle.send_goals([(4.0, 0.0)])  # inside the default world's walls at +/-5 m
     _run(sim, 0.5)
-    _, _, _, far = handle.status()
+    _, _, _, far, _ = handle.status()
     _run(sim, 3.0)
-    _, _, _, near = handle.status()
+    _, _, _, near, _ = handle.status()
     assert near < far, "distance remaining did not fall while it drove"
 
 
@@ -192,7 +192,7 @@ def test_reset_clears_a_commanded_route(tmp_path):
         assert _run_until_finished(engine, seq) == "finished"
 
         engine.reset()
-        applied, finished, _, _ = handle.status()
+        applied, finished, _, _, _ = handle.status()
         assert applied == 0 and not finished, "the commanded route survived the reset"
         _run(engine, 6.0)
         # It runs its CONFIGURED route again, not the commanded one.

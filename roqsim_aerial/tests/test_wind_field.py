@@ -104,7 +104,7 @@ def test_turbulence_follows_the_run_seed():
 
 
 def test_turbulence_variance_does_not_track_the_timestep():
-    """The sqrt(2a) term is what makes this a wind model rather than a timestep artefact.
+    """The sqrt(1 - phi^2) term is what makes this a wind model rather than a timestep artefact.
 
     Without it, refining the timestep would quietly make the world calmer, and a convergence study
     would then read as a physics result. The length scale is short and the window long so that the
@@ -125,6 +125,16 @@ def test_turbulence_variance_does_not_track_the_timestep():
     # And both must sit at the sigma that was asked for -- equal-but-wrong would pass the line above.
     for timestep, spread in spreads.items():
         assert spread == pytest.approx(sigma, rel=0.2), (timestep, spread)
+
+
+def test_turbulence_keeps_its_intensity_at_a_step_past_the_correlation_time():
+    """A coarse step makes the draws memoryless; it must not make them wider than the intensity."""
+    sigma = 1.0
+    # Correlation time L / V = 0.05 s, so a 0.05 s step decays one full correlation time per tick.
+    config = {"steady": [2.0, 0.0, 0.0], "turbulence": {"intensity": sigma, "length_scale": 0.1}}
+    track = _wind_track(config, 200.0, timestep=0.05)[:, :2]
+    spread = float(np.std(track[len(track) // 10 :], axis=0).mean())
+    assert spread == pytest.approx(sigma, rel=0.1), spread
 
 
 def test_refuses_a_second_wind_owner():

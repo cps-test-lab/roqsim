@@ -94,7 +94,7 @@ def _plugin(model, data, **overrides):
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
+    plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides}, entity="robot")
     plugin.configure(ctx)
     plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
@@ -434,7 +434,7 @@ def test_c5_odometry_tf_default_is_base_link():
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    plugin = DiffDrivePlugin(cfg)
+    plugin = DiffDrivePlugin(cfg, entity="robot")
     plugin.configure(ctx)
     plugin.register_endpoints(ctx)
     odom = next(e for e in ctx.interface.all() if e.name == "odom")
