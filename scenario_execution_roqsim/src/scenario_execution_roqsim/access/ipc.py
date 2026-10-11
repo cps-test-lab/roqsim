@@ -19,6 +19,8 @@ scenario uses is resolved against that list with the same functions the in-proce
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from . import (
@@ -50,6 +52,9 @@ _SET_STATE = "sim/entities/set_state"
 _SET_PRESENCE = "sim/entities/set_presence"
 #: The exception a producer raises for a name the world does not carry (roqsim.entity_control).
 _UNKNOWN = "UnknownEntity"
+#: How long the first listing may go unanswered beyond the client's timeout before no simulator
+#: is taken to be at the address (seconds).
+_GRACE_S = 2.0
 
 
 class _Request:
@@ -161,7 +166,8 @@ class _IpcRoute(NavCall):
         if applied > self._seq:
             return NavOutcome(False, "a newer route preempted this one")
         if applied == self._seq and finished:
-            return NavOutcome(True, "arrived")
+            error = str(status.value["error"])
+            return NavOutcome(False, error) if error else NavOutcome(True, "arrived")
         return None
 
     def cancel(self) -> None:
@@ -206,6 +212,8 @@ class IpcAccess(WorldAccess):
         self._rows: list[dict] | None = None
         self._listing: _Request | None = None
         self._waiting_for = "no simulator answered yet"
+        self._unreachable: str | None = None
+        self._asked_at: float | None = None
         self._poses: dict[str, _Request] = {}
 
     # -- the world ------------------------------------------------------------------------------
@@ -214,21 +222,26 @@ class IpcAccess(WorldAccess):
             return True
         from roqsim.ipc import ControlError
 
+        if self._unreachable is not None:
+            return False
         if self._client is None:
             try:
                 from roqsim.control_client import Client
 
                 self._client = Client(self._control)
             except ControlError as err:
-                self._waiting_for = str(err)
+                self._unreachable = str(err)
                 return False
         if self._listing is None:
             self._listing = _Request(self, "describe", path="")
+            self._asked_at = time.monotonic()
         if not self._listing.poll():
+            if time.monotonic() - self._asked_at > self._client.timeout + _GRACE_S:
+                self._unreachable = f"nothing answered at {self._client.uri}"
             return False
         listing, self._listing = self._listing, None
         if listing.error is not None:
-            self._waiting_for = str(listing.error)
+            self._unreachable = str(listing.error)
             return False
         self._rows = list(listing.value)
         return True
@@ -236,6 +249,10 @@ class IpcAccess(WorldAccess):
     def pending_reason(self) -> str:
         """Why :meth:`ready` is still false, for an action's waiting message."""
         return self._waiting_for
+
+    def unreachable(self) -> str | None:
+        """No simulator found, several and none named, a refused listing, or no reply in time."""
+        return self._unreachable
 
     def _require_rows(self) -> list[dict]:
         if self._rows is None:
