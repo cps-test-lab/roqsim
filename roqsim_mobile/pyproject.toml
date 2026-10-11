@@ -82,6 +82,8 @@ roqsim_mobile = [
     # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
     # licence is not redistributable.
     "models/*/*LICENSE*",
+    # `roqsim catalog` reports the `<model>.thumb.png` beside each MJCF (`make thumbnails`).
+    "models/*/*.thumb.png",
     "worlds/*.yaml",
 ]
 

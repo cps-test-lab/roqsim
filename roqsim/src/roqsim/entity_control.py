@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .placement import PLACEABLE_MODES_HINT, base_joint_of, place_body
+from .placement import PLACEABLE_MODES_HINT, base_joint_of, carries_velocity, place_body
 
 
 class UnknownEntity(LookupError):
@@ -51,8 +51,11 @@ def unplaceable(name: str, joint_name: str | None) -> str:
 
 
 def set_state(ctx, name: str, position, orientation, linear_velocity=None, angular_velocity=None):
-    """Place *name* at ``position`` / ``orientation`` (w, x, y, z), moving at the velocities
-    (zero unless stated: a body put somewhere is at rest). Returns what was done."""
+    """Place *name* at ``position`` / ``orientation`` (w, x, y, z), moving at the world-frame
+    velocities (zero unless stated: a body put somewhere is at rest). Returns what was done.
+
+    A non-zero velocity on an entity that cannot carry one (:func:`carries_velocity`) is refused
+    before anything is written."""
     import mujoco
 
     entity = require_entity(ctx, name)
@@ -65,6 +68,11 @@ def set_state(ctx, name: str, position, orientation, linear_velocity=None, angul
         ],
         dtype=float,
     )
+    if vel.any() and not carries_velocity(ctx, entity):
+        raise EntityRefused(
+            f"entity {name!r} cannot carry the velocity {vel.tolist()}: only a body with a free "
+            "joint ('motion: physics') moves on from where it is placed. Ask for zero velocity."
+        )
     if not place_body(ctx, entity, pos, quat, vel):
         raise EntityRefused(unplaceable(name, base_joint_of(entity)))
     mujoco.mj_forward(ctx.model, ctx.data)

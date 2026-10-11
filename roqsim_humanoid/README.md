@@ -55,7 +55,7 @@ driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_sta
   policy + deploy config, vendored verbatim from LimX `humanoid-rl-deploy-python`.
 - `plugins/oli_locomotion.py` — the controller: builds the 102-dim observation, keeps a 5-deep
   history (510-dim policy input), runs the ONNX policy at 100 Hz, and applies a 1000 Hz PD torque
-  loop to the 31 actuators. **The world must set `sim.timestep: 0.001`.** Needs `onnxruntime` (CPU).
+  loop to the 31 actuators. **The world must set `sim.timestep: 0.001`**; the plugin refuses any other step. Needs `onnxruntime` (CPU).
 
 ## Unitree G1 (`unitree_g1`)
 
@@ -78,7 +78,7 @@ driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_sta
 
 Needs `torch` for policy inference (declared in `pyproject.toml`). CPU torch is enough — the policy
 is a small 47→12 MLP evaluated at 50 Hz. The world must set `sim.timestep: 0.002` — the policy's PD
-loop is tuned for a 500 Hz step (see `worlds/*g1*.yaml`).
+loop is tuned for a 500 Hz step (see `worlds/*g1*.yaml`), and the plugin refuses any other step.
 
 **Optional follow-up:** convert `policy/motion.pt` to ONNX and switch `g1_locomotion` to
 `onnxruntime` to drop the `torch` dependency. The observation/action math is unchanged; only the

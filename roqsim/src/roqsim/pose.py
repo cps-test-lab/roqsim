@@ -29,8 +29,9 @@ Three deliberate departures from the message, each because a document can expres
 cannot:
 
 ``header.frame_id``
-    optional, and only the world frame is accepted -- the same answer the bridge's spawn service
-    gives, since this simulator knows no other frame to state a pose in.
+    optional, and only the world frame is accepted: a document is read before any entity is
+    placed, so there is no entity yet whose frame a pose could be stated in. (The bridge's spawn
+    and set-state services, which run on a placed world, also accept a present entity's frame.)
 ``position.z``
     optional, and omitting it means *unstated* rather than zero. The service has no way to say that
     (a default-constructed request carries the origin), but a wheeled robot authored with its base

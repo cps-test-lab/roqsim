@@ -60,7 +60,7 @@ Config::
       steer_joints:    [left_steer_joint, right_steer_joint]
       drive_actuators: [rear_left_motor, rear_right_motor]      # VELOCITY servos, left then right
       drive_joints:    [rear_left_joint, rear_right_joint]
-      base_body: base_link
+      base_body: ""                 # body the wheel axes are expressed in (default: the root)
       odom_child_frame: base_link   # link the odometry TF points at (see below)
       stamped_cmd_vel: false        # true when the stack publishes TwistStamped (see below)
       cmd_vel_timeout: 0.0          # s; > 0 stops the car when no command arrives for this long
@@ -114,6 +114,7 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
+from roqsim.frames import entity_body
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import Angle, AngularSpeed, JointState, Odometry, Speed, Twist
@@ -171,7 +172,7 @@ class AckermannDrivePlugin(Plugin):
         self.steer_joint_names = list(self.config.get("steer_joints") or [])
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])
         self.drive_joint_names = list(self.config.get("drive_joints") or [])
-        self.base_body = self.config.get("base_body", "base_link")
+        self.base_body = self.config.get("base_body", "")
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
@@ -259,12 +260,8 @@ class AckermannDrivePlugin(Plugin):
         # Per-wheel roll sign, read off the model exactly as diff_drive does: a wheel carries the
         # base forward when it spins about the base's +y, and a source URDF may express the same
         # wheel about either y direction with both being correct.
-        base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
-        if base_b < 0:
-            raise RuntimeError(
-                f"ackermann_drive: base body {prefix + self.base_body!r} not found; the wheel roll "
-                f"signs are read off the wheel axes expressed in it"
-            )
+        base_b = entity_body(ctx, self.robot, self.base_body, who="ackermann_drive").index
+        self.base_body = m.body(base_b).name.removeprefix(prefix)
         d0 = mujoco.MjData(m)
         mujoco.mj_forward(m, d0)
         rb = d0.xmat[base_b].reshape(3, 3)
