@@ -602,10 +602,9 @@ class NavigatorPlugin(Plugin):
         self._caution.attach(ctx, entity)
 
         # Joining the avoidance model is deferred to on_reset, not done here: components are
-        # configured with their owner, so a world that declares its `avoidance:` entry *after* its
-        # movers would configure every navigator before the model existed. They would each find
-        # nothing, fall back silently to no avoidance, and the world would behave differently for
-        # the order of two lines in a file -- with nothing in the log to say so.
+        # configured with their owner, so a mover that does not steer, configured before the first
+        # one that does, would find no model yet and never become an agent the others go round --
+        # the world would behave differently for the order of two lines in a file.
 
         rate = cfg.get("update_hz")
         if rate is None:
