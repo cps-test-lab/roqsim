@@ -40,6 +40,8 @@ roqsim_quadruped = [
     "models/*.manifest.yaml",
     "models/meshes/*.obj",
     "models/LICENSE.*",
+    # `roqsim catalog` reports the `<model>.thumb.png` beside each MJCF (`make thumbnails`).
+    "models/*.thumb.png",
     "policy/*.yaml",
 ]
 
