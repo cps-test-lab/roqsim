@@ -82,8 +82,13 @@ circle. Widening to footprints is a real interface change and should be made del
 
 `route_mode: plan` (default) runs A\* between the given points — they are goals. `route_mode: exact`
 makes the path *be* the polyline: straight legs, no planner, for replaying a scripted trajectory.
-`autostart: false` plans at load and holds the mover until something starts it, so a world can own
-the trajectory while a scenario owns its timing (`entity_navigate_start`).
+`autostart: false` holds the mover until something starts it, so a world can own the trajectory
+while a scenario owns its timing (`entity_navigate_start`).
+
+A goal the planner cannot reach ends the route as **failed** where the mover stands, rather than
+sending it along a straight leg through the wall; a goal given up on after `max_recovery` recoveries
+is skipped and reported when the route ends. The route's status then carries an `error` naming the
+goal, and every caller below sees a failure, never an arrival.
 
 **`stop` holds; `reroute` is how it plans around.** The planner's grid holds static walls only, so
 each mover also looks ahead: a blocker is a body with DOFs or a mocap body — exactly the complement
@@ -123,6 +128,7 @@ under test). A mover with realistic localisation error is a different experiment
 Every navigator publishes a `NavHandle` on the blackboard under `nav:<entity>:handle`, and routes are
 stamped with a **sequence number** so a caller can tell its own arrival from a stale one — a
 navigator that finished its previous route is already "finished" when a new one is queued.
+`status()` is `(seq, finished, goals_left, dist_left, error)`, and `error` is empty for an arrival.
 
 * in a scenario: `entity_navigate(entity: 'cart', goal_poses: [...])`, or `entity_navigate_start`
 * over ROS 2: nav2's `NavigateToPose` / `NavigateThroughPoses`, served by `roqsim_nav_ros`, and the
