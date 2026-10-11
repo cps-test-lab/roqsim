@@ -146,6 +146,16 @@ def test_a_model_that_does_not_resolve_is_a_plugin_error(tmp_path, config, expec
         _built(tmp_path, config)
 
 
+def test_unresolved_models_are_config_errors_reported_together(tmp_path):
+    """Validation, not build, refuses them, so `roqsim check` lists both with the world's other
+    errors instead of the run stopping at whichever model build() meets first."""
+    with pytest.raises(PluginError) as err:
+        Engine(_door(tmp_path, {"frame_model": "no_such_frame", "model": "no_such_leaf"}))
+    assert "plugin config validation failed" in str(err.value)
+    assert "frame model 'no_such_frame' could not be resolved" in str(err.value)
+    assert "leaf model 'no_such_leaf' could not be resolved" in str(err.value)
+
+
 def _body_rgba(engine, body_name):
     """The rgba every geom of ``body_name`` renders with, via its material (or its own rgba).
 

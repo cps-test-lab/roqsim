@@ -277,6 +277,18 @@ class DoorPlugin(Plugin):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
             errors.append("'swing' must be non-zero (+1 or -1)")
+        # Resolved here as well as in build(), so `roqsim check` reports a misspelt model with the
+        # world's other errors instead of the run stopping at the first one build() meets.
+        models = []
+        if bool(config.get("frame", True)):
+            models.append(("frame model", config.get("frame_model", "door_frame")))
+        if bool(config.get("leaf", True)) and config.get("model"):
+            models.append(("leaf model", config["model"]))
+        for what, ref in models:
+            try:
+                resolve_model(ref, base_dir=self.base_dir)
+            except ModelError as exc:
+                errors.append(f"{what} {ref!r} could not be resolved ({exc})")
         errors += config_pose_errors(config, "door")
         return errors
 
