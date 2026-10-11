@@ -10,6 +10,9 @@ driven with stubbed entry points, so nothing has to be installed for this to be 
 
 from __future__ import annotations
 
+import importlib
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -33,10 +36,6 @@ from scenario_execution_roqsim.actions.entity_call import EntityCall  # noqa: E4
 from scenario_execution_roqsim.actions.entity_in_region import EntityInRegion  # noqa: E402
 from scenario_execution_roqsim.actions.entity_monitor import EntityMonitor  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved  # noqa: E402
-from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
-    EntityNavigate,
-    EntityNavigateStart,
-)
 from scenario_execution_roqsim.actions.entity_near import (  # noqa: E402
     EntityNear,
     EntityNearPosition,
@@ -67,19 +66,33 @@ def _entry_points(group):
         ]
     if group == "scenario_execution.actions":
         return [
-            EntryPointStub("entity_moved", EntityMoved, "scenario_execution_roqsim"),
-            EntryPointStub("entity_monitor", EntityMonitor, "scenario_execution_roqsim"),
-            EntryPointStub("entity_rotated", EntityRotated, "scenario_execution_roqsim"),
-            EntryPointStub("entity_call", EntityCall, "scenario_execution_roqsim"),
-            EntryPointStub("entity_near", EntityNear, "scenario_execution_roqsim"),
-            EntryPointStub("entity_near_position", EntityNearPosition, "scenario_execution_roqsim"),
-            EntryPointStub("entity_in_region", EntityInRegion, "scenario_execution_roqsim"),
-            EntryPointStub("entity_navigate", EntityNavigate, "scenario_execution_roqsim"),
-            EntryPointStub(
-                "entity_navigate_start", EntityNavigateStart, "scenario_execution_roqsim"
-            ),
+            EntryPointStub(name, _load(target), "scenario_execution_roqsim")
+            for name, target in _registered_actions().items()
         ]
     return []
+
+
+def _registered_actions() -> dict[str, str]:
+    """``name -> module:Class``, as this package's ``pyproject.toml`` registers them -- read from
+    the source rather than from an installed copy, whose metadata may be another checkout's."""
+    tomllib = pytest.importorskip("tomllib", reason="the standard library's from Python 3.11")
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    return project["project"]["entry-points"]["scenario_execution.actions"]
+
+
+def _load(target: str):
+    module, _, name = target.partition(":")
+    return getattr(importlib.import_module(module), name)
+
+
+def _declared_actions() -> list[str]:
+    """Every ``action <name>:`` the library declares."""
+    from importlib.resources import files
+
+    import scenario_execution_roqsim
+
+    text = (files(scenario_execution_roqsim) / "lib_osc" / "roqsim.osc").read_text()
+    return re.findall(r"^action (\w+):", text, flags=re.MULTILINE)
 
 
 def _build(scenario: str):
@@ -94,6 +107,68 @@ def _build(scenario: str):
 
 def _nodes(tree, cls):
     return [n for n in tree.iterate() if isinstance(n, cls)]
+
+
+def test_every_declared_action_is_registered_and_every_registered_one_declared():
+    """An action declared without an entry point fails a scenario at parse time; one registered
+    without a declaration can never be invoked."""
+    declared = _declared_actions()
+    registered = _registered_actions()
+    assert len(declared) == len(set(declared)), "an action is declared twice"
+    assert sorted(declared) == sorted(registered)
+    for target in registered.values():
+        assert callable(getattr(_load(target), "execute", None)), target
+
+
+#: Every action with every argument named, so a declaration and its ``execute()`` cannot drift apart
+#: for any of them.
+EVERY_ACTION = """
+import osc.roqsim
+scenario test_every_action:
+    var tripped: bool = false
+    do parallel:
+        entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+        serial:
+            entity_moved(entities: ['parcel'], threshold: 0.05, mode: displacement_mode!z,
+                         dwell: 1.0, require: entity_quantifier!any)
+            entity_rotated(entities: ['parcel'], angle: 0.5, dwell: 1.0,
+                           require: entity_quantifier!all)
+            entity_near(entity: 'robot', target: 'shelf', distance: 0.6,
+                        mode: distance_mode!spatial)
+            entity_near_position(entity: 'robot', position: position_3d(x: 1.0m),
+                                 distance: 0.3, mode: distance_mode!planar)
+            entity_in_region(entity: 'robot', region: [position_3d(x: 0m), position_3d(x: 1m, y: 1m)],
+                             outside: true)
+            entity_navigate(entity: 'cart', goal_poses: [pose_3d(position: position_3d(x: 2.0))],
+                            success_on_acceptance: true)
+            entity_navigate_start(entity: 'cart', success_on_acceptance: true)
+            spawn_entity(entity: 'crate', pose: pose_3d(position: position_3d(x: 1.0, z: 0.2)))
+            set_entity_state(entity: 'crate', pose: pose_3d(position: position_3d(x: 2.0)),
+                             twist: velocity_6d(translational: translational_velocity_3d(x: 0.1mps)))
+            delete_entity(entity: 'crate')
+            entity_call(entity: 'grip_fault', command: 'override', value: 'true',
+                        require_verified: false)
+"""
+
+
+def test_every_declared_action_binds_with_every_argument_named():
+    tree = _build(EVERY_ACTION)
+    bound = {
+        type(node)
+        for node in tree.iterate()
+        if type(node).__module__.startswith("scenario_execution_roqsim.")
+    }
+    assert {cls.__name__ for cls in bound} == {
+        _load(target).__name__ for target in _registered_actions().values()
+    }
+    for node in tree.iterate():
+        if type(node) in bound:
+            resolve = (
+                node._model.get_resolved_value
+                if node.resolve_variable_reference_arguments_in_execute
+                else node._model.get_resolved_value_with_variable_references
+            )
+            node.execute(**resolve(node.get_blackboard_client(), skip_keys=node.execute_skip_args))
 
 
 def test_the_library_is_importable_and_every_action_binds():

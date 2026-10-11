@@ -348,6 +348,7 @@ CASES: dict[str, Case] = {
     "clearance_monitor": Case(lambda _: _mobile({"clearance_monitor": {}})),
     "upright_monitor": Case(lambda _: _mobile({"upright_monitor": {}})),
     "energy_monitor": Case(lambda _: _mobile({"energy_monitor": {}})),
+    "step_timers": Case(lambda tmp: _world({"step_timers": {"path": str(tmp / "timers.csv")}})),
     "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
     "pose_publisher": Case(lambda _: _world(_robot("turtlebot4"))),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
