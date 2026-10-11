@@ -604,3 +604,14 @@ def test_hints_stand_beside_keys_or_choices():
     assert validate({"gain": Field(float, hints={"kp": "write gain"})}, {}) == [
         "schema error: 'gain' declares hints but no keys or choices to refuse them beside"
     ]
+
+
+@pytest.mark.parametrize("key", ["robot", "arm"])
+def test_an_entity_key_is_refused_by_a_strict_schema(key):
+    """Ownership is where an entry sits, and manifest expansion writes no entity key into a config,
+    so `robot:` or `arm:` on a plugin whose schema does not declare it is a key nothing reads."""
+    from roqsim.config import PluginError, instantiate_plugins, load_config_from_dict
+
+    cfg = load_config_from_dict({"components": [{"ceiling": {key: "r1"}}]})
+    with pytest.raises(PluginError, match=f"'{key}' is not a setting of this component"):
+        instantiate_plugins(cfg)

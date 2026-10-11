@@ -2,13 +2,13 @@
 
 Implements the interfaces most useful for scenario-driven testing of the M1 turtlebot world:
   * GetSimulatorFeatures   — advertise what is supported
-  * GetEntities            — list entities from the registry
-  * GetEntityState/SetEntityState — read/teleport an entity's free-joint body
+  * GetEntities            — list entities, narrowed by a POSIX ERE name filter and a sphere
+  * GetEntityState/SetEntityState — read/teleport an entity's free-joint or mocap body
   * GetSpawnables          — the absent entities SpawnEntity can select, by uri
   * SpawnEntity/DeleteEntity — make a compiled entity perceivable at initial_pose, or absent
   * GetSimulationState/SetSimulationState — play/pause/stop (standalone driver)
-  * StepSimulation         — step N times while paused
-  * ResetSimulation        — reset the world
+  * StepSimulation         — step N times while paused, answering once they ran
+  * ResetSimulation        — reset the world, answering once it has
 
 Concurrency: services run on the bridge/executor thread. State changes go through the shared
 :class:`roqsim.control.RunControl`; anything touching ``data`` goes through
@@ -23,12 +23,19 @@ Reuses the ``rclpy`` node created by :class:`~roqsim_ros_bridge.ros2_bridge.Ros2
 from __future__ import annotations
 
 import math
+import re
 import threading
 
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from simulation_interfaces.msg import Result, SimulationState, SimulatorFeatures, Spawnable
+from simulation_interfaces.msg import (
+    Bounds,
+    Result,
+    SimulationState,
+    SimulatorFeatures,
+    Spawnable,
+)
 from simulation_interfaces.srv import (
     DeleteEntity,
     GetEntities,
@@ -45,9 +52,10 @@ from simulation_interfaces.srv import (
 
 from roqsim import control as ctl
 from roqsim.kinematics import body_twist
-from roqsim.placement import PLACEABLE_MODES_HINT, place_body
+from roqsim.placement import PLACEABLE_MODES_HINT, carries_velocity, place_body
 from roqsim.plugin import Plugin
-from roqsim.presence import set_present
+from roqsim.presence import entity_geom_ids, set_present
+from roqsim.schema import Field
 
 from .physics import DEFAULT_TIMEOUT_S, run_on_physics
 
@@ -69,25 +77,312 @@ _POSE_EPS = 1e-6
 _WORLD_FRAMES = ("", "world")
 
 
-def _pose_of(req):
-    """``initial_pose`` as ``(pos, quat)``, or ``None`` when the quaternion is not a rotation.
+def _pose_from(msg):
+    """``((pos, quat), None)`` for a ``geometry_msgs/Pose``, or ``(None, why)`` when it is no pose.
 
-    ``SpawnEntity.srv`` states ``initial_pose`` unconditionally -- there is no "unset": a
-    default-constructed request carries the origin and, because ``geometry_msgs/Quaternion``
-    declares ``w 1``, the IDENTITY. So every request asks for a pose, and this reads the one it
-    asks for rather than guessing which fields the caller meant to fill in.
-
-    A zero-norm quaternion is the one thing that cannot be a rotation, and the service has a code
-    saying so (``INVALID_POSE``), so it is reported rather than repaired.
+    A zero-norm quaternion is the one finite value that cannot be a rotation, and a NaN or infinite
+    component is no position or rotation at all; the services that take a pose have a code saying
+    so (``INVALID_POSE``), so either is reported rather than repaired -- a NaN written into the
+    model would corrupt every later step. The quaternion is normalised because MuJoCo reads a free
+    joint's quaternion as a unit one; a caller's near-unit value would otherwise scale the body's
+    orientation.
     """
-    p = req.initial_pose.pose.position
-    o = req.initial_pose.pose.orientation
+    p, o = msg.position, msg.orientation
+    values = (p.x, p.y, p.z, o.w, o.x, o.y, o.z)
+    if not all(math.isfinite(v) for v in values):
+        return None, "the pose carries a NaN or infinite component."
     norm = math.sqrt(o.w * o.w + o.x * o.x + o.y * o.y + o.z * o.z)
     if norm < _POSE_EPS:
+        return None, (
+            "the pose carries a zero-length quaternion, which is not a rotation. Send a unit "
+            "quaternion; the identity is w=1."
+        )
+    return ((p.x, p.y, p.z), (o.w / norm, o.x / norm, o.y / norm, o.z / norm)), None
+
+
+def _foreign_frame(stamped) -> str:
+    """The frame a stamped request states, when it is not the world frame."""
+    frame_id = getattr(getattr(stamped, "header", None), "frame_id", "")
+    return frame_id if frame_id and frame_id not in _WORLD_FRAMES else ""
+
+
+#: What a request's ``frame_id`` may name, for the refusal of any other.
+_KNOWN_FRAMES = (
+    "This simulator knows the world frame (an empty frame_id or 'world') and each present entity "
+    "by its name exactly as get_entities lists it, meaning that entity's root body; a body path "
+    "or a TF frame name is not a frame it knows."
+)
+
+
+def _reference_frame(stamped, subject, entities, *, field):
+    """``(entity, None)`` for the entity a stamped request's frame names, or ``(None, refusal)``.
+
+    ``(None, None)`` is the world frame. Any other ``frame_id`` must be exactly the name of an
+    entity ``GetEntities`` lists, and then means that entity's root body -- ``SpawnEntity.srv``
+    asks for a frame "known to the simulator, e.g. of an object spawned earlier", and a present
+    entity is what this simulator knows by name. An absent entity is not listed, so as a frame it
+    is unknown. *subject* named as its own frame is refused: the write moves that frame, so the
+    pose it states would hold of neither the frame before the write nor the one after it.
+    """
+    frame_id = _foreign_frame(stamped)
+    if not frame_id:
+        return None, None
+    if frame_id == subject:
+        return None, (
+            f"{field} is stated in the frame of {subject!r} itself, which the request moves, so "
+            "it names no fixed frame. State it in the world frame or another entity's."
+        )
+    entity = entities.get(frame_id)
+    if entity is None or not entity.present or not getattr(entity, "body", None):
+        return None, f"{field} is stated in frame {frame_id!r}, which is not one it knows. " + (
+            _KNOWN_FRAMES
+        )
+    return entity, None
+
+
+def _quat_mul(a, b):
+    """The Hamilton product ``a * b`` of two ``(w, x, y, z)`` quaternions."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    )
+
+
+def _rotate(quat, vec):
+    """*vec* rotated by the unit ``(w, x, y, z)`` quaternion *quat*."""
+    w, x, y, z = quat
+    _, rx, ry, rz = _quat_mul(_quat_mul(quat, (0.0, *vec)), (w, -x, -y, -z))
+    return (rx, ry, rz)
+
+
+def _in_world(frame, pose):
+    """*pose*, stated in the frame whose world pose is *frame*, as a world pose."""
+    (fp, fq), (p, q) = frame, pose
+    offset = _rotate(fq, p)
+    quat = _quat_mul(fq, q)
+    norm = math.sqrt(sum(c * c for c in quat))
+    return (
+        tuple(a + b for a, b in zip(fp, offset, strict=True)),
+        tuple(c / norm for c in quat),
+    )
+
+
+#: POSIX character classes in the POSIX locale, as Python character-set contents.
+_POSIX_CLASSES = {
+    "alnum": "0-9A-Za-z",
+    "alpha": "A-Za-z",
+    "blank": " \\t",
+    "cntrl": "\\x00-\\x1f\\x7f",
+    "digit": "0-9",
+    "graph": "\\x21-\\x7e",
+    "lower": "a-z",
+    "print": "\\x20-\\x7e",
+    "punct": "!-/:-@\\[-`{-~",
+    "space": " \\t\\n\\r\\f\\v",
+    "upper": "A-Z",
+    "xdigit": "0-9A-Fa-f",
+}
+
+#: Characters a backslash makes literal outside a bracket expression: the ones an ERE gives a
+#: meaning, and the closing ``]`` and ``}``. Before any other character it is undefined.
+_ERE_ESCAPABLE = set(".[\\()*+?{|^$]}")
+
+
+class _PosixRegexError(ValueError):
+    """A pattern that is not a POSIX Extended regular expression this module can translate."""
+
+
+def _set_char(c: str) -> str:
+    """One literal character inside a Python character set."""
+    return "\\" + c if c in "\\]^-[&~|" else c
+
+
+def _bracket(pattern: str, i: int) -> tuple[str, int]:
+    """Translate the bracket expression opening at ``pattern[i] == '['``; ``(python, next_i)``.
+
+    In a POSIX bracket expression a backslash is an ordinary character, ``]`` first is literal,
+    ``[:name:]`` is a character class, and ``[.c.]`` / ``[=c=]`` name the single character ``c``
+    (the POSIX locale has no multi-character collating elements). Python reads all of these
+    differently, so each item is re-emitted as a Python set member.
+    """
+    n = len(pattern)
+    j = i + 1
+    out = "["
+    if j < n and pattern[j] == "^":
+        out += "^"
+        j += 1
+    items: list[tuple[str, str]] = []  # ("char", c) or ("class", python)
+    first = True
+    while True:
+        if j >= n:
+            raise _PosixRegexError("unterminated bracket expression '['")
+        c = pattern[j]
+        if c == "]" and not first:
+            j += 1
+            break
+        first = False
+        if c == "[" and j + 1 < n and pattern[j + 1] in ":.=":
+            kind = pattern[j + 1]
+            close = pattern.find(kind + "]", j + 2)
+            if close < 0:
+                raise _PosixRegexError(f"unterminated '[{kind}' in a bracket expression")
+            name = pattern[j + 2 : close]
+            j = close + 2
+            if kind == ":":
+                if name not in _POSIX_CLASSES:
+                    raise _PosixRegexError(f"unknown character class '[:{name}:]'")
+                items.append(("class", _POSIX_CLASSES[name]))
+            elif len(name) == 1:
+                items.append(("char", name))
+            else:
+                raise _PosixRegexError(
+                    f"'[{kind}{name}{kind}]' names no single character in the POSIX locale"
+                )
+            continue
+        items.append(("char", c))
+        j += 1
+    k = 0
+    while k < len(items):
+        kind, val = items[k]
+        is_range = (
+            kind == "char"
+            and k + 2 < len(items)
+            and items[k + 1] == ("char", "-")
+            and items[k + 2][0] == "char"
+        )
+        if is_range:
+            lo, hi = val, items[k + 2][1]
+            if ord(lo) > ord(hi):
+                raise _PosixRegexError(f"range '{lo}-{hi}' runs backwards")
+            out += _set_char(lo) + "-" + _set_char(hi)
+            k += 3
+            continue
+        out += val if kind == "class" else _set_char(val)
+        k += 1
+    return out + "]", j
+
+
+def _posix_ere(pattern: str) -> re.Pattern:
+    """Compile a POSIX Extended regular expression (``EntityFilters.filter``) for :meth:`search`.
+
+    The service names POSIX ERE, and Python's ``re`` reads several ERE constructs otherwise, so the
+    pattern is translated rather than handed over: bracket expressions (character classes such as
+    ``[[:digit:]]``, collating symbols, equivalence classes, and a backslash that is literal inside
+    brackets); ``$``, which Python also matches before a trailing newline; ``.``, which in POSIX
+    also matches a newline; and a backslash outside brackets, which escapes a special character and
+    is otherwise undefined in POSIX, so ``\\d`` or a back-reference is refused rather than given
+    Python's meaning. A ``(?`` group is likewise not ERE. Matching is unanchored, as ``regexec``
+    is. Raises :class:`_PosixRegexError` (or :class:`re.error`) for what is not a valid ERE.
+    """
+    out = []
+    i, n = 0, len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "\\":
+            if i + 1 >= n:
+                raise _PosixRegexError("trailing backslash")
+            nxt = pattern[i + 1]
+            if nxt not in _ERE_ESCAPABLE:
+                raise _PosixRegexError(
+                    f"'\\{nxt}' is not defined in a POSIX Extended regular expression; use a "
+                    "bracket expression such as '[[:digit:]]', or escape only a special character"
+                )
+            out.append(re.escape(nxt))
+            i += 2
+        elif c == "[":
+            translated, i = _bracket(pattern, i)
+            out.append(translated)
+        elif c == "(" and pattern.startswith("(?", i):
+            raise _PosixRegexError("'(?' is not a POSIX Extended regular expression construct")
+        elif c == "$":
+            out.append(r"\Z")
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return re.compile("".join(out), re.DOTALL)
+
+
+def _unsupported_entity_filters(filters):
+    """``(result_code, message)`` for a ``GetEntities`` filter this simulator cannot apply, else
+    ``None``.
+
+    Entities carry no category and no tags here, which ``get_simulator_features`` says by
+    advertising neither ENTITY_CATEGORIES nor ENTITY_TAGS. Of the bounds types only
+    ``TYPE_SPHERE`` is applied -- the one the service requires -- so ``TYPE_BOX`` and
+    ``TYPE_CONVEX_HULL``, which ENTITY_BOUNDS_BOX and ENTITY_BOUNDS_CONVEX would advertise, are
+    refused with ``RESULT_FEATURE_UNSUPPORTED``. Answering such a query with every entity would
+    hand the caller a list it asked to have narrowed.
+    """
+    if filters is None:
         return None
-    # Normalised because MuJoCo reads the free joint's quaternion as a unit one; a caller's
-    # near-unit value would otherwise scale the body's orientation.
-    return (p.x, p.y, p.z), (o.w / norm, o.x / norm, o.y / norm, o.z / norm)
+    unsupported = []
+    if list(getattr(filters, "categories", []) or []):
+        unsupported.append("'categories'")
+    if list(getattr(getattr(filters, "tags", None), "tags", []) or []):
+        unsupported.append("'tags'")
+    bounds = getattr(filters, "bounds", None)
+    if bounds is not None and bounds.type not in (Bounds.TYPE_EMPTY, Bounds.TYPE_SPHERE):
+        unsupported.append(f"'bounds' of type {bounds.type}")
+    if unsupported:
+        return Result.RESULT_FEATURE_UNSUPPORTED, (
+            f"filters {', '.join(unsupported)} cannot be applied: entities here carry no "
+            "category or tags, and only TYPE_SPHERE bounds are applied (get_simulator_features "
+            "advertises none of ENTITY_CATEGORIES, ENTITY_TAGS, ENTITY_BOUNDS_BOX and "
+            "ENTITY_BOUNDS_CONVEX). Filter by name with 'filter' or by a sphere."
+        )
+    return None
+
+
+def _sphere_of(bounds):
+    """``(center, radius)`` of a ``TYPE_SPHERE`` filter, ``None`` for no bounds filter.
+
+    Raises :class:`ValueError` naming what is wrong with bounds that define no volume.
+    """
+    points = list(getattr(bounds, "points", []) or []) if bounds is not None else []
+    if bounds is None or bounds.type == Bounds.TYPE_EMPTY:
+        if points:
+            raise ValueError(f"TYPE_EMPTY bounds carry no points, got {len(points)}")
+        return None
+    if len(points) != 2:
+        raise ValueError(
+            f"TYPE_SPHERE bounds take two points (the center, then the radius in x), got "
+            f"{len(points)}"
+        )
+    center = (points[0].x, points[0].y, points[0].z)
+    radius = points[1].x
+    if not all(math.isfinite(v) for v in (*center, radius)):
+        raise ValueError("TYPE_SPHERE bounds must be finite")
+    if radius < 0.0:
+        raise ValueError(f"TYPE_SPHERE radius must not be negative, got {radius}")
+    return center, radius
+
+
+def _overlaps_sphere(model, data, body, center, radius) -> bool:
+    """Does any geom of entity body *body* (and its subtree) overlap the sphere? Physics thread.
+
+    Each geom is tested by its bounding sphere (``geom_rbound`` about ``geom_xpos``), so the test
+    is conservative: it never misses a geom that overlaps, and may include one whose bounding
+    sphere reaches the query sphere while its surface does not. A plane, whose ``geom_rbound`` is
+    zero because it is unbounded, is the half-space MuJoCo collides it as.
+    """
+    import mujoco
+    import numpy as np
+
+    c = np.asarray(center, dtype=float)
+    for gid in entity_geom_ids(model, body):
+        offset = c - data.geom_xpos[gid]
+        if int(model.geom_type[gid]) == mujoco.mjtGeom.mjGEOM_PLANE:
+            normal = data.geom_xmat[gid].reshape(3, 3)[:, 2]
+            if float(offset @ normal) <= radius:
+                return True
+        elif float(np.linalg.norm(offset)) <= radius + float(model.geom_rbound[gid]):
+            return True
+    return False
 
 
 def _already_at(state, pose) -> bool:
@@ -173,6 +468,22 @@ def _spawn_target(req, names):
     return uri, None
 
 
+def _absent(name) -> Result:
+    """``RESULT_NOT_FOUND`` for an entity the world compiled but holds absent.
+
+    The service identifies an entity as ``GetEntities`` or ``SpawnEntity`` returns it, and neither
+    returns an absent one: ``GetEntities`` does not list it and ``GetSpawnables`` offers it for
+    spawning. So by the service's terms it does not exist, and naming it is "no match for input".
+    """
+    return Result(
+        result=Result.RESULT_NOT_FOUND,
+        error_message=(
+            f"entity {name!r} is absent, and an absent entity can only be spawned: "
+            "get_spawnables lists it, and spawn_entity brings it in."
+        ),
+    )
+
+
 def _unsupported_spawn_request(req):
     """``(result_code, message)`` for a request this simulator cannot serve as asked, else ``None``.
 
@@ -192,8 +503,9 @@ def _unsupported_spawn_request(req):
     ``get_simulator_features`` already says by advertising no ``spawn_formats``; a namespace,
     because an entity's name is settled when the model compiles; renaming, because spawning here
     SELECTS an entity by name, so an existing name is the required case rather than the collision
-    ``allow_renaming`` resolves; and a frame, because the service requires one the simulator
-    knows, and this one knows only the world frame the empty default already names.
+    ``allow_renaming`` resolves.
+
+    The frame of ``initial_pose`` is not here either: :func:`_reference_frame` resolves it.
     """
     if _resource_of(req)[1]:
         return SpawnEntity.Response.UNSUPPORTED_FORMAT, (
@@ -212,12 +524,6 @@ def _unsupported_spawn_request(req):
             "compiled under this name, so an existing name is what the request needs rather than "
             "a collision to rename around. Ask for the name you want."
         )
-    frame_id = getattr(getattr(req.initial_pose, "header", None), "frame_id", "")
-    if frame_id and frame_id not in _WORLD_FRAMES:
-        return SpawnEntity.Response.INVALID_POSE, (
-            f"initial_pose is stated in frame {frame_id!r}, which this simulator does not know. "
-            "It places entities in the world frame, which the empty default already names."
-        )
     return None
 
 
@@ -225,6 +531,14 @@ class SimInterfacesPlugin(Plugin):
     # Pure service surface over an already-built world -- no geometry, no state of its own -- so a
     # scene consumer (render, review, export) may drop it. See Plugin.transport_only.
     transport_only = True
+
+    CONFIG_SCHEMA = {
+        "node_name": Field(
+            str,
+            default="roqsim_interfaces",
+            doc="name of the node the services are served on, where no ros2_bridge node is shared",
+        ),
+    }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -234,6 +548,9 @@ class SimInterfacesPlugin(Plugin):
         self._executor = None
         self._thread = None
         self._we_inited_rclpy = False
+        # One event per ResetSimulation call waiting for the reset it asked for (see _reset).
+        self._reset_lock = threading.Lock()
+        self._reset_waiters: list[threading.Event] = []
 
     def configure(self, ctx) -> None:
         self._ctx = ctx
@@ -242,7 +559,7 @@ class SimInterfacesPlugin(Plugin):
             if not rclpy.ok():
                 rclpy.init()
                 self._we_inited_rclpy = True
-            node = Node(self.config.get("node_name", "roqsim_interfaces"))
+            node = Node(self.settings.node_name)
             self._own_node = True
         self._node = node
 
@@ -302,16 +619,76 @@ class SimInterfacesPlugin(Plugin):
         f.custom_info = (
             "roqsim bridge (M1 subset); spawn/delete activate entities the world compiled, "
             "spawn selecting one by the uri get_spawnables lists and placing a free-jointed one "
-            "at initial_pose (world frame only) -- the model is never rebuilt at runtime"
+            "at initial_pose (in the world frame or a present entity's) -- the model is never "
+            "rebuilt at runtime"
         )
         resp.features = f
         return resp
 
     def _get_entities(self, req, resp):
+        """The present entities, narrowed by the request's name ``filter`` and sphere ``bounds``.
+
+        ``filter`` is a POSIX Extended regular expression searched in each name (:func:`_posix_ere`).
+        ``bounds`` of ``TYPE_SPHERE`` keeps the entities whose geometry overlaps the sphere, given
+        in the world frame (:func:`_overlaps_sphere`); an entity with no body has no geometry and
+        overlaps nothing. A filter this simulator cannot apply is refused by name
+        (:func:`_unsupported_entity_filters`). A malformed filter -- a pattern that is not an ERE,
+        bounds that define no volume -- is ``RESULT_OPERATION_FAILED`` naming what is wrong:
+        ``Result.msg`` has no code for invalid input and ``GetEntities`` defines none of its own,
+        and ``RESULT_FEATURE_UNSUPPORTED`` would send the caller to the feature list for a feature
+        that is supported.
+        """
+        filters = getattr(req, "filters", None)
+        unsupported = _unsupported_entity_filters(filters)
+        if unsupported:
+            code, message = unsupported
+            resp.result = Result(result=code, error_message=message)
+            return resp
+        pattern = getattr(filters, "filter", "") if filters is not None else ""
+        try:
+            regex = _posix_ere(pattern) if pattern else None
+        except (re.error, ValueError) as exc:
+            return self._refuse_filter(
+                resp, f"'filter' {pattern!r} is not a POSIX Extended regular expression: {exc}"
+            )
+        try:
+            sphere = _sphere_of(getattr(filters, "bounds", None))
+        except ValueError as exc:
+            return self._refuse_filter(resp, f"'bounds' define no sphere: {exc}")
         # Present ones only: an absent entity is compiled into the model but nothing can see
         # or touch it, so listing it would make this disagree with every sensor.
-        resp.entities = self._ctx.entities.names(present_only=True)
+        names = self._ctx.entities.names(present_only=True)
+        if regex is not None:
+            names = [name for name in names if regex.search(name)]
+        if sphere is not None:
+            center, radius = sphere
+            bodies = {name: getattr(self._ctx.entities.get(name), "body", None) for name in names}
+            # Recorded positively: run_on_physics also returns True for a command that raised.
+            outcome = {}
+
+            def _overlapping(ctx):
+                outcome["kept"] = [
+                    name
+                    for name in names
+                    if bodies[name]
+                    and _overlaps_sphere(ctx.model, ctx.data, bodies[name], center, radius)
+                ]
+
+            if not run_on_physics(self._ctx, _overlapping) or "kept" not in outcome:
+                resp.result = Result(
+                    result=Result.RESULT_OPERATION_FAILED,
+                    error_message=f"the simulation did not answer the bounds query within "
+                    f"{DEFAULT_TIMEOUT_S} s or raised doing so; its log carries the reason.",
+                )
+                return resp
+            names = outcome["kept"]
+        resp.entities = names
         resp.result = Result(result=Result.RESULT_OK)
+        return resp
+
+    @staticmethod
+    def _refuse_filter(resp, message):
+        resp.result = Result(result=Result.RESULT_OPERATION_FAILED, error_message=message)
         return resp
 
     def _get_spawnables(self, req, resp):
@@ -340,6 +717,9 @@ class SimInterfacesPlugin(Plugin):
         is. An entity the model welded cannot be moved at all, so for it the request succeeds only
         if it is already at the pose asked for, and is refused otherwise rather than appearing
         somewhere else under a RESULT_OK.
+
+        The pose is stated in the world frame or in a present entity's (:func:`_reference_frame`);
+        an entity's frame is read where the pose is written, in the same physics transaction.
         """
         name, unsupported = _spawn_target(req, self._ctx.entities.names())
         unsupported = unsupported or _unsupported_spawn_request(req)
@@ -347,26 +727,34 @@ class SimInterfacesPlugin(Plugin):
             code, message = unsupported
             resp.result = Result(result=code, error_message=message)
             return resp
-        pose = _pose_of(req)
-        if pose is None:
+        # ``initial_pose`` is stated unconditionally -- there is no "unset": a default request
+        # carries the origin and, because ``geometry_msgs/Quaternion`` declares ``w 1``, the
+        # identity. So every request asks for a pose, and this reads the one it asks for.
+        pose, invalid = _pose_from(req.initial_pose.pose)
+        if invalid:
             resp.result = Result(
-                result=SpawnEntity.Response.INVALID_POSE,
-                error_message="initial_pose carries a zero-length quaternion, which is not a "
-                "rotation. Send a unit quaternion; the identity is w=1.",
+                result=SpawnEntity.Response.INVALID_POSE, error_message=f"initial_pose: {invalid}"
             )
             return resp
-        return self._set_presence(name, True, resp, verb="spawn", pose=pose)
+        frame, refusal = _reference_frame(
+            req.initial_pose, name, self._ctx.entities, field="initial_pose"
+        )
+        if refusal:
+            resp.result = Result(result=SpawnEntity.Response.INVALID_POSE, error_message=refusal)
+            return resp
+        return self._set_presence(name, True, resp, verb="spawn", pose=pose, frame=frame)
 
     def _delete_entity(self, req, resp):
         """Make an entity absent: invisible to sensors, untouchable, and unlisted.
 
         Its pose does not move. Parking it out of sight instead would leave a free body
         accelerating under gravity for as long as it stays away, so it would return with
-        whatever velocity it had accumulated.
+        whatever velocity it had accumulated. An entity already absent is not found
+        (:func:`_absent`), as it is for every service that names one.
         """
         return self._set_presence(req.entity, False, resp, verb="delete")
 
-    def _set_presence(self, name, present, resp, *, verb, pose=None):
+    def _set_presence(self, name, present, resp, *, verb, pose=None, frame=None):
         entity = self._ctx.entities.get(name)
         if entity is None:
             resp.result = Result(
@@ -377,10 +765,15 @@ class SimInterfacesPlugin(Plugin):
                 ),
             )
             return resp
-        if bool(entity.present) == bool(present):
+        if not present and not entity.present:
+            resp.result = _absent(name)
+            return resp
+        if present and entity.present:
+            # A spawn of a present entity asks for a name a listed entity already holds, which
+            # SpawnEntity.srv answers with its own NAME_NOT_UNIQUE (renaming is never allowed here).
             resp.result = Result(
-                result=Result.RESULT_OPERATION_FAILED,
-                error_message=f"entity {name!r} is already {'present' if present else 'absent'}",
+                result=SpawnEntity.Response.NAME_NOT_UNIQUE,
+                error_message=f"entity {name!r} is already present",
             )
             return resp
         # Physics-thread only, like every other write to model/data -- and WAITED FOR, so RESULT_OK
@@ -398,9 +791,16 @@ class SimInterfacesPlugin(Plugin):
         outcome = {}
 
         def _apply(ctx):
-            if pose is not None and not place_body(ctx, entity, pose[0], pose[1]):
+            target = pose
+            if target is not None and frame is not None:
+                at = self._frame_pose(ctx, frame)
+                if at is None:
+                    outcome["frame_gone"] = True
+                    return
+                target = _in_world(at, target)
+            if target is not None and not place_body(ctx, entity, target[0], target[1]):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
-                if not _already_at(state, pose):
+                if not _already_at(state, target):
                     outcome["welded_at"] = state.get("pos")
                     return
             set_present(ctx, entity, present)
@@ -411,6 +811,12 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not apply {verb} {name!r} within "
                 f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
+            )
+            return resp
+        if outcome.get("frame_gone"):
+            resp.result = Result(
+                result=SpawnEntity.Response.INVALID_POSE,
+                error_message=self._frame_gone(frame),
             )
             return resp
         if "welded_at" in outcome:
@@ -443,6 +849,9 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
             )
             return resp
+        if not entity.present:
+            resp.result = _absent(req.entity)
+            return resp
         holder = {}
         run_on_physics(self._ctx, lambda c: holder.update(self._read_body(c, entity.body)))
         if not holder:
@@ -459,19 +868,44 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _set_entity_state(self, req, resp):
+        """Place an entity at the pose, and with the twist, the request states.
+
+        Both are stated in the header's frame: the world frame, or a present entity's root body
+        (:func:`_reference_frame`). That entity's world pose is read where the state is written,
+        in the same physics transaction, so the placement is relative to where it is then.
+
+        The twist is EXPRESSED in that frame and is rotated into the world by the frame entity's
+        orientation; the frame entity's own velocity is not added. ``EntityState`` says the twist
+        is "observed in the frame specified by header.frame_id" and refers to the convention of
+        ``geometry_msgs/VelocityStamped``, which separates the frame a velocity is observed in
+        (its ``header.frame_id``) from the frame it is measured against (``reference_frame_id``).
+        ``EntityState`` carries only the first, so the motion stays measured against the world --
+        what ``GetEntityState`` reports -- and the header only chooses the axes it is written in.
+        """
         entity = self._ctx.entities.get(req.entity)
         if entity is None:
             resp.result = Result(
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
             )
             return resp
-        p = req.state.pose.position
-        o = req.state.pose.orientation
-        quat = (o.w, o.x, o.y, o.z) if any([o.w, o.x, o.y, o.z]) else (1.0, 0.0, 0.0, 0.0)
-        pose = ((p.x, p.y, p.z), quat)
+        # Not placed while absent: a pose written now would be one nobody can observe, and
+        # spawn_entity states the pose an entity appears at.
+        if not entity.present:
+            resp.result = _absent(req.entity)
+            return resp
+        frame, refusal = _reference_frame(
+            req.state, req.entity, self._ctx.entities, field="the state"
+        )
+        if refusal:
+            resp.result = Result(result=SetEntityState.Response.INVALID_POSE, error_message=refusal)
+            return resp
+        pose, invalid = _pose_from(req.state.pose)
+        if invalid:
+            resp.result = Result(result=SetEntityState.Response.INVALID_POSE, error_message=invalid)
+            return resp
         # The twist is part of the state: `EntityState` carries one and the GETTER reports one, so
         # answering RESULT_OK while ignoring whatever was asked for would let a caller read a
-        # velocity it could not set.
+        # velocity it could not set. Expressed in the header's frame, like the pose.
         #
         # Absent rather than zero when the request has no twist at all, which a real EntityState
         # always does but a partial caller may not: `None` is what `place_body` already reads as
@@ -481,17 +915,48 @@ class SimInterfacesPlugin(Plugin):
         if twist is not None:
             tl, ta = twist.linear, twist.angular
             vel = (tl.x, tl.y, tl.z, ta.x, ta.y, ta.z)
+        # The acceleration is ignored, which the service allows -- except that a non-zero one, like
+        # a non-zero twist, fails for an entity that cannot move on from its pose.
+        accel = getattr(req.state, "acceleration", None)
+        acc = ()
+        if accel is not None:
+            al, aa = accel.linear, accel.angular
+            acc = (al.x, al.y, al.z, aa.x, aa.y, aa.z)
+        if not all(math.isfinite(v) for v in (*(vel or ()), *acc)):
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message="the twist or acceleration carries a NaN or infinite component.",
+            )
+            return resp
+        asked_motion = [
+            field for field, values in (("twist", vel or ()), ("acceleration", acc)) if any(values)
+        ]
         # Recorded POSITIVELY, and each failure told apart, exactly as the spawn door does it:
         # run_on_physics sets its event in a `finally`, so a command that raised still returns
         # True, and reading "no outcome" as one particular failure would explain an exception as
-        # a missing free joint. A welded entity asked for the pose it already holds succeeds --
-        # the caller got what it asked for, and only a MOVE is what a weld refuses.
+        # a missing free joint. A welded entity asked for the pose it already holds, at rest,
+        # succeeds -- the caller got what it asked for, and only a MOVE is what a weld refuses.
+        # A non-zero twist or acceleration on an entity without a free joint fails before
+        # anything is written, as SetEntityState.srv requires of a static object: a mocap body is
+        # held where it is put and welded scenery not even that, so neither can carry one.
         outcome = {}
 
         def _apply(ctx):
-            if not place_body(ctx, entity, pose[0], pose[1], vel):
+            if asked_motion and not carries_velocity(ctx, entity):
+                outcome["static"] = True
+                return
+            target, velocity = pose, vel
+            if frame is not None:
+                at = self._frame_pose(ctx, frame)
+                if at is None:
+                    outcome["frame_gone"] = True
+                    return
+                target = _in_world(at, pose)
+                if vel is not None:
+                    velocity = (*_rotate(at[1], vel[:3]), *_rotate(at[1], vel[3:]))
+            if not place_body(ctx, entity, target[0], target[1], velocity):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
-                if not _already_at(state, pose):
+                if not _already_at(state, target):
                     outcome["welded_at"] = state.get("pos")
                     return
             outcome["done"] = True
@@ -503,6 +968,12 @@ class SimInterfacesPlugin(Plugin):
                 f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
             )
             return resp
+        if outcome.get("frame_gone"):
+            resp.result = Result(
+                result=SetEntityState.Response.INVALID_POSE,
+                error_message=self._frame_gone(frame),
+            )
+            return resp
         if "welded_at" in outcome:
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
@@ -511,6 +982,24 @@ class SimInterfacesPlugin(Plugin):
                     f"at {outcome['welded_at']}, with neither a mocap body nor a free joint to "
                     f"write. {PLACEABLE_MODES_HINT}"
                 ),
+            )
+            return resp
+        if outcome.get("static"):
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=(
+                    f"{req.entity!r} cannot take a non-zero {' or '.join(asked_motion)}: it has no "
+                    "free joint, so it holds whatever pose it is given (a mocap body) or the one "
+                    "the world compiled (welded scenery), and nothing was written. Send a zero "
+                    "twist and acceleration, or give it 'motion: physics' in the world."
+                ),
+            )
+            return resp
+        if not outcome.get("done"):
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"placing {req.entity!r} did not complete in the simulation; "
+                "its log carries the reason.",
             )
             return resp
         resp.result = Result(result=Result.RESULT_OK)
@@ -531,21 +1020,103 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _step(self, req, resp):
-        if self._ctx.control.state != ctl.PAUSED:
+        """Take the requested steps while paused, and answer once they have run.
+
+        ``StepSimulation.srv`` returns "only once stepping is complete", and a caller reads the
+        world straight after it: an answer before the steps ran would let it read the state from
+        before them. The wait has no fixed budget, since a long request legitimately takes long;
+        it fails when the simulation stops advancing (no step within
+        :data:`~roqsim_ros_bridge.physics.DEFAULT_TIMEOUT_S`) or leaves the pause first.
+        """
+        control = self._ctx.control
+        if control.state != ctl.PAUSED:
             resp.result = Result(
                 result=Result.RESULT_INCORRECT_STATE, error_message="step requires PAUSED state"
             )
             return resp
-        self._ctx.control.request_steps(max(1, int(req.steps)))
+        steps = int(req.steps)
+        if steps < 1:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"steps must be at least 1, got {steps}",
+            )
+            return resp
+        done = threading.Event()
+        outcome = {}
+
+        def finished(completed: bool) -> None:
+            outcome["completed"] = completed
+            done.set()
+
+        control.request_steps(steps, on_done=finished)
+        last = self._ctx.sim_time
+        while not done.wait(DEFAULT_TIMEOUT_S):
+            now = self._ctx.sim_time
+            if now == last:
+                resp.result = Result(
+                    result=Result.RESULT_OPERATION_FAILED,
+                    error_message=f"the simulation took no step within {DEFAULT_TIMEOUT_S} s "
+                    f"while {steps} were requested (is the physics thread stalled?)",
+                )
+                return resp
+            last = now
+        if not outcome["completed"]:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message="the simulation left the paused state before the requested steps ran",
+            )
+            return resp
         resp.result = Result(result=Result.RESULT_OK)
         return resp
 
     def _reset(self, req, resp):
+        """Reset the world, and answer once the reset has run (:meth:`on_reset`).
+
+        Only a driver that honours the run control resets on request; under any other the reset
+        never comes, and the call fails rather than answering ``RESULT_OK`` for a world that kept
+        its state.
+        """
+        done = threading.Event()
+        with self._reset_lock:
+            self._reset_waiters.append(done)
         self._ctx.control.request_reset()
+        if not done.wait(DEFAULT_TIMEOUT_S):
+            with self._reset_lock:
+                if done in self._reset_waiters:
+                    self._reset_waiters.remove(done)
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"the simulation did not reset within {DEFAULT_TIMEOUT_S} s (is the "
+                "physics thread stalled, or does this run's driver own resets?)",
+            )
+            return resp
         resp.result = Result(result=Result.RESULT_OK)
         return resp
 
+    def on_reset(self, ctx) -> None:
+        with self._reset_lock:
+            waiters, self._reset_waiters = self._reset_waiters, []
+        for done in waiters:
+            done.set()
+
     # -- physics-thread helpers ---------------------------------------------------------------
+    @classmethod
+    def _frame_pose(cls, ctx, frame):
+        """The world ``(pos, quat)`` of the entity *frame* names, or ``None`` once it is absent."""
+        if not frame.present:
+            return None
+        state = cls._read_body(ctx, frame.body)
+        if not state:
+            return None
+        return tuple(state["pos"]), tuple(state["quat"])
+
+    @staticmethod
+    def _frame_gone(frame):
+        return (
+            f"the frame {frame.name!r} became unknown before the pose was written: the entity "
+            f"is no longer present. {_KNOWN_FRAMES}"
+        )
+
     @staticmethod
     def _read_body(ctx, body_name):
         import mujoco

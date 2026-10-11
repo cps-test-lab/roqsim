@@ -36,10 +36,13 @@ STAMP = Time(sec=3, nanosec=250)
 
 
 def _eq(a, b) -> bool:
-    """Dataclass values equal field by field, arrays by value."""
+    """Dataclass values equal field by field, arrays by value, nested dataclasses alike."""
     for name in a.__dataclass_fields__:
         x, y = getattr(a, name), getattr(b, name)
-        if isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
+        if isinstance(x, list) and x and hasattr(x[0], "__dataclass_fields__"):
+            if len(x) != len(y) or not all(_eq(u, v) for u, v in zip(x, y, strict=True)):
+                return False
+        elif isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
             if not np.allclose(np.asarray(x, dtype=float), np.asarray(y, dtype=float)):
                 return False
         elif x != y:
@@ -71,6 +74,12 @@ VALUES = [
     T.CameraInfo(640, 480, 500.0, 501.0, 320.0, 240.0, [0.1, 0.0, 0.0, 0.0, 0.0]),
     T.PointCloud(np.array([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], dtype=np.float32)),
     T.Transform("odom", "base_link", np.array([1.0, 2.0, 0.1]), np.array([0.5, 0.5, 0.5, 0.5])),
+    T.Transforms(
+        [
+            T.Transform("map", "a", np.array([1.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0, 0.0])),
+            T.Transform("map", "b", np.array([0.0, 2.0, 0.0]), np.array([0.5, 0.5, 0.5, 0.5])),
+        ]
+    ),
 ]
 
 
