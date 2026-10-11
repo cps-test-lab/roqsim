@@ -146,7 +146,8 @@ stepped run, where the bridge's action handler, which feeds waypoints on wall-cl
 
 - **Held after the end:** when the last knot is reached, the arm holds it. A new trajectory, a
   ``set_targets``, a velocity command or a command source taking the arm ends the current one.
-- **Only while active:** an inactive controller refuses a trajectory, as ros2_control refuses a goal.
+- **Only while active:** an inactive controller refuses a trajectory, as ros2_control refuses a goal,
+  and deactivating the controller ends the one it is executing.
 
 A position servo handed only the trajectory's positions lags it: the servo's damping acts on the
 joint's absolute velocity, so at speed the joint trails by ``d * qd / p``, and accelerating the arm
@@ -1224,6 +1225,8 @@ class ArmControllerPlugin(Plugin):
 
         """
         self._active = bool(active)
+        if not self._active:
+            self._traj = None  # deactivation aborts the trajectory, as it aborts a goal
 
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:

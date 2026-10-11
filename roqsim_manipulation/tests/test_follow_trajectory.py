@@ -158,6 +158,27 @@ def test_another_command_ends_the_trajectory(tmp_path):
     assert _reference(arm)["elbow_joint"] == pytest.approx(start, abs=1e-12)
 
 
+def test_deactivating_the_controller_ends_the_trajectory(tmp_path):
+    """As ros2_control aborts a goal on deactivation: activated again, the arm does not resume the
+    trajectory where the clock has got to, or jump to its end."""
+    engine, arm = _arm(tmp_path)
+    handle = engine.ctx.blackboard.get("arm:ur5e")
+    start = _reference(arm)["elbow_joint"]
+    ts, q, qd, qdd = _sweep(amplitude=0.5, peak=1.0, start=start)
+    handle.follow_trajectory(["elbow_joint"], ts, q, qd, qdd)
+    for _ in range(10):
+        engine.step()
+    handle.set_active(False)
+    assert not handle.trajectory_active()
+    held = _reference(arm)["elbow_joint"]
+    for _ in range(int(round((ts[-1] + 0.1) / DT))):
+        engine.step()
+    handle.set_active(True)
+    for _ in range(200):
+        engine.step()
+    assert _reference(arm)["elbow_joint"] == pytest.approx(held, abs=1e-12)
+
+
 def test_an_unknown_joint_and_an_inactive_controller_are_refused(tmp_path):
     engine, arm = _arm(tmp_path)
     handle = engine.ctx.blackboard.get("arm:ur5e")
