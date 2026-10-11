@@ -54,7 +54,7 @@ Config::
     contact_impulse:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # base body override; default: the entity's registered base body
+      body: ""               # a body of the entity, as a path within it; default: its root
       namespace: ""          # transport scope for the endpoint
       ignore: [floor]        # geom or flex NAMES that never count (default: ['floor'])
       ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
@@ -151,8 +151,7 @@ class ContactImpulsePlugin(Plugin):
 
     #: It watches an ENTITY, so it must be nested under the entry that provides one -- the same
     #: reason ``contact_monitor`` declares it: at the top of a document ``self.entity`` is None and
-    #: the base body would fall back to a bare "base_link", resolving by accident for a robot that
-    #: happens to use that name and failing obscurely for one that does not.
+    #: there is no registered body to watch.
     requires_owner = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -196,7 +195,6 @@ class ContactImpulsePlugin(Plugin):
     # -- lifecycle -----------------------------------------------------------------------------
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        model = ctx.model
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
@@ -204,8 +202,8 @@ class ContactImpulsePlugin(Plugin):
         # The rule is contact_monitor's, held in one place rather than restated here: resolving it
         # through the shared scope is what stops the two plugins counting different contacts.
         self._scope = resolve_contact_scope(
-            model,
-            entity,
+            ctx,
+            self.robot,
             plugin="contact_impulse",
             body=self.body,
             ignore=self.ignore,
