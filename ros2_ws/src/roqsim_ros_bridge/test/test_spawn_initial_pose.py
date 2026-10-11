@@ -23,7 +23,7 @@ from simulation_interfaces.srv import SpawnEntity
 
 from roqsim_ros_bridge.sim_interfaces import (
     _already_at,
-    _pose_of,
+    _pose_from,
     _resource_of,
     _spawn_target,
     _spawnable,
@@ -87,27 +87,38 @@ def test_a_default_request_states_the_origin():
     carries, so every plain spawn would be read as a request for the origin anyway, silently.
     Stating it as the contract is what makes that visible.
     """
-    assert _pose_of(_Request()) == ((0.0, 0.0, 0.0), IDENTITY)
+    assert _pose_from(_Request().initial_pose.pose)[0] == ((0.0, 0.0, 0.0), IDENTITY)
 
 
 def test_a_stated_pose_is_returned():
     yaw90 = _Quat(w=math.sqrt(0.5), z=math.sqrt(0.5))
     req = _Request(initial_pose=_Stamped(_Pose(_Vec(5.0, -4.0, 0.25), yaw90)))
-    pos, quat = _pose_of(req)
+    (pos, quat), _ = _pose_from(req.initial_pose.pose)
     assert pos == (5.0, -4.0, 0.25)
     assert quat == pytest.approx((yaw90.w, 0.0, 0.0, yaw90.z))
 
 
 def test_a_non_unit_quaternion_is_normalised():
     """MuJoCo reads a free joint's quaternion as a unit one, so a near-unit value would scale it."""
-    _, quat = _pose_of(_Request(initial_pose=_Stamped(_Pose(orientation=_Quat(w=2.0)))))
+    (_, quat), _ = _pose_from(_Pose(orientation=_Quat(w=2.0)))
     assert quat == pytest.approx(IDENTITY)
 
 
 def test_a_zero_length_quaternion_is_reported_not_repaired():
     """The one orientation that cannot be a rotation, and the service has a code that says so."""
-    req = _Request(initial_pose=_Stamped(_Pose(orientation=_Quat(w=0.0))))
-    assert _pose_of(req) is None
+    pose, why = _pose_from(_Pose(orientation=_Quat(w=0.0)))
+    assert pose is None
+    assert "quaternion" in why
+
+
+@pytest.mark.parametrize(
+    "bad", [_Pose(_Vec(math.nan, 0.0, 0.0)), _Pose(orientation=_Quat(w=math.inf))]
+)
+def test_a_non_finite_pose_is_reported_not_written(bad):
+    """A NaN written into qpos corrupts every later step, and INVALID_POSE is the code for it."""
+    pose, why = _pose_from(bad)
+    assert pose is None
+    assert "NaN or infinite" in why
 
 
 def test_geometry_is_refused_with_the_services_own_code():
