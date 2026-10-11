@@ -180,14 +180,16 @@ class _PostedRoute(NavCall):
         self._wait = wait
 
     def poll(self):
-        applied, finished, _goals, _dist = self._handle.status()
+        applied, finished, _goals, _dist, error = self._handle.status()
         if applied > self._seq:
             return NavOutcome(False, "a newer route preempted this one")
         if applied < self._seq:
             return None  # not applied yet: the post has not been drained
         if not self._wait:
             return NavOutcome(True, "route accepted")
-        return NavOutcome(True, "arrived") if finished else None
+        if not finished:
+            return None
+        return NavOutcome(False, error) if error else NavOutcome(True, "arrived")
 
     def cancel(self) -> None:
         self._handle.cancel()
