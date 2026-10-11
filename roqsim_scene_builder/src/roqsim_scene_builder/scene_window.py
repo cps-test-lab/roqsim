@@ -415,9 +415,10 @@ def run_window(
     """Open the review window for ``target`` and block until the human submits or closes it.
 
     Returns an exit code: 0 (pass, or a neutral Enter-submitted comment), 1 (fail), 2 (no display /
-    load error / no ``focus_object`` in the scene), 3 (closed without a verdict). On any submit the result JSON is written to
-    ``json_out`` (when given). The reason for a 2 goes to **stderr**, which is what the MCP tool
-    relays when the window produced no result -- on stdout it would be read by nobody.
+    load error / no ``focus_object`` in the scene), 3 (closed without a verdict). On any submit the
+    result JSON is written to ``json_out`` (when given). The reason for a 2 goes to **stderr**,
+    which is what the MCP tool relays when the window produced no result -- on stdout it would be
+    read by nobody.
     """
     import os
     import sys

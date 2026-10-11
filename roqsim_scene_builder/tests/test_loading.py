@@ -65,7 +65,7 @@ def test_a_world_whose_bridge_is_not_installed_still_loads(tmp_path):
 
 
 def test_focus_names_an_object_in_the_scene_or_is_refused():
-    """The window opens on the object asked for; a name the scene lacks is an error, never another view.
+    """The window opens on the object asked for; an unknown name is an error, not another view.
 
     No GL needed: the lookup runs on the built model, before any frame is drawn.
     """

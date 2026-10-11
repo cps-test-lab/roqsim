@@ -118,8 +118,8 @@ def review_scene(
     """Open the scene-review window for TARGET (world YAML, MJCF, or model ref).
 
     Prints the verdict JSON and exits: 0 pass (or a neutral Enter-submitted comment), 1 fail, 2
-    no-display/load-error/no such --focus-object, 3 closed without a verdict. TARGET accepts exactly what ``roqsim``
-    accepts.
+    no-display/load-error/no such --focus-object, 3 closed without a verdict. TARGET accepts
+    exactly what ``roqsim`` accepts.
     """
     from roqsim_scene_builder.scene_window import run_window
 
