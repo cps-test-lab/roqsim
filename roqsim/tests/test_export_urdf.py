@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import yaml
 
+from roqsim import exit_status
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_urdf import (
@@ -297,6 +298,22 @@ def test_the_check_of_an_export_that_names_the_consumers_path_is_silent(caplog):
         with caplog.at_level(logging.WARNING, logger="roqsim.export_urdf"):
             assert _run_cli(Path(tmp), "--check", "--mesh-prefix", "file:///config/meshes") == 0
         assert caplog.text == ""
+
+
+@pytest.mark.parametrize(
+    ("flags", "says"),
+    [
+        (["--tip-site", "nosuch"], "names no site"),
+        (["--root-link", "wrist_3_link"], "already the name of body"),
+    ],
+)
+def test_a_refusal_is_bad_input_on_one_line(capsys, flags, says):
+    """What the exporter refuses to write is an answer to the caller, so it exits 2 with one line
+    on stderr rather than crashing with a traceback."""
+    with tempfile.TemporaryDirectory() as tmp:
+        assert _run_cli(Path(tmp), *flags) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err
+    assert err.startswith("roqsim export urdf: ") and says in err
 
 
 def test_the_two_mesh_reference_flags_are_mutually_exclusive():
