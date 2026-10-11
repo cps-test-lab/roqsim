@@ -35,10 +35,13 @@ Notes:
 * ``format_timing`` reports **average µs per call per hook**. A hook that self-decimates (lidar,
   walker, cameras, the bridge's rate-gated reads) shows its *amortized* cost — a large full-tick cost
   spread over the cheap early-return steps.
-* ``mj_step`` itself is **not** in the table (it is not a plugin hook). To get the per-step wall cost
-  including physics, diff the wall time of two ``--seconds`` runs (startup cancels out):
-  ``RTF_intrinsic = Δsim / Δwall``. Example: 20 s → 26.3 s wall, 40 s → 36.1 s wall ⇒ 20 sim-s in
-  9.8 s ⇒ ~2.0× intrinsic.
+* The physics step is the ``<physics>`` row: ``mj_step``, or ``mj_step1``, ``gravity_reaction`` and
+  ``mj_step2`` where a drive holds a mechanism on a moving base and the engine steps in two halves.
+  It is timed only under ``--profile``, like the hooks, so its average µs per call reads directly
+  beside theirs. Which *stage* of the step is expensive (collision, solver, integrator) is the
+  ``step_timers`` plugin's question (:doc:`plugins`, "Where a step's time goes").
+* For the intrinsic real-time factor of the whole loop, diff the wall time of two ``--seconds`` runs
+  (startup cancels out): ``RTF_intrinsic = Δsim / Δwall``.
 
 Load-phase profiling
 --------------------
