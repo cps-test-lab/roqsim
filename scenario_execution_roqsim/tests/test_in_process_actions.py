@@ -1198,6 +1198,18 @@ def test_a_goal_orientation_is_refused_rather_than_dropped(world, axis):
         action.execute(entity="parcel", goal_poses=[goal])
 
 
+def test_a_goal_height_is_refused_rather_than_dropped(world):
+    """The navigator plans and drives in the floor plane, so a goal's z would be discarded."""
+    ctx, clock, sim = world
+    _nav(ctx)
+    action = EntityNavigate()
+    action.setup(simulation=sim, clock=clock)
+    goal = _pose(1.0, 0.0)
+    goal["position"]["z"] = 0.5
+    with pytest.raises(ActionError, match=r"goal_poses\[0\]\.position\.z is 0\.5"):
+        action.execute(entity="parcel", goal_poses=[goal])
+
+
 # -- what an action says while it is waiting ---------------------------------------------------
 
 
