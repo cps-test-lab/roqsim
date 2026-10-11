@@ -59,6 +59,7 @@ class _Resp:
 class _Entity:
     body = "dynamic_0"
     meta: dict = {}
+    present = True
 
 
 def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03), free=None):
