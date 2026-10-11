@@ -16,7 +16,7 @@ from roqsim.capture import RecordingError, RecordingNotFoundError
 from roqsim.plugin import PluginError
 from roqsim.render import RenderError, RenderGLError
 from roqsim.rendering import GLBackendError
-from roqsim.viewer import DisplayError
+from roqsim.viewer import DisplayError, ViewError
 
 QUICKSTART = Path(__file__).resolve().parents[2] / "docs" / "quickstart.rst"
 
@@ -45,6 +45,7 @@ def test_a_meaning_has_no_semicolon():
         (RecordingNotFoundError("x.npz: no such recording"), exit_status.BAD_INPUT),
         (RecordingError("x.npz is not a readable recording"), exit_status.RECORDING),
         (DisplayError("no display"), exit_status.NO_GL),
+        (ViewError("sim.view.track='x' is neither"), exit_status.BAD_INPUT),
         (GLBackendError("glfw bound"), exit_status.NO_GL),
         (RenderGLError("set MUJOCO_GL"), exit_status.NO_GL),
         (RenderError("--size: expected WxH"), exit_status.BAD_INPUT),

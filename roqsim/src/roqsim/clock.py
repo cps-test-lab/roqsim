@@ -47,13 +47,21 @@ class Pacer:
 
     @classmethod
     def from_config(cls, pacing: Any, dt: float) -> Pacer:
+        """The pacer ``sim.pacing`` (or ``--pacing``) names; :class:`ValueError` for anything else.
+
+        A factor is a positive number: at zero or below no wall-clock period exists to wait for.
+        """
         if pacing == "asap":
             return cls(dt, realtime=False)
         if pacing in (None, "realtime"):
             return cls(dt, factor=1.0, realtime=True)
-        if isinstance(pacing, dict) and "factor" in pacing:
-            return cls(dt, factor=float(pacing["factor"]), realtime=True)
-        raise ValueError(f"invalid pacing spec: {pacing!r}")
+        if isinstance(pacing, dict) and set(pacing) == {"factor"}:
+            factor = pacing["factor"]
+            if isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
+                return cls(dt, factor=float(factor), realtime=True)
+        raise ValueError(
+            f"invalid pacing {pacing!r}: realtime, asap, or {{factor: N}} with N a positive number"
+        )
 
     def reset(self) -> None:
         """Drop the schedule. Counters survive: they describe the run, not the current series."""

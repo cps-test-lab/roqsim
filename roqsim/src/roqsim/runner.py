@@ -84,11 +84,8 @@ from .world import resolve_world_yaml_ref
 log = logging.getLogger(__name__)
 
 #: Mesh extensions we deliberately refuse: roqsim runs worlds/scenes/models, not raw geometry.
-#: Finalizing a mesh into a model (roqsim_assets/tools/finalize_mujoco.py) is a separate step.
+#: Finalizing a mesh into a model (``roqsim assets finalize-mujoco``) is a separate step.
 _MESH_EXT = (".obj", ".stl", ".glb", ".gltf", ".fbx", ".dae", ".ply")
-
-# Backward-compatible alias: the message text lives in roqsim.viewer.
-_GL_HELP = GL_HELP
 
 #: Interactive-viewer render rate (Hz), decoupled from the physics step rate. High-rate worlds step
 #: at e.g. 500 Hz; syncing the viewer every step makes the scene update dominate the loop and run
@@ -539,7 +536,7 @@ def config_for_input(target: str, overrides: dict | None = None, transport: dict
     if suffix in _MESH_EXT:
         raise PluginError(
             f"{target}: roqsim runs worlds, scenes and models, not raw meshes. Finalize it with "
-            f"roqsim_assets/tools/finalize_mujoco.py and pass the resulting <name>.xml (or the model)."
+            f"`roqsim assets finalize-mujoco` and pass the resulting <name>.xml (or the model)."
         )
     if suffix == ".xml":
         raw = {"sim": {"world": str(Path(target).resolve())}}
@@ -562,10 +559,6 @@ def config_for_input(target: str, overrides: dict | None = None, transport: dict
     if transport:
         raw = with_transport(raw, **transport)
     return load_config_from_dict(raw, base_dir=base_dir, overrides=overrides)
-
-
-# Back-compat alias: this was ``_config_for_input`` before it became a public reuse point.
-_config_for_input = config_for_input
 
 
 def _warn_no_transport(dropped: list[str]) -> None:
