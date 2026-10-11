@@ -483,10 +483,16 @@ stack of its own and they carry on around it.
 
 **Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
 ``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
-routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
-the route at load and holds the mover at its first point until something starts it, so a world can
-own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
-scenario owns only its timing (``entity_navigate_start``).
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` holds
+the mover at its first point until something starts it, so a world can own the trajectory --
+identical in every repetition, visible in a campaign's config diff -- while a scenario owns only its
+timing (``entity_navigate_start``).
+
+**A goal the planner cannot reach ends the route as failed**, where the mover stands: it is never
+driven along a straight leg through the wall the planner could not get round. A goal given up on
+after ``recovery.max_recovery`` attempts is skipped, and the route reports that when it ends. Either
+way ``route_status`` carries an ``error`` naming the goal, a nav2 action aborts, and
+``entity_navigate`` fails -- a route that did not reach its goals is never reported as an arrival.
 
 **One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
 three independent capabilities, each one question with one answer:
@@ -527,10 +533,11 @@ Which you want follows from what the mover is *for*:
      - ``{stop: true, steer: give_way, reroute: true}``
      - It remembers what stopped it and plans around. The only setting that lets an encounter change
        the planned path -- do not use it for a mover whose route is the experiment.
-   * - a pedestrian, behaving as pedestrians always have here
-     - nothing; the ``walker`` entry's own ``avoidance: true|false`` still works
-     - It expands to ``{steer: ..., stop: false}``: a walker steers or does nothing, and has never
-       looked ahead. Give it a ``navigator`` asking for ``stop: true`` to change that.
+   * - a pedestrian
+     - ``{stop: false}``, the default navigator a ``walker`` gets; ``{steer: give_way, stop: false}``
+       to give way
+     - A walker steers or does nothing, and does not look ahead. A nested ``navigator`` asking for
+       ``stop: true`` changes that.
 
 Two settings are worth knowing before a scene misbehaves. ``lookahead`` is clear corridor measured
 from the mover's **front**, so it is how far short of something it halts -- the 1.2 m default is
