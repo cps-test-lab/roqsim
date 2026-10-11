@@ -17,6 +17,9 @@ The observation/action convention, default pose, action scale and joint order ar
 NVIDIA's Isaac ``Isaac-Velocity-Flat-Spot-v0`` env (bundled as ``policy/spot.yaml``), so the policy
 runs on exactly what it was trained on.
 
+The world must step at the deploy config's ``simulation_dt`` (0.002 s); ``configure`` refuses any
+other timestep, since the policy's decimation counts physics steps.
+
 Policy weights are NVIDIA-licensed and *not committed*: fetch them with
 ``python -m roqsim_quadruped.policy.fetch_policy`` or point ``policy_path`` / ``$SPOT_POLICY_PATH``
 at a local ``spot_policy.pt``.
@@ -175,6 +178,14 @@ class SpotLocomotionPlugin(Plugin):
         self._decimation = int(cfg["control_decimation"])
         self._obs = np.zeros(self._num_obs, dtype=np.float32)
         self._target_q = self._default_angles.copy()
+        # The decimation counts physics steps, so at another step the policy acts at another rate.
+        trained_dt = float(cfg["simulation_dt"])
+        if abs(ctx.dt - trained_dt) > 1e-9:
+            raise RuntimeError(
+                f"spot_locomotion ({self.robot}): the world steps at {ctx.dt:g} s, but the policy "
+                f"was trained at {trained_dt:g} s (`simulation_dt` in {self.config_path}); set "
+                f"sim.timestep: {trained_dt:g}"
+            )
 
         # -- load the TorchScript policy -------------------------------------------------------
         if not os.path.exists(self.policy_path):

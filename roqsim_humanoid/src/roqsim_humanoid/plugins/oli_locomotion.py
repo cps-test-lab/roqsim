@@ -19,7 +19,8 @@ deploy code the IMU is read noise-free from MuJoCo ground truth (base quat/omega
 with it commented out (obs is 102, not 107).
 
 **The world must set ``sim.timestep: 0.001``** -- the PD loop and ``decimation`` are tuned for a
-1000 Hz step / 100 Hz policy (see the demo world).
+1000 Hz step / 100 Hz policy (see the demo world), and ``configure`` refuses any other timestep.
+The vendored ``walk_param.yaml`` carries no step of its own, so :data:`TRAINED_DT` states it.
 
 Config -- a component of the entry that spawns the robot, since ownership is where the entry
 sits rather than a config key::
@@ -86,6 +87,9 @@ JOINTS = (
     "right_wrist_roll_joint",
 )
 NUM = 31
+
+#: s, the physics step the walk policy and its PD gains were tuned at.
+TRAINED_DT = 0.001
 
 
 class OliLocomotionPlugin(Plugin):
@@ -161,6 +165,12 @@ class OliLocomotionPlugin(Plugin):
         self._num_obs = int(size["observations_size"])
         self._hist_len = int(size["obs_history_length"])
         self._target_q = self._default_angle.copy()
+        if abs(ctx.dt - TRAINED_DT) > 1e-9:
+            raise RuntimeError(
+                f"oli_locomotion ({self.robot}): the world steps at {ctx.dt:g} s, but the policy "
+                f"was trained at {TRAINED_DT:g} s, and its PD gains are tuned for that step; set "
+                f"sim.timestep: {TRAINED_DT:g}"
+            )
 
         # -- ONNX policy (single-threaded: a small MLP at 100 Hz, cf. g1's torch.set_num_threads) -
         # Imported here rather than with the module, so listing or describing the registered
