@@ -122,7 +122,7 @@ def test_settings_read_a_nested_default():
 
 # -- every shipped world that configures a navigator ----------------------------------------------
 WALKER_WORLDS = Path(roqsim_walker.__file__).parent / "worlds"
-WALKER_NAV2 = REPO / "ros2_ws/src/roqsim_walker_ros/worlds/walker_nav2.yaml"
+WALKER_NAV2 = REPO / "ros2_ws/src/roqsim_nav_ros/worlds/walker_nav2.yaml"
 
 
 def _navigators(plugins):

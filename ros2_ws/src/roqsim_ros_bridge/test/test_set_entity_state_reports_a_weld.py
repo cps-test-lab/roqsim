@@ -59,9 +59,10 @@ class _Resp:
 class _Entity:
     body = "dynamic_0"
     meta: dict = {}
+    present = True
 
 
-def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
+def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03), free=None):
     """A handler whose physics write succeeds or refuses, with everything else stubbed."""
     plugin = SimInterfacesPlugin.__new__(SimInterfacesPlugin)
     plugin._ctx = type(
@@ -76,6 +77,8 @@ def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
         return writable
 
     plugin.place_stub = _write
+    # Only a free body carries a velocity; by default the one a write succeeds on is free.
+    plugin.free = writable if free is None else free
     # `quat` too: _already_at compares both, and a state missing either is "not there".
     plugin._read_body = lambda ctx, body: {"pos": list(at), "quat": [1.0, 0.0, 0.0, 0.0]}
     return plugin
@@ -84,7 +87,7 @@ def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
 def _run(plugin, req):
     import roqsim_ros_bridge.sim_interfaces as mod
 
-    original = mod.run_on_physics, mod.place_body
+    original = mod.run_on_physics, mod.place_body, mod.carries_velocity
     # The command runs inline: this test is about what the handler CONCLUDES, and threading a
     # real physics queue through it would test the queue instead.
     mod.run_on_physics = lambda ctx, fn, timeout=None: (fn(ctx), True)[1]
@@ -92,10 +95,11 @@ def _run(plugin, req):
     # `roqsim.placement.place_body`, and this file is about what the handler CONCLUDES from a
     # write that refused -- which needs no model to compile.
     mod.place_body = plugin.place_stub
+    mod.carries_velocity = lambda ctx, ent: plugin.free
     try:
         return plugin._set_entity_state(req, _Resp())
     finally:
-        mod.run_on_physics, mod.place_body = original
+        mod.run_on_physics, mod.place_body, mod.carries_velocity = original
 
 
 def test_a_welded_entity_is_refused_by_naming_the_weld():
@@ -154,3 +158,61 @@ def test_a_request_without_a_twist_zeroes_the_velocity():
     del req.state.twist
     _run(plugin, req)
     assert plugin.written["vel"] is None, "None is what place_body reads as 'zero the velocity'"
+
+
+def test_a_welded_entity_at_its_pose_asked_for_a_twist_fails():
+    """SetEntityState.srv: a non-zero twist for a static object fails with
+    RESULT_OPERATION_FAILED. Being at the pose already does not make the motion happen."""
+    plugin = _plugin(writable=False, at=(40.0, 40.0, 0.03))
+    resp = _run(plugin, _Req("dynamic_0", (40.0, 40.0, 0.03), lin=(0.5, 0.0, 0.0)))
+    assert resp.result.result == Result.RESULT_OPERATION_FAILED
+    assert "twist" in resp.result.error_message
+    assert not plugin.written
+
+
+def test_a_mocap_entity_asked_for_a_twist_fails_before_it_is_placed():
+    """A mocap body takes the pose and drops the velocity, so a twist must not succeed on it."""
+    plugin = _plugin(writable=True, free=False)
+    resp = _run(plugin, _Req("walker", (1.0, 2.0, 0.0), ang=(0.0, 0.0, 1.0)))
+    assert resp.result.result == Result.RESULT_OPERATION_FAILED
+    assert "twist" in resp.result.error_message
+    assert not plugin.written
+
+
+def test_a_non_zero_acceleration_on_a_static_entity_fails():
+    plugin = _plugin(writable=False, at=(40.0, 40.0, 0.03))
+    req = _Req("dynamic_0", (40.0, 40.0, 0.03))
+    req.state.acceleration = _Twist(lin=(0.0, 0.0, 9.81))
+    resp = _run(plugin, req)
+    assert resp.result.result == Result.RESULT_OPERATION_FAILED
+    assert "acceleration" in resp.result.error_message
+
+
+def test_an_acceleration_on_a_free_entity_is_ignored():
+    plugin = _plugin(writable=True)
+    req = _Req("robot", (1.0, 2.0, 3.0))
+    req.state.acceleration = _Twist(lin=(1.0, 0.0, 0.0))
+    resp = _run(plugin, req)
+    assert resp.result.result == Result.RESULT_OK
+    assert plugin.written["vel"] == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def test_a_placement_that_raised_is_not_reported_as_placed(monkeypatch):
+    """run_on_physics returns True for a command that raised, so success is recorded positively."""
+    import roqsim_ros_bridge.sim_interfaces as mod
+
+    def _raise(ctx, ent, pos, quat, vel=None):
+        raise RuntimeError("boom")
+
+    def _swallow(ctx, fn, timeout=None):
+        try:
+            fn(ctx)
+        except RuntimeError:
+            pass
+        return True
+
+    monkeypatch.setattr(mod, "run_on_physics", _swallow)
+    monkeypatch.setattr(mod, "place_body", _raise)
+    monkeypatch.setattr(mod, "carries_velocity", lambda ctx, ent: True)
+    resp = _plugin(writable=True)._set_entity_state(_Req("robot", (1.0, 2.0, 3.0)), _Resp())
+    assert resp.result.result == Result.RESULT_OPERATION_FAILED
