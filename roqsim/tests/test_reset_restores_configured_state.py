@@ -384,8 +384,11 @@ CASES: dict[str, Case] = {
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
         {
-            "walker": {"walker": "MaleVisitorWalk", "waypoints": [[-1.0, 0.0], [1.0, 0.0]]},
+            "walker": {"walker": "MaleVisitorWalk", "pose": {"position": {"x": -1.0, "y": 0.0}}},
             "name": "ped",
+            "components": [
+                {"navigator": {"output": "walker", "speed": 1.0, "goals": [[1.0, 0.0]]}}
+            ],
         }
     ),
     # manipulation
@@ -528,6 +531,7 @@ CASES: dict[str, Case] = {
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),
+    "hazard_marking": _static({"hazard_marking": {"prefix": "h_"}, "name": "marking"}),
     # aerial
     "quadrotor_controller": Case(
         lambda _: _world(_robot("crazyflie_2", name="drone"), density=1.225, viscosity=1.8e-5)

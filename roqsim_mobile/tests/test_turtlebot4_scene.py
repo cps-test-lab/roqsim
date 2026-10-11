@@ -148,7 +148,7 @@ def _plugin(model, data, **overrides):
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
+    plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides}, entity="robot")
     plugin.configure(ctx)
     plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)

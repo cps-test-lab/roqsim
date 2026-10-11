@@ -75,6 +75,9 @@ sits rather than a config key::
                                  #   below). A scalar applies to every joint; {joint: value} sets
                                  #   them apart, and a joint it does not name is not limited.
       max_acceleration: 1.0      # optional: the same for the rate of that speed, unit per s^2.
+      trajectory_feedforward: none   # none | velocity | dynamics: what an in-process trajectory
+                                 #   (``ArmHandle.follow_trajectory``) adds to the position target
+                                 #   (see "In-process trajectories" below). Needs affine position servos.
       gripper_ctrl: 255.0        # ctrl held on any non-joint (tendon) actuator, e.g. the gripper
       rest: {joint1: 0.0, ...}   # {joint: angle} spawn+hold stance. Seeds BOTH the reset qpos (so the
                                  #   arm spawns in the pose) and the held target (so it stays there).
@@ -138,6 +141,33 @@ Consequences worth knowing:
   ``max_acceleration`` and comes back to that pose rather than stopping dead.
 - A velocity stream that stops leaves the target to brake onto the integrated goal.
 
+**In-process trajectories** (``ArmHandle.follow_trajectory``). A plugin that plans a motion -- a
+time-optimal profile, a strike, a recorded demonstration -- hands the whole trajectory over at once:
+times, positions and optionally velocities and accelerations, the fields of a
+``trajectory_msgs/JointTrajectory``. Every ``pre_step`` samples it on simulated time
+(:class:`roqsim_manipulation.trajectory.JointTrajectory`: quintic between knots that carry
+accelerations, cubic with velocities only, linear otherwise, as ros2_control's controller does) and
+commands the sample through the drive's limiter like any other command. That is deterministic in a
+stepped run, where the bridge's action handler, which feeds waypoints on wall-clock time, is not.
+
+- **Held after the end:** when the last knot is reached, the arm holds it. A new trajectory, a
+  ``set_targets``, a velocity command or a command source taking the arm ends the current one.
+- **Only while active:** an inactive controller refuses a trajectory, as ros2_control refuses a goal,
+  and deactivating the controller ends the one it is executing.
+
+A position servo handed only the trajectory's positions lags it: the servo's damping acts on the
+joint's absolute velocity, so at speed the joint trails by ``d * qd / p``, and accelerating the arm
+needs an error to produce the force. ``trajectory_feedforward`` folds the missing terms into the
+target (:func:`roqsim_manipulation.trajectory.servo_feedforward`):
+
+- ``velocity`` adds ``d * qd / p``;
+- ``dynamics`` adds the inverse dynamics as well, less the gravity the model compensates outside
+  the servo.
+
+With ``dynamics``, a joint swept at its speed limit tracks to within a hundredth of a degree. Both
+need affine position servos on unit-gear joint transmissions, and ``configure`` refuses anything else
+rather than adding a wrong term.
+
 **The ``rest`` stance.** ``spawn_arm`` supplies a per-model ``home`` that this plugin seeds its targets from. ``spawn_robot``
 does **not**: a robot spawn sets the base pose only, so an arm carried by a mobile base falls back to
 ``qpos0`` -- all joints zero. For the Panda that is not a neutral default but an actively bad pose (its
@@ -187,6 +217,7 @@ from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
 from roqsim.types import JointPositions, JointState
 
+from ..trajectory import FEEDFORWARD, JointTrajectory, affine_servo_gains, servo_feedforward
 from ._arm import (
     named_actuators,
     named_joints,
@@ -348,6 +379,11 @@ class ArmHandle:
     #: takes no new ones, the way a deactivated ros2_control controller does.
     is_active: Callable[[], bool] | None = None
     set_active: Callable[[bool], None] | None = None
+    #: Execute a joint trajectory on simulated time: ``(names, times, positions, velocities=None,
+    #: accelerations=None)``, times from now. See "In-process trajectories" in the module docstring.
+    follow_trajectory: Callable[..., None] | None = None
+    #: Whether a trajectory handed to ``follow_trajectory`` is still being executed.
+    trajectory_active: Callable[[], bool] | None = None
 
 
 class ArmControllerPlugin(Plugin):
@@ -375,6 +411,11 @@ class ArmControllerPlugin(Plugin):
             )
         errors += self._validate_tolerances(config)
         errors += self._validate_limits(config)
+        ff = config.get("trajectory_feedforward", "none")
+        if ff not in FEEDFORWARD:
+            errors.append(
+                f"arm_controller: `trajectory_feedforward` must be one of {list(FEEDFORWARD)}, got {ff!r}"
+            )
         return errors
 
     @staticmethod
@@ -447,10 +488,8 @@ class ArmControllerPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        # Entity name. `spawn_arm` wires its manifest plugins with `arm: <name>`, `spawn_robot` with
-        # `robot: <name>` (roqsim.manifest.expand_manifest sets the spawn's own target key). Accepting
-        # either lets one controller serve a standalone arm and an arm carried by a robot, without the
-        # manifest having to hardcode the entity name the world happens to choose.
+        # Entity name: the spawn this controller is nested under, so one controller serves a
+        # standalone arm and an arm carried by a robot without the manifest naming either.
         self.arm = self.entity
         self.gripper_ctrl = float(self.config.get("gripper_ctrl", 255.0))
         self.stream_commands = bool(self.config.get("stream_commands", False))
@@ -472,6 +511,14 @@ class ArmControllerPlugin(Plugin):
         #: claimed the arm at configure.
         self._configured_active = self._active
         self._vel_stamp = -1.0  # sim time of the last velocity command; -1 = never
+        # In-process trajectory (see the module docstring): the knots, the joints they name, and the
+        # sim time they started at. None when no trajectory is being executed.
+        self.trajectory_feedforward = str(self.config.get("trajectory_feedforward", "none"))
+        self._traj: JointTrajectory | None = None
+        self._traj_names: list[str] = []
+        self._traj_t0 = 0.0
+        self._ff_gains: dict[str, tuple[float, float]] = {}
+        self._ff_scratch = None
         self._jnt_range: dict[
             str, tuple[float, float]
         ] = {}  # clamp integration to the joint limits
@@ -690,8 +737,21 @@ class ArmControllerPlugin(Plugin):
                 is_active=self.is_active,
                 set_active=self.set_active,
                 ensure_updated=self.ensure_updated,
+                follow_trajectory=self.follow_trajectory,
+                trajectory_active=lambda: self._traj is not None,
             ),
         )
+        if self.trajectory_feedforward != "none":
+            for name, (aid, _) in zip(self._ctrl_names, self._joint_acts, strict=True):
+                gains = affine_servo_gains(m, aid)
+                if gains is None:
+                    raise RuntimeError(
+                        f"arm_controller[{self.name}]: trajectory_feedforward "
+                        f"{self.trajectory_feedforward!r} needs an affine position servo on a unit-gear "
+                        f"joint transmission; actuator {m.actuator(aid).name!r} of joint {name!r} is not one"
+                    )
+                self._ff_gains[name] = gains
+            self._ff_scratch = mujoco.MjData(m)
 
         # Gripper: a non-joint (tendon) actuator makes this arm's hand commandable. Map the tendon's
         # ctrlrange to a commanded gripper position and expose a GripperCommand action + a state reader.
@@ -942,7 +1002,52 @@ class ArmControllerPlugin(Plugin):
             self._target[name] = x_next
             self._sp_vel[name] = v
 
+    def follow_trajectory(
+        self, names, times, positions, velocities=None, accelerations=None
+    ) -> None:
+        """Execute a joint trajectory from now (see "In-process trajectories" in the module docstring).
+
+        ``times`` are seconds from now, ``positions`` one row per time and one column per name; the
+        joints it does not name hold where they are. Raises ``ValueError`` for malformed knots or an
+        unknown joint, ``RuntimeError`` while the controller is inactive.
+        """
+        if not self._active:
+            raise RuntimeError(f"arm_controller[{self.name}]: inactive, so it takes no trajectory")
+        names = list(names)
+        unknown = [n for n in names if n not in self._target]
+        if unknown:
+            raise ValueError(
+                f"arm_controller[{self.name}]: the trajectory names unknown joints {unknown}"
+            )
+        self._traj = JointTrajectory.build(times, positions, velocities, accelerations)
+        if self._traj.positions.shape[1] != len(names):
+            self._traj = None
+            raise ValueError("arm_controller: one position column per named joint")
+        self._traj_names = names
+        self._traj_t0 = float(self._ctx.sim_time) if self._ctx is not None else 0.0
+        self._vel_cmd.clear()
+
+    def _advance_trajectory(self, ctx) -> None:
+        """Command this step's sample of the trajectory, with the feed-forward the config asks for."""
+        t = float(ctx.sim_time) - self._traj_t0
+        q, qd, qdd = self._traj.sample(t)
+        ff = self.trajectory_feedforward
+        if ff != "none":
+            m, d = ctx.model, ctx.data
+            jids = {n: jid for n, (_, jid) in zip(self._ctrl_names, self._joint_acts, strict=True)}
+            qadr = np.array([m.jnt_qposadr[jids[n]] for n in self._traj_names])
+            vadr = np.array([m.jnt_dofadr[jids[n]] for n in self._traj_names])
+            tau = servo_feedforward(m, self._ff_scratch, d.qpos, qadr, vadr, q, qd, qdd, ff)
+            p = np.array([self._ff_gains[n][0] for n in self._traj_names])
+            dd = np.array([self._ff_gains[n][1] for n in self._traj_names])
+            q = q + (dd * qd + tau) / p
+        for n, v in zip(self._traj_names, q, strict=True):
+            self._command(n, float(v))
+        if t >= self._traj.duration:
+            self._traj = None
+
     def set_targets(self, names, positions) -> None:
+        self._traj = None  # a position command supersedes a trajectory being executed
         for n, p in zip(names, positions, strict=False):  # tolerate external/partial input
             if n in self._target:
                 self._command(n, float(p))
@@ -959,6 +1064,7 @@ class ArmControllerPlugin(Plugin):
         """
         if not self.velocity_commands:
             return
+        self._traj = None  # a velocity command supersedes a trajectory being executed
         for n, v in zip(names, velocities, strict=False):
             if n in self._target:
                 self._vel_cmd[n] = float(v)
@@ -1068,6 +1174,7 @@ class ArmControllerPlugin(Plugin):
         # stance) is qpos0 -- `rest` is what makes a mobile manipulator's arm reproducible per trial.
         self._apply_rest(ctx)
         self._vel_cmd.clear()  # a stale velocity command must not survive a reset
+        self._traj = None  # nor a trajectory
         self._gripper_ctrl_target = self.gripper_ctrl
         if self._grip_forcerange is not None:
             # A trial's grip force is that trial's: the next one starts from the model's own.
@@ -1097,6 +1204,7 @@ class ArmControllerPlugin(Plugin):
             )
         self._command_source = update
         self._command_source_owner = owner
+        self._traj = None
         # A world that declares a Cartesian controller has declared which controller drives the
         # arm. Leaving the trajectory role active as well would come up in a state real
         # ros2_control refuses outright -- two active controllers claiming the same command
@@ -1135,6 +1243,8 @@ class ArmControllerPlugin(Plugin):
 
         """
         self._active = bool(active)
+        if not self._active:
+            self._traj = None  # deactivation aborts the trajectory, as it aborts a goal
 
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:
@@ -1143,6 +1253,8 @@ class ArmControllerPlugin(Plugin):
             # stops with it.
             self.ensure_updated(ctx)
             if self._active:
+                if self._traj is not None:
+                    self._advance_trajectory(ctx)
                 self._integrate_velocity(ctx.data)
             # The limiter is the drive's, not the trajectory role's: it runs whoever commanded.
             self._advance_limited(float(ctx.model.opt.timestep))

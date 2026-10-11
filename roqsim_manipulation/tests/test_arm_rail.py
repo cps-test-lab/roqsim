@@ -175,3 +175,43 @@ def test_urdf_is_wellformed_xml(tmp_path):
     ).export()
     tree.write(out)
     assert ET.parse(out).getroot().tag == "robot"
+
+
+# One hinge under one root body, and no `home` keyframe: an arm with no home pose of its own.
+_ARM_WITHOUT_HOME = """
+<mujoco model="one_link">
+  <worldbody>
+    <body name="base">
+      <geom type="box" size="0.05 0.05 0.05"/>
+      <body name="link" pos="0 0 0.1">
+        <joint name="j1" axis="0 0 1" range="-1 1"/>
+        <geom type="capsule" fromto="0 0 0 0.3 0 0" size="0.02"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="j1" joint="j1" kp="100"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def test_the_carriage_starts_at_rail_home_on_an_arm_without_a_home_pose(tmp_path):
+    (tmp_path / "one_link.xml").write_text(_ARM_WITHOUT_HOME)
+    plugins = [
+        {
+            "spawn_arm": {"model": "one_link.xml", "prefix": "a_", "rail": RAIL, **CEILING},
+            "name": "arm",
+            "components": [{"arm_controller": {}}],
+        }
+    ]
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
+    engine.setup()
+    engine.reset()
+    m = engine.ctx.model
+    rail = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "a_rail_joint")
+    assert engine.ctx.data.qpos[m.jnt_qposadr[rail]] == pytest.approx(RAIL["home"])
+    # The controller holds the carriage there rather than servoing it back to zero.
+    for _ in range(200):
+        engine.step()
+    assert engine.ctx.data.qpos[m.jnt_qposadr[rail]] == pytest.approx(RAIL["home"], abs=1e-3)

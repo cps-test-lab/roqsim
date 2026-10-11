@@ -483,10 +483,16 @@ stack of its own and they carry on around it.
 
 **Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
 ``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
-routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
-the route at load and holds the mover at its first point until something starts it, so a world can
-own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
-scenario owns only its timing (``entity_navigate_start``).
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` holds
+the mover at its first point until something starts it, so a world can own the trajectory --
+identical in every repetition, visible in a campaign's config diff -- while a scenario owns only its
+timing (``entity_navigate_start``).
+
+**A goal the planner cannot reach ends the route as failed**, where the mover stands: it is never
+driven along a straight leg through the wall the planner could not get round. A goal given up on
+after ``recovery.max_recovery`` attempts is skipped, and the route reports that when it ends. Either
+way ``route_status`` carries an ``error`` naming the goal, a nav2 action aborts, and
+``entity_navigate`` fails -- a route that did not reach its goals is never reported as an arrival.
 
 **One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
 three independent capabilities, each one question with one answer:
@@ -527,10 +533,11 @@ Which you want follows from what the mover is *for*:
      - ``{stop: true, steer: give_way, reroute: true}``
      - It remembers what stopped it and plans around. The only setting that lets an encounter change
        the planned path -- do not use it for a mover whose route is the experiment.
-   * - a pedestrian, behaving as pedestrians always have here
-     - nothing; the ``walker`` entry's own ``avoidance: true|false`` still works
-     - It expands to ``{steer: ..., stop: false}``: a walker steers or does nothing, and has never
-       looked ahead. Give it a ``navigator`` asking for ``stop: true`` to change that.
+   * - a pedestrian
+     - ``{stop: false}``, the default navigator a ``walker`` gets; ``{steer: give_way, stop: false}``
+       to give way
+     - A walker steers or does nothing, and does not look ahead. A nested ``navigator`` asking for
+       ``stop: true`` changes that.
 
 Two settings are worth knowing before a scene misbehaves. ``lookahead`` is clear corridor measured
 from the mover's **front**, so it is how far short of something it halts -- the 1.2 m default is
@@ -563,8 +570,10 @@ schema: each key with its type, unit and default, and for the ``avoidance``, ``p
 ``recovery`` and ``action_names`` blocks the keys each accepts. A key it does not name is refused at
 load, at the top level and inside a block alike, with the nearest key it knows. The ``drive``
 output's keys (``kinematics``, ``heading_gain``, ``max_angular_vel``, ``turn_in_place``,
-``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema;
-``kinematics`` is refused under ``output: mocap``.
+``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema. Each
+output declares which of them it reads (``NavOutput.config_keys``), and under a named ``output`` a
+key it does not read is refused -- ``kinematics`` under ``output: mocap``, ``yaw_rate`` under
+``output: walker``.
 
 **The goal interface.** ``goal_endpoint``, ``actions`` and ``action_names`` say which actions a
 mover answers and under what name, in the owner's ``namespace``. nav2's ``navigate_to_pose`` and
@@ -767,6 +776,28 @@ distance query per geom pair, a real share of the step budget if done every phys
 200 Hz resolves ~1.5 mm at walking pace — finer than anything downstream consumes. Beyond
 ``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
 rather than offering a number that looks measured.
+
+On ROS it publishes the same report twice, because a series and a reduction are not the same
+observable. ``clearance`` is the distance now, as a ``std_msgs/Float32``, and it is what a reader
+plots and reduces: a running minimum follows from a recorded series while the series does not follow
+from a minimum. ``clearance_report`` is the whole report — ``current``, ``minimum``, ``at_time``, ``geom``
+and ``saturated`` — as the named readings of a ``diagnostic_msgs/DiagnosticStatus``, because two of
+those fields are in no series at all. A distance does not say **what** it was measured to, nor
+whether it is a measurement or the ``distmax`` cutoff, so an experiment grading a near miss can say
+how close it came and not what it nearly hit::
+
+   ros2 topic echo /robot/clearance_report
+   # values: [{key: current, value: '1.7'}, {key: minimum, value: '0.104'},
+   #          {key: at_time, value: '12.5'}, {key: geom, value: post_geom},
+   #          {key: saturated, value: 'false'}]
+
+The two flags are about different numbers. ``saturated`` says ``current`` is the cutoff; an empty
+``geom`` says the same of ``minimum``, whose closest approach was set by a step that found nothing
+inside ``distmax``. A trial that was never near anything therefore reports ``minimum == distmax``
+naming nothing, which reads as the cutoff rather than as a plausible distance. The reduction runs
+from the last reset, which is one trial: ``on_reset`` starts it again, so a repetition does not
+inherit the previous one's near-miss. Neither endpoint is a verdict — the status level is always
+``OK``, since what counts as too close is the experiment's threshold.
 
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
@@ -1293,6 +1324,9 @@ The things the readers rely on:
   fails on a literal key that neither the block nor the schema publishes, since a caller that checks
   a world against the catalog would refuse that key in a valid world. A key read only to be refused
   with a reason (``seed`` on a sensor that draws from the run's seed) is not a setting and stays out.
+  The scan is public, ``roqsim.introspection.undeclared_config_reads(cls)``: it returns the keys a
+  plugin class reads and does not publish, so a package that registers plugins of its own can hold
+  them to the same rule in its tests.
 
 Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
 cannot be validated, so it drifts, and this block is read by a caller writing a world.
@@ -2053,13 +2087,17 @@ Four more answers come off the model rather than from flags, each because gettin
 
 * **the joint list and its order** — the ``ArmHandle`` the controller published, i.e. the names that
   reach ``/joint_states``. ``robot_state_publisher`` matches by name, so a list that is right about the
-  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in.
+  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in. The
+  controller's ``joint_prefix`` is part of those names, so the URDF's joints, the SRDF and
+  ``moveit_controllers.yaml`` carry it too.
 * **the home posture** — ``data.qpos`` after setup, not the world's ``home:`` key. The controller
   applies that key itself and a ``rest`` stance may overlay it, while MoveIt's start-state bounds check
   runs against the posture the arm is really in.
-* **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
-  A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
-  the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
+* **the collapse root** — the lowest common ancestor of every body a ``connect`` or ``weld`` equality
+  touches. A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse
+  it and the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes. A ``joint``
+  equality closes no loop: it couples two fingers of an open chain, and the URDF carries it as a
+  ``<mimic>`` on the joint that is not commanded.
 * **``fix_start_state``** — emitted only for an arm that has a *continuous* joint.
   ``CheckStartStateBounds`` normalizes such a joint onto [-pi, pi], and with this false (its default)
   it reports ``START_STATE_INVALID`` precisely because it had to normalize. A start state that drifted
@@ -2344,9 +2382,10 @@ Four things decide whether such a world measures anything at all:
 * **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
   probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
   the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
-  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
-  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
-  docstring.
+  ``force_torque`` adds those contacts back (:class:`roqsim.flex.FlexContactWrench`), so a soft tool
+  pressing a table and a rigid tool pressing a soft object read what a sensor at that cut measures.
+  A flex lying partly inside the sensed subtree is refused, since its contacts cannot be split
+  across the cut -- the measurement is in the plugin's docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
 outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
@@ -2433,6 +2472,17 @@ overrides them per key there, and ``max_velocity: null`` lifts one. Give the pla
 numbers (``roqsim export moveit --max-velocity … --max-acceleration …``): a trajectory faster than
 the limits arrives late and is graded by ``goal_time_tolerance``. The module docstring of
 ``roqsim_manipulation.plugins.arm_controller`` has the profile and what each command path does.
+
+**A planned trajectory, in-process.** A plugin that plans a whole motion -- a time-optimal profile, a
+strike, a replayed demonstration -- hands it to ``ArmHandle.follow_trajectory(names, times, positions,
+velocities, accelerations)``. The controller samples it on simulated time every step (quintic between
+knots carrying accelerations, as ros2_control's controller does), holds the last knot, and gives way
+to any other command. Unlike the bridge's ``follow_joint_trajectory`` handler, which feeds waypoints
+on wall-clock time, this is deterministic in a stepped run. A position servo handed only the positions
+trails them at speed by ``d·qd/p``; ``trajectory_feedforward: velocity`` cancels that, and ``dynamics``
+also adds the inverse dynamics, so a joint swept at a real arm's speed limit tracks to a hundredth of
+a degree. Where tracking is part of what a trial measures, still report the gains and the feed-forward
+with the setup.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
