@@ -690,8 +690,10 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 * ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
-* ``StepSimulation`` — step N times while paused.
-* ``ResetSimulation`` — reset the world.
+* ``StepSimulation`` — step N times while paused; answers once the steps have run, and fails when the
+  simulation stops stepping or leaves the pause first.
+* ``ResetSimulation`` — reset the world; answers once the reset has run, and fails under a driver that
+  does not reset on request.
 
 Spawning is activation, not creation
 `````````````````````````````````````
