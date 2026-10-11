@@ -51,6 +51,7 @@ import logging
 from dataclasses import dataclass
 
 import mujoco
+import numpy as np
 
 from .plugin import PluginError
 
@@ -367,3 +368,86 @@ def flex_collides(model: mujoco.MjModel, flex_id: int) -> bool:
 def flex_label(model: mujoco.MjModel, flex_id: int) -> str:
     """Flex *flex_id*'s name, or ``#<id>`` for an unnamed one."""
     return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_FLEX, flex_id) or f"#{flex_id}"
+
+
+# -- the wrench a flex's contacts put into a subtree -------------------------------------------------
+#
+# MuJoCo 3.14's site force/torque sensor reads a subtree's momentum balance against its external
+# forces, and leaves a contact with a flex out of those forces: a probe pressing a flex reads its own
+# weight alone, and a support under a hanging flex is not in the reading at all. Everything else a
+# flex does is already in it -- its weight, its inertia, the elastic forces on its vertex DOFs, which
+# are joint forces between each vertex body and the body it hangs from
+# (``roqsim_sensors/tests/test_force_torque_flex.py`` measures each). A pinned vertex has no body and
+# no constraint, so there is no reaction "of the pin" to read: what is missing is the contact, and
+# it is added here.
+
+
+def straddling_flexes(model: mujoco.MjModel, bodies: set[int]) -> list[int]:
+    """Flexes with DOF bodies both inside and outside *bodies*.
+
+    A contact on such a flex cannot be assigned to one side of a cut through it: an element's
+    contact force is spread over vertices on both sides, and no split of it is the flex's.
+    """
+    out = []
+    for flex in range(model.nflex):
+        on = set(flex_dof_body_ids(model, flex))
+        if on & bodies and not on <= bodies:
+            out.append(flex)
+    return out
+
+
+class FlexContactWrench:
+    """The force and moment flex contacts apply to a set of bodies, which a site sensor misses.
+
+    Built once per compiled model and body set; :meth:`__call__` reads one step's contacts. A contact
+    counts when it involves a flex and exactly one of its two sides lies in *bodies*: a geom side by
+    its body, a flex side when all of that flex's DOF bodies do (a flex straddling the set is
+    refused, :func:`straddling_flexes`). A contact with both sides inside is internal to the set and
+    cancels; one with neither is not the set's.
+    """
+
+    def __init__(self, model: mujoco.MjModel, bodies: set[int]) -> None:
+        straddling = straddling_flexes(model, bodies)
+        if straddling:
+            names = ", ".join(repr(flex_label(model, f)) for f in straddling)
+            raise PluginError(
+                f"flex {names} lies partly inside the measured subtree and partly outside it, so "
+                "no reading can say which of its contacts the subtree receives. Measure above the "
+                "whole flex, or below all of it."
+            )
+        self._model = model
+        self._geom_in = np.array(
+            [int(model.geom_bodyid[g]) in bodies for g in range(model.ngeom)], dtype=bool
+        )
+        self._flex_in = np.array(
+            [set(flex_dof_body_ids(model, f)) <= bodies for f in range(model.nflex)], dtype=bool
+        )
+        self.active = bool(model.nflex)
+
+    def _inside(self, geom: int, flex: int) -> bool:
+        return bool(self._geom_in[geom]) if geom >= 0 else bool(self._flex_in[flex])
+
+    def __call__(self, data: mujoco.MjData, point: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``(force, moment about point)`` in the world frame, applied TO the bodies."""
+        force, moment = np.zeros(3), np.zeros(3)
+        if not self.active or data.ncon == 0:
+            return force, moment
+        con = data.contact
+        n = data.ncon
+        flexes = con.flex[:n]
+        candidates = np.nonzero((flexes >= 0).any(axis=1) & (con.efc_address[:n] >= 0))[0]
+        f6 = np.zeros(6)
+        for i in candidates:
+            g, f = con.geom[i], flexes[i]
+            first, second = self._inside(int(g[0]), int(f[0])), self._inside(int(g[1]), int(f[1]))
+            if first == second:
+                continue
+            mujoco.mj_contactForce(self._model, data, int(i), f6)
+            frame = con.frame[i].reshape(3, 3)
+            # mj_contactForce is the force on the SECOND side, in the contact frame (rows are axes).
+            f_world, t_world = frame.T @ f6[:3], frame.T @ f6[3:]
+            if first:
+                f_world, t_world = -f_world, -t_world
+            force += f_world
+            moment += t_world + np.cross(con.pos[i] - point, f_world)
+        return force, moment

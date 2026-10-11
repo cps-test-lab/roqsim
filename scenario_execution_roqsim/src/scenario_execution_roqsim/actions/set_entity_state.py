@@ -109,7 +109,7 @@ class SetEntityState(SimAction):
 
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():
-            return self.waiting("waiting for the simulation")
+            return self.not_ready()
 
         try:
             if self._call is None:

@@ -83,6 +83,8 @@ roqsim_sensors = [
     "models/*/*.xml",
     "models/*/*.manifest.yaml",
     "models/*/*_LICENSE",
+    # `roqsim catalog` reports the `<model>.thumb.png` beside each MJCF (`make thumbnails`).
+    "models/*/*.thumb.png",
     "models/*/meshes/*",
     "worlds/*.yaml",
 ]
