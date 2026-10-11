@@ -46,7 +46,8 @@ var. If the policy is missing at load time, `spot_locomotion` raises an error po
 
 Needs `torch` for policy inference (declared in `pyproject.toml`). CPU torch is enough — the policy
 is a small 48→12 MLP evaluated at 50 Hz. The world must set `sim.timestep: 0.002` — Isaac trains Spot
-at a 500 Hz sim / 50 Hz policy (decimation 10); see `ros2_ws/src/roqsim_nav2_example/worlds/spot_nav2.yaml`.
+at a 500 Hz sim / 50 Hz policy (decimation 10), and the plugin refuses any other step; see
+`ros2_ws/src/roqsim_nav2_example/worlds/spot_nav2.yaml`.
 
 ## Decimated meshes
 

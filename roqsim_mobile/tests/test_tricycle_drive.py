@@ -445,3 +445,50 @@ def test_a_driven_steered_wheel_needs_its_radius():
     config = {k: v for k, v in FRONT_STEER_WHEEL.items() if k != "steer_wheel_radius"}
     errors = TricycleDrivePlugin(config, entity="robot", label="drive").validate_config(config)
     assert any("'steer_wheel_radius' is required" in e for e in errors), errors
+
+
+# -- the body the geometry is read in --------------------------------------------------------------
+
+
+class _ChassisTricycle(_Tricycle):
+    """The truck rooted at ``chassis``, beside a prop called ``base_link`` elsewhere in the world."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        spec.body("base_link").name = "chassis"
+        for exclude in spec.excludes:
+            if exclude.bodyname1 == "base_link":
+                exclude.bodyname1 = "chassis"
+        prop = spec.worldbody.add_body(name="base_link", pos=[3, 0, 0.5], quat=[0, 0, 0, 1])
+        prop.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.1, 0.1, 0.1])
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(
+                name=self.name, kind="robot", body="chassis", meta={"prefix": "", "namespace": ""}
+            )
+        )
+
+
+def test_the_geometry_is_read_in_the_root_the_truck_registered():
+    """Read in the prop called `base_link`, the steering axis would sit metres off the axle."""
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {
+                    f"{__name__}:_ChassisTricycle": {"steer_x": -WHEELBASE},
+                    "name": "robot",
+                    "components": [{"tricycle_drive": dict(REAR_AXLE)}],
+                }
+            ],
+        }
+    )
+    engine = Engine(cfg)
+    engine.setup()
+    try:
+        assert _plugin(engine).base_body == "chassis"
+    finally:
+        engine.shutdown()

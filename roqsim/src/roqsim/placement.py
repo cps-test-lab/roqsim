@@ -21,6 +21,8 @@ default, and the forward-kinematics refresh are decided once, here, for all of t
 
 from __future__ import annotations
 
+import numpy as np
+
 
 def place_body(ctx, entity, pos, quat, vel=None) -> bool:
     """Put *entity* at ``pos``/``quat``. ``True`` if it took the pose. Physics thread only.
@@ -42,10 +44,13 @@ def place_body(ctx, entity, pos, quat, vel=None) -> bool:
     A **welded** body has neither and cannot be placed; ``False`` says so, and the caller turns that
     into whatever refusal its own surface owes.
 
-    ``vel`` is the six-vector a free body is to carry away, or ``None`` for "at rest" -- which is
-    what placing something means, and what every caller before it could ask for anything else
-    relied on. A mocap body ignores it: there is no DOF to carry a velocity, and the placement
-    itself was applied in full, so this reports success rather than refusing.
+    ``vel`` is the velocity a free body is to carry away, ``(vx, vy, vz, wx, wy, wz)`` in the
+    world frame -- linear of the body origin, angular about it, the convention
+    :func:`roqsim.kinematics.body_twist` reports -- or ``None`` for "at rest", which is what
+    placing something means. MuJoCo keeps a free joint's angular velocity in the body's own frame,
+    so it is rotated into the placed orientation here. A mocap body has no DOF to carry a velocity
+    and ignores it; a caller that was asked for one checks :func:`carries_velocity` first and
+    refuses, rather than reporting a motion that was never applied.
 
     The forward-kinematics refresh happens here, so a caller cannot place a body and then read a
     stale pose off it.
@@ -71,9 +76,33 @@ def place_body(ctx, entity, pos, quat, vel=None) -> bool:
     ctx.data.qpos[q : q + 3] = pos
     ctx.data.qpos[q + 3 : q + 7] = quat
     dof = ctx.model.jnt_dofadr[jid]
-    ctx.data.qvel[dof : dof + 6] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if vel is None else vel
+    ctx.data.qvel[dof : dof + 6] = 0.0
+    if vel is not None:
+        ctx.data.qvel[dof : dof + 3] = vel[:3]
+        # World to body frame: the conjugate of the placed orientation.
+        w, x, y, z = (float(v) for v in quat)
+        mujoco.mju_rotVecQuat(
+            ctx.data.qvel[dof + 3 : dof + 6], np.asarray(vel[3:6], float), np.array([w, -x, -y, -z])
+        )
     mujoco.mj_forward(ctx.model, ctx.data)
     return True
+
+
+def carries_velocity(ctx, entity) -> bool:
+    """Can *entity* carry a velocity once placed? Physics thread only.
+
+    Only a free body can: a mocap body is put somewhere and stays, and welded scenery takes no pose
+    at all. Asked before :func:`place_body` by a caller that was handed a non-zero velocity, so it
+    can refuse instead of placing the body at rest under a success.
+    """
+    import mujoco
+
+    joint_name = base_joint_of(entity)
+    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name) if joint_name else -1
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, getattr(entity, "body", "") or "")
+    if bid >= 0 and int(ctx.model.body_mocapid[bid]) >= 0:
+        return False
+    return jid >= 0 and ctx.model.jnt_type[jid] == mujoco.mjtJoint.mjJNT_FREE
 
 
 def base_joint_of(entity) -> str | None:
@@ -101,4 +130,4 @@ PLACEABLE_MODES_HINT = (
 )
 
 
-__all__ = ["PLACEABLE_MODES_HINT", "base_joint_of", "place_body"]
+__all__ = ["PLACEABLE_MODES_HINT", "base_joint_of", "carries_velocity", "place_body"]

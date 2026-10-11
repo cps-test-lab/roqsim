@@ -1154,8 +1154,8 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--profile",
         action="store_true",
-        help="print load-phase timing after setup and per-plugin hook timing at exit "
-        "(timing is only collected with this flag)",
+        help="print load-phase timing after setup, and the physics step's and per-plugin hook "
+        "timing at exit (timing is only collected with this flag)",
     )
     parser.add_argument(
         "--left-ui", action="store_true", help="show MuJoCo's left side panel at launch"
