@@ -71,7 +71,6 @@ The plugin logs a warning rather than silently flying in vacuum.
 from __future__ import annotations
 
 import logging
-import math
 
 import mujoco
 import numpy as np
@@ -81,6 +80,7 @@ from roqsim.context import RobotHandle, SimContext
 from roqsim.kinematics import body_twist
 from roqsim.odometry import CommandWatchdog, SpawnFrame
 from roqsim.plugin import Plugin
+from roqsim.pose import yaw_of
 from roqsim.types import Odometry, Point3, Pose, Quaternion
 
 logger = logging.getLogger(__name__)
@@ -109,12 +109,6 @@ _HOVER_SPEED = 0.05
 def _hat_vee(matrix: np.ndarray) -> np.ndarray:
     """The vee map: the axial vector of a 3x3 skew-symmetric matrix."""
     return np.array([matrix[2, 1], matrix[0, 2], matrix[1, 0]])
-
-
-def _yaw_of(quat) -> float:
-    """Heading out of a ``(w, x, y, z)`` quaternion."""
-    w, x, y, z = (float(v) for v in quat)
-    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 class QuadrotorControllerPlugin(Plugin):
@@ -252,7 +246,7 @@ class QuadrotorControllerPlugin(Plugin):
             frame_id: 'odom' (the spawn frame), 'world', 'map' or empty (the world); any other
                 is refused and the setpoint kept
         """
-        yaw = _yaw_of(orientation) if orientation is not None else None
+        yaw = yaw_of(orientation) if orientation is not None else None
         self.set_target(*position, yaw, frame=frame_id)
 
     def drive(self, vx: float, vy: float, w: float) -> None:

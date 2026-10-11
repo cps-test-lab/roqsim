@@ -4,9 +4,11 @@ A path is ``<component>/<name>``. The component is the dotted address of the ent
 name, with its dots as slashes -- ``robot.oakd`` is ``robot/oakd`` -- as deep as the leading segments
 name a component; the rest is the name that component offers. For an endpoint that is its name
 (``robot/lidar/scan``, ``ur5e/force_torque/tare``); for a frame, one of the component's bodies,
-sites, declared frames or device frames, as TF shows it (``robot/base_link``,
+sites, cameras, declared frames or device frames, as TF shows it (``robot/base_link``,
 ``robot/oakd/oakd_rgb_camera_optical_frame``, :mod:`roqsim.frames`). An endpoint is also named by
-the entity that owns it and its name, where that entity has one of that name.
+the entity that owns it and its name, where that entity has one of that name. An offer with no
+component is named by its name alone: a frame of the world's own MJCF that no entity owns
+(``gantry``).
 
 A caller says which kind it wants, so an endpoint and a frame of one name never collide. Within a
 kind, a path that names two offers (a body and a site of one name) is refused naming both, and an
@@ -119,6 +121,10 @@ def resolve(offers: Iterable[Offer], path: str, kind: str, *, noun: str | None =
     else:
         tops = sorted({c.split("/")[0] for c in components if c})
         message += f" The components offering one: {', '.join(tops) or '(none)'}."
+        top_level = sorted({o.path for o in pool if not o.component and o.path not in components})
+        if top_level:
+            listed = ", ".join(top_level[:40]) + (" ..." if len(top_level) > 40 else "")
+            message += f" Named at the top of the world: {listed}."
     raise PathError(
         message,
         reason="unknown",

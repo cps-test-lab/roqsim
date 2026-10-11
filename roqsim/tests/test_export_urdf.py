@@ -498,6 +498,51 @@ def test_rescued_gripper_joint_keeps_its_mujoco_type_and_effort(tmp_path):
     assert float(limit.get("effort")) == pytest.approx(10.0)
 
 
+def _lift_effort(tmp_path, joint_attrs: str, actuator_attrs: str) -> float:
+    """The URDF effort exported for a slide driven by one position servo."""
+    model = mujoco.MjModel.from_xml_string(f"""
+        <mujoco>
+          <worldbody>
+            <body name="mast">
+              <geom type="box" size="0.05 0.05 0.05" mass="1"/>
+              <body name="carriage" pos="0 0 0.5">
+                <joint name="lift" type="slide" axis="0 0 1" range="0 1" {joint_attrs}/>
+                <geom type="box" size="0.2 0.2 0.05" mass="150"/>
+              </body>
+            </body>
+          </worldbody>
+          <actuator>
+            <position name="lift" joint="lift" kp="20000" {actuator_attrs}/>
+          </actuator>
+        </mujoco>""")
+    tree = UrdfExporter(
+        model, prefix="", name="r", root_link="mast", mesh_dir=tmp_path / "meshes"
+    ).export()
+    return float(tree.getroot().find("joint[@name='lift']/limit").get("effort"))
+
+
+@pytest.mark.parametrize(
+    ("joint_attrs", "actuator_attrs", "effort"),
+    [
+        # A one-sided rating stated on the joint, the actuator left wider: the joint's bound.
+        ('actuatorfrcrange="0 25000"', 'forcerange="-30000 30000"', 25000.0),
+        # ... or left unlimited: the joint alone bounds the drive.
+        ('actuatorfrcrange="0 25000"', "", 25000.0),
+        # The joint tighter than the actuator on both sides.
+        ('actuatorfrcrange="-800 800"', 'forcerange="-1000 1000"', 800.0),
+        # The actuator tighter than the joint.
+        ('actuatorfrcrange="-5000 5000"', 'forcerange="-1000 1000"', 1000.0),
+        # No joint range: the actuator's, through its gear.
+        ("", 'forcerange="-10 10" gear="50"', 500.0),
+    ],
+)
+def test_effort_is_what_the_joints_drives_can_deliver(
+    tmp_path, joint_attrs, actuator_attrs, effort
+):
+    """URDF's effort is the joint's limit, so the joint's own ``actuatorfrcrange`` bounds it too."""
+    assert _lift_effort(tmp_path, joint_attrs, actuator_attrs) == pytest.approx(effort)
+
+
 def test_visual_only_geometry_is_not_collidable(tmp_path, robot):
     """MoveIt must not plan around decoration. The husky's mast is visual-only in the MJCF."""
     _out, _exporter, tree = _export(tmp_path, robot, collapse=("base_mount",))

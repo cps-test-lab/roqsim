@@ -368,7 +368,7 @@ class MovingBoxPlugin(Plugin):
 
         Keyed on the entity's address, so two movers draw independent streams under one run seed.
         """
-        return ctx.rng_for(f"{self.address}.random_walk.{what}")
+        return ctx.rng_for(self.draw_key(f"random_walk/{what}"))
 
     def _turn_range(self, value) -> tuple[float, float]:
         try:

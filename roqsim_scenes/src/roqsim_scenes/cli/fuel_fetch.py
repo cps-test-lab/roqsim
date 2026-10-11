@@ -208,11 +208,14 @@ def _world_uris(world: Path) -> list[str]:
 
 
 def _tag(el) -> str:
-    return (
-        etree.QName(el).localname
-        if hasattr(el, "tag") and not isinstance(el.tag, str)
-        else str(el.tag).split("}")[-1]
-    )
+    """The local tag name of an element; ``""`` for a comment or processing instruction.
+
+    ``tree.iter()`` yields those too, and a world file is full of commented-out models. Their
+    ``tag`` is a function rather than a string, and they have no name to match.
+    """
+    if not isinstance(el.tag, str):
+        return ""
+    return el.tag.split("}")[-1]
 
 
 def main(argv: list | None = None) -> int:
@@ -264,6 +267,4 @@ def main(argv: list | None = None) -> int:
 
 
 if __name__ == "__main__":
-    from lxml import etree  # noqa: F401  (import here so library use does not require it)
-
     raise SystemExit(main())
