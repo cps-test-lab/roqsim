@@ -775,6 +775,28 @@ distance query per geom pair, a real share of the step budget if done every phys
 ``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
 rather than offering a number that looks measured.
 
+On ROS it publishes the same report twice, because a series and a reduction are not the same
+observable. ``clearance`` is the distance now, as a ``std_msgs/Float32``, and it is what a reader
+plots and reduces: a running minimum follows from a recorded series while the series does not follow
+from a minimum. ``clearance_report`` is the whole report — ``current``, ``minimum``, ``at_time``, ``geom``
+and ``saturated`` — as the named readings of a ``diagnostic_msgs/DiagnosticStatus``, because two of
+those fields are in no series at all. A distance does not say **what** it was measured to, nor
+whether it is a measurement or the ``distmax`` cutoff, so an experiment grading a near miss can say
+how close it came and not what it nearly hit::
+
+   ros2 topic echo /robot/clearance_report
+   # values: [{key: current, value: '1.7'}, {key: minimum, value: '0.104'},
+   #          {key: at_time, value: '12.5'}, {key: geom, value: post_geom},
+   #          {key: saturated, value: 'false'}]
+
+The two flags are about different numbers. ``saturated`` says ``current`` is the cutoff; an empty
+``geom`` says the same of ``minimum``, whose closest approach was set by a step that found nothing
+inside ``distmax``. A trial that was never near anything therefore reports ``minimum == distmax``
+naming nothing, which reads as the cutoff rather than as a plausible distance. The reduction runs
+from the last reset, which is one trial: ``on_reset`` starts it again, so a repetition does not
+inherit the previous one's near-miss. Neither endpoint is a verdict — the status level is always
+``OK``, since what counts as too close is the experiment's threshold.
+
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
 integrates the normal force of the very same contacts at the physics step, and reports the impulse,
@@ -2351,9 +2373,10 @@ Four things decide whether such a world measures anything at all:
 * **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
   probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
   the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
-  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
-  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
-  docstring.
+  ``force_torque`` adds those contacts back (:class:`roqsim.flex.FlexContactWrench`), so a soft tool
+  pressing a table and a rigid tool pressing a soft object read what a sensor at that cut measures.
+  A flex lying partly inside the sensed subtree is refused, since its contacts cannot be split
+  across the cut -- the measurement is in the plugin's docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
 outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
