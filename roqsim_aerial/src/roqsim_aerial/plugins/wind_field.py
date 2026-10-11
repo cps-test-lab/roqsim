@@ -176,13 +176,14 @@ class WindFieldPlugin(Plugin):
 
         The Dryden spectrum's first-order form is an exponentially-correlated (Ornstein-Uhlenbeck)
         process whose correlation time is ``L / V`` -- the time the vehicle takes to traverse one
-        turbulence length scale. Discretised at ``dt``::
+        turbulence length scale. Discretised exactly at ``dt``::
 
-            a      = V * dt / L                     (how much of the correlation decays per tick)
-            u[k+1] = (1 - a) * u[k] + sigma * sqrt(2a) * N(0, 1)
+            phi    = exp(-V * dt / L)               (how much of the correlation survives a tick)
+            u[k+1] = phi * u[k] + sigma * sqrt(1 - phi^2) * N(0, 1)
 
-        The ``sqrt(2a)`` is what keeps the stationary variance at ``sigma^2`` independent of ``dt``,
-        so halving the timestep refines the signal instead of changing how windy it is.
+        The ``sqrt(1 - phi^2)`` keeps the stationary variance at ``sigma^2`` for every ``dt``, so
+        halving the timestep refines the signal instead of changing how windy it is, and a timestep
+        past the correlation time gives memoryless draws of the same spread.
         """
         sigma = float(self._turbulence.get("intensity", 0.0))
         if sigma <= 0.0:
@@ -192,8 +193,7 @@ class WindFieldPlugin(Plugin):
         vertical = float(self._turbulence.get("vertical", _DEFAULT_VERTICAL_SCALE))
 
         convection = max(float(np.linalg.norm(mean_wind)), _MIN_CONVECTION_MPS)
-        # Clamped: a timestep past the correlation time is memoryless, not unstable.
-        a = min(convection * ctx.dt / length, 1.0)
+        phi = float(np.exp(-convection * ctx.dt / length))
         scale = np.array([sigma, sigma, sigma * vertical])
         draw = ctx.rng_for(self.draw_key("turbulence")).standard_normal(3)
-        self._turb = (1.0 - a) * self._turb + scale * np.sqrt(2.0 * a) * draw
+        self._turb = phi * self._turb + scale * np.sqrt(1.0 - phi * phi) * draw

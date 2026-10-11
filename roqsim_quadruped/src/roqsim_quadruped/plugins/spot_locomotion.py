@@ -44,7 +44,6 @@ import os
 
 import mujoco
 import numpy as np
-import torch
 import yaml
 
 from roqsim import endpoint
@@ -69,6 +68,27 @@ def _quat_rotate_inverse(quat: np.ndarray, vec: np.ndarray) -> np.ndarray:
     b = np.cross(qvec, vec) * (2.0 * w)
     c = qvec * (np.dot(qvec, vec) * 2.0)
     return (a - b + c).astype(np.float32)
+
+
+def _torchscript_policy(path: str):
+    """Load a TorchScript policy as a numpy-in, numpy-out callable.
+
+    ``torch`` is imported here rather than with the module, so listing or describing the registered
+    plugins does not load it. One thread: the policy is a small MLP run at 50 Hz, and fanning out
+    across every core oversubscribes the host against MuJoCo's physics thread and any co-running
+    policies or nav stacks.
+    """
+    import torch
+
+    torch.set_num_threads(1)
+    policy = torch.jit.load(path)
+    policy.eval()
+
+    def infer(obs: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            return policy(torch.from_numpy(obs).unsqueeze(0)).numpy().squeeze()
+
+    return infer
 
 
 # Gravity direction in the world frame (Isaac projected_gravity uses [0, 0, -1]).
@@ -175,12 +195,7 @@ class SpotLocomotionPlugin(Plugin):
                 "`python -m roqsim_quadruped.policy.fetch_policy`, or set the plugin's "
                 "`policy_path` / the SPOT_POLICY_PATH env var to a local spot_policy.pt."
             )
-        # Pin torch to one thread: the policy is a small MLP run at 50 Hz, so single-threaded
-        # inference is fastest and avoids fanning out across every core (which oversubscribes the
-        # box against MuJoCo's physics thread and any co-running policies/nav stacks).
-        torch.set_num_threads(1)
-        self._policy = torch.jit.load(self.policy_path)
-        self._policy.eval()
+        self._policy = _torchscript_policy(self.policy_path)
 
         # -- resolve MuJoCo ids/addresses (prefixed), mapping each name to the policy's slot ---
         def jnt(n):
@@ -305,8 +320,7 @@ class SpotLocomotionPlugin(Plugin):
             obs[12 + n : 12 + 2 * n] = dqj * self._dof_vel_scale
             obs[12 + 2 * n : 12 + 3 * n] = self._action
 
-            with torch.no_grad():
-                self._action = self._policy(torch.from_numpy(obs).unsqueeze(0)).numpy().squeeze()
+            self._action = self._policy(obs)
             self._target_q = self._action * self._action_scale + self._default_angles
 
         # Write position targets to Spot's position actuators (MuJoCo closes the PD loop each step;
