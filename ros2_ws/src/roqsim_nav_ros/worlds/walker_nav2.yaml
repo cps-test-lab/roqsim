@@ -9,10 +9,11 @@
 #     "{poses: [{header: {frame_id: map}, pose: {position: {x: 2.0, y: 0.0}}},
 #               {header: {frame_id: map}, pose: {position: {x: 0.0, y: 2.0}}}]}" --feedback
 #
-# The walker leaves its patrol, walks the goal poses, then resumes patrolling. Drop `waypoints:` to
-# make it goal-driven only (it stands at `pos` until commanded).
+# The walker leaves its patrol, walks the goal poses, then resumes patrolling. Drop the nested
+# `navigator` to make it goal-driven only: it stands at its `pose` until commanded.
 #
-# To have the walker steer round a robot, add a `spawn_robot` plugin and set `avoidance: true`.
+# To have the walker steer round a robot, add a `spawn_robot` plugin and set the navigator's
+# `avoidance: {steer: give_way}`.
 
 sim:
   pacing: realtime
@@ -20,17 +21,19 @@ sim:
 components:
   - walker:
       walker: MaleVisitorWalk
-      speed: 1.2
-      loop: true
-      arrival_radius: 0.25
-      avoidance: false
-      action_name: navigate_through_poses   # served at /navigate_through_poses
-      waypoints:
-        - [-2.0, -2.0]
-        - [ 2.0, -2.0, [2, 4]]
-        - [ 2.0,  2.0]
-        - [-2.0,  2.0, [1, 3]]
+      pose: {position: {x: -2.0, y: -2.0}, orientation: {yaw: 0.0}}
     name: pedestrian
+    components:
+      - navigator:
+          output: walker
+          speed: 1.2
+          goals: [[2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]]
+          loop: true
+          dwell: [[0, 0], [2, 4], [0, 0], [1, 3]]
+          arrival_radius: 0.25
+          radius: 0.26
+          avoidance: {steer: none, stop: false}
+          action_names: {navigate_through_poses: navigate_through_poses}   # /navigate_through_poses
 
   # Reads the walker's declared endpoints from ctx.interface. The goal endpoint carries an `action`
   # hint, so the bridge serves it as an ActionServer using the handler this package registers.
