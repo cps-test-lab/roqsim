@@ -16,11 +16,13 @@
 
 """Programmatic, JSON-friendly introspection of the roqsim.plugins registry.
 
-Two public entry points: a one-liner list, full detail on request.
+Two public entry points for the catalog: a one-liner list, full detail on request. A third checks
+a plugin's catalog entry against its source.
 
 * :func:`list_plugins` -- every registered ``roqsim.plugins`` entry, one line per plugin.
 * :func:`get_plugin_details` -- one plugin's full detail, including its ``Config::``
   block parsed into structured fields.
+* :func:`undeclared_config_reads` -- the config keys a plugin class reads but does not publish.
 
 The doc-extraction helpers here (:func:`_own_or_module_doc`, :func:`_summary_and_config`,
 :func:`_flags`, :func:`_dist_name`) are the same ones the Sphinx ``.. roqsim-plugins::``
@@ -37,10 +39,12 @@ have its JSON output parsed by a caller on the host::
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import re
 import sys
+import textwrap
 
 from roqsim import exit_status
 from roqsim.entry_points import entry_points
@@ -513,6 +517,126 @@ def get_plugin_details(name: str) -> dict:
     if endpoints:
         details["endpoints"] = endpoints
     return details
+
+
+# ── Keys a plugin reads against the keys it publishes ─────────────────────────────
+
+
+def _is_config(node: ast.AST, names: set[str]) -> bool:
+    if isinstance(node, ast.Attribute) and node.attr == "config":
+        return isinstance(node.value, ast.Name) and node.value.id in ("self", "spec")
+    return isinstance(node, ast.Name) and node.id in names
+
+
+def _key_of(node: ast.AST, names: set[str]) -> ast.AST | None:
+    """The key expression a config read uses, or None when *node* is not a config read."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr in ("get", "pop", "setdefault") and node.args:
+            return node.args[0] if _is_config(node.func.value, names) else None
+    if isinstance(node, ast.Subscript) and _is_config(node.value, names):
+        return node.slice
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], (ast.In, ast.NotIn))
+        and _is_config(node.comparators[0], names)
+    ):
+        return node.left
+    return None
+
+
+def _is_settings(node: ast.AST, names: set[str]) -> bool:
+    """``self.settings``, ``self.settings_for(...)``, or a name bound to either."""
+    if isinstance(node, ast.Attribute) and node.attr == "settings":
+        return isinstance(node.value, ast.Name) and node.value.id == "self"
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.attr == "settings_for"
+    return isinstance(node, ast.Name) and node.id in names
+
+
+def _literal_names(node: ast.AST) -> list[str] | None:
+    if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return None
+    values = [e.value for e in node.elts if isinstance(e, ast.Constant)]
+    return values if values and all(isinstance(v, str) for v in values) else None
+
+
+def _class_keys_read(cls: type) -> set[str]:
+    """Top-level config keys one class's own source reads by a literal name."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
+    keys: set[str] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        params = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
+        names = {a.arg for a in params if a.arg in ("config", "cfg")}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and _is_config(node.value, names):
+                names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        views = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and _is_settings(node.value, set()):
+                views |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        for node in ast.walk(fn):
+            key = _key_of(node, names)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                keys.add(key.value)
+            # `self.settings.rate_hz`, `settings = self.settings_for(config); settings.model`
+            if isinstance(node, ast.Attribute) and _is_settings(node.value, views):
+                keys.add(node.attr)
+        # `for key in ("a", "b"): config.get(key)` -- resolved per loop, so two loops reusing one
+        # variable name each contribute their own names.
+        for loop in ast.walk(fn):
+            if not (isinstance(loop, ast.For) and isinstance(loop.target, ast.Name)):
+                continue
+            values = _literal_names(loop.iter)
+            if values is None:
+                continue
+            for stmt in loop.body:
+                for node in ast.walk(stmt):
+                    key = _key_of(node, names)
+                    if isinstance(key, ast.Name) and key.id == loop.target.id:
+                        keys.update(values)
+    return keys
+
+
+def _config_keys_read(cls: type) -> set[str]:
+    """Top-level config keys *cls* and the plugin bases it inherits from read by a literal name."""
+    from roqsim.plugin import Plugin
+
+    return set().union(
+        *(_class_keys_read(c) for c in cls.__mro__ if c is not Plugin and issubclass(c, Plugin))
+    )
+
+
+def _published_keys(cls: type) -> set[str]:
+    """The top-level keys *cls* publishes: its schema's, else its and its bases' ``Config::`` keys."""
+    schema = getattr(cls, "CONFIG_SCHEMA", None)
+    if schema:
+        return set(schema)
+    return {f["name"] for f in _config_parameters(cls) if "." not in f["name"]}
+
+
+def undeclared_config_reads(cls: type) -> list[str]:
+    """The config keys plugin class *cls* reads but does not publish, sorted.
+
+    Published is what :func:`get_plugin_details` reports as ``parameters``: the keys of the plugin's
+    ``CONFIG_SCHEMA`` where it declares one, else the top-level keys of its ``Config::`` block and
+    those of the plugin bases it inherits from. A key another owner puts into every config
+    (:data:`roqsim.schema.INJECTED_KEYS`) counts as published. A caller that checks a world against
+    the catalog refuses any key this returns, although the plugin honours it.
+
+    The reads are found statically, in the source of *cls* and of each plugin base it inherits from:
+    a key written as a literal -- ``config.get("rate_hz")``, ``self.config["model"]``, ``"pose" in
+    config``, or a loop over a literal tuple of names -- read from ``self.config``, ``spec.config``,
+    or a ``config``/``cfg`` parameter or a name bound to one, and an attribute of ``self.settings``
+    or ``self.settings_for(...)``. A key computed at runtime, or read by a helper outside the class,
+    is out of its reach. A key read only in order to refuse it is reported like any other, so a
+    caller that holds a plugin to an empty answer lists such keys itself.
+    """
+    from roqsim.schema import INJECTED_KEYS
+
+    return sorted(_config_keys_read(cls) - _published_keys(cls) - INJECTED_KEYS)
 
 
 # ── Module CLI (python -m roqsim.introspection <subcommand>) ─────────────────────
