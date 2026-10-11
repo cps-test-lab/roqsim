@@ -176,10 +176,10 @@ def service_for(ctx, spec, base_dir=None) -> AvoidanceService:
     a world-level entry is one a world can leave commented out, with every mover politely
     yielding to nobody.
 
-    ``spec`` is one navigator's ``avoidance:`` value: the NAME of a model, or a mapping naming one
-    with its parameters. A name rather than a boolean because there is more than one model, and
-    "yes" does not say which -- a world should read as what it is actually using. The model itself is shared, because agents can only avoid
-    each other inside one solver, so **two navigators asking for different models is refused** --
+    ``spec`` is the NAME of a model, or a mapping naming it under ``model`` with its parameters; a
+    navigator passes its ``avoidance.steer`` and ``avoidance.params``. The model itself is shared,
+    because agents can only avoid each other inside one solver, so **two navigators asking for
+    different models is refused** --
     silently giving the second one its own solver would make the two invisible to each other, which
     looks exactly like avoidance that does not work.
     """
