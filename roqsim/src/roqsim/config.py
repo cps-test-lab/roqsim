@@ -1286,6 +1286,75 @@ SIM_INTEGRATORS = ("auto", "euler", "rk4", "implicit", "implicitfast", "discrete
 #: The values ``sim.solver`` accepts: MuJoCo's constraint solvers by the name its XML uses.
 SIM_SOLVERS = ("pgs", "cg", "newton")
 
+#: The values ``sim.cone`` accepts: MuJoCo's friction cones by the name its XML uses.
+SIM_CONES = ("pyramidal", "elliptic")
+
+#: ``sim`` keys the engine writes onto a three-vector ``<option>`` field.
+_SIM_VECTORS = ("gravity", "wind")
+
+#: ``sim`` option keys that count solver passes, so a whole number of them, zero or more.
+_SIM_COUNTS = ("iterations", "ls_iterations", "noslip_iterations")
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _got(value) -> str:
+    """*value* as a refusal quotes it, saying so when YAML read a number as text.
+
+    YAML 1.1 reads ``1e-5`` -- an exponent without a decimal point -- as the string ``'1e-5'``.
+    """
+    if isinstance(value, str):
+        try:
+            float(value)
+        except ValueError:
+            return repr(value)
+        return f"the string {value!r} (YAML reads an exponent without a decimal point as text)"
+    return repr(value)
+
+
+def _validate_numbers(sim: dict) -> None:
+    """Refuse a ``sim`` value the engine would write onto MuJoCo's ``<option>`` in the wrong shape.
+
+    The engine applies these after every plugin has built, so unchecked a bad one surfaces there as
+    a bare ``TypeError`` or ``ValueError`` from a MuJoCo setter, naming neither the key nor the file.
+    """
+    for key in _SIM_VECTORS:
+        value = sim.get(key)
+        if value is None:
+            continue
+        if not (
+            isinstance(value, (list, tuple)) and len(value) == 3 and all(map(_is_number, value))
+        ):
+            raise PluginError(f"sim.{key}: expected 3 numbers, e.g. [0, 0, -9.81], got {value!r}")
+    for key in _SIM_COUNTS:
+        value = sim.get(key)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise PluginError(f"sim.{key}: expected a whole number >= 0, got {value!r}")
+    for key in ("impratio", "density", "viscosity"):
+        value = sim.get(key)
+        if value is not None and (not _is_number(value) or value < 0):
+            raise PluginError(f"sim.{key}: expected a number >= 0, got {_got(value)}")
+    timestep = sim.get("timestep")
+    if timestep is not None and (not _is_number(timestep) or timestep <= 0):
+        raise PluginError(f"sim.timestep: expected a number of seconds > 0, got {_got(timestep)}")
+    dedup = sim.get("dedup_assets")
+    if dedup is not None and not isinstance(dedup, bool):
+        raise PluginError(f"sim.dedup_assets: expected true or false, got {dedup!r}")
+
+
+def _validate_pacing(pacing) -> None:
+    """Refuse a ``sim.pacing`` the standalone driver's pacer would refuse, at load."""
+    from .clock import Pacer
+
+    try:
+        Pacer.from_config(pacing, dt=1.0)
+    except ValueError as exc:
+        raise PluginError(f"sim.pacing: {exc}") from None
+
 
 def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
     """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
@@ -1366,6 +1435,10 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = 
     _validate_seed((raw.get("sim") or {}).get("seed"))
     _validate_choice("integrator", (raw.get("sim") or {}).get("integrator"), SIM_INTEGRATORS)
     _validate_choice("solver", (raw.get("sim") or {}).get("solver"), SIM_SOLVERS)
+    _validate_choice("cone", (raw.get("sim") or {}).get("cone"), SIM_CONES)
+    _validate_numbers(raw.get("sim") or {})
+    if "pacing" in (raw.get("sim") or {}):
+        _validate_pacing(raw["sim"]["pacing"])
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
 
     component_assignments = [a for a in assignments if _is_component(a)]
