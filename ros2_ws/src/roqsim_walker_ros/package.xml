@@ -20,6 +20,9 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>roqsim_ros_bridge</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <!-- roqsim and roqsim_walker are plain pip packages (not ROS packages);
        install them into the same environment (pip install -e .). They are
