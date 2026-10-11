@@ -13,7 +13,7 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
       depth_width: null       # override the depth camera's MJCF resolution (a separate depth
       depth_height: null      #   camera only; through the colour camera, `width`/`height` apply)
       clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return"
-      clip_far: 100.0         # m
+      clip_far: 100.0         # m; both default to the device's DEFAULT_CLIP_NEAR/_FAR
       depth_encoding: 32FC1   # or 16UC1 -- see below
       depth_codec: png        # png | rvl: the 16UC1 compressedDepth companion's codec
 
@@ -88,6 +88,10 @@ class DepthCameraPlugin(CameraPlugin):
     DEPTH_ENCODINGS = ("32FC1", "16UC1")
     #: The camera depth is rendered from; ``None`` is the colour camera (see the module docstring).
     DEFAULT_DEPTH_CAMERA: str | None = None
+    #: The device's working range in metres. A device states its own here, so validation judges a
+    #: world's ``clip_near``/``clip_far`` against the same defaults the plugin then runs with.
+    DEFAULT_CLIP_NEAR = 0.3
+    DEFAULT_CLIP_FAR = 100.0
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -100,8 +104,8 @@ class DepthCameraPlugin(CameraPlugin):
         self._depth_intr: Intrinsics | None = None
         #: The depth camera's own renderer, when it is not the colour camera.
         self._depth_frames: FrameRenderer | None = None
-        self.clip_near = float(self.config.get("clip_near", 0.3))
-        self.clip_far = float(self.config.get("clip_far", 100.0))
+        self.clip_near = float(self.config.get("clip_near", self.DEFAULT_CLIP_NEAR))
+        self.clip_far = float(self.config.get("clip_far", self.DEFAULT_CLIP_FAR))
         self.depth_encoding = str(self.config.get("depth_encoding", self.DEFAULT_DEPTH_ENCODING))
         self.depth_codec = str(self.config.get("depth_codec", DEFAULT_DEPTH_CODEC))
         self._depth: np.ndarray | None = None
@@ -129,10 +133,15 @@ class DepthCameraPlugin(CameraPlugin):
                 "'depth_width'/'depth_height' size a separate depth camera; this one renders depth "
                 f"through the colour camera {camera!r}, which 'width'/'height' size"
             )
-        if float(config.get("clip_near", 0.3)) < 0:
+        clip_near = float(config.get("clip_near", self.DEFAULT_CLIP_NEAR))
+        clip_far = float(config.get("clip_far", self.DEFAULT_CLIP_FAR))
+        if clip_near < 0:
             errors.append("'clip_near' must be >= 0")
-        if float(config.get("clip_far", 100.0)) <= float(config.get("clip_near", 0.3)):
-            errors.append("'clip_far' must be > 'clip_near'")
+        if clip_far <= clip_near:
+            errors.append(
+                f"'clip_far' ({clip_far} m) must be > 'clip_near' ({clip_near} m); each defaults "
+                f"to this device's working range, {self.DEFAULT_CLIP_NEAR}-{self.DEFAULT_CLIP_FAR} m"
+            )
         encoding = str(config.get("depth_encoding", self.depth_encoding))
         if encoding not in self.DEPTH_ENCODINGS:
             errors.append(
@@ -141,9 +150,7 @@ class DepthCameraPlugin(CameraPlugin):
             )
         # Loudly at load time rather than per pixel at run time: a range this encoding cannot carry
         # would otherwise reach the wire as a wrong number, not as an error.
-        elif (
-            encoding == "16UC1" and float(config.get("clip_far", self.clip_far)) > MAX_16UC1_RANGE_M
-        ):
+        elif encoding == "16UC1" and clip_far > MAX_16UC1_RANGE_M:
             errors.append(
                 f"'clip_far' must be <= {MAX_16UC1_RANGE_M} m with depth_encoding: 16UC1 "
                 "(uint16 millimetres saturate there) -- lower it, or publish 32FC1"
@@ -156,7 +163,7 @@ class DepthCameraPlugin(CameraPlugin):
             # compressedDepth's encoder zeroes returns past its depth_max, so a camera that sees
             # further would publish two depth topics that disagree beyond that distance -- with the
             # raw one right. Refuse the pair rather than ship the disagreement.
-            if float(config.get("clip_far", self.clip_far)) > COMPRESSED_DEPTH_MAX_M:
+            if clip_far > COMPRESSED_DEPTH_MAX_M:
                 errors.append(
                     f"'clip_far' must be <= {COMPRESSED_DEPTH_MAX_M} m to offer the compressedDepth "
                     "topic (its encoder drops returns past that, so the raw and compressed streams "

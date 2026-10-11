@@ -42,6 +42,11 @@ class NavOutput(ABC):
     #: the navigator special-case it by name.
     update_hz: float | None = None
 
+    #: The navigator keys this embodiment reads, out of the ones that tune an output
+    #: (``kinematics``, ``heading_gain``, ``yaw_rate``, ...). A world that sets one this output does
+    #: not read is refused at load, naming the output, rather than having it silently ignored.
+    config_keys: tuple[str, ...] = ()
+
     def __init__(self, config: dict):
         self.config = config or {}
 

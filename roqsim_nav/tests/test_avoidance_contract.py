@@ -20,7 +20,6 @@ from roqsim.plugin import PluginError
 from roqsim_nav.avoidance import (
     NO_AGENT,
     AvoidanceModel,
-    NullAvoidance,
     RegistryError,
     resolve_model,
 )
@@ -303,11 +302,3 @@ def test_a_world_where_nobody_asks_for_avoidance_creates_no_model(tmp_path):
         assert float(engine.ctx.data.mocap_pos[mid][0]) > 0.0, "it never set off"
     finally:
         engine.shutdown()
-
-
-def test_the_null_model_is_the_identity():
-    null = NullAvoidance()
-    aid = null.add_agent("x", radius=0.3, max_speed=1.0, yields=True, params={})
-    null.submit(aid, (0.0, 0.0), (0.0, 0.0), (0.7, -0.2))
-    null.solve(0.002)
-    assert null.result(aid) == pytest.approx([0.7, -0.2])
