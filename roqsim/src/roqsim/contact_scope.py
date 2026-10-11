@@ -54,6 +54,7 @@ import mujoco
 import numpy as np
 
 from .flex import entity_flex_ids
+from .frames import entity_body
 from .presence import entity_geom_ids
 
 _log = logging.getLogger(__name__)
@@ -147,22 +148,9 @@ class ContactScope:
         return np.flatnonzero(self.qualifying(con.geom[:n], con.flex[:n]))
 
 
-def resolve_base_body(entity, body: str = "") -> str:
-    """The body an entity's observables watch: an explicit override, else its registered base.
-
-    ``base_link`` is the last resort and only reached for an entity that registered no body of its
-    own; a plugin that watches nothing must fail rather than guess, which is why the callers here
-    treat an unresolvable name as fatal.
-    """
-    prefix = entity.meta.get("prefix", "") if entity else ""
-    if body:
-        return prefix + body
-    return entity.body if entity and entity.body else prefix + "base_link"
-
-
 def resolve_contact_scope(
-    model,
-    entity,
+    ctx,
+    entity: str | None,
     *,
     plugin: str,
     body: str = "",
@@ -171,17 +159,18 @@ def resolve_contact_scope(
 ) -> ContactScope:
     """Resolve the watched subtree and the ignore list into masks, or fail loudly.
 
-    *plugin* names the caller in the errors and the log line, since what a missing body means is
-    the caller's story. The watched set is the subtree's geoms and the flexes it owns
-    (:func:`roqsim.flex.entity_flex_ids`); *ignore* and *ignore_prefixes* match geom and flex names
-    alike. Raises :class:`RuntimeError` where the base body does not resolve or its subtree carries
-    neither a geom nor a flex: a meter watching nothing reports a clean run forever, which is
-    indistinguishable from a trial that touched nothing and would be averaged in as one.
+    The watched body is *entity*'s registered root, or the body *body* names as a path within it
+    (:func:`roqsim.frames.entity_body`). *plugin* names the caller in the errors and the log line,
+    since what a missing body means is the caller's story. The watched set is the subtree's geoms
+    and the flexes it owns (:func:`roqsim.flex.entity_flex_ids`); *ignore* and *ignore_prefixes*
+    match geom and flex names alike. Raises :class:`RuntimeError` where the body does not resolve
+    or its subtree carries neither a geom nor a flex: a meter watching nothing reports a clean run
+    forever, which is indistinguishable from a trial that touched nothing and would be averaged in
+    as one.
     """
     ignore = list(ignore)
-    body_name = resolve_base_body(entity, body)
-    if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name) < 0:
-        raise RuntimeError(f"{plugin}: base body {body_name!r} not found")
+    model = ctx.model
+    body_name = model.body(entity_body(ctx, entity, body, who=plugin).index).name
 
     watched = np.zeros(model.ngeom, dtype=bool)
     watched[entity_geom_ids(model, body_name)] = True

@@ -697,11 +697,49 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 
 * ``GetSimulatorFeatures`` — advertised capabilities.
 * ``GetEntities``, ``GetEntityState``, ``SetEntityState`` — list and read/teleport entities.
+  ``GetEntities`` narrows by its name ``filter``, a POSIX Extended regular expression searched in
+  each name (unanchored, as ``regexec`` matches; character classes such as ``[[:digit:]]`` are
+  read in the POSIX locale, and a backslash before an ordinary character, which POSIX leaves
+  undefined, is refused). It also narrows by ``bounds`` of ``TYPE_SPHERE`` in the world frame,
+  keeping each entity with a geom whose bounding sphere overlaps it -- a conservative test that may
+  keep an entity whose surface stops just short. It refuses a ``categories`` or ``tags`` filter
+  and ``TYPE_BOX`` or ``TYPE_CONVEX_HULL`` bounds with ``RESULT_FEATURE_UNSUPPORTED``, and a
+  pattern or sphere that is malformed with ``RESULT_OPERATION_FAILED`` naming the fault.
+  ``SetEntityState`` takes a state in a reference frame (see below) and refuses a zero-length
+  quaternion and a NaN or infinite component with ``INVALID_POSE``. ``GetEntityState`` reports the
+  world frame. The acceleration is ignored. A non-zero twist or
+  acceleration fails with ``RESULT_OPERATION_FAILED`` for an entity without a free joint (a mocap
+  body or welded scenery), which cannot carry one.
 * ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
-* ``StepSimulation`` — step N times while paused.
-* ``ResetSimulation`` — reset the world.
+* ``StepSimulation`` — step N times while paused; answers once the steps have run, and fails when the
+  simulation stops stepping or leaves the pause first.
+* ``ResetSimulation`` — reset the world; answers once the reset has run, and fails under a driver that
+  does not reset on request.
+
+Reference frames
+````````````````
+
+``SpawnEntity``'s ``initial_pose`` and ``SetEntityState``'s state name their frame in
+``header.frame_id``. Two kinds of name are accepted:
+
+* the world frame: an empty ``frame_id`` or ``world``;
+* a present entity, by its name exactly as ``GetEntities`` lists it, meaning that entity's root
+  body. The pose is composed with that entity's world pose, read on the physics thread in the
+  same transaction that writes the new pose, so it is relative to where the entity is at that
+  moment.
+
+Every other ``frame_id`` is refused with ``INVALID_POSE``: a body path such as
+``robot/base_link``, a TF frame name, an absent entity (it is not listed, so it is not known),
+and the entity being placed named as its own frame, since the write moves that frame.
+
+A ``SetEntityState`` twist in an entity's frame is *expressed* in that entity's axes: its linear
+and angular parts are rotated into the world by the entity's orientation, and the entity's own
+velocity is not added. ``EntityState`` says the twist is "observed in" the header's frame and
+refers to the ``geometry_msgs/VelocityStamped`` convention, which tells the frame a velocity is
+observed in apart from the frame it is measured against; ``EntityState`` names only the first, so
+the motion stays measured against the world, as ``GetEntityState`` reports it.
 
 Spawning is activation, not creation
 `````````````````````````````````````
@@ -712,7 +750,8 @@ name, as ``GetSpawnables`` lists it. ``name`` may be left empty or repeat the ``
 one would be a rename, which a compiled entity cannot take. A request with no ``uri`` selects by
 ``name``, which the service does not define but older callers rely on. A ``uri`` the world does not
 carry is refused rather than approximated, because the alternative is a trial that believes it
-spawned something. Spawning CONSUMES a spawnable, since it activates one entity rather than
+spawned something; one already present is refused with ``NAME_NOT_UNIQUE``, since its name is
+taken and renaming is never allowed. Spawning CONSUMES a spawnable, since it activates one entity rather than
 copying a model: ``GetSpawnables`` lists the absent ones, ``GetEntities`` the present ones, and an
 entity moves between the two lists as it is spawned and deleted. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite a
 caller to send geometry that nothing can load.
@@ -725,6 +764,13 @@ this flips (on its geoms, and on a flex's own copies of them) and why disabling 
 not enough: ``mj_multiRay`` ignores ``contype``/``conaffinity`` and tests the real triangles, so
 it is the zeroed alpha, and the absent geom group that roqsim's raycasts mask by default, that take
 an absent obstacle out of a lidar's returns.
+
+An absent entity is not found. The service identifies an entity as ``GetEntities`` or
+``SpawnEntity`` returns it, and an absent one is neither: ``GetEntities`` does not list it and
+``GetSpawnables`` offers it. So ``DeleteEntity``, ``GetEntityState`` and ``SetEntityState`` naming
+one answer ``RESULT_NOT_FOUND``, with a message saying it is absent and can be spawned. Only
+``SpawnEntity`` takes it, which is how it appears; the pose it should appear at is the
+request's ``initial_pose``.
 
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
@@ -743,11 +789,11 @@ to spawn.
 Moving one needs a free joint
 `````````````````````````````
 
-``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
-same joint with its ``initial_pose`` -- always, since a request that states no pose asks for the
-origin; to bring an entity back where it was, state that pose. A body compiled without one is
-welded scenery: it holds the pose the world gave it, and both services refuse to move it, naming the
-weld and the ``motion: physics`` that resolves it.
+``SetEntityState`` places an entity by writing its base free joint or its mocap pose, and
+``SpawnEntity`` does the same with its ``initial_pose`` -- always, since a request that states no
+pose asks for the origin; to bring an entity back where it was, state that pose. A body compiled
+with neither is welded scenery: it holds the pose the world gave it, and both services refuse to
+move it, naming the weld and the ``motion: driven`` or ``motion: physics`` that resolves it.
 
 This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
 exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an

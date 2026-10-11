@@ -70,7 +70,7 @@ class EntityCall(SimAction):
 
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():
-            return self.waiting("waiting for the simulation", self._access)
+            return self.not_ready()
 
         name = f"{self._entity}/{self._command}"
         try:

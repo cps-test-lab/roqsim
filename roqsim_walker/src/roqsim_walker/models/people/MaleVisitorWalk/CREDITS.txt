@@ -4,5 +4,7 @@ Source:  https://fuel.gazebosim.org/1.0/OpenRobotics/models/Male visitor (versio
 Licence: CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/)
 Author:  Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: OpenRobotics
 
-Imported with roqsim_walker/tools/import_actor.py: the skin (mesh, textures,
-skeleton, skin weights) is the source's; the locomotion clips are this package's.
+Imported with `roqsim walker import-actor`: the skin (mesh, textures,
+skeleton, skin weights) is the source's. Locomotion comes from this
+package's models/anims/, which are CARLA retargets under CC-BY 4.0 --
+so this walker carries CARLA attribution too; see THIRD_PARTY.md.
