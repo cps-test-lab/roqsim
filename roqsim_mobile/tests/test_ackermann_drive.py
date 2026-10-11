@@ -462,3 +462,49 @@ def test_reset_forgets_an_ackermann_steering_command():
     for _ in range(300):
         engine.step()
     assert plugin._steer == pytest.approx(0.0, abs=1e-9)
+
+
+# -- the body the wheels are read in ---------------------------------------------------------------
+
+
+class _ChassisCarScene(_CarScene):
+    """The car rooted at ``chassis``, beside a prop called ``base_link`` that is turned round."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        spec.body("base_link").name = "chassis"
+        prop = spec.worldbody.add_body(name="base_link", pos=[3, 0, 0.5], quat=[0, 0, 0, 1])
+        prop.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.1, 0.1, 0.1])
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(
+                name=self.name, kind="robot", body="chassis", meta={"prefix": "", "namespace": ""}
+            )
+        )
+
+
+def test_the_wheels_are_read_in_the_root_the_car_registered():
+    """A base looked up by the name `base_link` would be the prop, and every wheel read backwards."""
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {
+                    f"{__name__}:_ChassisCarScene": {},
+                    "name": "robot",
+                    "components": [{"ackermann_drive": dict(CONFIG)}],
+                }
+            ],
+        }
+    )
+    engine = Engine(cfg)
+    engine.setup()
+    try:
+        plugin = _plugin(engine)
+        assert plugin.base_body == "chassis"
+        assert plugin._roll_sign == [1.0, 1.0]
+    finally:
+        engine.shutdown()

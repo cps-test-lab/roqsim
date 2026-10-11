@@ -18,7 +18,7 @@ Topic/frame naming approximates the ``zivid-ros`` driver (``color/...``, ``depth
 stream with its own ``camera_info``,
 ``zivid_optical_frame``); the exact driver names (e.g. ``color/image_color``, ``points/xyzrgba``) can
 be set via the ``topics:`` override (see ``camera_common.CameraPlugin``). Config: see
-``camera_common.CameraPlugin`` (``robot``, ``camera``, ``width``/``height``, ``fovy``,
+``camera_common.CameraPlugin`` (``camera``, ``width``/``height``, ``fovy``,
 ``rate_hz``, ``frame_id``) and ``depth_camera.DepthCameraPlugin`` (``clip_near``, ``clip_far``,
 ``depth_encoding``).
 
@@ -48,14 +48,9 @@ class ZividPlugin(DepthCameraPlugin):
     DEFAULT_RATE_HZ = 5.0
     DEFAULT_WIDTH = 480
     DEFAULT_HEIGHT = 480
-
-    def __init__(self, config=None, *, name=None, entity=None, label=None):
-        # Working-range defaults differ from the OAK-D's (0.3-100 m): the XL250 operates at
-        # 1.3-5 m (recommended 1.5-4 m). Apply them unless the world overrides.
-        cfg = dict(config or {})
-        cfg.setdefault("clip_near", 1.3)
-        cfg.setdefault("clip_far", 5.0)
-        super().__init__(cfg, name=name, entity=entity, label=label)
+    # The XL250 operates at 1.3-5 m (recommended 1.5-4 m).
+    DEFAULT_CLIP_NEAR = 1.3
+    DEFAULT_CLIP_FAR = 5.0
 
     def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         # `depth/image_raw` -- Zivid's own namespace, not under the colour prefix.

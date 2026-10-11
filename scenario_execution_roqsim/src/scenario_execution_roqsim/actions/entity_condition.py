@@ -86,7 +86,7 @@ class EntityCondition(SimAction):
         if not self._access.ready():
             # The stepped runner builds the world on the first reset, and the tree is set up before
             # that. Waiting is correct; asking for the world here would compile one as a side effect.
-            return self.waiting("waiting for the simulation")
+            return self.not_ready()
 
         poses = {}
         try:

@@ -6,7 +6,8 @@ prints. A value is printed as JSON; an array larger than ``--max-items`` numbers
 dtype, shape and range unless ``--full`` asks for all of it.
 
 Exit status: 0 on success; 2 when there is no simulator to talk to or the request names something
-that does not exist; 5 when the simulator refused a command or it timed out.
+that does not exist; 5 when the simulator refused a command or it timed out; 130 when interrupted,
+which says nothing about whether a command sent before the interrupt applied.
 """
 
 from __future__ import annotations
@@ -19,7 +20,10 @@ import time
 from .. import exit_status
 from ..ipc import ControlError, running, wire
 
-_NOTE = "2 is also no simulator found; 5 is a command the simulator refused or that timed out."
+_NOTE = (
+    "2 is also no simulator found; 5 is a command the simulator refused or that timed out. "
+    "An interrupt (Ctrl-C) exits 130."
+)
 
 
 def _parser(name: str, doc: str) -> argparse.ArgumentParser:
@@ -85,8 +89,12 @@ def run(name: str, argv: list | None, doc: str) -> int:
         _values(parser)
     elif name == "ctl":
         parser.add_argument("action", choices=("pause", "resume", "step", "reset", "state"))
-        parser.add_argument("n", nargs="?", type=int, default=1, help="steps, for step")
+        parser.add_argument(
+            "n", nargs="?", type=int, default=None, help="steps, for step (default 1)"
+        )
     args = parser.parse_args(argv)
+    if name == "ctl" and args.n is not None and args.action != "step":
+        parser.error(f"{args.action} takes no count; only step does")
     if name == "ls":
         return _ls()
     from ..control_client import Client
@@ -99,7 +107,7 @@ def run(name: str, argv: list | None, doc: str) -> int:
         refused = err.kind in ("refused", "timeout")
         return exit_status.FINDING if refused else exit_status.BAD_INPUT
     except KeyboardInterrupt:
-        return exit_status.OK
+        return exit_status.INTERRUPTED
 
 
 def _ls() -> int:
@@ -216,7 +224,9 @@ def _sub(sim, args) -> int:
 
 def _ctl(sim, args) -> int:
     action = args.action
-    result = sim.step(args.n) if action == "step" else getattr(sim, action)()
+    result = (
+        sim.step(1 if args.n is None else args.n) if action == "step" else getattr(sim, action)()
+    )
     print(json.dumps(wire.plain(result), indent=2))
     return exit_status.OK
 
