@@ -695,10 +695,9 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
   keep an entity whose surface stops just short. It refuses a ``categories`` or ``tags`` filter
   and ``TYPE_BOX`` or ``TYPE_CONVEX_HULL`` bounds with ``RESULT_FEATURE_UNSUPPORTED``, and a
   pattern or sphere that is malformed with ``RESULT_OPERATION_FAILED`` naming the fault.
-  ``SetEntityState`` takes a state in the world frame (an empty ``frame_id`` or ``world``) and
-  refuses any other frame, a zero-length quaternion and a NaN or infinite component with
-  ``INVALID_POSE``. The twist is world
-  frame, as ``GetEntityState`` reports it; the acceleration is ignored. A non-zero twist or
+  ``SetEntityState`` takes a state in a reference frame (see below) and refuses a zero-length
+  quaternion and a NaN or infinite component with ``INVALID_POSE``. ``GetEntityState`` reports the
+  world frame. The acceleration is ignored. A non-zero twist or
   acceleration fails with ``RESULT_OPERATION_FAILED`` for an entity without a free joint (a mocap
   body or welded scenery), which cannot carry one.
 * ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
@@ -708,6 +707,29 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
   simulation stops stepping or leaves the pause first.
 * ``ResetSimulation`` — reset the world; answers once the reset has run, and fails under a driver that
   does not reset on request.
+
+Reference frames
+````````````````
+
+``SpawnEntity``'s ``initial_pose`` and ``SetEntityState``'s state name their frame in
+``header.frame_id``. Two kinds of name are accepted:
+
+* the world frame: an empty ``frame_id`` or ``world``;
+* a present entity, by its name exactly as ``GetEntities`` lists it, meaning that entity's root
+  body. The pose is composed with that entity's world pose, read on the physics thread in the
+  same transaction that writes the new pose, so it is relative to where the entity is at that
+  moment.
+
+Every other ``frame_id`` is refused with ``INVALID_POSE``: a body path such as
+``robot/base_link``, a TF frame name, an absent entity (it is not listed, so it is not known),
+and the entity being placed named as its own frame, since the write moves that frame.
+
+A ``SetEntityState`` twist in an entity's frame is *expressed* in that entity's axes: its linear
+and angular parts are rotated into the world by the entity's orientation, and the entity's own
+velocity is not added. ``EntityState`` says the twist is "observed in" the header's frame and
+refers to the ``geometry_msgs/VelocityStamped`` convention, which tells the frame a velocity is
+observed in apart from the frame it is measured against; ``EntityState`` names only the first, so
+the motion stays measured against the world, as ``GetEntityState`` reports it.
 
 Spawning is activation, not creation
 `````````````````````````````````````
