@@ -483,10 +483,16 @@ stack of its own and they carry on around it.
 
 **Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
 ``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
-routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
-the route at load and holds the mover at its first point until something starts it, so a world can
-own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
-scenario owns only its timing (``entity_navigate_start``).
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` holds
+the mover at its first point until something starts it, so a world can own the trajectory --
+identical in every repetition, visible in a campaign's config diff -- while a scenario owns only its
+timing (``entity_navigate_start``).
+
+**A goal the planner cannot reach ends the route as failed**, where the mover stands: it is never
+driven along a straight leg through the wall the planner could not get round. A goal given up on
+after ``recovery.max_recovery`` attempts is skipped, and the route reports that when it ends. Either
+way ``route_status`` carries an ``error`` naming the goal, a nav2 action aborts, and
+``entity_navigate`` fails -- a route that did not reach its goals is never reported as an arrival.
 
 **One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
 three independent capabilities, each one question with one answer:
@@ -527,10 +533,11 @@ Which you want follows from what the mover is *for*:
      - ``{stop: true, steer: give_way, reroute: true}``
      - It remembers what stopped it and plans around. The only setting that lets an encounter change
        the planned path -- do not use it for a mover whose route is the experiment.
-   * - a pedestrian, behaving as pedestrians always have here
-     - nothing; the ``walker`` entry's own ``avoidance: true|false`` still works
-     - It expands to ``{steer: ..., stop: false}``: a walker steers or does nothing, and has never
-       looked ahead. Give it a ``navigator`` asking for ``stop: true`` to change that.
+   * - a pedestrian
+     - ``{stop: false}``, the default navigator a ``walker`` gets; ``{steer: give_way, stop: false}``
+       to give way
+     - A walker steers or does nothing, and does not look ahead. A nested ``navigator`` asking for
+       ``stop: true`` changes that.
 
 Two settings are worth knowing before a scene misbehaves. ``lookahead`` is clear corridor measured
 from the mover's **front**, so it is how far short of something it halts -- the 1.2 m default is
@@ -767,6 +774,28 @@ distance query per geom pair, a real share of the step budget if done every phys
 200 Hz resolves ~1.5 mm at walking pace — finer than anything downstream consumes. Beyond
 ``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
 rather than offering a number that looks measured.
+
+On ROS it publishes the same report twice, because a series and a reduction are not the same
+observable. ``clearance`` is the distance now, as a ``std_msgs/Float32``, and it is what a reader
+plots and reduces: a running minimum follows from a recorded series while the series does not follow
+from a minimum. ``clearance_report`` is the whole report — ``current``, ``minimum``, ``at_time``, ``geom``
+and ``saturated`` — as the named readings of a ``diagnostic_msgs/DiagnosticStatus``, because two of
+those fields are in no series at all. A distance does not say **what** it was measured to, nor
+whether it is a measurement or the ``distmax`` cutoff, so an experiment grading a near miss can say
+how close it came and not what it nearly hit::
+
+   ros2 topic echo /robot/clearance_report
+   # values: [{key: current, value: '1.7'}, {key: minimum, value: '0.104'},
+   #          {key: at_time, value: '12.5'}, {key: geom, value: post_geom},
+   #          {key: saturated, value: 'false'}]
+
+The two flags are about different numbers. ``saturated`` says ``current`` is the cutoff; an empty
+``geom`` says the same of ``minimum``, whose closest approach was set by a step that found nothing
+inside ``distmax``. A trial that was never near anything therefore reports ``minimum == distmax``
+naming nothing, which reads as the cutoff rather than as a plausible distance. The reduction runs
+from the last reset, which is one trial: ``on_reset`` starts it again, so a repetition does not
+inherit the previous one's near-miss. Neither endpoint is a verdict — the status level is always
+``OK``, since what counts as too close is the experiment's threshold.
 
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
@@ -1293,6 +1322,9 @@ The things the readers rely on:
   fails on a literal key that neither the block nor the schema publishes, since a caller that checks
   a world against the catalog would refuse that key in a valid world. A key read only to be refused
   with a reason (``seed`` on a sensor that draws from the run's seed) is not a setting and stays out.
+  The scan is public, ``roqsim.introspection.undeclared_config_reads(cls)``: it returns the keys a
+  plugin class reads and does not publish, so a package that registers plugins of its own can hold
+  them to the same rule in its tests.
 
 Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
 cannot be validated, so it drifts, and this block is read by a caller writing a world.
@@ -2344,9 +2376,10 @@ Four things decide whether such a world measures anything at all:
 * **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
   probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
   the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
-  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
-  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
-  docstring.
+  ``force_torque`` adds those contacts back (:class:`roqsim.flex.FlexContactWrench`), so a soft tool
+  pressing a table and a rigid tool pressing a soft object read what a sensor at that cut measures.
+  A flex lying partly inside the sensed subtree is refused, since its contacts cannot be split
+  across the cut -- the measurement is in the plugin's docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
 outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run

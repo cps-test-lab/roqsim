@@ -57,8 +57,8 @@ import mujoco
 import numpy as np
 
 from .. import endpoint
-from ..contact_scope import resolve_base_body
 from ..context import SimContext
+from ..frames import entity_body
 from ..plugin import Plugin
 from ..presence import entity_body_ids
 from ..types import JointState
@@ -97,10 +97,9 @@ class JointStatePublisherPlugin(Plugin):
         model = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        body_name = resolve_base_body(entity)
+        root = entity_body(ctx, self.robot, who="joint_state_publisher")
+        body_name = model.body(root.index).name
         bodies = set(entity_body_ids(model, body_name))
-        if not bodies:
-            raise RuntimeError(f"joint_state_publisher: base body {body_name!r} not found")
 
         if self.joints:
             jids = []

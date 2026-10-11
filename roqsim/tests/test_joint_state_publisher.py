@@ -125,3 +125,15 @@ def test_declared_at_the_top_of_a_document_it_is_refused():
 @pytest.mark.parametrize("bad", [{"rate_hz": 0}, {"joints": "wheel_joint"}])
 def test_bad_config_is_reported(bad):
     assert JointStatePublisherPlugin(bad, entity="robot").validate_config(bad) != []
+
+
+def test_an_entity_that_registered_no_body_is_refused():
+    """The joints are those of the root the entity registered; `r_base_link` is in the model, and
+    finding it by the conventional name would be a guess."""
+    ctx = SimContext(config={})
+    ctx.model = mujoco.MjModel.from_xml_string(SCENE)
+    ctx.data = mujoco.MjData(ctx.model)
+    ctx.entities.add(Entity(name="robot", kind="robot", meta={"prefix": "r_", "namespace": ""}))
+    plugin = JointStatePublisherPlugin({}, entity="robot")
+    with pytest.raises(RuntimeError, match="entity 'robot' registered no body"):
+        plugin.configure(ctx)

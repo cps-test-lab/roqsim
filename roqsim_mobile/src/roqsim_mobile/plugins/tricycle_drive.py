@@ -72,7 +72,7 @@ Config::
       drive_actuators: [left_motor, right_motor]   # VELOCITY servos; left then right for `axle`,
       drive_joints: [left_wheel, right_wheel]      # the one steered wheel for `steer_wheel`
       passive_joints: [steer_wheel_joint]          # published in joint_states, never commanded
-      base_body: base_link
+      base_body: ""                 # body the geometry is read in (default: the robot's root)
       odom_child_frame: base_link
       odom_rate_hz: 50.0
       cmd_vel_timeout: 0.0          # s; > 0 stops the vehicle when no command arrives for this long
@@ -110,6 +110,7 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
+from roqsim.frames import entity_body
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
@@ -155,7 +156,7 @@ class TricycleDrivePlugin(Plugin):
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])
         self.drive_joint_names = list(self.config.get("drive_joints") or [])
         self.passive_joint_names = list(self.config.get("passive_joints") or [])
-        self.base_body = self.config.get("base_body", "base_link")
+        self.base_body = self.config.get("base_body", "")
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         self.odom_rate_hz = float(self.config.get("odom_rate_hz", 50.0))
         self.publish_joint_states = bool(self.config.get("publish_joint_states", True))
@@ -277,12 +278,8 @@ class TricycleDrivePlugin(Plugin):
         self._drive_jid = resolve(mujoco.mjtObj.mjOBJ_JOINT, self.drive_joint_names)
         self._passive_jid = resolve(mujoco.mjtObj.mjOBJ_JOINT, self.passive_joint_names)
 
-        base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
-        if base_b < 0:
-            raise RuntimeError(
-                f"tricycle_drive: base body {prefix + self.base_body!r} not found; the geometry and "
-                f"the wheel signs are read in it"
-            )
+        base_b = entity_body(ctx, self.robot, self.base_body, who="tricycle_drive").index
+        self.base_body = m.body(base_b).name.removeprefix(prefix)
         # The reference pose, where every joint is at zero: the steered wheel points straight ahead.
         d0 = mujoco.MjData(m)
         mujoco.mj_forward(m, d0)
