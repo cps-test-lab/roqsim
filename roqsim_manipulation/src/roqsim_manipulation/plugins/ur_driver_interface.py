@@ -2,7 +2,7 @@
 
 A stack written against a real Universal Robots arm talks to the driver's controller manager and
 expects, besides the trajectory controller and the joint-state and force-torque broadcasters (which
-``arm_controller`` and ``force_torque`` provide under the driver's names), two more of its
+``arm_controller`` and ``force_torque`` provide under the driver's names), three more of its
 controllers:
 
 * ``speed_scaling_state_broadcaster`` -- the pendant's speed slider times the controller's own
@@ -14,18 +14,18 @@ controllers:
   task needs is ``io_and_status_controller/zero_ftsensor`` (``std_srvs/Trigger``), the wrist sensor's
   zero button. Here it presses the tare of the ``force_torque`` entry named by ``ft`` -- the same
   operation as that sensor's own ``tare`` endpoint, under the name the driver gives it.
-
-Both register with the controller manager under the driver's names and types, active, claiming no
-command interface, as they are on the robot.
-
 * ``joint_trajectory_controller`` -- the driver's unscaled trajectory controller, which it loads
   inactive beside the scaled one. ``ur_moveit_config`` lists both, and MoveIt chooses between them by
   their state on the controller manager: a stack whose controller manager does not list this one at
-  all gets its trajectories sent to an action nobody serves. It is listed here inactive, as the
-  driver lists it; activating it is refused with a message naming the scaled controller, which a
-  simulated arm runs at 100 % and so is the same controller. The driver's other GPIO surface (digital outputs,
-payload, tool voltage, robot and safety mode) has no simulated counterpart and is not served: a
-stack that relies on it fails at the missing name rather than reading an invented value.
+  all gets its trajectories sent to an action nobody serves. Activating it is refused with a message
+  naming the scaled controller, which a simulated arm runs at 100 % and so is the same controller.
+
+All three register with the controller manager under the driver's names and types, claiming no
+command interface; the first two active, the third inactive, as they are on the robot.
+
+The driver's other GPIO surface (digital outputs, payload, tool voltage, robot and safety mode) has
+no simulated counterpart and is not served: a stack that relies on it fails at the missing name
+rather than reading an invented value.
 
 Config -- a component of the entry that spawns the arm, AFTER the ``force_torque`` entry it names::
 
