@@ -121,18 +121,6 @@ def _foot_ground(poses, st):
     return poses
 
 
-def _wp_xy(p) -> tuple[float, float]:
-    """World (x, y) of a waypoint entry: ``[x, y]``, ``[x, y, dwell]``, or ``{pos: [x, y], dwell:
-    ...}``."""
-    if isinstance(p, dict):
-        return float(p["pos"][0]), float(p["pos"][1])
-    return float(p[0]), float(p[1])
-
-
-def _heading(a, b) -> float:
-    return math.atan2(float(b[1]) - float(a[1]), float(b[0]) - float(a[0]))
-
-
 def _approach_angle(cur, target, max_step) -> float:
     """Move ``cur`` toward ``target`` by at most ``max_step`` (shortest way)."""
     d = math.atan2(math.sin(target - cur), math.cos(target - cur))
@@ -246,7 +234,7 @@ class AnimState:
     idle: Clip
     run: Clip
     mocap: dict  # part name -> mocap id
-    patrol_wps: np.ndarray  # (N, 2) configured waypoints; the walker starts at the first
+    start: np.ndarray  # (x, y, yaw) the walker stands at after a reset: its configured pose
     skeleton: object = None  # this walker's per-rig bone table (humanoid.Skeleton)
     short: Clip = None  # slow-shuffle gait (idle->walk transition)
     turn_l: Clip = None  # in-place turn-left / turn-right (lean into turns)
@@ -268,16 +256,8 @@ class AnimState:
     pref_vel: np.ndarray = field(default_factory=lambda: np.zeros(2))
 
 
-def spec_waypoints(spec) -> list:
-    """The spec's patrol waypoints, or its single start point when it is goal-driven only."""
-    wps = list(spec.get("waypoints") or [])
-    if wps:
-        return wps
-    return [list((spec.get("start") or (0.0, 0.0, 0.0))[:2])]
-
-
 def make_anim_state(model, spec) -> AnimState:
-    wps = np.array([_wp_xy(p) for p in spec_waypoints(spec)], dtype=float)
+    start = np.array(spec.get("start") or (0.0, 0.0, 0.0), dtype=float)
     skel = to_skeleton(spec.get("skeleton"))
     st = AnimState(
         name=spec["name"],
@@ -294,11 +274,10 @@ def make_anim_state(model, spec) -> AnimState:
         skeleton=skel,
         foot_rest=_foot_rest(skel),
         sole=spec.get("sole"),
-        patrol_wps=wps.copy(),
+        start=start,
     )
-    st.pos = wps[0].copy()
-    start_yaw = float((spec.get("start") or (0.0, 0.0, 0.0))[2])
-    st.yaw = _heading(wps[0], wps[1]) if len(wps) > 1 else start_yaw
+    st.pos = start[:2].copy()
+    st.yaw = float(start[2])
     return st
 
 
