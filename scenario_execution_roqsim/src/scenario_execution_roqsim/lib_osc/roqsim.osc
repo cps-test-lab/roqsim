@@ -165,7 +165,8 @@ action entity_navigate:
     # heading is a capability to add to the navigator, not a value to pass and ignore.
     # The route replaces whatever the navigator was doing, and the entity's own configured route
     # resumes when it finishes, if it had one. A branch that is abandoned cancels the route rather
-    # than leaving the mover driving to a goal the scenario has given up on.
+    # than leaving the mover driving to a goal the scenario has given up on. A goal the navigator
+    # cannot reach, or gives up on, fails the action with the reason, never reports an arrival.
     #
     entity: string                        # roqsim entity name -- the world's `name:`, not a body
                                           #   and not a TF frame

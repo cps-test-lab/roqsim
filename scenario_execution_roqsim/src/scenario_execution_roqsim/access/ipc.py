@@ -166,7 +166,8 @@ class _IpcRoute(NavCall):
         if applied > self._seq:
             return NavOutcome(False, "a newer route preempted this one")
         if applied == self._seq and finished:
-            return NavOutcome(True, "arrived")
+            error = str(status.value["error"])
+            return NavOutcome(False, error) if error else NavOutcome(True, "arrived")
         return None
 
     def cancel(self) -> None:

@@ -1033,6 +1033,7 @@ class FakeNavHandle:
     def __init__(self):
         self.applied = 0
         self.finished = False
+        self.error = ""
         self.routes: list[list] = []
         self.cancels = 0
         self.starts = 0
@@ -1059,11 +1060,11 @@ class FakeNavHandle:
         return self._stamp()
 
     def status(self):
-        return self.applied, self.finished, 0, 0.0
+        return self.applied, self.finished, 0, 0.0, self.error
 
-    def apply(self, seq: int, *, finished: bool = False) -> None:
+    def apply(self, seq: int, *, finished: bool = False, error: str = "") -> None:
         """What the physics thread does when a posted route lands."""
-        self.applied, self.finished = seq, finished
+        self.applied, self.finished, self.error = seq, finished, error
 
 
 def _nav(ctx, entity="parcel"):
@@ -1110,6 +1111,16 @@ def test_a_newer_route_preempts_this_one_and_fails_the_branch(world):
     action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(1.0, 0.0)])
     action.update()
     handle.apply(7, finished=True)  # somebody else's route, and it finished
+    assert action.update() == py_trees.common.Status.FAILURE
+
+
+def test_a_route_that_finishes_with_an_error_fails_rather_than_arrives(world):
+    """An unreachable goal ends the route; the action must not read that as an arrival."""
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(9.0, 0.0)])
+    action.update()
+    handle.apply(1, finished=True, error="goal 1 at (9.00, 0.00) is unreachable")
     assert action.update() == py_trees.common.Status.FAILURE
 
 
