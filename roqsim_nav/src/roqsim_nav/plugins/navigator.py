@@ -56,7 +56,7 @@ grouped by what reads them::
       min_speed: 0.15         # m/s an ackermann base is never commanded below (it cannot pivot)
       face: travel            # holonomic only: travel | hold
 
-      # -- output: mocap / walker ------------------------------------------------------------
+      # -- output: mocap ---------------------------------------------------------------------
       yaw_rate: 3.0           # rad/s the body is re-faced at (0 = snap)
 
       # -- planning --------------------------------------------------------------------------
@@ -103,6 +103,19 @@ logger = logging.getLogger(__name__)
 _AUTO_ORDER = ("drive", "mocap")
 
 ROUTE_MODES = ("plan", "exact")
+
+#: The keys that tune an output rather than the navigation above it. Each output declares which of
+#: them it reads (:attr:`NavOutput.config_keys`); one set for an output that does not read it is
+#: refused, since it would otherwise be silently ignored.
+OUTPUT_KEYS = (
+    "kinematics",
+    "heading_gain",
+    "max_angular_vel",
+    "turn_in_place",
+    "min_speed",
+    "face",
+    "yaw_rate",
+)
 
 #: The three things a mover can do about what its planner could not know about -- another robot, a
 #: pedestrian, a driven prop. They are **independent capabilities, not a ladder**, and each is one
@@ -429,14 +442,7 @@ class NavigatorPlugin(Plugin):
             # route points would refuse that.
             errors.append("'loop: true' needs at least one goal to cycle through")
 
-        kin = config.get("kinematics", "auto")
-        if kin != "auto" and config.get("output") in ("mocap",):
-            # Silently ignoring a key is the failure a validator exists to prevent: a pose is
-            # written where the path says, so there is no base geometry to shape a command for.
-            errors.append(
-                "'kinematics' has no meaning with output: mocap -- the pose is written directly, "
-                "not steered"
-            )
+        errors += self._output_key_errors(config)
 
         band = config.get("obstacle_height")
         if band is not None:
@@ -472,6 +478,26 @@ class NavigatorPlugin(Plugin):
                 "'exact' promises the given polyline. Traffic is handled by stopping instead."
             )
         return errors
+
+    def _output_key_errors(self, config: dict) -> list[str]:
+        """Output keys set for a named output that does not read them, as the output declares.
+
+        Under ``output: auto`` the output is not known until the entity is, so nothing is refused.
+        """
+        ref = config.get("output", "auto")
+        if not isinstance(ref, str) or ref == "auto":
+            return []
+        try:
+            cls = resolve_output(ref, self.base_dir)
+        except RegistryError as exc:
+            return [f"'output': {exc}"]
+        reads = set(cls.config_keys)
+        return [
+            f"'{key}' has no meaning with output: {ref} -- that output does not read it"
+            f" (it reads: {', '.join(cls.config_keys) or 'none of the output keys'})"
+            for key in OUTPUT_KEYS
+            if key in config and key not in reads
+        ]
 
     # -- lifecycle -----------------------------------------------------------------------------
     def build(self, spec, ctx: SimContext) -> None:

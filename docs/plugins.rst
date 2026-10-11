@@ -570,8 +570,10 @@ schema: each key with its type, unit and default, and for the ``avoidance``, ``p
 ``recovery`` and ``action_names`` blocks the keys each accepts. A key it does not name is refused at
 load, at the top level and inside a block alike, with the nearest key it knows. The ``drive``
 output's keys (``kinematics``, ``heading_gain``, ``max_angular_vel``, ``turn_in_place``,
-``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema;
-``kinematics`` is refused under ``output: mocap``.
+``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema. Each
+output declares which of them it reads (``NavOutput.config_keys``), and under a named ``output`` a
+key it does not read is refused -- ``kinematics`` under ``output: mocap``, ``yaw_rate`` under
+``output: walker``.
 
 **The goal interface.** ``goal_endpoint``, ``actions`` and ``action_names`` say which actions a
 mover answers and under what name, in the owner's ``namespace``. nav2's ``navigate_to_pose`` and
