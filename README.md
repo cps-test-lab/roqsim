@@ -67,8 +67,9 @@ make help     # list all targets
 ```
 
 **Ready-to-run worlds** ship in the box, named by a `<package>:<world>` ref that `roqsim sim`
-takes. Every robot model also registers a `<name>_demo` world that shows that
-one robot in an empty room, which is how the commands above run. `roqsim --help` lists the core's commands and the command groups; `roqsim <group> --help` gives one line per tool.
+takes. Every wheeled base, mobile manipulator and aerial vehicle, and most arms, also register a
+`<robot>_demo` world that shows that one robot in an empty room, which is how the commands above
+run; `roqsim catalog worlds --refs` lists every world the installation offers. `roqsim --help` lists the core's commands and the command groups; `roqsim <group> --help` gives one line per tool.
 
 Headless, as fast as the machine allows, with timings:
 

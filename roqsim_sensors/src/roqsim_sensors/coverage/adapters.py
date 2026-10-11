@@ -149,7 +149,11 @@ def camera_adapter(model, data, placed: PlacedSensor) -> SensorFov:
         height = int(cfg.get("height", 480))
         fovy = float(cfg.get("fovy", 45.0))
         f = height / (2.0 * np.tan(np.radians(fovy) / 2.0))
-        intr = Intrinsics(width=width, height=height, fx=f, fy=f, cx=width / 2.0, cy=height / 2.0)
+        # A symmetric frustum's axis is the frame's centre, in pixel-centre coordinates as
+        # intrinsics_from_model publishes it.
+        intr = Intrinsics(
+            width=width, height=height, fx=f, fy=f, cx=(width - 1) / 2.0, cy=(height - 1) / 2.0
+        )
 
     # Horizontal half-angle from the intrinsics; vertical from fovy. Stored for reference -- FRUSTUM
     # membership uses the intrinsics rectangle, not these bands, but they describe the sector honestly.

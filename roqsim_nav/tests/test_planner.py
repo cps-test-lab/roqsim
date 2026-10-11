@@ -46,6 +46,28 @@ def test_planner_simplifies_a_clear_run_to_a_straight_shot():
     assert len(path) <= 2, f"line-of-sight string-pulling should collapse the path, got {path}"
 
 
+def test_a_goal_beyond_the_grid_is_planned_to_over_free_space():
+    """A runtime goal outside the extent the grid was built for is still reachable.
+
+    The grid covers the walls plus a margin, so everything beyond it is free; a goal there must be
+    planned to, not reported unreachable for lying off the raster.
+    """
+    shared = _wall_grid()
+    planner = GridPlanner(shared, inflation_radius=0.2)
+    path = planner.plan((-1.0, -1.0), (8.0, -1.0))
+    assert path, "a goal in the open beyond the grid read as unreachable"
+    assert path[-1] == pytest.approx((8.0, -1.0))
+    assert max(y for _, y in path) > 1.0, "the path crossed the wall instead of going round it"
+    assert planner.grid is not shared and shared.occupied.shape == _wall_grid().occupied.shape, (
+        "growing the grid must not touch the raster other movers share"
+    )
+
+
+def test_a_grid_already_covering_the_points_is_returned_unchanged():
+    grid = _wall_grid()
+    assert grid.covering([(-1.0, -1.0), (1.0, 1.0)]) is grid
+
+
 def test_occupancy_inflation_grows_obstacles():
     grid = _wall_grid()
     base = grid.inflate(0.0).sum()

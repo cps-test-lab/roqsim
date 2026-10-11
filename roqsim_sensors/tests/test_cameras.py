@@ -10,6 +10,7 @@ import pytest
 from roqsim_sensors.plugins.camera_common import (
     Intrinsics,
     _build_distortion_map,
+    _cv2_import_error,
     intrinsics_from_model,
 )
 from roqsim_sensors.plugins.realsense_d435 import RealsenseD435Plugin
@@ -79,7 +80,8 @@ def test_intrinsics_from_model_matches_pinhole_formula():
     expected_f = 48 / (2.0 * math.tan(math.radians(60) / 2.0))
     assert intr.width == 64 and intr.height == 48
     assert math.isclose(intr.fx, expected_f) and intr.fx == intr.fy
-    assert intr.cx == 32.0 and intr.cy == 24.0
+    # The centre of a 64 x 48 frame in pixel-centre coordinates: pixel 0 spans [-0.5, 0.5].
+    assert intr.cx == 31.5 and intr.cy == 23.5
 
 
 def test_intrinsics_from_model_falls_back_when_resolution_unset():
@@ -109,9 +111,11 @@ def test_intrinsics_come_from_the_mjcf_lens_when_sensorsize_is_set():
     assert math.isclose(intr.fx, 1330.2327, rel_tol=1e-4)
     assert math.isclose(intr.fy, 1329.3745, rel_tol=1e-4)
     assert intr.fx != intr.fy
-    # cy is BELOW centre for a positive principalpixel y: MJCF counts it up the image, ROS down.
-    assert math.isclose(intr.cx, 974.25, abs_tol=0.01)
-    assert math.isclose(intr.cy, 538.99, abs_tol=0.01)
+    # MuJoCo renders the axis at (W/2 - ppx, H/2 - ppy) in edge coordinates from the top-left
+    # corner; ROS counts pixel centres, half a pixel less. Measured on rendered points:
+    # test_spawn_sensor.py::test_the_rendered_pixels_are_where_camera_info_projects_them.
+    assert math.isclose(intr.cx, 960 - 0.5 - 14.25, abs_tol=0.01)
+    assert math.isclose(intr.cy, 540 - 0.5 - 1.01, abs_tol=0.01)
 
 
 def test_an_explicit_fovy_still_wins_over_the_mjcf_lens():
@@ -124,7 +128,7 @@ def test_an_explicit_fovy_still_wins_over_the_mjcf_lens():
     m = mujoco.MjModel.from_xml_string(xml)
     intr = intrinsics_from_model(m, 0, fovy=60)
     assert math.isclose(intr.fx, 48 / (2.0 * math.tan(math.radians(60) / 2.0)))
-    assert intr.fx == intr.fy and intr.cx == 32.0 and intr.cy == 24.0
+    assert intr.fx == intr.fy and intr.cx == 31.5 and intr.cy == 23.5
 
 
 def test_intrinsics_can_be_stated_field_by_field():
@@ -137,7 +141,7 @@ def test_intrinsics_can_be_stated_field_by_field():
     assert intr.fx == 100.0 and intr.cy == 20.0
     # The ones not stated still come from the model.
     assert math.isclose(intr.fy, 48 / (2.0 * math.tan(math.radians(60) / 2.0)))
-    assert intr.cx == 32.0
+    assert intr.cx == 31.5
 
 
 def test_distortion_defaults_to_zero_because_a_render_is_an_ideal_pinhole():
@@ -371,9 +375,11 @@ def test_d455_model_fov_matches_datasheet():
 # -- subscriber-gated rendering (unit-level; no ctx/render needed) --------------------------
 
 
-class _FakeEndpoint:
-    def __init__(self, has_subscribers=None):
-        self.has_subscribers = has_subscribers
+def _FakeEndpoint(has_subscribers=None):
+    """A bare output port, as a bridge leaves it: only its subscriber hook set."""
+    from roqsim.context import Endpoint
+
+    return Endpoint(name="image", direction="out", has_subscribers=has_subscribers)
 
 
 class _FakeCtx:
@@ -754,3 +760,96 @@ def test_a_rate_the_timestep_divides_renders_on_every_period():
             due.append(step)
     gaps = {b - a for a, b in zip(due, due[1:], strict=False)}
     assert gaps == {50}, f"capture spacing in steps: {sorted(gaps)}"
+
+
+def test_an_in_process_claim_keeps_the_render_on():
+    """A plugin reading the image on the physics thread is a consumer no transport can count.
+
+    With a bridge loaded and no subscriber, the gate closes; an in-process reader that claimed the
+    endpoint keeps it open, and releasing the claim closes it again.
+    """
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})
+    plugin._last_capture = 0.0
+    image_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    plugin._rendered = [image_ep]
+    assert plugin._due(_FakeCtx(0.2)) is False
+    image_ep.claim()
+    assert plugin._due(_FakeCtx(0.2)) is True
+    image_ep.release()
+    assert plugin._due(_FakeCtx(0.2)) is False
+    with pytest.raises(RuntimeError):
+        image_ep.release()
+
+
+def test_a_frame_carries_the_sim_time_it_was_captured_at():
+    engine = Engine(_world("roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin", rate_hz=100.0))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    engine.step()
+    first = _endpoint(engine, "image").read()
+    assert first.stamp == pytest.approx(engine.ctx.sim_time)
+    for _ in range(int(0.02 / engine.ctx.model.opt.timestep)):
+        engine.step()
+    later = _endpoint(engine, "image").read()
+    assert later.stamp > first.stamp
+    engine.shutdown()
+
+
+def _frame(noise=None, seed=1):
+    cfg = {"rate_hz": 100.0}
+    if noise is not None:
+        cfg["noise"] = noise
+    engine = Engine(_world("roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin", **cfg))
+    engine.ctx.seed = seed
+    engine.setup()
+    engine.reset()
+    engine.step()
+    rgb = _read(engine, "image").copy()
+    engine.shutdown()
+    return rgb
+
+
+def test_zero_noise_is_the_clean_frame_bit_for_bit():
+    assert np.array_equal(_frame(), _frame({"gaussian_sigma": 0.0, "blur_sigma": 0.0}))
+
+
+def test_noise_is_a_function_of_the_seed_and_degrades_the_frame():
+    clean = _frame()
+    a = _frame({"gaussian_sigma": 3.0}, seed=1)
+    b = _frame({"gaussian_sigma": 3.0}, seed=1)
+    c = _frame({"gaussian_sigma": 3.0}, seed=2)
+    assert np.array_equal(a, b)
+    assert not np.array_equal(a, c)
+    assert 1.5 < float(np.std(a.astype(float) - clean.astype(float))) < 4.0
+
+
+@pytest.mark.skipif(_cv2_import_error() is not None, reason="blur needs OpenCV")
+def test_blur_smooths_edges():
+    clean = _frame().astype(float)
+    blurred = _frame({"blur_sigma": 1.5}).astype(float)
+    grad = lambda im: np.abs(np.diff(im, axis=1)).max()  # noqa: E731
+    assert grad(blurred) < grad(clean)
+
+
+def test_noise_config_is_checked():
+    plugin = RealsenseD435Plugin({})
+    assert any("noise" in e for e in plugin.validate_config({"noise": {"sigma": 1}}))
+    assert any("noise" in e for e in plugin.validate_config({"noise": {"gaussian_sigma": -1}}))
+    assert not plugin.validate_config({"noise": {"gaussian_sigma": 2.0, "blur_sigma": 0.5}})
+
+
+def test_on_demand_renders_only_for_a_consumer_that_asks():
+    """No transport and no claim: nothing renders; a claim (or a subscriber) brings frames."""
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0, "on_demand": True})
+    plugin._last_capture = 0.0
+    image_ep = _FakeEndpoint(has_subscribers=None)
+    plugin._rendered = [image_ep]
+    assert plugin._due(_FakeCtx(0.2)) is False
+    image_ep.claim()
+    assert plugin._due(_FakeCtx(0.2)) is True
+    image_ep.release()
+    image_ep.has_subscribers = lambda: True
+    assert plugin._due(_FakeCtx(0.2)) is True
+    image_ep.has_subscribers = lambda: False
+    assert plugin._due(_FakeCtx(0.2)) is False
