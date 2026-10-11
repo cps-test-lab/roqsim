@@ -483,10 +483,16 @@ stack of its own and they carry on around it.
 
 **Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
 ``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
-routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
-the route at load and holds the mover at its first point until something starts it, so a world can
-own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
-scenario owns only its timing (``entity_navigate_start``).
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` holds
+the mover at its first point until something starts it, so a world can own the trajectory --
+identical in every repetition, visible in a campaign's config diff -- while a scenario owns only its
+timing (``entity_navigate_start``).
+
+**A goal the planner cannot reach ends the route as failed**, where the mover stands: it is never
+driven along a straight leg through the wall the planner could not get round. A goal given up on
+after ``recovery.max_recovery`` attempts is skipped, and the route reports that when it ends. Either
+way ``route_status`` carries an ``error`` naming the goal, a nav2 action aborts, and
+``entity_navigate`` fails -- a route that did not reach its goals is never reported as an arrival.
 
 **One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
 three independent capabilities, each one question with one answer:
@@ -1181,6 +1187,39 @@ nothing to drive.
 **It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
 collision -- a scenario reads the endpoint and stops the run itself.
+
+Where a step's time goes
+------------------------
+
+``roqsim sim --profile`` reports what the physics step costs as a whole, beside each plugin's hooks.
+``step_timers`` splits that step into MuJoCo's own stages -- ``POSITION`` (kinematics, inertia,
+collision broad and narrow phase, constraint assembly and projection), ``VELOCITY``, ``ACTUATION``,
+``CONSTRAINT`` (the solver) and ``ADVANCE`` (the integrator) -- which is what tells a contact-heavy
+scene, a flex and a long chain apart when each is slow for its own reason. MuJoCo keeps that split
+in ``mjData.timer`` but fills it only while a time callback is installed; the plugin installs one at
+``configure`` and removes it at ``shutdown``, and refuses to start if something else in the process
+already installed one. The callback only reads a clock, so the trajectory is the same with or
+without it.
+
+It is a measurement mode, so a world carries it switched off with the entry-level ``enabled: false``
+sibling and a run that wants the split turns it on (``--set components.step_timers.enabled=true``,
+or an override)::
+
+   components:
+     - step_timers: {every_s: 0.05, path: step_timers.csv}
+       name: step_timers
+       enabled: false
+
+Every ``every_s`` of simulated time it appends a row: ``t``, ``episode``, ``wall_s`` (since
+``configure``), then each timer's cumulative ``<timer>_us`` and ``<timer>_n`` (``step_us``,
+``forward_us``, ``pos_collision_us``, ...), with a final row at shutdown. A relative ``path`` lands
+in the run's output directory (``RUN_OUTPUT_DIR``, then ``OUTPUT_DIR``, then the working directory),
+the way ``roqsim sim`` anchors its recording. Values are cumulative and a reset zeroes them, so a
+window's share is the difference of two rows of one episode. Forward dynamics outside the timed
+sub-stages -- for a flex under a discrete integrator, the smooth-acceleration solve -- shows as
+``FORWARD`` minus its children; a step taken in two halves (a mechanism whose weight the engine
+routes through a moving base) records no ``FORWARD``. ``wall_s`` minus ``step_us`` is the time no
+MuJoCo timer covers: the plugins, the recorder and the loop.
 
 Ground that is not flat
 -----------------------

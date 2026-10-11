@@ -7,8 +7,8 @@ Implements the interfaces most useful for scenario-driven testing of the M1 turt
   * GetSpawnables          — the absent entities SpawnEntity can select, by uri
   * SpawnEntity/DeleteEntity — make a compiled entity perceivable at initial_pose, or absent
   * GetSimulationState/SetSimulationState — play/pause/stop (standalone driver)
-  * StepSimulation         — step N times while paused
-  * ResetSimulation        — reset the world
+  * StepSimulation         — step N times while paused, answering once they ran
+  * ResetSimulation        — reset the world, answering once it has
 
 Concurrency: services run on the bridge/executor thread. State changes go through the shared
 :class:`roqsim.control.RunControl`; anything touching ``data`` goes through
@@ -274,6 +274,9 @@ class SimInterfacesPlugin(Plugin):
         self._executor = None
         self._thread = None
         self._we_inited_rclpy = False
+        # One event per ResetSimulation call waiting for the reset it asked for (see _reset).
+        self._reset_lock = threading.Lock()
+        self._reset_waiters: list[threading.Event] = []
 
     def configure(self, ctx) -> None:
         self._ctx = ctx
@@ -611,19 +614,84 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _step(self, req, resp):
-        if self._ctx.control.state != ctl.PAUSED:
+        """Take the requested steps while paused, and answer once they have run.
+
+        ``StepSimulation.srv`` returns "only once stepping is complete", and a caller reads the
+        world straight after it: an answer before the steps ran would let it read the state from
+        before them. The wait has no fixed budget, since a long request legitimately takes long;
+        it fails when the simulation stops advancing (no step within
+        :data:`~roqsim_ros_bridge.physics.DEFAULT_TIMEOUT_S`) or leaves the pause first.
+        """
+        control = self._ctx.control
+        if control.state != ctl.PAUSED:
             resp.result = Result(
                 result=Result.RESULT_INCORRECT_STATE, error_message="step requires PAUSED state"
             )
             return resp
-        self._ctx.control.request_steps(max(1, int(req.steps)))
+        steps = int(req.steps)
+        if steps < 1:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"steps must be at least 1, got {steps}",
+            )
+            return resp
+        done = threading.Event()
+        outcome = {}
+
+        def finished(completed: bool) -> None:
+            outcome["completed"] = completed
+            done.set()
+
+        control.request_steps(steps, on_done=finished)
+        last = self._ctx.sim_time
+        while not done.wait(DEFAULT_TIMEOUT_S):
+            now = self._ctx.sim_time
+            if now == last:
+                resp.result = Result(
+                    result=Result.RESULT_OPERATION_FAILED,
+                    error_message=f"the simulation took no step within {DEFAULT_TIMEOUT_S} s "
+                    f"while {steps} were requested (is the physics thread stalled?)",
+                )
+                return resp
+            last = now
+        if not outcome["completed"]:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message="the simulation left the paused state before the requested steps ran",
+            )
+            return resp
         resp.result = Result(result=Result.RESULT_OK)
         return resp
 
     def _reset(self, req, resp):
+        """Reset the world, and answer once the reset has run (:meth:`on_reset`).
+
+        Only a driver that honours the run control resets on request; under any other the reset
+        never comes, and the call fails rather than answering ``RESULT_OK`` for a world that kept
+        its state.
+        """
+        done = threading.Event()
+        with self._reset_lock:
+            self._reset_waiters.append(done)
         self._ctx.control.request_reset()
+        if not done.wait(DEFAULT_TIMEOUT_S):
+            with self._reset_lock:
+                if done in self._reset_waiters:
+                    self._reset_waiters.remove(done)
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"the simulation did not reset within {DEFAULT_TIMEOUT_S} s (is the "
+                "physics thread stalled, or does this run's driver own resets?)",
+            )
+            return resp
         resp.result = Result(result=Result.RESULT_OK)
         return resp
+
+    def on_reset(self, ctx) -> None:
+        with self._reset_lock:
+            waiters, self._reset_waiters = self._reset_waiters, []
+        for done in waiters:
+            done.set()
 
     # -- physics-thread helpers ---------------------------------------------------------------
     @staticmethod
