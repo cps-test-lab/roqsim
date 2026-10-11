@@ -95,12 +95,16 @@ def _drive(goal_handle, ctx, endpoint, send, result, feedback, fill):
             goal_handle.canceled()
             return result
 
-        applied, finished, goals_left, dist_left = handle.status()
+        applied, finished, goals_left, dist_left, error = handle.status()
         if applied > seq:  # a newer goal replaced ours before we finished
             goal_handle.abort()
             return result
         if applied == seq and finished:
-            goal_handle.succeed()
+            # A route that ended short of its goals -- unreachable, or given up on -- is a failure.
+            if error:
+                goal_handle.abort()
+            else:
+                goal_handle.succeed()
             return result
 
         if applied == seq:  # our route is live -- report progress
