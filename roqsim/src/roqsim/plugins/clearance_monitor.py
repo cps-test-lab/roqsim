@@ -44,7 +44,7 @@ difference is that the threshold is then the experiment's, stated in the experim
 Config::
 
     clearance_monitor:
-      body: ""               # base body override; default: the entity's registered base
+      body: ""               # a body of the entity, as a path within it; default: its root
       ignore: [floor]        # geom NAMES that never count (default: ['floor'])
       ignore_prefixes: []    # geom name prefixes that never count
       distmax: 5.0           # [m] cutoff: beyond this the distance is not computed
@@ -80,6 +80,7 @@ import mujoco
 
 from .. import endpoint
 from ..context import SimContext
+from ..frames import entity_body
 from ..plugin import Plugin
 from ..presence import subtree_geom_ids
 from ..types import Duration, Length
@@ -145,20 +146,12 @@ class ClearanceMonitorPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
         model = ctx.model
-        entity = ctx.entities.get(self.robot)
-        prefix = entity.meta.get("prefix", "") if entity else ""
-
-        body_name = (
-            (prefix + self.body)
-            if self.body
-            else (entity.body if entity and entity.body else prefix + "base_link")
-        )
-        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if root < 0:
-            # Loudly, for the same reason contact_monitor refuses: a monitor watching nothing
-            # reports "never close to anything" forever, which is indistinguishable from a
-            # clean run and would quietly pass every trial in a campaign.
-            raise RuntimeError(f"clearance_monitor: base body {body_name!r} not found")
+        # The body the entity registered, or the one `body` names. Anything else fails loudly,
+        # for the same reason contact_monitor refuses: a monitor watching nothing reports "never
+        # close to anything" forever, which is indistinguishable from a clean run and would
+        # quietly pass every trial in a campaign.
+        root = entity_body(ctx, self.robot, self.body, who="clearance_monitor").index
+        body_name = model.body(root).name
 
         subtree = subtree_geom_ids(model, root)
         # Only geoms that can actually collide. `mj_geomDistance` is pure geometry and
