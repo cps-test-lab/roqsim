@@ -37,7 +37,7 @@ class WhereCondition(SimAction):
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():
             # As in entity_moved: the stepped runner builds the world on the first reset.
-            return self.waiting("waiting for the simulation", self._access)
+            return self.not_ready()
         poses = {}
         try:
             for name in self.names():
