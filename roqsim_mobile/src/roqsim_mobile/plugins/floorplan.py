@@ -78,7 +78,8 @@ Config::
         physical_size: 2.4              # metres one tile spans. Honoured for both a UV-less .stl (via
                                         #   texuniform) and a UV'd .obj (its UVs are scaled to match).
       light:               # a single overhead light at the floorplan centre + a global ambient
-        height: 2.5                     # metres above the floor for the light
+        height: 2.5                     # metres above the floor for the light; by default 0.15 m under
+                                        #   the walls' top when it would be at it (their tops then flicker)
         diffuse: [0.35, 0.35, 0.35]     # light colour/intensity (flat across the cone)
         cutoff: 90.0                    # spot half-angle (deg); 90 = hemisphere, no visible cone edge
         fill: [0.3, 0.3, 0.3]           # uniform global ambient (not a light); [0, 0, 0] disables it
@@ -144,6 +145,12 @@ _LIGHT_DEFAULTS = {
     "cutoff": 90.0,  # spot half-angle (deg); 90 = hemisphere, i.e. no visible cone edge
     "fill": [0.3, 0.3, 0.3],  # uniform global ambient; [0, 0, 0] disables it
 }
+
+
+#: How close to the walls' top height a light counts as at it, and how far under it the default
+#: light hangs when the default height would be there (see ``_add_lights``).
+_LIGHT_CLEAR_OF_WALL_TOP = 0.05
+_LIGHT_BELOW_WALL_TOP = 0.15
 
 
 def _boxes_as_points(boxes: list) -> list:
@@ -455,7 +462,10 @@ class FloorplanPlugin(Plugin):
         floor.material = "floor_mat"
         floor.friction = [float(v) for v in floor_cfg["friction"]]
 
-        self._add_lights(spec, (cx, cy))
+        wall_top = (
+            None if mesh else float(self.config.get("height", self.SEGMENT_DEFAULTS["height"]))
+        )
+        self._add_lights(spec, (cx, cy), wall_top)
 
         wall_raw = self.config.get("wall") or {}
         wall_mat = surface_material(spec, "wall_grid", "wall_mat", wall_raw, _WALL_DEFAULTS)
@@ -465,7 +475,7 @@ class FloorplanPlugin(Plugin):
         else:
             self._add_wall_boxes(spec, boxes, wall_mat)
 
-    def _add_lights(self, spec, floor_center) -> None:
+    def _add_lights(self, spec, floor_center, wall_top: float | None = None) -> None:
         """A single overhead light at the floorplan centre + a uniform global ambient.
 
         The light is a spotlight with ``exponent = 0`` so its intensity is flat across the cone
@@ -473,14 +483,32 @@ class FloorplanPlugin(Plugin):
         radius. ``fill`` is applied as the scene's global ambient rather than another positional light,
         so it lifts wall-shadowed corners evenly instead of adding a second hotspot.
         """
-        cfg = {**_LIGHT_DEFAULTS, **(self.config.get("light") or {})}
+        light_raw = self.config.get("light") or {}
+        cfg = {**_LIGHT_DEFAULTS, **light_raw}
+        height = float(cfg["height"])
+        # A spot's cone edge is the horizontal plane through it, and at a 90-degree cutoff that plane
+        # is lit or not by rounding: a light at the walls' top height puts their top faces -- and a
+        # ceiling laid on them -- on that edge, and they flicker as a camera moves. The default light
+        # is moved under the walls' top; a light the world placed there is reported, not moved.
+        if wall_top is not None and abs(height - wall_top) < _LIGHT_CLEAR_OF_WALL_TOP:
+            if "height" in light_raw:
+                logger.warning(
+                    "floorplan[%s]: light.height %.3g m is the walls' height %.3g m: their tops lie on "
+                    "the light's cone edge and flicker in a moving camera; hang it %.2g m lower",
+                    self.label,
+                    height,
+                    wall_top,
+                    _LIGHT_BELOW_WALL_TOP,
+                )
+            else:
+                height = wall_top - _LIGHT_BELOW_WALL_TOP
         fill = [float(v) for v in cfg["fill"]]
         if any(fill):
             spec.visual.headlight.ambient = fill
 
         cx, cy = floor_center
         light = spec.worldbody.add_light()
-        light.pos = [cx, cy, float(cfg["height"])]
+        light.pos = [cx, cy, height]
         light.dir = [0, 0, -1]
         light.diffuse = [float(v) for v in cfg["diffuse"]]
         light.exponent = 0.0  # flat across the cone -> no hotspot
