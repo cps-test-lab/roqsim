@@ -14,9 +14,10 @@ components:
   # `d435_color` camera it renders from. Same line the ur5e draws for its force-torque sensor: the
   # arm's contribution is the mount (a camera element at the vendor's own mount pose); whether a run
   # renders from it, at what rate, and whether it reprojects to a point cloud are properties of the
-  # experiment. A world that wants it adds:
+  # experiment. A world that wants it adds, to the arm's spawn entry:
   #
-  #     realsense_d435: {arm: omx, depth_camera: d435_color, depth: true, points: true}
+  #     components:
+  #       - realsense_d435: {depth_camera: d435_color, depth: true, points: true}
 
 # Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. The tool point
 # between the welded fingers.

@@ -264,3 +264,15 @@ def test_a_failed_save_leaves_the_world_untouched(tmp_path):
         save_view(path, VIEW)
     assert path.read_text() == original
     assert list(tmp_path.iterdir()) == [path]  # no temp file left behind
+
+
+def test_a_save_keeps_the_worlds_permissions(tmp_path):
+    """The rewritten world replaces the old one, so it must carry the old one's mode: a world in a
+    group-writable tree that came back owner-only would lock everyone else out of it."""
+    import stat
+
+    path = tmp_path / "world.yaml"
+    path.write_text("sim:\n  name: Lab\n\ncomponents:\n  - dummy: {}\n")
+    path.chmod(0o664)
+    save_view(path, VIEW)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o664
