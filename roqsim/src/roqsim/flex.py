@@ -42,7 +42,7 @@ The rules, as measured on 3.14.0:
    the experiment is about.
 
 ``sim.integrator: auto`` (the default) resolves to ``discrete`` for a model with a discrete flex and
-to ``implicitfast`` otherwise, so a world without one runs exactly as it did before flexes existed.
+to ``implicitfast`` otherwise.
 """
 
 from __future__ import annotations
@@ -61,8 +61,7 @@ _log = logging.getLogger(__name__)
 AUTO = "auto"
 
 #: What ``auto`` resolves to for a model with no discrete flex. The velocity-servo wheel drives need
-#: an implicit integrator for stability (Euler blows them up), and ``implicitfast`` was roqsim's
-#: unconditional integrator before ``auto`` existed, so every rigid world keeps it.
+#: an implicit integrator for stability (Euler blows them up).
 RIGID_DEFAULT = "implicitfast"
 
 #: The integrator a discrete flex requires (rule 1).

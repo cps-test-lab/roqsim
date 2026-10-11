@@ -28,8 +28,7 @@ class Pacer:
     the timing it asked for. Falling behind is absorbed deliberately (see :meth:`wait`), so
     without a counter the run simply produces slower sim time and says nothing -- a campaign
     then has to reconstruct the shortfall from ``run.clock_map.csv`` afterwards, if anyone
-    thinks to look. Observed on a lone run that held 0.34x realtime for five minutes and
-    reported nothing before its job deadline killed it.
+    thinks to look.
     """
 
     def __init__(self, dt: float, factor: float = 1.0, realtime: bool = True):
