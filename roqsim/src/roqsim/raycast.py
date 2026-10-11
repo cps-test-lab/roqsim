@@ -2,9 +2,8 @@
 
 **The visibility mask is the default, not an argument you remember.** ``mj_multiRay``'s ``geomgroup``
 of ``None`` means *every* group, including :data:`roqsim.presence.ABSENT_GEOM_GROUP` -- so a caller
-that omits the mask sees entities that have been made absent. That is not hypothetical: the 3D lidars
-shipped passing ``None``, and :func:`roqsim.presence.visible_geomgroup_mask` carried a standing
-warning listing the raycasters that skipped it. Here the mask is what you get unless you write
+that omits the mask sees entities that have been made absent, and nothing downstream can tell. Here
+the mask is what you get unless you write
 ``geomgroup=None`` on purpose, which turns "forgot the mask" from the default into a visible choice.
 
 Threading this is unsafe, and that is measured rather than assumed

@@ -402,6 +402,34 @@ def test_roqsim_sim_control_none_serves_nothing(tmp_path, monkeypatch, capsys):
     assert not list(tmp_path.rglob("*.json"))
 
 
+def test_a_killed_simulators_registration_and_sockets_are_removed(tmp_path, monkeypatch):
+    # A simulator killed outright runs no cleanup: its registration and default sockets stay behind.
+    import json
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    child = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    dead = int(child.stdout)
+    directory = ipc.runtime_dir()
+    directory.mkdir(parents=True)
+    left = [directory / f"{dead}.json", directory / f"{dead}.sock", directory / f"{dead}.sock.pub"]
+    left[0].write_text(json.dumps({"pid": dead, "uri": f"ipc://{left[1]}"}))
+    for path in left[1:]:
+        path.touch()
+    live = [directory / f"{os.getpid()}.sock", directory / f"{os.getpid()}.sock.pub"]
+    for path in live:
+        path.touch()
+    assert ipc.running() == []
+    assert [p for p in left if p.exists()] == []
+    assert all(p.exists() for p in live), "a live process's sockets are not the cleanup's"
+
+
 def test_discovery_finds_the_only_running_simulator(uri):
     with Sim(uri):
         assert ipc.discover() == uri
@@ -429,3 +457,24 @@ def test_describe_names_the_endpoint_on_the_other_transports(uri):
     with Sim(uri, Hinted({}, entity="box", label="base"), Wire({})), Client(uri) as sim:
         entry = sim.describe("box/base/odom")
         assert entry["bridges"] == {"wire": {"topic": "/resolved/odom"}}
+
+
+def test_ctl_refuses_a_count_only_step_takes(capsys):
+    from roqsim.control_cli.ctl import main as ctl_main
+
+    with pytest.raises(SystemExit) as exc:
+        ctl_main(["pause", "5", "--control", "ipc:///nonexistent.sock"])
+    assert exc.value.code == 2
+    assert "pause takes no count" in capsys.readouterr().err
+
+
+def test_an_interrupted_command_does_not_exit_as_a_success(monkeypatch):
+    import roqsim.control_client as control_client
+    from roqsim import exit_status
+
+    class _Interrupted:
+        def __init__(self, *a, **k):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(control_client, "Client", _Interrupted)
+    assert call_main(["box/tank/drain", "3"]) == exit_status.INTERRUPTED == 130

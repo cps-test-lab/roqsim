@@ -47,6 +47,7 @@ ASSET_FOLDER_GLOBS = (
     "roqsim_assets/src/roqsim_assets/assets/*",
     "roqsim_assets/src/roqsim_assets/models/*",
     "roqsim_walker/src/roqsim_walker/models/people/*",
+    "roqsim_walker/src/roqsim_walker/models/anims/*",
     "roqsim_scenes/src/roqsim_scenes/scenes/*",
 )
 

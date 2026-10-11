@@ -4,8 +4,8 @@ A robot/arm ships a ``<model>.manifest.yaml`` next to its MJCF listing the contr
 that are intrinsic to it (a diff-drive + lidar for a mobile base, an arm_controller for a
 manipulator). A spawn plugin implements :meth:`roqsim.plugin.Plugin.expand` by delegating to
 :func:`expand_manifest`, so a world that just spawns the model gets those plugins without
-re-declaring them -- and any spawn plugin (mobile, arm, ...) reuses the same mechanism, differing
-only in the config key its injected plugins use to name their entity (``robot`` vs ``arm``).
+re-declaring them -- and any spawn plugin (mobile, arm, ...) reuses the same mechanism: an injected
+plugin belongs to the entity whose entry it is nested under, so no config key names it.
 """
 
 from __future__ import annotations
@@ -261,7 +261,7 @@ def expand_manifest(
 
     The model is resolved via :func:`roqsim.models.resolve_model` (so it may live in any installed
     package), and its ``<model>.manifest.yaml`` manifest is read from beside the resolved file. Each
-    (a mobile spawn wires ``robot: <name>``, an arm spawn ``arm: <name>``) and inherits the spawn's
+    entry is injected as a component of the spawn, owned by its address, and inherits the spawn's
     ``prefix`` -- so a build-time plugin (e.g. ``fiducial_marker`` welding a geom onto a spawned body)
     can form prefixed names like ``<prefix>wrist_3_link`` before the entity registry exists; runtime
     plugins keep reading the prefix from the entity. Distinct entities (two arms) never collide.
