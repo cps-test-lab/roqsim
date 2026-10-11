@@ -468,6 +468,22 @@ def _spawn_target(req, names):
     return uri, None
 
 
+def _absent(name) -> Result:
+    """``RESULT_NOT_FOUND`` for an entity the world compiled but holds absent.
+
+    The service identifies an entity as ``GetEntities`` or ``SpawnEntity`` returns it, and neither
+    returns an absent one: ``GetEntities`` does not list it and ``GetSpawnables`` offers it for
+    spawning. So by the service's terms it does not exist, and naming it is "no match for input".
+    """
+    return Result(
+        result=Result.RESULT_NOT_FOUND,
+        error_message=(
+            f"entity {name!r} is absent, and an absent entity can only be spawned: "
+            "get_spawnables lists it, and spawn_entity brings it in."
+        ),
+    )
+
+
 def _unsupported_spawn_request(req):
     """``(result_code, message)`` for a request this simulator cannot serve as asked, else ``None``.
 
@@ -733,7 +749,8 @@ class SimInterfacesPlugin(Plugin):
 
         Its pose does not move. Parking it out of sight instead would leave a free body
         accelerating under gravity for as long as it stays away, so it would return with
-        whatever velocity it had accumulated.
+        whatever velocity it had accumulated. An entity already absent is not found
+        (:func:`_absent`), as it is for every service that names one.
         """
         return self._set_presence(req.entity, False, resp, verb="delete")
 
@@ -748,15 +765,15 @@ class SimInterfacesPlugin(Plugin):
                 ),
             )
             return resp
-        if bool(entity.present) == bool(present):
+        if not present and not entity.present:
+            resp.result = _absent(name)
+            return resp
+        if present and entity.present:
             # A spawn of a present entity asks for a name a listed entity already holds, which
             # SpawnEntity.srv answers with its own NAME_NOT_UNIQUE (renaming is never allowed here).
-            code = (
-                SpawnEntity.Response.NAME_NOT_UNIQUE if present else Result.RESULT_OPERATION_FAILED
-            )
             resp.result = Result(
-                result=code,
-                error_message=f"entity {name!r} is already {'present' if present else 'absent'}",
+                result=SpawnEntity.Response.NAME_NOT_UNIQUE,
+                error_message=f"entity {name!r} is already present",
             )
             return resp
         # Physics-thread only, like every other write to model/data -- and WAITED FOR, so RESULT_OK
@@ -832,6 +849,9 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
             )
             return resp
+        if not entity.present:
+            resp.result = _absent(req.entity)
+            return resp
         holder = {}
         run_on_physics(self._ctx, lambda c: holder.update(self._read_body(c, entity.body)))
         if not holder:
@@ -867,6 +887,11 @@ class SimInterfacesPlugin(Plugin):
             resp.result = Result(
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
             )
+            return resp
+        # Not placed while absent: a pose written now would be one nobody can observe, and
+        # spawn_entity states the pose an entity appears at.
+        if not entity.present:
+            resp.result = _absent(req.entity)
             return resp
         frame, refusal = _reference_frame(
             req.state, req.entity, self._ctx.entities, field="the state"

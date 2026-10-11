@@ -766,7 +766,7 @@ class SpawnArmPlugin(Plugin):
         from the copy published on the entity. Those two must agree, or the arm spawns in one pose and
         is immediately servoed to another.
         """
-        return ([self.rail_home] + self.home) if (self.rail and self.home) else self.home
+        return [self.rail_home, *self.home] if self.rail else self.home
 
     def _apply_home(self, ctx: SimContext) -> None:
         home = self._home_vector()

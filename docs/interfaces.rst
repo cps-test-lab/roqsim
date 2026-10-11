@@ -755,6 +755,13 @@ not enough: ``mj_multiRay`` ignores ``contype``/``conaffinity`` and tests the re
 it is the zeroed alpha, and the absent geom group that roqsim's raycasts mask by default, that take
 an absent obstacle out of a lidar's returns.
 
+An absent entity is not found. The service identifies an entity as ``GetEntities`` or
+``SpawnEntity`` returns it, and an absent one is neither: ``GetEntities`` does not list it and
+``GetSpawnables`` offers it. So ``DeleteEntity``, ``GetEntityState`` and ``SetEntityState`` naming
+one answer ``RESULT_NOT_FOUND``, with a message saying it is absent and can be spawned. Only
+``SpawnEntity`` takes it, which is how it appears; the pose it should appear at is the
+request's ``initial_pose``.
+
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
 
