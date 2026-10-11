@@ -1,6 +1,7 @@
-# A walker driven through poses over ROS 2 -- the nav-through-poses demo world.
+# A walker driven through poses over ROS 2 -- the nav-through-poses demo world. The walker is
+# `roqsim_walker`'s, a pip package to install beside this one.
 #
-#   ros2 launch roqsim_walker_ros walker_nav.launch.py
+#   ros2 launch roqsim_nav_ros walker_nav.launch.py
 #
 # then, in another sourced shell:
 #

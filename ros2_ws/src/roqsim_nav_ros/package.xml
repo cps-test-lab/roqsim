@@ -17,6 +17,9 @@
   <exec_depend>roqsim_nav_interfaces</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>roqsim_ros_bridge</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
   <test_depend>geometry_msgs</test_depend>
