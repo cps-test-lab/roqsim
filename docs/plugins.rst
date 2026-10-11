@@ -1218,6 +1218,39 @@ a command a scenario sends when its own condition says to
 ordinary campaign factor rather than a second world file. ``robot/attachment/attached`` reports the
 state for a stack that only wants to watch.
 
+Where a step's time goes
+------------------------
+
+``roqsim sim --profile`` reports what the physics step costs as a whole, beside each plugin's hooks.
+``step_timers`` splits that step into MuJoCo's own stages -- ``POSITION`` (kinematics, inertia,
+collision broad and narrow phase, constraint assembly and projection), ``VELOCITY``, ``ACTUATION``,
+``CONSTRAINT`` (the solver) and ``ADVANCE`` (the integrator) -- which is what tells a contact-heavy
+scene, a flex and a long chain apart when each is slow for its own reason. MuJoCo keeps that split
+in ``mjData.timer`` but fills it only while a time callback is installed; the plugin installs one at
+``configure`` and removes it at ``shutdown``, and refuses to start if something else in the process
+already installed one. The callback only reads a clock, so the trajectory is the same with or
+without it.
+
+It is a measurement mode, so a world carries it switched off with the entry-level ``enabled: false``
+sibling and a run that wants the split turns it on (``--set components.step_timers.enabled=true``,
+or an override)::
+
+   components:
+     - step_timers: {every_s: 0.05, path: step_timers.csv}
+       name: step_timers
+       enabled: false
+
+Every ``every_s`` of simulated time it appends a row: ``t``, ``episode``, ``wall_s`` (since
+``configure``), then each timer's cumulative ``<timer>_us`` and ``<timer>_n`` (``step_us``,
+``forward_us``, ``pos_collision_us``, ...), with a final row at shutdown. A relative ``path`` lands
+in the run's output directory (``RUN_OUTPUT_DIR``, then ``OUTPUT_DIR``, then the working directory),
+the way ``roqsim sim`` anchors its recording. Values are cumulative and a reset zeroes them, so a
+window's share is the difference of two rows of one episode. Forward dynamics outside the timed
+sub-stages -- for a flex under a discrete integrator, the smooth-acceleration solve -- shows as
+``FORWARD`` minus its children; a step taken in two halves (a mechanism whose weight the engine
+routes through a moving base) records no ``FORWARD``. ``wall_s`` minus ``step_us`` is the time no
+MuJoCo timer covers: the plugins, the recorder and the loop.
+
 Ground that is not flat
 -----------------------
 
