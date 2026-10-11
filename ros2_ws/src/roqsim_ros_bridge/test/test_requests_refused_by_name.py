@@ -11,7 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from simulation_interfaces.msg import EntityCategory, EntityFilters, Result
-from simulation_interfaces.srv import GetEntities, SetEntityState
+from simulation_interfaces.srv import GetEntities, SetEntityState, SpawnEntity
 
 import roqsim_ros_bridge.sim_interfaces as mod
 from roqsim_ros_bridge.sim_interfaces import SimInterfacesPlugin
@@ -23,7 +23,7 @@ def _plugin():
     plugin = SimInterfacesPlugin()
     entities = SimpleNamespace(
         names=lambda present_only=False: list(NAMES),
-        get=lambda name: SimpleNamespace(body="b", meta={}),
+        get=lambda name: SimpleNamespace(body="b", meta={}, present=True),
     )
     plugin._ctx = SimpleNamespace(entities=entities)
     return plugin
@@ -113,3 +113,29 @@ def test_a_near_unit_quaternion_is_normalised(monkeypatch):
     assert resp.result.result == Result.RESULT_OK
     (args,) = written
     assert args[3] == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_a_non_finite_pose_is_invalid(monkeypatch):
+    req = SetEntityState.Request(entity="obstacle_0")
+    req.state.pose.position.x = float("nan")
+    resp, written = _set(req, monkeypatch)
+    assert resp.result.result == SetEntityState.Response.INVALID_POSE
+    assert not written
+
+
+def test_spawning_a_present_entity_is_name_not_unique():
+    """The name is held by a listed entity and renaming is never allowed here, which
+    SpawnEntity.srv answers with its own code rather than the generic failure."""
+    req = SpawnEntity.Request(uri="obstacle_0")
+    resp = _plugin()._spawn_entity(req, SpawnEntity.Response())
+    assert resp.result.result == SpawnEntity.Response.NAME_NOT_UNIQUE
+    assert "already present" in resp.result.error_message
+
+
+def test_a_non_finite_twist_is_refused(monkeypatch):
+    req = SetEntityState.Request(entity="obstacle_0")
+    req.state.twist.angular.z = float("inf")
+    resp, written = _set(req, monkeypatch)
+    assert resp.result.result == Result.RESULT_OPERATION_FAILED
+    assert "NaN or infinite" in resp.result.error_message
+    assert not written
