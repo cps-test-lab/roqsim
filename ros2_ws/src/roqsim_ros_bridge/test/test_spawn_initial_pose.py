@@ -24,6 +24,7 @@ from simulation_interfaces.srv import SpawnEntity
 from roqsim_ros_bridge.sim_interfaces import (
     _already_at,
     _pose_from,
+    _reference_frame,
     _resource_of,
     _spawn_target,
     _spawnable,
@@ -221,16 +222,28 @@ def test_renaming_is_refused_rather_than_ignored():
     assert "allow_renaming" in message
 
 
+class _NoEntities:
+    @staticmethod
+    def get(name):
+        return None
+
+
 def test_an_unknown_frame_is_refused():
-    code, message = _unsupported_spawn_request(_Request(initial_pose=_Stamped(frame_id="map")))
-    assert code == SpawnEntity.Response.INVALID_POSE
-    assert "map" in message
+    frame, message = _reference_frame(
+        _Stamped(frame_id="map"), "obstacle_0", _NoEntities, field="initial_pose"
+    )
+    assert frame is None
+    assert "'map'" in message
 
 
 @pytest.mark.parametrize("frame_id", ["", "world"])
 def test_the_world_frame_is_accepted_by_either_spelling(frame_id):
     """Empty is the service's default for the world frame; 'world' is the name it gives it."""
-    assert _unsupported_spawn_request(_Request(initial_pose=_Stamped(frame_id=frame_id))) is None
+    stamped = _Stamped(frame_id=frame_id)
+    assert _reference_frame(stamped, "obstacle_0", _NoEntities, field="initial_pose") == (
+        None,
+        None,
+    )
 
 
 def test_an_ordinary_request_is_supported():

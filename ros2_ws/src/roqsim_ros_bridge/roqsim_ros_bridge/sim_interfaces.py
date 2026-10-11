@@ -101,9 +101,74 @@ def _pose_from(msg):
 
 
 def _foreign_frame(stamped) -> str:
-    """The frame a stamped request states, when it is not the world frame this simulator knows."""
+    """The frame a stamped request states, when it is not the world frame."""
     frame_id = getattr(getattr(stamped, "header", None), "frame_id", "")
     return frame_id if frame_id and frame_id not in _WORLD_FRAMES else ""
+
+
+#: What a request's ``frame_id`` may name, for the refusal of any other.
+_KNOWN_FRAMES = (
+    "This simulator knows the world frame (an empty frame_id or 'world') and each present entity "
+    "by its name exactly as get_entities lists it, meaning that entity's root body; a body path "
+    "or a TF frame name is not a frame it knows."
+)
+
+
+def _reference_frame(stamped, subject, entities, *, field):
+    """``(entity, None)`` for the entity a stamped request's frame names, or ``(None, refusal)``.
+
+    ``(None, None)`` is the world frame. Any other ``frame_id`` must be exactly the name of an
+    entity ``GetEntities`` lists, and then means that entity's root body -- ``SpawnEntity.srv``
+    asks for a frame "known to the simulator, e.g. of an object spawned earlier", and a present
+    entity is what this simulator knows by name. An absent entity is not listed, so as a frame it
+    is unknown. *subject* named as its own frame is refused: the write moves that frame, so the
+    pose it states would hold of neither the frame before the write nor the one after it.
+    """
+    frame_id = _foreign_frame(stamped)
+    if not frame_id:
+        return None, None
+    if frame_id == subject:
+        return None, (
+            f"{field} is stated in the frame of {subject!r} itself, which the request moves, so "
+            "it names no fixed frame. State it in the world frame or another entity's."
+        )
+    entity = entities.get(frame_id)
+    if entity is None or not entity.present or not getattr(entity, "body", None):
+        return None, f"{field} is stated in frame {frame_id!r}, which is not one it knows. " + (
+            _KNOWN_FRAMES
+        )
+    return entity, None
+
+
+def _quat_mul(a, b):
+    """The Hamilton product ``a * b`` of two ``(w, x, y, z)`` quaternions."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    )
+
+
+def _rotate(quat, vec):
+    """*vec* rotated by the unit ``(w, x, y, z)`` quaternion *quat*."""
+    w, x, y, z = quat
+    _, rx, ry, rz = _quat_mul(_quat_mul(quat, (0.0, *vec)), (w, -x, -y, -z))
+    return (rx, ry, rz)
+
+
+def _in_world(frame, pose):
+    """*pose*, stated in the frame whose world pose is *frame*, as a world pose."""
+    (fp, fq), (p, q) = frame, pose
+    offset = _rotate(fq, p)
+    quat = _quat_mul(fq, q)
+    norm = math.sqrt(sum(c * c for c in quat))
+    return (
+        tuple(a + b for a, b in zip(fp, offset, strict=True)),
+        tuple(c / norm for c in quat),
+    )
 
 
 #: POSIX character classes in the POSIX locale, as Python character-set contents.
@@ -438,8 +503,9 @@ def _unsupported_spawn_request(req):
     ``get_simulator_features`` already says by advertising no ``spawn_formats``; a namespace,
     because an entity's name is settled when the model compiles; renaming, because spawning here
     SELECTS an entity by name, so an existing name is the required case rather than the collision
-    ``allow_renaming`` resolves; and a frame, because the service requires one the simulator
-    knows, and this one knows only the world frame the empty default already names.
+    ``allow_renaming`` resolves.
+
+    The frame of ``initial_pose`` is not here either: :func:`_reference_frame` resolves it.
     """
     if _resource_of(req)[1]:
         return SpawnEntity.Response.UNSUPPORTED_FORMAT, (
@@ -457,12 +523,6 @@ def _unsupported_spawn_request(req):
             "'allow_renaming' cannot be honoured: spawning here selects the entity the world "
             "compiled under this name, so an existing name is what the request needs rather than "
             "a collision to rename around. Ask for the name you want."
-        )
-    frame_id = _foreign_frame(req.initial_pose)
-    if frame_id:
-        return SpawnEntity.Response.INVALID_POSE, (
-            f"initial_pose is stated in frame {frame_id!r}, which this simulator does not know. "
-            "It places entities in the world frame, which the empty default already names."
         )
     return None
 
@@ -559,7 +619,8 @@ class SimInterfacesPlugin(Plugin):
         f.custom_info = (
             "roqsim bridge (M1 subset); spawn/delete activate entities the world compiled, "
             "spawn selecting one by the uri get_spawnables lists and placing a free-jointed one "
-            "at initial_pose (world frame only) -- the model is never rebuilt at runtime"
+            "at initial_pose (in the world frame or a present entity's) -- the model is never "
+            "rebuilt at runtime"
         )
         resp.features = f
         return resp
@@ -656,6 +717,9 @@ class SimInterfacesPlugin(Plugin):
         is. An entity the model welded cannot be moved at all, so for it the request succeeds only
         if it is already at the pose asked for, and is refused otherwise rather than appearing
         somewhere else under a RESULT_OK.
+
+        The pose is stated in the world frame or in a present entity's (:func:`_reference_frame`);
+        an entity's frame is read where the pose is written, in the same physics transaction.
         """
         name, unsupported = _spawn_target(req, self._ctx.entities.names())
         unsupported = unsupported or _unsupported_spawn_request(req)
@@ -672,7 +736,13 @@ class SimInterfacesPlugin(Plugin):
                 result=SpawnEntity.Response.INVALID_POSE, error_message=f"initial_pose: {invalid}"
             )
             return resp
-        return self._set_presence(name, True, resp, verb="spawn", pose=pose)
+        frame, refusal = _reference_frame(
+            req.initial_pose, name, self._ctx.entities, field="initial_pose"
+        )
+        if refusal:
+            resp.result = Result(result=SpawnEntity.Response.INVALID_POSE, error_message=refusal)
+            return resp
+        return self._set_presence(name, True, resp, verb="spawn", pose=pose, frame=frame)
 
     def _delete_entity(self, req, resp):
         """Make an entity absent: invisible to sensors, untouchable, and unlisted.
@@ -684,7 +754,7 @@ class SimInterfacesPlugin(Plugin):
         """
         return self._set_presence(req.entity, False, resp, verb="delete")
 
-    def _set_presence(self, name, present, resp, *, verb, pose=None):
+    def _set_presence(self, name, present, resp, *, verb, pose=None, frame=None):
         entity = self._ctx.entities.get(name)
         if entity is None:
             resp.result = Result(
@@ -721,9 +791,16 @@ class SimInterfacesPlugin(Plugin):
         outcome = {}
 
         def _apply(ctx):
-            if pose is not None and not place_body(ctx, entity, pose[0], pose[1]):
+            target = pose
+            if target is not None and frame is not None:
+                at = self._frame_pose(ctx, frame)
+                if at is None:
+                    outcome["frame_gone"] = True
+                    return
+                target = _in_world(at, target)
+            if target is not None and not place_body(ctx, entity, target[0], target[1]):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
-                if not _already_at(state, pose):
+                if not _already_at(state, target):
                     outcome["welded_at"] = state.get("pos")
                     return
             set_present(ctx, entity, present)
@@ -734,6 +811,12 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not apply {verb} {name!r} within "
                 f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
+            )
+            return resp
+        if outcome.get("frame_gone"):
+            resp.result = Result(
+                result=SpawnEntity.Response.INVALID_POSE,
+                error_message=self._frame_gone(frame),
             )
             return resp
         if "welded_at" in outcome:
@@ -785,6 +868,20 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _set_entity_state(self, req, resp):
+        """Place an entity at the pose, and with the twist, the request states.
+
+        Both are stated in the header's frame: the world frame, or a present entity's root body
+        (:func:`_reference_frame`). That entity's world pose is read where the state is written,
+        in the same physics transaction, so the placement is relative to where it is then.
+
+        The twist is EXPRESSED in that frame and is rotated into the world by the frame entity's
+        orientation; the frame entity's own velocity is not added. ``EntityState`` says the twist
+        is "observed in the frame specified by header.frame_id" and refers to the convention of
+        ``geometry_msgs/VelocityStamped``, which separates the frame a velocity is observed in
+        (its ``header.frame_id``) from the frame it is measured against (``reference_frame_id``).
+        ``EntityState`` carries only the first, so the motion stays measured against the world --
+        what ``GetEntityState`` reports -- and the header only chooses the axes it is written in.
+        """
         entity = self._ctx.entities.get(req.entity)
         if entity is None:
             resp.result = Result(
@@ -796,16 +893,11 @@ class SimInterfacesPlugin(Plugin):
         if not entity.present:
             resp.result = _absent(req.entity)
             return resp
-        # The pose and twist are stated in the header's frame, and this simulator knows only the
-        # world frame, which the empty default names.
-        frame_id = _foreign_frame(req.state)
-        if frame_id:
-            resp.result = Result(
-                result=SetEntityState.Response.INVALID_POSE,
-                error_message=f"the state is stated in frame {frame_id!r}, which this simulator "
-                "does not know. It places entities in the world frame, which the empty default "
-                "already names.",
-            )
+        frame, refusal = _reference_frame(
+            req.state, req.entity, self._ctx.entities, field="the state"
+        )
+        if refusal:
+            resp.result = Result(result=SetEntityState.Response.INVALID_POSE, error_message=refusal)
             return resp
         pose, invalid = _pose_from(req.state.pose)
         if invalid:
@@ -813,7 +905,7 @@ class SimInterfacesPlugin(Plugin):
             return resp
         # The twist is part of the state: `EntityState` carries one and the GETTER reports one, so
         # answering RESULT_OK while ignoring whatever was asked for would let a caller read a
-        # velocity it could not set. World frame, like the pose, and what the getter reports.
+        # velocity it could not set. Expressed in the header's frame, like the pose.
         #
         # Absent rather than zero when the request has no twist at all, which a real EntityState
         # always does but a partial caller may not: `None` is what `place_body` already reads as
@@ -853,9 +945,18 @@ class SimInterfacesPlugin(Plugin):
             if asked_motion and not carries_velocity(ctx, entity):
                 outcome["static"] = True
                 return
-            if not place_body(ctx, entity, pose[0], pose[1], vel):
+            target, velocity = pose, vel
+            if frame is not None:
+                at = self._frame_pose(ctx, frame)
+                if at is None:
+                    outcome["frame_gone"] = True
+                    return
+                target = _in_world(at, pose)
+                if vel is not None:
+                    velocity = (*_rotate(at[1], vel[:3]), *_rotate(at[1], vel[3:]))
+            if not place_body(ctx, entity, target[0], target[1], velocity):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
-                if not _already_at(state, pose):
+                if not _already_at(state, target):
                     outcome["welded_at"] = state.get("pos")
                     return
             outcome["done"] = True
@@ -865,6 +966,12 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not place {req.entity!r} within "
                 f"{DEFAULT_TIMEOUT_S} s (is the physics thread stalled?)",
+            )
+            return resp
+        if outcome.get("frame_gone"):
+            resp.result = Result(
+                result=SetEntityState.Response.INVALID_POSE,
+                error_message=self._frame_gone(frame),
             )
             return resp
         if "welded_at" in outcome:
@@ -993,6 +1100,23 @@ class SimInterfacesPlugin(Plugin):
             done.set()
 
     # -- physics-thread helpers ---------------------------------------------------------------
+    @classmethod
+    def _frame_pose(cls, ctx, frame):
+        """The world ``(pos, quat)`` of the entity *frame* names, or ``None`` once it is absent."""
+        if not frame.present:
+            return None
+        state = cls._read_body(ctx, frame.body)
+        if not state:
+            return None
+        return tuple(state["pos"]), tuple(state["quat"])
+
+    @staticmethod
+    def _frame_gone(frame):
+        return (
+            f"the frame {frame.name!r} became unknown before the pose was written: the entity "
+            f"is no longer present. {_KNOWN_FRAMES}"
+        )
+
     @staticmethod
     def _read_body(ctx, body_name):
         import mujoco
