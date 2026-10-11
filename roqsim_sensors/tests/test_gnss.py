@@ -212,6 +212,23 @@ def test_the_bias_is_correlated_rather_than_white():
     assert corr > 0.25, corr
 
 
+def test_the_bias_keeps_its_spread_at_an_update_as_long_as_the_correlation_time():
+    """A coarse update makes the bias memoryless; it must not make it wider than the noise asked."""
+    sigma = 1.0
+    config = {**QUIET, "rate": 1.0, "bias_time": 1.0, "horizontal_noise": sigma}
+    ctx = _ctx()
+    plugin = _plugin(config)
+    plugin.configure(ctx)
+    plugin.on_reset(ctx)
+    bias = []
+    for _ in range(4000):
+        plugin.post_step(ctx)
+        bias.append(plugin._bias[:2].copy())
+        ctx.data.time += 1.0
+    spread = float(np.std(np.array(bias[400:]), axis=0).mean())
+    assert spread == pytest.approx(sigma, rel=0.1), spread
+
+
 # -- the entity contract -------------------------------------------------------------------------
 def test_the_body_comes_from_the_entity_not_from_a_meta_key():
     """Regression: the root body is `Entity.body`, the attribute spawn_robot fills in. Reading a
