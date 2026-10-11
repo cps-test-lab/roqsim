@@ -44,6 +44,11 @@ ur_driver_interface = "roqsim_manipulation.plugins.ur_driver_interface:URDriverI
 [project.entry-points."roqsim.ros2_types"]
 roqsim_manipulation = "roqsim_manipulation.ros2_types:TYPES"
 
+# The service handlers this package's plugins need from the ROS bridge (ur_driver_interface's
+# ur_msgs/SetSpeedSliderFraction); imported by the bridge only, at start-up.
+[project.entry-points."roqsim_ros_bridge.extensions"]
+roqsim_manipulation = "roqsim_manipulation.ros2_services"
+
 # No roqsim.models / roqsim.worlds providers and NO package-data: this package is code only, and installing
 # it costs kilobytes.
 #

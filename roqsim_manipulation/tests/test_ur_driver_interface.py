@@ -1,7 +1,10 @@
 """``ur_driver_interface`` and ``arm_controller``'s ``controller_type``: a simulated UR5e answering to
-the controller names, types and services ``ur_robot_driver`` gives the real one."""
+the controller names, types and services ``ur_robot_driver`` gives the real one, with the speed
+slider slowing the scaled trajectory controller as it slows the real one."""
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import pytest
@@ -13,9 +16,13 @@ from roqsim.controllers import ACTIVE, INACTIVE, registry_for
 from roqsim.engine import Engine
 
 SCALED = "ur_controllers/ScaledJointTrajectoryController"
+JOINT = "shoulder_pan_joint"
 
 
-def _engine(**driver) -> Engine:
+def _engine(controller_type: str | None = SCALED, **driver) -> Engine:
+    arm = {"controller_name": "scaled_joint_trajectory_controller"}
+    if controller_type is not None:
+        arm["controller_type"] = controller_type
     cfg = load_config_from_dict(
         {
             "sim": {},
@@ -24,13 +31,7 @@ def _engine(**driver) -> Engine:
                     "spawn_arm": {"model": "ur5e", "prefix": "ur5e_"},
                     "name": "ur5e",
                     "components": [
-                        {
-                            "arm_controller": {
-                                "controller_name": "scaled_joint_trajectory_controller",
-                                "controller_type": SCALED,
-                            },
-                            "name": "arm_controller",
-                        },
+                        {"arm_controller": arm, "name": "arm_controller"},
                         {
                             "force_torque": {
                                 "site": "fts_site",
@@ -88,9 +89,90 @@ def test_activating_the_unscaled_controller_is_refused_naming_the_scaled_one():
         )
 
 
-def test_speed_scaling_is_the_stated_percentage():
-    assert _plugin(_engine(), URDriverInterfacePlugin).speed_scaling() == 100.0
-    assert _plugin(_engine(speed_scaling=40.0), URDriverInterfacePlugin).speed_scaling() == 40.0
+def _steps(engine, seconds: float) -> None:
+    for _ in range(round(seconds / engine.ctx.model.opt.timestep)):
+        engine.step()
+
+
+def _run_line(engine, seconds: float):
+    """Start a 2 s straight line of the shoulder over 0.4 rad in process, run *seconds*, and return
+    ``(start, arm)``."""
+    arm = _plugin(engine, ArmControllerPlugin)
+    q0 = arm._target[JOINT]
+    engine.ctx.blackboard.get("arm:ur5e").follow_trajectory([JOINT], [0.0, 2.0], [[q0], [q0 + 0.4]])
+    _steps(engine, seconds)
+    return q0, arm
+
+
+def _reached(arm, q0: float) -> float:
+    """The trajectory time the held target has reached, read off where it is along the line."""
+    return (arm._target[JOINT] - q0) / 0.4 * 2.0
+
+
+def test_the_speed_scaling_starts_at_100_percent():
+    engine = _engine()
+    assert _plugin(engine, URDriverInterfacePlugin).speed_scaling() == 100.0
+    assert engine.ctx.blackboard.get("arm:ur5e").trajectory_time_scale() == 1.0
+
+
+def test_the_slider_at_half_halves_the_trajectory_progress_per_sim_second():
+    full, half = _engine(), _engine()
+    assert _plugin(half, URDriverInterfacePlugin).set_speed_slider(0.5) is True
+    for engine, expected in ((full, 1.0), (half, 0.5)):
+        q0, arm = _run_line(engine, 1.0)
+        assert _reached(arm, q0) == pytest.approx(expected, abs=2e-3)
+
+
+def test_a_slider_change_mid_trajectory_keeps_the_time_travelled():
+    engine = _engine()
+    q0, arm = _run_line(engine, 0.5)
+    assert _reached(arm, q0) == pytest.approx(0.5, abs=2e-3)
+    _plugin(engine, URDriverInterfacePlugin).set_speed_slider(0.25)
+    _steps(engine, 1.0)
+    assert _reached(arm, q0) == pytest.approx(0.75, abs=2e-3)
+
+
+def test_the_unscaled_controller_type_is_not_slowed_by_the_slider():
+    engine = _engine(controller_type=None)
+    assert _plugin(engine, URDriverInterfacePlugin).set_speed_slider(0.5) is True
+    assert engine.ctx.blackboard.get("arm:ur5e").trajectory_time_scale() == 1.0
+    q0, arm = _run_line(engine, 1.0)
+    assert _reached(arm, q0) == pytest.approx(1.0, abs=2e-3)
+
+
+def test_speed_scaling_publishes_the_factor_in_effect():
+    engine = _engine()
+    driver = _plugin(engine, URDriverInterfacePlugin)
+    endpoint = next(e for e in engine.ctx.interface.all() if e.name == "set_speed_slider")
+    future = endpoint.write({"speed_slider_fraction": 0.25})  # as the bridge's service hands it
+    engine.step()
+    assert future.result(1.0) is True
+    assert driver.speed_scaling() == 25.0
+    assert engine.ctx.blackboard.get("arm:ur5e").trajectory_time_scale() == 0.25
+
+
+@pytest.mark.parametrize("fraction", [0.0, 0.005, -0.5, 1.0001, 2.0, math.nan])
+def test_a_fraction_outside_the_drivers_range_is_refused_and_changes_nothing(fraction):
+    engine = _engine()
+    driver = _plugin(engine, URDriverInterfacePlugin)
+    assert driver.set_speed_slider(0.5) is True
+    assert driver.set_speed_slider(fraction) is False
+    assert driver.speed_scaling() == 50.0
+
+
+@pytest.mark.parametrize("fraction", [0.01, 1.0])
+def test_the_ends_of_the_drivers_range_are_accepted(fraction):
+    driver = _plugin(_engine(), URDriverInterfacePlugin)
+    assert driver.set_speed_slider(fraction) is True
+    assert driver.speed_scaling() == pytest.approx(100.0 * fraction)
+
+
+def test_a_reset_returns_the_slider_to_100_percent():
+    engine = _engine()
+    driver = _plugin(engine, URDriverInterfacePlugin)
+    driver.set_speed_slider(0.3)
+    engine.reset()
+    assert driver.speed_scaling() == 100.0
 
 
 def test_zero_ftsensor_tares_the_named_sensor():
@@ -124,7 +206,7 @@ def test_a_sensor_that_is_not_there_is_refused():
 
 @pytest.mark.parametrize(
     "config, fragment",
-    [({}, "'ft' is required"), ({"ft": "x", "speed_scaling": 150}, "percentage")],
+    [({}, "'ft' is required"), ({"ft": "x", "rate_hz": 0}, "'rate_hz' must be > 0")],
 )
 def test_config_is_checked(config, fragment):
     errors = URDriverInterfacePlugin(config).validate_config(config)

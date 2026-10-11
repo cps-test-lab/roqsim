@@ -551,14 +551,19 @@ limitation.
 **A Universal Robots arm under the driver's names.** A stack written for ``ur_robot_driver`` looks
 for that driver's controllers by name. The world gives them: ``arm_controller`` with
 ``controller_name: scaled_joint_trajectory_controller`` and ``controller_type:
-ur_controllers/ScaledJointTrajectoryController`` (its speed scaling is 100 %, a simulated arm having
-no pendant slider), a ``force_torque`` entry named ``force_torque_sensor_broadcaster``, and a
-``ur_driver_interface`` entry, which adds ``speed_scaling_state_broadcaster`` (publishing
-``speed_scaling_state_broadcaster/speed_scaling``) and ``io_and_status_controller`` with its
-``zero_ftsensor`` service, the wrist sensor's tare. It also lists the driver's unscaled
-``joint_trajectory_controller`` inactive, as the driver does, since MoveIt chooses between the two by
-their state; activating it is refused. The driver's other GPIO surface has no simulated counterpart
-and is not served, so a stack that relies on it fails at the missing name::
+ur_controllers/ScaledJointTrajectoryController``, a ``force_torque`` entry named
+``force_torque_sensor_broadcaster``, and a ``ur_driver_interface`` entry, which adds
+``speed_scaling_state_broadcaster`` and ``io_and_status_controller``. The speed scaling starts at
+100 % and ``io_and_status_controller/set_speed_slider`` (``ur_msgs/SetSpeedSliderFraction``) sets it:
+a fraction in [0.01, 1.0] is applied, anything else is answered ``success: false`` and changes
+nothing, as on the driver. The scaled controller advances trajectory time at that factor, for an
+in-process trajectory and a ``follow_joint_trajectory`` goal alike, so at 0.5 the arm takes twice as
+long over the same path; ``speed_scaling_state_broadcaster/speed_scaling`` publishes the factor in
+effect, in percent. ``io_and_status_controller/zero_ftsensor`` is the wrist sensor's tare. The
+service type comes from ``ur_msgs``, which the ROS side must have installed. The world also lists the
+driver's unscaled ``joint_trajectory_controller`` inactive, as the driver does, since MoveIt chooses
+between the two by their state; activating it is refused. The driver's other GPIO surface has no
+simulated counterpart and is not served, so a stack that relies on it fails at the missing name::
 
    - spawn_arm: {model: ur5e, prefix: ur5e_}
      name: ur5e

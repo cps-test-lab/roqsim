@@ -249,6 +249,7 @@ PAYLOADS: dict[str, Any] = {
     "door": 1.0,
     "tare": None,
     "zero_ftsensor": None,
+    "set_speed_slider": 0.5,
     "override": True,
 }
 
