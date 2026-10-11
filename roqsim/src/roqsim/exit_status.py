@@ -52,6 +52,10 @@ RECORDING = 4
 #: finding, an export whose round trip disagrees with its source.
 FINDING = 5
 
+#: Interrupted by the person (Ctrl-C): a shell's convention for SIGINT, not a verdict, so it is not
+#: in :data:`MEANINGS` and no epilog lists it.
+INTERRUPTED = 130
+
 #: One line per status, in order: the text of the ``--help`` epilogs and of the documented table.
 MEANINGS: dict[int, str] = {
     OK: "success",
