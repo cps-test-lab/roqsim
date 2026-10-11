@@ -1184,57 +1184,62 @@ def main(argv: list | None = None) -> int:
     mesh_dir = Path(args.mesh_dir) if args.mesh_dir else out.parent / "meshes"
     prefixes = [s.strip() for s in args.prefix.split(",") if s.strip()] or [args.prefix]
     collapse = tuple(s.strip() for s in args.collapse.split(",") if s.strip())
-    if len(prefixes) == 1:
-        exporter = UrdfExporter(
-            model,
-            prefix=prefixes[0],
-            name=args.name,
-            root_link=args.root_link,
-            collapse=collapse,
-            mesh_dir=mesh_dir,
-            world_link=args.world_link,
-            gripper_joint=args.gripper_joint,
-            strip=args.strip,
-            mesh_package=args.mesh_package,
-            mesh_prefix=args.mesh_prefix,
-            tip_site=args.tip_site,
-            tip_link=args.tip_link,
-        )
-        tree = exporter.export()
-    else:
-        if args.strip is not None:
-            print(
-                "roqsim export urdf: --strip cannot be used with several --prefix values. Each "
-                "robot keeps its own MJCF prefix there, which is what makes the combined "
-                "description's link and joint names unique.",
-                file=sys.stderr,
-            )
-            return exit_status.BAD_INPUT
-        parts, exporters = [], []
-        for prefix in prefixes:
-            root_body = _first_body(model, prefix)
+    # A ValueError here is a refusal naming what the model cannot express (no body under the
+    # prefix, a tip site that is not there, a multi-joint body), so it is reported as bad input.
+    try:
+        if len(prefixes) == 1:
             exporter = UrdfExporter(
                 model,
-                prefix=prefix,
-                name=f"{args.name}_{prefix.rstrip('_')}",
-                # Names are kept, so the root link keeps the model's own (prefixed) body name and
-                # --root-link names the COMMON root the parts hang off instead.
-                root_link=_name(model, mujoco.mjtObj.mjOBJ_BODY, root_body),
-                collapse=tuple(prefix + c for c in collapse),
+                prefix=prefixes[0],
+                name=args.name,
+                root_link=args.root_link,
+                collapse=collapse,
                 mesh_dir=mesh_dir,
-                world_link=f"{prefix}{args.world_link}",
-                gripper_joint=f"{prefix}{args.gripper_joint}" if args.gripper_joint else "",
-                strip="",
-                link_strip="",
+                world_link=args.world_link,
+                gripper_joint=args.gripper_joint,
+                strip=args.strip,
                 mesh_package=args.mesh_package,
                 mesh_prefix=args.mesh_prefix,
                 tip_site=args.tip_site,
-                tip_link=f"{prefix}{args.tip_link}",
+                tip_link=args.tip_link,
             )
-            parts.append((exporter.export(), root_body))
-            exporters.append(exporter)
-        tree = combine_urdfs(model, parts, name=args.name, root_link=args.root_link)
-        exporter = _MergedExporters(exporters)
+            tree = exporter.export()
+        else:
+            if args.strip is not None:
+                print(
+                    "roqsim export urdf: --strip cannot be used with several --prefix values. Each "
+                    "robot keeps its own MJCF prefix there, which is what makes the combined "
+                    "description's link and joint names unique.",
+                    file=sys.stderr,
+                )
+                return exit_status.BAD_INPUT
+            parts, exporters = [], []
+            for prefix in prefixes:
+                root_body = _first_body(model, prefix)
+                exporter = UrdfExporter(
+                    model,
+                    prefix=prefix,
+                    name=f"{args.name}_{prefix.rstrip('_')}",
+                    # Names are kept, so the root link keeps the model's own (prefixed) body name and
+                    # --root-link names the COMMON root the parts hang off instead.
+                    root_link=_name(model, mujoco.mjtObj.mjOBJ_BODY, root_body),
+                    collapse=tuple(prefix + c for c in collapse),
+                    mesh_dir=mesh_dir,
+                    world_link=f"{prefix}{args.world_link}",
+                    gripper_joint=f"{prefix}{args.gripper_joint}" if args.gripper_joint else "",
+                    strip="",
+                    link_strip="",
+                    mesh_package=args.mesh_package,
+                    mesh_prefix=args.mesh_prefix,
+                    tip_site=args.tip_site,
+                    tip_link=f"{prefix}{args.tip_link}",
+                )
+                parts.append((exporter.export(), root_body))
+                exporters.append(exporter)
+            tree = combine_urdfs(model, parts, name=args.name, root_link=args.root_link)
+            exporter = _MergedExporters(exporters)
+    except ValueError as err:
+        return exit_status.fail(parser.prog, err)
     ET.indent(tree, space="  ")
     tree.write(out, encoding="utf-8", xml_declaration=True)
     log.info(
