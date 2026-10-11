@@ -61,8 +61,11 @@ What "derived" means, file by file
 * controller and action names -- the ``Endpoint`` objects ``arm_controller`` declared on
   ``ctx.interface``. That registry *is* what the bridge wires, so a name taken from it cannot
   disagree with the action the trajectory is executed against.
-* the collapse root -- the lowest common ancestor of every body an ``equality`` constraint touches.
-  A closed linkage is what URDF cannot express, and MuJoCo says exactly where one is.
+* the collapse root -- the lowest common ancestor of every body a ``connect`` or ``weld`` equality
+  touches. A closed linkage is what URDF cannot express, and MuJoCo says exactly where one is. A
+  ``joint`` equality is no loop: it is written as a URDF ``<mimic>`` and collapses nothing.
+* joint names -- ``arm_controller``'s, ``joint_prefix`` included, in the URDF, the SRDF and the
+  controller file alike, since ``/joint_states`` and a trajectory point carry exactly those.
 * ``fix_start_state`` -- present only if the arm has a CONTINUOUS joint. ``CheckStartStateBounds``
   normalizes such a joint onto [-pi, pi] and, with this false by default, refuses the request because
   it had to; the symptom is the next phase failing instantly with START_STATE_INVALID (-26) after a
@@ -95,8 +98,8 @@ Three things follow from a shared description, and each is refused rather than r
 
 * **Names stay apart.** One URDF is one flat namespace, so each arm's links and joints keep its MJCF
   prefix. Joint names are the controller's, not ours to rename -- they are what reaches
-  ``/joint_states`` and what a trajectory point carries -- so an arm whose controller reports
-  unprefixed names is refused, naming ``arm_controller``'s ``joint_prefix``.
+  ``/joint_states`` and what a trajectory point carries -- so an arm whose controller reports them
+  under any other ``joint_prefix`` is refused, naming ``arm_controller``'s ``joint_prefix``.
 * **The combined group gets no IK solver.** A chain solver has no chain to solve; see
   ``kinematics_yaml``.
 * **Each arm keeps its own controller entry**, with the action its own endpoints declared, so a goal
@@ -215,9 +218,12 @@ class ArmFacts:
     #: The SRDF group this arm's chain is in. ``ARM_GROUP`` for a description holding one arm; the
     #: entity's own name where several share a description.
     group: str = ARM_GROUP
-    #: Whether the emitted link and joint names keep the arm's MJCF prefix. True only in a
-    #: description holding several robots, where one flat namespace has to hold both.
+    #: Whether the emitted LINK names keep the arm's MJCF prefix. True only in a description holding
+    #: several robots, where one flat namespace has to hold both.
     keep_prefix: bool = False
+    #: ``arm_controller``'s ``joint_prefix``: what it puts before every model-local joint name it
+    #: reports, so what every exported joint name carries too.
+    joint_prefix: str = ""
 
     @property
     def has_gripper(self) -> bool:
@@ -233,11 +239,9 @@ class ArmFacts:
 
         Unlike the arm joints -- which come from the controller and are therefore already in the
         spelling that reaches ``/joint_states`` -- this one is read from the plugin's config, which
-        names it model-locally. Where prefixes are kept it needs the arm's own.
+        names it model-locally, so it takes the controller's ``joint_prefix`` here.
         """
-        if not self.gripper_joint or not self.keep_prefix:
-            return self.gripper_joint
-        return self.prefix + self.gripper_joint
+        return self.joint_prefix + self.gripper_joint if self.gripper_joint else ""
 
     @property
     def controller_key(self) -> str:
@@ -273,9 +277,15 @@ def infer_collapse(model: mujoco.MjModel, bodies: set[int]) -> tuple[str, ...]:
     """Bodies whose subtree must be lumped into one fixed link, read off the model's equalities.
 
     URDF is a tree, so a closed kinematic loop -- a Robotiq 2F-85's four-bar, a PAL PRO jaw -- has no
-    URDF spelling at all. MuJoCo closes such a loop with an ``equality`` constraint, which makes the
-    question answerable rather than a matter of the caller knowing their gripper: the loop lives under
-    the lowest common ancestor of every body the equalities touch, and collapsing there removes it.
+    URDF spelling at all. MuJoCo closes such a loop with a ``connect`` or ``weld`` equality, which
+    makes the question answerable rather than a matter of the caller knowing their gripper: the loop
+    lives under the lowest common ancestor of every body those equalities touch, and collapsing there
+    removes it.
+
+    A ``joint`` equality closes no loop. It couples two joints of an open chain -- an X-Series or
+    Panda gripper's second finger mirroring the first -- which URDF spells as ``<mimic>`` (see
+    :mod:`roqsim.export_urdf`). Counting it here would put the collapse at the body both fingers
+    hang off, which on such an arm is the wrist, and the wrist joint would leave the arm chain.
 
     Getting this wrong is quiet. The constraint is simply not exported, so the URDF keeps the loop's
     branches as free revolute DOFs that no controller publishes, and move_group then never assembles a
@@ -287,12 +297,8 @@ def infer_collapse(model: mujoco.MjModel, bodies: set[int]) -> tuple[str, ...]:
     """
     involved: set[int] = set()
     for i in range(model.neq):
-        eq_type = int(model.eq_type[i])
-        for obj in (int(model.eq_obj1id[i]), int(model.eq_obj2id[i])):
-            if eq_type == mujoco.mjtEq.mjEQ_JOINT:
-                involved.add(int(model.jnt_bodyid[obj]))
-            elif eq_type in (mujoco.mjtEq.mjEQ_CONNECT, mujoco.mjtEq.mjEQ_WELD):
-                involved.add(obj)
+        if int(model.eq_type[i]) in (mujoco.mjtEq.mjEQ_CONNECT, mujoco.mjtEq.mjEQ_WELD):
+            involved.update((int(model.eq_obj1id[i]), int(model.eq_obj2id[i])))
     # Only loops INSIDE the robot being exported. A world may weld a prop to a shelf or couple a
     # conveyor's rollers; collapsing the arm at their common ancestor would lump the whole robot into
     # one link, which is worse than not collapsing at all.
@@ -380,14 +386,39 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
     if entity is not None:
         prefix = entity.meta.get("prefix", "") or ""
 
+    # The controller's `joint_prefix` sits in front of every name it reports, so it is what the
+    # description's joint names need too, and what comes off a name before the model is asked for it.
+    controller_plugin = next(
+        (
+            p
+            for p in engine.plugins
+            if type(p).__name__ == "ArmControllerPlugin"
+            and getattr(p, "arm", None) == arm
+            and p.config.get("controller_name", "arm_controller") == controller.rsplit("/", 1)[-1]
+        ),
+        None,
+    )
+    if controller_plugin is None:
+        raise ValueError(
+            f"arm {arm!r} serves {trajectory_action!r} but no arm_controller of that name is "
+            "configured on it, so the joint names it reports cannot be traced to the model."
+        )
+    joint_prefix = str(controller_plugin.config.get("joint_prefix", "") or "")
+
     model, data = ctx.model, ctx.data
     home: dict[str, float] = {}
     continuous: list[str] = []
     ranges: dict[str, tuple[float, float]] = {}
     for name in joints:
-        jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + name)
+        if not name.startswith(joint_prefix):
+            raise ValueError(
+                f"joint {name!r} in arm {arm!r}'s handle does not carry its controller's "
+                f"joint_prefix {joint_prefix!r}"
+            )
+        local = name[len(joint_prefix) :]
+        jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + local)
         if jid < 0:
-            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, local)
         if jid < 0:
             raise ValueError(f"joint {name!r} is in the arm's handle but not in the model")
         home[name] = float(data.qpos[int(model.jnt_qposadr[jid])])
@@ -411,6 +442,7 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
         collapse=(),
         continuous_joints=continuous,
         ranges=ranges,
+        joint_prefix=joint_prefix,
     )
 
     grip = _endpoint(endpoints, arm, "gripper_cmd")
@@ -464,7 +496,10 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
             {
                 int(model.jnt_bodyid[j])
                 for j in (
-                    mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + n) for n in joints
+                    mujoco.mj_name2id(
+                        model, mujoco.mjtObj.mjOBJ_JOINT, prefix + n[len(joint_prefix) :]
+                    )
+                    for n in joints
                 )
                 if j >= 0
             },
@@ -488,10 +523,10 @@ def all_arm_facts(engine, arms: list[str] | None = None) -> list[ArmFacts]:
     and refused rather than repaired here:
 
     * a distinct, non-empty MJCF prefix each -- what keeps their link names apart;
-    * joint names that already carry that prefix, i.e. ``arm_controller``'s ``joint_prefix``. Those
-      names are the ones reaching ``/joint_states`` and the ones MoveIt puts in a trajectory point,
-      so the description cannot rename them: two arms of one model would both command
-      ``shoulder_pan_joint`` and each would answer for the other's trajectory.
+    * ``arm_controller``'s ``joint_prefix`` equal to that prefix, so the joint names it reports are
+      the MJCF's own. Those names are the ones reaching ``/joint_states`` and the ones MoveIt puts
+      in a trajectory point, so the description cannot rename them: two arms of one model would
+      both command ``shoulder_pan_joint`` and each would answer for the other's trajectory.
     """
     if not arms:
         return [arm_facts(engine)]
@@ -508,12 +543,12 @@ def all_arm_facts(engine, arms: list[str] | None = None) -> list[ArmFacts]:
                 f"arm {arm!r} has no MJCF prefix, so its links cannot be told from the other arms' "
                 "in one description. Give each arm in a multi-arm cell a distinct `prefix:`."
             )
-        outside = [j for j in one.joints if not j.startswith(one.prefix)]
-        if outside:
+        if one.joint_prefix != one.prefix:
             raise ValueError(
-                f"arm {arm!r} publishes joints that do not carry its prefix {one.prefix!r} "
-                f"({', '.join(outside)}). A description holding several arms is one flat namespace, "
-                "and these are the names that reach /joint_states and a trajectory point, so they "
+                f"arm {arm!r} publishes its joints under joint_prefix {one.joint_prefix!r} "
+                f"({', '.join(one.joints)}), not its MJCF prefix {one.prefix!r}. A description "
+                "holding several arms is one flat namespace keeping each arm's MJCF names, and "
+                "these are the names that reach /joint_states and a trajectory point, so they "
                 f"cannot be renamed here. Set `joint_prefix: {one.prefix!r}` on this arm's "
                 "arm_controller."
             )
@@ -1364,11 +1399,12 @@ def _export(args, log, engine) -> int:
             root_link=args.root_link,
             collapse=collapse,
             mesh_dir=out / "meshes",
-            gripper_joint=facts.gripper_joint,
+            gripper_joint=facts.urdf_gripper_joint,
             mesh_package=args.mesh_package,
             mesh_prefix=args.mesh_prefix,
             tip_site=args.tip_site,
             tip_link=args.tip_link,
+            joint_prefix=facts.joint_prefix,
         )
         tree = exporter.export()
     ET.indent(tree, space="  ")
@@ -1400,7 +1436,7 @@ def _export(args, log, engine) -> int:
         name=name,
         arm_base="" if multi else arm_base,
         arm_tip="" if multi else arm_tip,
-        gripper_joint=facts.gripper_joint,
+        gripper_joint=facts.urdf_gripper_joint,
         gripper_open=facts.gripper_open,
         gripper_close=facts.gripper_close,
         home=facts.home,
@@ -1511,7 +1547,13 @@ def _export(args, log, engine) -> int:
     )
 
     if args.check:
-        err, where = round_trip_error(urdf, model, strip, mesh_dir=exporter.mesh_dir)
+        err, where = round_trip_error(
+            urdf,
+            model,
+            strip,
+            mesh_dir=exporter.mesh_dir,
+            joint_prefix="" if multi else facts.joint_prefix,
+        )
         if unshippable:
             # The check reads the meshes out of the export's own mesh dir whatever the URIs say,
             # which is what lets it measure an export whose URIs name the consumer's path. Saying so

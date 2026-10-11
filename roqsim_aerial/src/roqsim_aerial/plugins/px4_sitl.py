@@ -282,7 +282,7 @@ class Px4SitlPlugin(Plugin):
         self._armed = False
         self._controls = [0.0] * 16
         self._tick = 0
-        self._next_gps = 0.0
+        self._last_gps = float("-inf")
         self._ctx: SimContext | None = None
         self._gate = None
         #: Set by the receive thread when a HIL_ACTUATOR_CONTROLS has been parsed AND its
@@ -429,7 +429,7 @@ class Px4SitlPlugin(Plugin):
 
     def on_reset(self, ctx: SimContext) -> None:
         self._tick = 0
-        self._next_gps = 0.0
+        self._last_gps = float("-inf")
         self._controls_arrived.clear()
         # `_ever_answered` is NOT cleared: PX4 did not reboot, so the lockstep it is already
         # driving must stay armed across an episode boundary.
@@ -454,8 +454,14 @@ class Px4SitlPlugin(Plugin):
         if self._gate is not None:
             self._gate.reset()
         self._send_sensors(ctx)
-        if self._gnss.read_fix()["valid"] and ctx.sim_time + 1e-12 >= self._next_gps:
-            self._next_gps = ctx.sim_time + 1.0 / max(float(self._gnss.rate), 1e-6)
+        # A thousandth of a step short still counts, as in every sensor's rate gate: float drift
+        # in the summed clock would otherwise push a due fix to the next sensor batch.
+        gps_period = 1.0 / max(float(self._gnss.rate), 1e-6)
+        if (
+            self._gnss.read_fix()["valid"]
+            and ctx.sim_time - self._last_gps >= gps_period - 1e-3 * ctx.dt
+        ):
+            self._last_gps = ctx.sim_time
             self._send_gps(ctx)
         if bool(self.cfg("ground_truth")):
             self._send_ground_truth(ctx)
