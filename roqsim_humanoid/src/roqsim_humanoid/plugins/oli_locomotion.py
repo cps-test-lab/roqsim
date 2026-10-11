@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import mujoco
 import numpy as np
-import onnxruntime as ort
 import yaml
 
 from roqsim import endpoint
@@ -164,6 +163,10 @@ class OliLocomotionPlugin(Plugin):
         self._target_q = self._default_angle.copy()
 
         # -- ONNX policy (single-threaded: a small MLP at 100 Hz, cf. g1's torch.set_num_threads) -
+        # Imported here rather than with the module, so listing or describing the registered
+        # plugins does not load onnxruntime.
+        import onnxruntime as ort
+
         so = ort.SessionOptions()
         so.intra_op_num_threads = 1
         so.inter_op_num_threads = 1
