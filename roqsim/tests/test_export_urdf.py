@@ -825,3 +825,120 @@ def test_one_robot_is_exported_directly_rather_than_combined(tmp_path):
         combine_urdfs(
             model, _pair_parts(model, tmp_path / "meshes")[:1], name="one", root_link="base_link"
         )
+
+
+# -- joint couplings and the controller's joint prefix --------------------------------------------
+
+
+def _fingers(
+    polycoef: str = "0 -1 0 0 0", *, actuated: str = "left", ref: str = "0"
+) -> mujoco.MjModel:
+    """A wrist with two slide fingers, the right coupled to the left as an X-Series gripper's is."""
+    xml = f"""
+    <mujoco>
+      <worldbody>
+        <body name="r_base">
+          <geom type="box" size=".05 .05 .05"/>
+          <body name="r_wrist" pos="0 0 .1">
+            <joint name="r_wrist_rotate" axis="1 0 0" range="-3 3"/>
+            <geom type="box" size=".02 .02 .02"/>
+            <body name="r_left_link" pos=".05 0 0">
+              <joint name="r_left" type="slide" axis="0 1 0" range=".02 .06" ref="{ref}"/>
+              <geom type="box" size=".01 .01 .01"/>
+            </body>
+            <body name="r_right_link" pos=".05 0 0">
+              <joint name="r_right" type="slide" axis="0 1 0" range="-.06 -.02"/>
+              <geom type="box" size=".01 .01 .01"/>
+            </body>
+          </body>
+        </body>
+      </worldbody>
+      <equality>
+        <joint joint1="r_right" joint2="r_left" polycoef="{polycoef}"/>
+      </equality>
+      <actuator>
+        <position name="grip" joint="r_{actuated}" kp="100"/>
+      </actuator>
+    </mujoco>
+    """
+    return mujoco.MjModel.from_xml_string(xml)
+
+
+def _joints(tree) -> dict:
+    return {j.get("name"): j for j in tree.getroot().findall("joint")}
+
+
+def test_a_joint_coupling_is_a_mimic_on_the_follower_not_a_collapse(tmp_path):
+    """An equality between two joints closes no loop; dropping it, or lumping the subtree both
+    fingers hang off, takes the wrist joint out of the arm with it."""
+    tree = UrdfExporter(_fingers(), "r_", "r", mesh_dir=tmp_path).export()
+    joints = _joints(tree)
+    assert joints["wrist_rotate"].get("type") == "revolute"
+    assert joints["left"].find("mimic") is None
+    mimic = joints["right"].find("mimic")
+    assert mimic is not None
+    assert (mimic.get("joint"), float(mimic.get("multiplier")), float(mimic.get("offset"))) == (
+        "left",
+        -1.0,
+        0.0,
+    )
+
+
+def test_the_commanded_joint_leads_whichever_side_mujoco_puts_it(tmp_path):
+    """MuJoCo's joint1 follows joint2; when joint1 is the one an actuator drives, the mimic is
+    inverted so that MoveIt still commands it."""
+    tree = UrdfExporter(
+        _fingers("0.01 -2 0 0 0", actuated="right"), "r_", "r", mesh_dir=tmp_path
+    ).export()
+    mimic = _joints(tree)["left"].find("mimic")
+    assert mimic is not None and mimic.get("joint") == "right"
+    # right = 0.01 - 2 left  =>  left = -0.5 right + 0.005
+    assert float(mimic.get("multiplier")) == pytest.approx(-0.5)
+    assert float(mimic.get("offset")) == pytest.approx(0.005)
+
+
+def test_a_mimic_offset_folds_in_the_reference_positions(tmp_path):
+    """MuJoCo couples displacements from qpos0; URDF couples positions."""
+    tree = UrdfExporter(_fingers(ref="0.03"), "r_", "r", mesh_dir=tmp_path).export()
+    # right - 0 = -(left - 0.03)  =>  right = -left + 0.03
+    assert float(_joints(tree)["right"].find("mimic").get("offset")) == pytest.approx(0.03)
+
+
+def test_a_nonlinear_coupling_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="linear"):
+        UrdfExporter(_fingers("0 -1 0.5 0 0"), "r_", "r", mesh_dir=tmp_path).export()
+
+
+def test_a_coupling_half_inside_a_collapse_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="mimic"):
+        UrdfExporter(_fingers(), "r_", "r", collapse=("left_link",), mesh_dir=tmp_path).export()
+
+
+def test_a_coupling_inside_a_collapse_writes_nothing(tmp_path):
+    tree = UrdfExporter(_fingers(), "r_", "r", collapse=("wrist",), mesh_dir=tmp_path).export()
+    assert tree.getroot().find(".//mimic") is None
+
+
+def test_the_joint_prefix_is_on_every_joint_and_the_round_trip_reads_it(tmp_path):
+    """`arm_controller`'s `joint_prefix` is on every name /joint_states carries, so the description
+    carries it too; the check strips it again to find each joint in the model."""
+    model = _fingers()
+    tree = UrdfExporter(model, "r_", "r", mesh_dir=tmp_path, joint_prefix="j_").export()
+    joints = _joints(tree)
+    assert {"j_wrist_rotate", "j_left", "j_right"} <= set(joints)
+    assert joints["j_right"].find("mimic").get("joint") == "j_left"
+    urdf = tmp_path / "r.urdf"
+    tree.write(urdf)
+    err, where = round_trip_error(urdf, model, "r_", joint_prefix="j_")
+    assert err < 1e-6, where
+
+
+def test_the_round_trip_refuses_a_joint_it_cannot_find_in_the_model(tmp_path):
+    """Unposed, such a joint sits at zero in both models and agrees, so the check would pass
+    whatever the export got wrong about it."""
+    model = _fingers()
+    tree = UrdfExporter(model, "r_", "r", mesh_dir=tmp_path, joint_prefix="j_").export()
+    urdf = tmp_path / "r.urdf"
+    tree.write(urdf)
+    with pytest.raises(ValueError, match="j_wrist_rotate"):
+        round_trip_error(urdf, model, "r_")

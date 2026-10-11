@@ -2087,13 +2087,17 @@ Four more answers come off the model rather than from flags, each because gettin
 
 * **the joint list and its order** — the ``ArmHandle`` the controller published, i.e. the names that
   reach ``/joint_states``. ``robot_state_publisher`` matches by name, so a list that is right about the
-  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in.
+  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in. The
+  controller's ``joint_prefix`` is part of those names, so the URDF's joints, the SRDF and
+  ``moveit_controllers.yaml`` carry it too.
 * **the home posture** — ``data.qpos`` after setup, not the world's ``home:`` key. The controller
   applies that key itself and a ``rest`` stance may overlay it, while MoveIt's start-state bounds check
   runs against the posture the arm is really in.
-* **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
-  A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
-  the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
+* **the collapse root** — the lowest common ancestor of every body a ``connect`` or ``weld`` equality
+  touches. A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse
+  it and the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes. A ``joint``
+  equality closes no loop: it couples two fingers of an open chain, and the URDF carries it as a
+  ``<mimic>`` on the joint that is not commanded.
 * **``fix_start_state``** — emitted only for an arm that has a *continuous* joint.
   ``CheckStartStateBounds`` normalizes such a joint onto [-pi, pi], and with this false (its default)
   it reports ``START_STATE_INVALID`` precisely because it had to normalize. A start state that drifted
