@@ -98,7 +98,8 @@ class WalkerHandle:
     name: str
     send_route: Callable[[list], int]  # poses [(x, y[, yaw]), ...] -> route sequence number
     cancel_route: Callable[[], int]  # -> route sequence number
-    status: Callable[[], tuple[int, bool, int, float]]  # (seq, finished, goals_left, dist_left)
+    #: (seq, finished, goals_left, dist_left, error); ``error`` is ``""`` for an arrival
+    status: Callable[[], tuple[int, bool, int, float, str]]
 
 
 class WalkerPlugin(Plugin):
@@ -329,7 +330,8 @@ class WalkerPlugin(Plugin):
         handle = self._nav()
         return handle.cancel() if handle is not None else self._next_seq()
 
-    def status(self) -> tuple[int, bool, int, float]:
-        """``(route_seq, finished, goals_remaining, distance_remaining)``; safe to poll off-thread."""
+    def status(self) -> tuple[int, bool, int, float, str]:
+        """``(route_seq, finished, goals_remaining, distance_remaining, error)``; safe to poll
+        off-thread."""
         handle = self._nav()
-        return handle.status() if handle is not None else (0, False, 0, 0.0)
+        return handle.status() if handle is not None else (0, False, 0, 0.0, "")

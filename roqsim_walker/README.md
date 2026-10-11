@@ -81,7 +81,7 @@ Every walker publishes a `WalkerHandle` on the blackboard under `walker:<name>`:
 ```python
 handle = ctx.blackboard.get("walker:pedestrian")
 seq = handle.send_route([(2.0, 0.0), (0.0, 2.0)])  # thread-safe; returns a sequence number
-seq_applied, finished, goals_left, dist_left = handle.status()
+seq_applied, finished, goals_left, dist_left, error = handle.status()
 handle.cancel_route()
 ```
 

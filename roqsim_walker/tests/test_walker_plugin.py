@@ -153,14 +153,14 @@ def test_send_route_overrides_patrol_and_reports_arrival(sim):
     seq = handle.send_route(goals)
     assert seq >= 1
     _run(sim, 0.05)  # let the posted command reach the physics thread
-    applied_seq, finished, goals_left, _ = handle.status()
+    applied_seq, finished, goals_left, _, _ = handle.status()
     assert (applied_seq, finished, goals_left) == (seq, False, 2)
 
     arrived = _run_until(sim, lambda: handle.status()[1])
     assert arrived, "walker never reported finishing its route"
 
-    applied_seq, finished, goals_left, dist = handle.status()
-    assert (applied_seq, finished, goals_left, dist) == (seq, True, 0, 0.0)
+    applied_seq, finished, goals_left, dist, error = handle.status()
+    assert (applied_seq, finished, goals_left, dist, error) == (seq, True, 0, 0.0, "")
     # It really is at the final pose (within its arrival radius).
     assert np.linalg.norm(_xy(sim) - np.array(goals[-1])) < 0.26
 
@@ -195,7 +195,7 @@ def test_cancel_route_stops_the_walker(sim):
 
     seq = handle.cancel_route()
     _run(sim, 0.3)
-    applied_seq, finished, _, _ = handle.status()
+    applied_seq, finished, _, _, _ = handle.status()
     assert (applied_seq, finished) == (seq, True)
 
     stopped_at = _xy(sim)
@@ -210,7 +210,7 @@ def test_a_newer_route_supersedes_an_older_one(sim):
     second = handle.send_route([(-2.0, -2.0)])
     _run(sim, 0.05)
 
-    applied_seq, finished, _, _ = handle.status()
+    applied_seq, finished, _, _, _ = handle.status()
     assert applied_seq == second > first
     assert not finished
     # The handler for `first` sees a larger seq and aborts its goal.
