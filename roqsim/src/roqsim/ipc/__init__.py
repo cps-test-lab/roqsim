@@ -74,10 +74,10 @@ def runtime_dir() -> Path:
     return Path(tempfile.gettempdir()) / f"roqsim-{os.getuid()}"
 
 
-def default_uri() -> str:
-    """``ipc://`` + this process's control socket in :func:`runtime_dir`: one per simulator, so
-    any number run side by side."""
-    return "ipc://" + str(runtime_dir() / f"{os.getpid()}.sock")
+def default_uri(pid: int | None = None) -> str:
+    """``ipc://`` + the control socket of process *pid* (default: this one) in :func:`runtime_dir`:
+    one per simulator, so any number run side by side."""
+    return "ipc://" + str(runtime_dir() / f"{os.getpid() if pid is None else pid}.sock")
 
 
 def normalize(value: str) -> str | None:
@@ -167,8 +167,9 @@ def running() -> list[dict]:
             continue
         if not _alive(pid):
             path.unlink(missing_ok=True)
-            for leftover in (f"{pid}.sock", f"{pid}.sock.pub"):
-                (directory / leftover).unlink(missing_ok=True)
+            uri = default_uri(pid)
+            for leftover in (uri, pub_uri(uri)):
+                Path(leftover[len("ipc://") :]).unlink(missing_ok=True)
             continue
         found.append(entry)
     return sorted(found, key=lambda e: e.get("started", 0.0))
