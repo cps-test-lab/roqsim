@@ -362,12 +362,14 @@ def world_doc(
 ) -> dict:
     """The world-YAML document: the baked scene as ``sim.world`` + one spawn_model per marker.
 
-    Every marker id must be in ``markers_map``; a missing one raises (fail loud, no placeholder). A
-    map value is a bare model name or ``{"model", "yaw_deg"}``. A prop is placed axis-aligned unless a
+    Every marker id must be in ``markers_map``; a missing one raises (fail loud, no placeholder), and
+    so does a ``markers_map`` id that names no marker, which nothing would place. A map value is a bare model name or ``{"model", "yaw_deg"}``. A prop is placed axis-aligned unless a
     heading is given: the map's ``yaw_deg`` wins, else the marker's own ``yaw_deg`` (set in the sketch
     UI's Mark mode); the chosen yaw is emitted as the pose's ``orientation.yaw`` (roll/pitch stay 0 --
     a floor-standing prop only turns about +Z).
     """
+    known = {str(m["id"]) for m in markers}
+    refuse_unknown_keys(markers_map, known, "markers map: marker id", error=KeyError)
     plugins = []
     for m in markers:
         mid = str(m["id"])

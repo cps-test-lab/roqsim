@@ -200,6 +200,12 @@ def test_world_doc_refuses_a_map_key_nothing_reads():
         fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, {"1": {"model": "d", "yaw": 9}})
 
 
+def test_world_doc_refuses_a_map_id_that_names_no_marker():
+    markers = [{"id": 1, "x_m": 0.0, "y_m": 0.0}]
+    with pytest.raises(KeyError, match=re.escape("markers map: marker id: unknown key(s) '2'")):
+        fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, {"1": "d", "2": "e"})
+
+
 def test_door_placements_defaults_to_a_passive_wooden_door():
     lines = [{"id": 1, "x0_m": 0.0, "y0_m": 0.0, "x1_m": 4.0, "y1_m": 0.0}]
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]
