@@ -592,6 +592,13 @@ class WorldAccess(ABC):
         """Why :meth:`ready` is still false, when that is more than the world not being built yet."""
         return None
 
+    def unreachable(self) -> str | None:
+        """Why no simulator can be reached at all, or ``None`` while one may still answer.
+
+        Set only once :meth:`ready` has returned false for a reason that waiting cannot resolve.
+        """
+        return None
+
     def teardown(self) -> None:
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""
 

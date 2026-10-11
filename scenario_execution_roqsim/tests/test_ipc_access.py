@@ -758,11 +758,13 @@ def test_every_registered_action_has_arguments_here():
 
 
 @pytest.mark.parametrize("name", sorted(NOT_READY_ARGS))
-def test_an_action_with_no_simulator_to_reach_says_why_it_waits(name, tmp_path, monkeypatch):
+def test_an_action_with_no_simulator_to_reach_fails_naming_why(name, tmp_path, monkeypatch):
     """Over the socket, "not ready" may never end -- none running, or several and none named --
-    so every action's waiting message carries the reason the transport gives, not only that it waits."""
+    so every action fails on its first tick with the transport's reason instead of waiting."""
     pytest.importorskip("scenario_execution")
     import importlib
+
+    from scenario_execution.actions.base_action import ActionError
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     monkeypatch.delenv("ROQSIM_CONTROL", raising=False)
@@ -774,7 +776,24 @@ def test_an_action_with_no_simulator_to_reach_says_why_it_waits(name, tmp_path, 
     action.setup(clock=_HostClock())
     try:
         action.execute(**args)
-        assert action.update().name == "RUNNING"
-        assert "no running simulator found" in action.feedback_message, action.feedback_message
+        with pytest.raises(ActionError, match="no simulator to reach: no running simulator found"):
+            action.update()
     finally:
         action.shutdown()
+
+
+def test_an_address_nothing_answers_at_is_unreachable_once_the_reply_is_overdue(
+    tmp_path, monkeypatch
+):
+    import scenario_execution_roqsim.access.ipc as ipc
+
+    uri = "ipc://" + str(tmp_path / "nobody.sock")
+    access = IpcAccess(uri)
+    try:
+        assert not access.ready()
+        assert access.unreachable() is None  # the listing is still in flight
+        monkeypatch.setattr(ipc, "_GRACE_S", -access._client.timeout)
+        assert not access.ready()
+        assert access.unreachable() == f"nothing answered at {uri}"
+    finally:
+        access.teardown()
