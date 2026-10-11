@@ -529,6 +529,7 @@ CASES: dict[str, Case] = {
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),
+    "hazard_marking": _static({"hazard_marking": {"prefix": "h_"}, "name": "marking"}),
     # aerial
     "quadrotor_controller": Case(
         lambda _: _world(_robot("crazyflie_2", name="drone"), density=1.225, viscosity=1.8e-5)
