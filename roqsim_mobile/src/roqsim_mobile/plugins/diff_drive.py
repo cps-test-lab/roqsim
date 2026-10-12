@@ -93,7 +93,7 @@ timestep; state the stddev together with the world's ``sim.timestep``. Everythin
 consumes odometry sees it -- the ``odom`` endpoint, its TF, the ``RobotHandle`` -- and nothing that
 reports the truth does: the body's pose, ``sim_poses`` and a ground-truth pose plugin are exact.
 Draws come from ``ctx.rng_for`` (``docs/architecture.rst`` §9.1), so a noisy run needs a seed and
-reproduces from it; with the block omitted nothing is drawn and the odometry is exact, as before.
+reproduces from it; with the block omitted nothing is drawn and the odometry is exact.
 """
 
 from __future__ import annotations

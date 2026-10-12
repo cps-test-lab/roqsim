@@ -26,8 +26,8 @@ The plugin is ``parallel_safe = False`` and holds its own renderer, so it cannot
 **What exists today (cheap mitigations, already in place).** ``camera_common.py`` already:
 
 - **throttles** capture to ``rate_hz`` (renders at e.g. 15--30 Hz, not every step), and
-- **skips** rendering entirely when the ``image`` endpoint reports no subscribers
-  (``Endpoint.has_subscribers``; see :doc:`interfaces`).
+- **skips** rendering entirely when no endpoint the render feeds is wanted -- no transport
+  subscriber and no in-process claim (``Endpoint.wanted()``; see :doc:`interfaces`).
 
 These bound *how often* we pay the cost, but each render still blocks the physics thread, so an
 actively-consumed camera still stalls the loop.

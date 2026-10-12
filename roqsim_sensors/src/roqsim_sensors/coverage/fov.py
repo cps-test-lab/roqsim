@@ -101,10 +101,11 @@ def in_fov(fov: SensorFov, local_points: np.ndarray) -> np.ndarray:
         return h_ok & v_ok
 
     # FRUSTUM: pinhole projection into the image rectangle. The camera looks along -z, so a point is
-    # in front only when z < 0; project and test the pixel bounds.
+    # in front only when z < 0; project and test the pixel bounds. (cx, cy) count pixel centres, so
+    # the frame spans [-0.5, W - 0.5) x [-0.5, H - 0.5).
     intr = fov.intrinsics
     in_front = z < 0.0
     zz = np.where(in_front, z, -1.0)  # avoid divide-by-zero for points behind the camera
     u = intr.cx - intr.fx * x / zz
     v = intr.cy + intr.fy * y / zz
-    return in_front & (u >= 0.0) & (u < intr.width) & (v >= 0.0) & (v < intr.height)
+    return in_front & (u >= -0.5) & (u < intr.width - 0.5) & (v >= -0.5) & (v < intr.height - 0.5)

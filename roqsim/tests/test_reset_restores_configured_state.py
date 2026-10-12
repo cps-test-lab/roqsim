@@ -248,6 +248,8 @@ PAYLOADS: dict[str, Any] = {
     "cmd": 1.0,
     "door": 1.0,
     "tare": None,
+    "zero_ftsensor": None,
+    "set_speed_slider": 0.5,
     "override": True,
 }
 
@@ -394,6 +396,7 @@ CASES: dict[str, Case] = {
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
+    "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller,),
@@ -529,6 +532,7 @@ CASES: dict[str, Case] = {
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),
+    "hazard_marking": _static({"hazard_marking": {"prefix": "h_"}, "name": "marking"}),
     # aerial
     "quadrotor_controller": Case(
         lambda _: _world(_robot("crazyflie_2", name="drone"), density=1.225, viscosity=1.8e-5)

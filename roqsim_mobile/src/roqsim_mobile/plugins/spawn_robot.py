@@ -1,7 +1,7 @@
 """Scene plugin: attach a robot MJCF into the world and own its base spawn pose.
 
 This plugin only *places* the robot (build + initial pose). Its kinematics/odometry live in a controller plugin
-(e.g. :mod:`roqsim.plugins.diff_drive`), which finds this robot via the entity registry.
+(e.g. :mod:`roqsim_mobile.plugins.diff_drive`), which finds this robot via the entity registry.
 
 Every key is declared in :attr:`SpawnRobotPlugin.CONFIG_SCHEMA`, which is what ``roqsim plugins
 describe spawn_robot`` and the plugin catalog publish. ``model`` is required: a bundled model name, a
