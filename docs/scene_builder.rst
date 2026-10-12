@@ -213,7 +213,8 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
   then fitted with a **swing-door leaf** (the ``door`` plugin — a hinged leaf with a position
   actuator, ROS-controllable as an automatic door); ``roqsim scenes floorplan-to-world``'s ``--doors-map``
   overrides per door which side is fixed, which way it swings, how open it starts, the leaf model
-  (``door`` / ``door_glass``), its ``color`` / ``frame_color``, and whether it is ``controllable``. A
+  (``door`` / ``door_glass``), its ``color`` / ``frame_color``, and whether it is ``controllable``;
+  an entry for a door id the floorplan does not have, or with a key it does not read, is refused. A
   **full-height** opening (``height_m`` ≥ the ceiling) stays a bare doorway — a swing leaf does not fit
   it. Two doors-map keys say the opening is not a swinging door, and **both keep it a floorplan
   ``door``** — so the room loops it belongs to never change, only what fills it: ``leaf: false`` forwards
