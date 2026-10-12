@@ -1,7 +1,6 @@
 """rvl: round-trip, the wire bytes, and the shapes that break a reimplementation.
 
-No ROS imports -- the codec has none either, which is the point of splitting it out: these run in a
-plain venv.
+No ROS imports -- the codec has none either, so these run without a sourced ROS.
 
 The golden vector below was produced by the reference C++ encoder
 (``compressed_depth_image_transport::RvlCodec::CompressRVL``, compiled from the upstream source
@@ -15,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from roqsim_ros_bridge import rvl
+from roqsim import rvl
 
 #: A 4x4 frame with a leading zero run, interior runs, rising and falling deltas, and a trailing zero
 #: (so the last pair has no values, and the last word is padded).

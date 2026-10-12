@@ -8,8 +8,8 @@ one from a real RealSense driver are the same bytes. The reference is ``rvl_code
 vectorised implementation of that algorithm, not a translation of its loops.
 
 Deliberately free of ROS imports and of the ``compressedDepth`` framing (the header, the dimensions):
-this module is the codec, :mod:`roqsim_ros_bridge.image_codec` puts it on the wire, and the registry
-owns the ``format`` string. It runs in a plain venv, which is where its tests run.
+this module is the codec, :mod:`roqsim.image_codec` puts it on the wire, and
+:mod:`roqsim.ros_messages` owns the ``format`` string.
 
 **The format, in the three places a reimplementation goes wrong silently.**
 
