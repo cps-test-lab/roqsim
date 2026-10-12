@@ -81,6 +81,13 @@ That is what an agent or a person needs to write the next thing -- a scenario th
 a bridge that expects ``scan`` -- without opening the world file and its manifests to work out what
 is in there.
 
+Each endpoint says, beside its ROS ``type`` and ``topic`` (before the namespace, which it gives
+separately) and its ``rate_hz``, what it costs to produce: ``lazy`` (not read while no transport
+subscriber listens), ``cost`` (``"render"``, ``"raycast"`` or ``null``, from the producing plugin's
+:meth:`~roqsim.plugin.Plugin.output_cost`) and ``rebuildable`` (``roqsim rebuild`` produces it
+afterwards from a ``roqsim sim --record`` recording, :mod:`roqsim.rebuild`). That is what a tool
+deciding before a run which streams to record live -- and which to leave to a rebuild -- reads.
+
 ``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
 elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
 it, whether the timestep resolves each mode, and whether its contact ``solref`` is above the floor
@@ -317,12 +324,16 @@ def _inventory(engine) -> dict:
     import mujoco
 
     from roqsim.endpoint import topic_of
+    from roqsim.rebuild import rebuildable_streams
 
     ctx = engine.ctx
     model = ctx.model
+    producers = {p.address: p for p in engine.plugins}
+    rebuildable = {(s.sensor, s.name) for s in rebuildable_streams(ctx, engine.plugins)[0]}
     endpoints = []
     for endpoint in ctx.interface.all():
         hints = endpoint.backend.get("ros2") or {}
+        producer = producers.get(endpoint.producer)
         endpoints.append(
             {
                 "name": endpoint.name,
@@ -333,6 +344,9 @@ def _inventory(engine) -> dict:
                 "payload": endpoint.payload_type.name if endpoint.payload_type else None,
                 "topic": topic_of(endpoint, "ros2"),
                 "rate_hz": endpoint.rate_hz,
+                "lazy": bool(endpoint.lazy),
+                "cost": producer.output_cost(endpoint) if producer is not None else None,
+                "rebuildable": (endpoint.producer.replace(".", "/"), endpoint.name) in rebuildable,
             }
         )
     entities = [

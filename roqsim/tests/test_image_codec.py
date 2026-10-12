@@ -1,7 +1,6 @@
 """image_codec: channel order, byte-parity with OpenCV, and what it refuses.
 
-No ROS imports here -- the module under test has none either, which is the point of splitting it out
-of the registry: these run in a plain venv.
+No ROS imports here -- the module under test has none either, so these run without a sourced ROS.
 """
 
 from __future__ import annotations
@@ -12,8 +11,8 @@ import struct
 import numpy as np
 import pytest
 
-from roqsim_ros_bridge import rvl
-from roqsim_ros_bridge.image_codec import (
+from roqsim import rvl
+from roqsim.image_codec import (
     DEFAULT_DEPTH_MAX_M,
     DEFAULT_JPEG_QUALITY,
     encode,
