@@ -324,6 +324,32 @@ def test_the_cli_samples_exactly_what_the_plugins_sample(sample):
     assert names == expected[2]
 
 
+def test_open_reaches_the_sample_set():
+    """``--open`` is a sampling option like the others, so it goes through ``sample_set`` too: in a
+    world with no walls it is what keeps any volume point at all."""
+    from argparse import Namespace
+
+    from roqsim_sensors.coverage import cli, sampling
+
+    m = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody>
+             <geom type="plane" size="2 2 0.1"/>
+             <geom name="table" type="box" size="0.5 0.5 0.4" pos="0 0 0.4"/>
+           </worldbody></mujoco>"""
+    )
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    args = Namespace(sample="volume", resolution=0.25, heights=[0.9], per_object=16, open=True)
+    points, labels, _ = cli._build_samples(m, d, args)
+    expected = sampling.sample_set(
+        m, d, objects=False, resolution=0.25, heights=(0.9,), enclosed_only=False
+    )
+    assert len(points) > 0
+    np.testing.assert_array_equal(points, expected[0])
+    np.testing.assert_array_equal(labels, expected[1])
+    assert len(cli._sample_set(m, d, Namespace(**{**vars(args), "open": False}))[0]) == 0
+
+
 def test_build_report_schema_and_gaps():
     from roqsim_sensors.coverage.report import build_report
 
