@@ -354,6 +354,7 @@ class MujocoSim(_Base):
         import mujoco
 
         from .export_web import export_scene
+        from .scene_source import declared_cameras
 
         out_dir = self._resolve_out(out)
         mujoco.mj_forward(self._engine.ctx.model, self._engine.ctx.data)
@@ -365,6 +366,7 @@ class MujocoSim(_Base):
             out_dir,
             logging.getLogger(__name__),
             view=self._engine.config.view,
+            cameras=declared_cameras(self._engine),
         )
 
     def _resolve_out(self, value: str) -> Path:

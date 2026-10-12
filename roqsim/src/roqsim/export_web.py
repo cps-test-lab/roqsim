@@ -24,6 +24,19 @@ Output (all in ``--out``):
                       relative to ``texturedir`` and so never resolve). Procedural textures have no
                       source image and are packed raw into scene.bin as a DataTexture instead
 
+**Cameras** are the imaging sensors the world's plugins declare
+(:meth:`roqsim.plugin.Plugin.scene_cameras`), so a viewer can render the scene from where a sensor
+looks, with its projection, instead of shipping the sensor's images. Each entry is a glTF
+perspective camera on a body::
+
+    {"name": <sensor address>, "body": <body index>, "pos": [x, y, z], "quat": [w, x, y, z],
+     "perspective": {"yfov": <rad>, "aspectRatio": <w/h>, "znear": <m>, "zfar": <m>},
+     "kind": "rgb" | "depth", "width": <px>, "height": <px>}
+
+``pos``/``quat`` are the mount pose in the body's frame, and the camera looks down its local -z
+with +y up, as a glTF camera does (MuJoCo's camera frame is the same, so nothing is converted).
+``width``/``height`` are the published image's, so a viewer can draw it at the sensor's own size.
+
 Deformable geometry travels as **skins**: a MuJoCo ``<skin>`` as itself, and a **flex** (a
 ``<flexcomp>``: a soft solid, a sheet, a cable) as a skin whose bones are the bodies its vertices
 follow (``roqsim.flex_skin``). A viewer that animates skins from bone poses therefore replays a flex's
@@ -42,6 +55,7 @@ import json
 import logging
 import shutil
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import mujoco
@@ -49,7 +63,7 @@ import numpy as np
 from PIL import Image
 
 from . import exit_status, logging_setup
-from .scene_content import Mesh, SceneContent, Texture, walk
+from .scene_content import Camera, Mesh, SceneContent, SensorCamera, Texture, walk
 from .scene_source import (
     add_manifest_option,
     add_source_options,
@@ -148,6 +162,24 @@ def _skin_blocks(
     return skins, geoms, meshes
 
 
+def _camera_entry(cam: Camera) -> dict:
+    return {
+        "name": cam.name,
+        "body": cam.body,
+        "pos": cam.pos,
+        "quat": cam.quat,
+        "perspective": {
+            "yfov": cam.yfov,
+            "aspectRatio": cam.aspect_ratio,
+            "znear": cam.znear,
+            "zfar": cam.zfar,
+        },
+        "kind": cam.kind,
+        "width": cam.width,
+        "height": cam.height,
+    }
+
+
 def _write_texture(
     model: mujoco.MjModel,
     tex: Texture,
@@ -236,15 +268,17 @@ def export_scene(
     logger: logging.Logger,
     max_tex_dim: int = 2048,
     view: dict | None = None,
+    cameras: Sequence[SensorCamera] = (),
 ) -> dict:
     """Walk ``model`` and write ``scene.json`` + ``scene.bin`` + ``tex_*.png`` into ``out_dir``.
 
     ``data`` supplies the configured initial state (joint ``home`` pose, free-body placement) read
     from ``data.qpos``. ``max_tex_dim`` caps image textures' longest side (0 disables). Web viewers
-    don't need 8K character skins -- capping keeps the committed artifact small.
+    don't need 8K character skins -- capping keeps the committed artifact small. ``cameras`` are
+    the sensor cameras to place (:attr:`roqsim.scene_source.CompiledSource.cameras`).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    content = walk(model, data, logger)
+    content = walk(model, data, logger, cameras)
     binw = _BinWriter()
 
     geoms = [
@@ -304,6 +338,7 @@ def export_scene(
         "skins": skins,
         "materials": materials,
         "textures": textures,
+        "cameras": [_camera_entry(c) for c in content.cameras],
     }
     # Bake the world's authored initial camera view (MuJoCo free camera) so any viewer that loads this
     # scene frames it the way the world author intended -- no per-deployment web config needed.
@@ -316,7 +351,7 @@ def export_scene(
     (out_dir / "scene.bin").write_bytes(binw.bytes())
     logger.info(
         "exported %d bodies, %d joints, %d geoms, %d meshes, %d skins (%d of them flexes), "
-        "%d materials, %d textures -> %s (scene.bin %d KiB)",
+        "%d materials, %d textures, %d cameras -> %s (scene.bin %d KiB)",
         len(scene["bodies"]),
         len(scene["joints"]),
         len(geoms),
@@ -325,6 +360,7 @@ def export_scene(
         content.flex_count,
         len(materials),
         len(textures),
+        len(scene["cameras"]),
         out_dir,
         len(binw.bytes()) // 1024,
     )
@@ -355,8 +391,16 @@ def main(argv: list | None = None) -> int:
     logging_setup.configure(verbose=args.verbose)
     logger = logging.getLogger("roqsim.export_web")
 
-    model, data, view = compile_source(args, logger)
-    export_scene(model, data, Path(args.out), logger, max_tex_dim=args.max_tex_dim, view=view)
+    src = compile_source(args, logger)
+    export_scene(
+        src.model,
+        src.data,
+        Path(args.out),
+        logger,
+        max_tex_dim=args.max_tex_dim,
+        view=src.view,
+        cameras=src.cameras,
+    )
     write_manifest(args, logger)
     return exit_status.OK
 

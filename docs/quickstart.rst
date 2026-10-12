@@ -751,6 +751,16 @@ texture on a drawn geom is refused, naming the material. Lights and the skybox a
 (a viewer brings its own), and a world's ``sim.view`` becomes a camera named in ``extras`` as
 ``{"roqsim": "view"}``, outside ``world``.
 
+**Sensor cameras.** Every camera sensor in the world (an RGB or RGB-D camera plugin) is a glTF
+perspective camera on a node of its own, the child of the node of the body it is mounted on, at its
+mount pose, so it follows that body when a viewer moves it. The node and the camera are named after
+the sensor's address (``robot.oakd.oakd_camera``), the projection is the one the sensor publishes
+(``yfov`` and ``aspectRatio`` from its intrinsics, ``znear``/``zfar`` the planes MuJoCo renders it
+with), and the node's ``extras`` carry ``sensor`` (the address), ``kind`` (``rgb``, or ``depth`` for a
+device that publishes depth and no colour) and the image's ``width`` and ``height``. A viewer renders
+the scene from that node to see what the sensor saw, with no image stored. ``export web`` writes the
+same cameras under ``cameras`` in ``scene.json`` (:mod:`roqsim.export_web`).
+
 **Size.** Images are most of a large world's file, and the export logs how much. ``--max-tex-dim``
 caps every image's longest side (default 1024, 0 keeps them whole) and ``--texture-format jpeg``
 stores opaque images as JPEG (``--jpeg-quality``, default 85), several times smaller for photographic

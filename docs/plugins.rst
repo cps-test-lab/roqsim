@@ -2587,6 +2587,14 @@ not exist are dropped, and the hook must never raise (callers treat it as best-e
 the same rule as ``transport_only``: a capability is declared by the plugin, never listed in
 the core.
 
+**If your plugin renders an image, implement ``scene_cameras``.** It returns a
+``roqsim.scene_content.SensorCamera`` per image -- the plugin's address, the MuJoCo camera it renders
+through, ``rgb`` or ``depth``, and the published size and focal lengths -- and the scene exporters
+place each as a camera on the body that camera is mounted on, so a viewer of the exported scene can
+look through the sensor. ``CameraPlugin`` implements it for every camera in ``roqsim_sensors``. As
+with ``sources``, the plugin declares it; the exporters never guess a sensor from the model's
+``<camera>`` list.
+
 **And resolve it against ``self.base_dir``, not the CWD.** That attribute is the directory of the
 world document the entry was declared in, so a path written beside the world resolves the same
 wherever the world is opened from. That matters more than it sounds: the working directory is not
