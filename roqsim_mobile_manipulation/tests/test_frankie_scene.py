@@ -41,7 +41,9 @@ MANIFEST = MODEL_DIR / "frankie.manifest.yaml"
 # From the source URDF (authoritative)
 MOUNT = np.array([0.15, 0.0, 0.38])
 BOX = np.array([0.68, 0.47, 0.38])
-# Substrate assumptions (port log)
+# Not in the source URDF, which models the base with no wheels: LD-60-class values chosen for the
+# model, inside the 0.47 m body width (build_frankie_mjcf.py). ARM_REST is `qr`, the ready pose the
+# Robotics Toolbox Frankie model ships.
 WHEEL_R = 0.0625
 TRACK = 0.36
 ARM_REST = (0.0, -0.3, 0.0, -2.2, 0.0, 2.0, math.pi / 4)
@@ -210,8 +212,9 @@ def test_a3_mount_transform_matches_source_urdf(rig):
 def test_a4_footprint_matches_declared_box(rig):
     """The simulated chassis footprint equals the URDF's declared collision box in x/y.
 
-    Planner-facing and simulated footprints must agree. Height deliberately
-    differs: the box is raised clear of the wheels — see the port log.
+    Planner-facing and simulated footprints must agree. Height deliberately differs: the box starts
+    at z 0.125 so it clears the wheels (build_frankie_mjcf.CHASSIS_Z0), so an obstacle lower than
+    that does not collide with the base.
     """
     model, _, *_ = rig
     half = model.geom_size[model.geom("chassis").id]

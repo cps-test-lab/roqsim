@@ -423,9 +423,9 @@ declares the observation layout, the joints the policy commands, the joints it m
 control gains, and the envelope it was trained for -- so adding a policy is dropping in a directory, not
 editing Python. Omit the key and the controller uses its bundled default, unchanged.
 
-Note the envelope is recorded, not enforced: outside it a policy does not fail, it balances worse. Check
-it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than trusting a
-port log to be read.
+Note the envelope is recorded, not enforced: outside it a policy does not fail, it balances worse.
+Check it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than
+trusting prose to be read.
 
 Navigation: a mover the simulator drives itself
 -----------------------------------------------

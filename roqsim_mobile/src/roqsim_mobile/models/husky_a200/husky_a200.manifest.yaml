@@ -21,7 +21,7 @@ components:
       # Skid-steer ICR slip compensation, calibrated against this model's wheel friction/contacts:
       # without it the base yaws at ~15% of commanded (lateral scrub) and a planner cannot rotate.
       # chi=3.0 -> achieved/commanded yaw 0.93/1.00/1.09/1.14 at w = 0.3/0.5/0.8/1.0 rad/s.
-      # Re-measure if wheel friction, wheel radius, actuator kv, mass or timestep change. See the port log.
+      # Re-measure if wheel friction, wheel radius, actuator kv, mass or timestep change.
       slip_factor: 3.0
       left_actuators:  [front_left_wheel_motor,  rear_left_wheel_motor]
       right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
