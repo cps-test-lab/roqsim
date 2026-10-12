@@ -28,9 +28,10 @@ from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 from roqsim.pose import pose_mapping
 
-# Husky A200 top plate, in base_link coordinates: the base collision box top is at
-# 0.12498 + 0.13375 = 0.25873. Forward of centre (x=+0.25) to clear the lidar mast at x=0.
-MOUNT_POS = [0.25, 0.0, 0.2587]
+# On the Husky A200's PACS top plate, in base_link coordinates. The plate's top face is at
+# z 0.224 + 0.00635 = 0.23035; the scanner's bracket starts at x 0.32825 - 0.045 = 0.28325 and the
+# UR10e base is 0.095 m in radius, so x 0.17 leaves the arm base 18 mm behind the bracket.
+MOUNT_POS = [0.17, 0.0, 0.23035]
 
 
 def _world(tmp_path, arm_extra=None, robot_first=True, prefix="ur10e_"):
@@ -98,6 +99,59 @@ def test_actuators_stay_separated(tmp_path):
         "wrist_2_joint",
         "wrist_3_joint",
     ]
+
+
+def _box_in_base(m, d, base, geoms):
+    """The axis-aligned box, in base_link coordinates, bounding ``geoms``.
+
+    A mesh is bounded by its vertices: its geom frame is the mesh's principal frame, so the
+    geom's own AABB is rotated and overstates the extent.
+    """
+    rot, origin = d.xmat[base].reshape(3, 3), d.xpos[base]
+    points = []
+    for g in geoms:
+        if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH:
+            mesh = m.geom_dataid[g]
+            start = m.mesh_vertadr[mesh]
+            local = m.mesh_vert[start : start + m.mesh_vertnum[mesh]]
+        else:
+            centre, half = m.geom_aabb[g][:3], m.geom_aabb[g][3:]
+            signs = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
+            local = centre + half * signs
+        world = local @ d.geom_xmat[g].reshape(3, 3).T + d.geom_xpos[g]
+        points.append((world - origin) @ rot)
+    pts = np.vstack(points)
+    return pts.min(axis=0), pts.max(axis=0)
+
+
+def test_mounted_arm_sits_on_the_plate_behind_the_scanner(tmp_path):
+    """The arm base stands on the PACS plate and clears the scanner's bracket and the scanner."""
+    engine = Engine(_world(tmp_path))
+    engine.setup()
+    m, d = engine.ctx.model, engine.ctx.data
+    mujoco.mj_forward(m, d)
+    base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    arm_root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "ur10e_base")
+    scanner = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "lidar2d_0_mount")
+    assert scanner > 0, "the Husky's scanner is missing"
+
+    def geom(name):
+        return [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, name)]
+
+    arm_lo, arm_hi = _box_in_base(m, d, base, np.flatnonzero(m.geom_bodyid == arm_root))
+    _, plate_hi = _box_in_base(m, d, base, geom("top_plate_collision"))
+    assert arm_lo[2] == pytest.approx(plate_hi[2], abs=1e-4), "the arm base must stand on the plate"
+
+    obstacles = {
+        "bracket_0_collision": _box_in_base(m, d, base, geom("bracket_0_collision")),
+        "scanner": _box_in_base(m, d, base, np.flatnonzero(m.geom_bodyid == scanner)),
+    }
+    for name, (lo, hi) in obstacles.items():
+        overlap = np.all(arm_lo < hi) and np.all(lo < arm_hi)
+        assert not overlap, f"the arm base {arm_lo}..{arm_hi} overlaps {name} {lo}..{hi}"
+    assert arm_hi[0] < obstacles["bracket_0_collision"][0][0] - 0.01, (
+        "less than 10 mm to the bracket"
+    )
 
 
 def test_mounted_arm_rides_the_base(tmp_path):

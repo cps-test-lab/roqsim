@@ -1,9 +1,11 @@
 # Default capture plugin shipped with the zivid mount.
 #
 # `spawn_sensor: {model: zivid}` pulls this in automatically, so a world does not re-declare the
-# capture plugin. To override, declare zivid for the same mount in the world (it wins); to opt out,
-# set spawn_sensor config `default_plugins: false`. `robot` is filled in from the spawn_sensor
-# `name`. `camera: zivid_color` is the imaging sensor placed on the +x optical module.
+# capture plugin. To override a default, nest an entry with the same label under that spawn_sensor's
+# `components:` (it merges into this one, per key); to opt out, set spawn_sensor config
+# `default_plugins: false`. Each entry below attaches to the mount because it is nested under it --
+# there is no ownership key to fill in. `camera: zivid_color` is the imaging sensor placed on the +x
+# optical module.
 components:
   - zivid:
       camera: zivid_color

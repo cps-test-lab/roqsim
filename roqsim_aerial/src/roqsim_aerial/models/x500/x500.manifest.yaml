@@ -1,8 +1,10 @@
 # Default components shipped with the X500 description.
 #
 # `spawn_robot: {model: x500}` pulls this in automatically, so a world does not re-declare the
-# airframe's intrinsic actuation. To override a default, declare the same plugin for the same robot
-# in the world; to opt out entirely, set `spawn_robot` config `default_plugins: false`.
+# airframe's intrinsic actuation. To override a default, nest an entry with the same label under
+# that spawn_robot's `components:` (it merges into this one, per key); to opt out entirely, set
+# `spawn_robot` config `default_plugins: false`. Each entry below attaches to the spawned entity
+# because it is nested under it -- there is no ownership key to fill in.
 #
 # Unlike the Crazyflie's manifest, this one does NOT pull in a stabiliser -- and the omission is the
 # point. An X500's stabiliser is its flight stack (PX4), which is a separate process outside the

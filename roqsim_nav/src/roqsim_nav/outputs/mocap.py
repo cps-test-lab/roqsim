@@ -28,6 +28,7 @@ class MocapOutput(NavOutput):
     """Writes ``mocap_pos``/``mocap_quat`` for the owning entity's body."""
 
     kinematics = "holonomic"  # a written pose can move any direction; nothing is being steered
+    config_keys = ("yaw_rate",)
 
     def __init__(self, config: dict):
         super().__init__(config)
