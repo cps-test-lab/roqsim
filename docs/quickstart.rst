@@ -710,9 +710,10 @@ Exporting a world as glTF
 -------------------------
 
 ``roqsim export gltf`` writes a world as one binary glTF 2.0 file (``.glb``), the standard format for 3D
-scenes that three.js, Blender and every engine load. It takes the sources and options ``export web``
-takes, compiles the world the same way, and writes the same scene -- what a scene contains is decided
-once, by the walk both exports share:
+scenes that three.js, Blender and every engine load. It compiles the world through the same build
+pipeline a run uses, and what the scene contains is decided once, by the walk in
+:mod:`roqsim.scene_content`. A browser viewer is best served with
+``--meshopt --texture-format webp`` (see **Size** below):
 
 .. code-block:: bash
 
@@ -746,7 +747,7 @@ carry ``geom`` (its name, where it has one), ``body`` and ``geom_id``. Primitive
 normals, and an infinite plane becomes a square of the model's extent. A surface MuJoCo shades with
 its faces' own normals -- a box, a triangulated STL or OBJ -- is written without normals, which glTF
 draws flat, and with one vertex per corner position. Collision-only geometry
-(group 3) is left out, as ``export web`` leaves it out. A MuJoCo skin, and a flex, are glTF skinned
+(group 3) is left out. A MuJoCo skin, and a flex, are glTF skinned
 meshes whose joints are their bone bodies' nodes, so moving the bodies deforms them; a
 ``dof="quadratic"`` flex loses its negative weights (glTF allows none), exact at rest and approximate
 under deformation, and the export says so.
@@ -767,8 +768,7 @@ the sensor's address (``robot.oakd.oakd_camera``), the projection is the one the
 (``yfov`` and ``aspectRatio`` from its intrinsics, ``znear``/``zfar`` the planes MuJoCo renders it
 with), and the node's ``extras`` carry ``sensor`` (the address), ``kind`` (``rgb``, or ``depth`` for a
 device that publishes depth and no colour) and the image's ``width`` and ``height``. A viewer renders
-the scene from that node to see what the sensor saw, with no image stored. ``export web`` writes the
-same cameras under ``cameras`` in ``scene.json`` (:mod:`roqsim.export_web`).
+the scene from that node to see what the sensor saw, with no image stored.
 
 **Size.** By default only core glTF is written, which every loader reads. ``--max-tex-dim`` caps
 every image's longest side (default 1024, 0 keeps them whole). ``--texture-format jpeg`` stores
@@ -783,10 +783,24 @@ bundled warehouse (``depot``) is several megabytes at the defaults and about a f
 The export is checked with the Khronos glTF Validator: ``make test-gltf`` validates an export of every
 bundled world (see :doc:`developer_guide`).
 
+**From Python.** The compile is public, for a script that needs the model a world builds rather than a
+file: :func:`roqsim.scene_source.compile_from_world` returns ``(model, data, view)``, and
+:func:`roqsim.scene_source.compile_world` the same with the sensor cameras the world's plugins declare.
+Both take the world YAML, a set of plugin names or refs to drop, the overrides to merge in, a logger
+and ``settle_steps``, and return the state after ``reset()``:
+
+.. code-block:: python
+
+   import logging
+
+   from roqsim.scene_source import compile_from_world
+
+   model, data, view = compile_from_world("world.yaml", set(), {}, logging.getLogger(__name__))
+
 Exporting a model as one mesh
 -----------------------------
 
-``export web``, ``export gltf``, ``export urdf``, ``export srdf`` and ``export moveit`` all keep a model as a body tree,
+``export gltf``, ``export urdf``, ``export srdf`` and ``export moveit`` all keep a model as a body tree,
 because their consumers animate or plan it. A second class of consumer wants the opposite -- one rigid
 mesh and nothing else. A model-based 6D pose estimator takes a single mesh and returns the pose *of that
 mesh's frame*; a CAD tool imports one body and knows nothing about joints:
@@ -1119,18 +1133,17 @@ a windowed adapter run hits ``gladLoadGL error`` on a camera world. The offscree
 among them — that one is chosen by ``import roqsim``, so the adapter gets it like everything else,
 which is what makes a stepped run able to render at all.
 
-The adapter can also leave a browser scene descriptor next to the run: set
-``ROQSIM_SCENE_EXPORT_DIR`` and every (re)built world is exported as ``scene.json`` +
-``scene.bin`` (+ textures) into that directory after ``reset()`` — the same format
-``roqsim export web`` produces, but of the *exact* simulated world (``world_overrides``
-included), captured at its true initial pose. A relative path is anchored to ``RUN_OUTPUT_DIR`` when it
+The adapter can also leave the scene next to the run: set ``ROQSIM_SCENE_EXPORT_DIR`` and every
+(re)built world is exported as ``scene.glb`` into that directory after ``reset()`` — the file
+``roqsim export gltf`` writes with its default options, but of the *exact* simulated world
+(``world_overrides`` included), captured at its true initial pose. A relative path is anchored to ``RUN_OUTPUT_DIR`` when it
 is set, else to the scenario's ``output_dir`` (which scenario-execution passes to ``setup()``), else to
 the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_RECORD_TRACKS``, ``ROQSIM_RECORD_EXCLUDE`` -- see
 :ref:`recording-a-run`), with a relative path anchored to ``RUN_OUTPUT_DIR`` when it is set, else to
-the scenario's ``output_dir``. That is what turns a run into something replayable: the descriptor
+the scenario's ``output_dir``. That is what turns a run into something replayable: the scene
 above is the world's geometry, and the recording is what moved in it.
 
 What a scenario can ask the simulation

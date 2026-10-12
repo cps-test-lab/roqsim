@@ -15,8 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "click>=8.1",   # the `roqsim` command tree (roqsim/commands.py); tools keep their own argparse
     # `roqsim render` writes its stills through Pillow, so it is a hard dependency of a shipped
-    # subcommand, not an optional extra. Two other sites (the splash overlay, the web exporter's
-    # texture downscale) degrade without it; the renderer cannot.
+    # subcommand, not an optional extra. The splash overlay degrades without it; the renderer cannot.
     "pillow>=9.0",
     # A run is recorded as one mcap file (roqsim/capture.py), chunked and zstd-compressed so a
     # killed run keeps every closed chunk; the reader (roqsim/recording.py) decompresses them.
@@ -102,7 +101,6 @@ entity_control = "roqsim.plugins.entity_control:EntityControlPlugin"
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of
 # `roqsim export *` because they are already written into other people's configs and scripts.
 roqsim = "roqsim.commands:main"
-roqsim-export-web = "roqsim.export_web:main"
 roqsim-export-urdf = "roqsim.export_urdf:main"
 roqsim-export-srdf = "roqsim.export_srdf:main"
 

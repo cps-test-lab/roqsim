@@ -223,7 +223,7 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.setup(output_dir=str(root))
     sim.reset()
     sim.shutdown()
-    assert (run_dir / "scene" / "scene.json").is_file()
+    assert (run_dir / "scene" / "scene.glb").read_bytes()[:4] == b"glTF"
     assert not (root / "scene").exists()
 
     # Without a per-run directory the scenario's own output_dir is the fallback.
@@ -232,4 +232,4 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.setup(output_dir=str(root))
     sim.reset()
     sim.shutdown()
-    assert (root / "scene" / "scene.json").is_file()
+    assert (root / "scene" / "scene.glb").is_file()

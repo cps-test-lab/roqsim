@@ -1,7 +1,7 @@
 """Render a world, scene, model or mesh to an image, headless.
 
 This is the *tool*; the rendering library it drives is :mod:`roqsim.rendering` (``FrameRenderer`` and the
-camera maths). Same relationship ``roqsim.export_web`` has with ``roqsim export web``.
+camera maths). Same relationship ``roqsim.export_gltf`` has with ``roqsim export gltf``.
 
     roqsim render world.yaml --out top.png --view elevation=-85 distance=45
     roqsim render roqsim_assets:industrial_table --out table.png        # one model, auto-framed

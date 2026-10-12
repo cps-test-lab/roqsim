@@ -1,10 +1,9 @@
 """What a compiled world's scene contains: the one walk every scene export serialises.
 
-``roqsim export web`` and ``roqsim export gltf`` write the same scene in two formats. What the scene
-*contains* -- which bodies, where each sits, which geoms are drawn, the meshes with their texture
-coordinates, the skins and the flexes drawn as skins, the materials and the textures they use -- is
-decided here, once, so the two files cannot disagree about it. A writer decides only how to spell
-it.
+``roqsim export gltf`` writes this scene. What the scene *contains* -- which bodies, where each
+sits, which geoms are drawn, the meshes with their texture coordinates, the skins and the flexes
+drawn as skins, the materials and the textures they use -- is decided here, once, and a writer
+decides only how to spell it.
 
 :func:`walk` reads a compiled :class:`mujoco.MjModel` and the :class:`mujoco.MjData` holding the
 state to export, and returns a :class:`SceneContent`:
@@ -36,7 +35,6 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -148,7 +146,6 @@ class Texture:
     width: int
     height: int
     channels: int
-    path: str | None  # the path MuJoCo recorded for it, None for a procedural texture
 
     def pixels(self, model: mujoco.MjModel) -> np.ndarray:
         """The compiled pixels, ``(height, width, channels)`` uint8, rows top first."""
@@ -157,12 +154,6 @@ class Texture:
         return np.asarray(model.tex_data[adr : adr + n], dtype=np.uint8).reshape(
             self.height, self.width, self.channels
         )
-
-    def source_file(self) -> Path | None:
-        """The image file it came from, when the recorded path resolves on disk."""
-        if self.path and Path(self.path).is_file():
-            return Path(self.path)
-        return None
 
 
 @dataclass
@@ -258,18 +249,6 @@ def resolved_rgba(model: mujoco.MjModel, matid: int, rgba) -> list[float]:
     if matid < 0 or any(abs(a - b) > 1e-6 for a, b in zip(own, DEFAULT_RGBA, strict=True)):
         return own
     return [float(c) for c in model.mat_rgba[matid]]
-
-
-# -- strings ---------------------------------------------------------------------------------------
-
-
-def model_path(model: mujoco.MjModel, adr: int) -> str | None:
-    """Read a NUL-terminated string at ``adr`` in ``model.paths`` (the packed texture file paths)."""
-    if adr < 0:
-        return None
-    paths = model.paths
-    end = paths.find(b"\x00", adr)
-    return paths[adr:end].decode() if end >= 0 else paths[adr:].decode()
 
 
 # -- bodies and joints -----------------------------------------------------------------------------
@@ -486,7 +465,7 @@ def exported_state(model: mujoco.MjModel, data: mujoco.MjData) -> mujoco.MjData:
 
     That is ``data`` -- free bodies, mocap bodies and named joints, as :func:`body_poses` and
     :func:`joints` read them -- with every unnamed hinge and slide joint at its reference position,
-    where a viewer of ``roqsim.web_scene`` shows it, having no value for it. A flex binds here (its
+    where a viewer with joints shows it, having no value for it. A flex binds here (its
     vertex bodies move on unnamed slide joints, so its bind shape is the flex at rest on its posed
     parent, whatever it had settled into in ``data``), and a format with no joints, such as glTF,
     places each body where this state puts it.
@@ -745,7 +724,6 @@ def walk(
                 int(model.tex_width[tid]),
                 int(model.tex_height[tid]),
                 int(model.tex_nchannel[tid]),
-                model_path(model, int(model.tex_pathadr[tid])),
             )
         )
     scene.joints, scene.initial_joints = joints(model, data)

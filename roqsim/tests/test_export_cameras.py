@@ -1,13 +1,12 @@
 """Sensor cameras in a scene export: a glTF perspective camera on the body the sensor is mounted on.
 
-Both exports are read back as a viewer would and checked against MuJoCo itself: the camera's world
-pose, composed from its body's pose and the exported mount pose, is ``cam_xpos``/``cam_xmat``, and
-what the camera looks at lies down its -z, the direction a glTF camera looks.
+The walk's cameras and the glTF file's are checked against MuJoCo itself: the camera's world pose,
+composed from its body's pose and the mount pose, is ``cam_xpos``/``cam_xmat``, and what the camera
+looks at lies down its -z, the direction a glTF camera looks.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 
@@ -15,11 +14,10 @@ import mujoco
 import numpy as np
 import pytest
 from test_export_gltf import _W, Glb
-from test_export_web import _joint_motion, _quat_to_mat, _rest_mat
+from test_scene_content import _quat_to_mat, _rest_mat
 
 from roqsim.export_gltf import export_gltf as write_glb
-from roqsim.export_web import export_scene
-from roqsim.scene_content import SensorCamera
+from roqsim.scene_content import SensorCamera, walk
 
 LOG = logging.getLogger("t")
 
@@ -64,43 +62,31 @@ def _cam_world(model, data, camera="eye"):
     return T
 
 
-def _web_world(scene, index, values):
-    """A body's world matrix as the web loader composes it: rest pose, then its joints' motion."""
-    bodies, joints = scene["bodies"], scene["joints"]
-    T = np.eye(4)
-    chain = []
-    while index > 0:
-        chain.append(index)
-        index = bodies[index]["parent"]
-    for b in reversed(chain):
-        local = _rest_mat(bodies[b]["pos"], bodies[b]["quat"])
-        for j in joints:
-            if j["body"] == b and j["type"] in ("hinge", "slide"):
-                local = local @ _joint_motion(j, values.get(j["name"], 0.0))
-        T = T @ local
-    return T
+def _cameras(model, data, sensors=None):
+    """The walk's cameras of ``model`` at ``data``, with the default sensor unless told otherwise."""
+    content = walk(model, data, LOG, [_sensor(model)] if sensors is None else sensors)
+    return content, content.cameras
+
+
+def _camera_world(content, cam):
+    """The camera's world matrix: its body's pose at the exported state, then the mount pose."""
+    return _rest_mat(*content.world_poses[cam.body]) @ _rest_mat(cam.pos, cam.quat)
 
 
 @pytest.mark.parametrize("pan", [0.0, 0.6, -1.1])
-def test_the_web_camera_sits_where_mujoco_puts_it(tmp_path, pan):
+def test_the_camera_sits_where_mujoco_puts_it(pan):
     model, data = _model(pan)
-    scene = export_scene(model, data, tmp_path, LOG, max_tex_dim=0, cameras=[_sensor(model)])
-    (cam,) = scene["cameras"]
-    assert cam["name"] == "robot.eye" and cam["kind"] == "rgb"
-    assert scene["bodies"][cam["body"]]["name"] == "mount"
-    world = _web_world(scene, cam["body"], scene["initialJoints"]) @ _rest_mat(
-        cam["pos"], cam["quat"]
-    )
-    np.testing.assert_allclose(world, _cam_world(model, data), atol=1e-9)
-    assert json.loads((tmp_path / "scene.json").read_text())["cameras"] == scene["cameras"]
+    content, (cam,) = _cameras(model, data)
+    assert cam.name == "robot.eye" and cam.kind == "rgb"
+    assert content.bodies[cam.body].name == "mount"
+    np.testing.assert_allclose(_camera_world(content, cam), _cam_world(model, data), atol=1e-9)
 
 
-def test_the_camera_looks_down_its_minus_z_with_y_up(tmp_path):
+def test_the_camera_looks_down_its_minus_z_with_y_up():
     """The glTF convention, checked on what the camera sees rather than on a matrix."""
     model, data = _model()
-    scene = export_scene(model, data, tmp_path, LOG, max_tex_dim=0, cameras=[_sensor(model)])
-    (cam,) = scene["cameras"]
-    world = _web_world(scene, cam["body"], {}) @ _rest_mat(cam["pos"], cam["quat"])
+    content, (cam,) = _cameras(model, data)
+    world = _camera_world(content, cam)
     # xyaxes "0 -1 0  0 0 1": image right is world -y, image up is world +z, so the view is +x.
     np.testing.assert_allclose(
         world[:3, :3] @ [0, 0, -1],
@@ -110,41 +96,36 @@ def test_the_camera_looks_down_its_minus_z_with_y_up(tmp_path):
     np.testing.assert_allclose(world[:3, :3] @ [0, 1, 0], [0, 0, 1], atol=1e-9)
 
 
-def test_the_projection_is_the_published_images(tmp_path):
+def test_the_projection_is_the_published_images():
     model, data = _model()
-    scene = export_scene(model, data, tmp_path, LOG, max_tex_dim=0, cameras=[_sensor(model)])
-    (cam,) = scene["cameras"]
-    p = cam["perspective"]
-    assert p["yfov"] == pytest.approx(math.radians(50))
-    assert p["aspectRatio"] == pytest.approx(64 / 48)
-    assert (cam["width"], cam["height"]) == (64, 48)
+    _content, (cam,) = _cameras(model, data)
+    assert cam.yfov == pytest.approx(math.radians(50))
+    assert cam.aspect_ratio == pytest.approx(64 / 48)
+    assert (cam.width, cam.height) == (64, 48)
     extent = float(model.stat.extent)
-    assert p["znear"] == pytest.approx(float(model.vis.map.znear) * extent)
-    assert p["zfar"] == pytest.approx(float(model.vis.map.zfar) * extent)
+    assert cam.znear == pytest.approx(float(model.vis.map.znear) * extent)
+    assert cam.zfar == pytest.approx(float(model.vis.map.zfar) * extent)
 
 
-def test_non_square_pixels_widen_the_aspect_ratio(tmp_path):
+def test_non_square_pixels_widen_the_aspect_ratio():
     """aspectRatio is the ratio of the half-angle tangents, so fx < fy (wider pixels) widens it."""
     model, data = _model()
-    sensor = _sensor(model, fx=40.0, fy=50.0)
-    (cam,) = export_scene(model, data, tmp_path, LOG, max_tex_dim=0, cameras=[sensor])["cameras"]
-    assert cam["perspective"]["yfov"] == pytest.approx(2 * math.atan(48 / 100))
-    assert cam["perspective"]["aspectRatio"] == pytest.approx((64 / 80) / (48 / 100))
+    _content, (cam,) = _cameras(model, data, [_sensor(model, fx=40.0, fy=50.0)])
+    assert cam.yfov == pytest.approx(2 * math.atan(48 / 100))
+    assert cam.aspect_ratio == pytest.approx((64 / 80) / (48 / 100))
 
 
-def test_a_camera_not_fixed_to_its_body_is_left_out_and_named(tmp_path, caplog):
+def test_a_camera_not_fixed_to_its_body_is_left_out_and_named(caplog):
     model, data = _model()
     with caplog.at_level("WARNING"):
-        scene = export_scene(
-            model, data, tmp_path, LOG, max_tex_dim=0, cameras=[_sensor(model, "follower")]
-        )
-    assert scene["cameras"] == []
+        _content, cameras = _cameras(model, data, [_sensor(model, "follower")])
+    assert cameras == []
     assert "robot.eye" in caplog.text and "not fixed" in caplog.text
 
 
-def test_no_sensors_means_no_cameras(tmp_path):
+def test_no_sensors_means_no_cameras():
     model, data = _model()
-    assert export_scene(model, data, tmp_path, LOG, max_tex_dim=0)["cameras"] == []
+    assert _cameras(model, data, [])[1] == []
 
 
 @pytest.mark.parametrize("pan", [0.0, 0.6])
@@ -168,17 +149,18 @@ def test_the_gltf_camera_node_is_a_child_of_its_body_and_sits_where_mujoco_puts_
     np.testing.assert_allclose(glb.globals()[n], _W @ _cam_world(model, data), atol=1e-6)
 
 
-def test_the_gltf_and_web_cameras_agree(tmp_path):
+def test_the_gltf_camera_is_the_walks(tmp_path):
     model, data = _model(0.4)
-    web = export_scene(model, data, tmp_path / "web", LOG, max_tex_dim=0, cameras=[_sensor(model)])
+    _content, (cam,) = _cameras(model, data)
     out = tmp_path / "scene.glb"
     gltf = write_glb(model, data, out, log=LOG, max_tex_dim=0, cameras=[_sensor(model)])
-    (cam,) = web["cameras"]
     (camera,) = [c for c in gltf["cameras"] if c.get("name") == "robot.eye"]
-    assert camera["perspective"] == pytest.approx(cam["perspective"])
+    assert camera["perspective"] == pytest.approx(
+        {"yfov": cam.yfov, "aspectRatio": cam.aspect_ratio, "znear": cam.znear, "zfar": cam.zfar}
+    )
     (node,) = [n for n in gltf["nodes"] if n.get("extras", {}).get("sensor") == "robot.eye"]
-    np.testing.assert_allclose(node["translation"], cam["pos"])
+    np.testing.assert_allclose(node["translation"], cam.pos)
     q = node["rotation"]
     np.testing.assert_allclose(
-        _quat_to_mat([q[3], q[0], q[1], q[2]]), _quat_to_mat(cam["quat"]), atol=1e-12
+        _quat_to_mat([q[3], q[0], q[1], q[2]]), _quat_to_mat(cam.quat), atol=1e-12
     )

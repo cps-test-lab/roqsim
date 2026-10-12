@@ -1,5 +1,5 @@
 """export_gltf: a world as one binary glTF file, with the body tree, the frame and the content of
-``export web``.
+the scene walk (:func:`roqsim.scene_content.walk`).
 
 The file is read back here by a small GLB reader (header, JSON chunk, BIN chunk, accessors into
 numpy), so every check is on what a glTF loader would see, not on the exporter's own structures.
@@ -20,7 +20,7 @@ import meshopt_decode
 import mujoco
 import numpy as np
 import pytest
-from test_export_web import (
+from test_scene_content import (
     _CABLE,
     _GRID3,
     _MJCF,
@@ -43,7 +43,7 @@ from test_export_web import (
 from roqsim import env, exit_status, export_gltf
 from roqsim.export_gltf import WORLD_ROTATION
 from roqsim.export_gltf import export_gltf as write_glb
-from roqsim.export_web import export_scene
+from roqsim.scene_content import walk
 
 LOG = logging.getLogger("t")
 
@@ -261,21 +261,21 @@ def test_a_point_in_the_world_nodes_frame_is_a_world_coordinate(tmp_path, qh, qs
     np.testing.assert_allclose(scene, expect @ _W[:3, :3].T, atol=1e-6)
 
 
-# -- the same content as export web ----------------------------------------------------------------
+# -- the same content as the walk ------------------------------------------------------------------
 
 
-def _web_world_poses(scene: dict) -> list[np.ndarray]:
-    """Body world matrices as a ``roqsim.web_scene`` viewer computes them: rest pose, then joints."""
+def _walk_world_poses(content) -> list[np.ndarray]:
+    """Body world matrices as a viewer with joints computes them: rest pose, then joints."""
     joints: dict[int, list] = {}
-    for j in scene["joints"]:
-        joints.setdefault(j["body"], []).append(j)
+    for j in content.joints:
+        joints.setdefault(j.body, []).append(j)
     world = []
-    for i, b in enumerate(scene["bodies"]):
-        local = _rest_mat(b["pos"], b["quat"])
+    for i, b in enumerate(content.bodies):
+        local = _rest_mat(b.pos, b.quat)
         for j in joints.get(i, []):
-            if j["type"] in ("hinge", "slide"):
-                local = local @ _joint_motion(j, scene["initialJoints"].get(j["name"], 0.0))
-        world.append(world[b["parent"]] @ local if i else local)
+            if j.type in ("hinge", "slide"):
+                local = local @ _joint_motion(j, content.initial_joints.get(j.name, 0.0))
+        world.append(world[b.parent] @ local if i else local)
     return world
 
 
@@ -289,16 +289,14 @@ def _display(linear):
     return [*out, linear[3]]
 
 
-def _web_geoms(scene: dict) -> Counter:
+def _walk_geoms(content) -> Counter:
     out = Counter()
-    for g in scene["geoms"]:
-        if g.get("skin") is not None:
-            continue
-        own = [round(c, 6) for c in g["rgba"]]
-        mat = g["matid"] >= 0 and own == [0.5, 0.5, 0.5, 1.0]
-        rgba = scene["materials"][g["matid"]]["rgba"] if mat else g["rgba"]  # as MuJoCo draws it
-        pose = tuple(np.round(np.r_[g["pos"], g["quat"]], 6))
-        out[(scene["bodies"][g["body"]]["name"], g["type"], pose, _colour(rgba))] += 1
+    for g in content.geoms:
+        own = [round(c, 6) for c in g.rgba]
+        mat = g.matid >= 0 and own == [0.5, 0.5, 0.5, 1.0]
+        rgba = content.materials[g.matid].rgba if mat else g.rgba  # as MuJoCo draws it
+        pose = tuple(np.round(np.r_[g.pos, g.quat], 6))
+        out[(content.bodies[g.body].name, g.type, pose, _colour(rgba))] += 1
     return out
 
 
@@ -320,27 +318,26 @@ _FIXTURES = {"mixed": _MJCF, "names": _NAMES}
 
 
 @pytest.mark.parametrize("fixture", sorted(_FIXTURES))
-def test_gltf_and_web_exports_hold_the_same_scene(tmp_path, fixture):
-    """The two exports do not drift: same bodies where the same viewer state puts them, same geoms
-    with the same pose and colour."""
+def test_gltf_holds_the_walks_scene(tmp_path, fixture):
+    """The file does not drift from the walk: same bodies where a viewer with joints puts them, same
+    geoms with the same pose and colour."""
     model, data = _compile(_FIXTURES[fixture])
     for j in range(model.njnt):  # a non-trivial state: every named scalar joint away from rest
         if model.jnt_type[j] in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
             data.qpos[model.jnt_qposadr[j]] = 0.3 + 0.1 * j
     mujoco.mj_forward(model, data)
-    web = export_scene(model, data, tmp_path / "web", LOG, max_tex_dim=0)
+    content = walk(model, data, LOG)
     glb = _export(model, data, tmp_path)
 
     G = glb.globals()
     to_world = np.linalg.inv(G[glb.body_nodes()[0]])
-    web_world = _web_world_poses(web)
     nodes = glb.body_nodes()
-    assert [b["name"] for b in web["bodies"]] == [
-        glb.nodes[nodes[b]]["extras"]["body"] for b in range(len(web["bodies"]))
+    assert [b.name for b in content.bodies] == [
+        glb.nodes[nodes[b]]["extras"]["body"] for b in range(len(content.bodies))
     ]
-    for b, T in enumerate(web_world):
+    for b, T in enumerate(_walk_world_poses(content)):
         np.testing.assert_allclose(to_world @ G[nodes[b]], T, atol=1e-6)
-    assert _glb_geoms(glb, model) == _web_geoms(web)
+    assert _glb_geoms(glb, model) == _walk_geoms(content)
 
 
 # -- tessellation and normals ----------------------------------------------------------------------
@@ -494,8 +491,8 @@ def test_the_authored_view_is_a_camera_where_render_puts_its_own(tmp_path):
 # A glTF viewer skins a vertex as ``sum_k w_k * J_k * IBM_k * v``, ``J_k`` the joint node's matrix in
 # the scene. Here the joint nodes are posed the way a viewer replaying a run poses them -- each body
 # node at the body's world pose, seen through the ``world`` node -- and the result is held against
-# MuJoCo, or against ``export web``'s skin of the same flex, whose skinning its own tests hold
-# against MuJoCo.
+# MuJoCo, or against the walk's skin of the same flex, whose skinning its own tests hold against
+# MuJoCo.
 
 _SKIN = """
 <mujoco>
@@ -579,10 +576,9 @@ def test_a_skin_is_a_skinned_mesh_over_its_bone_bodies(tmp_path):
     [(_GRID3, "blk"), (_PINNED3, "blk"), (_TRILINEAR, "blk"), (_SHEET, "cloth"), (_CABLE, "cable")],
     ids=["solid", "pinned", "trilinear", "sheet", "cable"],
 )
-def test_a_flex_deforms_as_export_webs_skin_of_it_does(tmp_path, flexcomp, name):
+def test_a_flex_deforms_as_the_walks_skin_of_it_does(tmp_path, flexcomp, name):
     model, data = _compile(_flex_world(flexcomp))
-    web = export_scene(model, data, tmp_path / "web", LOG)
-    web_verts, faces, web_skin, index, weight = _flex_skin(web, tmp_path / "web", name)
+    walk_verts, faces, walk_skin, index, weight = _flex_skin(walk(model, data, LOG), name)
     glb = _export(model, data, tmp_path)
     (n,) = [n for n in _skin_nodes(glb) if glb.nodes[n]["extras"].get("flex") == name]
     prim = glb.primitive(n)
@@ -595,7 +591,7 @@ def test_a_flex_deforms_as_export_webs_skin_of_it_does(tmp_path, flexcomp, name)
 
     # At the exported state the file draws the flex where MuJoCo has it.
     G = glb.globals()
-    np.testing.assert_allclose(_glb_skinned(glb, n, G.__getitem__), _yup(web_verts), atol=1e-6)
+    np.testing.assert_allclose(_glb_skinned(glb, n, G.__getitem__), _yup(walk_verts), atol=1e-6)
     if name == "blk":
         np.testing.assert_allclose(
             _glb_skinned(glb, n, G.__getitem__), _yup(_flex_verts(model, data)), atol=1e-6
@@ -605,7 +601,7 @@ def test_a_flex_deforms_as_export_webs_skin_of_it_does(tmp_path, flexcomp, name)
     for _ in range(3):
         _deform(model, data, rng)
         got = _glb_skinned(glb, n, _posed(glb, model, data))
-        want = _skinned(web_verts, web_skin, index, weight, _body_pose(model, data))
+        want = _skinned(walk_verts, walk_skin, index, weight, _body_pose(model, data))
         assert np.abs(got - _yup(want))[drawn].max() < 1e-5
         if name == "blk":
             assert np.abs(got - _yup(_flex_verts(model, data)))[drawn].max() < 1e-5
