@@ -28,7 +28,9 @@ Physics walls come from *exact* convex colliders, one per wall segment / column,
 floorplan's json-ld source next to the mesh (``<env>/json-ld/``, see
 :mod:`roqsim.floorplan_collision`). They are invisible and hidden from the renderer, but
 solid to physics, so the robot physically cannot drive through walls (doorways stay open). The json-ld
-is **required**: a mesh without it fails validation.
+is **required**: a mesh without it fails validation. It states the walls in the mesh's own frame, so
+``mesh_scale`` and ``mesh_pos`` place the colliders and the ground plane with the mesh, and the walls
+the lidar sees stay the walls the robot collides with.
 
 **From segments**, each wall becomes one box: visible AND collidable, because a box is already
 convex, so unlike the mesh source there is nothing to hide behind -- what is drawn is what is
@@ -45,6 +47,8 @@ Config::
     floorplan:
       # --- one of these two sources ---
       mesh: <path>         # floorplan mesh (.stl); absolute, or relative to the process cwd
+      mesh_scale: 1.0      # mesh only: float or [x, y, z]
+      mesh_pos: [0, 0, 0]  # mesh only: placement offset in the world frame
       # ...or the layout instead, in the floorplan JSON's own vocabulary:
       floorplan: rooms.json  # what `roqsim scenes dxf-to-floorplan` and the sketch window write
       lines:                 # ...or the segments inline
@@ -54,8 +58,6 @@ Config::
       thickness: 0.12      # segments only: wall thickness (m)
       opening_height: 2.0  # segments only: door height; the wall above one becomes a lintel
       # --- the rest applies to both ---
-      mesh_scale: 1.0      # float or [x, y, z]
-      mesh_pos: [0, 0, 0]  # placement offset of the mesh in the world frame
       floor:               # ground-plane appearance + physics (all keys optional; default = light gray)
         rgb1: [0.85, 0.85, 0.85]        # builtin-checker colour A (0..1 RGB)
         rgb2: [0.78, 0.78, 0.79]        # builtin-checker colour B
@@ -78,7 +80,8 @@ Config::
         physical_size: 2.4              # metres one tile spans. Honoured for both a UV-less .stl (via
                                         #   texuniform) and a UV'd .obj (its UVs are scaled to match).
       light:               # a single overhead light at the floorplan centre + a global ambient
-        height: 2.5                     # metres above the floor for the light
+        height: 2.5                     # metres above the floor for the light; by default 0.15 m under
+                                        #   the walls' top when it would be at it (their tops then flicker)
         diffuse: [0.35, 0.35, 0.35]     # light colour/intensity (flat across the cone)
         cutoff: 90.0                    # spot half-angle (deg); 90 = hemisphere, no visible cone edge
         fill: [0.3, 0.3, 0.3]           # uniform global ambient (not a light); [0, 0, 0] disables it
@@ -144,6 +147,12 @@ _LIGHT_DEFAULTS = {
     "cutoff": 90.0,  # spot half-angle (deg); 90 = hemisphere, i.e. no visible cone edge
     "fill": [0.3, 0.3, 0.3],  # uniform global ambient; [0, 0, 0] disables it
 }
+
+
+#: How close to the walls' top height a light counts as at it, and how far under it the default
+#: light hangs when the default height would be there (see ``_add_lights``).
+_LIGHT_CLEAR_OF_WALL_TOP = 0.05
+_LIGHT_BELOW_WALL_TOP = 0.15
 
 
 def _boxes_as_points(boxes: list) -> list:
@@ -231,6 +240,12 @@ class FloorplanPlugin(Plugin):
             )
         if segments:
             errors.extend(self._validate_segments(config))
+            placed = sorted(k for k in ("mesh_scale", "mesh_pos") if k in config)
+            if placed:
+                errors.append(
+                    f"{placed} place a floorplan mesh, and this floorplan is built from segments: "
+                    f"state the walls where they stand instead"
+                )
         elif not mesh:
             pass
         elif not os.path.exists(mesh):
@@ -248,6 +263,9 @@ class FloorplanPlugin(Plugin):
                 errors.append(
                     "'mesh_scale' must be a positive float or a list of 3 positive floats"
                 )
+            pos = config.get("mesh_pos", [0.0, 0.0, 0.0])
+            if not isinstance(pos, (list, tuple)) or len(pos) != 3:
+                errors.append("'mesh_pos' must be a list of 3 floats")
         errors.extend(self._validate_floor(config.get("floor") or {}))
         errors.extend(self._validate_appearance(config.get("wall") or {}, "wall"))
         errors.extend(self._validate_light(config.get("light") or {}))
@@ -442,7 +460,7 @@ class FloorplanPlugin(Plugin):
                 f"floorplan[{self.label}]: the segments produced no walls. A floorplan with "
                 f"nothing in it builds a world that quietly measures nothing."
             )
-        colliders = wall_colliders(mesh) if mesh else _boxes_as_points(boxes)
+        colliders = self._placed(wall_colliders(mesh)) if mesh else _boxes_as_points(boxes)
         cx, cy, half_x, half_y = _footprint(colliders)
 
         surface_material(spec, "grid", "floor_mat", floor_raw, _FLOOR_DEFAULTS)
@@ -455,7 +473,10 @@ class FloorplanPlugin(Plugin):
         floor.material = "floor_mat"
         floor.friction = [float(v) for v in floor_cfg["friction"]]
 
-        self._add_lights(spec, (cx, cy))
+        wall_top = (
+            None if mesh else float(self.config.get("height", self.SEGMENT_DEFAULTS["height"]))
+        )
+        self._add_lights(spec, (cx, cy), wall_top)
 
         wall_raw = self.config.get("wall") or {}
         wall_mat = surface_material(spec, "wall_grid", "wall_mat", wall_raw, _WALL_DEFAULTS)
@@ -465,7 +486,7 @@ class FloorplanPlugin(Plugin):
         else:
             self._add_wall_boxes(spec, boxes, wall_mat)
 
-    def _add_lights(self, spec, floor_center) -> None:
+    def _add_lights(self, spec, floor_center, wall_top: float | None = None) -> None:
         """A single overhead light at the floorplan centre + a uniform global ambient.
 
         The light is a spotlight with ``exponent = 0`` so its intensity is flat across the cone
@@ -473,18 +494,47 @@ class FloorplanPlugin(Plugin):
         radius. ``fill`` is applied as the scene's global ambient rather than another positional light,
         so it lifts wall-shadowed corners evenly instead of adding a second hotspot.
         """
-        cfg = {**_LIGHT_DEFAULTS, **(self.config.get("light") or {})}
+        light_raw = self.config.get("light") or {}
+        cfg = {**_LIGHT_DEFAULTS, **light_raw}
+        height = float(cfg["height"])
+        # A spot's cone edge is the horizontal plane through it, and at a 90-degree cutoff that plane
+        # is lit or not by rounding: a light at the walls' top height puts their top faces -- and a
+        # ceiling laid on them -- on that edge, and they flicker as a camera moves. The default light
+        # is moved under the walls' top; a light the world placed there is reported, not moved.
+        if wall_top is not None and abs(height - wall_top) < _LIGHT_CLEAR_OF_WALL_TOP:
+            if "height" in light_raw:
+                logger.warning(
+                    "floorplan[%s]: light.height %.3g m is the walls' height %.3g m: their tops lie on "
+                    "the light's cone edge and flicker in a moving camera; hang it %.2g m lower",
+                    self.label,
+                    height,
+                    wall_top,
+                    _LIGHT_BELOW_WALL_TOP,
+                )
+            else:
+                height = wall_top - _LIGHT_BELOW_WALL_TOP
         fill = [float(v) for v in cfg["fill"]]
         if any(fill):
             spec.visual.headlight.ambient = fill
 
         cx, cy = floor_center
         light = spec.worldbody.add_light()
-        light.pos = [cx, cy, float(cfg["height"])]
+        light.pos = [cx, cy, height]
         light.dir = [0, 0, -1]
         light.diffuse = [float(v) for v in cfg["diffuse"]]
         light.exponent = 0.0  # flat across the cone -> no hotspot
         light.cutoff = float(cfg["cutoff"])
+
+    def _placement(self) -> tuple[list[float], list[float]]:
+        """``mesh_scale`` as three factors, and ``mesh_pos``: how the mesh's frame sits in the world."""
+        scale = self.config.get("mesh_scale", 1.0)
+        scale = [float(s) for s in (scale if isinstance(scale, (list, tuple)) else [scale] * 3)]
+        return scale, [float(v) for v in self.config.get("mesh_pos", [0.0, 0.0, 0.0])]
+
+    def _placed(self, colliders: list) -> list:
+        """The json-ld colliders placed as the mesh is: scaled about its origin, then offset."""
+        scale, pos = self._placement()
+        return [np.asarray(v, dtype=float).reshape(-1, 3) * scale + pos for v in colliders]
 
     def _add_mesh(self, spec: mujoco.MjSpec, mesh_path: str, material: str) -> None:
         """Add the floorplan mesh as a visual + lidar-only geom (no physics contacts).
@@ -493,8 +543,7 @@ class FloorplanPlugin(Plugin):
         interior, so contacts are disabled and the lidar (which raycasts the real triangles) provides
         the obstacles. ``material`` carries the wall appearance (see :func:`roqsim.surfaces.surface_material`).
         """
-        scale = self.config.get("mesh_scale", 1.0)
-        scale = [float(s) for s in (scale if isinstance(scale, (list, tuple)) else [scale] * 3)]
+        scale, pos = self._placement()
 
         mesh_file = os.path.abspath(mesh_path)
         # If the wall carries a texture and the mesh has baked UVs, MuJoCo ignores texrepeat on it, so
@@ -517,13 +566,13 @@ class FloorplanPlugin(Plugin):
         g.name = "floorplan"
         g.type = mujoco.mjtGeom.mjGEOM_MESH
         g.meshname = "floorplan"
-        g.pos = [float(v) for v in self.config.get("mesh_pos", [0.0, 0.0, 0.0])]
+        g.pos = pos
         g.material = material
         g.contype = 0
         g.conaffinity = 0
 
     def _add_colliders(self, spec: mujoco.MjSpec, colliders: list) -> None:
-        """Inject one collidable geom per exact convex wall/column (world-frame vertex sets).
+        """Inject one collidable geom per exact convex wall/column (world-frame vertex sets, placed).
 
         Hidden behind the visual mesh (transparent, render group 3) but solid to physics. MuJoCo
         convex-hulls each ``uservert`` set at compile time, which is exact here because every part is

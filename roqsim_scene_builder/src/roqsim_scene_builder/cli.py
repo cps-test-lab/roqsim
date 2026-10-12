@@ -93,8 +93,8 @@ def serve(transport: str, host: str, port: int) -> None:
     "--focus-object",
     "focus_object",
     default="",
-    help="Name of a scene object to point the initial camera at (zoomed, unoccluded). "
-    "Empty = automatic camera.",
+    help="Name of a scene object to point the initial camera at (zoomed, unoccluded); a name "
+    "the scene does not have exits 2. Empty = automatic camera.",
 )
 @click.option(
     "--size", default="960x720", show_default=True, help="Render size WxH, e.g. 1280x800."
@@ -118,8 +118,8 @@ def review_scene(
     """Open the scene-review window for TARGET (world YAML, MJCF, or model ref).
 
     Prints the verdict JSON and exits: 0 pass (or a neutral Enter-submitted comment), 1 fail, 2
-    no-display/load-error, 3 closed without a verdict. TARGET accepts exactly what ``roqsim``
-    accepts.
+    no-display/load-error/no such --focus-object, 3 closed without a verdict. TARGET accepts
+    exactly what ``roqsim`` accepts.
     """
     from roqsim_scene_builder.scene_window import run_window
 

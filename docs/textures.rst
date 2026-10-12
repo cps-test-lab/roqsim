@@ -70,7 +70,8 @@ of the walls through the optional ``floor`` / ``wall`` blocks:
        texture: roqsim_assets:Concrete046    # default is solid gray (rgb1 == rgb2)
        rgba: [1.0, 1.0, 1.0, 1.0]      # optional tint multiplied over the texture; RGB >1 brightens
      light:                            # one overhead light at the centre + a global fill (defaults shown)
-       height: 2.5                     # metres above the floor
+       height: 2.5                     # metres above the floor; by default 0.15 m under the walls'
+                                       #   top when it would be at it (their tops then flicker)
        diffuse: [0.35, 0.35, 0.35]     # light intensity
        cutoff: 90.0                    # spot half-angle (deg); 90 = hemisphere, no visible cone edge
        fill: [0.3, 0.3, 0.3]           # uniform global ambient so shadowed corners aren't black

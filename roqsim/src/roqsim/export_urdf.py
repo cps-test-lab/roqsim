@@ -25,6 +25,11 @@ cosmetic:
   geometry is preserved (so MoveIt still plans around the real gripper volume) while its internal
   DOFs are dropped. What is lost is the *fingers'* articulation in the planning model, which MoveIt
   does not plan through anyway -- a gripper is driven by a GripperCommand controller, not by IK.
+* A joint coupling is not a loop. An ``equality/joint`` between two exported joints -- an X-Series
+  or Panda gripper's second finger mirroring the first -- is written as a URDF ``<mimic>`` on the
+  joint that is not commanded, following the one that is. URDF's mimic is linear, so a coupling with
+  a non-zero quadratic or higher ``polycoef`` term raises, as does one coupling a kept joint to a
+  dropped one.
 * Free joints become a fixed root. A mobile base's pose belongs to TF (``odom -> base_link``), not to
   the robot description, and MoveIt expects a fixed-root URDF.
 * A **hinge or slide** root joint is kept, not dropped: the robot gets a synthetic fixed ``world`` link
@@ -152,6 +157,7 @@ class UrdfExporter:
         tip_site: str = "",
         tip_link: str = "tcp",
         link_strip: str | None = None,
+        joint_prefix: str = "",
     ):
         self.m = model
         self.prefix = prefix
@@ -169,6 +175,9 @@ class UrdfExporter:
         # both claim `base`, `shoulder_link`, ... Keeping each arm's MJCF prefix is what makes those
         # names unique, and `collapse` is then read in that same (unstripped) spelling.
         self.link_strip = self.prefix if link_strip is None else link_strip
+        # Prepended to every emitted JOINT name once `strip_prefix` is removed: `arm_controller`'s
+        # `joint_prefix`, which it puts on every name it reports in /joint_states.
+        self.joint_prefix = joint_prefix
         self.name = name
         self.root_link = root_link
         # Parent for a root body that is itself jointed (a rail carriage, a gantry). Only emitted
@@ -223,8 +232,9 @@ class UrdfExporter:
         sp = self.link_strip
         return s[len(sp) :] if sp and s.startswith(sp) else s
 
-    def _strip_joint(self, s: str) -> str:
-        """Strip the naming prefix. Used for JOINT names, which have to match /joint_states.
+    def _joint_name(self, s: str) -> str:
+        """A JOINT's emitted name, which has to match /joint_states: ``strip_prefix`` removed, then
+        ``joint_prefix`` prepended.
 
         Deliberately different from :meth:`_strip`. Only joint names are name-matched against
         ``/joint_states`` by robot_state_publisher, so only they need the arm's prefix removed; link
@@ -233,7 +243,7 @@ class UrdfExporter:
         collides with the mobile base's link and the URDF will not parse at all.
         """
         sp = self.strip_prefix
-        return s[len(sp) :] if sp and s.startswith(sp) else s
+        return self.joint_prefix + (s[len(sp) :] if sp and s.startswith(sp) else s)
 
     def _bodies(self) -> list[int]:
         """The robot's bodies, in model order (parents before children)."""
@@ -437,7 +447,7 @@ class UrdfExporter:
                 members[target].append((body, np.zeros(3), (rot, trans)))
                 jid = self._body_joint(body)
                 if jid is not None:
-                    jname = self._strip_joint(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
+                    jname = self._joint_name(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
                     if jname == self.gripper_joint:
                         # Keep the ONE joint the gripper is commanded through. Everything else in the
                         # loop is genuinely unrepresentable, but this joint is the name MoveIt's
@@ -463,7 +473,7 @@ class UrdfExporter:
                 # gripper_*_outer_finger_*_joint", followed by "Found empty JointState message" and a
                 # planner that cannot sample a single valid state.
                 self.dropped_dofs.append(
-                    self._strip_joint(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
+                    self._joint_name(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
                 )
                 jid = None
             # A URDF joint frame IS the child link frame, so a non-zero MuJoCo anchor shifts it.
@@ -509,9 +519,13 @@ class UrdfExporter:
             for body, shift, xform in mem:
                 self._write_geoms(link, body, shift, xform)
 
+        written: dict[int, ET.Element] = {}
         for link_name, body, jid, shift in joints:
-            self._write_joint(robot, link_name, body, jid, shift, link_of)
+            element = self._write_joint(robot, link_name, body, jid, shift, link_of)
+            if element.get("type") != "fixed":
+                written[jid] = element
 
+        self._write_mimics(set(bodies), written)
         self._write_gripper_drive(robot)
         self._write_tip_site(robot, link_of, shift_of)
 
@@ -612,7 +626,7 @@ class UrdfExporter:
         if self._kept_gripper is None:
             return
         parent_link, jid, rot, trans = self._kept_gripper
-        jname = self._strip_joint(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
+        jname = self._joint_name(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
         child = f"{jname}_link"
         # A frame-marker link with no geometry. It carries a NEGLIGIBLE but non-zero inertia (1 ug):
         # ROS/MoveIt accept an inertia-free link, but MuJoCo -- which parses this URDF back for the
@@ -651,6 +665,74 @@ class UrdfExporter:
             velocity="3.14",
         )
 
+    def _write_mimics(self, bodies: set[int], written: dict[int, ET.Element]) -> None:
+        """Write each ``equality/joint`` inside this robot as a ``<mimic>`` on its follower.
+
+        MuJoCo's coupling is ``q1 - q1_0 = c0 + c1 (q2 - q2_0) + ...`` about the reference positions
+        ``qpos0``; URDF's is ``follower = multiplier * leader + offset``, so the offset folds both
+        references in. The leader is the joint that is commanded -- the gripper joint, else the one
+        an actuator drives, else MuJoCo's ``joint2`` -- because MoveIt commands no mimic joint, and
+        a gripper group whose joint follows another cannot open. A coupling whose joints a collapse
+        dropped needs nothing: the lump has no DOF to couple.
+        """
+        m = self.m
+        for i in range(m.neq):
+            if int(m.eq_type[i]) != mujoco.mjtEq.mjEQ_JOINT or not bool(m.eq_active0[i]):
+                continue
+            j1, j2 = int(m.eq_obj1id[i]), int(m.eq_obj2id[i])
+            ours = [j for j in (j1, j2) if j >= 0 and int(m.jnt_bodyid[j]) in bodies]
+            if not ours:
+                continue
+            names = " and ".join(
+                repr(_name(m, mujoco.mjtObj.mjOBJ_JOINT, j)) for j in (j1, j2) if j >= 0
+            )
+            kept = [j for j in (j1, j2) if j in written]
+            if not kept:
+                continue
+            if j2 < 0 or len(kept) != 2:
+                raise ValueError(
+                    f"the equality coupling {names} has no URDF spelling here: a <mimic> needs both "
+                    "joints in the description as movable joints, and this export keeps "
+                    f"{len(kept)} of them. Collapse the subtree holding both (--collapse) or neither."
+                )
+            c0, c1, *higher = (float(v) for v in m.eq_data[i][:5])
+            if any(abs(v) > 0.0 for v in higher):
+                raise ValueError(
+                    f"the equality coupling {names} is a polynomial of degree "
+                    f"{max(k + 2 for k, v in enumerate(higher) if v)}; URDF's <mimic> is linear."
+                )
+            q1_0 = float(m.qpos0[int(m.jnt_qposadr[j1])])
+            q2_0 = float(m.qpos0[int(m.jnt_qposadr[j2])])
+            # q1 = c1 * q2 + offset, the coupling as MuJoCo states it.
+            follower, leader, mult, offset = j1, j2, c1, q1_0 + c0 - c1 * q2_0
+            commanded = {j: self._is_commanded(j, written[j].get("name")) for j in (j1, j2)}
+            if commanded[j1] > commanded[j2]:
+                if c1 == 0.0:
+                    raise ValueError(
+                        f"the equality coupling {names} holds {written[j1].get('name')!r}, the "
+                        "commanded joint, at a constant, so URDF cannot make it the leader."
+                    )
+                follower, leader, mult, offset = j2, j1, 1.0 / c1, -offset / c1
+            ET.SubElement(
+                written[follower],
+                "mimic",
+                joint=written[leader].get("name"),
+                multiplier=f"{mult:.9g}",
+                offset=f"{offset + 0.0:.9g}",  # + 0.0 writes -0 as 0
+            )
+
+    def _is_commanded(self, jid: int, name: str) -> int:
+        """How directly a joint is commanded: 2 the gripper joint, 1 actuated, 0 neither."""
+        if name == self.gripper_joint:
+            return 2
+        driven = any(
+            int(self.m.actuator_trntype[a])
+            in (mujoco.mjtTrn.mjTRN_JOINT, mujoco.mjtTrn.mjTRN_JOINTINPARENT)
+            and int(self.m.actuator_trnid[a, 0]) == jid
+            for a in range(self.m.nu)
+        )
+        return 1 if driven else 0
+
     def _rigid_to(self, body: int, ancestor: int, anc_shift: np.ndarray):
         """Rigid transform taking coordinates in ``body``'s frame into ``ancestor``'s link frame."""
         rot = np.eye(3)
@@ -665,7 +747,7 @@ class UrdfExporter:
             cur = parent
         return rot, trans - anc_shift
 
-    def _write_joint(self, robot, link_name, body, jid, shift, link_of) -> None:
+    def _write_joint(self, robot, link_name, body, jid, shift, link_of) -> ET.Element:
         parent_body = int(self.m.body_parentid[body])
         parent_link = link_of.get(parent_body, self.root_link)
         jtype = self.m.jnt_type[jid] if jid >= 0 else None
@@ -674,10 +756,10 @@ class UrdfExporter:
             # A floating base is TF's business (odom -> base_link), not the description's.
             jname, kind = f"{link_name}_fixed", "fixed"
         elif jtype == mujoco.mjtJoint.mjJNT_HINGE:
-            jname = self._strip_joint(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
+            jname = self._joint_name(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
             kind = "revolute" if self.m.jnt_limited[jid] else "continuous"
         elif jtype == mujoco.mjtJoint.mjJNT_SLIDE:
-            jname = self._strip_joint(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
+            jname = self._joint_name(_name(self.m, mujoco.mjtObj.mjOBJ_JOINT, jid))
             kind = "prismatic"
         elif jtype is None:
             jname, kind = f"{link_name}_fixed", "fixed"
@@ -701,7 +783,7 @@ class UrdfExporter:
         _origin(joint, pos, self.m.body_quat[body])
 
         if kind == "fixed":
-            return
+            return joint
         axis = np.asarray(self.m.jnt_axis[jid], dtype=float)
         ET.SubElement(joint, "axis", xyz=" ".join(f"{v:.9g}" for v in axis))
         lo, hi = (float(v) for v in self.m.jnt_range[jid])
@@ -713,6 +795,7 @@ class UrdfExporter:
         if kind in ("revolute", "prismatic"):
             attrs |= {"lower": f"{lo:.9g}", "upper": f"{hi:.9g}"}
         ET.SubElement(joint, "limit", **attrs)
+        return joint
 
     def _actuator_effort(self, jid: int) -> float:
         # URDF's effort is one magnitude, so a one-sided range (a single-acting cylinder) exports
@@ -856,7 +939,7 @@ def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
     faces = model.mesh_face[fadr : fadr + fnum].reshape(-1, 3)
     # Whole-mesh at a time, not triangle at a time. A per-face Python loop calling np.cross was
     # ~200k calls for one mobile manipulator and made a single export take four seconds -- most of
-    # the cost of `roqsim export-urdf`, and of every test that exercises it.
+    # the cost of `roqsim export urdf`, and of every test that exercises it.
     #
     # Every VERTEX this writes is bit-identical to what the loop wrote (checked over all 205k faces
     # of a husky+ur10e+robotiq). The face NORMAL can differ by one float32 ulp on a minority of
@@ -947,8 +1030,12 @@ def round_trip_error(
     samples: int = 32,
     seed: int = 0,
     mesh_dir: Path | None = None,
+    joint_prefix: str = "",
 ) -> tuple[float, str]:
     """Max FK position error (m) between the exported URDF and the MJCF it came from.
+
+    ``joint_prefix`` is the one the export put on every joint name (:class:`UrdfExporter`), removed
+    again before a joint is looked up in the model.
 
     This is the assertion that the export is *correct* rather than merely well-formed, and it needs no
     third-party URDF library: MuJoCo parses URDF too, so the URDF is loaded back and both models are
@@ -1001,15 +1088,24 @@ def round_trip_error(
         got = mujoco.mj_name2id(model, objtype, nm)
         return got if got >= 0 else mujoco.mj_name2id(model, objtype, prefix + nm)
 
-    pairs = []
+    pairs, unmatched = [], []
     for uj in range(um.njnt):
+        # int(): a raw numpy value is never found `in` a tuple of mjt* enums.
+        if int(um.jnt_type[uj]) not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+            continue
         nm = _name(um, mujoco.mjtObj.mjOBJ_JOINT, uj)
-        mj = _resolve(mujoco.mjtObj.mjOBJ_JOINT, nm)
-        if mj >= 0 and um.jnt_type[uj] in (
-            mujoco.mjtJoint.mjJNT_HINGE,
-            mujoco.mjtJoint.mjJNT_SLIDE,
-        ):
+        local = nm[len(joint_prefix) :] if joint_prefix and nm.startswith(joint_prefix) else nm
+        mj = _resolve(mujoco.mjtObj.mjOBJ_JOINT, local)
+        if mj < 0:
+            unmatched.append(nm)
+        else:
             pairs.append((nm, uj, mj))
+    # A joint left unposed sits at zero in both models, so it would agree and hide its own error.
+    if unmatched:
+        raise ValueError(
+            f"the URDF's joints {unmatched} name no joint in the model (prefix {prefix!r}, joint "
+            f"prefix {joint_prefix!r}), so the round trip cannot pose them"
+        )
 
     body_pairs = []
     for ub in range(1, um.nbody):

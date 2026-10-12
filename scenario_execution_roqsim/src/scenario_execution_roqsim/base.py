@@ -42,7 +42,7 @@ class SimAction(BaseAction):
     def setup(self, **kwargs):
         """Pick the transport from what the runner offered. See :func:`access.select`."""
         try:
-            self._access = select(kwargs, what=f"{self.__class__.__name__}")
+            self._access = select(kwargs)
         except AccessError as err:
             raise ActionError(str(err), action=self) from None
         self._clock = clock_of(kwargs)

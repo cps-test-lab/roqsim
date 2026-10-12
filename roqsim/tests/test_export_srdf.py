@@ -239,7 +239,7 @@ def _composed(tmp_path):
                         "model": "ur10e",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
-                        "pose": pose_mapping([0.25, 0.0, 0.2587]),
+                        "pose": pose_mapping([0.17, 0.0, 0.23035]),
                         "end_effector": {
                             "model": "robotiq_2f85",
                             "replaces": ["ee_plate"],
@@ -595,7 +595,13 @@ def test_a_group_per_robot_plus_one_spanning_both(two_arms):
         links,
         name="pair",
         arms=[
-            ArmGroup(name="a", base_link="a_base", tip_link="a_link", home={"a_j": 0.1}),
+            ArmGroup(
+                name="a",
+                base_link="a_base",
+                tip_link="a_link",
+                gripper_joint="a_j",
+                home={"a_j": 0.1},
+            ),
             ArmGroup(name="b", base_link="b_base", tip_link="b_link", home={"b_j": 0.2}),
         ],
         combined_group="both_arms",
@@ -603,13 +609,12 @@ def test_a_group_per_robot_plus_one_spanning_both(two_arms):
         samples=20,
     )
     root = tree.getroot()
-    assert [g.get("name") for g in root.findall("group")] == [
-        "a",
-        "a_gripper",
-        "b",
-        "b_gripper",
-        "both_arms",
-    ]
+    # `b` names no gripper joint, so it gets no gripper group, end effector or open/closed states:
+    # each of those would name a joint "".
+    assert [g.get("name") for g in root.findall("group")] == ["a", "a_gripper", "b", "both_arms"]
+    assert [e.get("group") for e in root.findall("end_effector")] == ["a_gripper"]
+    assert {s.get("group") for s in root.findall("group_state[@name='open']")} == {"a_gripper"}
+    assert not root.findall(".//joint[@name='']")
     assert [
         (c.get("base_link"), c.get("tip_link"))
         for c in root.findall("group[@name='both_arms']/chain")
