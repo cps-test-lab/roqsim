@@ -1,9 +1,10 @@
 # Default controller shipped with the xArm 7 arm description.
 #
 # `spawn_arm: {model: xarm7}` pulls this in automatically, so a world does not re-declare the arm's
-# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
-# out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
-# spawn_arm `name`.
+# controller. To override a default, nest an entry with the same label under that spawn_arm's
+# `components:` (it merges into this one, per key); to opt out, set `spawn_arm` config
+# `default_plugins: false`. Each entry below attaches to the spawned arm because it is nested under
+# it -- there is no ownership key to fill in.
 components:
   # No gripper keys: this model is the arm alone, built from Menagerie's `xarm7_nohand`. The
   # UFACTORY parallel gripper is a mimic-driven linkage and belongs in its own model beside

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 import pytest
 
@@ -193,6 +194,18 @@ def test_world_doc_errors_on_map_dict_without_model():
         fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, {"1": {"yaw_deg": 10}})
 
 
+def test_world_doc_refuses_a_map_key_nothing_reads():
+    markers = [{"id": 1, "x_m": 0.0, "y_m": 0.0}]
+    with pytest.raises(KeyError, match="unknown key.*'yaw'"):
+        fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, {"1": {"model": "d", "yaw": 9}})
+
+
+def test_world_doc_refuses_a_map_id_that_names_no_marker():
+    markers = [{"id": 1, "x_m": 0.0, "y_m": 0.0}]
+    with pytest.raises(KeyError, match=re.escape("markers map: marker id: unknown key(s) '2'")):
+        fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, {"1": "d", "2": "e"})
+
+
 def test_door_placements_defaults_to_a_passive_wooden_door():
     lines = [{"id": 1, "x0_m": 0.0, "y0_m": 0.0, "x1_m": 4.0, "y1_m": 0.0}]
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]
@@ -224,6 +237,21 @@ def test_door_placements_applies_map_overrides():
     assert d["model"] == "door_glass" and d["hinge_side"] == "right"
     assert d["swing"] == -1 and d["open"] == 0.3
     assert d["controllable"] is True and d["namespace"] == "foyer"
+
+
+@pytest.mark.parametrize(
+    ("dmap", "expect"),
+    [
+        ({"1": {"hinge": "right"}}, "doors map: door 1: unknown key(s) 'hinge'"),
+        ({"7": {"hinge_side": "right"}}, "doors map: door id: unknown key(s) '7'"),
+    ],
+)
+def test_door_placements_refuses_a_map_entry_nothing_reads(dmap, expect):
+    """A misspelt key or a wrong door id would leave the default leaf hanging without a word."""
+    lines = [{"id": 1, "x0_m": 0.0, "y0_m": 0.0, "x1_m": 4.0, "y1_m": 0.0}]
+    doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]
+    with pytest.raises(KeyError, match=re.escape(expect)):
+        fw.door_placements(lines, doors, dmap, 2.5, 2.0)
 
 
 def test_door_placements_skips_full_height_openings():
@@ -399,3 +427,35 @@ def test_main_says_where_the_world_and_the_scene_went(tmp_path, capsys, monkeypa
     assert fw.main(_argv(tmp_path, floorplan)) == 0
     out = capsys.readouterr().out.strip()
     assert out == f"wrote world {tmp_path / 't.yaml'} (scene dir {tmp_path / 'scene'})"
+
+
+@pytest.mark.parametrize(
+    ("flag", "doc", "expect"),
+    [
+        (
+            "--markers-map",
+            {"1": "table", "2": "chair"},
+            "markers map: marker id: unknown key(s) '2'",
+        ),
+        ("--markers-map", {"1": {"model": "table", "yaw": 90}}, "unknown key(s) 'yaw'"),
+        ("--doors-map", {"7": {"hinge_side": "right"}}, "doors map: door id: unknown key(s) '7'"),
+        ("--doors-map", {"1": {"hinge": "right"}}, "doors map: door 1: unknown key(s) 'hinge'"),
+    ],
+)
+def test_main_refuses_a_map_that_does_not_fit_the_floorplan(tmp_path, capsys, flag, doc, expect):
+    """A map entry for a marker or door the floorplan has not, or a key nothing reads, is refused
+    before anything is written -- a stale id or a typo would otherwise bake the default in silence."""
+    floorplan = {
+        "lines": [{"id": 1, "x0_m": 0, "y0_m": 0, "x1_m": 4, "y1_m": 0}],
+        "doors": [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}],
+        "markers": [{"id": 1, "x_m": 1, "y_m": 1, "comment": "table"}],
+    }
+    extra = [flag, _fp_json(tmp_path, doc, "map.json")]
+    if flag == "--doors-map":
+        extra += ["--markers-map", _fp_json(tmp_path, {"1": "table"}, "markers.json")]
+    argv = _argv(tmp_path, _fp_json(tmp_path, floorplan), *extra)
+    assert fw.main(argv) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1, err
+    assert expect in err[0]
+    assert not (tmp_path / "scene").exists(), "nothing is written for an input that was refused"
