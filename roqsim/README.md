@@ -28,7 +28,7 @@ repository extends it without a change here.
 | `scenario_adapter.py` | The `scenario-execution` `SimulationInterface` driver. |
 | `capture.py`, `mcap_format.py`, `recording.py`, `state.py`, `render.py` | State recording (one mcap file per run) and everything read or drawn from it afterwards — driver-level, not plugins. `health.py` tails that file from outside the run. |
 | `export_web.py`, `export_gltf.py`, `export_urdf.py`, `export_srdf.py` | A compiled world out to a browser scene descriptor, a glTF 2.0 file, a URDF, or a MoveIt SRDF. |
-| `scene_source.py`, `scene_content.py`, `tessellate.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, and the primitives as triangles. |
+| `scene_source.py`, `scene_content.py`, `tessellate.py`, `meshopt.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, the primitives as triangles, and the `EXT_meshopt_compression` encoders `export gltf --meshopt` writes with. |
 | `commands.py` | The `roqsim` command tree. |
 
 Core registers twenty-one plugins, all world-agnostic (`roqsim plugins list` prints every one); among
