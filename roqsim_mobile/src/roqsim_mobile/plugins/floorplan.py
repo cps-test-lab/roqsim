@@ -13,7 +13,7 @@ arrives as geometry or as a layout, and a world author picks by what they HAVE:
     then an ordinary config value that a sweep varies and the run's provenance records, rather
     than a file baked ahead of time that nothing downstream can tell apart from another file.
 
-Provides a ground plane named ``floor`` (the TurtleBot caster contact pair references that name)
+Provides a ground plane named ``floor`` (the name a model's wheel-contact ``<pair>`` references)
 grown to the walls' XY footprint, plus a ceiling light. Because it builds those itself it fills the
 same slot as a world definition: ``sim.world`` alongside it is refused, not overridden (see
 :mod:`roqsim.world`).
