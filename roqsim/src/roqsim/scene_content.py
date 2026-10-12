@@ -90,6 +90,9 @@ class Joint:
     axis: list
     pos: list
     qposadr: int
+    #: A hinge's or a slide's reference value (``qpos0``): the value at which the body sits at its
+    #: ``body_pos``/``body_quat``, so a value ``q`` moves it by ``q - ref``. None for a free or ball joint.
+    ref: float | None = None
 
 
 @dataclass
@@ -342,6 +345,7 @@ def joints(model: mujoco.MjModel, data: mujoco.MjData) -> tuple[list[Joint], dic
                 model.jnt_axis[i].tolist(),
                 model.jnt_pos[i].tolist(),
                 qadr,
+                float(model.qpos0[qadr]) if jtype in ("hinge", "slide") else None,
             )
         )
         # An unnamed joint has no key a viewer could look its value up by: every unnamed joint would

@@ -733,17 +733,26 @@ exact name then survives in the object's ``userData``. A body sits where the exp
 relative to its parent -- a free body where the world placed it, a jointed link at its configured
 value -- since glTF has no joints to apply one.
 
+**Joints.** The joints glTF has no place for ride in ``extras``: a body node's ``joints`` list each
+joint's ``name``, ``type``, ``axis``, anchor ``pos`` and, for a hinge or a slide, ``ref``; the
+scene's ``extras`` give ``initialJoints``, the values the nodes are posed at, beside ``format`` and
+``version`` (``roqsim.scene``, 1) and the world's authored ``view``. That is enough for a viewer to
+move an arm or a wheel from recorded joint values exactly as MuJoCo does: it takes each body back to
+its pose at ``ref`` and turns or slides it by ``value - ref`` (:mod:`roqsim.export_gltf`).
+
 **Geoms.** A drawn geom is an unnamed child node of its body's node, holding one mesh; its ``extras``
 carry ``geom`` (its name, where it has one), ``body`` and ``geom_id``. Primitives are tessellated
 (``--segments``, by default the model's own ``visual/quality numslices``), meshes keep MuJoCo's
-normals, and an infinite plane becomes a square of the model's extent. Collision-only geometry
+normals, and an infinite plane becomes a square of the model's extent. A surface MuJoCo shades with
+its faces' own normals -- a box, a triangulated STL or OBJ -- is written without normals, which glTF
+draws flat, and with one vertex per corner position. Collision-only geometry
 (group 3) is left out, as ``export web`` leaves it out. A MuJoCo skin, and a flex, are glTF skinned
 meshes whose joints are their bone bodies' nodes, so moving the bodies deforms them; a
 ``dof="quadratic"`` flex loses its negative weights (glTF allows none), exact at rest and approximate
 under deformation, and the export says so.
 
-**What it looks like.** Colours are MuJoCo's resolved colours and textures its compiled pixels,
-embedded in the file. A texture lands where MuJoCo draws it: a primitive carries MuJoCo's own
+**What it looks like.** Colours are MuJoCo's resolved colours, converted to the linear space glTF
+states them in, and textures its compiled pixels, embedded in the file. A texture lands where MuJoCo draws it: a primitive carries MuJoCo's own
 texture coordinates for it, and a mesh without coordinates gets the ones MuJoCo generates, so a
 UV-less wall is tiled as in the simulator; ``texrepeat`` and ``texuniform`` scale them as MuJoCo
 does. A tint above 1 is multiplied into the image, since glTF's colour stops at 1. A cube or skybox
@@ -761,12 +770,15 @@ device that publishes depth and no colour) and the image's ``width`` and ``heigh
 the scene from that node to see what the sensor saw, with no image stored. ``export web`` writes the
 same cameras under ``cameras`` in ``scene.json`` (:mod:`roqsim.export_web`).
 
-**Size.** Images are most of a large world's file, and the export logs how much. ``--max-tex-dim``
-caps every image's longest side (default 1024, 0 keeps them whole) and ``--texture-format jpeg``
-stores opaque images as JPEG (``--jpeg-quality``, default 85), several times smaller for photographic
-textures; images with transparency stay PNG. Only core glTF is written -- no compression extension a
-loader would need a decoder for -- so the bundled warehouse (``depot``) is about 13 MB at the defaults
-and about 8.5 MB with ``--texture-format jpeg``, most of it geometry.
+**Size.** By default only core glTF is written, which every loader reads. ``--max-tex-dim`` caps
+every image's longest side (default 1024, 0 keeps them whole). ``--texture-format jpeg`` stores
+opaque images as JPEG and ``webp`` every image as WebP (``EXT_texture_webp``), at
+``--texture-quality`` (default 85), several times smaller than PNG for photographic textures.
+``--meshopt`` compresses vertex and index data with ``EXT_meshopt_compression``, which three.js
+decodes with ``GLTFLoader.setMeshoptDecoder``; it stores positions to 16 bits below each mesh's
+extent and normals and texture coordinates to fixed steps, and is meant to be gzipped on top. The
+bundled warehouse (``depot``) is several megabytes at the defaults and about a fifth of that with
+``--meshopt --texture-format webp``, the file a browser viewer is best served.
 
 The export is checked with the Khronos glTF Validator: ``make test-gltf`` validates an export of every
 bundled world (see :doc:`developer_guide`).

@@ -16,6 +16,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
+import meshopt_decode
 import mujoco
 import numpy as np
 import pytest
@@ -67,15 +68,38 @@ class Glb:
         self.bin = blob[28 + jlen : 28 + jlen + blen]
         self.nodes = self.json["nodes"]
 
+    def view(self, i: int) -> bytes:
+        """The bytes of buffer view ``i`` as a reader gets them, ``EXT_meshopt_compression`` decoded."""
+        view = self.json["bufferViews"][i]
+        ext = view.get("extensions", {}).get("EXT_meshopt_compression")
+        if ext is None:
+            assert view["buffer"] == 0
+            start = view.get("byteOffset", 0)
+            return self.bin[start : start + view["byteLength"]]
+        assert ext["buffer"] == 0
+        start = ext.get("byteOffset", 0)
+        source = self.bin[start : start + ext["byteLength"]]
+        count, stride = ext["count"], ext["byteStride"]
+        if ext["mode"] == "ATTRIBUTES":
+            raw = meshopt_decode.decode_vertex_buffer(source, count, stride)
+            if ext.get("filter") == "EXPONENTIAL":
+                raw = meshopt_decode.unfilter_exponential(raw.view("<i4")).view(np.uint8)
+            data = raw.tobytes()
+        else:
+            assert ext["mode"] == "TRIANGLES"
+            faces = meshopt_decode.decode_index_buffer(source, count)
+            data = faces.astype({2: "<u2", 4: "<u4"}[stride]).tobytes()
+        assert len(data) == view["byteLength"]
+        return data
+
     def accessor(self, i: int) -> np.ndarray:
         acc = self.json["accessors"][i]
-        view = self.json["bufferViews"][acc["bufferView"]]
         width = _WIDTH[acc["type"]]
         flat = np.frombuffer(
-            self.bin,
+            self.view(acc["bufferView"]),
             dtype=_COMPONENTS[acc["componentType"]],
             count=acc["count"] * width,
-            offset=view.get("byteOffset", 0) + acc.get("byteOffset", 0),
+            offset=acc.get("byteOffset", 0),
         )
         return flat.reshape(acc["count"], width) if width > 1 else flat
 
@@ -259,6 +283,12 @@ def _colour(rgba):
     return tuple(round(min(max(float(c), 0.0), 1.0), 5) for c in rgba)
 
 
+def _display(linear):
+    """A glTF colour factor (linear) as the colour MuJoCo draws (sRGB-encoded)."""
+    out = [c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055 for c in linear[:3]]
+    return [*out, linear[3]]
+
+
 def _web_geoms(scene: dict) -> Counter:
     out = Counter()
     for g in scene["geoms"]:
@@ -280,7 +310,7 @@ def _glb_geoms(glb: Glb, model) -> Counter:
         x, y, z, w = node["rotation"]
         pose = tuple(np.round(np.r_[node["translation"], [w, x, y, z]], 6))
         material = glb.json["materials"][glb.primitive(n)["material"]]
-        rgba = material["pbrMetallicRoughness"]["baseColorFactor"]
+        rgba = _display(material["pbrMetallicRoughness"]["baseColorFactor"])
         kind = mujoco.mjtGeom(int(model.geom_type[g])).name.removeprefix("mjGEOM_").lower()
         out[(node["extras"]["body"], kind, pose, _colour(rgba))] += 1
     return out
@@ -330,11 +360,20 @@ _PRIMITIVES = """
 
 
 def _triangles(glb, n):
+    """``(verts, normals, faces)`` with a vertex per corner, so ``normals`` are the ones a reader
+    shades with: the file's own, or, where it has none, each face's (glTF's flat normals)."""
     prim = glb.primitive(n)
     verts = glb.accessor(prim["attributes"]["POSITION"]).astype(float)
-    normals = glb.accessor(prim["attributes"]["NORMAL"]).astype(float)
     faces = glb.accessor(prim["indices"]).astype(int).reshape(-1, 3)
-    return verts, normals, faces
+    if "NORMAL" in prim["attributes"]:
+        normals = glb.accessor(prim["attributes"]["NORMAL"]).astype(float)[faces]
+    else:
+        tri = verts[faces]
+        face_n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        face_n /= np.linalg.norm(face_n, axis=1, keepdims=True)
+        normals = np.repeat(face_n[:, None, :], 3, axis=1)
+    corner = np.arange(faces.size).reshape(-1, 3)
+    return verts[faces].reshape(-1, 3), normals.reshape(-1, 3), corner
 
 
 def test_primitives_wind_outward_and_their_normals_agree(tmp_path):
@@ -693,7 +732,7 @@ def test_an_untextured_colour_above_one_is_clamped_and_named(tmp_path, caplog):
         glb = _export(model, data, tmp_path)
     assert "material 'hot'" in caplog.text
     (material,) = glb.json["materials"]
-    assert material["pbrMetallicRoughness"]["baseColorFactor"] == pytest.approx(
+    assert _display(material["pbrMetallicRoughness"]["baseColorFactor"]) == pytest.approx(
         [1.0, 0.5, 0.2, 1.0]
     )
 
@@ -787,7 +826,9 @@ _PROJECTED = """
 def _surface_uv(glb, n, local):
     """The exported texture coordinate of mesh node ``n`` at the point ``local`` on it, or None."""
     verts, _normals, faces = _triangles(glb, n)
-    uv = glb.accessor(glb.primitive(n)["attributes"]["TEXCOORD_0"]).astype(float)
+    prim = glb.primitive(n)
+    uv = glb.accessor(prim["attributes"]["TEXCOORD_0"]).astype(float)
+    uv = uv[glb.accessor(prim["indices"]).astype(int)]  # per corner, as _triangles numbers them
     a, b, c = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
     normal = np.cross(b - a, c - a)
     area2 = np.einsum("ij,ij->i", normal, normal)
@@ -917,6 +958,213 @@ def test_khronos_validator_finds_nothing_wrong_with_a_small_world(tmp_path):
         scene.write_text(xml, encoding="utf-8")
         out = tmp_path / f"{name}.glb"
         assert export_gltf.main(["--mjcf", str(scene), "--out", str(out)]) == exit_status.OK
+        paths.append(out)
+    for path, report in khronos(paths).items():
+        assert report["errors"] == 0 and report["warnings"] == 0, (path, report["messages"])
+
+
+# -- what a viewer needs beyond core glTF: joints, the scene's extras --------------------------------
+
+_JOINTED = """
+<mujoco>
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="base" pos="0.5 0 0.1">
+      <joint name="x" type="slide" axis="1 0 0"/>
+      <joint name="yaw" type="hinge" axis="0 0 1" pos="0.1 0 0" ref="0.4"/>
+      <geom type="box" size="0.2 0.1 0.05"/>
+      <body name="arm" pos="0.2 0 0.1" euler="0 0.5 0">
+        <joint name="lift" type="hinge" axis="0 1 0" pos="0 0 0.05" ref="-0.3"/>
+        <geom type="capsule" size="0.03 0.2" pos="0 0 0.2"/>
+        <body name="tip" pos="0 0 0.4"><joint type="hinge" axis="1 0 0"/><geom type="sphere" size="0.04"/></body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _motion(joint, value):
+    """The local motion a viewer applies for ``joint`` at ``value``: by ``value - ref``."""
+    return _joint_motion(joint, value - joint.get("ref", 0.0))
+
+
+def _viewer_poses(glb, values):
+    """Each body's matrix in the frame of node ``world``, as a viewer computes it from the file:
+    a body's rest transform is its node's with its joints taken back from the file's values, and a
+    joint at ``values[name]`` moves it from there."""
+    initial = glb.json["scenes"][0]["extras"]["initialJoints"]
+    bodies = glb.body_nodes()
+    parent = glb.parents()
+    node_body = {n: b for b, n in bodies.items()}
+    out = {0: np.eye(4)}
+    for b in sorted(bodies)[1:]:
+        n = bodies[b]
+        joints = [
+            j for j in glb.nodes[n]["extras"].get("joints", []) if j["type"] in ("hinge", "slide")
+        ]
+        posed = glb.local(n)
+        at_file = np.eye(4)
+        moved = np.eye(4)
+        for j in joints:
+            value = initial.get(j["name"], j.get("ref", 0.0)) if j["name"] else j.get("ref", 0.0)
+            at_file = at_file @ _motion(j, value)
+            moved = moved @ _motion(j, values.get(j["name"], value) if j["name"] else value)
+        out[b] = out[node_body[parent[n]]] @ posed @ np.linalg.inv(at_file) @ moved
+    return out
+
+
+@pytest.mark.parametrize("compress", [False, True])
+def test_joints_in_the_extras_move_bodies_where_mujoco_does(tmp_path, compress):
+    """A viewer that knows only the file reproduces MuJoCo's kinematics at any joint values: the
+    file's pose, each joint's axis, anchor and reference value, and the values it is posed at."""
+    model, data = _compile(_JOINTED)
+    data.qpos[:] = [0.2, 0.9, 0.1, 0.0]
+    mujoco.mj_forward(model, data)
+    glb = _export(model, data, tmp_path, compress=compress)
+    extras = glb.json["scenes"][0]["extras"]
+    assert extras["initialJoints"] == pytest.approx({"x": 0.2, "yaw": 0.9, "lift": 0.1})
+    base = glb.nodes[glb.body_nodes()[model.body("base").id]]["extras"]["joints"]
+    assert [(j["name"], j["type"], j["qposadr"]) for j in base] == [
+        ("x", "slide", 0),
+        ("yaw", "hinge", 1),
+    ]
+    assert base[1]["ref"] == pytest.approx(0.4) and base[1]["pos"] == pytest.approx([0.1, 0, 0])
+
+    for values in ({}, {"x": -0.3, "yaw": -1.2, "lift": 0.8}, {"yaw": 2.0}):
+        probe = mujoco.MjData(model)
+        probe.qpos[:] = data.qpos
+        for name, value in values.items():
+            probe.qpos[model.jnt_qposadr[model.joint(name).id]] = value
+        probe.qpos[3] = 0.0  # the unnamed joint stays where the file has it, at its reference
+        mujoco.mj_kinematics(model, probe)
+        for b, pose in _viewer_poses(glb, values).items():
+            np.testing.assert_allclose(
+                pose[:3, 3], probe.xpos[b], atol=1e-6, err_msg=f"{values} {b}"
+            )
+            np.testing.assert_allclose(pose[:3, :3], probe.xmat[b].reshape(3, 3), atol=1e-6)
+
+
+def test_the_scene_extras_state_their_contract_and_the_authored_view(tmp_path):
+    model, data = _compile(_NAMES)
+    view = {"lookat": [1.0, 2.0, 0.5], "distance": 4.0, "azimuth": 30.0, "elevation": -20.0}
+    glb = _export(model, data, tmp_path, view=view)
+    extras = glb.json["scenes"][0]["extras"]
+    assert (extras["format"], extras["version"]) == (
+        export_gltf.EXTRAS_FORMAT,
+        export_gltf.EXTRAS_VERSION,
+    )
+    assert extras["initialJoints"] == {"j": 0.0}
+    assert extras["view"] == view
+    assert (
+        "view" not in _export(model, data, tmp_path, name="plain.glb").json["scenes"][0]["extras"]
+    )
+
+
+# -- compressed: EXT_meshopt_compression and EXT_texture_webp --------------------------------------
+
+
+def _drawn(glb):
+    """Every drawn triangle, as the centroid a reader puts it at in the scene, sorted."""
+    G = glb.globals()
+    out = []
+    for n in glb.geom_nodes():
+        verts, _normals, faces = _triangles(glb, n)
+        tri = (G[n] @ np.c_[verts, np.ones(len(verts))].T).T[:, :3][faces]
+        out.append(tri.mean(axis=1))
+    return np.concatenate(out)
+
+
+@pytest.mark.parametrize("fixture", ["mixed", "names", "primitives", "jointed"])
+def test_a_compressed_export_holds_the_same_scene(tmp_path, fixture):
+    """Compressed, the file has the same nodes -- bodies, joints, cameras, extras -- and draws the
+    same triangles to within the stated precision."""
+    xml = {"mixed": _MJCF, "names": _NAMES, "primitives": _PRIMITIVES, "jointed": _JOINTED}[fixture]
+    model, data = _compile(xml)
+    plain = _export(model, data, tmp_path, name="plain.glb")
+    packed = _export(model, data, tmp_path, name="packed.glb", compress=True)
+    assert packed.json["extensionsRequired"] == ["EXT_meshopt_compression"]
+    assert "extensionsRequired" not in plain.json
+    assert packed.nodes == plain.nodes
+    assert packed.json["scenes"] == plain.json["scenes"]
+    a, b = _drawn(plain), _drawn(packed)
+    order = lambda c: np.lexsort(np.round(c, 3).T[::-1])  # noqa: E731
+    np.testing.assert_allclose(a[order(a)], b[order(b)], atol=2e-4)
+    assert (tmp_path / "packed.glb").stat().st_size < (tmp_path / "plain.glb").stat().st_size
+
+
+def test_a_compressed_skin_keeps_weights_that_sum_to_one(tmp_path):
+    model, data = _compile(_SKIN)
+    glb = _export(model, data, tmp_path, compress=True)
+    (skin_node,) = [n for n in glb.nodes if "skin" in n]
+    prim = glb.json["meshes"][skin_node["mesh"]]["primitives"][0]
+    weights = glb.accessor(prim["attributes"]["WEIGHTS_0"])
+    np.testing.assert_allclose(weights.sum(axis=1), 1.0, atol=1e-6)
+    plain = _export(model, data, tmp_path, name="plain.glb")
+    (plain_node,) = [n for n in plain.nodes if "skin" in n]
+    plain_prim = plain.json["meshes"][plain_node["mesh"]]["primitives"][0]
+    want = plain.accessor(plain_prim["attributes"]["POSITION"])
+    got = glb.accessor(prim["attributes"]["POSITION"])
+    np.testing.assert_allclose(np.sort(got, axis=0), np.sort(want, axis=0), atol=1e-4)
+
+
+def test_a_flat_shaded_surface_has_no_normals_and_one_vertex_per_corner_position(tmp_path):
+    """A surface whose normals are its faces' (a box) is welded and left to glTF's flat normals;
+    one MuJoCo shades smooth (a sphere, a smoothed mesh) keeps its own."""
+    model, data = _compile(_PRIMITIVES)
+    glb = _export(model, data, tmp_path)
+    by_name = {glb.nodes[n]["extras"]["geom"]: n for n in glb.geom_nodes()}
+    box = glb.primitive(by_name["box"])["attributes"]
+    assert "NORMAL" not in box
+    assert glb.json["accessors"][box["POSITION"]]["count"] == 8
+    assert "NORMAL" in glb.primitive(by_name["sphere"])["attributes"]
+    model, data = _compile(_MJCF)
+    glb = _export(model, data, tmp_path, name="m.glb")
+    g = model.geom("g_mesh").id  # a tetrahedron MuJoCo smooths over its four shared vertices
+    node = next(n for n in glb.geom_nodes() if glb.nodes[n]["extras"]["geom_id"] == g)
+    assert "NORMAL" in glb.primitive(node)["attributes"]
+
+
+def test_webp_holds_every_image_and_is_required(tmp_path):
+    for alpha in (255, 128):
+        model, data = _compile(_textured_world(tmp_path, _quadrants(alpha=alpha), name=f"w{alpha}"))
+        glb = _export(
+            model, data, tmp_path, name=f"{alpha}.glb", texture_format="webp", max_tex_dim=0
+        )
+        assert glb.json["extensionsRequired"] == ["EXT_texture_webp"]
+        material, _ = _material_of(glb, "g")
+        index = material["pbrMetallicRoughness"]["baseColorTexture"]["index"]
+        texture = glb.json["textures"][index]
+        assert "source" not in texture
+        image = glb.json["images"][texture["extensions"]["EXT_texture_webp"]["source"]]
+        assert image["mimeType"] == "image/webp"
+        view = glb.json["bufferViews"][image["bufferView"]]
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(glb.view(image["bufferView"])))
+        assert img.size == (96, 64) and view["byteLength"] > 0
+        want = _quadrants(alpha=alpha)
+        assert (
+            np.abs(np.asarray(img.convert(img.mode)).astype(int)[..., :3] - want[..., :3]).mean()
+            < 4
+        )
+
+
+def test_khronos_validator_finds_nothing_wrong_with_a_compressed_world(tmp_path):
+    paths = []
+    textured = _PROJECTED.format(png=_write_png(tmp_path / "grid.png", _grid_texture()))
+    for name, xml in {
+        "mixed": _MJCF,
+        "textured": textured,
+        "skin": _SKIN,
+        "sheet": _flex_world(_SHEET),
+        "jointed": _JOINTED,
+    }.items():
+        scene = tmp_path / f"{name}.xml"
+        scene.write_text(xml, encoding="utf-8")
+        out = tmp_path / f"{name}.glb"
+        argv = ["--mjcf", str(scene), "--out", str(out), "--meshopt", "--texture-format", "webp"]
+        assert export_gltf.main(argv) == exit_status.OK
         paths.append(out)
     for path, report in khronos(paths).items():
         assert report["errors"] == 0 and report["warnings"] == 0, (path, report["messages"])

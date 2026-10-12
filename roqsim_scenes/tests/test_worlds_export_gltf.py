@@ -41,12 +41,16 @@ def test_there_are_worlds_to_export():
     assert {w.stem for w in _WORLDS} >= {"depot", "tb3_world"}
 
 
+@pytest.mark.parametrize("compressed", [False, True], ids=["plain", "compressed"])
 @pytest.mark.parametrize("world", _WORLDS, ids=lambda w: w.stem)
-def test_khronos_validator_finds_nothing_wrong_with_a_bundled_world(tmp_path, world):
+def test_khronos_validator_finds_nothing_wrong_with_a_bundled_world(tmp_path, world, compressed):
     if env.get("ROQSIM_GLTF_VALIDATOR") != "required":
         pytest.skip("every bundled world through the Khronos glTF Validator: `make test-gltf`")
     out = tmp_path / f"{world.stem}.glb"
-    assert export_gltf.main(["--world", str(world), "--out", str(out)]) == exit_status.OK
+    argv = ["--world", str(world), "--out", str(out)]
+    if compressed:
+        argv += ["--meshopt", "--texture-format", "webp"]
+    assert export_gltf.main(argv) == exit_status.OK
     # One file a phone loads, at the defaults; a ceiling with headroom, not a measurement.
     assert out.stat().st_size < 20 * 2**20
     for path, report in _khronos([out]).items():
