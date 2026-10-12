@@ -45,6 +45,7 @@
        install_requires rather than here, where rosdep would look it up. -->
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>ur_msgs</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

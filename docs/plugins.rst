@@ -570,8 +570,10 @@ schema: each key with its type, unit and default, and for the ``avoidance``, ``p
 ``recovery`` and ``action_names`` blocks the keys each accepts. A key it does not name is refused at
 load, at the top level and inside a block alike, with the nearest key it knows. The ``drive``
 output's keys (``kinematics``, ``heading_gain``, ``max_angular_vel``, ``turn_in_place``,
-``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema;
-``kinematics`` is refused under ``output: mocap``.
+``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema. Each
+output declares which of them it reads (``NavOutput.config_keys``), and under a named ``output`` a
+key it does not read is refused -- ``kinematics`` under ``output: mocap``, ``yaw_rate`` under
+``output: walker``.
 
 **The goal interface.** ``goal_endpoint``, ``actions`` and ``action_names`` say which actions a
 mover answers and under what name, in the owner's ``namespace``. nav2's ``navigate_to_pose`` and
@@ -2085,13 +2087,17 @@ Four more answers come off the model rather than from flags, each because gettin
 
 * **the joint list and its order** — the ``ArmHandle`` the controller published, i.e. the names that
   reach ``/joint_states``. ``robot_state_publisher`` matches by name, so a list that is right about the
-  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in.
+  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in. The
+  controller's ``joint_prefix`` is part of those names, so the URDF's joints, the SRDF and
+  ``moveit_controllers.yaml`` carry it too.
 * **the home posture** — ``data.qpos`` after setup, not the world's ``home:`` key. The controller
   applies that key itself and a ``rest`` stance may overlay it, while MoveIt's start-state bounds check
   runs against the posture the arm is really in.
-* **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
-  A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
-  the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
+* **the collapse root** — the lowest common ancestor of every body a ``connect`` or ``weld`` equality
+  touches. A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse
+  it and the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes. A ``joint``
+  equality closes no loop: it couples two fingers of an open chain, and the URDF carries it as a
+  ``<mimic>`` on the joint that is not commanded.
 * **``fix_start_state``** — emitted only for an arm that has a *continuous* joint.
   ``CheckStartStateBounds`` normalizes such a joint onto [-pi, pi], and with this false (its default)
   it reports ``START_STATE_INVALID`` precisely because it had to normalize. A start state that drifted
