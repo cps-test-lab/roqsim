@@ -3,7 +3,7 @@ the model's wall footprints (:mod:`~roqsim_nav.obstacles`).
 
 The grid is just the raster the :mod:`~roqsim_nav.planner` A* searches:
 ``occupied[r, c]`` is ``True`` where a wall covers that cell. It is derived from
-the same polygons fed to ORCA, so the planner avoids exactly what ORCA does.
+the same polygons fed to the avoidance model, so both layers avoid the same walls.
 Row 0 is the top; ``origin`` is the world position of the grid's lower-left corner.
 """
 
@@ -46,6 +46,29 @@ class OccupancyGrid:
         grid = cls(np.zeros((h, w), dtype=bool), resolution, (minx, miny))
         grid.mark_polygons(polygons)
         return grid
+
+    def covering(self, points, pad: float = 1.0) -> OccupancyGrid:
+        """This grid, or a copy grown with free cells so that every point in ``points`` lies on it,
+        ``pad`` metres in from the new edge.
+
+        The grid covers the walls and the points it was built for. A goal sent at runtime may lie
+        beyond that, and a cell off the grid is one the planner cannot search -- but everything off
+        the grid is free, since the walls are all on it, so growing it with free cells is exact.
+        """
+        pts = [(float(p[0]), float(p[1])) for p in points]
+        if all(self.in_bounds(*self.world_to_cell(x, y)) for x, y in pts):
+            return self
+        res = self.resolution
+        x0, y0 = self.origin
+        x1, y1 = x0 + self.width * res, y0 + self.height * res
+        xs, ys = [x for x, _ in pts], [y for _, y in pts]
+        left = max(0, math.ceil((x0 - (min(xs) - pad)) / res))
+        right = max(0, math.ceil((max(xs) + pad - x1) / res))
+        bottom = max(0, math.ceil((y0 - (min(ys) - pad)) / res))
+        top = max(0, math.ceil((max(ys) + pad - y1) / res))
+        # Row 0 is the top of the grid, so rows added above go first.
+        occupied = np.pad(self.occupied, ((top, bottom), (left, right)))
+        return OccupancyGrid(occupied, res, (x0 - left * res, y0 - bottom * res))
 
     # -- transforms --------------------------------------------------------
     def world_to_cell(self, x: float, y: float):

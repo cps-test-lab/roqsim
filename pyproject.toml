@@ -1,5 +1,5 @@
-# Root config for developer tooling only (ruff). The installable packages are roqsim/ and
-# roqsim_mobile/, each with its own pyproject.toml. This file is NOT a Python package.
+# Root config for developer tooling only (ruff). Each installable package is a sibling directory
+# with its own pyproject.toml. This file is NOT a Python package.
 
 [tool.ruff]
 line-length = 100
@@ -47,6 +47,5 @@ known-first-party = [
     "roqsim_nav",
     "roqsim_ros_bridge",
     "roqsim_walker",
-    "roqsim_walker_ros",
     "scenario_execution_roqsim",
 ]

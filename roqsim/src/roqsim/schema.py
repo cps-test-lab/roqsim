@@ -116,9 +116,7 @@ from .document import nearest
 #: the base class reads and checks for every plugin (:meth:`roqsim.plugin.Plugin.validate_presence`
 #: refuses it, with the reason, on one that registers no entity). A plugin that declares one of these
 #: in its own schema (with a type or a default) overrides the entry here.
-INJECTED_KEYS = frozenset(
-    {"prefix", "namespace", "topics", "qos", "fault", "robot", "arm", "present"}
-)
+INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "qos", "fault", "present"})
 
 #: How a type is named in the published schema -- the vocabulary a caller matches on, not Python's.
 _TYPE_NAMES = {bool: "bool", int: "int", float: "float", str: "str", list: "list", dict: "dict"}

@@ -119,30 +119,32 @@ def test_no_communication_on_an_offline_world_says_it_changed_nothing():
     assert "nothing was dropped" in _warnings_from([])
 
 
-# -- positional dispatch (_config_for_input) -----------------------------------------------------
+# -- positional dispatch (config_for_input) -----------------------------------------------------
 
 
 def test_xml_runs_as_the_world():
     """A .xml is a baked scene: it becomes sim.world (as an absolute path), no plugins added."""
-    cfg = runner._config_for_input("scene.xml", None)
+    cfg = runner.config_for_input("scene.xml", None)
     assert cfg.sim["world"].endswith("/scene.xml") and cfg.plugins == []
 
 
 def test_model_ref_is_shown_via_spawn_model():
     """A bare reference is welded into the default empty room by spawn_model."""
-    cfg = runner._config_for_input("roqsim_assets:industrial_table", None)
+    cfg = runner.config_for_input("roqsim_assets:industrial_table", None)
     assert [p.ref for p in cfg.plugins] == ["spawn_model"]
     assert cfg.plugins[0].config["model"] == "roqsim_assets:industrial_table"
 
 
 def test_raw_mesh_is_refused():
     """roqsim runs worlds/scenes/models, not geometry -- point at finalize instead."""
-    with pytest.raises(PluginError, match="raw meshes"):
-        runner._config_for_input("prop.obj", None)
+    with pytest.raises(PluginError, match="raw meshes") as err:
+        runner.config_for_input("prop.obj", None)
+    # A command of the tree, never a script by path.
+    assert "`roqsim assets finalize-mujoco`" in str(err.value) and ".py" not in str(err.value)
 
 
 def test_overrides_reach_a_synthesized_world():
-    cfg = runner._config_for_input("roqsim_assets:industrial_table", {"sim": {"pacing": "asap"}})
+    cfg = runner.config_for_input("roqsim_assets:industrial_table", {"sim": {"pacing": "asap"}})
     assert cfg.sim.get("pacing") == "asap"
 
 
