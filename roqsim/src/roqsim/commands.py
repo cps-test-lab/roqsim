@@ -334,6 +334,7 @@ def cli() -> None:
 cli.add_command(tool("roqsim.runner", "sim"))
 cli.add_command(tool("roqsim.render", "render"))
 cli.add_command(tool("roqsim.state", "state"))
+cli.add_command(tool("roqsim.rebuild", "rebuild"))
 cli.add_command(tool("roqsim.introspection", "plugins"))
 cli.add_command(tool("roqsim.catalog", "catalog"))
 cli.add_command(tool("roqsim.health", "health"))

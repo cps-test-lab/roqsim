@@ -244,6 +244,9 @@ class CameraPlugin(Plugin):
     """
 
     parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
+    # A frame is the render of the state at its stamp plus noise keyed on (seed, sim time), so a
+    # recording can rebuild every stream off this camera (roqsim.rebuild).
+    rebuild_cost = "render"
 
     #: Whether this camera's colour stream is worth publishing by default. A device that images
     #: something other than colour -- a label camera, whose colour frame duplicates whatever RGB
@@ -462,9 +465,17 @@ class CameraPlugin(Plugin):
         # produces anything.
         return any(ep.wanted() for ep in gates)
 
+    def output_cost(self, endpoint) -> str | None:
+        """``render`` for a stream the render pass feeds; nothing for the intrinsics."""
+        return self.rebuild_cost if endpoint in self._rendered else None
+
     def post_step(self, ctx: SimContext) -> None:
         if not self._due(ctx):
             return
+        self.capture(ctx)
+
+    def capture(self, ctx: SimContext) -> None:
+        """Render every pass of this camera for the state ``ctx.data`` holds, now."""
         self._last_capture = ctx.sim_time
         self._stamp = float(ctx.sim_time)
         if self._frames is None:

@@ -1020,6 +1020,32 @@ A selected sensor whose plugin raises while re-running on a sample is refused, n
 error, rather than written with the value it held from the sample before; another plugin that raises
 is logged as a warning and does not stop the rest.
 
+Rebuilding a run's sensor streams
+---------------------------------
+
+A camera's frames, its depth and a lidar's scans are a function of the recorded state, so a run need
+not produce or keep them: ``roqsim rebuild`` produces them afterwards from ``roqsim sim --record``,
+through each sensor's own code -- its intrinsics, resolution, frame ids, depth encoding and its noise,
+drawn from the run's seed -- as the ROS 2 messages the bridge publishes, on the topics it publishes
+them on:
+
+.. code-block:: bash
+
+   roqsim rebuild --state run.mcap --list                          # the streams, rendering nothing
+   roqsim rebuild --state run.mcap --sensor robot/oakd --at 12.5   # one moment, nothing kept
+   roqsim rebuild --state run.mcap --from 8 --to 20 --rate 5 --output sensors.mcap
+
+The primary interface is the Python iterator (``python -m pydoc roqsim.rebuild``): it opens the
+recording once, renders only the frames asked for, restores each moment directly from its sample, and
+keeps nothing. ``--output`` is one sink over it, an mcap file (``ros2`` profile, zstd chunks, the
+manifest as ``roqsim.rebuild`` metadata). A moment is served by the nearest recorded sample, never an
+interpolated one, and a ``--rate`` is the recording's rate divided by a whole number -- one above it,
+or one that does not divide it, is refused with the rates it holds. Record at a multiple of the
+sensors' rates (``--capture-fps 30`` for a 10 Hz camera) to rebuild them at their own.
+
+Which world endpoints a rebuild can produce is in ``roqsim check --json``'s ``endpoints``, before any
+run: ``rebuildable``, ``cost`` (``render``, ``raycast`` or ``null``) and ``lazy``.
+
 Rendering a picture
 -------------------
 

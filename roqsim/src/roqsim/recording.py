@@ -443,6 +443,9 @@ class Recording:
         mujoco.mj_setState(
             model, self._data, self._buf, int(self.meta.get("state_spec", STATE_SPEC))
         )
+        # The state holds time as float32; `t` holds it exactly. A sensor keys its noise on the
+        # step this time falls on, and a rebuilt frame is stamped with it.
+        self._data.time = float(row["t"])
         mujoco.mj_forward(model, self._data)
         if self._run_sensors and ctx is not None:
             self._drive_sensors(ctx)
@@ -566,6 +569,12 @@ class Recording:
                 continue
             out[endpoint.name] = f"its producer is not known, and these raised: {failed}"
         return out
+
+    def sample(self, index: int) -> Sample:
+        """Restore sample ``index`` directly -- no replay of the samples before it."""
+        if not 0 <= index < len(self):
+            raise RecordingError(f"{self.path} has no sample {index}: it holds {len(self)}.")
+        return self._restore(int(index))
 
     def at(self, when: float | None = None) -> Sample:
         """The sample nearest ``when``, or the last one when ``when`` is ``None``.

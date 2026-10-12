@@ -1,12 +1,12 @@
 """Compress a rendered frame to bytes: pixels in, bytes out.
 
 Colour goes out as JPEG/PNG (:func:`encode`) and depth as ``compressedDepth`` (:func:`encode_depth`),
-whose codec lives in :mod:`roqsim_ros_bridge.rvl`; this module owns the framing that turns either into
-the bytes a ``CompressedImage`` carries.
+whose codec lives in :mod:`roqsim.rvl`; this module owns the framing that turns either into the bytes a
+``CompressedImage`` carries.
 
-Deliberately free of ROS imports so it is testable without a sourced ROS, and so the ROS-facing
-concerns stay in :mod:`roqsim_ros_bridge.registry` -- which encoding string maps to which wire format,
-and what ``CompressedImage.format`` should say. This module knows only about arrays.
+Free of ROS imports, so the ROS 2 bridge and :mod:`roqsim.rebuild` encode a frame with the same code
+and a test needs no sourced ROS. Which encoding maps to which wire format, and what
+``CompressedImage.format`` says, is :mod:`roqsim.ros_messages`'s. This module knows only about arrays.
 
 **Channel order: none is applied, and none is wanted.** JPEG stores YCbCr, and Pillow converts
 RGB -> YCbCr with the same matrix OpenCV uses for BGR -> YCbCr, so a frame handed here as RGB decodes
@@ -58,7 +58,7 @@ def encode(array: np.ndarray, *, fmt: str = "jpeg", quality: int = DEFAULT_JPEG_
 
     # Loudly, because the alternative is Pillow either raising something opaque about a buffer or
     # silently reinterpreting the bytes. A depth frame arriving here is the likely cause, and it is a
-    # different wire format entirely rather than a quality setting -- see the registry's converter.
+    # different wire format entirely rather than a quality setting -- see :func:`roqsim.ros_messages.compressed_image_fields`.
     if array.dtype != np.uint8:
         raise TypeError(
             f"compressed images need an 8-bit frame, got dtype {array.dtype}. A 16-bit or float "
@@ -117,7 +117,7 @@ def encode_depth(
 
     Layout, from ``compressed_depth_image_transport``'s ``codec.cpp``: the 12-byte ``ConfigHeader``,
     then the codec's own bytes -- for ``rvl`` prefixed with ``uint32`` columns and rows, which PNG
-    carries itself. ``msg.format`` (the registry's job) is what tells a subscriber which codec ran.
+    carries itself. ``format`` (:mod:`roqsim.ros_messages`) is what tells a subscriber which codec ran.
 
     Both codecs here are LOSSLESS, so which one a bag carries changes its size and nothing else.
     The lossy half of ``compressedDepth`` is the 32FC1 path -- an inverse-depth *quantisation* into

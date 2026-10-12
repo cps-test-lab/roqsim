@@ -82,6 +82,14 @@ class Plugin:
     #: one.
     transport_only: bool = False
 
+    #: What one capture of this plugin's outputs costs -- ``"render"`` (a GL pass) or ``"raycast"`` --
+    #: on a sensor whose outputs a recording can rebuild: each is a function of the restored state,
+    #: the run's seed and the sim time alone, so a run need not produce or keep the stream and
+    #: :mod:`roqsim.rebuild` produces it afterwards from ``roqsim sim --record``. ``None``: not
+    #: rebuildable (the plugin carries state between steps, or reads input the state does not hold).
+    #: A plugin that sets it implements :meth:`capture`; :meth:`output_cost` says it per endpoint.
+    rebuild_cost: str | None = None
+
     #: Set True on a plugin that registers an entity (a ``spawn_*``, a prop). Such an entry may own
     #: a nested ``components:`` block, and its label names the entity it brings into being. Declared
     #: here rather than listed in the core for the same reason ``transport_only`` is: a name list in
@@ -420,6 +428,22 @@ class Plugin:
 
     def shutdown(self, ctx: SimContext) -> None:
         """Release resources. Runs once at teardown, in reverse plugin order."""
+
+    def capture(self, ctx: SimContext) -> None:
+        """Produce this plugin's outputs for the state ``ctx.data`` holds, whatever its own rate.
+
+        The hook :mod:`roqsim.rebuild` drives on a restored state, in place of ``post_step``: the
+        rebuild chooses the moments, so the plugin's rate gate and its has-anyone-subscribed gate do
+        not apply. Required where :attr:`rebuild_cost` is set.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} declares rebuild_cost {self.rebuild_cost!r} but no capture()"
+        )
+
+    def output_cost(self, endpoint) -> str | None:
+        """What producing *endpoint*'s payload costs: :attr:`rebuild_cost` for each of this plugin's
+        outputs, unless the plugin knows one is cheap (a camera's ``camera_info``)."""
+        return self.rebuild_cost if endpoint.direction == "out" else None
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"<{type(self).__name__} name={self.name!r}>"

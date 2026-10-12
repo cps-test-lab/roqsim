@@ -87,7 +87,8 @@ a path or which package a tool lives in:
    python -m pydoc roqsim_scenes.cli.sdf_to_scene   # the reasoning behind it
 
 The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a world, ``roqsim render``
-draws one, and ``state``, ``check``, ``health``, ``catalog`` and ``plugins`` read a world, a run or the
+draws one, ``rebuild`` produces a recorded run's sensor streams, and ``state``, ``check``, ``health``,
+``catalog`` and ``plugins`` read a world, a run or the
 registries; the core's exporters are the ``roqsim export`` group. Every package tool is
 ``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).
 

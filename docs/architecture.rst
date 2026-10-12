@@ -100,6 +100,7 @@ Reference implementation: ``roqsim/src/roqsim/engine.py``.
 -  ``validate_config(self, config) -> list[str]`` — return error strings (empty = valid).
 -  ``expand(cls, spec, world, base_dir) -> list[PluginSpec]`` *(classmethod, optional)* — extra specs to splice in right after this one at config load; used by spawn plugins to pull in a model's manifest (see §4). What it returns is expanded in turn. A plugin lists the config keys ``expand`` reads in ``expansion_keys``, so a too-late override of one is refused. Default: none.
 -  Hooks as in §2. ``parallel_safe: bool`` marks a read-only ``post_step`` for the future parallel executor. ``transport_only: bool`` marks a plugin that builds no geometry and holds no state (``BridgeBase`` and its subclasses), so the scene-only consumers — ``roqsim render``, the review window, the exporters — drop it and can therefore build a ``*_ros`` world without its middleware installed; ``roqsim sim`` keeps it unless asked for ``--no-communication``, which warns that the run then publishes and receives nothing (see :doc:`plugins` › Transport plugins).
+-  ``rebuild_cost: str | None`` marks a sensor whose outputs are a function of the restored state, the seed and the sim time alone, and says what one capture costs (``"render"``, ``"raycast"``). Such a plugin implements ``capture(ctx)`` -- produce the outputs now, past its own rate and subscriber gates -- and :mod:`roqsim.rebuild` drives it on a recording's restored samples, so a run need not produce or keep those streams; ``output_cost(endpoint)`` says it per endpoint (a camera's ``camera_info`` is cheap), and ``roqsim check --json`` reports both per endpoint. A rebuilt frame is the render of the state at its stamp. Live, ``post_step`` runs after ``mj_step``, whose body poses are still those from before the step's integration, so a live frame of a moving body shows it one physics step earlier than its stamp; a rebuilt frame equals the live sensor's capture after ``mj_forward`` at the same state, pixel for pixel, noise included.
 
 .. _simcontext-contextpy-impl:
 
@@ -977,7 +978,7 @@ converter. One converter per
 *wire format*, not per producer: the same rendered frame is published as ``sensor_msgs/Image`` or as
 ``sensor_msgs/CompressedImage`` purely by which type string an endpoint names, so a camera plugin
 offers a compressed stream without importing a codec (the encoder itself is
-``roqsim_ros_bridge/image_codec.py``, kept ROS-free so it is testable on its own). Actions follow
+``roqsim/image_codec.py``, and the fields of every sensor message are ``roqsim/ros_messages.py``, both ROS-free so ``roqsim rebuild`` writes the same messages without ROS). Actions follow
 the same pattern one level up: an ``in`` endpoint whose ros2 hint block carries ``action`` (an action
 type string, e.g. ``control_msgs.action.FollowJointTrajectory``) is served as an ``ActionServer``
 whose goal-execution policy comes from a handler registry (``roqsim_ros_bridge/actions.py``) — so even
