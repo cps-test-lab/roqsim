@@ -9,7 +9,7 @@ what a caller holding an override needs to know::
      "components": [{"address": "robot.lidar", "ref": "lidar",
                      "paths": ["components.robot.lidar.rays", ...]}],
      "addresses": ["robot", "robot.lidar", ...],
-     "entities": null, "flexes": null, "warnings": null, "endpoints": null,
+     "entities": null, "flexes": null, "warnings": null, "endpoints": null, "realised": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
                      "targets": null},
      "dropped_transport": [], "errors": null}
@@ -55,6 +55,10 @@ the build-fed keys still filled.
 an output the rate it asks for and the rate a run publishes it at on this world's physics step
 (:func:`roqsim.endpoint.describe_endpoints`), the transport's ``rates:`` included. A caller can
 check what a campaign records against what the world publishes, and see a rate the step moves.
+
+**Realised** values come with them: per plugin, what it runs with where that bounds a run -- the
+caps a drive clips a command at, odometry with no error drawn -- and whether the world or the
+plugin's default set each (:func:`roqsim.config.realised_values`).
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
 and ``--set PATH=VALUE`` one value over it: the same options, merged by the same function
@@ -463,6 +467,9 @@ def main(argv=None) -> int:
         # Every endpoint the world offers and the rate each output is published at -- with the
         # entities, from the same build: see the module docstring.
         "endpoints": None,
+        # What each plugin runs with where it bounds a run -- a drive's caps, a reading without
+        # noise -- read after configure, with the endpoints.
+        "realised": None,
         # The allowlist is world-independent, so it costs nothing and is always here. Its
         # world-specific half needs the model, hence the flag -- see the module docstring.
         "overridable": {"fields": _overridable_fields(), "targets": None},
@@ -506,6 +513,9 @@ def main(argv=None) -> int:
                     from roqsim.interpenetration import as_warnings
 
                     result["endpoints"] = describe_endpoints(ctx, "ros2", rates)
+                    from roqsim.config import realised_values
+
+                    result["realised"] = realised_values(engine.plugins)
                     stage = "reset"
                     engine.reset()
                     result["warnings"] = (

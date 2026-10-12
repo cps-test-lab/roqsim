@@ -327,6 +327,7 @@ def _inventory(engine, rates: dict | None = None) -> dict:
     """
     import mujoco
 
+    from roqsim.config import realised_values
     from roqsim.endpoint import describe_endpoints
 
     ctx = engine.ctx
@@ -352,6 +353,7 @@ def _inventory(engine, rates: dict | None = None) -> dict:
         ],
         "entities": entities,
         "endpoints": endpoints,
+        "realised": realised_values(engine.plugins),
         "model": {
             "nbody": int(model.nbody),
             "ngeom": int(model.ngeom),

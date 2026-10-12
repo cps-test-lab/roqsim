@@ -2115,6 +2115,21 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
     return instances
 
 
+def realised_values(plugins: list[Plugin]) -> list[dict]:
+    """``[{address, plugin, values}]`` for each configured plugin that reports realised values.
+
+    What :meth:`roqsim.plugin.Plugin.realised` says, read after ``configure`` by ``roqsim check``
+    and ``roqsim scenes describe``: the caps a drive clips commands at, a reading that carries no
+    noise -- values a world's author did not necessarily write, and a run cannot exceed.
+    """
+    out = []
+    for inst in plugins:
+        values = inst.realised()
+        if values:
+            out.append({"address": inst.address, "plugin": type(inst).__name__, "values": values})
+    return out
+
+
 def undocumented_key_warnings(plugins: list[Plugin]) -> list[dict]:
     """One warning per plugin whose config holds keys it does not document.
 

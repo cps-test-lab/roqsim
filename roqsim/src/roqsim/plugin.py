@@ -59,6 +59,12 @@ class Plugin:
     #: Published by ``roqsim plugins describe`` beside ``strict_keys``.
     OPEN_KEYS: str = ""
 
+    #: What this plugin realises from its config, as ``(key, attribute, unit, effect)``: the config
+    #: key, the attribute holding the value it runs with, the unit, and what the value does to a
+    #: command or a reading. :meth:`realised` turns it into rows; a plugin with more to say (a value
+    #: derived from several keys, a default that switches something off) extends that method.
+    REALISED: tuple = ()
+
     #: Set True on a plugin whose ``post_step`` only *reads* ``data`` (no writes, no shared mutable
     #: state) so a future executor may run it concurrently with other parallel-safe post_steps.
     parallel_safe: bool = False
@@ -303,6 +309,29 @@ class Plugin:
             errors.append(f"validate_config raised: {exc}")
         errors += self._misplaced_enabled(config, errors)
         return errors
+
+    def realised(self) -> list[dict]:
+        """The values this plugin runs with, where they shape what a run can do or report.
+
+        One row per value: ``{key, value, unit, source, effect}``, ``source`` saying whether the
+        world (``config``) or the plugin's default (``default``) set it. Read after ``configure`` by
+        ``roqsim check`` and ``roqsim scenes describe``, so a caller sees before a run that a drive
+        clips a command at its cap, or that a reading carries no noise, rather than finding it in
+        the results.
+        """
+        rows = []
+        for key, attribute, unit, effect in type(self).REALISED:
+            value = getattr(self, attribute, None)
+            rows.append(
+                {
+                    "key": key,
+                    "value": value,
+                    "unit": unit,
+                    "source": "config" if key in (self.config or {}) else "default",
+                    "effect": effect,
+                }
+            )
+        return rows
 
     @classmethod
     def documented_keys(cls) -> frozenset[str] | None:
