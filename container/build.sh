@@ -20,7 +20,8 @@
 #   --image        Which image(s) to build. Default: all.
 #   --project      Registry/namespace prefix for the tag+push (e.g. ghcr.io/cps-test-lab/). Optional.
 #   --ros-distro   ROS distro for roqsim-ros. Default: jazzy.
-#   --platform     Explicit platform list (e.g. linux/arm64). Overrides --multiarch.
+#   --platform     Explicit platform list (e.g. linux/arm64). Overrides --multiarch; a list of
+#                  several needs --push and --project, as --multiarch does.
 #   --multiarch    Build every platform container/platforms.env lists for the image. Needs --push.
 #   --push         docker push after building.
 
@@ -63,13 +64,18 @@ if [[ -n "${PROJECT}" ]]; then
   [[ "${PROJECT}" == */ ]] || PROJECT="${PROJECT}/"
 fi
 
-if [[ -n "${MULTIARCH}" && -z "${PUSH}" ]]; then
-  echo "ERROR: --multiarch needs --push: a multi-platform build cannot be loaded into the local" >&2
+# A multi-platform build is one that --multiarch asks for or that --platform lists several
+# platforms for; either way the result can only go to a registry, so both need --push and --project.
+MULTI_FLAG=""
+if [[ -n "${MULTIARCH}" ]]; then MULTI_FLAG="--multiarch"; fi
+if [[ "${PLATFORM}" == *,* ]]; then MULTI_FLAG="--platform ${PLATFORM}"; fi
+if [[ -n "${MULTI_FLAG}" && -z "${PUSH}" ]]; then
+  echo "ERROR: ${MULTI_FLAG} needs --push: a multi-platform build cannot be loaded into the local" >&2
   echo "       daemon, so without a registry there is nowhere to put the result." >&2
   exit 1
 fi
-if [[ -n "${MULTIARCH}" && -z "${PROJECT}" ]]; then
-  echo "ERROR: --multiarch needs --project: pushing an index requires a registry to push it to." >&2
+if [[ -n "${MULTI_FLAG}" && -z "${PROJECT}" ]]; then
+  echo "ERROR: ${MULTI_FLAG} needs --project: pushing an index requires a registry to push it to." >&2
   exit 1
 fi
 

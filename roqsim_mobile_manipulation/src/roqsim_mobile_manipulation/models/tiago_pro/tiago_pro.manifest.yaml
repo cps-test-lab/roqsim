@@ -1,10 +1,10 @@
 # Default controllers + sensors shipped with the PAL Robotics TIAGo Pro description.
 #
 # `spawn_robot: {model: tiago_pro}` pulls these in automatically, so a world does not re-declare the
-# robot's intrinsic drive/arm/sensor plugins. To override a default, declare the same plugin for the
-# same robot in the world (it wins, and its config merges over the manifest's); to opt out entirely,
-# set `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the
-# spawn name.
+# robot's intrinsic drive/arm/sensor plugins. To override a default, nest an entry with the same
+# LABEL under that spawn_robot's `components:` (it merges into this one, per key); to opt out
+# entirely, set `spawn_robot` config `default_plugins: false`. Each entry below attaches to the
+# spawned entity because it is nested under it -- there is no ownership key to fill in.
 #
 # The TIAGo Pro is a dual-arm wheeled mobile manipulator, so it carries FOUR controllers over
 # DISJOINT actuator sets, kept disjoint by each one's explicit `joints:` list:

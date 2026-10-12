@@ -62,7 +62,7 @@ def _plugins(model, data):
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    dd = DiffDrivePlugin(dict(_CFG["diff_drive"]))
+    dd = DiffDrivePlugin(dict(_CFG["diff_drive"]), entity="robot")
     dd.configure(ctx)
     dd.register_endpoints(ctx)
     dd.on_reset(ctx)

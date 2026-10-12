@@ -1,9 +1,10 @@
 # Default controller shipped with the KUKA LBR iiwa 14 R820 description.
 #
-# `spawn_arm: {model: lbr_iiwa14}` pulls this in automatically, so a world does not re-declare the arm's
-# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
-# out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
-# spawn_arm `name`.
+# `spawn_arm: {model: lbr_iiwa14}` pulls this in automatically, so a world does not re-declare the
+# arm's controller. To override a default, nest an entry with the same label under that spawn_arm's
+# `components:` (it merges into this one, per key); to opt out, set `spawn_arm` config
+# `default_plugins: false`. Each entry below attaches to the spawned arm because it is nested under
+# it -- there is no ownership key to fill in.
 #
 # The ROS 2 interface is lbr_fri_ros2_stack's, the stack KUKA FRI users run on the real arm
 # (lbr_ros2_control/config/controllers/*.yaml there), so a client written against it drives this

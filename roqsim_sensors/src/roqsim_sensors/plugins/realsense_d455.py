@@ -18,7 +18,7 @@ along the baseline from the colour one) with the depth stream's own 87 x 58 deg,
 below is the D455's own -- which is what decides whether a wall 4 m away is a depth return or a "no
 return". Attach it to a robot or mount it standalone with ``spawn_sensor``.
 
-Config: see ``camera_common.CameraPlugin`` (``robot``/``arm``, ``camera``, ``width``/``height``,
+Config: see ``camera_common.CameraPlugin`` (``camera``, ``width``/``height``,
 ``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``) plus
 ``depth``/``points``/``clip_near``/``clip_far``/``depth_camera``/``depth_frame_id``. Defaults below
 match the D455's 640x400@30fps colour profile (the native 1280x800 colour aspect, downscaled to fit
@@ -38,11 +38,6 @@ class RealsenseD455Plugin(RealsenseD435Plugin):
     DEFAULT_RATE_HZ = 30.0
     DEFAULT_WIDTH = 640
     DEFAULT_HEIGHT = 400
-
-    def __init__(self, config=None, *, name=None, entity=None, label=None):
-        cfg = dict(config or {})
-        # The D455's own working range, not the D435's 0.28-3 m: min-Z ~0.6 m, ideal to ~6 m. Set
-        # BEFORE super().__init__, whose setdefault would otherwise install the D435's numbers.
-        cfg.setdefault("clip_near", 0.6)
-        cfg.setdefault("clip_far", 6.0)
-        super().__init__(cfg, name=name, entity=entity, label=label)
+    # The D455's own working range, not the D435's 0.28-3 m: min-Z ~0.6 m, ideal to ~6 m.
+    DEFAULT_CLIP_NEAR = 0.6
+    DEFAULT_CLIP_FAR = 6.0

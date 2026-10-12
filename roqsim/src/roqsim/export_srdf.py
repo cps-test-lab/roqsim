@@ -505,6 +505,10 @@ def build_srdf(
         group = ET.SubElement(robot, "group", name=spec.name)
         ET.SubElement(group, "chain", base_link=spec.base_link, tip_link=spec.tip_link)
 
+        # An arm with no gripper joint has no hand to group: a group naming no joint is one
+        # srdfdom rejects, and the end effector built on it then names a group that does not exist.
+        if not spec.gripper_joint:
+            continue
         hand = ET.SubElement(robot, "group", name=spec.gripper_group)
         ET.SubElement(hand, "joint", name=spec.gripper_joint)
 
@@ -531,6 +535,8 @@ def build_srdf(
     # manifest gives arm_controller -- so a MoveIt named target and a GripperCommand agree.
     for spec in arms:
         for state, value in (("open", spec.gripper_open), ("closed", spec.gripper_close)):
+            if not spec.gripper_joint:
+                break
             grp = ET.SubElement(robot, "group_state", name=state, group=spec.gripper_group)
             ET.SubElement(grp, "joint", name=spec.gripper_joint, value=f"{value:.6g}")
         if spec.home:
