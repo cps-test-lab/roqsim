@@ -22,13 +22,13 @@ def test_a_component_override_with_state_is_refused_by_name(tmp_path):
         render.render_target(
             None,
             str(tmp_path / "x.png"),
-            state=str(tmp_path / "run.npz"),
+            state=str(tmp_path / "run.mcap"),
             overrides={"sim": {"pacing": "asap"}, "components": {"obstacle": {"instances": []}}},
         )
 
 
 def test_the_command_exits_2_naming_the_ignored_key(tmp_path, capsys):
-    argv = ["--state", str(tmp_path / "run.npz"), "--set", "components.table.pose.position.x=1"]
+    argv = ["--state", str(tmp_path / "run.mcap"), "--set", "components.table.pose.position.x=1"]
     assert render.main(argv) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -49,7 +49,7 @@ def test_a_view_override_with_state_is_not_refused(monkeypatch, tmp_path):
     render.render_target(
         None,
         str(tmp_path / "x.png"),
-        state=str(tmp_path / "run.npz"),
+        state=str(tmp_path / "run.mcap"),
         overrides={"sim": {"view": {"azimuth": 90}}},
     )
     assert seen["merged"] == {"sim": {"view": {"azimuth": 90}}}

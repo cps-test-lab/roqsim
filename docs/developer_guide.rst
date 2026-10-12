@@ -35,7 +35,7 @@ Golden rules
   *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered
   ``True``. A bare ``value == enum`` still works, so the break is silent and partial: the
   filter just returns nothing, and an arm reports no joints instead of raising. ``int()`` on
-  the model value (or plain-``int`` members, as in ``export_capture._SCALAR_JOINTS``) is
+  the model value (or plain-``int`` members, as in ``capture._SCALAR_JOINTS``) is
   correct on every version.
 
 Developer workflow
@@ -114,6 +114,15 @@ A package that ships its first tool also declares the group itself, in its ``pyp
 
 That is the whole mechanism: any installed package can contribute a group this way, including one
 maintained outside this repository. It never edits the core.
+
+**A** ``ROQSIM_*`` **environment variable is registered, then read.** Code reads one with
+``roqsim.env.get(name)``, which raises for a name that is not registered, and a run refuses every
+``ROQSIM_*`` variable that is not (``roqsim/tests/test_env.py`` checks every name the tree spells).
+The core's own are ``roqsim.env.VARIABLES``; any other package declares the ones it reads as a mapping
+of name to a one-line description, under its own entry point::
+
+   [project.entry-points."roqsim.environment"]
+   roqsim_scenes = "roqsim_scenes.environment:VARIABLES"
 
 **You write no help text.** All three levels come from the docstring you already wrote — click takes
 the listing line from its first line, ``--help`` is your own ``argparse``, and ``python -m pydoc``

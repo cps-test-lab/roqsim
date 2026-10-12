@@ -8,7 +8,6 @@ validator is a Node.js program `make test` does not require.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import roqsim_scenes
-from roqsim import exit_status, export_gltf
+from roqsim import env, exit_status, export_gltf
 
 _VALIDATOR = Path(__file__).resolve().parents[2] / "tools" / "gltf_validator"
 _WORLDS = sorted((Path(roqsim_scenes.__file__).parent / "worlds").glob("*.yaml"))
@@ -44,7 +43,7 @@ def test_there_are_worlds_to_export():
 
 @pytest.mark.parametrize("world", _WORLDS, ids=lambda w: w.stem)
 def test_khronos_validator_finds_nothing_wrong_with_a_bundled_world(tmp_path, world):
-    if os.environ.get("ROQSIM_GLTF_VALIDATOR") != "required":
+    if env.get("ROQSIM_GLTF_VALIDATOR") != "required":
         pytest.skip("every bundled world through the Khronos glTF Validator: `make test-gltf`")
     out = tmp_path / f"{world.stem}.glb"
     assert export_gltf.main(["--world", str(world), "--out", str(out)]) == exit_status.OK

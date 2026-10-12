@@ -9,8 +9,8 @@ The recording
 -------------
 
 An analysis reads the true path from the run itself. ``roqsim sim --record`` keeps the complete
-state, and the pose series beside it (``sim_poses.csv``, :ref:`sim-poses`) has one row per sample
-per named body: the world pose as a quaternion and the world twist, on exact simulated time. A
+state, and its ``poses`` channel (:ref:`sim-poses`) has one entry per sample per named body: the
+world pose as a quaternion and the world twist, on exact simulated time. A
 stepped run publishes nothing, so for it this is the only pose series there is. Because it comes from
 the solver rather than from a transport, it has no arrival-time jitter.
 
