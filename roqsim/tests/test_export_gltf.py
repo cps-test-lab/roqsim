@@ -10,7 +10,6 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 import shutil
 import struct
 import subprocess
@@ -40,7 +39,7 @@ from test_export_web import (
     _skinned,
 )
 
-from roqsim import exit_status, export_gltf
+from roqsim import env, exit_status, export_gltf
 from roqsim.export_gltf import WORLD_ROTATION
 from roqsim.export_gltf import export_gltf as write_glb
 from roqsim.export_web import export_scene
@@ -886,7 +885,7 @@ def khronos(paths) -> dict:
             "the Khronos glTF Validator is not installed: `make test-gltf` installs it "
             f"({_VALIDATOR / 'package.json'}), and needs Node.js"
         )
-        if os.environ.get("ROQSIM_GLTF_VALIDATOR") == "required":
+        if env.get("ROQSIM_GLTF_VALIDATOR") == "required":
             pytest.fail(why)
         pytest.skip(why)
     run = subprocess.run(

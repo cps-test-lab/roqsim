@@ -8,7 +8,7 @@
     This is a BENCHTOP unit, not a floor-standing one: its feet run from z=0.76 to 0.915, so it
     needs a ~0.76 m table under it. The standalone `industrial_table` prop is the table it is laid
     out for (spawn it at this model's local [-0.13, 0.6, 0] for the source layout);
-    any other ~0.76 m top works too -- `desk_diy` is 0.758.
+    any other ~0.76 m top works too.
 
     Coordinates match the source cell: belt centred at (x=0, y=0.6), belt surface at z=0.97,
     roller centres at x=+/-1.221. Attach at pos [0,0,0] to reproduce the original layout.

@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 import os
 
+from . import env
+
 _logger = logging.getLogger(__name__)
 
 #: Preferred offscreen backend where a render device exists. ``MUJOCO_GL`` selects only the
@@ -153,7 +155,7 @@ def select_offscreen_gl() -> str | None:
     explicit ``MUJOCO_GL``, and is idempotent.
     """
     global _chosen
-    if os.environ.get(_OPT_OUT):
+    if env.get(_OPT_OUT):
         return None
     existing = os.environ.get("MUJOCO_GL")
     if existing:

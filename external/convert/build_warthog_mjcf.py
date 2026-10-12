@@ -19,11 +19,11 @@ Three things this port gets for free:
 * **Nothing is articulated but the wheels.** The rocker/differential suspension is a set of fixed
   joints in this description, so the tree is a chassis, two diff units and four wheels.
 
-The one thing it does need is the yaw calibration -- see ``slip_factor`` in the manifest and the
-port log. Clearpath publishes its own compensation here, and unusually it is legible: ``diff_4wd``
-declares ``wheel_separation: 1.5`` for a robot whose URDF track is 1.13642 m, then multiplies it by
-1.125. That is a 48% inflation of the geometric track, and it is the real driver's ICR compensation
-under another name.
+The one thing it does need is the yaw calibration -- see ``slip_factor`` in the manifest. Clearpath
+publishes its own compensation here, and unusually it is legible: ``diff_4wd`` declares
+``wheel_separation: 1.5`` for a robot whose URDF track is 1.13642 m, then multiplies it by 1.125.
+That is a 48% inflation of the geometric track, and it is the real driver's ICR compensation under
+another name.
 
 The w200 description ships no scanner. The model carries the two vertical PACS brackets Clearpath's
 dual-laser sample bolts to the front of each diff unit (``BRACKETS``), with the bracket mesh from
@@ -274,8 +274,9 @@ TEMPLATE = """<mujoco model="warthog">
 
     The largest robot in roqsim_mobile: 260 kg against the Husky's 50, on 0.3 m wheels over a
     1.136 m track. It is a skid-steer, so it turns by scrubbing and carries a slip_factor - see the
-    manifest, where the measured achieved/commanded ratios are recorded, and the port log for why
-    the vendor's own number could not simply be adopted.
+    manifest, where the measured achieved/commanded ratios are recorded. The vendor's own
+    compensation (diff_4wd's wheel_separation 1.5 x 1.125 over the 1.136 m track, a factor of 1.485)
+    cannot simply be adopted: measured on this model it achieves 0.31 of commanded yaw.
 
     The rocker/differential suspension is FIXED in this description. Nothing articulates but the
     four wheels, so a Warthog crossing rough ground here will not articulate its rockers the way the

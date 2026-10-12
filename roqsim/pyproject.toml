@@ -18,6 +18,10 @@ dependencies = [
     # subcommand, not an optional extra. Two other sites (the splash overlay, the web exporter's
     # texture downscale) degrade without it; the renderer cannot.
     "pillow>=9.0",
+    # A run is recorded as one mcap file (roqsim/capture.py), chunked and zstd-compressed so a
+    # killed run keeps every closed chunk; the reader (roqsim/recording.py) decompresses them.
+    "mcap>=1.2",
+    "zstandard>=0.21",
 ]
 
 [project.optional-dependencies]
