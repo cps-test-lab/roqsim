@@ -17,13 +17,14 @@ from __future__ import annotations
 import json
 import logging
 import time
+import zipfile
 
 import mujoco
 import numpy as np
 import pytest
 from synthetic_recording import write_state_recording
 
-from roqsim import capture
+from roqsim import capture, exit_status
 from roqsim.capture import (
     STATE_FIELDS,
     STATE_SPEC,
@@ -45,6 +46,7 @@ from roqsim.mcap_format import (
     META_RECORDING,
     PROFILE,
     ChunkedWriter,
+    RecordingTargetError,
     is_finished,
 )
 from roqsim.recording import RecordingError, RecordingNotFoundError, open_recording
@@ -500,18 +502,16 @@ def test_replay_after_close_still_works(tmp_path, moving):
     assert replayed == sorted(replayed)
 
 
-def test_a_recording_path_without_the_suffix_is_still_found_where_it_says(tmp_path, moving):
-    """``--record out`` lands as ``out.mcap``, and close() returns the path that exists."""
+@pytest.mark.parametrize("target", ["out", "run.npz", "run.mcap.part", "takes/"])
+def test_a_recording_target_that_is_not_an_mcap_file_is_refused(tmp_path, moving, target):
+    """A recording target is an ``.mcap`` file path; anything else is a wrong input, not renamed."""
     model, data = moving
-    ctx = _Ctx(model, data)
-    rec = StateRecorder(ctx, tmp_path / "out", snap_fps(25, model.opt.timestep), world="w")
-    for _ in range(600):
-        mujoco.mj_step(model, data)
-        rec.sample(ctx)
-    written = rec.close()
-    assert written == tmp_path / "out.mcap"
-    assert written.exists()
-    assert open_recording(written).meta["world"] == "w"
+    given = str(tmp_path / target) + ("/" if target.endswith("/") else "")
+    with pytest.raises(RecordingTargetError, match=r"a recording is an \.mcap file; got ") as err:
+        StateRecorder(_Ctx(model, data), given, snap_fps(25, model.opt.timestep), world="w")
+    assert repr(given) in str(err.value)
+    assert exit_status.for_error(err.value) == exit_status.BAD_INPUT
+    assert not list(tmp_path.iterdir()), "a refused target writes nothing"
 
 
 def test_the_sample_rate_is_in_simulated_seconds(tmp_path, moving):
@@ -584,27 +584,19 @@ def test_a_missing_file_is_named(tmp_path):
         open_recording(tmp_path / "absent.mcap")
 
 
-def test_an_npz_path_is_refused_for_its_format_even_when_absent(tmp_path):
-    """A script still naming ``run.npz`` learns the recording is mcap, not that a file is missing."""
-    with pytest.raises(RecordingError, match=r"one \.mcap file per run") as err:
+def test_a_path_that_is_not_an_mcap_file_is_refused_before_it_is_looked_for(tmp_path):
+    """The suffix is the rule, so a wrong one is reported as that, not as a missing file."""
+    with pytest.raises(RecordingTargetError, match=r"a recording is an \.mcap file; got ") as err:
         open_recording(tmp_path / "absent.npz")
     assert not isinstance(err.value, RecordingNotFoundError)
 
 
-def test_a_numpy_archive_is_refused_by_name(tmp_path):
-    """The formats before this one; there is no reader for them, and the refusal says which this is."""
-    old = tmp_path / "run.npz"
-    np.savez(old, meta=np.array("{}"), samples=np.zeros(3))
-    with pytest.raises(RecordingError) as err:
-        open_recording(old)
-    assert "numpy archive" in str(err.value) and "formats 1 and 2" in str(err.value)
-    assert "one .mcap file per run" in str(err.value)
-    assert f"format {FORMAT_VERSION}" in str(err.value)
-
-    renamed = tmp_path / "run.mcap"  # the same bytes under the new suffix are still refused
-    renamed.write_bytes(old.read_bytes())
+def test_a_zip_archive_is_refused_by_name(tmp_path):
+    archive = tmp_path / "run.mcap"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("meta.json", "{}")
     with pytest.raises(RecordingError, match="zip archive"):
-        open_recording(renamed)
+        open_recording(archive)
 
 
 def test_something_that_is_not_mcap_is_refused(tmp_path):

@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 
 from . import control as ctl
-from . import exit_status, ipc, logging_setup
+from . import env, exit_status, ipc, logging_setup
 from .capture import (
     DEFAULT_FPS,
     RECORD_EXCLUDE_VAR,
@@ -60,6 +60,7 @@ from .config import (
 )
 from .engine import Engine
 from .gl import select_offscreen_gl
+from .mcap_format import RECORDING_SUFFIX, recording_path
 from .models import ModelError
 from .override_options import add_override_options, overrides_from_options
 from .plugin import PluginError
@@ -649,6 +650,32 @@ def run(
     ``no_transport`` does not remove it -- the control socket is how this process is reached, not a
     middleware the experiment publishes on.
     """
+    if video and not record:
+        # A recording is how a video is made, so --video needs one; put it beside the video by default
+        # rather than inventing a second convention for where it lives.
+        record = str(Path(video).with_suffix(RECORDING_SUFFIX))
+
+    # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
+    # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
+    # to add --record to without editing a launch file that two backends share. Recording is a session
+    # concern -- the same footing as `--headless`, which a world YAML has no key for -- so the
+    # environment is the right channel, and it is the one the scenario adapter already uses.
+    # An explicit flag always wins.
+    if record is None:
+        record = env.get("ROQSIM_RECORD") or None
+        if record:
+            record = str(_session_path(record))
+    if record:
+        # Before the world compiles: a target that cannot be a recording is a wrong input.
+        record = str(recording_path(record))
+    if capture_fps == DEFAULT_FPS and env.get("ROQSIM_CAPTURE_FPS"):
+        capture_fps = parse_fps(env.get("ROQSIM_CAPTURE_FPS"))
+    # Which bodies and joints the decoded channels carry: the flag, else the environment, else all.
+    if record_tracks is None:
+        record_tracks = env.get(RECORD_TRACKS_VAR) or None
+    if record_exclude is None:
+        record_exclude = env.get(RECORD_EXCLUDE_VAR) or None
+
     # Parse the world before any GL: a bad target (missing YAML, unknown model ref, a schema error) is
     # a millisecond away and must fail as a plain message, not behind a window that then has to be torn
     # down again. The splash exists to cover the *world compile*, which is what follows.
@@ -713,30 +740,6 @@ def run(
                 max_steps = (
                     steps_from_seconds if max_steps is None else min(max_steps, steps_from_seconds)
                 )
-
-            if video and not record:
-                # A recording is how a video is made, so --video needs one; put it beside the video by default
-                # rather than inventing a second convention for where it lives.
-                record = str(Path(video).with_suffix(".mcap"))
-
-            # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
-            # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
-            # to add --record to without editing a launch file that two backends share. Recording is a session
-            # concern -- the same footing as `--headless`, which a world YAML has no key for -- so the
-            # environment is the right channel, and it is the one the scenario adapter already uses.
-            # An explicit flag always wins.
-            if record is None:
-                record = os.environ.get("ROQSIM_RECORD") or None
-                if record:
-                    record = str(_session_path(record))
-            if capture_fps == DEFAULT_FPS and os.environ.get("ROQSIM_CAPTURE_FPS"):
-                capture_fps = parse_fps(os.environ["ROQSIM_CAPTURE_FPS"])
-            # Which bodies and joints the decoded channels carry: the flag, else the environment,
-            # else all.
-            if record_tracks is None:
-                record_tracks = os.environ.get(RECORD_TRACKS_VAR) or None
-            if record_exclude is None:
-                record_exclude = os.environ.get(RECORD_EXCLUDE_VAR) or None
 
             # The rate is checked against the *compiled* timestep, which is the only authority: a world can
             # inherit it from a baked MJCF rather than declaring it in `sim:`.
@@ -974,7 +977,7 @@ def _control_uri(value: str | None) -> str | None:
     import importlib.util
 
     uri = ipc.bind_uri(value, log)
-    asked = value is not None or bool(os.environ.get(ipc.ENV))
+    asked = value is not None or bool(env.get(ipc.ENV))
     if uri is not None and not asked and importlib.util.find_spec("zmq") is None:
         log.warning(
             "control: not served -- pyzmq is not installed, so this run has no control socket "
@@ -1138,7 +1141,7 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--record",
         metavar="PATH",
-        help="record MuJoCo state to this file, for later rendering with `roqsim render --state`. "
+        help="record MuJoCo state to this .mcap file, for later rendering with `roqsim render --state`. "
         "A path is required rather than defaulted: a recording is an artifact you will name again "
         "later, and a default would quietly overwrite the previous run's.",
     )
@@ -1188,6 +1191,12 @@ def main(argv: list | None = None) -> int:
     add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+
+    # A ROQSIM_* variable nothing reads would be ignored, and the run would look configured.
+    try:
+        env.check()
+    except env.UnknownEnvironmentError as err:
+        return exit_status.fail("roqsim sim", err)
 
     logging_setup.configure(verbose=args.verbose)
 

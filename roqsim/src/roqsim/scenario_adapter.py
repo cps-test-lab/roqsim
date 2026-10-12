@@ -66,6 +66,7 @@ import logging
 import os
 from pathlib import Path
 
+from . import env
 from .config import load_config, overrides_from_files
 from .context import SimContext
 from .engine import Engine
@@ -206,7 +207,15 @@ class MujocoSim(_Base):
         world_overrides: dict | None = None,
         seed: int | None = None,
     ):
-        self._default_world = world or os.environ.get("ROQSIM_WORLD")
+        # Before anything is read: a ROQSIM_* variable nothing reads would be ignored, and a
+        # recording target that cannot be one would fail only once the world had been built.
+        env.check()
+        record = env.get("ROQSIM_RECORD")
+        if record:
+            from .mcap_format import recording_path
+
+            recording_path(record)
+        self._default_world = world or env.get("ROQSIM_WORLD")
         if not self._default_world:
             raise ValueError(
                 "no world specified: pass world=... or set ROQSIM_WORLD to a world YAML path"
@@ -219,10 +228,10 @@ class MujocoSim(_Base):
         self._transport = (
             {
                 "ros": True,
-                "tf_namespace": os.environ.get("ROQSIM_TF_NAMESPACE") or None,
-                "control": _as_bool(os.environ.get("ROQSIM_SIM_CONTROL")),
+                "tf_namespace": env.get("ROQSIM_TF_NAMESPACE") or None,
+                "control": _as_bool(env.get("ROQSIM_SIM_CONTROL")),
             }
-            if _as_bool(os.environ.get("ROQSIM_ROS"))
+            if _as_bool(env.get("ROQSIM_ROS"))
             else None
         )
         # A deployment's overrides, for the shape that has no command line. `roqsim sim` takes
@@ -232,14 +241,14 @@ class MujocoSim(_Base):
         # `world_overrides` itself still wins: that is the experiment speaking, and it is
         # more specific than the deployment.
         if world_overrides is None:
-            overrides_file = os.environ.get("ROQSIM_WORLD_OVERRIDES")
+            overrides_file = env.get("ROQSIM_WORLD_OVERRIDES")
             world_overrides = overrides_from_files([overrides_file]) if overrides_file else None
         self._default_overrides = world_overrides
         # The run's noise seed, same story as the two above: the deployment states it in the
         # environment (there is no command line here), and a scenario passing it wins. `None` means
         # "the world's `sim.seed`, or draw one" -- resolved at build time, where the config is known.
         if seed is None:
-            env_seed = os.environ.get(SEED_ENV)
+            env_seed = env.get(SEED_ENV)
             seed = int(env_seed) if env_seed not in (None, "") else None
         self._explicit_seed = seed
         #: A drawn seed, kept so a rebuild does not redraw. `_build` runs again for a different world
@@ -339,7 +348,7 @@ class MujocoSim(_Base):
         ``data.xpos`` first (mirrors ``scene_source.compile_from_world``).
         """
         self._scene_export_pending = False
-        out = os.environ.get("ROQSIM_SCENE_EXPORT_DIR")
+        out = env.get("ROQSIM_SCENE_EXPORT_DIR")
         if not out:
             return
         import mujoco
@@ -391,7 +400,7 @@ class MujocoSim(_Base):
         The recorder is rebuilt with the world: it holds the model whose state it packs, so a world
         rebuilt with different ``world_overrides`` needs a new one.
         """
-        target = os.environ.get("ROQSIM_RECORD")
+        target = env.get("ROQSIM_RECORD")
         if not target:
             return
         from .capture import (
@@ -407,7 +416,7 @@ class MujocoSim(_Base):
         lg = logging.getLogger(__name__)
         try:
             rate = snap_fps(
-                parse_fps(os.environ.get("ROQSIM_CAPTURE_FPS") or DEFAULT_FPS),
+                parse_fps(env.get("ROQSIM_CAPTURE_FPS") or DEFAULT_FPS),
                 self._engine.dt,
             )
         except CaptureError as err:
@@ -421,8 +430,8 @@ class MujocoSim(_Base):
             rate,
             world=self._world,
             overrides=self._built_overrides if isinstance(self._built_overrides, dict) else None,
-            tracks=os.environ.get(RECORD_TRACKS_VAR),
-            exclude=os.environ.get(RECORD_EXCLUDE_VAR),
+            tracks=env.get(RECORD_TRACKS_VAR),
+            exclude=env.get(RECORD_EXCLUDE_VAR),
             logger=lg,
         )
 

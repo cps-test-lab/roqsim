@@ -21,7 +21,8 @@ record's own epoch timestamp, taken when the event happened rather than when it 
 """
 
 import logging
-import os
+
+from . import env
 
 #: The default: what roqsim has always printed, unchanged.
 PLAIN_FORMAT = "%(levelname)s %(name)s: %(message)s"
@@ -45,7 +46,7 @@ def log_format(name: str = None) -> str:
     while producing lines nothing downstream can place -- and a typo is exactly how that
     happens.
     """
-    name = name or os.environ.get(FORMAT_ENV) or "plain"
+    name = name or env.get(FORMAT_ENV) or "plain"
     try:
         return FORMATS[name]
     except KeyError:

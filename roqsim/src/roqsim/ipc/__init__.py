@@ -30,6 +30,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from .. import env as _env
+
 #: The environment variable naming the control URI, for ``roqsim sim`` and for a client alike.
 ENV = "ROQSIM_CONTROL"
 #: What ``--control`` / ``ROQSIM_CONTROL`` take to serve nothing.
@@ -120,7 +122,7 @@ def bind_uri(value: str | None, logger: logging.Logger | None = None) -> str | N
     The default serves a simulator and its clients on one machine, which find it through its
     registration. An ``ipc://`` path too long for a Unix socket is refused, naming the limit.
     """
-    explicit = value if value is not None else os.environ.get(ENV) or None
+    explicit = value if value is not None else _env.get(ENV) or None
     if explicit is None:
         runtime_dir().mkdir(parents=True, exist_ok=True)
         uri = default_uri()
@@ -215,7 +217,7 @@ def discover(explicit: str | None = None) -> str:
         if uri is None:
             raise ControlError("control address 'none' names no simulator", "not_found")
         return uri
-    env = os.environ.get(ENV)
+    env = _env.get(ENV)
     if env and env.strip().lower() != NONE:
         return normalize(env)
     live = running()
