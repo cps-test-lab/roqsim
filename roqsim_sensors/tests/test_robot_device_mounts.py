@@ -23,6 +23,9 @@ from roqsim.models import ModelError, resolve_model
 
 POSES = json.loads((Path(__file__).parent / "robot_device_poses.json").read_text())
 SPAWNS = ("spawn_robot", "spawn_sensor")
+#: The step a robot's world must set where its manifest carries a plugin that refuses any other,
+#: as its demo world does: a locomotion policy runs only at the timestep it was trained at.
+SIM = {"oli": {"timestep": 0.001}}
 
 
 def _compiled(model: str, *components) -> mujoco.MjModel:
@@ -91,7 +94,7 @@ def test_every_frame_a_robot_declares_is_published(model):
     engine = Engine(
         load_config_from_dict(
             {
-                "sim": {},
+                "sim": dict(SIM.get(model, {})),
                 "components": [{"spawn_robot": {"model": model, "prefix": "r_"}, "name": "r"}],
             }
         )
