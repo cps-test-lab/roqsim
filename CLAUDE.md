@@ -33,7 +33,7 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - `roqsim_mcp/`, `roqsim_scene_builder/` — MCP servers (introspection; scene windows and renders). `roqsim`.
 - `scenario_execution_roqsim/` — the OSC vocabulary (`import osc.roqsim`). `roqsim`; `scenario_execution` via `[osc]`.
 - `ros2_ws/src/` (colcon): `roqsim_ros_bridge` (transport + `simulation_interfaces`, as plugins), `roqsim_nav_interfaces`,
-  `roqsim_nav_ros` (nav2 goal actions for roqsim's own movers), `roqsim_walker_ros`, `roqsim_nav2_example`,
+  `roqsim_nav_ros` (nav2 goal actions for roqsim's own movers, and the walker demo launch), `roqsim_nav2_example`,
   `roqsim_create3_toolbox` (`docs/create3_stack.rst`).
 
 ## Golden rules

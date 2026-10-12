@@ -388,6 +388,21 @@ def write_result(
 # --- GUI ------------------------------------------------------------------------------------------
 
 
+def focus_body_id(ctx, name: str) -> int:
+    """The body id of the scene object ``name`` names, for the window to open looking at.
+
+    Raises ``ValueError`` naming the objects there are when the scene has no such object, or when it
+    has one with no body to frame.
+    """
+    entity = ctx.entities.get(name)
+    if entity is None:
+        available = ", ".join(ctx.entities.names()) or "(none)"
+        raise ValueError(f"no object {name!r} in scene to focus on; available: {available}")
+    if not entity.body:
+        raise ValueError(f"object {name!r} has no body to focus on")
+    return mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+
+
 def run_window(
     target: str,
     message: str = "",
@@ -400,9 +415,10 @@ def run_window(
     """Open the review window for ``target`` and block until the human submits or closes it.
 
     Returns an exit code: 0 (pass, or a neutral Enter-submitted comment), 1 (fail), 2 (no display /
-    load error), 3 (closed without a verdict). On any submit the result JSON is written to
-    ``json_out`` (when given). The reason for a 2 goes to **stderr**, which is what the MCP tool
-    relays when the window produced no result -- on stdout it would be read by nobody.
+    load error / no ``focus_object`` in the scene), 3 (closed without a verdict). On any submit the
+    result JSON is written to ``json_out`` (when given). The reason for a 2 goes to **stderr**,
+    which is what the MCP tool relays when the window produced no result -- on stdout it would be
+    read by nobody.
     """
     import os
     import sys
@@ -442,17 +458,15 @@ def run_window(
         fr = FrameRenderer(engine.ctx.model, width, height)
         stack.callback(fr.close)
         ctx = engine.ctx
-        entity = ctx.entities.get(focus_object) if focus_object else None
-        if focus_object and entity is None:
-            print(
-                f"roqsim-scene-builder: no object {focus_object!r} in scene; "
-                f"available: {', '.join(ctx.entities.names()) or '(none)'}. Using default camera.",
-                file=sys.stderr,
-                flush=True,
-            )
-        if entity is not None and entity.body:
+        try:
+            bid = focus_body_id(ctx, focus_object) if focus_object else None
+        except ValueError as err:
+            # The caller asked to look at something the scene does not have; a window opened on
+            # some other view would answer a question nobody asked.
+            print(f"roqsim-scene-builder: {err}", file=sys.stderr, flush=True)
+            return 2
+        if bid is not None:
             # Open looking at the requested object, from an angle with a clear line of sight to it.
-            bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
             fr.camera = focus_camera(ctx.model, ctx.data, [bid], aspect=width / height)
         elif is_model_ref(target) and not view:
             # A single model/robot shown by itself: zoom onto it, not the empty room it stands in.

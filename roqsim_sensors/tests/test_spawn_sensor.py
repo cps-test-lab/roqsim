@@ -574,8 +574,10 @@ def test_the_lens_scales_to_whatever_resolution_the_plugin_renders():
     cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "cam_d435_color")
     intr = intrinsics_from_model(m, cid, width=960, height=540)
     assert intr.fx == pytest.approx(_CAM1["fx"] / 2, abs=1e-3)
-    assert intr.cx == pytest.approx(_CAM1["cx"] / 2, abs=1e-3)
-    assert intr.cy == pytest.approx(_CAM1["cy"] / 2, abs=1e-3)
+    # Pixel-centre coordinates scale about the frame's corner, which lies half a pixel before
+    # pixel 0's centre: c' = (c + 0.5) / 2 - 0.5.
+    assert intr.cx == pytest.approx((_CAM1["cx"] + 0.5) / 2 - 0.5, abs=1e-3)
+    assert intr.cy == pytest.approx((_CAM1["cy"] + 0.5) / 2 - 0.5, abs=1e-3)
 
 
 def test_two_mounts_of_one_model_carry_two_different_lenses():
@@ -614,8 +616,8 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
 
     A pure ``camera_info`` change would leave the image identical and tell every consumer the
     principal point is somewhere it is not -- which is the failure this prevents, so it is the one
-    thing a test must not take on trust. Shifting the principal point right by N px must move the
-    image content left by N px, which a column correlation reads off directly.
+    thing a test must not take on trust. A pinhole projects a point to u = fx X/Z + cx, so raising
+    cx by N px moves the image content right by N px, which a column correlation reads off directly.
     """
     import numpy as np
 
@@ -642,7 +644,79 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
     shifted = column_profile(width / 2 + offset)
     assert np.argmax(centred) != np.argmax(shifted), "the render ignored the principal point"
     lag = np.argmax(np.correlate(shifted - shifted.mean(), centred - centred.mean(), "full"))
-    assert lag - (len(centred) - 1) == pytest.approx(-offset, abs=2.0)
+    assert lag - (len(centred) - 1) == pytest.approx(offset, abs=2.0)
+
+
+class _GlowDots(Plugin):
+    """Small emissive spheres over a black slab: points whose rendered centroids can be measured."""
+
+    POINTS = [(0.06, 0.04), (0.12, 0.08), (-0.15, -0.1), (0.18, -0.12), (-0.08, 0.15), (0.1, -0.05), (-0.2, 0.1), (0.0, -0.14)]
+    Z = 0.05
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        glow = spec.add_material()
+        glow.name = "glow"
+        glow.emission = 1.0
+        glow.rgba = [1, 1, 1, 1]
+        black = spec.add_material()
+        black.name = "black"
+        black.rgba = [0, 0, 0, 1]
+        black.specular = 0.0
+        slab = spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.6, 0.6, 0.01], pos=[0, 0, 0.02])
+        slab.material = "black"
+        for x, y in self.POINTS:
+            g = spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.004, 0, 0], pos=[x, y, self.Z])
+            g.material = "glow"
+
+
+@pytest.mark.parametrize("dcx, dcy", [(0.0, 0.0), (40.0, 0.0), (0.0, -40.0), (-25.0, 30.0)])
+def test_the_rendered_pixels_are_where_camera_info_projects_them(dcx, dcy):
+    """camera_info describes the delivered pixels to a tenth of a pixel, the principal point included.
+
+    Points at known positions are rendered and their centroids compared with the pinhole projection
+    through the published intrinsics. Both the direction of a principal-point offset and the
+    half-pixel between MuJoCo's edge coordinates and a calibration's pixel-centre coordinates show
+    up here, and nowhere a round trip of the numbers alone could see them.
+    """
+    import numpy as np
+
+    width, height = 640, 480
+    f = height / (2 * np.tan(np.radians(42.5) / 2))
+    lens = {"fx": f, "fy": f, "cx": (width - 1) / 2 + dcx, "cy": (height - 1) / 2 + dcy, "width": width, "height": height}
+    cfg = load_config_from_dict({"sim": {}, "components": [
+        {f"{__name__}:_GlowDots": {}},
+        {"spawn_sensor": {"model": "realsense_d435", "prefix": "cam_", "intrinsics": lens,
+                          "pose": {"position": {"x": 0.0, "y": 0.0, "z": 1.0}, "orientation": {"pitch": 1.5707963}}},
+         "name": "cam",
+         "components": [{"realsense_d435": {"width": width, "height": height}}, {"imu": {"enabled": False}}]},
+    ]})
+    engine = Engine(cfg)
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    engine.step()
+    gray = _endpoint(engine, "image").read().data.astype(np.float64).mean(axis=2)
+    info = _endpoint(engine, "camera_info").read()
+    m, d = engine.ctx.model, engine.ctx.data
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "cam_d435_color")
+    R = np.array(d.cam_xmat[cid]).reshape(3, 3) @ np.diag([1.0, -1.0, -1.0])  # MuJoCo camera -> optical
+    t = np.array(d.cam_xpos[cid])
+    engine.shutdown()
+    projected = []
+    for x, y in _GlowDots.POINTS:
+        p = R.T @ (np.array([x, y, _GlowDots.Z]) - t)
+        projected.append([info.fx * p[0] / p[2] + info.cx, info.fy * p[1] / p[2] + info.cy])
+    projected = np.array(projected)
+    mask = gray > 128
+    rows, cols = np.nonzero(mask)
+    rendered = []
+    for u, v in projected:  # the bright pixels within 6 px of each projection, intensity-weighted
+        near = (np.abs(cols - u) < 6) & (np.abs(rows - v) < 6)
+        w = gray[rows[near], cols[near]]
+        assert w.sum() > 0, f"no dot rendered near ({u:.1f}, {v:.1f})"
+        rendered.append([np.average(cols[near], weights=w), np.average(rows[near], weights=w)])
+    err = np.array(rendered) - projected
+    assert np.abs(err.mean(axis=0)).max() < 0.1, f"rendered - projected = {err.mean(axis=0)} px"
 
 
 def test_the_drawn_frustum_follows_the_measured_lens():
