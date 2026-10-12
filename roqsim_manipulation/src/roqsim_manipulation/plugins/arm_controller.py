@@ -46,6 +46,11 @@ sits rather than a config key::
       topics: {joint_states: /joint_states}  # optional: rename an endpoint, here to an absolute
                                  #   name that overrides the namespace (see Plugin.topic_override)
       controller_name: arm_controller   # action at <controller_name>/follow_joint_trajectory
+      controller_type: joint_trajectory_controller/JointTrajectoryController
+                                 # the type list_controllers reports: this, or
+                                 #   ur_controllers/ScaledJointTrajectoryController, the UR driver's
+                                 #   trajectory controller, whose trajectory time runs at the speed
+                                 #   scaling (see "Speed scaling" below)
       initial_state: active      # active | inactive -- `inactive` is ros2_control's
                                  #   `spawner --inactive`: registered, but not holding the arm
       joint_state_broadcaster_name: joint_state_broadcaster  # the robot's one broadcaster; a
@@ -162,6 +167,18 @@ With ``dynamics``, a joint swept at its speed limit tracks to within a hundredth
 need affine position servos on unit-gear joint transmissions, and ``configure`` refuses anything else
 rather than adding a wrong term.
 
+**Speed scaling** (``controller_type: ur_controllers/ScaledJointTrajectoryController``). The UR
+driver's scaled controller advances a trajectory's time at the robot's speed scaling factor rather
+than at one second per second, so at a factor of 0.5 the arm passes through the same path in twice
+the time. The factor is read from the blackboard under ``speed_scaling:<entity>``, a
+``() -> float`` fraction that ``ur_driver_interface`` publishes from its speed slider; without one
+the factor is 1.0, as the driver's scaled controller runs unscaled when the hardware has no scaling
+interface. The scaling applies to both trajectory paths: the in-process playback above, and the
+bridge's ``follow_joint_trajectory`` handler, which reads it through
+``ArmHandle.trajectory_time_scale``. The plain ``JointTrajectoryController`` type always runs at 1.0.
+A change of factor during a trajectory takes effect from the step it is seen in; the time already
+travelled is kept.
+
 **The ``rest`` stance.** ``spawn_arm`` supplies a per-model ``home`` that this plugin seeds its targets from. ``spawn_robot``
 does **not**: a robot spawn sets the base pose only, so an arm carried by a mobile base falls back to
 ``qpos0`` -- all joints zero. For the Panda that is not a neutral default but an actively bad pose (its
@@ -270,6 +287,21 @@ def ctrl_direction_on_joint(model, actuator_id: int, joint_id: int) -> int:
     return (slope > 0.0) - (slope < 0.0)
 
 
+#: Trajectory controller types this plugin can stand for. The UR driver's scaled controller is the
+#: plain one with its trajectory time advanced at the speed scaling factor (see "Speed scaling" in
+#: the module docstring). The first is the default.
+_TRAJECTORY_TYPES = (
+    "joint_trajectory_controller/JointTrajectoryController",
+    "ur_controllers/ScaledJointTrajectoryController",
+)
+SCALED_TRAJECTORY_TYPE = _TRAJECTORY_TYPES[1]
+
+
+def speed_scaling_key(entity: str) -> str:
+    """The blackboard key under which an entity's speed scaling, a ``() -> float`` fraction, is read."""
+    return f"speed_scaling:{entity}"
+
+
 @dataclass
 class JointVelocities:
     """Target velocities for named joints.
@@ -369,6 +401,10 @@ class ArmHandle:
     follow_trajectory: Callable[..., None] | None = None
     #: Whether a trajectory handed to ``follow_trajectory`` is still being executed.
     trajectory_active: Callable[[], bool] | None = None
+    #: Seconds of trajectory time per simulated second: the speed scaling factor for the scaled
+    #: controller type, 1.0 for the plain one. An executor outside this plugin advances its own
+    #: trajectory clock by it (see "Speed scaling" in the module docstring).
+    trajectory_time_scale: Callable[[], float] | None = None
 
 
 class ArmControllerPlugin(Plugin):
@@ -388,6 +424,11 @@ class ArmControllerPlugin(Plugin):
             errors.append(
                 "arm_controller: `gripper_actuator` only applies together with `joints`; "
                 "without it the prefix scan picks up tendon actuators itself"
+            )
+        if config.get("controller_type", _TRAJECTORY_TYPES[0]) not in _TRAJECTORY_TYPES:
+            errors.append(
+                f"arm_controller: `controller_type` is one of {', '.join(_TRAJECTORY_TYPES)} -- the "
+                "trajectory controllers whose behaviour this plugin has"
             )
         errors += self._validate_tolerances(config)
         errors += self._validate_limits(config)
@@ -496,7 +537,14 @@ class ArmControllerPlugin(Plugin):
         self.trajectory_feedforward = str(self.config.get("trajectory_feedforward", "none"))
         self._traj: JointTrajectory | None = None
         self._traj_names: list[str] = []
+        # Trajectory time is `_traj_base + (sim_time - _traj_t0) * _traj_scale`; a change of scale
+        # folds the time travelled so far into `_traj_base` and restarts the segment.
         self._traj_t0 = 0.0
+        self._traj_base = 0.0
+        self._traj_scale = 1.0
+        self._scaled = self.config.get("controller_type", _TRAJECTORY_TYPES[0]) == (
+            SCALED_TRAJECTORY_TYPE
+        )
         self._ff_gains: dict[str, tuple[float, float]] = {}
         self._ff_scratch = None
         self._jnt_range: dict[
@@ -669,7 +717,7 @@ class ArmControllerPlugin(Plugin):
         self._registered = registry.register(
             Controller(
                 name=controller,
-                type="joint_trajectory_controller/JointTrajectoryController",
+                type=self.config.get("controller_type", _TRAJECTORY_TYPES[0]),
                 claims=tuple(f"{j}/position" for j in self._ctrl_names),
                 state=ACTIVE if self._active else INACTIVE,
                 namespace=ns,
@@ -719,6 +767,7 @@ class ArmControllerPlugin(Plugin):
                 ensure_updated=self.ensure_updated,
                 follow_trajectory=self.follow_trajectory,
                 trajectory_active=lambda: self._traj is not None,
+                trajectory_time_scale=self.trajectory_time_scale,
             ),
         )
         if self.trajectory_feedforward != "none":
@@ -1005,11 +1054,28 @@ class ArmControllerPlugin(Plugin):
             raise ValueError("arm_controller: one position column per named joint")
         self._traj_names = names
         self._traj_t0 = float(self._ctx.sim_time) if self._ctx is not None else 0.0
+        self._traj_base = 0.0
+        self._traj_scale = self.trajectory_time_scale()
         self._vel_cmd.clear()
+
+    def trajectory_time_scale(self) -> float:
+        """Seconds of trajectory time per simulated second (see "Speed scaling" in the module docstring)."""
+        if not self._scaled or self._ctx is None:
+            return 1.0
+        factor = self._ctx.blackboard.get(speed_scaling_key(self.arm))
+        return 1.0 if factor is None else float(factor())
+
+    def _trajectory_time(self, now: float) -> float:
+        """The trajectory time reached at sim time *now*, advanced at the current speed scaling."""
+        scale = self.trajectory_time_scale()
+        if scale != self._traj_scale:
+            self._traj_base += (now - self._traj_t0) * self._traj_scale
+            self._traj_t0, self._traj_scale = now, scale
+        return self._traj_base + (now - self._traj_t0) * scale
 
     def _advance_trajectory(self, ctx) -> None:
         """Command this step's sample of the trajectory, with the feed-forward the config asks for."""
-        t = float(ctx.sim_time) - self._traj_t0
+        t = self._trajectory_time(float(ctx.sim_time))
         q, qd, qdd = self._traj.sample(t)
         ff = self.trajectory_feedforward
         if ff != "none":

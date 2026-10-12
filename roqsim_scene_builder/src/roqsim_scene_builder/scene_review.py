@@ -60,8 +60,8 @@ def review_scene_by_human(
             window opens zoomed to fill the view with that object, from a viewing angle chosen to
             have a clear line of sight to it (it looks over/around walls so the object is not hidden
             behind one). Empty (the default) keeps the automatic camera -- a model preview for a bare
-            model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An unknown name is not
-            an error: it warns and falls back to the automatic camera.
+            model ref, otherwise the world's ``sim.view`` or MuJoCo's default. A name the scene does
+            not have opens no window and raises ``RuntimeError`` naming the objects it does have.
         timeout_s: Seconds to wait for a verdict before raising ``TimeoutError`` (default 600).
         size: The 3D view's size in pixels, ``WxH`` (default ``960x720``), as the CLI's ``--size``.
 
@@ -78,7 +78,8 @@ def review_scene_by_human(
     Raises:
         FileNotFoundError: If ``target`` is a path to a file that does not exist.
         TimeoutError: If no verdict arrives within the timeout.
-        RuntimeError: If the review window closed without a verdict or failed to start.
+        RuntimeError: If the review window closed without a verdict or failed to start, or
+            ``focus_object`` names no object in the scene.
     """
     require_existing(target, "Scene to review")
     extra = ["--message", message, "--settle-steps", str(int(settle_steps)), "--size", size]
