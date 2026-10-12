@@ -260,7 +260,10 @@ A run logs the same finding as a WARNING at every reset. An overlap that is mean
 collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
 ``config-key`` names the config keys a plugin without a schema does not document (see
-:doc:`plugins`).
+:doc:`plugins`), and ``rate`` an output the physics step publishes more than 1 % away from the rate
+it asks for -- a publish lands on a step, so 30 Hz on a 2 ms step is 29.41 Hz, every 17 steps. Each
+endpoint in the inventory carries ``requested_hz``, ``realised_hz`` and ``every_steps``, the
+transport's ``rates:`` included, so the rate a run publishes at is readable before the run.
 
 With no problems it prints the inventory instead: the entities that registered, the endpoints they
 publish with their topics and types, and the model's totals. That is what the next thing gets written

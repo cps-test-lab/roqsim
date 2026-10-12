@@ -1342,3 +1342,82 @@ def _streamer(slot, params: tuple[Param, ...], where: str):
         put(_bind(params, payload, where), source)
 
     return write
+
+
+def describe_endpoints(
+    ctx, backend: str = "ros2", rates: Mapping[str, float] | None = None
+) -> list[dict]:
+    """Every endpoint a loaded world offers, with the rate each output is published at.
+
+    For a reader that has the world but not the run -- ``roqsim check``, ``roqsim scenes describe``
+    and whatever validates a campaign through them: which topic carries what, and at what rate. A
+    bridge publishes an output at the nearest rate the physics step can hold
+    (:func:`roqsim.rates.snap_rate`), so ``requested_hz`` is what the world asks for -- a transport's
+    ``rates:`` entry *rates* over the endpoint's hint over its own rate -- and ``realised_hz`` what a
+    run publishes at, ``every_steps`` physics steps apart. Both are ``None`` for an input, and for an
+    output published on every step or event-driven (a rate of 0).
+    """
+    from .rates import snap_rate
+
+    rates = rates or {}
+    dt = float(ctx.model.opt.timestep) if getattr(ctx, "model", None) is not None else None
+    out = []
+    for ep in ctx.interface.all():
+        hints = ep.backend.get(backend) or {}
+        row = {
+            "name": ep.name,
+            "direction": ep.direction,
+            "owner": ep.owner,
+            "namespace": ep.namespace,
+            "type": hints.get("type") or hints.get("service"),
+            "payload": ep.payload_type.name if ep.payload_type else None,
+            "topic": topic_of(ep, backend),
+            "rate_hz": ep.rate_hz,
+            "requested_hz": None,
+            "realised_hz": None,
+            "every_steps": None,
+        }
+        if ep.direction == "out":
+            requested = float(rates.get(ep.name, hints.get("rate_hz", ep.rate_hz)) or 0.0)
+            if requested > 0.0:
+                row["requested_hz"] = requested
+                if dt is not None:
+                    grid = snap_rate(requested, dt)
+                    row["realised_hz"] = float(grid.hz)
+                    row["every_steps"] = grid.every
+        out.append(row)
+    return sorted(out, key=lambda row: (row["owner"] or "", row["name"]))
+
+
+def rate_snap_warnings(endpoints: list[dict]) -> list[dict]:
+    """A warning per output whose published rate moved far from the one asked for.
+
+    The bands are :mod:`roqsim.rates`' -- the same a bridge logs at when it binds -- so a move a run
+    warns about is the one a check reports, in ``roqsim check``'s ``{"check", "message", "hint"}``.
+    """
+    from .rates import SNAP_NOTABLE
+
+    warnings = []
+    for row in endpoints:
+        requested, realised = row.get("requested_hz"), row.get("realised_hz")
+        if not requested or realised is None:
+            continue
+        deviation = abs(realised - requested) / requested
+        if deviation < SNAP_NOTABLE:
+            continue
+        warnings.append(
+            {
+                "check": "rate",
+                "message": (
+                    f"output {(row['owner'] + '.') if row.get('owner') else ''}{row['name']} "
+                    f"({row['topic'] or 'no topic'}) asks for {requested:g} Hz "
+                    f"and is published at {realised:.4g} Hz, once every {row['every_steps']} physics "
+                    "steps: a publish lands on a step, and no whole number of steps gives the request."
+                ),
+                "hint": "ask for a rate the step divides, or step the world at a multiple of the rate",
+                "endpoint": row["name"],
+                "requested_hz": requested,
+                "realised_hz": realised,
+            }
+        )
+    return warnings

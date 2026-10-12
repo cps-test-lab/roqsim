@@ -1739,6 +1739,24 @@ def _prune_unresolved(cfg: SimConfig) -> None:
     cfg.unresolved = [(ref, msg) for ref, msg in cfg.unresolved if ref in live]
 
 
+def transport_rate_overrides(cfg: SimConfig) -> dict[str, float]:
+    """The ``rates:`` the world's transport plugins set per endpoint name, merged.
+
+    Read before a reader drops the transport, so the rate a world would publish an output at can
+    still be stated (:func:`roqsim.endpoint.describe_endpoints`). A ref that does not resolve is
+    skipped: whether it is transport cannot be told, and it is reported where it is dropped.
+    """
+    rates: dict[str, float] = {}
+    for spec in cfg.plugins:
+        try:
+            cls = resolve_plugin(spec.ref, base_dir=cfg.base_dir)
+        except PluginError:
+            continue
+        if cls.transport_only and isinstance((spec.config or {}).get("rates"), dict):
+            rates.update(spec.config["rates"])
+    return rates
+
+
 def drop_transport(cfg: SimConfig) -> list[str]:
     """Drop the transport plugins from *cfg* and return their labels -- for a deliberately offline run.
 
