@@ -2,8 +2,8 @@
   <!--
     Heavy industrial workbench: a 2.90 x 1.56 m top at z=0.76 on four 0.08 x 0.08 m legs. Separate
     from the `conveyor` model so the
-    belt is a bare benchtop unit that can stand on ANY table -- this one, a `desk_diy`, an
-    `industrial_table`. The conveyor's own feet run from z=0.76 to 0.915, so a belt placed at the same
+    belt is a bare benchtop unit that can stand on ANY table of that height, this one or another.
+    The conveyor's own feet run from z=0.76 to 0.915, so a belt placed at the same
     pos as this table (z=0) lands exactly on this top.
 
     For the conveyor's source-cell layout, spawn this at the belt model's local [-0.13, 0.6, 0]:
