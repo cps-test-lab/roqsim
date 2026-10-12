@@ -70,6 +70,16 @@ def test_a_seed_of_zero_is_a_chosen_seed_not_an_absent_one():
     assert ctx.rng_for("lidar").standard_normal(2).shape == (2,)
 
 
+def test_a_per_episode_draw_is_not_the_time_keyed_draw_at_time_zero():
+    """One name may key both kinds of draw; the episode's draw must not repeat the first step's."""
+    ctx = SimContext(config={})
+    ctx.seed = 7
+    stepped = ctx.rng_for("ft").standard_normal(4)
+    episodic = ctx.rng_for("ft", per_episode=True).standard_normal(4)
+    assert not np.allclose(stepped, episodic)
+    assert np.allclose(episodic, ctx.rng_for("ft", per_episode=True).standard_normal(4))
+
+
 # -- the adapter resolves one -----------------------------------------------------------------
 
 

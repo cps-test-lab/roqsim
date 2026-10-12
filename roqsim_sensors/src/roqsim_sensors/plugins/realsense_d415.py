@@ -11,7 +11,7 @@ plugin/model so a robot that carries a real D415 is faithful. The bundled
 camera, and a ``d415_depth`` camera at the depth optical frame for a depth path to render from;
 attach it to a robot or mount it standalone with ``spawn_sensor``.
 
-Config: see ``camera_common.CameraPlugin`` (``robot``/``arm``, ``camera``, ``width``/``height``,
+Config: see ``camera_common.CameraPlugin`` (``camera``, ``width``/``height``,
 ``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``). Defaults below match the
 D415's 640x480@30fps colour profile.
 """

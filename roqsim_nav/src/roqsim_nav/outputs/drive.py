@@ -31,6 +31,15 @@ from . import NavOutput, OutputUnavailable
 class DriveOutput(NavOutput):
     """Commands a body-frame twist through the owning entity's :class:`RobotHandle`."""
 
+    config_keys = (
+        "kinematics",
+        "heading_gain",
+        "max_angular_vel",
+        "turn_in_place",
+        "min_speed",
+        "face",
+    )
+
     def __init__(self, config: dict):
         super().__init__(config)
         self._handle: RobotHandle | None = None
