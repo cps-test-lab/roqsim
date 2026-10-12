@@ -40,12 +40,14 @@ class EntityControlPlugin(Plugin):
     ) -> str:
         """Place a free-jointed or mocap entity, at rest unless velocities are stated.
 
+        A mocap entity takes no velocity, so a non-zero one is refused for it.
+
         Args:
             entity: the world's `name:` for it
             position: world frame
             orientation: quaternion (w, x, y, z), world frame
-            linear_velocity: zero unless stated
-            angular_velocity: zero unless stated
+            linear_velocity: of the body origin, world frame; zero unless stated
+            angular_velocity: world frame; zero unless stated
         """
         return entity_control.set_state(
             self._ctx, entity, position, orientation, linear_velocity, angular_velocity

@@ -1,8 +1,10 @@
 # Default controller shipped with the Crazyflie 2 description.
 #
 # `spawn_robot: {model: crazyflie_2}` pulls this in automatically, so a world does not re-declare
-# the drone's intrinsic control. To override a default, declare the same plugin for the same robot
-# in the world; to opt out entirely, set `spawn_robot` config `default_plugins: false`.
+# the drone's intrinsic control. To override a default, nest an entry with the same label under that
+# spawn_robot's `components:` (it merges into this one, per key); to opt out entirely, set
+# `spawn_robot` config `default_plugins: false`. Each entry below attaches to the spawned entity
+# because it is nested under it -- there is no ownership key to fill in.
 #
 # Unlike a ground robot's manifest this one is not optional in practice: the MJCF exposes collective
 # thrust and three body moments with no stabiliser, so a Crazyflie spawned without a controller does

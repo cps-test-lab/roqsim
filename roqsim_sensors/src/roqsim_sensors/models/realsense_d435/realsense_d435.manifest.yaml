@@ -1,10 +1,10 @@
 # What the realsense_d435 mount ships with: the capture plugin, and the D435i's integrated IMU.
 #
-# `spawn_sensor: {model: realsense_d435}` pulls both in automatically, so a world does not re-declare
-# them. To override one, declare it for the same mount in the world (it wins, and keeps this file's
-# config for every key it does not restate); to drop one, `enabled: false` on that component; to opt
-# out of all of them, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
-# spawn_sensor `name`, and `prefix` is inherited from it.
+# `spawn_sensor: {model: realsense_d435}` pulls both in automatically, so a world does not
+# re-declare them. To override one, nest an entry with the same label under that spawn_sensor's
+# `components:` (it merges into this one, per key); to drop one, `enabled: false` on that component;
+# to opt out of all of them, set spawn_sensor config `default_plugins: false`. Each entry below
+# attaches to the mount because it is nested under it, and inherits its `prefix`.
 #
 # The mount is `camera_bottom_screw_frame`, the frame the vendor macro `sensor_d435` attaches to its
 # parent (see realsense_d435.xml): nested in a robot manifest at the origin the robot description

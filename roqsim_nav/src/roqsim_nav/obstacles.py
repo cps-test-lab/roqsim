@@ -1,5 +1,5 @@
-"""Static wall footprints for the walker planner and ORCA, read from the compiled MuJoCo model --
-the single source of truth.
+"""Static wall footprints for the planner and the avoidance model, read from the compiled MuJoCo
+model -- the single source of truth.
 
 Walls live in the model as *collidable, static, non-floor* geoms: the ``floorplan`` plugin's wall
 colliders, and any environment MJCF attached as welded bodies -- so reading the model needs no
@@ -15,8 +15,8 @@ components, not about the model.
 
 Each such geom is reduced to a 2D convex **footprint** (counter-clockwise, solid inside -- ORCA's
 convention for an obstacle agents stay outside). The same polygons rasterize the planner grid and
-feed ORCA, so global plan and local avoidance always agree. Geoms whose height doesn't overlap a
-walking body are skipped (e.g. ceiling beams).
+feed the avoidance model, so global plan and local avoidance always agree. Geoms whose height
+doesn't overlap the mover's band are skipped (e.g. ceiling beams).
 """
 
 from __future__ import annotations

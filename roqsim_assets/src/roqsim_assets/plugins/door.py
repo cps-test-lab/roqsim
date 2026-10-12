@@ -71,7 +71,7 @@ door model's origin is its **hinge (fixed) vertical edge** at floor level, the l
 Frame. Unless ``frame: false``, a static jamb/lintel casing (the ``frame_model``, default
 ``door_frame``) is welded around the opening while the leaf hinges inside it. The frame is centred on
 the opening and rescaled to width/height like the leaf; it is visual-only (the wall already collides),
-so it never narrows the doorway. A missing frame model is a warning, not an error (bare opening).
+so it never narrows the doorway. A frame or leaf model that cannot be resolved is refused.
 
 Leafless openings. ``leaf: false`` welds the casing but hangs **no leaf** -- a cased opening (German
 *Türblatt*-less door): no hinge joint, no actuator, no ROS surface, nothing to command. Use it where a
@@ -100,7 +100,7 @@ import mujoco
 from roqsim import endpoint
 from roqsim.context import Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import config_pose, config_pose_errors
 
 logger = logging.getLogger("roqsim_assets.door")
@@ -168,7 +168,7 @@ class DoorPlugin(Plugin):
         self.color = self._rgba(self.config.get("color"))
         self.frame_color = self._rgba(self.config.get("frame_color")) or self.color
         # Static frame (jamb + lintel casing) welded around the opening while the leaf hinges inside
-        # it. On by default; `frame: false` (or an unresolvable frame_model) leaves the bare opening.
+        # it. On by default; `frame: false` leaves the bare opening.
         self.frame = bool(self.config.get("frame", True))
         self.frame_model = self.config.get("frame_model", "door_frame")
         self.hinge_side = str(self.config.get("hinge_side", "left")).lower()
@@ -277,6 +277,18 @@ class DoorPlugin(Plugin):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
             errors.append("'swing' must be non-zero (+1 or -1)")
+        # Resolved here as well as in build(), so `roqsim check` reports a misspelt model with the
+        # world's other errors instead of the run stopping at the first one build() meets.
+        models = []
+        if bool(config.get("frame", True)):
+            models.append(("frame model", config.get("frame_model", "door_frame")))
+        if bool(config.get("leaf", True)) and config.get("model"):
+            models.append(("leaf model", config["model"]))
+        for what, ref in models:
+            try:
+                resolve_model(ref, base_dir=self.base_dir)
+            except ModelError as exc:
+                errors.append(f"{what} {ref!r} could not be resolved ({exc})")
         errors += config_pose_errors(config, "door")
         return errors
 
@@ -349,7 +361,7 @@ class DoorPlugin(Plugin):
             try:
                 asset = resolve_model(self.model, base_dir=self.base_dir)
             except ModelError as exc:
-                raise RuntimeError(
+                raise PluginError(
                     f"door {self.door_name!r}: leaf model {self.model!r} could not be resolved ({exc})"
                 ) from exc
             leaf = mujoco.MjSpec.from_file(str(asset.path))
@@ -382,22 +394,20 @@ class DoorPlugin(Plugin):
         """Weld a static frame (jamb + lintel casing) around the opening; the leaf hinges inside it.
 
         Centred on the opening (its own origin is the opening centre) and rescaled to width/height
-        like the leaf, so leaf and frame stay consistent for any opening. Skipped -- with a warning,
-        never fatal -- if ``frame`` is off or the frame model can't be resolved, leaving a bare
-        opening. The frame is a separate static body (no joint), so ``attach`` welds it in place.
+        like the leaf, so leaf and frame stay consistent for any opening. Skipped if ``frame`` is off,
+        leaving a bare opening; a ``frame_model`` that cannot be resolved is an error, as an
+        unresolved leaf ``model`` is. The frame is a separate static body (no joint), so ``attach``
+        welds it in place.
         """
         if not self.frame:
             return
         try:
             asset = resolve_model(self.frame_model, base_dir=self.base_dir)
         except ModelError as exc:
-            logger.warning(
-                "door %r: frame model %r unresolved (%s); leaving a bare opening",
-                self.door_name,
-                self.frame_model,
-                exc,
-            )
-            return
+            raise PluginError(
+                f"door {self.door_name!r}: frame model {self.frame_model!r} could not be resolved "
+                f"({exc}); set `frame: false` for a bare opening"
+            ) from exc
         fr = mujoco.MjSpec.from_file(str(asset.path))
         apply_assets(fr, asset)
         if self.frame_color:

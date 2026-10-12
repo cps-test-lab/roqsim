@@ -172,8 +172,8 @@ An roqsim simulation is driven two ways and these actions work in both, unedited
   or any other). Every action reaches the same endpoints over the socket it serves: a pose is
   `sim/entities/<name>/pose`, a command is a `call` whose reply carries its confirmation, a report is
   a `read` of the whole value, and placement and presence are `sim/entities/set_state` /
-  `set_presence`. The simulator is found as `roqsim ls` finds it (`ROQSIM_CONTROL`, the run
-  directory, or the only one running), and waited for until it answers.
+  `set_presence`. The simulator is found as `roqsim ls` finds it (`ROQSIM_CONTROL`, or the
+  only one running), and waited for until it answers.
 
 The transport is chosen from what the runner offered (`simulation`, or not), never declared in the
 scenario — see [`access/__init__.py`](src/scenario_execution_roqsim/access/__init__.py). Both routes
