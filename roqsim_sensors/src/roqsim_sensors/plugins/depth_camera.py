@@ -61,6 +61,7 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.rendering import FrameRenderer
+from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
 
 from .camera_common import CameraPlugin, Intrinsics, camera_info_of, intrinsics_from_model
@@ -175,6 +176,12 @@ class DepthCameraPlugin(CameraPlugin):
                 "needs depth_encoding: 16UC1 (its codec is 16-bit) and 'compressed' left on"
             )
         return errors
+
+    def scene_cameras(self, ctx: SimContext) -> list[SensorCamera]:
+        """The colour image where it is published, else the depth image of a device that has one."""
+        if self.color or not self._depth_topic:
+            return super().scene_cameras(ctx)
+        return [self._scene_camera("depth", self._depth_cam_id, self._depth_intr)]
 
     def _add_depth_endpoints(self, ctx: SimContext, topic: str, frame_id: str) -> None:
         """Turn on this camera's depth output(s), published on *topic* in *frame_id*.

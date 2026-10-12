@@ -33,6 +33,7 @@ from roqsim import endpoint
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
 from roqsim.rendering import FrameRenderer, hold_gc
+from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
 
 # image_transport's own default, and what real camera drivers ship with. Stated here rather than
@@ -361,6 +362,15 @@ class CameraPlugin(Plugin):
             self._dist_map = _build_distortion_map(self._intr)
 
         self._configure_extra(ctx, prefix)
+
+    def scene_cameras(self, ctx: SimContext) -> list[SensorCamera]:
+        """The colour image, through the camera it is rendered from; nothing without one."""
+        if not self.color:
+            return []
+        return [self._scene_camera("rgb", self._cam_id, self._intr)]
+
+    def _scene_camera(self, kind: str, cam_id: int, intr: Intrinsics) -> SensorCamera:
+        return SensorCamera(self.address, cam_id, kind, intr.width, intr.height, intr.fx, intr.fy)
 
     #: Endpoints this camera declares that need no render: a lone subscriber to one of them (an
     #: rviz panel on camera_info, say) must not switch the renderer on.

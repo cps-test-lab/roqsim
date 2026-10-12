@@ -22,6 +22,7 @@ if TYPE_CHECKING:  # avoid importing mujoco / context at module import time
 
     from .config import PluginSpec
     from .context import SimContext
+    from .scene_content import SensorCamera
 
 
 class PluginError(Exception):
@@ -388,6 +389,18 @@ class Plugin:
         Return absolute paths where possible; non-existent entries are dropped by the caller,
         so an optional file that is simply absent needs no guard here. Never raise: a caller
         asking "what does this depend on?" is usually about to report a different error.
+        """
+        return []
+
+    # -- scene export (optional) --------------------------------------------------------------
+    def scene_cameras(self, ctx: SimContext) -> list[SensorCamera]:
+        """The imaging sensors this plugin renders, for a scene export to place as cameras.
+
+        Asked after ``configure`` by the scene exporters (:mod:`roqsim.scene_source`), so a viewer
+        of the exported scene can look through the sensor: the camera's mount and its projection
+        travel with the geometry, and the picture is rendered from the scene by whoever views it.
+        Declared by the plugin, never inferred from the model's ``<camera>`` list, which also holds
+        cameras no sensor renders through. Default: none.
         """
         return []
 

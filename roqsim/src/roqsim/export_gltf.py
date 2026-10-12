@@ -33,6 +33,14 @@ Primitives are tessellated (``--segments``) with their exact normals, MuJoCo mes
 own normals, and a plane is a quad of its size (an infinite plane one of the model's extent, which
 the export logs).
 
+**Sensor cameras.** Every imaging sensor the world's plugins declare
+(:meth:`roqsim.plugin.Plugin.scene_cameras`) is a perspective camera on a node of its own, the child
+of the node of the body it is mounted on, at its mount pose, so it follows that body wherever a
+viewer moves it. MuJoCo's camera frame is glTF's (it looks down -z with +y up), so the pose is the
+MuJoCo camera's as it stands. The node and the camera are named after the sensor's address, and the
+node's ``extras`` carry ``sensor`` (that address), ``kind`` (``rgb`` or ``depth``) and the published
+image's ``width`` and ``height``.
+
 **View.** A world with an authored ``sim.view`` gets a perspective camera, on a root node of its own
 outside ``world`` with ``extras: {"roqsim": "view"}``, placed where ``roqsim render`` puts its
 default camera.
@@ -55,6 +63,7 @@ import logging
 import math
 import struct
 import sys
+from collections.abc import Sequence
 from importlib import metadata
 from pathlib import Path
 
@@ -63,7 +72,16 @@ import numpy as np
 
 from . import exit_status, logging_setup, tessellate
 from .rendering import view_forward
-from .scene_content import Geom, Mesh, SceneContent, Skin, reindex, resolved_rgba, walk
+from .scene_content import (
+    Geom,
+    Mesh,
+    SceneContent,
+    SensorCamera,
+    Skin,
+    reindex,
+    resolved_rgba,
+    walk,
+)
 from .scene_source import (
     add_manifest_option,
     add_source_options,
@@ -511,16 +529,18 @@ def export_gltf(
     texture_format: str = "png",
     jpeg_quality: int = 85,
     log: logging.Logger | None = None,
+    cameras: Sequence[SensorCamera] = (),
 ) -> dict:
     """Write the scene of ``model`` at the state in ``data`` to ``out`` as GLB; return the glTF JSON.
 
     ``segments`` is the count around a round primitive; by default the model's own
     ``visual/quality numslices``, so a texture lands on the facets MuJoCo draws.
     ``max_tex_dim`` caps an embedded image's longest side (0 keeps every image whole);
-    ``texture_format`` ``"jpeg"`` writes opaque images as JPEG at ``jpeg_quality``.
+    ``texture_format`` ``"jpeg"`` writes opaque images as JPEG at ``jpeg_quality``. ``cameras``
+    are the sensor cameras to place (:attr:`roqsim.scene_source.CompiledSource.cameras`).
     """
     log = log or logger
-    content = walk(model, data, log)
+    content = walk(model, data, log, cameras)
     doc = _Document()
     materials = _Materials(
         doc,
@@ -581,6 +601,36 @@ def export_gltf(
 
     for i, skin in enumerate(content.skins):
         _skin(doc, skin, i, body_node, materials)
+
+    for sensor in content.cameras:
+        camera = doc.add(
+            "cameras",
+            {
+                "name": sensor.name,
+                "type": "perspective",
+                "perspective": {
+                    "yfov": sensor.yfov,
+                    "aspectRatio": sensor.aspect_ratio,
+                    "znear": sensor.znear,
+                    "zfar": sensor.zfar,
+                },
+            },
+        )
+        child = doc.node(
+            {
+                "name": sensor.name,
+                "translation": [float(v) for v in sensor.pos],
+                "rotation": _xyzw(sensor.quat),
+                "camera": camera,
+                "extras": {
+                    "sensor": sensor.name,
+                    "kind": sensor.kind,
+                    "width": sensor.width,
+                    "height": sensor.height,
+                },
+            }
+        )
+        doc.gltf["nodes"][body_node[sensor.body]].setdefault("children", []).append(child)
 
     cam = _camera_node(view or {}, model)
     if cam is not None:
@@ -839,14 +889,15 @@ def main(argv: list | None = None) -> int:
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_gltf")
 
-    model, data, view = compile_source(args, log)
+    src = compile_source(args, log)
     try:
         export_gltf(
-            model,
-            data,
+            src.model,
+            src.data,
             Path(args.out),
             segments=args.segments,
-            view=view,
+            view=src.view,
+            cameras=src.cameras,
             max_tex_dim=args.max_tex_dim,
             texture_format=args.texture_format,
             jpeg_quality=args.jpeg_quality,

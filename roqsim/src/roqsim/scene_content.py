@@ -22,7 +22,9 @@ state to export, and returns a :class:`SceneContent`:
   bodies its vertices follow (:mod:`roqsim.flex_skin`);
 * **materials** and the RGB-role **textures** they reference, in first-use order;
 * every body's **world pose** at the exported state (:func:`exported_state`), for a format that
-  places bodies rather than joints.
+  places bodies rather than joints;
+* **cameras**: the imaging sensors the world's plugins declare (:class:`SensorCamera`), each on the
+  body it is mounted on with the projection it renders with (:func:`sensor_cameras`).
 
 A geom, skin or flex in the collision group (:data:`COLLISION_GROUP`) is not drawn. That is the
 whole drawn-or-not rule, and :func:`drawn_group` is the only place it is spelled.
@@ -31,6 +33,8 @@ whole drawn-or-not rule, and :func:`drawn_group` is the only place it is spelled
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -159,6 +163,46 @@ class Texture:
 
 
 @dataclass
+class SensorCamera:
+    """An imaging sensor as a plugin declares it (:meth:`roqsim.plugin.Plugin.scene_cameras`).
+
+    ``fx``/``fy`` are the focal lengths in pixels of the ``width`` x ``height`` image the sensor
+    publishes. ``kind`` is what the image holds: ``"rgb"`` or ``"depth"``.
+    """
+
+    sensor: str  # the plugin's address
+    camera: int  # the MuJoCo camera id it renders through
+    kind: str
+    width: int
+    height: int
+    fx: float
+    fy: float
+
+
+@dataclass
+class Camera:
+    """A sensor camera in the scene: on its body, at its mount pose, with its projection.
+
+    The frame is MuJoCo's camera frame, which is glTF's too: the camera looks down its local -z with
+    +y up and +x to the right of the image. ``yfov`` (radians) and ``aspect_ratio`` are the
+    projection of the published image, and ``znear``/``zfar`` (metres) the clip planes it renders
+    with.
+    """
+
+    name: str  # the sensor's address
+    body: int
+    pos: list  # body-relative
+    quat: list  # body-relative, wxyz
+    yfov: float
+    aspect_ratio: float
+    znear: float
+    zfar: float
+    kind: str
+    width: int
+    height: int
+
+
+@dataclass
 class SceneContent:
     bodies: list[Body] = field(default_factory=list)
     joints: list[Joint] = field(default_factory=list)
@@ -170,6 +214,7 @@ class SceneContent:
     textures: list[Texture] = field(default_factory=list)
     #: Every body's world (pos, wxyz quat) at :func:`exported_state`.
     world_poses: list[tuple[list, list]] = field(default_factory=list)
+    cameras: list[Camera] = field(default_factory=list)
 
     @property
     def flex_count(self) -> int:
@@ -582,8 +627,64 @@ def _flexes(model: mujoco.MjModel, bind: mujoco.MjData, logger: logging.Logger) 
 # -- the walk --------------------------------------------------------------------------------------
 
 
-def walk(model: mujoco.MjModel, data: mujoco.MjData, logger: logging.Logger) -> SceneContent:
-    """What the scene of ``model`` at the state in ``data`` contains."""
+# -- cameras ---------------------------------------------------------------------------------------
+
+
+def sensor_cameras(
+    model: mujoco.MjModel, sensors: Sequence[SensorCamera], logger: logging.Logger
+) -> list[Camera]:
+    """The declared sensor cameras, each on its body with the projection of its published image.
+
+    The pose is the MuJoCo camera's own (``cam_pos``/``cam_quat``, relative to ``cam_bodyid``), which
+    needs no conversion: a MuJoCo camera looks down its -z with +y up, as a glTF camera does. Only a
+    camera fixed to its body has such a pose; a tracking or targeting one is placed by the simulator
+    each step, so it is left out, and said so.
+
+    ``yfov`` follows from ``fy`` and the image height, and ``aspect_ratio`` is the ratio of the two
+    half-angle tangents (``width * fy / (height * fx)``), which is ``width / height`` for square
+    pixels. A principal point off the image centre is not expressible in this projection. The clip
+    planes are the ones MuJoCo renders every camera with: ``visual/map`` ``znear``/``zfar`` scaled
+    by the model's extent.
+    """
+    fixed = int(mujoco.mjtCamLight.mjCAMLIGHT_FIXED)
+    extent = float(model.stat.extent)
+    znear = float(model.vis.map.znear) * extent
+    zfar = float(model.vis.map.zfar) * extent
+    out = []
+    for s in sensors:
+        if int(model.cam_mode[s.camera]) != fixed:
+            logger.warning(
+                "camera of sensor %s is not fixed to its body (mode %d), so it has no mount pose "
+                "to export; left out",
+                s.sensor,
+                int(model.cam_mode[s.camera]),
+            )
+            continue
+        out.append(
+            Camera(
+                name=s.sensor,
+                body=int(model.cam_bodyid[s.camera]),
+                pos=model.cam_pos[s.camera].tolist(),
+                quat=model.cam_quat[s.camera].tolist(),
+                yfov=2.0 * math.atan(s.height / (2.0 * s.fy)),
+                aspect_ratio=(s.width * s.fy) / (s.height * s.fx),
+                znear=znear,
+                zfar=zfar,
+                kind=s.kind,
+                width=int(s.width),
+                height=int(s.height),
+            )
+        )
+    return out
+
+
+def walk(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    logger: logging.Logger,
+    sensors: Sequence[SensorCamera] = (),
+) -> SceneContent:
+    """What the scene of ``model`` at the state in ``data`` contains, with the ``sensors``' cameras."""
     scene = SceneContent()
 
     # Geoms first: they say which meshes are drawn, so unreferenced and collision-only mesh data is
@@ -648,4 +749,5 @@ def walk(model: mujoco.MjModel, data: mujoco.MjData, logger: logging.Logger) -> 
     scene.world_poses = [
         (state.xpos[i].tolist(), state.xquat[i].tolist()) for i in range(model.nbody)
     ]
+    scene.cameras = sensor_cameras(model, sensors, logger)
     return scene
