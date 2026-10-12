@@ -33,7 +33,7 @@ from importlib.metadata import entry_points
 
 import pytest
 
-from roqsim.introspection import _config_parameters
+from roqsim.introspection import config_parameters
 from roqsim.plugin import Plugin
 from roqsim.registry import ENTRY_POINT_GROUP
 from roqsim.schema import INJECTED_KEYS
@@ -208,7 +208,7 @@ def test_a_plugin_with_a_schema_reads_only_what_it_declares(name, cls):
     ("name", "cls"), [p for p in PLUGINS if not p[1].CONFIG_SCHEMA], ids=lambda v: str(v)
 )
 def test_a_plugin_without_one_reads_only_what_its_config_block_lists(name, cls):
-    listed = {f["name"] for f in _config_parameters(cls) if "." not in f["name"]}
+    listed = {f["name"] for f in config_parameters(cls) if "." not in f["name"]}
     missing = _unpublished(name, cls, listed)
     assert not missing, (
         f"{name} reads {missing}, which its published Config:: block does not list (roqsim "

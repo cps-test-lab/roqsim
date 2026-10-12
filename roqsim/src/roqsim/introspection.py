@@ -288,7 +288,7 @@ def _parse_config_block(doc: str) -> list[dict]:
     return fields
 
 
-def _config_parameters(cls) -> list[dict]:
+def config_parameters(cls) -> list[dict]:
     """The ``Config::`` fields a plugin accepts: its own block's, then each base plugin's it inherits.
 
     A device built on shared machinery documents what distinguishes it (a lidar's fan) and inherits
@@ -460,7 +460,7 @@ def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
     Returns ``{name, kind: "plugin", doc, parameters, flags, package, class}`` where
-    ``parameters`` is :func:`_config_parameters`'s output -- the plugin's ``Config::`` block and
+    ``parameters`` is :func:`config_parameters`'s output -- the plugin's ``Config::`` block and
     those of the base plugins it inherits keys from (empty if none has one, whether because it
     takes no config or because nobody wrote one) -- or ``{"error": "..."}``.
 
@@ -496,7 +496,7 @@ def get_plugin_details(name: str) -> dict:
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
-        "parameters": _schema_parameters(schema) if schema else _config_parameters(cls),
+        "parameters": _schema_parameters(schema) if schema else config_parameters(cls),
         "flags": _flags(cls),
         "package": _dist_name(ep),
         "class": ep.value,

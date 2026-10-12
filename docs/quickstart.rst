@@ -259,6 +259,9 @@ first steps by flinging them apart. It names both sides, the entity each belongs
 A run logs the same finding as a WARNING at every reset. An overlap that is meant is excluded from
 collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
+``config-key`` names the config keys a plugin without a schema does not document (see
+:doc:`plugins`).
+
 With no problems it prints the inventory instead: the entities that registered, the endpoints they
 publish with their topics and types, and the model's totals. That is what the next thing gets written
 against -- a scenario that drives ``robot``, a bridge that expects ``scan`` -- without opening the

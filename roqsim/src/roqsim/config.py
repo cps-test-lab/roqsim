@@ -1141,11 +1141,21 @@ def _assign_one(a: Assignment, spec: PluginSpec, config_path: tuple) -> None:
             f"the document."
         )
     node = spec.config
-    for key in config_path[:-1]:
+    for depth, key in enumerate(config_path[:-1]):
         nxt = node.get(key)
-        if not isinstance(nxt, dict):
+        if nxt is None:
             nxt = {}
             node[key] = nxt
+        elif not isinstance(nxt, dict):
+            # Walking through it would replace the value with a mapping holding one key, which
+            # drops everything else the value said and leaves the plugin reading a shape it may
+            # not take -- with the run looking configured.
+            here = ".".join(config_path[: depth + 1])
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' walks into '{here}' of '{spec.address}', which is a "
+                f"{type(nxt).__name__}, not a mapping: a path can only name keys of a mapping. Set "
+                f"'{here}' itself to the whole new value."
+            )
         node = nxt
     node[config_path[-1]] = a.value
 
@@ -2082,4 +2092,38 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
 
     if errors:
         raise PluginError("plugin config validation failed:\n  - " + "\n  - ".join(errors))
+    for warning in undocumented_key_warnings(instances):
+        _logger.warning("%s %s", warning["message"], warning["hint"])
     return instances
+
+
+def undocumented_key_warnings(plugins: list[Plugin]) -> list[dict]:
+    """One warning per plugin whose config holds keys it does not document.
+
+    In ``roqsim check``'s ``{"check", "message", "hint"}`` shape, because ``roqsim check`` and
+    ``roqsim scenes describe`` report them beside a world that loads: a plugin with no schema accepts
+    any key, so a misspelled one leaves its setting at the default with the run looking configured.
+    A warning rather than a refusal, since a plugin may read a key its ``Config::`` block leaves out
+    (:meth:`roqsim.plugin.Plugin.undocumented_keys`).
+    """
+    warnings = []
+    for inst in plugins:
+        keys = type(inst).undocumented_keys(inst.config)
+        if not keys:
+            continue
+        listed = ", ".join(repr(key) for key in keys)
+        warnings.append(
+            {
+                "check": "config-key",
+                "message": (
+                    f"{inst.address} ({type(inst).__name__}): {listed} "
+                    f"{'is not a key' if len(keys) == 1 else 'are not keys'} this plugin documents, "
+                    "so unless it reads them undocumented they are ignored and their setting stays at "
+                    "its default."
+                ),
+                "hint": f"check the spelling against `roqsim plugins describe {type(inst).__name__}`",
+                "keys": keys,
+                "address": inst.address,
+            }
+        )
+    return warnings

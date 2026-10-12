@@ -198,6 +198,9 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
     report["reached"] = "config"
+    from roqsim.config import undocumented_key_warnings
+
+    report["warnings"].extend(undocumented_key_warnings(engine.plugins))
 
     # A transport plugin is config-checked above with the rest, and then left out of the load: its
     # `configure` opens a middleware node or waits for a peer (an autopilot dialling in), which is a

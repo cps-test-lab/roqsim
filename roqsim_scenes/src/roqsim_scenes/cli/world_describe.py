@@ -44,8 +44,9 @@ one row per flex (:func:`roqsim.flex_modes.describe_flexes`), ``null`` without t
 trial, so the answer is about the state a trial starts from: ``warnings`` lists what that state holds
 that will not stop the world from loading but is likely to make a run misbehave, in ``roqsim check``'s
 ``{"check", "message", "hint"}`` shape -- two bodies placed inside one another
-(``interpenetration``, :func:`roqsim.interpenetration.as_warnings`). ``[]`` is a start state with
-nothing to say, ``null`` one that was not reset. A plugin whose ``on_reset`` raises is a world that
+(``interpenetration``, :func:`roqsim.interpenetration.as_warnings`), and a config key a plugin does
+not document (``config-key``, :func:`roqsim.config.undocumented_key_warnings`). ``[]`` is a start
+state with nothing to say, ``null`` one that was not reset. A plugin whose ``on_reset`` raises is a world that
 cannot start a trial: the reply carries ``errors.reset`` and exits non-zero, with the build-fed keys
 still filled.
 
@@ -488,11 +489,14 @@ def main(argv=None) -> int:
                 if args.entities:
                     # Last, so everything above describes the model as compiled: a reset moves the
                     # state to where a trial starts, which is what the warnings are about.
+                    from roqsim.config import undocumented_key_warnings
                     from roqsim.interpenetration import as_warnings
 
                     stage = "reset"
                     engine.reset()
-                    result["warnings"] = as_warnings(engine.interpenetrations)
+                    result["warnings"] = as_warnings(engine.interpenetrations) + (
+                        undocumented_key_warnings(engine.plugins)
+                    )
         except Exception as err:  # noqa: BLE001
             # The half that needed no build (or no reset) is still worth having, so the reply is
             # printed with the reason attached -- and the exit code still says it is not whole.
