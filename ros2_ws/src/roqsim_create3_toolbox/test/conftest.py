@@ -19,6 +19,7 @@ pkg = types.ModuleType("roqsim_create3_toolbox_launch")
 try:
     pkg.create3_nodes = _load("create3_nodes")
     pkg.turtlebot4_nodes = _load("turtlebot4_nodes")
+    pkg.create3_control = _load("create3_control")
     sys.modules["roqsim_create3_toolbox_launch"] = pkg
 except Exception:  # no ROS overlay: the launch test skips on its own import
     pass

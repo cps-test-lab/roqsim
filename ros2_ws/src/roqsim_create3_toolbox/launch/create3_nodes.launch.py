@@ -20,7 +20,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -43,6 +45,14 @@ ARGUMENTS = [
             get_package_share_directory("roqsim_create3_toolbox"), "config", "create3_params.yaml"
         ),
         description="motion_control parameters (safety_override); a campaign's varied copy",
+    ),
+    DeclareLaunchArgument(
+        "ros2_control",
+        default_value="false",
+        choices=["true", "false"],
+        description="Also run the reference simulator's ros2_control diffdrive_controller "
+        "(create3_control.launch.py), which publishes its limited command on "
+        "diffdrive_controller/cmd_vel_out",
     ),
 ]
 
@@ -142,4 +152,17 @@ def generate_launch_description():
     ld = LaunchDescription(ARGUMENTS)
     for n in nodes:
         ld.add_action(n)
+    ld.add_action(
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory("roqsim_create3_toolbox"),
+                    "launch",
+                    "create3_control.launch.py",
+                )
+            ),
+            launch_arguments=[("namespace", namespace)],
+            condition=IfCondition(LaunchConfiguration("ros2_control")),
+        )
+    )
     return ld
