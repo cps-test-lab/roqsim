@@ -372,7 +372,7 @@ def main(argv: list | None = None) -> int:
         return err.exit_code
     except click.Abort:
         click.echo("roqsim: aborted", err=True)
-        return 130
+        return exit_status.INTERRUPTED
 
 
 if __name__ == "__main__":  # pragma: no cover

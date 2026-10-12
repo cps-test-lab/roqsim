@@ -16,22 +16,9 @@ turning monolithic MuJoCo code into cooperating plugins).
 Repository layout
 -----------------
 
-.. code-block:: text
-
-   roqsim/            core pip package (framework, ROS-free; depends on no sibling)
-   roqsim_sensors/    generic sensor plugins + models + the coverage analysis layer (depends on roqsim)
-   roqsim_assets/     prop library; roqsim_scenes/  baked scenes + world generators
-   roqsim_mobile/     wheeled BASE plugins + base models (depends on roqsim + roqsim_sensors)
-   roqsim_manipulation/         arm plugins only;  roqsim_manipulation_assets/  arm + gripper models
-   roqsim_mobile_manipulation/  base AND arm robots — the one package depending on both families
-   roqsim_humanoid/ roqsim_quadruped/   legged families;  roqsim_walker/  pedestrians (dynamic obstacles)
-   roqsim_scene_builder/          human-in-the-loop scene windows
-   scenario_execution_roqsim/     OSC actions (entity_moved, entity_monitor, entity_call, ...);
-                                    the ONLY package here that may import scenario_execution
-   ros2_ws/src/
-     roqsim_ros_bridge/            ROS 2 bridge + simulation_interfaces (plugins)
-     roqsim_nav2_example/   minimal nav2 example + goal test
-   docs/                 this documentation (+ architecture.rst)
+Each package is a sibling directory with its own ``pyproject.toml``, which states what it depends
+on; ``ros2_ws/src/`` holds the colcon packages. :doc:`installation` says what each one holds.
+``scenario_execution_roqsim`` is the only package that imports ``scenario_execution``.
 
 Golden rules
 ------------

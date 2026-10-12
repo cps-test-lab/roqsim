@@ -74,10 +74,10 @@ def runtime_dir() -> Path:
     return Path(tempfile.gettempdir()) / f"roqsim-{os.getuid()}"
 
 
-def default_uri() -> str:
-    """``ipc://`` + this process's control socket in :func:`runtime_dir`: one per simulator, so
-    any number run side by side."""
-    return "ipc://" + str(runtime_dir() / f"{os.getpid()}.sock")
+def default_uri(pid: int | None = None) -> str:
+    """``ipc://`` + the control socket of process *pid* (default: this one) in :func:`runtime_dir`:
+    one per simulator, so any number run side by side."""
+    return "ipc://" + str(runtime_dir() / f"{os.getpid() if pid is None else pid}.sock")
 
 
 def normalize(value: str) -> str | None:
@@ -149,8 +149,12 @@ def _alive(pid: int) -> bool:
 
 
 def running() -> list[dict]:
-    """The simulators running for this user, oldest first. Registrations of dead processes are
-    removed on the way."""
+    """The simulators running for this user, oldest first.
+
+    A dead process's registration is removed on the way, with the default sockets it left in the
+    runtime directory (``<pid>.sock`` and its ``.pub``): a simulator killed outright never ran its
+    own cleanup, and only its pid names them.
+    """
     found = []
     directory = runtime_dir()
     if not directory.is_dir():
@@ -163,6 +167,9 @@ def running() -> list[dict]:
             continue
         if not _alive(pid):
             path.unlink(missing_ok=True)
+            uri = default_uri(pid)
+            for leftover in (uri, pub_uri(uri)):
+                Path(leftover[len("ipc://") :]).unlink(missing_ok=True)
             continue
         found.append(entry)
     return sorted(found, key=lambda e: e.get("started", 0.0))

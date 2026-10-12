@@ -42,7 +42,8 @@ Usage::
 Exit status (``roqsim.exit_status``): ``0`` and one line naming the world and the scene dir written;
 ``2`` and one ``roqsim scenes floorplan-to-world: ...`` line on stderr when an input is wrong -- a
 floorplan or map file that is missing or is not JSON, a floorplan with no walls, a marker without a
-model, a door on a line that is not there. A caller in a loop greps that line; it does not read a
+model, a map entry for a marker or door the floorplan has not or with a key nothing reads, a door on
+a line that is not there. A caller in a loop greps that line; it does not read a
 traceback.
 """
 
@@ -57,6 +58,7 @@ from pathlib import Path
 import numpy as np
 
 from roqsim import exit_status
+from roqsim.document import refuse_unknown_keys
 from roqsim.floorplan_geometry import check_sketch, stamp_sketch
 from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
@@ -80,6 +82,30 @@ _SHARED_CONFIG = Path(__file__).resolve().parent / "floorplan.scene.yaml"
 _SCENE_CONFIG_NAME = "scene.yaml"  # a scene dir may carry its own look, overriding the shared one
 _FLOORPLAN_NAME = (
     "floorplan.json"  # the authored floorplan, written beside scene.json and referenced by it
+)
+# What a --markers-map dict entry and a --doors-map entry may carry. A key outside these is refused:
+# nothing would read it, so a misspelt `hinge` would hang the default leaf without a word.
+_MARKER_MAP_KEYS = ("model", "yaw_deg")
+_DOOR_FORWARDED_KEYS = (  # passed to the door plugin unchanged when present
+    "namespace",
+    "max_angle",
+    "thickness",
+    "kp",
+    "kv",
+    "color",
+    "frame_color",
+    "leaf",
+)
+_DOOR_MAP_KEYS = (
+    "skip",
+    "name",
+    "prefix",
+    "model",
+    "hinge_side",
+    "swing",
+    "open",
+    "controllable",
+    *_DOOR_FORWARDED_KEYS,
 )
 
 
@@ -211,6 +237,7 @@ def _map_entry(entry) -> tuple[str, float | None]:
     heading came from the sketch UI is honoured too (see :func:`world_doc`); a map ``yaw_deg`` overrides.
     """
     if isinstance(entry, dict):
+        refuse_unknown_keys(entry, _MARKER_MAP_KEYS, "markers-map entry", error=KeyError)
         model = entry.get("model")
         if not model:
             raise KeyError(f"markers-map entry {entry!r} has no 'model'")
@@ -239,7 +266,11 @@ def door_placements(
     * ``{"skip": true}`` -- **no door plugin at all**, for an opening something else fills: a ``window``
       plugin entry at the same centre, or a deliberately bare gap. Without it a window opening would get
       a wooden door in it.
+
+    A ``doors_map`` id that names no door, or an entry key nothing reads, raises ``KeyError``: either
+    would otherwise leave the door as the default without a word.
     """
+    check_doors_map(doors, doors_map)
     by_id = {int(x["id"]): i for i, x in enumerate(lines)}
     out: list[dict] = []
     for d in doors:
@@ -289,16 +320,7 @@ def door_placements(
             "open": float(entry.get("open", 0.0)),
             "controllable": bool(entry.get("controllable", False)),
         }
-        for key in (
-            "namespace",
-            "max_angle",
-            "thickness",
-            "kp",
-            "kv",
-            "color",
-            "frame_color",
-            "leaf",
-        ):
+        for key in _DOOR_FORWARDED_KEYS:
             if key in entry:
                 door[key] = entry[key]
         # `name` is the entry's reserved SIBLING, not one of the door plugin's config keys. Inside
@@ -306,6 +328,28 @@ def door_placements(
         # and a floorplan with two of them is refused for duplicate labels.
         out.append({"door": door, "name": label})
     return out
+
+
+def check_doors_map(doors: list[dict], doors_map: dict) -> None:
+    """Refuse a ``doors_map`` id that names no door in ``doors``, or an entry key nothing reads."""
+    known = {str(d.get("id", "?")) for d in doors}
+    refuse_unknown_keys(doors_map, known, "doors map: door id", error=KeyError)
+    for did, entry in doors_map.items():
+        refuse_unknown_keys(entry, _DOOR_MAP_KEYS, f"doors map: door {did}", error=KeyError)
+
+
+def check_markers_map(markers: list[dict], markers_map: dict) -> None:
+    """Refuse a ``markers_map`` that misses a marker or names one the floorplan does not have."""
+    missing = [str(m["id"]) for m in markers if str(m["id"]) not in markers_map]
+    if missing:
+        raise KeyError(
+            f"markers {missing} have no model in --markers-map; resolve each to a roqsim model "
+            f"(import one if needed) before generating"
+        )
+    known = {str(m["id"]) for m in markers}
+    refuse_unknown_keys(markers_map, known, "markers map: marker id", error=KeyError)
+    for entry in markers_map.values():
+        _map_entry(entry)
 
 
 def world_doc(
@@ -318,12 +362,14 @@ def world_doc(
 ) -> dict:
     """The world-YAML document: the baked scene as ``sim.world`` + one spawn_model per marker.
 
-    Every marker id must be in ``markers_map``; a missing one raises (fail loud, no placeholder). A
-    map value is a bare model name or ``{"model", "yaw_deg"}``. A prop is placed axis-aligned unless a
+    Every marker id must be in ``markers_map``; a missing one raises (fail loud, no placeholder), and
+    so does a ``markers_map`` id that names no marker, which nothing would place. A map value is a bare model name or ``{"model", "yaw_deg"}``. A prop is placed axis-aligned unless a
     heading is given: the map's ``yaw_deg`` wins, else the marker's own ``yaw_deg`` (set in the sketch
     UI's Mark mode); the chosen yaw is emitted as the pose's ``orientation.yaw`` (roll/pitch stay 0 --
     a floor-standing prop only turns about +Z).
     """
+    known = {str(m["id"]) for m in markers}
+    refuse_unknown_keys(markers_map, known, "markers map: marker id", error=KeyError)
     plugins = []
     for m in markers:
         mid = str(m["id"])
@@ -449,13 +495,10 @@ def generate(
         raise ValueError("floorplan has no wall lines to build")
     bbox = bbox_of(lines)  # floor + scene bounds come from the walls' extent
     markers = floorplan.get("markers") or []
-    # Fail loud on an unmapped marker BEFORE doing any work (writing meshes, baking the MJCF).
-    missing = [str(m["id"]) for m in markers if str(m["id"]) not in markers_map]
-    if missing:
-        raise KeyError(
-            f"markers {missing} have no model in --markers-map; resolve each to a roqsim model "
-            f"(import one if needed) before generating"
-        )
+    # Fail loud on a map that does not fit the floorplan BEFORE doing any work (writing meshes,
+    # baking the MJCF).
+    check_markers_map(markers, markers_map)
+    check_doors_map(floorplan.get("doors") or [], doors_map or {})
 
     # Doors are openings attached to a line: cut each wall into floor pieces + a lintel above.
     pieces = wall_pieces(lines, floorplan.get("doors") or [], ceiling_h, opening_h)
@@ -526,16 +569,18 @@ def main(argv: list | None = None) -> int:
         "--markers-map",
         help="JSON {marker_id: model}; required if the floorplan has markers. A value is a "
         'model name ("single_bed") or {"model": ..., "yaw_deg": ...} to also set '
-        "the prop's heading (else the marker's own drawn yaw is used)",
+        "the prop's heading (else the marker's own drawn yaw is used). A marker id the "
+        "floorplan has not, or any other key, is refused",
     )
     ap.add_argument(
         "--doors-map",
         help="JSON {door_id: {...}} overriding per-door leaf options (optional; unmapped "
         "doors get a passive, closed wooden door hinged 'left'). Keys: model "
         "(door|door_glass), hinge_side (left|right), swing (+1/-1), open (0..1), "
-        "controllable (bool -> automatic door), namespace, max_angle, leaf (false -> a "
-        "cased opening: casing welded, no leaf hung), skip (true -> emit no door plugin at "
-        "all, for an opening a `window` fills or a deliberately bare gap)",
+        "controllable (bool -> automatic door), name, prefix, namespace, max_angle, thickness, "
+        "kp, kv, color, frame_color, leaf (false -> a cased opening: casing welded, no leaf "
+        "hung), skip (true -> emit no door plugin at all, for an opening a `window` fills or a "
+        "deliberately bare gap). A door id the floorplan has not, or any other key, is refused",
     )
     ap.add_argument(
         "--ceiling-h", type=float, default=2.5, help="wall/ceiling height in metres (default 2.5)"

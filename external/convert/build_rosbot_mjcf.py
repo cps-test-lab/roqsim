@@ -53,7 +53,7 @@ from sources import resolve_source  # noqa: E402
 from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat, write_license  # noqa: E402
 
 ROSBOT_URL = "https://github.com/husarion/rosbot_ros.git"
-# Pinned. If this moves, the port log moves with it.
+# Pinned. The manifest cites vendor files at this commit; re-check those citations if it moves.
 ROSBOT_COMMIT = "41fad02196ee200a39e01579c75391385cc9b714"
 
 ROOT = Path(__file__).resolve().parents[2]

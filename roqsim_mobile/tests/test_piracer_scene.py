@@ -40,9 +40,10 @@ WHEEL_RADIUS = 0.034
 #: base_link is the chassis origin, which the wheels hold this far off the ground.
 REST_HEIGHT = WHEEL_RADIUS - 0.015
 
-#: See the module docstring: assumed pending measurement of the physical car, and the manifest and
-#: port log say so. A test that hard-codes them is how a placeholder becomes permanent, so this is
-#: deliberately one named constant per assumed quantity rather than a magic number in an assert.
+#: See the module docstring: assumed pending measurement of the physical car, as
+#: build_piracer_mjcf.MEASURED records. A test that hard-codes them is how a placeholder becomes
+#: permanent, so this is deliberately one named constant per assumed quantity rather than a magic
+#: number in an assert.
 TOTAL_MASS = 1.5
 WHEEL_MASS = 0.045
 

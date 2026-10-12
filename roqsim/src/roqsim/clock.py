@@ -28,8 +28,7 @@ class Pacer:
     the timing it asked for. Falling behind is absorbed deliberately (see :meth:`wait`), so
     without a counter the run simply produces slower sim time and says nothing -- a campaign
     then has to reconstruct the shortfall from the recording's ``clock`` channel afterwards, if anyone
-    thinks to look. Observed on a lone run that held 0.34x realtime for five minutes and
-    reported nothing before its job deadline killed it.
+    thinks to look.
     """
 
     def __init__(self, dt: float, factor: float = 1.0, realtime: bool = True):
@@ -48,13 +47,21 @@ class Pacer:
 
     @classmethod
     def from_config(cls, pacing: Any, dt: float) -> Pacer:
+        """The pacer ``sim.pacing`` (or ``--pacing``) names; :class:`ValueError` for anything else.
+
+        A factor is a positive number: at zero or below no wall-clock period exists to wait for.
+        """
         if pacing == "asap":
             return cls(dt, realtime=False)
         if pacing in (None, "realtime"):
             return cls(dt, factor=1.0, realtime=True)
-        if isinstance(pacing, dict) and "factor" in pacing:
-            return cls(dt, factor=float(pacing["factor"]), realtime=True)
-        raise ValueError(f"invalid pacing spec: {pacing!r}")
+        if isinstance(pacing, dict) and set(pacing) == {"factor"}:
+            factor = pacing["factor"]
+            if isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
+                return cls(dt, factor=float(factor), realtime=True)
+        raise ValueError(
+            f"invalid pacing {pacing!r}: realtime, asap, or {{factor: N}} with N a positive number"
+        )
 
     def reset(self) -> None:
         """Drop the schedule. Counters survive: they describe the run, not the current series."""

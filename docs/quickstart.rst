@@ -952,7 +952,7 @@ naming the command, or the report the tool prints (``check``, ``health``).
 
 The scene-builder windows (``roqsim builder``) are the one exception: they return a person's verdict
 on what they were shown, and :doc:`scene_builder` gives their statuses. Interrupting a command
-(Ctrl-C) exits ``130``, as a shell's convention has it.
+(Ctrl-C) exits ``130`` (``roqsim.exit_status.INTERRUPTED``), as a shell's convention has it.
 
 Getting numbers out of a run
 ----------------------------

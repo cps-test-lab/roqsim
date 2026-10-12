@@ -1,9 +1,10 @@
 # Default controllers shipped with the Frankie mobile manipulator (Panda on an Omron LD-60 base).
 #
 # `spawn_robot: {model: frankie}` pulls these in automatically, so a world does not re-declare the
-# robot's intrinsic drive/arm controllers. To override a default, declare the same plugin for the same
-# robot in the world (it wins, and its config merges over the manifest's); to opt out entirely, set
-# `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the spawn name.
+# robot's intrinsic drive/arm controllers. To override a default, nest an entry with the same
+# LABEL under that spawn_robot's `components:` (it merges into this one, per key); to opt out
+# entirely, set `spawn_robot` config `default_plugins: false`. Each entry below attaches to the
+# spawned entity because it is nested under it -- there is no ownership key to fill in.
 #
 # Frankie is a wheeled mobile manipulator, so it needs TWO controllers over DISJOINT actuator sets:
 # `diff_drive` (roqsim_mobile) owns the two wheel velocity servos, `arm_controller` (roqsim_manipulation)
@@ -29,7 +30,7 @@ components:
                                     # for studies that drive the base past its rated speed. Override
                                     # it in the world if a run must stay inside the hardware limit.
       max_angular_vel: 1.0
-      wheel_accel_limit: 2.0        # rad/s^2 ramp on the wheel command
+      wheel_accel_limit: 2.0        # m/s^2 per wheel, the ramp on the wheel command
       left_actuator: left_wheel_motor
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
@@ -45,11 +46,12 @@ components:
       gripper_close: 0.0
       velocity_commands: true       # joint-velocity input (rad/s), integrated into the held target
       stream_commands: true         # also keep the high-rate position-stream path available
-      # Rest stance = `qr`, the ready pose the Robotics Toolbox Frankie model ships (see the port log
-      # for the source). Declaring it is NOT optional here: spawn_robot sets only the base pose,
-      # so without a stance the arm falls back to qpos0 (all joints zero) -- a pose where the stock
-      # Panda's link5 and hand collision geoms overlap by 0.030 m. `rest` seeds the spawn qpos AND the
-      # held target, and is re-seated on reset so repeated trials start identically.
+      # Rest stance = `qr`, the ready pose the Robotics Toolbox Frankie model ships
+      # (petercorke/robotics-toolbox-python, models/URDF/Frankie.py). Declaring it is NOT optional
+      # here: spawn_robot sets only the base pose, so without a stance the arm falls back to qpos0
+      # (all joints zero) -- a pose where the stock Panda's link5 and hand collision geoms overlap
+      # by 0.030 m. `rest` seeds the spawn qpos AND the held target, and is re-seated on reset so
+      # repeated trials start identically.
       rest:
         joint1: 0.0
         joint2: -0.3

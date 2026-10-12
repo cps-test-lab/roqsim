@@ -31,7 +31,7 @@ repository extends it without a change here.
 | `scene_source.py`, `scene_content.py`, `tessellate.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, and the primitives as triangles. |
 | `commands.py` | The `roqsim` command tree. |
 
-Core registers sixteen plugins, all world-agnostic (`roqsim plugins list` prints every one); among
+Core registers twenty-one plugins, all world-agnostic (`roqsim plugins list` prints every one); among
 them:
 
 - `dummy` — adds one free-floating box and counts its own hook invocations on the blackboard. It

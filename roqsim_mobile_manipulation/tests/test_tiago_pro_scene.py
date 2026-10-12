@@ -58,9 +58,10 @@ ARM_R = [f"arm_right_{i}_joint" for i in range(1, 8)]
 HOME_L = [0.36, -1.83, 0.47, -2.35, 0.0, -1.2, 0.0]
 HOME_R = [-0.36, -1.83, -0.47, -2.35, 0.0, -1.2, 0.0]
 
-# Measured on the model, documented in the port log: gripper travel -> fingertip pad gap.
+# Measured on the model: gripper travel -> gap between the fingertip pad inner faces, as the
+# manifest's aperture table states it (0.070 m of travel opens the pads 59.7 mm).
 GRIP_OPEN_TRAVEL = 0.07
-GRIP_MAX_GAP_MM = 41.2
+GRIP_MAX_GAP_MM = 59.7
 GRIP_TOUCH_TRAVEL = 0.013
 
 
@@ -368,7 +369,7 @@ def test_b4c_diagonal_is_limited_per_axis_only(rig):
     This pins a known, deliberate divergence rather than a desired behaviour. PAL's
     mobile_base_controller.yaml also caps combined motion (`space: xy: 0.7` m/s), but that block's
     semantics cannot be resolved -- pal-robotics/omni_drive_controller is not public -- so the port
-    enforces only the unambiguous per-axis limits (see the manifest and port log A6). If the combined
+    enforces only the unambiguous per-axis limits (see the manifest). If the combined
     cap is ever pinned down, set `max_combined_linear_vel` and invert this test.
     """
     assert "max_combined_linear_vel" not in _manifest_entries("omni_drive")[0], (
@@ -416,9 +417,10 @@ def test_b6_stop_from_full_speed(rig):
 def test_b7_wheels_spin_and_differ_between_drive_and_strafe(rig):
     """B7: the observational mecanum wheel servos turn, and their PATTERN distinguishes the modes.
 
-    The wheels are not the motive force (see the port log), but a mecanum base's wheels must not all
-    spin identically when strafing — if they did, the wheel kinematics would be a plain rolling model
-    and `joint_states` would misreport what the base is doing.
+    The wheels are not the motive force (the planar actuators on the base free joint are), but a
+    mecanum base's wheels must not all spin identically when strafing — if they did, the wheel
+    kinematics would be a plain rolling model and `joint_states` would misreport what the base is
+    doing.
     """
     names = [f"wheel_{w}_joint" for w in ("front_left", "front_right", "rear_left", "rear_right")]
     rig.settle(1.0)
@@ -622,7 +624,7 @@ def test_e5b_jaws_are_more_parallel_than_the_urdf_linearisation(rig):
 
     The measured baseline is the URDF's own linearisation: 34.8 deg of splay at the grasp opening. The
     loop closure roughly halves it. This is a regression guard on the modelling choice, not a claim
-    that the jaws are perfectly parallel -- they are not, and the port log says so.
+    that the jaws are perfectly parallel -- they are not.
     """
     m, d = rig.model, rig.data
     tcp = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "gripper_left_grasping_link")
@@ -642,7 +644,7 @@ def test_e5b_jaws_are_more_parallel_than_the_urdf_linearisation(rig):
 
 
 def test_e6_gripper_stroke_matches_the_measured_range(rig):
-    """E6: commanding open/closed produces the fingertip gap the port log documents (max 41 mm)."""
+    """E6: commanding open/closed moves the fingertips over the documented ~55 mm stroke."""
     m, d = rig.model, rig.data
     ctrl = rig.arms["arm_left_controller"]
 
@@ -672,8 +674,8 @@ def test_e6_gripper_stroke_matches_the_measured_range(rig):
     rig.step(2.0)
     opened = pad_gap()
     assert opened > closed, f"gripper did not open (closed {closed:.4f}, open {opened:.4f})"
-    # Centroid separation, not the pad gap: the fingertip meshes are wedges, so this reads larger
-    # than the 41.2 mm pad gap the port log records. What it pins is the STROKE.
+    # Centroid separation, not the pad gap, so the absolute values differ from the pad gap's 5.0 and
+    # 59.7 mm (the manifest's aperture table). What it pins is the STROKE, ~55 mm either way.
     assert (opened - closed) * 1000 == pytest.approx(55.0, abs=10.0), (
         f"stroke {(opened - closed) * 1000:.1f} mm does not match the documented range"
     )

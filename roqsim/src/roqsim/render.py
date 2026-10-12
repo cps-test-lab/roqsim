@@ -64,7 +64,7 @@ from .models import ModelError
 from .override_options import add_override_options, overrides_from_options
 from .recording import RecordingError
 from .rendering import FrameRenderer, GLBackendError, check_gl_backend, focus_camera
-from .viewer import GL_HELP, DisplayError
+from .viewer import GL_HELP, DisplayError, ViewError
 
 log = logging.getLogger(__name__)
 
@@ -1443,6 +1443,7 @@ def main(argv: list | None = None) -> int:
         RenderError,
         RecordingError,
         DisplayError,
+        ViewError,
         PluginError,
         ModelError,
         CaptureError,

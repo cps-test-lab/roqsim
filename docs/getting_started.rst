@@ -33,7 +33,7 @@ No display? Run it headless
    .venv/bin/roqsim sim roqsim_mobile:turtlebot4_demo \
        --headless --pacing asap --steps 1000 --profile
 
-``--profile`` prints a per-plugin timing table so you can see where the time goes.
+``--profile`` prints the physics step's and each plugin's timing so you can see where the time goes.
 
 ``roqsim_mobile:turtlebot4_demo`` is a world resolved by name from an installed package; a path to a
 world YAML works just as well. ``roqsim`` is the only command name to learn — ``roqsim --help`` lists the
