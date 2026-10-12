@@ -95,9 +95,9 @@ def apply_assets(spec, asset: ModelAsset) -> None:
 
     The spec's **own** ``meshdir``/``texturedir`` (as declared in its ``<compiler>``, joined with the
     model file's dir) is searched **first**: a model's own assets must never be shadowed by
-    same-named files in a provider dir. This bit for real -- the Oli's ``left_hip_yaw_link.STL``
-    (in ``meshes/oli/``) collides with the G1's Menagerie mesh of the same name in the provider's
-    flat ``meshes/`` dir, and resolving provider-first silently dressed the Oli in G1 limb shells.
+    same-named files in a provider dir. Menagerie-style link names recur across robots -- the Oli
+    and the G1 both ship a ``left_hip_yaw_link.STL`` -- so resolving provider-first would dress one
+    robot in another's meshes, silently.
     """
 
     def _own_dir(subdir: str) -> tuple[Path, ...]:

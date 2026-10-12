@@ -103,8 +103,8 @@ The ``review_scene_by_human`` tool
   ``moves``) to point the initial camera at: the window opens zoomed to fill the view with that
   object, from a viewing angle picked to have a **clear line of sight** to it (it looks over/around
   walls so the object is not hidden behind one). Empty (default) keeps the automatic camera — a
-  model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An
-  unknown name is not an error: it warns and falls back to the automatic camera.
+  model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. A
+  name the scene does not have opens no window: the tool raises, naming the objects there are.
 * **timeout_s** — seconds to wait for a verdict before ``TimeoutError`` (default 600).
 * **size** — the 3D view in pixels, ``WxH`` (default ``960x720``), the CLI's ``--size``.
 
@@ -141,8 +141,9 @@ CLI (debugging)
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
 It prints the verdict JSON and exits **0** (pass, or a neutral comment), **1** (fail), **2** (no
-display / load error), **3** (window closed without a verdict). The reason for a 2 is one line on
-stderr, which is what the MCP tool relays when the window produced no result.
+display / load error / no ``--focus-object`` in the scene), **3** (window closed without a
+verdict). The reason for a 2 is one line on stderr, which is what the MCP tool relays when the
+window produced no result.
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
 not around a pivot in front of it), **WASD walks** — or the **arrow keys**, whichever hand is free —
@@ -213,7 +214,8 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
   then fitted with a **swing-door leaf** (the ``door`` plugin — a hinged leaf with a position
   actuator, ROS-controllable as an automatic door); ``roqsim scenes floorplan-to-world``'s ``--doors-map``
   overrides per door which side is fixed, which way it swings, how open it starts, the leaf model
-  (``door`` / ``door_glass``), its ``color`` / ``frame_color``, and whether it is ``controllable``. A
+  (``door`` / ``door_glass``), its ``color`` / ``frame_color``, and whether it is ``controllable``;
+  an entry for a door id the floorplan does not have, or with a key it does not read, is refused. A
   **full-height** opening (``height_m`` ≥ the ceiling) stays a bare doorway — a swing leaf does not fit
   it. Two doors-map keys say the opening is not a swinging door, and **both keep it a floorplan
   ``door``** — so the room loops it belongs to never change, only what fills it: ``leaf: false`` forwards

@@ -60,8 +60,9 @@ from .mcap_format import (
     register_channels,
 )
 from .mcap_format import (
-    RecordingNotFoundError as RecordingNotFoundError,  # re-exported: the error a caller catches
+    RecordingNotFoundError as RecordingNotFoundError,  # re-exported: the errors a caller catches
 )
+from .mcap_format import RecordingTargetError as RecordingTargetError
 from .presence import subtree_body_ids
 from .rates import (
     SNAP_NOTABLE,

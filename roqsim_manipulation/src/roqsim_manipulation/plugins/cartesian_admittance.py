@@ -303,6 +303,13 @@ class CartesianAdmittancePlugin(Plugin):
             choices=("active", "inactive"),
             doc="inactive: registered holding nothing, as `spawner --inactive` leaves one",
         ),
+        "arm_controller": Field(
+            str,
+            default="",
+            doc="`controller_name` of the arm_controller it commands through; needed where that "
+            "controller names its `joints:`, which keys its handle by it. Empty: the arm's one "
+            "controller, at `arm:<arm>`",
+        ),
         "site": Field(str, default="tool_site", doc="controlled site, with the arm's prefix"),
         "ft": Field(
             str,
@@ -446,12 +453,19 @@ class CartesianAdmittancePlugin(Plugin):
         entity = ctx.entities.get(self.arm)
         prefix = entity.meta.get("prefix", "") if entity else ""
 
-        self._arm_handle = ctx.blackboard.get(f"arm:{self.arm}")
+        # arm_controller publishes its handle at `arm:<arm>`, or at `arm:<arm>:<controller_name>`
+        # when it names its `joints:` -- one entity may then carry several.
+        driven = str(self._setting("arm_controller"))
+        handle_key = f"arm:{self.arm}:{driven}" if driven else f"arm:{self.arm}"
+        self._arm_handle = ctx.blackboard.get(handle_key)
         if self._arm_handle is None:
             raise RuntimeError(
-                f"cartesian_admittance: no ArmHandle at 'arm:{self.arm}'. This plugin commands the "
+                f"cartesian_admittance: no ArmHandle at {handle_key!r}. This plugin commands the "
                 f"arm through arm_controller rather than writing ctrl itself, so arm_controller must "
-                f"be configured first -- list it (or the arm's spawn) BEFORE this plugin."
+                f"be configured first -- list it (or the arm's spawn) BEFORE this plugin. An "
+                f"arm_controller that names its `joints:` publishes at "
+                f"'arm:{self.arm}:<controller_name>': name it here with `arm_controller:`, and "
+                f"leave `arm_controller` empty for one that does not."
             )
         if self._needs_ft:
             self._ft = ctx.blackboard.get(f"ft:{self.ft_key}")

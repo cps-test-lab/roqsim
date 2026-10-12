@@ -159,8 +159,8 @@ TEMPLATE = """<mujoco model="oomwoo_one">
 
     The twelve `bumper` plates around the front arc are the platform's distinguishing feature - a
     real bump ring, six facets per side, each ~5 mm proud of the body cylinder. They are collision
-    geoms here as they are in the description, so a contact-based bump sensor has geometry to read;
-    roqsim ships no bumper plugin, so nothing reads them yet (see the port log).
+    geoms here as they are in the description, so a contact-based bump sensor such as the `bumper`
+    plugin has geometry to read.
 
     Drive: a TRUE two-wheel differential drive with a modelled caster, so there is no slip_factor -
     it does not turn by scrubbing. The same line turtlebot3_waffle and raspimouse draw.
@@ -208,7 +208,7 @@ TEMPLATE = """<mujoco model="oomwoo_one">
 
          kv 0.25 keeps kv*dt/I below 1 at this scale (wheel inertia 5.8e-5 plus 5e-4 of armature).
          Raising it buys almost nothing: 0.974 of commanded at 0.25 against 0.982 at 1.0, because
-         the residual is caster drag rather than servo lag. See the port log. -->
+         the residual is caster drag rather than servo lag. -->
     <velocity name="wheel_left_motor" joint="wheel_left_joint" kv="0.25" ctrlrange="-15 15" forcerange="-0.5 0.5"/>
     <velocity name="wheel_right_motor" joint="wheel_right_joint" kv="0.25" ctrlrange="-15 15" forcerange="-0.5 0.5"/>
   </actuator>

@@ -23,13 +23,13 @@ Config (in addition to ``lidar``'s ``site``/``frame_id``/``rate_hz``/``range_min
 ``tf_parent`` keys)::
 
     range_sensor:
-      site: cliff_front_left     # rays are cast along the site's +x axis
-      h_rays: 1                  # rays across the horizontal field of view (>= 1)
-      v_rays: 1                  # rays down the vertical field of view (>= 1)
-      h_fov: 0.0873              # horizontal field of view, rad (5 deg); 0 with h_rays 1
-      v_fov: 0.0                 # vertical field of view, rad; 0 with v_rays 1
-      range_min: 0.0001          # published as the header's range_min
-      max_range: 0.15            # published as the header's range_max
+      site: ir_front             # rays are cast along the site's +x axis
+      h_rays: 5                  # rays across the horizontal field of view (default 1, >= 1)
+      v_rays: 5                  # rays down the vertical field of view (default 1, >= 1)
+      h_fov: 0.1745              # horizontal field of view, rad (10 deg); 0 with h_rays: 1
+      v_fov: 0.1745              # vertical field of view, rad; 0 with v_rays: 1
+      range_min: 0.025           # published as the header's range_min (default 0.01)
+      max_range: 0.2             # published as the header's range_max (default 2.0)
       rate_hz: 62.0
 
 A ``lidar``'s ``rays``/``angle_min``/``angle_max`` are refused here: the layout is the grid's, and

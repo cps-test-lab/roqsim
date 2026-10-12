@@ -437,6 +437,26 @@ def test_hil_gps_carries_the_receivers_fix():
         plugin.shutdown(ctx)
 
 
+def test_hil_gps_keeps_the_receivers_rate_late_in_a_long_run():
+    """A fix due at a sum of float steps that lands a hair short of its period is still due, so
+    HIL_GPS keeps the receiver's rate however long the run, as every sensor's rate gate does."""
+    ctx = _ctx()
+    plugin, px4, _ = _connected(ctx, {"imu_rate": 250.0, "ground_truth": False, "lockstep": False})
+    sent = []
+    plugin._send_sensors = lambda ctx: None
+    plugin._send_gps = lambda ctx: sent.append(plugin._tick)
+    try:
+        ctx.data.time = 3600.0  # an hour in, where the summed clock has drifted
+        for _ in range(2000):
+            ctx.data.time += ctx.dt
+            plugin.post_step(ctx)
+    finally:
+        px4.close()
+        plugin.shutdown(ctx)
+    period_ticks = int(round((1.0 / 10.0) / ctx.dt))
+    assert set(np.diff(sent)) == {period_ticks}
+
+
 def test_ground_truth_reports_the_attitude_in_ned():
     ctx = _ctx()
     plugin, px4, _ = _connected(ctx, {"imu_rate": 250.0, "ground_truth": True})

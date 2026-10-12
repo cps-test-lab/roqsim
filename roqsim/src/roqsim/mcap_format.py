@@ -25,6 +25,7 @@ writer reads the same way and a change to the library's internals cannot change 
 from __future__ import annotations
 
 import json
+import os
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -158,18 +159,23 @@ class RecordingNotFoundError(RecordingError):
     exit_status = BAD_INPUT
 
 
-def recording_path(path: str | Path) -> Path:
-    """``path`` carrying :data:`RECORDING_SUFFIX`, so a bare ``--record out`` lands as ``out.mcap``.
+class RecordingTargetError(RecordingError):
+    """A recording target that is not an ``.mcap`` file path: a wrong input."""
 
-    Settled up front rather than at close: what :meth:`roqsim.capture.StateRecorder.close` returns,
-    what a replay is handed and what ``roqsim health`` finds have to be one name.
+    exit_status = BAD_INPUT
+
+
+def recording_path(path: str | Path) -> Path:
+    """``path`` as a recording target: a file path ending in :data:`RECORDING_SUFFIX`.
+
+    Anything else raises :class:`RecordingTargetError` rather than being renamed, so the name a run
+    is given is the name :meth:`roqsim.capture.StateRecorder.close` returns, a replay is handed and
+    ``roqsim health`` finds.
     """
-    path = Path(path)
-    return (
-        path
-        if path.suffix.lower() == RECORDING_SUFFIX
-        else path.with_name(path.name + RECORDING_SUFFIX)
-    )
+    given = os.fspath(path)
+    if Path(given).suffix.lower() != RECORDING_SUFFIX or given.endswith(("/", os.sep)):
+        raise RecordingTargetError(f"a recording is an {RECORDING_SUFFIX} file; got {given!r}")
+    return Path(given)
 
 
 def ns(seconds: float) -> int:

@@ -421,6 +421,18 @@ def test_renders_a_real_frame(tmp_path, monkeypatch):
     assert frame.std() > 10, "rendered frame is uniform -- nothing was drawn"
 
 
+def test_an_unknown_track_target_is_bad_input(tmp_path, capsys):
+    """A camera told to follow a body the world lacks is a wrong request, reported as one line."""
+    from roqsim import exit_status
+
+    scene = tmp_path / "scene.xml"
+    scene.write_text(_SMOKE_XML)
+    code = render.main([str(scene), "--out", str(tmp_path / "x.png"), "--view", "track=nope"])
+    assert code == exit_status.BAD_INPUT
+    err = capsys.readouterr().err
+    assert "roqsim render: " in err and "'nope'" in err and "Traceback" not in err
+
+
 # -- rendering from a recording -------------------------------------------------------------------
 
 

@@ -48,6 +48,7 @@ from .mcap_format import (
     PROFILE,
     Message,
     read_contents,
+    recording_path,
 )
 from .presence import set_present
 
@@ -627,17 +628,11 @@ def open_recording(path: str | Path) -> Recording:
 
     Reads the file with :mod:`roqsim.mcap_format`'s own framing loop, so a file left by a killed run
     -- no summary, possibly a torn last chunk -- opens and yields every sample of the chunks that were
-    closed. What is refused, by name: an ``.npz`` path (a numpy archive is not a recording), a file
-    that is not mcap at all, a profile other than ``roqsim``, and a provenance whose version or
-    layout this reader does not know.
+    closed. What is refused, by name: a path that is not an ``.mcap`` file (a wrong input, checked
+    before whether it exists), a file that is not mcap at all, a profile other than ``roqsim``, and
+    a provenance whose version or layout this reader does not know.
     """
-    path = Path(path)
-    if path.suffix.lower() == ".npz":
-        raise RecordingError(
-            f"{path} is a numpy archive. A roqsim recording is one .mcap file per run (recording "
-            f"format {FORMAT_VERSION}); the numpy archives of formats 1 and 2 are not read. "
-            "Re-record the run."
-        )
+    path = recording_path(path)
     if not path.exists():
         raise RecordingNotFoundError(f"{path}: no such recording")
     data = path.read_bytes()
@@ -649,9 +644,7 @@ def open_recording(path: str | Path) -> Recording:
     if not data.startswith(MAGIC):
         what = "a zip archive" if data[:2] == b"PK" else "not an mcap file"
         raise RecordingError(
-            f"{path} is {what}: a recording is an mcap file starting with its magic bytes. "
-            "A run written by a version before recording format 3 is a numpy archive, which has "
-            "no reader here; re-record it."
+            f"{path} is {what}: a recording is an mcap file starting with its magic bytes."
         )
     try:
         contents = read_contents(data)

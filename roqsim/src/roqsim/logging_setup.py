@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """One place where roqsim's command-line entry points configure logging.
 
-Six entry points repeated the same three-line ``basicConfig`` call, which is six copies of
-one decision -- and the decision is not obvious, because roqsim's log lines are read in two
-very different places:
+Every entry point shares one decision about its log format, and the decision is not obvious,
+because roqsim's log lines are read in two very different places:
 
 * **A terminal**, where ``roqsim sim`` is one command a person is watching. ``INFO roqsim.engine:
   seed 42`` is what belongs there: short, and no timestamp competing with the message.
@@ -22,7 +21,8 @@ record's own epoch timestamp, taken when the event happened rather than when it 
 """
 
 import logging
-import os
+
+from . import env
 
 #: The default: what roqsim has always printed, unchanged.
 PLAIN_FORMAT = "%(levelname)s %(name)s: %(message)s"
@@ -46,7 +46,7 @@ def log_format(name: str = None) -> str:
     while producing lines nothing downstream can place -- and a typo is exactly how that
     happens.
     """
-    name = name or os.environ.get(FORMAT_ENV) or "plain"
+    name = name or env.get(FORMAT_ENV) or "plain"
     try:
         return FORMATS[name]
     except KeyError:

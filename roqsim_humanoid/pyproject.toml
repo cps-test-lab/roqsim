@@ -49,6 +49,8 @@ roqsim_humanoid = [
     "models/meshes/unitree_g1_dex1/*.STL",
     "models/meshes/unitree_g1_dex1/*.stl",
     "models/LICENSE.*",
+    # `roqsim catalog` reports the `<model>.thumb.png` beside each MJCF (`make thumbnails`).
+    "models/*.thumb.png",
     "policy/*.pt",
     "policy/*.yaml",
     "policy/LICENSE.*",

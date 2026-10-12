@@ -2,9 +2,10 @@
 # at the origin the robot description gives the vendor macro.
 #
 # `spawn_sensor: {model: realsense_d455}` pulls the capture plugin in automatically, so a world does
-# not re-declare it. To override, declare realsense_d455 for the same mount in the world (it wins);
-# to opt out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
-# spawn_sensor `name`.
+# not re-declare it. To override a default, nest an entry with the same label under that
+# spawn_sensor's `components:` (it merges into this one, per key); to opt out, set spawn_sensor
+# config `default_plugins: false`. Each entry below attaches to the mount because it is nested under
+# it -- there is no ownership key to fill in.
 #
 # The mount is `camera_bottom_screw_frame`, the frame the vendor macro `sensor_d455` attaches to its
 # parent (see realsense_d455.xml); spawn_sensor publishes the chain below from it. A second D455 on

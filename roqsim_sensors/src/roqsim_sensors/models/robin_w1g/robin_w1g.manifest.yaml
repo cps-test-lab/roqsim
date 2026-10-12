@@ -1,10 +1,11 @@
 # Default capture plugin shipped with the robin_w1g mount.
 #
 # `spawn_sensor: {model: robin_w1g}` pulls this in automatically, so a world does not re-declare the
-# capture plugin. To override, declare seyond_robin_w1g for the same mount in the world (it wins); to
-# opt out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
-# spawn_sensor `name`. `exclude_body: mount` skips the sensor's own housing (a standalone mount has no
-# chassis); `frame_id: seyond_lidar` matches Seyond's own ROS driver.
+# capture plugin. To override a default, nest an entry with the same label under that spawn_sensor's
+# `components:` (it merges into this one, per key); to opt out, set spawn_sensor config
+# `default_plugins: false`. Each entry below attaches to the mount because it is nested under it --
+# there is no ownership key to fill in. `exclude_body: mount` skips the sensor's own housing (a
+# standalone mount has no chassis); `frame_id: seyond_lidar` matches Seyond's own ROS driver.
 #
 components:
   - seyond_robin_w1g:

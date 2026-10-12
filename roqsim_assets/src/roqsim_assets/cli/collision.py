@@ -35,7 +35,7 @@ Usage::
 
     roqsim assets collision audit                          # every model of every provider
     roqsim assets collision audit --provider roqsim_assets # one provider
-    roqsim assets collision audit office_table desk_diy    # named models
+    roqsim assets collision audit office_table industrial_table  # named models
     roqsim assets collision diff office_table              # one model, in detail
     roqsim assets collision diff office_table --tol 5      # a tighter question
     roqsim assets collision diff office_table --json       # machine-readable

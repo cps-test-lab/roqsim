@@ -62,6 +62,9 @@ scenes = "roqsim_scenes.cli:scenes"
 [project.entry-points."roqsim.worlds"]
 roqsim_scenes = "roqsim_scenes"
 
+[project.entry-points."roqsim.environment"]
+roqsim_scenes = "roqsim_scenes.environment:VARIABLES"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

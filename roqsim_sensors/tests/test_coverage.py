@@ -16,6 +16,7 @@ from roqsim_sensors.coverage.catalog import CATALOG, catalog_as_dict
 from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
 from roqsim_sensors.models import MODELS_DIR
+from roqsim_sensors.plugins.camera_common import Intrinsics
 
 from roqsim import exit_status
 from roqsim.manifest import manifest_fov
@@ -85,6 +86,32 @@ def test_frustum_projection_front_and_back():
     assert np.allclose(cam.rot @ np.array([0, 0, -1.0]), [1, 0, 0], atol=1e-9)
     local = cam.to_local(np.array([[5, 0, 0.0], [-5, 0, 0.0], [0, 0, 5.0]]))
     assert in_fov(cam, local).tolist() == [True, False, False]
+
+
+def test_frustum_spans_the_rendered_frame_in_pixel_centre_coordinates():
+    """camera_info's (cx, cy) count pixel centres, so the frame ends half a pixel beyond each edge
+    pixel: a ray a quarter pixel inside either edge is in view, one a quarter pixel outside is not.
+    """
+    width, height, f = 640, 480, 400.0
+    intr = Intrinsics(
+        width=width, height=height, fx=f, fy=f, cx=(width - 1) / 2.0, cy=(height - 1) / 2.0
+    )
+    cam = SensorFov(
+        kind=FovKind.FRUSTUM,
+        origin=np.zeros(3),
+        rot=np.eye(3),
+        h_fov=(-1.0, 1.0),
+        v_fov=(-1.0, 1.0),
+        range_min=0.0,
+        range_max=10.0,
+        range_is_physical=False,
+        sensor_type="camera",
+        intrinsics=intr,
+    )
+    # Optical frame: looks along -z; at z = -1 a point at x lands on u = cx + f * x.
+    us = [-0.25, -0.75, width - 0.75, width - 0.25]
+    pts = np.array([[(u - intr.cx) / f, 0.0, -1.0] for u in us])
+    assert in_fov(cam, pts).tolist() == [True, False, True, False]
 
 
 # -- adapters reuse plugin defaults ------------------------------------------------------------------
@@ -237,6 +264,29 @@ def test_room_volume_points_are_interior():
     assert len(pts) > 0
     # every point is inside the +/-3 walls
     assert np.all(np.abs(pts[:, 0]) < 3.0) and np.all(np.abs(pts[:, 1]) < 3.0)
+
+
+def test_an_open_world_keeps_its_volume_points_only_when_asked():
+    """A cell on a table has no walls: the room test drops every point, `enclosed_only=False` keeps
+    them, still dropping the points inside a geom."""
+    from roqsim_sensors.coverage import sampling
+
+    m = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody>
+             <geom type="plane" size="5 5 0.1"/>
+             <geom name="table" type="box" size="0.5 0.5 0.4" pos="0 0 0.4"/>
+           </worldbody></mujoco>"""
+    )
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    bounds = (np.array([-1.0, -1.0, 0.0]), np.array([1.0, 1.0, 1.0]))
+    room = sampling.room_volume_points(m, d, resolution=0.1, heights=(0.3, 0.9), bounds=bounds)
+    assert len(room) == 0
+    open_ = sampling.room_volume_points(m, d, resolution=0.1, heights=(0.3, 0.9), bounds=bounds, enclosed_only=False)
+    assert len(open_) > 0
+    inside = (np.abs(open_[:, 0]) < 0.45) & (np.abs(open_[:, 1]) < 0.45) & (open_[:, 2] < 0.8)
+    assert not inside.any()
+    assert (open_[:, 2] == 0.9).sum() > (open_[:, 2] == 0.3).sum()  # above the table nothing is embedded
 
 
 def test_object_surface_points_label_the_table_not_walls():

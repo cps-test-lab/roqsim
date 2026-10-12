@@ -5,7 +5,7 @@
 so it runs forever. Objects ride the belt purely through the ``belt_package`` friction pair.
 
 The belt is a **benchtop** unit: its feet run from z=0.76 to 0.915, so it needs a ~0.76 m table
-under it, spawned separately (``industrial_table`` is the matching prop, and ``desk_diy`` at 0.758
+under it, spawned separately (``industrial_table`` is the matching prop; any other ~0.76 m top
 also works). Nothing here places or checks that table -- a conveyor with no
 table under it simply floats.
 

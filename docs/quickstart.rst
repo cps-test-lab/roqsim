@@ -344,6 +344,12 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.mcap --at 12.5 --out t.png # one moment
    roqsim render --state run.mcap --out run.webm        # the whole run as video
 
+**A recording target is a file path ending in ``.mcap``**, whether it comes from ``--record`` or
+``ROQSIM_RECORD``. Anything else -- another suffix, no suffix, a directory -- is refused before the
+world compiles, with exit status ``2`` and the target named (``a recording is an .mcap file; got
+'run.npz'``); it is never renamed. ``--video`` without ``--record`` records beside the video, under the
+video's name with ``.mcap``.
+
 With nothing said about the camera, a recording is shown as **the whole scene from above**: every
 geom in the world except the parked ones (below ``roqsim.presence.PARKED_BELOW_Z``), angled rather
 than top-down, as close as the field of view allows -- and with the ceiling removed where the world
@@ -617,6 +623,11 @@ through the environment, which both drivers honour:
    export ROQSIM_CAPTURE_FPS=25              # same as --capture-fps
    export ROQSIM_RECORD_TRACKS='robot/**'    # same as --record-tracks (below)
    export ROQSIM_RECORD_EXCLUDE='shelf'      # same as --record-exclude
+
+A ``ROQSIM_*`` variable that roqsim does not read is refused when a run starts, by ``roqsim sim``
+and by the scenario adapter alike, as an unknown parameter: the run exits ``2`` naming it and
+listing the ones roqsim reads (:mod:`roqsim.env` is that list). A misspelt or unread variable would
+otherwise be ignored, and the run would look configured.
 
 .. _sim-poses:
 
@@ -942,8 +953,9 @@ code   meaning
 
 ``2`` is anything the caller can fix by asking differently: a world, model, recording or file that
 does not exist or does not load, a flag or value that cannot be honoured. ``4`` is a recording that
-*exists* and cannot be read (a run killed before it closed the archive) or whose world cannot be
-rebuilt from its provenance; a recording path that names nothing is a ``2``. ``5`` is a verdict:
+*exists* and cannot be read (a file that is not mcap, or a format version this reader does not
+know) or whose world cannot be rebuilt from its provenance; a recording path that names nothing, or
+does not end in ``.mcap``, is a ``2``. ``5`` is a verdict:
 ``roqsim check`` finding a problem in a world it resolved, an error-level ``roqsim health`` finding,
 an exporter's ``--check`` finding its output off its source, an asset check (``roqsim assets
 collision``, ``inspect-prop``) failing a prop. ``1`` is never returned on purpose, so it always means
@@ -952,7 +964,7 @@ naming the command, or the report the tool prints (``check``, ``health``).
 
 The scene-builder windows (``roqsim builder``) are the one exception: they return a person's verdict
 on what they were shown, and :doc:`scene_builder` gives their statuses. Interrupting a command
-(Ctrl-C) exits ``130``, as a shell's convention has it.
+(Ctrl-C) exits ``130`` (``roqsim.exit_status.INTERRUPTED``), as a shell's convention has it.
 
 Getting numbers out of a run
 ----------------------------

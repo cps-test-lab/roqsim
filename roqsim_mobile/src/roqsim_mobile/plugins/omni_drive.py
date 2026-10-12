@@ -12,7 +12,7 @@ sits rather than a config key::
     omni_drive:
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       base_joint: base_free         # the base's free joint
-      base_body: base_link          # body the wheel axes are expressed in to derive their roll signs
+      base_body: ""                 # body the wheel axes are expressed in (default: the robot's root)
       vx_actuator: base_vx          # planar drive actuators (see "Planar drive" below)
       vy_actuator: base_vy
       wz_actuator: base_wz
@@ -111,6 +111,7 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
+from roqsim.frames import entity_body
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 from roqsim.pose import yaw_of
@@ -129,7 +130,7 @@ class OmniDrivePlugin(Plugin):
         self.robot = self.entity
         self.base_joint = self.config.get("base_joint", "base_free")
         # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
-        self.base_body = self.config.get("base_body", "base_link")
+        self.base_body = self.config.get("base_body", "")
         # PAL's mobile_base_controller reports odom in base_footprint, which is also the body the
         # free joint drives -- hence a different default from the two-wheel drives.
         self.odom_child_frame = self.config.get("odom_child_frame", "base_footprint")
@@ -296,12 +297,8 @@ class OmniDrivePlugin(Plugin):
         if self._wjid:
             d0 = mujoco.MjData(m)
             mujoco.mj_forward(m, d0)
-            base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
-            if base_b < 0:
-                raise RuntimeError(
-                    f"omni_drive: base body {prefix + self.base_body!r} not found; the wheel roll "
-                    f"signs are read off the wheel axes expressed in it"
-                )
+            base_b = entity_body(ctx, self.robot, self.base_body, who="omni_drive").index
+            self.base_body = m.body(base_b).name.removeprefix(prefix)
             rb = d0.xmat[base_b].reshape(3, 3)
             for k, jid in enumerate(self._wjid):
                 axis_w = d0.xmat[m.jnt_bodyid[jid]].reshape(3, 3) @ m.jnt_axis[jid]

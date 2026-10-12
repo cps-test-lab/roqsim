@@ -16,22 +16,9 @@ turning monolithic MuJoCo code into cooperating plugins).
 Repository layout
 -----------------
 
-.. code-block:: text
-
-   roqsim/            core pip package (framework, ROS-free; depends on no sibling)
-   roqsim_sensors/    generic sensor plugins + models + the coverage analysis layer (depends on roqsim)
-   roqsim_assets/     prop library; roqsim_scenes/  baked scenes + world generators
-   roqsim_mobile/     wheeled BASE plugins + base models (depends on roqsim + roqsim_sensors)
-   roqsim_manipulation/         arm plugins only;  roqsim_manipulation_assets/  arm + gripper models
-   roqsim_mobile_manipulation/  base AND arm robots — the one package depending on both families
-   roqsim_humanoid/ roqsim_quadruped/   legged families;  roqsim_walker/  pedestrians (dynamic obstacles)
-   roqsim_scene_builder/          human-in-the-loop scene windows
-   scenario_execution_roqsim/     OSC actions (entity_moved, entity_monitor, entity_call, ...);
-                                    the ONLY package here that may import scenario_execution
-   ros2_ws/src/
-     roqsim_ros_bridge/            ROS 2 bridge + simulation_interfaces (plugins)
-     roqsim_nav2_example/   minimal nav2 example + goal test
-   docs/                 this documentation (+ architecture.rst)
+Each package is a sibling directory with its own ``pyproject.toml``, which states what it depends
+on; ``ros2_ws/src/`` holds the colcon packages. :doc:`installation` says what each one holds.
+``scenario_execution_roqsim`` is the only package that imports ``scenario_execution``.
 
 Golden rules
 ------------
@@ -127,6 +114,15 @@ A package that ships its first tool also declares the group itself, in its ``pyp
 
 That is the whole mechanism: any installed package can contribute a group this way, including one
 maintained outside this repository. It never edits the core.
+
+**A** ``ROQSIM_*`` **environment variable is registered, then read.** Code reads one with
+``roqsim.env.get(name)``, which raises for a name that is not registered, and a run refuses every
+``ROQSIM_*`` variable that is not (``roqsim/tests/test_env.py`` checks every name the tree spells).
+The core's own are ``roqsim.env.VARIABLES``; any other package declares the ones it reads as a mapping
+of name to a one-line description, under its own entry point::
+
+   [project.entry-points."roqsim.environment"]
+   roqsim_scenes = "roqsim_scenes.environment:VARIABLES"
 
 **You write no help text.** All three levels come from the docstring you already wrote — click takes
 the listing line from its first line, ``--help`` is your own ``argparse``, and ``python -m pydoc``
