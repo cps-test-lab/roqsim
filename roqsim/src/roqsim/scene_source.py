@@ -1,8 +1,11 @@
 """Where a scene export gets its model: a world YAML through the real build pipeline, or a bare MJCF.
 
-Every exporter of a whole scene (``roqsim export web``, ``roqsim export gltf``) takes the same source
-options, through :func:`add_source_options`, and compiles through :func:`compile_source`, so an export
-is the scene the simulator builds and two exports of one world are exports of the same model.
+Every exporter of a whole scene (``roqsim export gltf``) takes the same source options, through
+:func:`add_source_options`, and compiles through :func:`compile_source`, so an export is the scene
+the simulator builds.
+
+:func:`compile_from_world` and :func:`compile_world` are public: a script that needs the model a
+world builds, rather than a file, compiles it with them.
 
 * ``--world``: the world YAML, compiled with its plugins, reset, and optionally stepped
   (:func:`compile_from_world`); its plugins' :meth:`~roqsim.plugin.Plugin.scene_cameras` say which

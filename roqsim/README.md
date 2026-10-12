@@ -27,7 +27,7 @@ repository extends it without a change here.
 | `runner.py` | The standalone driver (`roqsim sim`): loop, pacing, recording, and the optional viewer. |
 | `scenario_adapter.py` | The `scenario-execution` `SimulationInterface` driver. |
 | `capture.py`, `mcap_format.py`, `recording.py`, `state.py`, `render.py` | State recording (one mcap file per run) and everything read or drawn from it afterwards — driver-level, not plugins. `health.py` tails that file from outside the run. |
-| `export_web.py`, `export_gltf.py`, `export_urdf.py`, `export_srdf.py` | A compiled world out to a browser scene descriptor, a glTF 2.0 file, a URDF, or a MoveIt SRDF. |
+| `export_gltf.py`, `export_urdf.py`, `export_srdf.py` | A compiled world out to a glTF 2.0 file, a URDF, or a MoveIt SRDF. |
 | `scene_source.py`, `scene_content.py`, `tessellate.py`, `meshopt.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, the primitives as triangles, and the `EXT_meshopt_compression` encoders `export gltf --meshopt` writes with. |
 | `commands.py` | The `roqsim` command tree. |
 

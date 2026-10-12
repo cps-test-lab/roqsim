@@ -140,7 +140,8 @@ multiple times with distinct ``prefix`` (and ``name``).
 
 ``publish_tf`` puts the spawned root body's world pose on TF so a viewer binds the scene node by name
 (``child_frame_id`` == the exported body name) and a TF-tree consumer such as rviz gets the frame. It
-has no effect on the baked web scene, which already seats the body at its spawn pose.
+has no effect on an exported scene (``roqsim export gltf``), which already seats the body at its
+spawn pose.
 
   - ``false`` (default): a static prop already seated by the baked scene needs no TF.
   - ``dynamic`` (or ``true``): stream the live world pose on the relative ``tf`` topic at ``tf_rate``.

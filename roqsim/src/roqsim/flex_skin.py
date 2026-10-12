@@ -3,7 +3,7 @@
 A flex has no mesh of its own that a viewer could animate. MuJoCo computes each vertex position
 (``flexvert_xpos``) from bodies every step, and those bodies' poses are all a replay needs. This
 module states that dependency in the one form a viewer already animates -- linear-blend skinning
-over named bodies, at most four per vertex -- so :mod:`roqsim.export_web` can ship a flex as an
+over named bodies, at most four per vertex -- so :mod:`roqsim.export_gltf` can ship a flex as an
 ordinary skin, and a replay deforms it from the bodies' pose tracks alone.
 
 Where a vertex's position comes from depends on how the flex was declared:

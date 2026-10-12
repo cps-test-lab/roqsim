@@ -2,8 +2,8 @@
 
 glTF is the standard format for 3D scenes: three.js, Blender and every engine load it, so a world
 exported this way is looked at, placed into or published without learning a format of roqsim's own.
-What the scene contains is decided by :mod:`roqsim.scene_content`, the walk ``roqsim export web``
-writes too, so the two exports agree on it; this module only spells it as glTF.
+What the scene contains is decided by :mod:`roqsim.scene_content`, the walk every scene export
+shares; this module only spells it as glTF.
 
 Usage::
 
@@ -21,8 +21,8 @@ viewer that reports points in a node's frame reports them, for ``world``, in the
 **Bodies.** Every body is a node, the child of its parent body's node, in MuJoCo's body tree, with
 the body's pose relative to its parent at the exported state: a free body where its world placed
 it, a mocap body where its plugin posed it, a jointed link at its configured joint value (glTF has
-no joints, so the angle is in the node), and a link on an unnamed joint at that joint's rest, as
-``export web`` shows it (:func:`roqsim.scene_content.exported_state`). A node is named exactly as
+no joints, so the angle is in the node), and a link on an unnamed joint at that joint's rest
+(:func:`roqsim.scene_content.exported_state`). A node is named exactly as
 its body is, and its ``extras`` repeat the name as ``body`` beside ``body_id``: a loader that
 rewrites names it finds awkward (three.js removes ``.``, ``:``, ``/`` and brackets) still leaves the
 exact name in the node's user data.
@@ -70,13 +70,12 @@ image's ``width`` and ``height``.
 outside ``world`` with ``extras: {"roqsim": "view"}``, placed where ``roqsim render`` puts its
 default camera.
 
-**Skins.** A MuJoCo skin, and a flex drawn as one (as ``export web`` draws it), is a glTF skinned
+**Skins.** A MuJoCo skin, and a flex drawn as one (:mod:`roqsim.flex_skin`), is a glTF skinned
 mesh whose joints are its bone bodies' nodes, so a viewer that moves bodies by name deforms it. Its
 node is a root of the scene (glTF ignores a skinned mesh's node transform), with ``extras`` naming
 the skin's index and, for a flex, the flex.
 
-Left out: lights and the skybox (a viewer brings its own), and collision-only geometry (group 3),
-as for ``export web``.
+Left out: lights and the skybox (a viewer brings its own), and collision-only geometry (group 3).
 """
 
 from __future__ import annotations

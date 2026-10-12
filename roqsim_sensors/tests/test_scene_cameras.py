@@ -10,7 +10,7 @@ import yaml
 from test_cameras import _world
 
 from roqsim.engine import Engine
-from roqsim.export_web import export_scene
+from roqsim.export_gltf import export_gltf
 from roqsim.scene_source import compile_world, declared_cameras
 
 OAKD = "roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin"
@@ -69,8 +69,11 @@ def test_a_world_export_places_its_sensor_camera(tmp_path):
     )
     log = logging.getLogger("t")
     src = compile_world(world, set(), {}, log)
-    scene = export_scene(src.model, src.data, tmp_path / "out", log, cameras=src.cameras)
-    (cam,) = scene["cameras"]
-    assert cam["kind"] == "rgb" and (cam["width"], cam["height"]) == (64, 48)
-    assert cam["perspective"]["yfov"] == pytest.approx(math.radians(45))
-    assert scene["bodies"][cam["body"]]["name"] == "world"
+    gltf = export_gltf(src.model, src.data, tmp_path / "scene.glb", log=log, cameras=src.cameras)
+    (node,) = [n for n in gltf["nodes"] if "sensor" in n.get("extras", {})]
+    assert node["extras"]["kind"] == "rgb"
+    assert (node["extras"]["width"], node["extras"]["height"]) == (64, 48)
+    perspective = gltf["cameras"][node["camera"]]["perspective"]
+    assert perspective["yfov"] == pytest.approx(math.radians(45))
+    (world,) = [n for n in gltf["nodes"] if n.get("name") == "world"]
+    assert gltf["nodes"].index(node) in world["children"]

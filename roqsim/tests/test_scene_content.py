@@ -1,22 +1,22 @@
-"""export_web: the browser scene descriptor is structurally consistent and FK-correct.
+"""scene_content.walk: what every scene export writes is consistent and FK-correct.
 
-The exporter's contract is that the web loader can reproduce MuJoCo's body world transforms from the
-descriptor alone (rest transform composed with per-joint motion about ``axis`` anchored at ``pos``).
-The round-trip test recomputes that FK in numpy exactly the way ``mujocoSceneLoader.ts`` does and
-asserts it matches ``data.xpos``/``data.xquat`` -- proving the JS side will animate correctly before
-we ever run a browser.
+A format with joints reproduces MuJoCo's body world transforms from the walk alone: each body's rest
+transform composed with its joints' motion about ``axis`` anchored at ``pos``. The round-trip test
+recomputes that FK in numpy and holds it against ``data.xpos``/``data.xquat``; the flex tests hold a
+viewer's skinning of the walk's skins against MuJoCo's vertices.
 """
 
 from __future__ import annotations
 
-import json
+import logging
 
 import mujoco
 import numpy as np
 import pytest
 
-from roqsim import export_web
-from roqsim.export_web import export_scene
+from roqsim.scene_content import walk
+
+LOG = logging.getLogger("t")
 
 # A compact world exercising every FK path: a hinge, a slide, a free body, a textured plane, a box,
 # and two meshes (single tetras, one UV-mapped) so mesh buffer offsets and the texcoord path are
@@ -67,12 +67,17 @@ def _rest_mat(pos, quat):
 
 
 def _joint_motion(joint, q):
-    """Reproduce the loader's per-joint local motion matrix for a given joint value."""
-    axis = np.asarray(joint["axis"], dtype=float)
+    """A joint's local motion matrix at value ``q``: rotation about, or translation along, its axis.
+
+    ``joint`` is a :class:`roqsim.scene_content.Joint` or a mapping with the same keys, as a glTF
+    file's ``extras`` carry it.
+    """
+    field = joint.__getitem__ if isinstance(joint, dict) else lambda key: getattr(joint, key)
+    axis = np.asarray(field("axis"), dtype=float)
     axis = axis / np.linalg.norm(axis)
     T = np.eye(4)
-    if joint["type"] == "hinge":
-        anchor = np.asarray(joint["pos"], dtype=float)
+    if field("type") == "hinge":
+        anchor = np.asarray(field("pos"), dtype=float)
         rot = np.eye(4)
         rot[:3, :3] = _quat_to_mat(_axisangle_quat(axis, q))
         trans = np.eye(4)
@@ -80,7 +85,7 @@ def _joint_motion(joint, q):
         untrans = np.eye(4)
         untrans[:3, 3] = -anchor
         T = trans @ rot @ untrans
-    elif joint["type"] == "slide":
+    elif field("type") == "slide":
         T[:3, 3] = axis * q
     return T
 
@@ -96,54 +101,36 @@ def _compile():
     return model, mujoco.MjData(model)
 
 
-def test_descriptor_structure(tmp_path):
+def test_content_structure():
     model, data = _compile()
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"), max_tex_dim=0)
+    content = walk(model, data, LOG)
 
-    # Files exist and scene.bin length matches the largest buffer reference.
-    assert (tmp_path / "scene.json").is_file()
-    assert (tmp_path / "scene.bin").is_file()
-    disk = json.loads((tmp_path / "scene.json").read_text())
-    assert disk == scene
-    bin_len = (tmp_path / "scene.bin").stat().st_size
+    # Named joints present with correct types.
+    joints = {j.name: j for j in content.joints}
+    assert joints["j_hinge"].type == "hinge"
+    assert joints["j_slide"].type == "slide"
+    assert joints["j_free"].type == "free"
 
-    # The descriptor says what it is, so a reader can refuse one written to a later contract, and
-    # tell it from the scene manifest that shares its file name.
-    assert (scene["format"], scene["version"]) == (export_web.FORMAT, export_web.FORMAT_VERSION)
-    assert scene["format"] == "roqsim.web_scene" and scene["version"] == 1
+    # Every geom here is drawn, and a mesh geom references a mesh.
+    assert {g.name for g in content.geoms} == {model.geom(g).name for g in range(model.ngeom)}
+    mesh_geoms = [g for g in content.geoms if g.type == "mesh"]
+    assert mesh_geoms and all(g.mesh is not None for g in mesh_geoms)
 
-    # Named joints present with correct types/metadata.
-    joints = {j["name"]: j for j in scene["joints"]}
-    assert joints["j_hinge"]["type"] == "hinge"
-    assert joints["j_slide"]["type"] == "slide"
-    assert joints["j_free"]["type"] == "free"
+    # The floor material carries the checker texture in its RGB role.
+    floor_geom = next(g for g in content.geoms if g.type == "plane")
+    floor_mat = content.materials[floor_geom.matid]
+    assert floor_mat.texture >= 0
+    assert content.textures[floor_mat.texture].id == model.texture("grid").id
 
-    # Collision-only geoms would be group 3; here all are visual, and the mesh geom references a mesh.
-    mesh_geoms = [g for g in scene["geoms"] if g["type"] == "mesh"]
-    assert mesh_geoms and mesh_geoms[0]["mesh"] is not None
-
-    # Every mesh buffer slice lies within scene.bin.
-    for m in scene["meshes"]:
-        for ref in (m["vert"], m["index"]):
-            elem = 4  # float32 / uint32
-            assert ref["off"] + ref["count"] * elem <= bin_len
-
-    # The checker texture is procedural (no source file) -> packed raw into the bin, referenced by the
-    # floor material's RGB role.
-    floor_geom = next(g for g in scene["geoms"] if g["type"] == "plane")
-    floor_mat = scene["materials"][floor_geom["matid"]]
-    assert floor_mat["texture"] >= 0
-    assert "raw" in scene["textures"][floor_mat["texture"]]
-
-    # Material mapping fields survive the round trip: the floor tiles per metre, uv_mat does not.
-    assert floor_mat["texuniform"] is True
-    assert floor_mat["texrepeat"] == [4.0, 4.0]
-    assert scene["materials"][model.material("uv_mat").id]["texuniform"] is False
+    # Material mapping fields are carried: the floor tiles per metre, uv_mat does not.
+    assert floor_mat.texuniform is True
+    assert floor_mat.texrepeat == [4.0, 4.0]
+    assert content.materials[model.material("uv_mat").id].texuniform is False
 
 
 # A tetra whose texcoords are indexed separately from its vertices, OBJ-style: 5 vt for 4 v, which
 # MuJoCo keeps split (it does not always re-index -- the TurtleBot 4 body is 3995 vt over 2002 v).
-# The exporter has to re-index this to one shared index before it can become a GPU buffer.
+# The walk re-indexes this to one shared index, which is what a GPU buffer needs.
 _SPLIT_UV_OBJ = """\
 v 0 0 0
 v 1 0 0
@@ -184,70 +171,51 @@ def _compile_split_uv(tmp_path):
 
 
 def test_split_texcoords_are_reindexed(tmp_path):
-    """A mesh whose texcoords are indexed separately still exports usable per-vertex UVs.
+    """A mesh whose texcoords are indexed separately still yields usable per-vertex UVs.
 
-    The re-index is the part that can silently corrupt a mesh, so check it the way the loader will
-    read it: for every triangle corner, the exported (position, uv) pair must be the pair MuJoCo
-    names through its two separate indices.
+    The re-index is the part that can silently corrupt a mesh, so check it the way a loader will
+    read it: for every triangle corner, the (position, uv) pair must be the pair MuJoCo names
+    through its two separate indices.
     """
     model, data = _compile_split_uv(tmp_path)
-    out = tmp_path / "scene"
-    scene = export_scene(model, data, out, __import__("logging").getLogger("t"), max_tex_dim=0)
-    raw = (out / "scene.bin").read_bytes()
-
-    mesh = scene["meshes"][0]
-    verts = np.frombuffer(raw, np.float32, mesh["vert"]["count"], mesh["vert"]["off"]).reshape(
-        -1, 3
-    )
-    index = np.frombuffer(raw, np.uint32, mesh["index"]["count"], mesh["index"]["off"]).reshape(
-        -1, 3
-    )
-    uv = np.frombuffer(raw, np.float32, mesh["uv"]["count"], mesh["uv"]["off"]).reshape(-1, 2)
+    (mesh,) = walk(model, data, LOG).meshes
 
     # One index for both attributes -- the whole point of the re-index.
-    assert len(uv) == len(verts)
-    assert index.shape == (int(model.mesh_facenum[0]), 3)
+    assert len(mesh.uv) == len(mesh.vert)
+    assert mesh.index.shape == (int(model.mesh_facenum[0]), 3)
 
-    want_vert = model.mesh_vert[model.mesh_face[: len(index)]]
-    want_uv = model.mesh_texcoord[model.mesh_facetexcoord[: len(index)]]
-    np.testing.assert_allclose(verts[index], want_vert)
-    np.testing.assert_allclose(uv[index], want_uv)
+    want_vert = model.mesh_vert[model.mesh_face[: len(mesh.index)]]
+    want_uv = model.mesh_texcoord[model.mesh_facetexcoord[: len(mesh.index)]]
+    np.testing.assert_allclose(mesh.vert[mesh.index], want_vert, rtol=1e-6)
+    np.testing.assert_allclose(mesh.uv[mesh.index], want_uv, rtol=1e-6)
 
 
-def test_uv_mapped_mesh_carries_its_texcoords(tmp_path):
-    """A mesh whose UVs MuJoCo already aligned per-vertex exports them verbatim; a UV-less one does not.
+def test_uv_mapped_mesh_carries_its_texcoords():
+    """A mesh whose UVs MuJoCo already aligned per-vertex carries them verbatim; a UV-less one does not.
 
-    Dropping them is not a cosmetic loss: the loader falls back to projecting the texture from
-    geometry, which cannot reconstruct an atlas -- every surface then samples an arbitrary region of
-    it.
+    Dropping them is not a cosmetic loss: a loader then projects the texture from geometry, which
+    cannot reconstruct an atlas -- every surface samples an arbitrary region of it.
     """
     model, data = _compile()
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"), max_tex_dim=0)
-    raw = (tmp_path / "scene.bin").read_bytes()
+    content = walk(model, data, LOG)
+    by_name = {g.name: g for g in content.geoms}
 
-    # Geoms carry no name in the descriptor; uv_mat is only on the UV-mapped mesh, so its matid names it.
-    uv_geom = next(g for g in scene["geoms"] if g["matid"] == model.material("uv_mat").id)
-    mesh = scene["meshes"][uv_geom["mesh"]]
+    mesh = content.meshes[by_name["g_uv_mesh"].mesh]
     mid = int(model.geom("g_uv_mesh").dataid.item())
     vn = int(model.mesh_vertnum[mid])
     tca = int(model.mesh_texcoordadr[mid])
+    assert mesh.uv is not None and mesh.uv.shape == (vn, 2)
+    np.testing.assert_allclose(mesh.uv.ravel(), model.mesh_texcoord[tca : tca + vn].ravel())
 
-    assert "uv" in mesh
-    assert mesh["uv"]["count"] == 2 * vn
-    got = np.frombuffer(raw, np.float32, count=2 * vn, offset=mesh["uv"]["off"])
-    np.testing.assert_allclose(got, model.mesh_texcoord[tca : tca + vn].ravel())
-
-    # The plain tetra has no texcoords (and no material), so it must not gain a uv buffer.
-    plain = next(g for g in scene["geoms"] if g["type"] == "mesh" and g["matid"] < 0)
-    assert "uv" not in scene["meshes"][plain["mesh"]]
+    # The plain tetra has no texcoords, so it gains none.
+    assert content.meshes[by_name["g_mesh"].mesh].uv is None
 
 
 @pytest.mark.parametrize("qh, qs", [(0.0, 0.0), (0.7, 0.2), (-1.2, 0.35)])
-def test_fk_round_trip(tmp_path, qh, qs):
-    """Descriptor FK (rest ∘ joint motion) reproduces MuJoCo's data.xpos/xquat for the arm bodies."""
+def test_fk_round_trip(qh, qs):
+    """Rest pose composed with joint motion reproduces MuJoCo's data.xpos/xquat for the arm bodies."""
     model, data = _compile()
-    # Place the free body somewhere non-trivial, then set the articulated joints.
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"), max_tex_dim=0)
+    content = walk(model, data, LOG)
 
     adr_h = model.jnt_qposadr[model.joint("j_hinge").id]
     adr_s = model.jnt_qposadr[model.joint("j_slide").id]
@@ -255,36 +223,35 @@ def test_fk_round_trip(tmp_path, qh, qs):
     data.qpos[adr_s] = qs
     mujoco.mj_forward(model, data)
 
-    bodies = scene["bodies"]
     joints_by_body: dict[int, list] = {}
-    for j in scene["joints"]:
-        joints_by_body.setdefault(j["body"], []).append(j)
+    for j in content.joints:
+        joints_by_body.setdefault(j.body, []).append(j)
     qval = {"j_hinge": qh, "j_slide": qs}
 
-    # Compute each body's world transform from the descriptor, parent-relative like the loader.
-    world = [np.eye(4)] * len(bodies)
-    for i, b in enumerate(bodies):
-        local = _rest_mat(b["pos"], b["quat"])
+    # Each body's world transform from the walk, parent-relative as a loader composes it.
+    world = [np.eye(4)] * len(content.bodies)
+    for i, b in enumerate(content.bodies):
+        local = _rest_mat(b.pos, b.quat)
         for j in joints_by_body.get(i, []):
-            if j["type"] in ("hinge", "slide"):
-                local = local @ _joint_motion(j, qval[j["name"]])
-        world[i] = world[b["parent"]] @ local if i != 0 else local
+            if j.type in ("hinge", "slide"):
+                local = local @ _joint_motion(j, qval[j.name])
+        world[i] = world[b.parent] @ local if i != 0 else local
 
-    for i, b in enumerate(bodies):
-        # Free bodies are exported at qpos0 (static); their live xpos moves, so skip them here.
-        if any(j["type"] == "free" for j in joints_by_body.get(i, [])):
+    for i, b in enumerate(content.bodies):
+        # Free bodies are placed at qpos0 (static); their live xpos moves, so skip them here.
+        if any(j.type == "free" for j in joints_by_body.get(i, [])):
             continue
         got_pos = world[i][:3, 3]
         exp_pos = data.xpos[i]
-        assert np.allclose(got_pos, exp_pos, atol=1e-6), f"{b['name']} pos {got_pos} != {exp_pos}"
+        assert np.allclose(got_pos, exp_pos, atol=1e-6), f"{b.name} pos {got_pos} != {exp_pos}"
         got_rot = world[i][:3, :3]
         exp_rot = _quat_to_mat(data.xquat[i])
-        assert np.allclose(got_rot, exp_rot, atol=1e-6), f"{b['name']} rot mismatch"
+        assert np.allclose(got_rot, exp_rot, atol=1e-6), f"{b.name} rot mismatch"
 
 
-# -- flexes, exported as skins ----------------------------------------------------------------------
+# -- flexes, as skins ------------------------------------------------------------------------------
 #
-# A flex has no mesh: MuJoCo computes each vertex from bodies (``flexvert_xpos``). The exporter ships it
+# A flex has no mesh: MuJoCo computes each vertex from bodies (``flexvert_xpos``). The walk draws it
 # as a skin over those bodies, so the check is the viewer's own skinning formula --
 # ``v = sum_k w_k * T_k * inv(B_k) * v_bind`` -- evaluated here in numpy against MuJoCo's vertices.
 
@@ -335,24 +302,15 @@ def _flex_model(flexcomp, **kw):
     return model, data
 
 
-def _flex_skin(scene, tmp_path, name):
-    """(vertices, faces, skin, skinIndex, skinWeight) of the skin drawing flex ``name``."""
-    blob = (tmp_path / "scene.bin").read_bytes()
-
-    def read(ref, dtype, width):
-        flat = np.frombuffer(blob, dtype=dtype, count=ref["count"], offset=ref["off"])
-        return flat.reshape(-1, width)
-
-    skin_id = next(i for i, s in enumerate(scene["skins"]) if s.get("flex") == name)
-    skin = scene["skins"][skin_id]
-    geom = next(g for g in scene["geoms"] if g.get("skin") == skin_id)
-    mesh = scene["meshes"][geom["mesh"]]
+def _flex_skin(content, name):
+    """(vertices, faces, skin, skin_index, skin_weight) of the skin drawing flex ``name``."""
+    skin = next(s for s in content.skins if s.flex == name)
     return (
-        read(mesh["vert"], "<f4", 3).astype(float),
-        read(mesh["index"], "<u4", 3),
+        np.asarray(skin.mesh.vert, dtype=float),
+        np.asarray(skin.mesh.index),
         skin,
-        read(skin["skinIndex"], "<u2", 4),
-        read(skin["skinWeight"], "<f4", 4).astype(float),
+        np.asarray(skin.skin_index),
+        np.asarray(skin.skin_weight, dtype=float),
     )
 
 
@@ -362,7 +320,7 @@ def _skinned(verts, skin, index, weight, pose):
     ``pose(name) -> (pos, wxyz)`` is a bone's current world pose.
     """
     motion = []
-    for name, bpos, bquat in zip(skin["bones"], skin["bindpos"], skin["bindquat"], strict=True):
+    for name, bpos, bquat in zip(skin.bones, skin.bindpos, skin.bindquat, strict=True):
         pos, quat = pose(name)
         motion.append(_rest_mat(pos, quat) @ np.linalg.inv(_rest_mat(bpos, bquat)))
     motion = np.asarray(motion)
@@ -405,21 +363,19 @@ def _body_pose(model, data):
     [(_GRID3, "blk"), (_PINNED3, "blk"), (_TRILINEAR, "blk")],
     ids=["full", "pinned", "trilinear"],
 )
-def test_a_flex_skin_binds_at_its_vertices_and_follows_its_bodies(
-    tmp_path, caplog, flexcomp, name
-):
+def test_a_flex_skin_binds_at_its_vertices_and_follows_its_bodies(caplog, flexcomp, name):
     """At rest the skin IS the flex; deformed, blending the bones reproduces MuJoCo's vertices."""
     model, data = _flex_model(flexcomp)
     with caplog.at_level("WARNING"):
-        scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
+        content = walk(model, data, LOG)
     assert "flex" not in caplog.text, "every drawn vertex here follows at most four bodies"
-    verts, faces, skin, index, weight = _flex_skin(scene, tmp_path, name)
+    verts, faces, skin, index, weight = _flex_skin(content, name)
 
     assert len(verts) == model.flex_vertnum[0]
     assert np.allclose(verts, _flex_verts(model, data), atol=1e-6)
     assert np.allclose(weight.sum(axis=1), 1.0, atol=1e-6)
-    # Bones are named bodies the descriptor exports: the viewer binds them by name.
-    assert set(skin["bones"]) <= {b["name"] for b in scene["bodies"]}
+    # Bones are named bodies the walk carries: a viewer binds them by name.
+    assert set(skin.bones) <= {b.name for b in content.bodies}
 
     # Drawn vertices only: a trilinear block's interior vertices follow all eight nodes and are
     # reduced to four, which no one sees.
@@ -431,20 +387,20 @@ def test_a_flex_skin_binds_at_its_vertices_and_follows_its_bodies(
         assert np.abs(got - _flex_verts(model, data))[drawn].max() < 1e-5
 
 
-def test_a_pinned_vertex_binds_to_the_body_it_is_pinned_to(tmp_path):
+def test_a_pinned_vertex_binds_to_the_body_it_is_pinned_to():
     model, data = _flex_model(_PINNED3)
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
-    _verts, _faces, skin, index, weight = _flex_skin(scene, tmp_path, "blk")
-    holder = skin["bones"].index("holder")
+    content = walk(model, data, LOG)
+    _verts, _faces, skin, index, weight = _flex_skin(content, "blk")
+    holder = skin.bones.index("holder")
     pinned = [0, 1, 2, 9, 10, 11]
     assert (index[pinned, 0] == holder).all() and np.allclose(weight[pinned, 0], 1.0)
-    assert "holder" not in [skin["bones"][i] for i in index[12:, 0]]
+    assert "holder" not in [skin.bones[i] for i in index[12:, 0]]
 
 
-def test_a_solid_flex_draws_its_boundary_facing_outward(tmp_path):
+def test_a_solid_flex_draws_its_boundary_facing_outward():
     model, data = _flex_model(_GRID3)
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
-    verts, faces, *_ = _flex_skin(scene, tmp_path, "blk")
+    content = walk(model, data, LOG)
+    verts, faces, *_ = _flex_skin(content, "blk")
     # 3x3x3 vertices: six faces of 2x2 squares, two triangles each.
     assert len(faces) == 6 * 4 * 2
     tri = verts[faces]
@@ -452,14 +408,14 @@ def test_a_solid_flex_draws_its_boundary_facing_outward(tmp_path):
     outward = np.einsum("ij,ij->i", normal, tri.mean(axis=1) - verts.mean(axis=0))
     assert (outward > 0).all(), "a viewer draws front faces only: the shell must wind outward"
     # The skin's material is the flex's own.
-    geom = next(g for g in scene["geoms"] if g.get("skin") is not None)
-    assert geom["rgba"] == pytest.approx([0.2, 0.6, 0.9, 1.0]) and geom["body"] == 0
+    (skin,) = content.skins
+    assert skin.rgba == pytest.approx([0.2, 0.6, 0.9, 1.0])
 
 
-def test_a_sheet_flex_is_drawn_from_both_sides(tmp_path):
+def test_a_sheet_flex_is_drawn_from_both_sides():
     model, data = _flex_model(_SHEET)
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
-    verts, faces, skin, index, weight = _flex_skin(scene, tmp_path, "cloth")
+    content = walk(model, data, LOG)
+    verts, faces, skin, index, weight = _flex_skin(content, "cloth")
     n = model.flex_vertnum[0]
     elems = model.flex_elem[: model.flex_elemnum[0] * 3].reshape(-1, 3)
     assert len(verts) == 2 * n and np.allclose(verts[:n], _flex_verts(model, data), atol=1e-6)
@@ -473,16 +429,16 @@ def test_a_sheet_flex_is_drawn_from_both_sides(tmp_path):
     assert np.allclose(got[n:], got[:n])
 
 
-def test_a_line_flex_is_drawn_as_a_tube_of_its_radius(tmp_path):
+def test_a_line_flex_is_drawn_as_a_tube_of_its_radius():
     model, data = _flex_model(_CABLE)
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
-    verts, faces, skin, index, weight = _flex_skin(scene, tmp_path, "cable")
+    content = walk(model, data, LOG)
+    verts, faces, skin, index, weight = _flex_skin(content, "cable")
     rest = _flex_verts(model, data)
     edges = model.flex_vertnum[0] - 1
     assert len(verts) == edges * 2 * 8 and len(faces) == edges * 2 * 8
     # Every ring point is one radius from the vertex whose bone it follows, and the ring is centred
     # on it.
-    follows = np.array([skin["bones"][i] for i in index[:, 0]])
+    follows = np.array([skin.bones[i] for i in index[:, 0]])
     centre = np.array([rest[int(name.rsplit("_", 1)[1])] for name in follows])
     assert np.allclose(np.linalg.norm(verts - centre, axis=1), 0.004, atol=1e-6)
     tri = verts[faces]
@@ -491,13 +447,13 @@ def test_a_line_flex_is_drawn_as_a_tube_of_its_radius(tmp_path):
     assert (np.einsum("ij,ij->i", normal, tri.mean(axis=1) - axis_point) > 0).all()
 
 
-def test_a_quadratic_flex_is_capped_at_four_bones_and_says_so(tmp_path, caplog):
+def test_a_quadratic_flex_is_capped_at_four_bones_and_says_so(caplog):
     """Nine nodes move a face vertex; the viewer takes four. Rest and affine motion stay exact."""
     model, data = _flex_model(_QUADRATIC)
     with caplog.at_level("WARNING"):
-        scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
+        content = walk(model, data, LOG)
     assert "follow more than 4 node bodies" in caplog.text
-    verts, _faces, skin, index, weight = _flex_skin(scene, tmp_path, "blk")
+    verts, _faces, skin, index, weight = _flex_skin(content, "blk")
     assert np.allclose(verts, _flex_verts(model, data), atol=1e-6)
     assert np.allclose(weight.sum(axis=1), 1.0, atol=1e-5)
 
@@ -517,13 +473,13 @@ def test_a_quadratic_flex_is_capped_at_four_bones_and_says_so(tmp_path, caplog):
     assert np.allclose(got, _flex_verts(model, data), atol=1e-5)
 
 
-def test_a_settled_flex_binds_at_rest_where_the_viewer_seats_its_bodies(tmp_path):
-    """Unnamed joints have no value in the descriptor, so a viewer seats them at 0 -- bind there."""
+def test_a_settled_flex_binds_at_rest_where_the_viewer_seats_its_bodies():
+    """Unnamed joints have no exported value, so a viewer seats them at 0 -- bind there."""
     model, data = _flex_model(_GRID3)
     _deform(model, data, np.random.default_rng(2))
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
-    assert "" not in scene["initialJoints"]
-    verts, *_ = _flex_skin(scene, tmp_path, "blk")
+    content = walk(model, data, LOG)
+    assert "" not in content.initial_joints
+    verts, *_ = _flex_skin(content, "blk")
     rest = mujoco.MjData(model)
     rest.qpos[:] = data.qpos
     for j in range(model.njnt):
@@ -533,7 +489,7 @@ def test_a_settled_flex_binds_at_rest_where_the_viewer_seats_its_bodies(tmp_path
     assert np.allclose(verts, _flex_verts(model, rest), atol=1e-6)
 
 
-def test_a_flex_in_the_collision_group_is_not_drawn(tmp_path):
+def test_a_flex_in_the_collision_group_is_not_drawn():
     model, data = _flex_model(_GRID3.replace('name="blk"', 'name="blk" group="3"'))
-    scene = export_scene(model, data, tmp_path, __import__("logging").getLogger("t"))
-    assert not any(s.get("flex") for s in scene["skins"])
+    content = walk(model, data, LOG)
+    assert not any(s.flex for s in content.skins)
