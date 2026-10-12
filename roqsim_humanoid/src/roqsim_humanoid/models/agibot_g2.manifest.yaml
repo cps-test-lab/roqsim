@@ -2,9 +2,10 @@
 #
 # `spawn_robot: {model: agibot_g2}` pulls these in automatically (via SpawnRobotPlugin.expand ->
 # expand_manifest), so a world does not re-declare the robot's intrinsic drive/controllers/sensors.
-# Each entry's `robot` is filled in from the spawn_robot `name`. To override a default, declare the
-# same plugin for the same robot in the world; to opt out entirely, set `spawn_robot`
-# `default_plugins: false`.
+# Each entry below attaches to the spawned entity because it is nested under it -- there is no
+# ownership key to fill in. To override a default, nest an entry with the same label under that
+# spawn_robot's `components:` (it merges into this one, per key); to opt out entirely, set
+# `spawn_robot` `default_plugins: false`.
 #
 # G2 is a wheeled dual-arm mobile manipulator. The base is driven by the generic `diff_drive`
 # (from roqsim_mobile) as a planar skid-steer approximation of the real 4-wheel swerve chassis
