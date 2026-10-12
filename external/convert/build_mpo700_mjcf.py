@@ -6,10 +6,10 @@ Holonomic like the Ridgeback and the LGDXRobot2, so it uses ``omni_drive`` -- bu
 platform whose wheels have to be *aimed*, which is the swerve inverse kinematics added to that plugin
 alongside its mecanum table.
 
-Two source facts worth knowing before reading this, both recorded in the platform ledger:
+Two source facts worth knowing before reading this:
 
-* **The MIT source is `neo_simulation2`, not `neo_mpo_700-2`.** The survey ranked the latter, which
-  GitHub reports as having no detected licence. `neo_simulation2` is MIT and carries all four
+* **The MIT source is `neo_simulation2`, not `neo_mpo_700-2`.** The latter is the obvious candidate,
+  but GitHub reports it as having no detected licence. `neo_simulation2` is MIT and carries all four
   Neobotix platforms with meshes, urdf and sim configs together.
 * **Only the `humble` branch has the mechanism.** `rolling` and `jazzy-sync` ship a flattened
   ``mpo_700.urdf`` in which *every* joint is ``fixed``; `humble` keeps the xacro macros that build

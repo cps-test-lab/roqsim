@@ -61,7 +61,7 @@ body inertia I and a target attitude bandwidth wn with damping zeta, ``kp_att ~ 
 also why the Crazyflie's moment gear is tuned rather than upstream's: at the arbitrary 1e-5 N*m
 upstream ships, full deflection buys 0.42 rad/s^2 and no attitude loop can track a position
 controller's tilt command -- the drone hovers perfectly and flies away the moment it is asked to
-translate. See the port log.
+translate.
 
 **Air matters.** ``density``/``viscosity`` default to 0 in MuJoCo, so a world that does not set
 the world's ``density``/``viscosity`` flies the drone through a vacuum -- no drag, and a lateral step never settles.

@@ -30,7 +30,7 @@ components:
   # optical block 68.0-76.5 mm above the floor, and base_link stands 14.9 mm above the floor, so the
   # site is at z 0.05735 (build_makerspet_mjcf.CAD_SCAN_HEIGHT). The rays skip only base_scan; the
   # head ends at the puck's bottom face, z 0.04935, as the real Mini has no body material beside its
-  # LiDAR, and the CAD's four posts end 17 mm below the scan plane -- see the port log.
+  # LiDAR, and the CAD's four posts end 17 mm below the scan plane.
   #
   # PUBLISHED SCAN: Maker's Pet's config/telem.yaml (@ 77d196b, :4-7) runs kaiaai/kaiaai_telemetry
   # (@ 7ea0d663) with lidar_model LDROBOT-LD14P and mask_radius_meters 0.0625. For that model the node's

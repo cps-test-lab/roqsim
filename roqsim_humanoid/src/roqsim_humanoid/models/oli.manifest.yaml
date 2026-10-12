@@ -2,9 +2,10 @@
 #
 # `spawn_robot: {model: oli}` pulls these in automatically (via SpawnRobotPlugin.expand ->
 # expand_manifest), so a world does not re-declare the robot's intrinsic locomotion/sensors. To
-# override a default, declare the same plugin for the same robot in the world; to opt out entirely,
-# set `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the
-# spawn_robot `name`.
+# override a default, nest an entry with the same label under that spawn_robot's `components:` (it
+# merges into this one, per key); to opt out entirely, set `spawn_robot` config `default_plugins:
+# false`. Each entry below attaches to the spawned entity because it is nested under it -- there is
+# no ownership key to fill in.
 #
 # The world MUST set `sim.timestep: 0.001` -- oli_locomotion's PD loop / decimation are tuned for a
 # 1000 Hz step / 100 Hz policy (see worlds/*oli*.yaml), exactly as the vendor deploy code runs.

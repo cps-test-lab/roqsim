@@ -49,8 +49,8 @@ class OrcaModel(AvoidanceModel):
                 "It publishes no wheel and builds from source against Cython, which pip's build "
                 "isolation hides, so it installs in two commands: pip install Cython, then pip "
                 "install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git. "
-                "A world that must run without a compiler should declare no `avoidance:` entry -- "
-                "movers then execute their own preferred velocity and nobody yields."
+                "A world that must run without a compiler steers its movers with `steer: give_way`, "
+                "the pure-Python model, or with `steer: none`."
             ) from exc
         self._dt = float(ctx.model.opt.timestep) if ctx.model is not None else self._dt
         self._sim = rvo2.PyRVOSimulator(

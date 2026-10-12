@@ -1,7 +1,7 @@
 """Scene plugin: attach a robot MJCF into the world and own its base spawn pose.
 
 This plugin only *places* the robot (build + initial pose). Its kinematics/odometry live in a controller plugin
-(e.g. :mod:`roqsim.plugins.diff_drive`), which finds this robot via the entity registry.
+(e.g. :mod:`roqsim_mobile.plugins.diff_drive`), which finds this robot via the entity registry.
 
 Every key is declared in :attr:`SpawnRobotPlugin.CONFIG_SCHEMA`, which is what ``roqsim plugins
 describe spawn_robot`` and the plugin catalog publish. ``model`` is required: a bundled model name, a
@@ -204,6 +204,8 @@ class SpawnRobotPlugin(Plugin):
         #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
         self.rest_z: float | None = None
         self.base_joint = self.prefix + settings.base_joint
+        #: Its id in the compiled model, resolved and checked in :meth:`configure`.
+        self._base_jid = -1
         #: Every actuator's final law and gains, filled in :meth:`build` and published at
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
@@ -328,8 +330,31 @@ class SpawnRobotPlugin(Plugin):
             f"a body owning the base joint {self.base_joint!r} exists in the compiled model"
         )
 
+    def _resolve_base_joint(self, ctx: SimContext) -> int:
+        """The id of the free joint the spawn pose is written to; raises if the model has none.
+
+        The pose is seven qpos values, a position and a quaternion, so the joint must be a free
+        joint: written to any other joint they land in whatever joints follow it. The entity also
+        advertises this joint to every consumer that moves the robot, so a name the model lacks is
+        refused here rather than at each of them.
+        """
+        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
+        if jid < 0:
+            raise RuntimeError(
+                f"spawn_robot ({self.robot_name}): model {self.settings.model!r} has no joint "
+                f"{self.base_joint!r} to place the base by; name its free joint with `base_joint`"
+            )
+        if ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+            raise RuntimeError(
+                f"spawn_robot ({self.robot_name}): base joint {self.base_joint!r} of model "
+                f"{self.settings.model!r} is not a free joint; the spawn pose is a position and a "
+                f"rotation, written to the base's 6-DOF joint"
+            )
+        return int(jid)
+
     def configure(self, ctx: SimContext) -> None:
         self._refuse_a_missing_pair_geom(ctx)
+        self._base_jid = self._resolve_base_joint(ctx)
         base_body = self._resolve_base_body(ctx)
         ctx.entities.add(
             Entity(
@@ -422,15 +447,7 @@ class SpawnRobotPlugin(Plugin):
 
     def _apply_initial_pose(self, ctx: SimContext) -> None:
         x, y, _ = self.initial_pose
-        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
-        if jid < 0:
-            ctx.logger.warning(
-                "spawn_robot %s: base joint %r not found; pose not applied",
-                self.robot_name,
-                self.base_joint,
-            )
-            return
-        q = ctx.model.jnt_qposadr[jid]
+        q = ctx.model.jnt_qposadr[self._base_jid]
         ctx.data.qpos[q] = x
         ctx.data.qpos[q + 1] = y
         # z: the world's if it states one, else the model's own stance. Only a model that states

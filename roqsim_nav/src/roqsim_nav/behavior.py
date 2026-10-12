@@ -1,8 +1,8 @@
-"""Per-walker behaviour: navigate to goals, recover when stuck.
+"""Per-mover behaviour: navigate to goals, recover when stuck.
 
-The high-level decisions a walker makes each step live here, on top of the controller's global plan
-(where to route) and ORCA (how to avoid collisions right now). The behaviour is a small py-trees
-tree::
+The high-level decisions a mover makes each tick live here, between the global plan (where to
+route) and the local avoidance model (how to avoid collisions right now). The behaviour is a small
+py-trees tree::
 
     Selector "root"
     |-- Sequence "recovery"     (higher priority)
@@ -13,8 +13,8 @@ tree::
         '-- FollowPath          steer to the next path point; advance goals (loop)
 
 All leaves are thin wrappers over :class:`NavCore`, which holds the state and the actual logic. Each
-tick the chosen branch writes ``NavCore.pref_vel`` (the ORCA preferred velocity); the controller
-reads it after ticking.
+tick the chosen branch writes ``NavCore.pref_vel`` (the preferred velocity the avoidance model
+shapes); the navigator reads it after ticking.
 """
 
 from __future__ import annotations
@@ -42,9 +42,9 @@ _PROGRESS_EPS = 0.01
 
 @dataclass
 class NavParams:
-    """Navigation / recovery tuning (sane defaults; overridable per walker)."""
+    """Navigation / recovery tuning (sane defaults; overridable per mover)."""
 
-    inflation_radius: float = 0.0  # A* clearance; defaults to the walker radius
+    inflation_radius: float = 0.0  # A* clearance; defaults to the mover's radius
     waypoint_radius: float = 0.3  # "reached" radius for intermediate points
     stuck_time: float = 1.5  # s of no progress before declaring stuck
     stuck_eps: float = 0.10  # m travelled within stuck_time -> stuck
@@ -119,6 +119,10 @@ class NavCore:
         self._hist = []  # list[(t, x, y)] for stuck detection
         self.pref_vel = np.zeros(2)
         self._blocker = None
+        #: Why this route did not reach every goal, or ``""``: the first goal it could not plan to or
+        #: gave up on. Read by the navigator when the route finishes, so a failed route is reported
+        #: as one rather than as an arrival.
+        self.failure = ""
         if self.planner is not None:
             # An episode plans against the world as built, never against what the last one ran into.
             self.planner.forget_blockages()
@@ -176,11 +180,14 @@ class NavCore:
     def start_recovery(self) -> None:
         """Back away from the blocker (or reverse the last heading), then drop the path so the
         navigate branch replans from the unwedged pose. After ``max_recovery`` consecutive attempts
-        (counter resets only when a goal is reached), give up on this goal and move on so we never
-        loop forever."""
+        (the count clears on reaching a goal or on moving clear of the last backup), give up on this
+        goal, record it in :attr:`failure`, and move on so we never loop forever."""
         st = self.st
         self._recover_count += 1
         if self._recover_count > self.p.max_recovery:
+            self._note_failure(
+                f"gave up on goal {self._goal_text()} after {self.p.max_recovery} recoveries"
+            )
             self._recover_count = 0
             self._recover_from = None
             self._recover_until = 0.0
@@ -215,24 +222,44 @@ class NavCore:
         return self.pref_vel
 
     def ensure_path(self) -> bool:
-        """Make sure ``st.path`` heads to the current goal. Returns False only when there is no goal
-        to pursue (single-waypoint, non-looping, done)."""
+        """Make sure ``st.path`` heads to the current goal. Returns False when there is no goal to
+        pursue: the route is done, or the planner found no path to the goal.
+
+        Without a planner (a world with no walls) the path is the straight leg. With one, a goal it
+        cannot reach ends the route as failed -- :attr:`failure` says which goal -- rather than
+        becoming a straight leg: that leg runs through the wall the planner could not get round, and
+        a pose-written body would walk through it and report an arrival.
+        """
         st = self.st
         if st.done:
             return False
         if st.path:
             return True
-        goal = st.waypoints[st.goal_idx]
-        if self.planner is not None:
-            path = self.planner.plan(
-                (self._pos[0], self._pos[1]), (float(goal[0]), float(goal[1])), now=self._t
-            )
+        goal = (float(st.waypoints[st.goal_idx][0]), float(st.waypoints[st.goal_idx][1]))
+        if self.planner is None:
+            st.path = [goal]
         else:
-            path = None
-        # No planner, or unreachable -> straight line to the goal (ORCA/recovery then cope locally).
-        st.path = path if path else [(float(goal[0]), float(goal[1]))]
+            path = self.planner.plan((self._pos[0], self._pos[1]), goal, now=self._t)
+            if not path:
+                self._note_failure(
+                    f"goal {self._goal_text()} is unreachable from "
+                    f"({self._pos[0]:.2f}, {self._pos[1]:.2f}): the planner finds no path"
+                )
+                st.done = True
+                self.pref_vel = np.zeros(2)
+                return False
+            st.path = path
         st.path_idx = 0
         return True
+
+    def _note_failure(self, reason: str) -> None:
+        """Record why the route misses a goal; the first reason is the one reported."""
+        if not self.failure:
+            self.failure = reason
+
+    def _goal_text(self) -> str:
+        goal = self.st.waypoints[self.st.goal_idx]
+        return f"{self.st.goal_idx} at ({float(goal[0]):.2f}, {float(goal[1]):.2f})"
 
     def follow_path(self, depth: int = 0) -> bool:
         """Steer toward the next path point; advance through the path and on to the next goal
