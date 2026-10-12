@@ -516,7 +516,7 @@ class WorldAccess(ABC):
 
     @abstractmethod
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
-        """Send ``name`` through ``goal_poses`` (world-frame ``(x, y, yaw)``). Never blocks.
+        """Send ``name`` through ``goal_poses`` (world-frame ``(x, y)``). Never blocks.
 
         ``goal_poses`` must not be empty; running the route the entity was configured with is
         :meth:`start_route`, not a route with no poses.
@@ -592,11 +592,18 @@ class WorldAccess(ABC):
         """Why :meth:`ready` is still false, when that is more than the world not being built yet."""
         return None
 
+    def unreachable(self) -> str | None:
+        """Why no simulator can be reached at all, or ``None`` while one may still answer.
+
+        Set only once :meth:`ready` has returned false for a reason that waiting cannot resolve.
+        """
+        return None
+
     def teardown(self) -> None:
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""
 
 
-def select(kwargs: dict, *, what: str) -> WorldAccess:
+def select(kwargs: dict) -> WorldAccess:
     """Pick the backend from the setup kwargs the RUNNER provided.
 
     Not from configuration: which transport is present is a property of how the scenario is being

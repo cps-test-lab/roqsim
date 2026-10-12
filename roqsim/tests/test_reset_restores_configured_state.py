@@ -248,6 +248,8 @@ PAYLOADS: dict[str, Any] = {
     "cmd": 1.0,
     "door": 1.0,
     "tare": None,
+    "zero_ftsensor": None,
+    "set_speed_slider": 0.5,
     "override": True,
 }
 
@@ -348,6 +350,7 @@ CASES: dict[str, Case] = {
     "clearance_monitor": Case(lambda _: _mobile({"clearance_monitor": {}})),
     "upright_monitor": Case(lambda _: _mobile({"upright_monitor": {}})),
     "energy_monitor": Case(lambda _: _mobile({"energy_monitor": {}})),
+    "step_timers": Case(lambda tmp: _world({"step_timers": {"path": str(tmp / "timers.csv")}})),
     "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
     "pose_publisher": Case(lambda _: _world(_robot("turtlebot4"))),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
@@ -382,14 +385,18 @@ CASES: dict[str, Case] = {
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
         {
-            "walker": {"walker": "MaleVisitorWalk", "waypoints": [[-1.0, 0.0], [1.0, 0.0]]},
+            "walker": {"walker": "MaleVisitorWalk", "pose": {"position": {"x": -1.0, "y": 0.0}}},
             "name": "ped",
+            "components": [
+                {"navigator": {"output": "walker", "speed": 1.0, "goals": [[1.0, 0.0]]}}
+            ],
         }
     ),
     # manipulation
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
+    "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller,),
@@ -525,6 +532,7 @@ CASES: dict[str, Case] = {
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),
+    "hazard_marking": _static({"hazard_marking": {"prefix": "h_"}, "name": "marking"}),
     # aerial
     "quadrotor_controller": Case(
         lambda _: _world(_robot("crazyflie_2", name="drone"), density=1.225, viscosity=1.8e-5)

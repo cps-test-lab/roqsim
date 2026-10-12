@@ -277,6 +277,19 @@ def write_mtl(path: str, materials: dict) -> None:
             )
 
 
+def credits_text(name: str, source: str, licence: str, author: str) -> str:
+    """The ``CREDITS.txt`` an imported blueprint carries: its own terms, and the clips' CARLA ones."""
+    return (
+        f"{name}\n\nSource:  {source}\n"
+        f"Licence: {licence}\n"
+        f"Author:  {author}\n\n"
+        "Imported with `roqsim walker import-actor`: the skin (mesh, textures,\n"
+        "skeleton, skin weights) is the source's. Locomotion comes from this\n"
+        "package's models/anims/, which are CARLA retargets under CC-BY 4.0 --\n"
+        "so this walker carries CARLA attribution too; see THIRD_PARTY.md.\n"
+    )
+
+
 def main(argv: list | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dae", help="rigged source .dae")
@@ -302,9 +315,11 @@ def main(argv: list | None = None) -> None:
         metavar="NAME",
         help="drop this material group (a held prop like a handbag); repeatable",
     )
-    ap.add_argument("--credits-source", default=None)
-    ap.add_argument("--credits-licence", default=None)
-    ap.add_argument("--credits-author", default=None)
+    # Required: a blueprint is committed with the CREDITS.txt written here or not at all, and one
+    # written without its source, licence or author is an asset with no recorded licence.
+    ap.add_argument("--credits-source", required=True, help="where the actor came from (URL)")
+    ap.add_argument("--credits-licence", required=True, help='its licence, e.g. "CC-BY 4.0"')
+    ap.add_argument("--credits-author", required=True, help="its author, as the source names them")
     args = ap.parse_args(argv)
 
     # Default to the same people/ the loader reads, so an import is visible to `resolve_walker`
@@ -379,17 +394,10 @@ def main(argv: list | None = None) -> None:
     with open(os.path.join(wdir, f"{stem}.walker.json"), "w") as f:
         json.dump(meta, f, indent=1)
 
-    if args.credits_source:
-        with open(os.path.join(wdir, "CREDITS.txt"), "w") as f:
-            f.write(
-                f"{args.name}\n\nSource:  {args.credits_source}\n"
-                f"Licence: {args.credits_licence or 'UNKNOWN'}\n"
-                f"Author:  {args.credits_author or 'UNKNOWN'}\n\n"
-                "Imported with `roqsim walker import-actor`: the skin (mesh, textures,\n"
-                "skeleton, skin weights) is the source's. Locomotion comes from this\n"
-                "package's models/anims/, which are CARLA retargets under CC-BY 4.0 --\n"
-                "so this walker carries CARLA attribution too; see THIRD_PARTY.md.\n"
-            )
+    with open(os.path.join(wdir, "CREDITS.txt"), "w") as f:
+        f.write(
+            credits_text(args.name, args.credits_source, args.credits_licence, args.credits_author)
+        )
 
     print(f"wrote {wdir}")
     print(f"  height {height:.3f} m | root_height {root_height:.3f} m | {len(verts)} verts")

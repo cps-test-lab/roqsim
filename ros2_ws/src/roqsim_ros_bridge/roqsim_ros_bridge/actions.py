@@ -179,9 +179,35 @@ def _dur_to_sec(d: DurationMsg) -> float:
     return float(d.sec) + float(d.nanosec) * 1e-9
 
 
+class _TrajectoryClock:
+    """Trajectory time since a goal started, advanced at the producer's time scale.
+
+    *rate* is the producer's ``trajectory_time_scale`` (seconds of trajectory time per simulated
+    second; a scaled controller's speed scaling), or ``None`` for one that has none and runs at 1.0.
+    A change of rate takes effect from the poll that sees it, and the time travelled so far is kept.
+    """
+
+    def __init__(self, ctx, rate: Callable[[], float] | None) -> None:
+        self._ctx = ctx
+        self._rate = rate
+        self._t0 = ctx.sim_time
+        self._base = 0.0
+        self._scale = self._read_rate()
+
+    def _read_rate(self) -> float:
+        return 1.0 if self._rate is None else float(self._rate())
+
+    def __call__(self) -> float:
+        now, scale = self._ctx.sim_time, self._read_rate()
+        if scale != self._scale:
+            self._base += (now - self._t0) * self._scale
+            self._t0, self._scale = now, scale
+        return self._base + (now - self._t0) * scale
+
+
 @action_handler("control_msgs.action.FollowJointTrajectory")
 def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
-    """Follow a JointTrajectory by feeding each waypoint at its scheduled sim time.
+    """Follow a JointTrajectory by feeding each waypoint at its scheduled trajectory time.
 
     This is the interaction MoveIt2's ``moveit_simple_controller_manager`` drives to execute
     plans. Each due waypoint goes to the producer as the parameters ``names`` and ``positions``
@@ -193,6 +219,10 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     way a ros2_control JointTrajectoryController does. Reporting the command as both would make the
     tracking error identically zero, hiding exactly the saturation or gain problem the
     feedback exists to expose.
+
+    Trajectory time runs at the producer's ``trajectory_time_scale`` per simulated second when its
+    state handle has one -- a scaled controller's speed scaling, so at 0.5 the same path takes twice
+    as long -- and at 1.0 otherwise.
 
     The result is graded on where the JOINTS ended, not on the trajectory's clock running out: the
     goal's own ``goal_tolerance`` first, then the controller's ``goal_tolerance`` config, and a
@@ -311,7 +341,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         logger.info("trajectory cancelled: %s", result.error_string)
         return result
 
-    start = ctx.sim_time
+    clock = _TrajectoryClock(ctx, getattr(handle, "trajectory_time_scale", None))
     feedback = FollowJointTrajectory.Feedback()
     feedback.joint_names = names
     # INTERPOLATE between waypoints, rather than holding each one until the next falls due.
@@ -325,25 +355,24 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     # A real JointTrajectoryController does not do this: it evaluates the trajectory at its update
     # rate and commands a continuously varying setpoint. This does the same, which makes the executed
     # motion the trajectory MoveIt actually planned rather than a sampling of it.
-    prev_t = start
+    prev_t = 0.0
     prev_pos = measured(list(traj.points[0].positions)) if traj.points else []
     prev_vel = [0.0] * len(names)
     for point in traj.points:
-        target_t = start + _dur_to_sec(point.time_from_start)
+        target_t = _dur_to_sec(point.time_from_start)
         positions = list(point.positions)
         vels = list(point.velocities) if len(point.velocities) == len(names) else None
         span = target_t - prev_t
         last_fed = None
         fed = prev_pos
         # Feed the trajectory as it comes due, honouring cancellation.
-        while ctx.sim_time < target_t:
+        while (now := clock()) < target_t:
             if goal_handle.is_cancel_requested:
                 return cancelled(fed)
-            now = ctx.sim_time
             # Once per physics step at most: the payload goes onto the physics thread's queue, and
             # posting faster than it steps only lengthens the queue.
-            if span > 0.0 and now != last_fed:
-                last_fed = now
+            if span > 0.0 and ctx.sim_time != last_fed:
+                last_fed = ctx.sim_time
                 fed = _sample(prev_pos, prev_vel, positions, vels, (now - prev_t) / span, span)
                 _send(on_payload, endpoint, names=names, positions=fed)
             time.sleep(0.002)
