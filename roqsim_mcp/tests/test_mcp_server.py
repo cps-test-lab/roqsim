@@ -95,3 +95,18 @@ def test_get_plugin_details_unknown_name_is_error_not_an_exception():
     result = _run(_call())
     payload = json.loads(result.content[0].text)
     assert "error" in payload
+
+
+def test_the_server_tells_a_client_what_every_tool_is_for():
+    """The loop -- list, detail, write the ``use`` line, check, then run -- is visible from no single
+    tool, so it is stated once at connect time, and it must name every tool the server registers."""
+    server = create_server()
+    instructions = server.instructions or ""
+    assert instructions.strip(), "a client that connects is told nothing"
+
+    async def _names():
+        return {t.name for t in await server.list_tools()}
+
+    missing = {name for name in _run(_names()) if name not in instructions}
+    assert not missing, f"the instructions do not mention {sorted(missing)}"
+    assert "`use`" in instructions
