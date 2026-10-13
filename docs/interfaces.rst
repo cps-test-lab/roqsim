@@ -577,6 +577,15 @@ simulated counterpart and is not served, so a stack that relies on it fails at t
        - ur_driver_interface: {ft: force_torque_sensor_broadcaster}
          name: ur_driver
 
+**FZI's Cartesian controllers under their own law.** ``cartesian_admittance`` answers to the names of
+FZI's ``cartesian_controllers`` with a law of its own. ``fzi_cartesian_controllers`` runs FZI's law
+-- the forward-dynamics solver over a virtual model, ``pd_gains``, ``solver.error_scale`` and
+``iterations``, ``stiffness`` -- for any of the motion, force and compliance controllers it is given,
+each registered under its own name and switched like the rest. A stack's FZI gain file is therefore
+the world's, key for key. How well a compliant press holds its force depends on how faithfully the
+arm's servo realises each commanded position, as it does on the robot; the plugin's docstring states
+the measurement.
+
 Three semantics are worth stating because getting them wrong makes a scenario that works here fail
 on the arm:
 
