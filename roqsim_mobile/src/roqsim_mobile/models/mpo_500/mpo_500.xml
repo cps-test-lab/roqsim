@@ -83,10 +83,10 @@
       grandchild and the automatic exclusion misses it) and so the pair set does not silently depend
       on tree depth.
     -->
-    <exclude body1="base_link" body2="mpo_500_omni_wheel_front_left_link"/>
-    <exclude body1="base_link" body2="mpo_500_omni_wheel_front_right_link"/>
-    <exclude body1="base_link" body2="mpo_500_omni_wheel_back_left_link"/>
-    <exclude body1="base_link" body2="mpo_500_omni_wheel_back_right_link"/>
+    <exclude body1="base_link" body2="wheel_front_left_link"/>
+    <exclude body1="base_link" body2="wheel_front_right_link"/>
+    <exclude body1="base_link" body2="wheel_back_left_link"/>
+    <exclude body1="base_link" body2="wheel_back_right_link"/>
   </contact>
 
   <worldbody>
@@ -101,33 +101,33 @@
         <geom class="visual" mesh="MPO-500-BODY__m4" material="MPO-500-BODY__m4_mat" pos="0. 0. 0" quat="0.4998982 -0.5 -0.5001018 0.5"/>
         <geom class="visual" mesh="MPO-500-BODY__m5" material="MPO-500-BODY__m5_mat" pos="0. 0. 0" quat="0.4998982 -0.5 -0.5001018 0.5"/>
         <geom class="collision" mesh="MPO-500-BODY__m0" name="base_link_collision" pos="0. 0. 0" quat="0.4998982 -0.5 -0.5001018 0.5"/>
-        <body name="mpo_500_omni_wheel_front_left_link" pos="0.25 0.28 0.13">
+        <body name="wheel_front_left_link" pos="0.25 0.28 0.13">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
-          <joint name="mpo_500_omni_wheel_front_left_joint" class="wheel"/>
+          <joint name="wheel_front_left_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_front_left_link_tyre" size="0.127" pos="0 0 0"/>
+            <geom class="wheel_collision" name="wheel_front_left_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
-        <body name="mpo_500_omni_wheel_front_right_link" pos="0.25 -0.28 0.13" quat="0.0007963267 0 0 0.9999997">
+        <body name="wheel_front_right_link" pos="0.25 -0.28 0.13" quat="0.0007963267 0 0 0.9999997">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
-          <joint name="mpo_500_omni_wheel_front_right_joint" class="wheel"/>
+          <joint name="wheel_front_right_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_front_right_link_tyre" size="0.127" pos="0 0 0"/>
+            <geom class="wheel_collision" name="wheel_front_right_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
-        <body name="mpo_500_omni_wheel_back_left_link" pos="-0.25 0.28 0.13">
+        <body name="wheel_back_left_link" pos="-0.25 0.28 0.13">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
-          <joint name="mpo_500_omni_wheel_back_left_joint" class="wheel"/>
+          <joint name="wheel_back_left_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_back_left_link_tyre" size="0.127" pos="0 0 0"/>
+            <geom class="wheel_collision" name="wheel_back_left_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
-        <body name="mpo_500_omni_wheel_back_right_link" pos="-0.25 -0.28 0.13" quat="0.0007963267 0 0 0.9999997">
+        <body name="wheel_back_right_link" pos="-0.25 -0.28 0.13" quat="0.0007963267 0 0 0.9999997">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
-          <joint name="mpo_500_omni_wheel_back_right_joint" class="wheel"/>
+          <joint name="wheel_back_right_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_back_right_link_tyre" size="0.127" pos="0 0 0"/>
+            <geom class="wheel_collision" name="wheel_back_right_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
     </body>
   </worldbody>
@@ -140,10 +140,10 @@
     <velocity name="base_wz" joint="base_free" gear="0 0 0 0 0 1" kv="4500" ctrlrange="-1.5 1.5" forcerange="-500 500"/>
     <!-- Observational wheel servos, driven from the mecanum inverse kinematics so the wheels turn,
          and turn differently when strafing. They are not the motive force. -->
-    <velocity name="wheel_front_left_motor" joint="mpo_500_omni_wheel_front_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
-    <velocity name="wheel_front_right_motor" joint="mpo_500_omni_wheel_front_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
-    <velocity name="wheel_back_left_motor" joint="mpo_500_omni_wheel_back_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
-    <velocity name="wheel_back_right_motor" joint="mpo_500_omni_wheel_back_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_front_left_motor" joint="wheel_front_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_front_right_motor" joint="wheel_front_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_back_left_motor" joint="wheel_back_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_back_right_motor" joint="wheel_back_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
   </actuator>
 
   <keyframe>
