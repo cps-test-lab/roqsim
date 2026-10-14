@@ -109,11 +109,12 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
         name = f"mpo_500_omni_wheel_{corner}_link"
         pos, quat = pose(joints[name])
         wheels += WHEEL_BODY.format(
-            name=name, body_pos=pos, body_quat=quat, joint=joints[name].get("name"),
-            geoms=geoms(links[name], "            ", wheel=True), **inertial(links[name]),
+            name=ros_name(name), body_pos=pos, body_quat=quat, joint=ros_name(joints[name].get("name")),
+            geoms=geoms(links[name], "            ", wheel=True).replace(name, ros_name(name)),
+            **inertial(links[name]),
         )
     excludes = "".join(
-        f'    <exclude body1="base_link" body2="mpo_500_omni_wheel_{c}_link"/>\n' for c in CORNERS
+        f'    <exclude body1="base_link" body2="wheel_{c}_link"/>\n' for c in CORNERS
     )
     assets = asset_block(shipped, palette, scales)
     wheel_z = float(pose(joints[f"mpo_500_omni_wheel_{CORNERS[0]}_link"])[0].split()[2])
@@ -123,6 +124,18 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
         rest_height=f"{WHEEL_RADIUS - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
+
+
+def ros_name(vendor: str) -> str:
+    """A wheel's link or joint name as the robot publishes it.
+
+    neo_simulation2 (the MIT tree the meshes come from) names the wheels ``mpo_500_omni_wheel_<corner>``;
+    Neobotix's current description for the robot, ``neo_mpo_500-2`` (``robot_model/xacros``), names them
+    ``wheel_<corner>``, and that is what the robot's relayboard puts on ``joint_states``. A model whose
+    joint names differ from the robot's makes every robot_state_publisher over the real description
+    leave its wheels unposed, so the robot's names win.
+    """
+    return vendor.replace("mpo_500_omni_wheel_", "wheel_")
 
 
 WHEEL_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
@@ -218,10 +231,10 @@ TEMPLATE = """<mujoco model="mpo_500">
     <velocity name="base_wz" joint="base_free" gear="0 0 0 0 0 1" kv="4500" ctrlrange="-1.5 1.5" forcerange="-500 500"/>
     <!-- Observational wheel servos, driven from the mecanum inverse kinematics so the wheels turn,
          and turn differently when strafing. They are not the motive force. -->
-    <velocity name="wheel_front_left_motor" joint="mpo_500_omni_wheel_front_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
-    <velocity name="wheel_front_right_motor" joint="mpo_500_omni_wheel_front_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
-    <velocity name="wheel_back_left_motor" joint="mpo_500_omni_wheel_back_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
-    <velocity name="wheel_back_right_motor" joint="mpo_500_omni_wheel_back_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_front_left_motor" joint="wheel_front_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_front_right_motor" joint="wheel_front_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_back_left_motor" joint="wheel_back_left_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
+    <velocity name="wheel_back_right_motor" joint="wheel_back_right_joint" kv="5" ctrlrange="-30 30" forcerange="-10 10"/>
   </actuator>
 
   <keyframe>
