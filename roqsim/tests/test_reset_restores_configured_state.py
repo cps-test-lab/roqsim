@@ -250,6 +250,14 @@ PAYLOADS: dict[str, Any] = {
     "tare": None,
     "zero_ftsensor": None,
     "set_speed_slider": 0.5,
+    **{
+        f"{name}/target_frame": ([0.3, 0.2, 0.4], [1.0, 0.0, 0.0, 0.0])
+        for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
+    **{
+        f"{name}/target_wrench": ([0.0, 0.0, -5.0], [0.0, 0.0, 0.0])
+        for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
     "override": True,
 }
 
@@ -397,6 +405,20 @@ CASES: dict[str, Case] = {
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
     "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
+    "fzi_cartesian_controllers": Case(
+        lambda _: _arm(
+            {
+                "fzi_cartesian_controllers": {
+                    "ft": "ft",
+                    "controllers": {
+                        "cartesian_motion_controller": {"type": "motion"},
+                        "cartesian_compliance_controller": {"type": "compliance"},
+                    },
+                }
+            }
+        ),
+        use=(_switch_every_controller,),
+    ),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller,),
@@ -575,6 +597,10 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "keeps its link, arming and last controls across the episode boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
+    "fzi_cartesian_controllers": {
+        f"_registered['{c}'].transitions": _TRANSITIONS
+        for c in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
     **{
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
