@@ -134,15 +134,37 @@ def mounts_devices(model_file: Path) -> bool:
     )
 
 
+def _steps_only(model_file: Path) -> list[dict]:
+    """``enabled: false`` for each manifest entry that adds nothing to a still picture.
+
+    That is an entry which neither mounts a device nor builds into the MJCF -- a controller, which acts
+    only once the world steps. A thumbnail world steps at the default timestep, and a controller may
+    refuse that (a locomotion policy trained at another step), so the picture leaves it out.
+    """
+    from roqsim.config import parse_plugin_entry
+    from roqsim.manifest import load_manifest
+    from roqsim.plugin import Plugin
+    from roqsim.registry import resolve_plugin
+
+    off = []
+    for entry in load_manifest(model_file):
+        spec = parse_plugin_entry(entry, "manifest plugin")
+        cls = resolve_plugin(spec.ref)
+        if cls.provides_entity or cls.build is not Plugin.build:
+            continue
+        off.append({spec.ref: {}, "name": spec.label, "enabled": False})
+    return off
+
+
 @contextlib.contextmanager
 def model_scene(ref: str):
     """The scene a model's thumbnail shows, compiled and posed: yields ``(model, data)``.
 
     A robot whose manifest mounts devices is built as ``spawn_robot`` builds it, through the same path
     as ``roqsim render`` (:func:`roqsim.render.build_target`: transport plugins dropped, then reset),
-    so its devices are attached and it stands as the spawn and its controllers leave it. Any other
-    model is its own MJCF at ``home``. Both stand on the ground and under the light
-    :func:`_ground_and_light` gives.
+    so its devices are attached and it stands as the spawn leaves it; its controllers, which act only
+    once the world steps, are left out (:func:`_steps_only`). Any other model is its own MJCF at
+    ``home``. Both stand on the ground and under the light :func:`_ground_and_light` gives.
     """
     from roqsim import models as M
     from roqsim.render import build_target
@@ -170,7 +192,12 @@ def model_scene(ref: str):
         doc = Path(tmp) / "robot.yaml"
         doc.write_text(
             yaml.safe_dump(
-                {"sim": {"world": str(world)}, "components": [{"spawn_robot": {"model": ref}}]}
+                {
+                    "sim": {"world": str(world)},
+                    "components": [
+                        {"spawn_robot": {"model": ref}, "components": _steps_only(asset.path)}
+                    ],
+                }
             )
         )
         model, data, ctx, _view, _cam = build_target(str(doc), None)
