@@ -289,6 +289,14 @@ replace every contact's own parameters::
        solimp: [0.9, 0.95, 0.001, 0.5, 2.0]   # (dmin, dmax, width, midpoint, power)
        friction: [0.3, 0.005, 0.0001]         # (slide1, slide2, spin, roll1, roll2)
 
+**Which cone.** Pyramidal stays the default: it is MuJoCo's, it is cheaper, and for a base rolling
+over a floor the direction of the tangential force is incidental. It stops being incidental where
+that force decides the outcome -- a grasp that holds or slips, a pushed part that turns, a package a
+belt carries, an insertion that reads F_x/F_y -- because the pyramid quantises the direction to its
+facets. Such a world says ``cone: elliptic``; ``roqsim check`` warns (``friction-cone``) when a world
+with an arm or an ``object`` entity leaves the default, and a sweep over the two is an ordinary
+factor.
+
 They are here for **fidelity** first. A published model that enables MuJoCo's global override has to
 be reproducible as published, and these three are the values such a model states -- and often the ones
 it randomizes, since the flag makes them the only contact parameters in play; without the flag the

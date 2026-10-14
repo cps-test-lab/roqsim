@@ -259,6 +259,11 @@ first steps by flinging them apart. It names both sides, the entity each belongs
 A run logs the same finding as a WARNING at every reset. An overlap that is meant is excluded from
 collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
+``friction-cone`` is the other warning a plain world can get: it carries an arm or an ``object``
+entity -- something grasped, pushed or carried -- while its friction cone is MuJoCo's pyramidal
+default, which quantises the direction of the tangential contact force to the pyramid's facets.
+``sim: {cone: elliptic}`` is the cone such a world wants, and saying either silences it.
+
 With no problems it prints the inventory instead: the entities that registered, the endpoints they
 publish with their topics and types, and the model's totals. That is what the next thing gets written
 against -- a scenario that drives ``robot``, a bridge that expects ``scan`` -- without opening the
