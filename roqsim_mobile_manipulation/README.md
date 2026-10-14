@@ -8,6 +8,11 @@ Robot models that are a **mobile base and an arm**: composite platforms which be
 | `frankie` | Franka Emika Panda on an Omron LD-60 AGV (QUT "Frankie") | differential drive (`diff_drive`) | 1 x Panda 7-DOF + Franka Hand |
 | `tiago_pro` | PAL Robotics TIAGo Pro | holonomic (`omni_drive`) | 2 x 7-DOF + grippers, lifting torso |
 
+And one part of such a robot rather than a robot: `mpo_cabinet`, Neobotix's arm cabinet for the MPO-500
+(their MMO-500), the **riser** a UR stands on. `spawn_arm`'s `mount.riser` welds it between a base and an
+arm from world YAML, so a base x riser x arm composition needs no MJCF of its own
+(`tests/test_arm_on_riser.py`; its CREDITS.txt names the source).
+
 ```sh
 roqsim sim roqsim_mobile_manipulation:frankie_demo
 roqsim sim roqsim_mobile_manipulation:tiago_pro_demo
