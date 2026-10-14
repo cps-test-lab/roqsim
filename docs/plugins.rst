@@ -1998,6 +1998,39 @@ holding one already is a hover. ``cmd_pos`` is read in the frame its header name
 spawn frame, ``world`` or ``map`` (or no frame) the world, and any other frame is refused. The
 configured ``target`` is a world position.
 
+Manipulation: an arm on a mobile base, and what it stands on
+-------------------------------------------------------------
+
+``spawn_arm``'s ``mount:`` welds the arm to a body of a robot spawned before it, so the arm rides the
+base's free joint and any base pairs with any arm from the world YAML. A mounted arm needs a non-empty
+``prefix``, or ``arm_controller``'s prefix scan claims the wheel motors too.
+
+The arm of a real mobile manipulator rarely sits on the base's deck: it stands on a cabinet housing its
+control box, a column or an adapter plate. ``mount.riser`` welds that structure to the mount body,
+so the arm stands on a real collider at its real height rather than floating where ``pose`` puts it.
+The riser's ``pose`` and the arm's are both in the mount body's frame, as a robot description states
+them::
+
+   components:
+     - spawn_robot: {model: mpo_500}
+       name: base
+     - spawn_arm:
+         model: ur5e
+         prefix: "ur5e_"
+         mount:
+           robot: base
+           body: base_link
+           riser: {model: mpo_cabinet, pose: {position: {x: 0.025, z: 0.35}}}
+         pose: {position: {x: 0.158, z: 0.766}, orientation: {yaw: 1.5708}}
+       name: arm
+
+A riser is rigid: one root body, no joints, no actuators, or it is refused. It takes the arm's prefix
+followed by ``riser_``, and the arm is attached as its child, so MuJoCo's parent-child exclusion keeps
+the arm's base on the riser's top plate out of contact. ``mpo_cabinet`` (``roqsim_mobile_manipulation``)
+is Neobotix's cabinet for a UR on the MPO-500. Note the yaw above: the ``ur5e`` model's root body is a
+half turn about z from its spawn frame, so a description's ``base_link`` yaw of -pi/2 is a spawn yaw of
++pi/2.
+
 Manipulation: an arm on a linear axis
 -------------------------------------
 

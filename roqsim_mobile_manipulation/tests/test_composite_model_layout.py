@@ -42,7 +42,7 @@ def test_every_model_is_a_folder():
     # layout in two -- with its meshes in whichever dir the author happened to pick.
     assert not list(MODELS_DIR.glob("*.xml"))
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
-    assert set(MODEL_NAMES) == {"frankie", "tiago_pro"}
+    assert set(MODEL_NAMES) == {"frankie", "tiago_pro", "mpo_cabinet"}
 
 
 #: What a model folder's ``meshes/`` ships for the MJCF to load; ``*.materials.json`` sidecars are
