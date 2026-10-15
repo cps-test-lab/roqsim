@@ -586,6 +586,24 @@ the world's, key for key. How well a compliant press holds its force depends on 
 arm's servo realises each commanded position, as it does on the robot; the plugin's docstring states
 the measurement.
 
+**A Universal Robots arm driven over RTDE, without ROS.** A control loop that runs on a PC and
+drives a UR through ``ur_rtde``'s ``RTDEControlInterface`` and ``RTDEReceiveInterface`` is written as
+a function of those two objects. ``ur_rtde`` builds them for the robot; for the simulated arm, a
+``ur_rtde`` entry builds them, under the same method names, units and the controller's base frame.
+Its handle (``ur_rtde:<arm>``) runs such a function in lock-step with the physics, so one
+``waitPeriod`` is one control period of simulated time and a run is reproducible. It serves
+``speedL``, ``moveL``, ``zeroFtSensor``, ``setTcp``, the watchdog and the TCP pose, speed and force.
+It does not emulate the controller's own force law (``forceMode``), payload compensation or the
+safety system, and a method it does not serve fails at its name. The plugin's docstring states each
+semantic::
+
+   - spawn_arm: {model: ur5e, prefix: ur5e_}
+     name: ur5e
+     components:
+       - force_torque: {site: fts_site, frame: world}
+         name: ft
+       - ur_rtde: {ft: ft}
+
 Three semantics are worth stating because getting them wrong makes a scenario that works here fail
 on the arm:
 
