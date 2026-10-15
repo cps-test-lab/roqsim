@@ -213,6 +213,31 @@ def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, mon
     sim.shutdown()
 
 
+def test_scenario_adapter_records_each_scenario_into_its_own_directory(tmp_path: Path, monkeypatch):
+    """A reset() told the scenario's output directory finishes the recording before it and
+    starts one there; a reset() in the same directory is a reset within that recording."""
+    from roqsim.mcap_format import is_finished
+
+    world = _write_world(tmp_path)
+    monkeypatch.setenv("ROQSIM_RECORD", "run.mcap")
+    monkeypatch.delenv("RUN_OUTPUT_DIR", raising=False)
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(tmp_path / "out"))
+    sim.reset(output_dir=str(tmp_path / "out" / "cfg" / "0"))
+    for _ in range(3):
+        sim.step()
+    sim.reset(output_dir=str(tmp_path / "out" / "cfg" / "1"))
+    first = tmp_path / "out" / "cfg" / "0" / "run.mcap"
+    assert is_finished(first), "the first scenario's recording is finished"
+    sim.reset(output_dir=str(tmp_path / "out" / "cfg" / "1"))
+    for _ in range(3):
+        sim.step()
+    sim.shutdown()
+    second = tmp_path / "out" / "cfg" / "1" / "run.mcap"
+    assert is_finished(second)
+    assert not (tmp_path / "out" / "run.mcap").exists()
+
+
 def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
     """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
     world = _write_world(tmp_path)
