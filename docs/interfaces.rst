@@ -208,8 +208,10 @@ value falls through to ``glfw``, which on a headless node opens no display and a
 first ``mujoco.Renderer`` with ``mujoco.FatalError: gladLoadGL error``.
 
 So ``import roqsim`` picks one when ``MUJOCO_GL`` is unset (see
-:func:`roqsim.gl.select_offscreen_gl`): a render node means ``egl``, its absence means ``osmesa``.
-An explicit ``MUJOCO_GL`` is always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
+:func:`roqsim.gl.select_offscreen_gl`): a ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` decides,
+because MuJoCo's egl and osmesa backends each refuse to import under the other's; with neither set, a
+render node means ``egl`` and its absence means ``osmesa``. An explicit ``MUJOCO_GL`` is always
+honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
 happen where the simulator runs -- a run configured on one machine and dispatched to another
 cannot know.
 

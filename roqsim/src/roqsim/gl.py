@@ -137,7 +137,8 @@ def select_offscreen_gl() -> str | None:
 
     ``egl`` needs a render device; without one it fails at import complaining about a
     broken GL install, which is the wrong diagnosis for a node that simply has no GPU.
-    So: a render node means ``egl``, and a CPU-only node means ``osmesa``.
+    So: a render node means ``egl``, and a CPU-only node means ``osmesa`` -- unless
+    ``PYOPENGL_PLATFORM`` names one of the two, which then decides.
 
     ``DISPLAY`` deliberately does **not** enter into it: this picks only the offscreen
     renderer, never the window's, and offscreen never wants ``glfw``

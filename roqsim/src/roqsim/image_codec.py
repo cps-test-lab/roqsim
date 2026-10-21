@@ -153,7 +153,7 @@ def encode_depth(
     # reads back through `cv::imdecode(..., IMREAD_UNCHANGED)` -- the decoder's own call -- as the
     # same uint16 pixels. There is a test for that, because a byte-order slip here is invisible until
     # something reads the depth as metres. Pillow infers that mode from a little-endian uint16 array;
-    # it is not passed as `mode=`, which Pillow 13 no longer accepts.
+    # it is not passed as `mode=`, which Pillow 13 rejects.
     frame = Image.fromarray(np.ascontiguousarray(array, dtype="<u2"))
     if frame.mode != "I;16":
         raise TypeError(f"a 16-bit depth frame became Pillow mode {frame.mode!r}, not 'I;16'")
