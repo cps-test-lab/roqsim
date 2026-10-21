@@ -12,7 +12,8 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
                               #   the device's own, else the colour `camera`
       depth_width: null       # override the depth camera's MJCF resolution (a separate depth
       depth_height: null      #   camera only; through the colour camera, `width`/`height` apply)
-      clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return"
+      clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return". The
+                              #   model's near clip plane is brought in to it if it lies beyond
       clip_far: 100.0         # m; both default to the device's DEFAULT_CLIP_NEAR/_FAR
       depth_encoding: 32FC1   # or 16UC1 -- see below
       depth_codec: png        # png | rvl: the 16UC1 compressedDepth companion's codec
@@ -66,6 +67,8 @@ depth topics that disagree.
 
 from __future__ import annotations
 
+import logging
+
 import mujoco
 import numpy as np
 
@@ -82,6 +85,8 @@ from .camera_common import (
     intrinsics_from_model,
     join_topic,
 )
+
+_logger = logging.getLogger(__name__)
 
 #: uint16 millimetres saturate here, so this is the largest range `16UC1` can carry.
 MAX_16UC1_RANGE_M = 65.535
@@ -229,6 +234,7 @@ class DepthCameraPlugin(CameraPlugin):
         why it is not built here from a prefix); a world's ``topics: {depth: ...}`` renames it.
         """
         self._resolve_depth_camera(ctx)
+        self._near_plane_within_range(ctx)
         self._depth_topic = topic
         self._depth_frame_id = frame_id
         if self.registered_depth:
@@ -332,6 +338,33 @@ class DepthCameraPlugin(CameraPlugin):
         endpoints = super().register_endpoints(ctx)
         self._registered_ep = next((ep for ep in endpoints if ep.name == "registered_depth"), None)
         return endpoints
+
+    def _near_plane_within_range(self, ctx: SimContext) -> None:
+        """Bring the model's near clip plane in to ``clip_near``, if it lies beyond it.
+
+        MuJoCo clips every camera at one near plane, ``visual/map znear`` times the model's extent,
+        and the extent grows with the world: in a 20 m room the plane stands 0.2 m out, so a device
+        whose working range starts nearer reads "no return" -- and its colour image shows nothing --
+        across that gap, with nothing saying why. The plane is a model field the renderer reads per
+        frame, so it is lowered here, never raised: other cameras keep seeing what they saw, now
+        from nearer.
+        """
+        m = ctx.model
+        extent = float(m.stat.extent)
+        if self.clip_near <= 0 or extent <= 0:
+            return
+        near = float(m.vis.map.znear) * extent
+        # The plane is single precision (MuJoCo's visual block is float), so a plane another camera
+        # already brought to this range reads back a few ULP off it; a relative margin leaves it be.
+        if near > self.clip_near * (1.0 + 1e-6):
+            m.vis.map.znear = self.clip_near / extent
+            _logger.info(
+                "%s: the model's near clip plane stood %.3f m out, beyond this camera's clip_near "
+                "%.3f m; lowered to it",
+                self.address,
+                near,
+                self.clip_near,
+            )
 
     def _resolve_depth_camera(self, ctx: SimContext) -> None:
         """The depth camera's id and intrinsics: the colour camera's own when depth renders through it."""
