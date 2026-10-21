@@ -86,24 +86,38 @@ def test_each_device_hangs_from_a_frame_of_its_robot(model):
         resolve_parent_frame(path, device["parent_frame"])
 
 
+def _without_controllers(path) -> list[dict]:
+    """Overrides switching off every manifest entry that is not a spawn: the frames are the spawns'
+    to publish, and a controller may need a runtime this test does not (a walking policy's)."""
+    off = []
+    for entry in load_manifest(path):
+        ref = next(k for k in entry if k not in ("name", "components", "enabled"))
+        if ref not in SPAWNS:
+            off.append(
+                {ref: {}, **({"name": entry["name"]} if "name" in entry else {}), "enabled": False}
+            )
+    return off
+
+
 @pytest.mark.parametrize("model", sorted(POSES))
 def test_every_frame_a_robot_declares_is_published(model):
     """A frame is a link of the robot description: a site, and the child of a static transform."""
     path = _manifest(model)
     frames = {f.name for f in parse_frames(manifest_frames(path), model)}
-    engine = Engine(
-        load_config_from_dict(
-            {
-                "sim": dict(SIM.get(model, {})),
-                "components": [{"spawn_robot": {"model": model, "prefix": "r_"}, "name": "r"}],
-            }
-        )
-    )
+    robot = {
+        "spawn_robot": {"model": model, "prefix": "r_"},
+        "name": "r",
+        "components": _without_controllers(path),
+    }
+    engine = Engine(load_config_from_dict({"sim": dict(SIM.get(model, {})), "components": [robot]}))
     engine.setup()
     for name in frames:
         assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, f"r_{name}") >= 0, name
     children = {
-        t.child for e in engine.ctx.interface.all() if e.name == "frames" for t in e.read().transforms
+        t.child
+        for e in engine.ctx.interface.all()
+        if e.name == "frames"
+        for t in e.read().transforms
     }
     assert frames <= children, model
 
