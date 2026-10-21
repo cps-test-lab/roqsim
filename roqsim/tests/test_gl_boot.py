@@ -390,15 +390,15 @@ def test_software_renderers_are_recognised():
         assert software_rendered(name) is False, name
 
 
-@pytest.mark.parametrize("platform", ["egl", "osmesa"])
+@pytest.mark.parametrize("platform", ["egl", "osmesa", "EGL"])
 def test_a_pyopengl_platform_is_followed_whatever_the_devices_say(monkeypatch, platform):
     """MuJoCo's egl and osmesa backends each refuse to import under the other's
     PYOPENGL_PLATFORM, so a probe that disagrees with the environment picks a backend that cannot
     load -- the case of a machine whose EGL renders in software and has no render node."""
     from roqsim import gl
 
-    _fake_devices(monkeypatch, nvidiactl=False, render_node=platform == "osmesa")
+    _fake_devices(monkeypatch, nvidiactl=False, render_node=platform.lower() == "osmesa")
     monkeypatch.delenv("MUJOCO_GL", raising=False)
     monkeypatch.delenv(gl._OPT_OUT, raising=False)
     monkeypatch.setenv("PYOPENGL_PLATFORM", platform)
-    assert gl.select_offscreen_gl() == platform
+    assert gl.select_offscreen_gl() == platform.lower()

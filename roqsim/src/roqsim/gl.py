@@ -135,8 +135,8 @@ def chosen_backend() -> str | None:
 def select_offscreen_gl() -> str | None:
     """Choose the **offscreen** GL backend for *this machine*, and apply it if unset.
 
-    ``egl`` needs a render device; without one it fails at import complaining about a
-    broken GL install, which is the wrong diagnosis for a node that simply has no GPU.
+    ``egl`` usually needs a render device; without one it fails at import complaining about
+    a broken GL install, which is the wrong diagnosis for a node that simply has no GPU.
     So: a render node means ``egl``, and a CPU-only node means ``osmesa`` -- unless
     ``PYOPENGL_PLATFORM`` names one of the two, which then decides.
 
@@ -167,10 +167,11 @@ def select_offscreen_gl() -> str | None:
     if existing:
         return existing
     # PyOpenGL's platform is a choice too, and the stronger one: MuJoCo's egl and osmesa backends
-    # each refuse to import under the other's PYOPENGL_PLATFORM. A machine whose EGL renders in
-    # software (Mesa's surfaceless platform) has no render node, so the probe below would pick
-    # osmesa against an environment that asked for egl, and the import would fail.
-    platform = os.environ.get("PYOPENGL_PLATFORM", "")
+    # each refuse to import under the other's PYOPENGL_PLATFORM, which they compare lowercased. A
+    # machine whose EGL renders in software (Mesa's surfaceless platform) has no render node, so the
+    # probe below would pick osmesa against an environment that asked for egl, and the import would
+    # fail.
+    platform = os.environ.get("PYOPENGL_PLATFORM", "").lower()
     if platform in _PYOPENGL_BACKENDS:
         backend = platform
     else:
