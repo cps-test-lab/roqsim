@@ -51,11 +51,10 @@ def _run(code: str, **env) -> str:
     # has chosen, and an inherited value would silently make every assertion here vacuous.
     child.pop("MUJOCO_GL", None)
     child.pop("ROQSIM_NO_GL_SELECT", None)
-    # PYOPENGL_PLATFORM must go too, and for a reason only a GPU-less machine shows: `import mujoco`
-    # in the PARENT sets it from the parent's MUJOCO_GL, and the child inherits it. Where the fresh
-    # selection lands on the same backend nothing clashes; on a host with no /dev/dri/renderD128 it
-    # picks osmesa, which then refuses to start because the inherited variable still says egl. The
-    # point of this helper is a clean interpreter, so it has to be clean of this too.
+    # PYOPENGL_PLATFORM must go too: `import mujoco` in the PARENT sets it from the parent's
+    # MUJOCO_GL, and the child inherits it. The selection follows an explicit PYOPENGL_PLATFORM, so
+    # an inherited one would decide in place of the device probe these tests exercise. The point of
+    # this helper is a clean interpreter, so it has to be clean of this too.
     child.pop("PYOPENGL_PLATFORM", None)
     for key, value in env.items():
         if value is None:
