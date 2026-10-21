@@ -13,6 +13,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
+from roqsim_quadruped.plugins.spot_locomotion import SpotLocomotionPlugin
 from roqsim_quadruped.policy import DEFAULT_POLICY
 
 from roqsim.config import load_config_from_dict
@@ -53,6 +54,18 @@ def test_leg_link_offsets_are_the_descriptions(model, leg):
     lleg = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{leg}_lleg")
     np.testing.assert_allclose(model.body_pos[uleg], (0.0, side * UPPER_LEG_Y, 0.0), atol=1e-9)
     np.testing.assert_allclose(model.body_pos[lleg], KNEE_ORIGIN, atol=1e-9)
+
+
+@pytest.mark.parametrize(
+    "limits", [[12.0], {"fl_kn": 0.0}, {"fl_kn": -1.0}, {"fl_kn": True}, {"fl_kn": "12"}]
+)
+def test_a_joint_velocity_limit_that_is_not_a_positive_speed_is_refused(limits):
+    errors = SpotLocomotionPlugin({}).validate_config({"joint_velocity_limits": limits})
+    assert any("joint_velocity_limits" in e for e in errors), errors
+
+
+def test_a_positive_joint_velocity_limit_is_accepted():
+    assert SpotLocomotionPlugin({}).validate_config({"joint_velocity_limits": {"fl_kn": 12}}) == []
 
 
 def _walking(**locomotion) -> Engine:

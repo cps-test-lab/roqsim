@@ -13,8 +13,9 @@
        scaled ~0.65x to ~32.5 kg total (real Spot): Menagerie's 50.34 kg is ~1.5x too heavy for the
        policy's soft PD (kp=60), so the robot sagged/sat onto the rear legs at the default stance. The
        foot contact is retuned for the policy's near-no-slip assumption (friction 0.8 -> 2.0, solimp
-       stiffened; see the foot class). Bodies, joints, geoms and joint ordering are otherwise verbatim,
-       so the policy sees the morphology it was trained on.
+       stiffened; see the foot class). Bodies, joints, geoms and joint ordering are otherwise
+       Menagerie's, so the policy sees the morphology it was trained on, with the leg offsets and joint
+       ranges below.
 
        The leg geometry and the joint ranges are spot_description's (bdaiinstitute/spot_ros2's
        submodule rai-opensource/spot_description @ 156d1802bfb117f219dbfce7597d283d5fabc968,

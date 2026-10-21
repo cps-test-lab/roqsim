@@ -118,8 +118,7 @@ class SpotLocomotionPlugin(Plugin):
         self.max_v = float(self.config.get("max_linear_vel", 1.5))
         self.max_vy = float(self.config.get("max_lateral_vel", 0.8))
         self.max_w = float(self.config.get("max_angular_vel", 1.5))
-        limits = self.config.get("joint_velocity_limits") or {}
-        self.joint_velocity_limits = dict(limits) if isinstance(limits, dict) else {}
+        self.joint_velocity_limits = dict(self.config.get("joint_velocity_limits") or {})
 
         # Command (body-frame [vx, vy, yaw_rate]); written by drive(), read by the policy obs.
         self._cmd = np.zeros(3, dtype=np.float32)
@@ -163,7 +162,10 @@ class SpotLocomotionPlugin(Plugin):
         limits = config.get("joint_velocity_limits")
         if limits is not None and (
             not isinstance(limits, dict)
-            or not all(isinstance(v, (int, float)) and v > 0 for v in limits.values())
+            or not all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+                for v in limits.values()
+            )
         ):
             errors.append("'joint_velocity_limits' maps an MJCF joint name to a speed > 0 (rad/s)")
         errors += CommandWatchdog.validate(config)
