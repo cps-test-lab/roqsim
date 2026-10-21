@@ -28,7 +28,23 @@ frames:
   - {name: head, parent: body, pose: {position: {x: 0.415, z: -0.01}}}
 
 components:
-  - spot_locomotion: {}                            # RL flat-terrain walking policy; config bundled
+  - spot_locomotion:                               # RL flat-terrain walking policy; config bundled
+      # spot_description's joint velocity limits (rai-opensource/spot_description @ 156d180,
+      # urdf/spot_macro.xacro: velocity="17.647" at hip_x/hip_y, "12.0" at the knees), which MJCF
+      # cannot express: the plugin never commands a joint faster.
+      joint_velocity_limits:
+        fl_hx: 17.647
+        fl_hy: 17.647
+        fl_kn: 12.0
+        fr_hx: 17.647
+        fr_hy: 17.647
+        fr_kn: 12.0
+        hl_hx: 17.647
+        hl_hy: 17.647
+        hl_kn: 12.0
+        hr_hx: 17.647
+        hr_hy: 17.647
+        hr_kn: 12.0
   - lidar:
       site: lidar
       rays: 360
