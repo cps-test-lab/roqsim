@@ -36,6 +36,13 @@ sits rather than a config key::
       max_angular_vel: 1.5         # |yaw_rate| clamp (rad/s)
       cmd_vel_timeout: 0.0         # s; > 0 stops the robot when no command arrives for this long
       test_cmd: [0.5, 0.0, 0.0]    # optional [vx, vy, w] applied every tick (standalone demo)
+      joint_velocity_limits: {}    # rad/s by MJCF joint name: no position target moves faster
+
+``joint_velocity_limits`` bounds the command, not the joint: each physics step the position target
+written to a joint's actuator moves towards the policy's by at most ``limit * timestep``, so the
+plugin never asks a leg for more speed than its motor has. MuJoCo has no joint velocity limit, so a
+joint the PD loop or a contact accelerates can still exceed it. The model's manifest sets the
+description's limits.
 """
 
 from __future__ import annotations
@@ -111,6 +118,8 @@ class SpotLocomotionPlugin(Plugin):
         self.max_v = float(self.config.get("max_linear_vel", 1.5))
         self.max_vy = float(self.config.get("max_lateral_vel", 0.8))
         self.max_w = float(self.config.get("max_angular_vel", 1.5))
+        limits = self.config.get("joint_velocity_limits") or {}
+        self.joint_velocity_limits = dict(limits) if isinstance(limits, dict) else {}
 
         # Command (body-frame [vx, vy, yaw_rate]); written by drive(), read by the policy obs.
         self._cmd = np.zeros(3, dtype=np.float32)
@@ -151,6 +160,12 @@ class SpotLocomotionPlugin(Plugin):
                 errors.append(f"'{key}' must be > 0")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, w]")
+        limits = config.get("joint_velocity_limits")
+        if limits is not None and (
+            not isinstance(limits, dict)
+            or not all(isinstance(v, (int, float)) and v > 0 for v in limits.values())
+        ):
+            errors.append("'joint_velocity_limits' maps an MJCF joint name to a speed > 0 (rad/s)")
         errors += CommandWatchdog.validate(config)
         return errors
 
@@ -166,6 +181,16 @@ class SpotLocomotionPlugin(Plugin):
         with open(self.config_path) as fh:
             cfg = yaml.safe_load(fh)
         self._joint_order = tuple(cfg["joint_order"])
+        unknown = sorted(set(self.joint_velocity_limits) - set(self._joint_order))
+        if unknown:
+            raise RuntimeError(
+                f"spot_locomotion ({self.robot}): joint_velocity_limits names joints Spot does not "
+                f"have: {', '.join(unknown)}; its joints are {', '.join(self._joint_order)}"
+            )
+        # The largest step a target may move per physics step; inf where no limit is set.
+        self._max_step = np.array(
+            [self.joint_velocity_limits.get(j, np.inf) for j in self._joint_order], dtype=np.float64
+        ) * float(m.opt.timestep)
         self._default_angles = np.array(cfg["default_angles"], dtype=np.float32)
         self._action_scale = float(cfg["action_scale"])
         self._lin_vel_scale = float(cfg.get("lin_vel_scale", 1.0))
@@ -325,7 +350,13 @@ class SpotLocomotionPlugin(Plugin):
 
         # Write position targets to Spot's position actuators (MuJoCo closes the PD loop each step;
         # ctrl is clamped to the joint range via the actuators' inherited ctrlrange).
-        d.ctrl[self._leg_aid] = self._target_q
+        if np.isfinite(self._max_step).any():
+            prev = d.ctrl[self._leg_aid]
+            d.ctrl[self._leg_aid] = prev + np.clip(
+                self._target_q - prev, -self._max_step, self._max_step
+            )
+        else:
+            d.ctrl[self._leg_aid] = self._target_q
         self._counter += 1
 
     # odom / joint_states are computed on demand in read_odom / read_joint_states (the bridge reads

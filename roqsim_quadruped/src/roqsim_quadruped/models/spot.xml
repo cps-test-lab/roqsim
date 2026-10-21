@@ -14,7 +14,16 @@
        policy's soft PD (kp=60), so the robot sagged/sat onto the rear legs at the default stance. The
        foot contact is retuned for the policy's near-no-slip assumption (friction 0.8 -> 2.0, solimp
        stiffened; see the foot class). Bodies, joints, geoms and joint ordering are otherwise verbatim,
-       so the policy sees the morphology it was trained on. -->
+       so the policy sees the morphology it was trained on.
+
+       The leg geometry and the joint ranges are spot_description's (bdaiinstitute/spot_ros2's
+       submodule rai-opensource/spot_description @ 156d1802bfb117f219dbfce7597d283d5fabc968,
+       urdf/spot_macro.xacro:85-541): each upper leg 0.110945 m out from its hip, each knee
+       0.3205 m below it, the hip_y ranges -0.898845 .. 2.29511 rad and the knee ranges -2.7929 up
+       to -0.254801 (FL), -0.247563 (FR), -0.267153 (RL), -0.257725 (RR) rad, where Menagerie had
+       0.1108 m, 0.32 m, 2.24363 for fr_hy and other knee bounds. The description's joint velocity
+       limits (17.647 rad/s at the hips, 12.0 at the knees) are not expressible in MJCF; the
+       manifest gives them to spot_locomotion, which never commands a joint faster. -->
   <compiler angle="radian" meshdir="meshes/"/>
 
   <default>
@@ -83,16 +92,16 @@
           diaginertia="0.001463 0.001365 0.001170"/>
         <joint name="fl_hx" axis="1 0 0" range="-0.785398 0.785398"/>
         <geom material="BlackAbs" mesh="front_left_hip" class="visual"/>
-        <body name="fl_uleg" pos="0 0.1108 0">
+        <body name="fl_uleg" pos="0 0.110945 0">
           <inertial pos="0.00514237 -0.00243237 -0.121009" mass="1.511" diaginertia="0.017793 0.017661 0.001839"/>
           <joint name="fl_hy" axis="0 1 0" range="-0.898845 2.29511"/>
           <geom mesh="front_left_upper_leg_0" material="wrap" class="visual"/>
           <geom mesh="front_left_upper_leg_1" material="BlackAbs" class="visual"/>
           <geom mesh="left_upper_leg_collision" class="collision"/>
-          <body name="fl_lleg" pos="0.025 0 -0.32">
+          <body name="fl_lleg" pos="0.025 0 -0.3205">
             <inertial pos="0.00225794 4.6076e-05 -0.180082" quat="1 0 0 1" mass="0.226"
               diaginertia="0.002615 0.002582 0.0000964"/>
-            <joint name="fl_kn" axis="0 1 0" range="-2.7929 -0.254402"/>
+            <joint name="fl_kn" axis="0 1 0" range="-2.7929 -0.254801"/>
             <geom material="BlackAbs" mesh="front_left_lower_leg" class="visual"/>
             <geom mesh="left_lower_leg_collision" class="collision"/>
             <geom name="FL" class="foot"/>
@@ -104,16 +113,16 @@
           diaginertia="0.001463 0.001365 0.001170"/>
         <joint name="fr_hx" axis="1 0 0" range="-0.785398 0.785398"/>
         <geom material="BlackAbs" mesh="front_right_hip" class="visual"/>
-        <body name="fr_uleg" pos="0 -0.1108 0">
+        <body name="fr_uleg" pos="0 -0.110945 0">
           <inertial pos="0.00514237 0.00243237 -0.121009" mass="1.511" diaginertia="0.017793 0.017661 0.001839"/>
-          <joint name="fr_hy" axis="0 1 0" range="-0.898845 2.24363"/>
+          <joint name="fr_hy" axis="0 1 0" range="-0.898845 2.29511"/>
           <geom mesh="front_right_upper_leg_0" material="wrap" class="visual"/>
           <geom mesh="front_right_upper_leg_1" material="BlackAbs" class="visual"/>
           <geom mesh="right_upper_leg_collision" class="collision"/>
-          <body name="fr_lleg" pos="0.025 0 -0.32">
+          <body name="fr_lleg" pos="0.025 0 -0.3205">
             <inertial pos="0.00225794 4.6076e-05 -0.180082" quat="1 0 0 1" mass="0.226"
               diaginertia="0.002615 0.002582 0.0000964"/>
-            <joint name="fr_kn" axis="0 1 0" range="-2.7929 -0.255648"/>
+            <joint name="fr_kn" axis="0 1 0" range="-2.7929 -0.247563"/>
             <geom material="BlackAbs" mesh="front_right_lower_leg" class="visual"/>
             <geom mesh="right_lower_leg_collision" class="collision"/>
             <geom name="FR" class="foot"/>
@@ -125,16 +134,16 @@
           diaginertia="0.001463 0.001365 0.001170"/>
         <joint name="hl_hx" axis="1 0 0" range="-0.785398 0.785398"/>
         <geom material="BlackAbs" mesh="rear_left_hip" class="visual"/>
-        <body name="hl_uleg" pos="0 0.1108 0">
+        <body name="hl_uleg" pos="0 0.110945 0">
           <inertial pos="0.00514237 -0.00243237 -0.121009" mass="1.511" diaginertia="0.017793 0.017661 0.001839"/>
           <joint name="hl_hy" axis="0 1 0" range="-0.898845 2.29511"/>
           <geom mesh="rear_left_upper_leg_0" material="wrap" class="visual"/>
           <geom mesh="rear_left_upper_leg_1" material="BlackAbs" class="visual"/>
           <geom mesh="left_upper_leg_collision" class="collision"/>
-          <body name="hl_lleg" pos="0.025 0 -0.32">
+          <body name="hl_lleg" pos="0.025 0 -0.3205">
             <inertial pos="0.00225794 4.6076e-05 -0.180082" quat="1 0 0 1" mass="0.226"
               diaginertia="0.002615 0.002582 0.0000964"/>
-            <joint name="hl_kn" axis="0 1 0" range="-2.7929 -0.247067"/>
+            <joint name="hl_kn" axis="0 1 0" range="-2.7929 -0.267153"/>
             <geom material="BlackAbs" mesh="rear_left_lower_leg" class="visual"/>
             <geom mesh="left_lower_leg_collision" class="collision"/>
             <geom name="HL" class="foot"/>
@@ -146,16 +155,16 @@
           diaginertia="0.001463 0.001365 0.001170"/>
         <joint name="hr_hx" axis="1 0 0" range="-0.785398 0.785398"/>
         <geom material="BlackAbs" mesh="rear_right_hip" class="visual"/>
-        <body name="hr_uleg" pos="0 -0.1108 0">
+        <body name="hr_uleg" pos="0 -0.110945 0">
           <inertial pos="0.00514237 0.00243237 -0.121009" mass="1.511" diaginertia="0.017793 0.017661 0.001839"/>
           <joint name="hr_hy" axis="0 1 0" range="-0.898845 2.29511"/>
           <geom mesh="rear_right_upper_leg_0" material="wrap" class="visual"/>
           <geom mesh="rear_right_upper_leg_1" material="BlackAbs" class="visual"/>
           <geom mesh="right_upper_leg_collision" class="collision"/>
-          <body name="hr_lleg" pos="0.025 0 -0.32">
+          <body name="hr_lleg" pos="0.025 0 -0.3205">
             <inertial pos="0.00225794 4.6076e-05 -0.180082" quat="1 0 0 1" mass="0.226"
               diaginertia="0.002615 0.002582 0.0000964"/>
-            <joint name="hr_kn" axis="0 1 0" range="-2.7929 -0.248282"/>
+            <joint name="hr_kn" axis="0 1 0" range="-2.7929 -0.257725"/>
             <geom material="BlackAbs" mesh="rear_right_lower_leg" class="visual"/>
             <geom mesh="right_lower_leg_collision" class="collision"/>
             <geom name="HR" class="foot"/>
