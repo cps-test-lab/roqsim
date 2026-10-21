@@ -199,8 +199,9 @@ Choosing a GL backend
 ---------------------
 
 ``MUJOCO_GL`` selects the offscreen renderer, and which value works is a property of the **machine**:
-``egl`` needs a render device, and a CPU-only node needs ``osmesa``. Left unset, MuJoCo's own default
-fails on such a node with a message about a broken GL install -- the wrong diagnosis.
+``egl`` needs a render device unless its EGL renders in software, and a CPU-only node needs
+``osmesa``. Left unset, MuJoCo's own default fails on such a node with a message about a broken GL
+install -- the wrong diagnosis.
 
 **The variable is read once, while ``import mujoco`` runs, and binds ``GLContext`` there and then.**
 Setting it afterwards moves the variable and nothing else. Unset is not an error either: an empty
@@ -209,9 +210,9 @@ first ``mujoco.Renderer`` with ``mujoco.FatalError: gladLoadGL error``.
 
 So ``import roqsim`` picks one when ``MUJOCO_GL`` is unset (see
 :func:`roqsim.gl.select_offscreen_gl`): a ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` decides,
-because MuJoCo's egl and osmesa backends each refuse to import under the other's; with neither set, a
-render node means ``egl`` and its absence means ``osmesa``. An explicit ``MUJOCO_GL`` is always
-honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
+because MuJoCo's egl and osmesa backends each refuse to import under the other's; with neither
+named, a render node means ``egl`` and its absence means ``osmesa``. An explicit ``MUJOCO_GL`` is
+always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
 happen where the simulator runs -- a run configured on one machine and dispatched to another
 cannot know.
 
