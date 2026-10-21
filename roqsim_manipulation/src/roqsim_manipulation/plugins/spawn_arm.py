@@ -241,7 +241,9 @@ MOUNT = {
 
 #: ``end_effector:`` -- the tool welded onto the arm. See the module docstring.
 END_EFFECTOR = {
-    "model": Field(str, required=True, doc="a gripper model (robotiq_2f85, schunk_pg70)"),
+    "model": Field(
+        str, required=True, doc="a gripper model (robotiq_2f85, robotiq_hande, schunk_pg70)"
+    ),
     "site": Field(
         str,
         doc="arm site to weld it to; default: the arm manifest's end_effector.site, else "

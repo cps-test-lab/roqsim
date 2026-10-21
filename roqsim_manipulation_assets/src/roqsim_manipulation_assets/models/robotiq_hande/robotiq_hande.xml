@@ -1,0 +1,175 @@
+<mujoco model="robotiq_hande">
+  <!-- Robotiq Hand-E two-finger parallel gripper, standalone and attachable to any arm flange.
+
+       Kinematics, link and joint names and visual meshes are Robotiq's own robotiq_description
+       (robotiq_hand_e_macro.urdf.xacro; see ROBOTIQ_HANDE_LICENSE, meshes rebuilt by
+       external/convert/convert_robotiq_hande_meshes.py). Masses, grip force and speed are Robotiq's
+       Hand-E instruction manual for Universal Robots, revision 2022/01/10, cited below by section.
+       It is the third interchangeable end effector for `spawn_arm`'s `end_effector:`, beside
+       robotiq_2f85 and schunk_pg70: same frame convention, same single-DOF tendon interface.
+
+       FRAME CONVENTION: the root body `hand_e_coupling` has its origin on the GRP-CPL-062
+       coupling's mounting face (ISO 9409-1-50-4-M6, manual 5.1.2), +z along the approach axis, the
+       fingers moving along x. Robotiq's description starts at the gripper body (`hand_e_base_link`)
+       and has no coupling; the coupling is drawn here as a plain Ø75 x 11 mm disc, its effective
+       height (manual 5.2.3: TCP 157.0 mm = 146.0 mm of gripper + 11.0 mm of coupling).
+
+       HEIGHTS from the mounting face: gripper body from 11.0 mm, finger base at 110.0 mm,
+       fingertip ends at 157.0 mm on the meshes, which is the manual's TCP (5.2.3); `tcp` sits
+       there. `pinch`, the grasp centre every pick driver reaches, is the middle of the flat pad
+       band, 146.75 mm out.
+
+       ONE DOF THROUGH A TENDON. Two slide joints, coupled 1:1 as the description's <mimic> couples
+       them (the Hand-E is two racks on one pinion, no linkage loop, so the pads stay parallel by
+       construction). `fingers_actuator` drives the `split` tendon, a non-joint transmission, which
+       is what makes `arm_controller` expose it as a GripperCommand action.
+
+       JOINT CONVENTION IS ROBOTIQ'S: `hande_left_finger_joint` is that finger's travel, 0 open to
+       0.025 m closed, like the 2F-85 knuckle (0 open). So a GripperCommand position is metres of
+       finger travel from open, and qpos0 is the open gripper. The tendon is the mean travel, and the
+       ctrl is Robotiq's position register: 0 open (50 mm), 255 closed, linear, 0.196 mm of aperture
+       per count (manual: 0x00 open, 0xFF closed, about 0.2 mm per count).
+
+       GRIP FORCE AND SPEED. The force limit is the datasheet's 185 N per jaw (manual 5.2.1, and
+       5.2.2's payload equation W = 2 F mu / Sf, which makes F the force of each jaw): the tendon
+       forcerange is 370 N, halved at each finger by the 0.5 moment. The servo is stiff enough to
+       saturate there within a millimetre of a blocked jaw, as the real gripper squeezes with its
+       force setting whatever the object's width. The 150 mm/s top finger speed (5.2.1) is the
+       saturated force over the finger joints' damping, which acts outside the force clamp. So a
+       GripperCommand max_effort below 185 N also slows the fingers, where the real gripper's speed
+       register is independent of force: at the 20 N minimum they move at 16 mm/s, not 20.
+
+       No <option>/<keyframe>: physics options come from the world on attach, and the pose is
+       owned by spawn_arm / arm_controller. -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <default>
+    <!-- Gripper-scoped class names: this model is attached INTO an arm's spec, and with an empty
+         end-effector prefix a class called `visual` would collide with the arm's own. -->
+    <default class="hande">
+      <!-- Slide joints in metres, Robotiq's travel. damping = 185 N / 0.15 m/s sets the top speed;
+           MuJoCo integrates it implicitly, which also keeps the stiff servo stable (free tracking
+           to 0.000 mm on Euler and implicitfast at 2 ms for any armature and kp 1e5..1e6 N/m).
+           armature stands for the drive's reflected inertia, which no source gives and which a
+           geared rack drive makes large (a small DC motor geared to 150 mm/s reflects tens of kg).
+           It is load-bearing for HOLDING: with 0.005 .. 0.3 the saturated fingers chatter about a
+           millimetre against a gripped object and walk it out of the jaws at 0.4 .. 0.9 mm/s; from
+           0.5 up they sit still. 2.0 leaves a factor of four. Re-measure with the hold test in
+           tests/test_grippers.py if the world's timestep or the pad contact changes. -->
+      <joint type="slide" range="0 0.025" armature="2.0" damping="1233"
+        solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+      <default class="hande_visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="hande_collision">
+        <geom group="3" rgba="0.5 0.5 0.5 0.4"/>
+      </default>
+      <!-- The pads: a box on each finger's flat inner face (19 x 20.5 mm at x = 0, measured on the
+           finger meshes), so the contact is face to face with several points per jaw. priority
+           makes the pad own the pair, so solimp/solref are set with it. Friction 1.0 stands for the
+           flat NBR overmoulded fingers the Hand-E ships with (manual 5.1.3). -->
+      <default class="hande_pad">
+        <geom type="box" group="3" size="0.003 0.0095 0.01025" friction="1.0 0.005 0.0001"
+          condim="4" priority="1" solimp="0.95 0.99 0.001" solref="0.004 1" rgba="0.15 0.15 0.15 1"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <!-- Colours are the description's <color>s: body 0.1, fingers 0.7. -->
+    <material name="hande_body" rgba="0.1 0.1 0.1 1" specular="0.3"/>
+    <material name="hande_coupling" rgba="0.18 0.18 0.18 1" specular="0.3"/>
+    <material name="hande_finger" rgba="0.7 0.7 0.7 1" specular="0.6" shininess="0.5"/>
+    <mesh name="hand_e" file="hand_e.stl"/>
+    <mesh name="hande_left_finger" file="hande_left_finger.stl"/>
+    <mesh name="hande_right_finger" file="hande_right_finger.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="hand_e_coupling" childclass="hande">
+      <!-- MASSES (manual 5.2.3: 1068 g, CoM 59.0 mm out; 5.2.1: 1070 g with coupling). Coupling
+           0.119 kg as a solid disc, and fingers 0.038 kg each with the inertia of their meshes'
+           volume, both the figures the public Hand-E descriptions use; the body takes the rest,
+           0.875 kg, with its CoM and diagonal inertia solved so that the whole gripper, fingers
+           open, has the manual's CoM and its inertia diag(5341, 5447, 636) kg mm^2 (Fig. 5-13).
+           The manual names no reference point for that matrix; it is read as the mounting face,
+           which a CAD-derived body inertia reproduces to within 1 %, and
+           tests/test_robotiq_hande.py checks the composite against it. -->
+      <inertial pos="0 0 0.0055" mass="0.119" diaginertia="4.304e-05 4.304e-05 8.367e-05"/>
+      <geom class="hande_visual" type="cylinder" size="0.0375 0.0055" pos="0 0 0.0055"
+        material="hande_coupling"/>
+      <geom class="hande_collision" name="hande_coupling_collision" type="cylinder"
+        size="0.0375 0.0055" pos="0 0 0.0055"/>
+      <!-- Robotiq's TCP (manual 5.2.3), the fingertip ends, for matching a real cell's TCP. -->
+      <site name="tcp" pos="0 0 0.157" type="sphere" size="0.003" group="5" rgba="0.9 0.2 0.2 1"/>
+
+      <body name="hand_e_base_link" pos="0 0 0.011">
+        <inertial pos="0 0 0.05019" mass="0.875" diaginertia="9.3583e-04 1.0029e-03 4.9477e-04"/>
+        <geom class="hande_visual" mesh="hand_e" material="hande_body"/>
+        <!-- The body as a cylinder of its Ø75 base (manual 5.1.1) up to the finger base. The waist
+             is narrower, but nothing that matters reaches it. -->
+        <geom class="hande_collision" name="hande_body_collision" type="cylinder" size="0.0375 0.0495"
+          pos="0 0 0.0495"/>
+        <!-- Grasp centre: the middle of the pad band, on the approach axis. -->
+        <site name="pinch" pos="0 0 0.13575" type="sphere" size="0.005" group="5" rgba="0.9 0.9 0.9 1"/>
+
+        <!-- Left finger at the description's origin, the OPEN pose: x = -stroke/2, axis +x, so
+             positive q closes. Inertial: the mesh's volume at the finger mass. -->
+        <body name="hande_left_finger" pos="-0.025 0 0.099">
+          <inertial pos="0.00258 0.00725 0.00754" quat="0.6186 -0.05 -0.2673 0.7372" mass="0.038"
+            diaginertia="1.796e-05 1.587e-05 4.40e-06"/>
+          <joint name="hande_left_finger_joint" axis="1 0 0"/>
+          <geom class="hande_visual" mesh="hande_left_finger" material="hande_finger"/>
+          <geom class="hande_pad" name="hande_left_pad" pos="-0.003 0 0.03675"/>
+          <!-- The stem below the pad, its inner face set back 4.8 mm as on the mesh: an object
+               pushed deeper than the pads meets the finger, not air. -->
+          <geom class="hande_collision" name="hande_left_stem" type="box" size="0.003 0.01 0.013"
+            pos="-0.0078 0 0.013"/>
+        </body>
+
+        <!-- Right finger: the mirror, at x = +stroke/2 with axis -x. -->
+        <body name="hande_right_finger" pos="0.025 0 0.099">
+          <inertial pos="-0.00258 -0.00725 0.00754" quat="0.6186 0.05 0.2673 0.7371" mass="0.038"
+            diaginertia="1.797e-05 1.587e-05 4.40e-06"/>
+          <joint name="hande_right_finger_joint" axis="-1 0 0"/>
+          <geom class="hande_visual" mesh="hande_right_finger" material="hande_finger"/>
+          <geom class="hande_pad" name="hande_right_pad" pos="0.003 0 0.03675"/>
+          <geom class="hande_collision" name="hande_right_stem" type="box" size="0.003 0.01 0.013"
+            pos="0.0078 0 0.013"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- The fingers slide in the body and the pads meet at full travel, where the joint limit is
+         the stop. The coupling and the body share a face; the pair is excluded explicitly because
+         MuJoCo's parent filter is skipped when the coupling's parent is the world. -->
+    <exclude body1="hand_e_coupling" body2="hand_e_base_link"/>
+    <exclude body1="hand_e_base_link" body2="hande_left_finger"/>
+    <exclude body1="hand_e_base_link" body2="hande_right_finger"/>
+    <exclude body1="hande_left_finger" body2="hande_right_finger"/>
+  </contact>
+
+  <tendon>
+    <!-- The mean finger travel: 0 open, 0.025 closed, so the low end of ctrlrange is the open end. -->
+    <fixed name="split">
+      <joint joint="hande_left_finger_joint" coef="0.5"/>
+      <joint joint="hande_right_finger_joint" coef="0.5"/>
+    </fixed>
+  </tendon>
+
+  <equality>
+    <!-- The description's <mimic>: the right finger follows the left. -->
+    <joint joint1="hande_right_finger_joint" joint2="hande_left_finger_joint"
+      polycoef="0 1 0 0 0" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+  </equality>
+
+  <actuator>
+    <!-- Target tendon length = ctrl * 0.025/255 m, a stiff servo saturating at the force limit:
+         gainprm = kp * 0.025/255, biasprm = (0, -kp, 0), kp = 4e5 N/m. kv is 0 because the speed
+         limit is the joints' damping, outside the force clamp. -->
+    <general name="fingers_actuator" tendon="split" ctrlrange="0 255" forcerange="-370 370"
+      biastype="affine" gainprm="39.2156863 0 0" biasprm="0 -400000 0"/>
+  </actuator>
+</mujoco>
