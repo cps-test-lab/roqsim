@@ -12,6 +12,12 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
   class-level defaults, may override ``_configure_extra``/``_capture_extra`` to add more outputs
   (e.g. depth), and declare those outputs' endpoints on their own methods.
 
+The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
+by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
+The render is always RGB; the conversion is the last step of a capture, after the lens and the noise
+are applied, so every consumer of the frame -- the raw image, the compressed one, a recording --
+reads the same pixels.
+
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
 Both read the *same* array -- the bridge's converter owns the codec, so nothing here imports one --
@@ -40,6 +46,24 @@ from roqsim.types import CameraInfo, Image
 # imported from the bridge: a sensor package must not depend on a transport backend, so the two
 # defaults agree by both citing image_transport, not by sharing a symbol.
 DEFAULT_JPEG_QUALITY = 95
+
+#: The colour encodings a camera publishes, as ROS spells them.
+COLOR_ENCODINGS = ("rgb8", "bgr8", "mono8")
+
+#: ITU-R BT.601 luma weights for R, G, B: what OpenCV's ``COLOR_RGB2GRAY`` and so ``cv_bridge``
+#: compute, so a ``mono8`` frame here is the one a driver converting a colour imager would publish.
+LUMA_BT601 = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
+
+def encode_color(rgb: np.ndarray, encoding: str) -> np.ndarray:
+    """An ``(H, W, 3)`` RGB render as the pixels of *encoding* (one of :data:`COLOR_ENCODINGS`)."""
+    if encoding == "rgb8":
+        return rgb
+    if encoding == "bgr8":
+        return np.ascontiguousarray(rgb[..., ::-1])
+    if encoding == "mono8":
+        return np.rint(rgb.astype(np.float32) @ LUMA_BT601).clip(0, 255).astype(np.uint8)
+    raise ValueError(f"unknown colour encoding {encoding!r}; expected one of {COLOR_ENCODINGS}")
 
 
 @dataclass
@@ -235,6 +259,7 @@ class CameraPlugin(Plugin):
           rate_hz: <DEFAULT_RATE_HZ>
           frame_id: <DEFAULT_FRAME_ID>
           color: true            # publish the colour stream at all -- see PUBLISHES_COLOR
+          color_encoding: rgb8   # rgb8 | bgr8 | mono8: the colour stream's pixels on the wire
           compressed: true       # also publish <image topic>/compressed (CompressedImage)
           jpeg_quality: 95       # image_transport's default; only read when compressed is on
           topics: {}             # optional: hardwire absolute topics, e.g.
@@ -259,6 +284,7 @@ class CameraPlugin(Plugin):
     DEFAULT_FRAME_ID = "camera_optical_frame"
     DEFAULT_TOPIC_PREFIX = ""
     DEFAULT_RATE_HZ = 30.0
+    DEFAULT_COLOR_ENCODING = "rgb8"
     DEFAULT_WIDTH = 640
     DEFAULT_HEIGHT = 480
 
@@ -275,6 +301,7 @@ class CameraPlugin(Plugin):
         # A compressed companion to `image`, on by default: real camera drivers advertise both, and an
         # idle publisher costs nothing here because the endpoint is lazy (see configure()).
         self.color = bool(self.config.get("color", self.PUBLISHES_COLOR))
+        self.color_encoding = str(self.config.get("color_encoding", self.DEFAULT_COLOR_ENCODING))
         self.compressed = bool(self.config.get("compressed", True))
         self.jpeg_quality = int(self.config.get("jpeg_quality", DEFAULT_JPEG_QUALITY))
         self._width_cfg = self.config.get("width")
@@ -293,7 +320,8 @@ class CameraPlugin(Plugin):
         self._cam_id = -1
         self._intr: Intrinsics | None = None
         self._frames: FrameRenderer | None = None
-        self._rgb: np.ndarray | None = None
+        #: The colour frame of the last capture, in ``color_encoding``.
+        self._color_frame: np.ndarray | None = None
         self._last_capture = float("-inf")
         # The output endpoints fed by the render pass (colour, and a subclass's depth, point cloud or
         # labels), which gate the renderer -- see _gate_endpoints().
@@ -306,6 +334,11 @@ class CameraPlugin(Plugin):
         for key in ("width", "height"):
             if config.get(key) is not None and int(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
+        encoding = config.get("color_encoding", self.DEFAULT_COLOR_ENCODING)
+        if encoding not in COLOR_ENCODINGS:
+            errors.append(
+                f"'color_encoding' must be one of {', '.join(COLOR_ENCODINGS)}, got {encoding!r}"
+            )
         if not 1 <= int(config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)) <= 100:
             errors.append("'jpeg_quality' must be between 1 and 100")
         for key in ("fx", "fy"):
@@ -396,7 +429,9 @@ class CameraPlugin(Plugin):
     )
     def image(self) -> Image | None:
         """The colour frame; nothing before the first capture of a trial."""
-        return None if self._rgb is None else Image(self._rgb, "rgb8", self._stamp)
+        if self._color_frame is None:
+            return None
+        return Image(self._color_frame, self.color_encoding, self._stamp)
 
     # Same payload as `image` -- one array, two wire formats. The bridge's converter owns the codec,
     # so this plugin never imports one, and `lazy` means the encode is paid only while something
@@ -452,18 +487,18 @@ class CameraPlugin(Plugin):
         # push a period the timestep divides to the step after it.
         if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return False
-        gates = self._gate_endpoints()
+        return any(self._asked_for(ep) for ep in self._gate_endpoints())
+
+    def _asked_for(self, ep: Endpoint) -> bool:
+        """Whether a consumer wants *ep* rendered now, under this camera's ``on_demand``."""
         if self.on_demand:
             # Only for a consumer that asks: an in-process claim, or a transport subscriber. With no
             # transport able to tell, nothing renders until something claims a frame.
-            return any(
-                ep.claims > 0 or (ep.has_subscribers is not None and ep.has_subscribers())
-                for ep in gates
-            )
+            return ep.claims > 0 or (ep.has_subscribers is not None and ep.has_subscribers())
         # `wanted()`: an in-process claim, a transport subscriber, or no transport able to tell
         # (`has_subscribers is None`) -- then render, because the alternative is a sensor that never
         # produces anything.
-        return any(ep.wanted() for ep in gates)
+        return ep.wanted()
 
     def output_cost(self, endpoint) -> str | None:
         """``render`` for a stream the render pass feeds; nothing for the intrinsics."""
@@ -486,7 +521,7 @@ class CameraPlugin(Plugin):
         with hold_gc():
             r = self._frames.raw
             r.disable_depth_rendering()
-            self._rgb = self._frames.render(ctx.data).copy()
+            rgb = self._frames.render(ctx.data).copy()
             if self._dist_map is not None:
                 # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
                 # views of the SAME array, so warping downstream would either pay twice or warp
@@ -495,18 +530,20 @@ class CameraPlugin(Plugin):
                 # AWAY from the sensor.
                 import cv2
 
-                self._rgb = cv2.remap(
-                    self._rgb,
+                rgb = cv2.remap(
+                    rgb,
                     self._dist_map[0],
                     self._dist_map[1],
                     cv2.INTER_LINEAR,
                     borderMode=cv2.BORDER_CONSTANT,
                 )
+            frame = encode_color(rgb, self.color_encoding)
             if self._blur_sigma > 0 or self._noise_sigma > 0:
-                self._rgb = self._degrade(ctx, self._rgb)
+                frame = self._degrade(ctx, frame)
+            self._color_frame = frame
             self._capture_extra(ctx, r)
 
-    def _degrade(self, ctx: SimContext, rgb: np.ndarray) -> np.ndarray:
+    def _degrade(self, ctx: SimContext, frame: np.ndarray) -> np.ndarray:
         """Blur, then additive Gaussian noise: the colour stream's own errors, after the lens.
 
         Drawn from ``ctx.rng_for`` keyed on this camera instance (:meth:`draw_key`), so a frame's
@@ -514,7 +551,7 @@ class CameraPlugin(Plugin):
         """
         import cv2
 
-        out = rgb
+        out = frame
         if self._blur_sigma > 0:
             out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
         if self._noise_sigma > 0:
@@ -542,7 +579,7 @@ class CameraPlugin(Plugin):
         answer "nothing yet" rather than the last trial's pixels.
         """
         self._last_capture = float("-inf")
-        self._rgb = None
+        self._color_frame = None
         self._stamp = None
         self._reset_extra(ctx)
 
