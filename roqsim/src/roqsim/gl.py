@@ -54,6 +54,10 @@ _RENDER_NODE_PREFIX = "renderD"
 #: to own the decision -- including the decision to make no decision.
 _OPT_OUT = "ROQSIM_NO_GL_SELECT"
 
+#: The ``PYOPENGL_PLATFORM`` values that name an offscreen backend: a process told to use one cannot
+#: import MuJoCo under the other, so :func:`select_offscreen_gl` follows it.
+_PYOPENGL_BACKENDS = ("egl", "osmesa")
+
 #: An NVIDIA GPU is visible to this process. Paired with *no* render node at all (see
 #: :func:`render_node`) it describes one specific mistake and nothing else -- see
 #: :func:`gpu_without_render_node`.
@@ -152,7 +156,8 @@ def select_offscreen_gl() -> str | None:
     two are different machines whenever a campaign is dispatched anywhere.
 
     Returns the backend in effect, or ``None`` under :data:`_OPT_OUT`. Never overrides an
-    explicit ``MUJOCO_GL``, and is idempotent.
+    explicit ``MUJOCO_GL``, follows a ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` where
+    ``MUJOCO_GL`` is unset, and is idempotent.
     """
     global _chosen
     if env.get(_OPT_OUT):
@@ -160,7 +165,15 @@ def select_offscreen_gl() -> str | None:
     existing = os.environ.get("MUJOCO_GL")
     if existing:
         return existing
-    backend = "egl" if render_node() is not None else "osmesa"
+    # PyOpenGL's platform is a choice too, and the stronger one: MuJoCo's egl and osmesa backends
+    # each refuse to import under the other's PYOPENGL_PLATFORM. A machine whose EGL renders in
+    # software (Mesa's surfaceless platform) has no render node, so the probe below would pick
+    # osmesa against an environment that asked for egl, and the import would fail.
+    platform = os.environ.get("PYOPENGL_PLATFORM", "")
+    if platform in _PYOPENGL_BACKENDS:
+        backend = platform
+    else:
+        backend = "egl" if render_node() is not None else "osmesa"
     os.environ["MUJOCO_GL"] = backend
     _chosen = backend
     if backend == "osmesa" and gpu_without_render_node():

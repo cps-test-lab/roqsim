@@ -235,6 +235,7 @@ def test_selecting_osmesa_next_to_a_gpu_warns(monkeypatch, caplog):
 
     _fake_devices(monkeypatch, nvidiactl=True, render_node=False)
     monkeypatch.delenv("MUJOCO_GL", raising=False)
+    monkeypatch.delenv("PYOPENGL_PLATFORM", raising=False)
     monkeypatch.delenv(gl._OPT_OUT, raising=False)
     with caplog.at_level(logging.WARNING, logger="roqsim.gl"):
         assert gl.select_offscreen_gl() == "osmesa"
@@ -249,6 +250,7 @@ def test_plain_osmesa_selection_is_silent(monkeypatch, caplog):
 
     _fake_devices(monkeypatch, nvidiactl=False, render_node=False)
     monkeypatch.delenv("MUJOCO_GL", raising=False)
+    monkeypatch.delenv("PYOPENGL_PLATFORM", raising=False)
     monkeypatch.delenv(gl._OPT_OUT, raising=False)
     with caplog.at_level(logging.WARNING, logger="roqsim.gl"):
         assert gl.select_offscreen_gl() == "osmesa"
@@ -387,3 +389,17 @@ def test_software_renderers_are_recognised():
         assert software_rendered(name) is True, name
     for name in ("NVIDIA GeForce RTX 4090/PCIe/SSE2", "Mesa Intel(R) UHD Graphics 770", ""):
         assert software_rendered(name) is False, name
+
+
+@pytest.mark.parametrize("platform", ["egl", "osmesa"])
+def test_a_pyopengl_platform_is_followed_whatever_the_devices_say(monkeypatch, platform):
+    """MuJoCo's egl and osmesa backends each refuse to import under the other's
+    PYOPENGL_PLATFORM, so a probe that disagrees with the environment picks a backend that cannot
+    load -- the case of a machine whose EGL renders in software and has no render node."""
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=False, render_node=platform == "osmesa")
+    monkeypatch.delenv("MUJOCO_GL", raising=False)
+    monkeypatch.delenv(gl._OPT_OUT, raising=False)
+    monkeypatch.setenv("PYOPENGL_PLATFORM", platform)
+    assert gl.select_offscreen_gl() == platform
