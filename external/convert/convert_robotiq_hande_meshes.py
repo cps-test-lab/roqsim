@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Convert the Robotiq Hand-E visual meshes from Robotiq's own ``robotiq_description``.
 
-Source: https://github.com/robotiq/ros at :data:`COMMIT`, ``grippers/robotiq_description`` (BSD-3-Clause,
-Copyright Robotiq; see ``ROBOTIQ_HANDE_LICENSE`` beside the model). Its three Collada files --
-``meshes/visual/hand_e/hand-e.dae`` (the gripper body), ``left_finger.dae`` and ``right_finger.dae``
--- are in metres, in the frames of the links ``robotiq_hand_e_macro.urdf.xacro`` hangs them on, with
-identity visual origins. Vertices are taken verbatim: ``hand-e.dae`` is tagged ``Y_UP`` but is already
-Z-up, and honouring the tag would lay the body on its side (see ``dae2obj.py``).
+Source: https://github.com/robotiq/robotiq-ros at :data:`COMMIT`, ``grippers/robotiq_description``
+(BSD-3-Clause, Copyright Robotiq; see ``ROBOTIQ_HANDE_LICENSE`` beside the model). Its three
+Collada files, ``meshes/visual/hand_e/hand-e.dae`` (the gripper body), ``left_finger.dae`` and
+``right_finger.dae``, are in metres, in the frames of the links ``robotiq_hand_e_macro.urdf.xacro``
+hangs them on, with identity visual origins. Vertices are taken verbatim: ``hand-e.dae`` is tagged
+``Y_UP`` but is already Z-up, and honouring the tag would lay the body on its side (see
+``dae2obj.py``).
 
 Each mesh is written as one binary STL. The meshes carry at most one useful colour each, and the
 MJCF takes its materials from the xacro's ``<color>`` instead. They are light enough (10k triangles
@@ -32,7 +33,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 
-URL = "https://github.com/robotiq/ros"
+URL = "https://github.com/robotiq/robotiq-ros"
 COMMIT = "c39cd970a3f950c8be206d0e4340c7b69e018d7a"
 PACKAGE = "grippers/robotiq_description"
 
