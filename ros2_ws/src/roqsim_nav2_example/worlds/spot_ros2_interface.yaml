@@ -1,0 +1,58 @@
+# Boston Dynamics Spot with the state interface of the spot_ros2 driver, for an application written
+# against the real robot.
+#
+# The camera stations need nothing here: the spot model's manifest already publishes them as
+# spot_ros2 does (camera/<station>/image, depth/<station>/image, depth_registered/<station>/image,
+# each with its camera_info, QoS reliable + transient_local, Spot's own frames under `body`). What
+# this world adds is the rest of the driver's state interface, where it differs from roqsim's own
+# (spot_ros2 @ 949feb7):
+#
+#   * `odometry`, not `odom` (spot_driver/src/robot_state/state_middleware_handle.cpp:20-35), and
+#     `joint_states` under the driver's names (include/spot_driver/conversions/robot_state.hpp:34-42);
+#     both reliable + transient_local with a depth of 1, as the driver publishes them;
+#   * a velocity command that lapses after 0.125 s, the driver's `cmd_duration`
+#     (spot_driver/spot_driver/spot_ros2.py:383, 2720-2727).
+#
+# The odometry's child frame stays `base_link`, where the driver's is `body`: `body` hangs from
+# `base_link` here as an identity, so every transform a consumer looks up is the driver's, but the
+# message field names the other end of that identity. nav2_spot.launch.py keeps using
+# spot_nav2.yaml, whose /odom and /scan nav2 reads.
+#
+# timestep 0.002: the spot_locomotion policy's step (see spot_nav2.yaml).
+
+sim:
+  world: empty_room
+  timestep: 0.002
+  pacing: realtime
+
+components:
+  - spawn_robot:
+      model: spot
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
+    name: robot
+    components:
+      - spot_locomotion:
+          topics: {odom: odometry}
+          qos:
+            odom: {reliability: reliable, durability: transient_local, depth: 1}
+            joint_states: {reliability: reliable, durability: transient_local, depth: 1}
+          cmd_vel_timeout: 0.125
+          joint_names:
+            fl_hx: front_left_hip_x
+            fl_hy: front_left_hip_y
+            fl_kn: front_left_knee
+            fr_hx: front_right_hip_x
+            fr_hy: front_right_hip_y
+            fr_kn: front_right_knee
+            hl_hx: rear_left_hip_x
+            hl_hy: rear_left_hip_y
+            hl_kn: rear_left_knee
+            hr_hx: rear_right_hip_x
+            hr_hy: rear_right_hip_y
+            hr_kn: rear_right_knee
+
+  - ros2_bridge: {}
+
+  - sim_interfaces: {}
