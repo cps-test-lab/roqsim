@@ -21,6 +21,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -49,6 +50,8 @@ def _bridge(world: str) -> subprocess.Popen:
         pytest.skip("ros2 CLI not on PATH (ROS not sourced)")
     env = dict(os.environ)
     env.setdefault("MUJOCO_GL", "egl")
+    # Each bridge serves its own control socket, so one still winding down cannot hold the next's.
+    env["ROQSIM_CONTROL"] = f"ipc://{tempfile.gettempdir()}/roqsim-swap-{Path(world).stem}.sock"
     return subprocess.Popen(
         [
             sys.executable,
@@ -90,18 +93,21 @@ def _consume(*args: str) -> dict:
     return json.loads(done.stdout)
 
 
-@pytest.fixture(scope="module")
-def default_spot():
-    proc = _bridge("spot_nav2.yaml")
-    time.sleep(5.0)
-    yield proc
-    _stop(proc)
+class TestTheDefaultSpot:
+    """Every station of the Spot a world gets by default. The bridge is class-scoped, so it is gone
+    before the state test below starts its own: two bridges at once would answer one consumer."""
 
+    @pytest.fixture(scope="class")
+    def default_spot(self):
+        proc = _bridge("spot_nav2.yaml")
+        time.sleep(5.0)
+        yield proc
+        _stop(proc)
 
-@pytest.mark.parametrize("station", INTERFACE["stations"])
-def test_a_spot_ros2_perception_consumer_runs_unchanged(default_spot, station):
-    report = _consume("--station", station)
-    assert report.get("ok"), report
+    @pytest.mark.parametrize("station", INTERFACE["stations"])
+    def test_a_spot_ros2_perception_consumer_runs_unchanged(self, default_spot, station):
+        report = _consume("--station", station)
+        assert report.get("ok"), report
 
 
 def test_the_state_interface_world_matches_spot_ros2_but_for_the_odometry_child():
