@@ -152,6 +152,10 @@ def encode_depth(
     # "I;16" is Pillow's 16-bit greyscale mode; PNG stores those samples big-endian, and the result
     # reads back through `cv::imdecode(..., IMREAD_UNCHANGED)` -- the decoder's own call -- as the
     # same uint16 pixels. There is a test for that, because a byte-order slip here is invisible until
-    # something reads the depth as metres.
-    Image.fromarray(array, mode="I;16").save(buffer, "PNG", compress_level=int(png_level))
+    # something reads the depth as metres. Pillow infers that mode from a little-endian uint16 array;
+    # it is not passed as `mode=`, which Pillow 13 no longer accepts.
+    frame = Image.fromarray(np.ascontiguousarray(array, dtype="<u2"))
+    if frame.mode != "I;16":
+        raise TypeError(f"a 16-bit depth frame became Pillow mode {frame.mode!r}, not 'I;16'")
+    frame.save(buffer, "PNG", compress_level=int(png_level))
     return _CONFIG_HEADER + buffer.getvalue()
