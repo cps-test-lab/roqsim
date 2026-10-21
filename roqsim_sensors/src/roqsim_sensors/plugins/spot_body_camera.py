@@ -29,10 +29,13 @@ publishes no distortion. Depth is in millimetres (``PIXEL_FORMAT_DEPTH_U16``, Sp
 ``protos/bosdyn/api/image.proto``).
 
 Bundled with the ``spot_body_camera`` device model, whose ``spot_fisheye`` and ``spot_depth`` cameras
-carry each stream's lens. Config, in addition to ``depth_camera.DepthCameraPlugin``'s::
+carry each stream's lens.
+
+Config (in addition to ``depth_camera.DepthCameraPlugin``'s)::
 
     spot_body_camera:
       station: frontleft     # the station's name, which every topic carries (required)
+      depth_frame_id: <station>  # the frame depth is stamped in: the station's own
       color_encoding: mono8  # bgr8 for a Spot with colour body cameras (spot_ros2 rgb_cameras: true)
       registered_depth: true # depth_registered/<station>/image
       compressed: false      # spot_ros2's publish_compressed_images default
