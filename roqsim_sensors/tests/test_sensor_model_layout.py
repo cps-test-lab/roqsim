@@ -69,6 +69,7 @@ def test_every_model_is_a_folder():
         "sick_nanoscan3",
         "sick_s300",
         "sick_tim571",
+        "spot_body_camera",
         "velodyne_vlp16",
         "zivid",
     ]

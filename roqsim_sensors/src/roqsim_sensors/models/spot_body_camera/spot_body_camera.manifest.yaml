@@ -1,0 +1,32 @@
+# One body camera station of a Boston Dynamics Spot, as a device `spawn_sensor` mounts. The Spot
+# model's manifest mounts it five times (roqsim_quadruped spot.manifest.yaml), each with its station
+# name as `device_name`.
+#
+# `spawn_sensor: {model: spot_body_camera}` pulls the capture plugin in, so a world does not
+# re-declare it. To override a default, nest an entry with the same label under that spawn_sensor's
+# `components:` (it merges into this one, per key); to opt out, set spawn_sensor config
+# `default_plugins: false`.
+#
+# The frames are Spot's own (Spot SDK docs/concepts/geometry_and_frames.md @ 04537dd; spot_ros2
+# spot_driver/src/object_sync/object_synchronizer.cpp @ 949feb7): `<station>` is the depth frame and
+# the mount, `<station>_fisheye` the fisheye imager's, a child of it. spot_ros2 stamps the fisheye
+# image in the second and depth in the first.
+device_name: frontleft
+frame_id: "{device_name}_fisheye"
+frames:
+  - {name: "{device_name}", parent: mount}
+  - {name: "{frame_id}", parent: "{device_name}", pose: {position: {x: -0.01}}}
+
+components:
+  - spot_body_camera:
+      station: "{device_name}"
+      camera: spot_fisheye
+      frame_id: "{frame_id}"
+      depth_camera: spot_depth
+      depth_frame_id: "{device_name}"
+
+# The range a show_fov frustum is drawn to and the coverage catalog reads: the plugin's clip planes.
+# 4 m is the Spot SDK's operating range (docs/concepts/about_spot.md); the near plane is assumed.
+fov:
+  near: 0.1
+  far: 4.0
