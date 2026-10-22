@@ -22,6 +22,7 @@ a plugin's catalog entry against its source.
 * :func:`list_plugins` -- every registered ``roqsim.plugins`` entry, one line per plugin.
 * :func:`get_plugin_details` -- one plugin's full detail, including its ``Config::``
   block parsed into structured fields.
+* :func:`published_keys` -- the top-level config keys a plugin class publishes.
 * :func:`undeclared_config_reads` -- the config keys a plugin class reads but does not publish.
 
 The doc-extraction helpers here (:func:`_own_or_module_doc`, :func:`_summary_and_config`,
@@ -609,12 +610,18 @@ def _config_keys_read(cls: type) -> set[str]:
     )
 
 
-def _published_keys(cls: type) -> set[str]:
-    """The top-level keys *cls* publishes: its schema's, else its and its bases' ``Config::`` keys."""
+def published_keys(cls: type) -> frozenset[str]:
+    """The top-level keys *cls* publishes: its schema's, else its and its bases' ``Config::`` keys.
+
+    A nested mapping in a ``Config::`` block is published as its own key: :func:`config_parameters`
+    lists ``noise`` and then ``noise.stddev``, so a world writing ``noise: {stddev: ...}`` sets a
+    published key, and the dotted children add none. Empty where the plugin publishes no keys,
+    which is "unknown", not "takes no keys".
+    """
     schema = getattr(cls, "CONFIG_SCHEMA", None)
     if schema:
-        return set(schema)
-    return {f["name"] for f in config_parameters(cls) if "." not in f["name"]}
+        return frozenset(schema)
+    return frozenset(f["name"] for f in config_parameters(cls) if "." not in f["name"])
 
 
 def undeclared_config_reads(cls: type) -> list[str]:
@@ -636,7 +643,7 @@ def undeclared_config_reads(cls: type) -> list[str]:
     """
     from roqsim.schema import INJECTED_KEYS
 
-    return sorted(_config_keys_read(cls) - _published_keys(cls) - INJECTED_KEYS)
+    return sorted(_config_keys_read(cls) - published_keys(cls) - INJECTED_KEYS)
 
 
 # ── Module CLI (python -m roqsim.introspection <subcommand>) ─────────────────────

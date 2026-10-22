@@ -343,21 +343,6 @@ class Plugin:
         return rows
 
     @classmethod
-    def documented_keys(cls) -> frozenset[str] | None:
-        """The config keys this plugin publishes: its schema's, else its ``Config::`` block's.
-
-        ``None`` where it publishes none, which is "unknown", not "takes no keys". The same list
-        ``roqsim plugins describe`` publishes, so a world is held to what the catalog says.
-        """
-        if cls.CONFIG_SCHEMA:
-            return frozenset(cls.CONFIG_SCHEMA)
-        from .introspection import config_parameters
-
-        # A documented ``noise.stddev`` is the top-level key ``noise``.
-        names = frozenset(field["name"].split(".")[0] for field in config_parameters(cls))
-        return names or None
-
-    @classmethod
     def undocumented_keys(cls, config: dict) -> list[str]:
         """The keys of *config* that this plugin, with no schema, does not document.
 
@@ -368,10 +353,12 @@ class Plugin:
         """
         if cls.CONFIG_SCHEMA:
             return []
-        documented = cls.documented_keys()
-        if documented is None:
-            return []
+        from .introspection import published_keys
         from .schema import INJECTED_KEYS
+
+        documented = published_keys(cls)
+        if not documented:
+            return []
 
         return sorted(
             key
@@ -389,7 +376,9 @@ class Plugin:
         """
         if "enabled" not in (config or {}):
             return []
-        if "enabled" in (type(self).documented_keys() or ()):
+        from .introspection import published_keys
+
+        if "enabled" in published_keys(type(self)):
             return []
         if any("'enabled'" in error for error in errors):
             return []
