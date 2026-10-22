@@ -1151,15 +1151,19 @@ which is what makes a stepped run able to render at all.
 The adapter can also leave the scene next to the run: set ``ROQSIM_SCENE_EXPORT_DIR`` and every
 (re)built world is exported as ``scene.glb`` into that directory after ``reset()`` — the file
 ``roqsim export gltf`` writes with its default options, but of the *exact* simulated world
-(``world_overrides`` included), captured at its true initial pose. A relative path is anchored to ``RUN_OUTPUT_DIR`` when it
-is set, else to the scenario's ``output_dir`` (which scenario-execution passes to ``setup()``), else to
-the process working directory.
+(``world_overrides`` included), captured at its true initial pose. A relative path is anchored to
+the scenario's own directory when scenario-execution hands one to ``reset()`` (its ``output_dir``
+argument), else to ``RUN_OUTPUT_DIR`` when it is set, else to the ``output_dir`` scenario-execution
+passes to ``setup()``, else to the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_RECORD_TRACKS``, ``ROQSIM_RECORD_EXCLUDE`` -- see
-:ref:`recording-a-run`), with a relative path anchored to ``RUN_OUTPUT_DIR`` when it is set, else to
-the scenario's ``output_dir``. That is what turns a run into something replayable: the scene
-above is the world's geometry, and the recording is what moved in it.
+:ref:`recording-a-run`), with a relative path anchored the same way. A parameter file that runs
+several scenarios in one process hands ``reset()`` a directory per scenario, and the recording
+and the scene export roll with it: the scenario before is finished, with its summary, and the next
+one records and exports its scene into its own directory, with the engine kept rather than rebuilt. That is what turns a run into
+something replayable: the scene above is the world's geometry, and the recording is what moved
+in it.
 
 What a scenario can ask the simulation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
