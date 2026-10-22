@@ -99,7 +99,7 @@ from typing import Any
 import yaml
 
 from .document import check_version, refuse_unknown_keys
-from .plugin import Plugin, PluginError
+from .plugin import VALIDATOR_RAISED, Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
 
@@ -2113,7 +2113,9 @@ def _unresolved_message(unresolved: list[tuple[str, str]]) -> str:
 def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
     """Resolve and construct every plugin in order, then run aggregated config validation.
 
-    Raises :class:`PluginError` listing *all* validation errors if any plugin rejects its config.
+    Raises :class:`PluginError` listing *all* validation errors if any plugin rejects its config, or
+    if a plugin's constructor raises: a constructor reads its config before ``validate_config`` has
+    looked at it, so a value of the wrong type fails there first.
     """
     if cfg.unresolved:
         raise PluginError(_unresolved_message(cfg.unresolved))
@@ -2124,10 +2126,20 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
         for spec in cfg.plugins
         if spec.enabled
     ]
-    instances: list[Plugin] = [
-        cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
-        for spec, cls in resolved
-    ]
+    instances: list[Plugin] = []
+    #: What a constructor raised, by position in ``instances``.
+    failed: dict[int, Exception] = {}
+    for spec, cls in resolved:
+        kwargs = {"name": spec.name, "entity": spec.entity, "label": spec.label}
+        try:
+            inst = cls(spec.config, **kwargs)
+        except Exception as exc:
+            # Validate the config anyway, on an instance with only the base attributes, so the
+            # report names the key a constructor tripped over.
+            failed[len(instances)] = exc
+            inst = cls.__new__(cls)
+            Plugin.__init__(inst, spec.config, **kwargs)
+        instances.append(inst)
     # Where this document lives, so a plugin resolving a FILE its config names does it relative to
     # the world rather than to whatever CWD happened to load it. Set here, before the validation
     # below, because `validate_config` is the first thing that resolves such a path.
@@ -2135,15 +2147,28 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
         inst.base_dir = cfg.base_dir
 
     errors: list[str] = []
-    for inst, (spec, _cls) in zip(instances, resolved, strict=True):
+    for i, (inst, (spec, _cls)) in enumerate(zip(instances, resolved, strict=True)):
         # `config_errors`, not `validate_config`: a declared CONFIG_SCHEMA is checked because it is
         # declared. Leaving that call to each plugin made the schema exactly as reliable as the
         # docstring it replaces -- a plugin could publish a contract through `roqsim plugins
         # describe` and check none of it, with nothing to say so.
-        errors.extend(
-            f"[{inst.name} ({spec.ref})] {msg}" for msg in inst.config_errors(inst.config)
-        )
+        messages = inst.config_errors(inst.config)
+        if i in failed:
+            # A validator that reads what the constructor would have set raises on this instance;
+            # that says nothing of the config, and the constructor's exception is reported below.
+            messages = [m for m in messages if not m.startswith(VALIDATOR_RAISED)]
+        errors.extend(f"[{inst.name} ({spec.ref})] {msg}" for msg in messages)
+        if i in failed:
+            exc = failed[i]
+            errors.append(
+                f"[{inst.name} ({spec.ref})] could not be constructed: {type(exc).__name__}: {exc}"
+            )
 
     if errors:
-        raise PluginError("plugin config validation failed:\n  - " + "\n  - ".join(errors))
+        # Chained to the first constructor that raised, so its traceback is not lost: a constructor
+        # can fail on a bug of its own, not only on a value of the wrong type.
+        cause = next(iter(failed.values()), None)
+        raise PluginError(
+            "plugin config validation failed:\n  - " + "\n  - ".join(errors)
+        ) from cause
     return instances
