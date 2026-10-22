@@ -42,6 +42,7 @@ BSD 3-Clause
   Unitree G1 (12-DoF + policy)    (c) 2016-2023 HangZhou YuShu TECHNOLOGY CO.,LTD.
   Unitree G1 29-DoF w/ Dex1       (c) 2016-2022 HangZhou YuShu TECHNOLOGY CO.,LTD.
   UR10e, UR5e, Robotiq 2F-85      (c) 2018 ROS-Industrial Consortium / (c) 2013 ROS-Industrial
+  UR30                            parameters (c) 2021 Universal Robots A/S; meshes the UR10e's
   Clearpath Jackal                (c) 2021 Clearpath Robotics Inc.
   Clearpath Husky A200            (c) 2015 Clearpath Robotics, Paul Bovbel
   Clearpath Ridgeback             (c) 2023 Clearpath Robotics, via clearpath_common

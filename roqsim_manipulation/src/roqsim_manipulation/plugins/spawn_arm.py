@@ -152,6 +152,8 @@ _DEFAULT_HOME = {
     # UR5e home from the reference implementation this model was ported from: elbow-up
     # over the workspace, which is the configuration its peg-in-hole runs start from.
     "ur5e": [0.0, -1.57079632, 1.57079632, -1.57079632, -1.57079632, 0.0],
+    # UR30: the ur5e's elbow-up pose, flange pointing down over the workspace.
+    "ur30": [0.0, -1.57079632, 1.57079632, -1.57079632, -1.57079632, 0.0],
     "panda": [0.0, 0.0, 0.0, -1.57079, 0.0, 1.57079, -0.7853, 0.04, 0.04],
     # Gen3 arm home (7 joints); the gripper joints keep their rest (open) pose.
     "gen3": [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109, 1.57079633],
