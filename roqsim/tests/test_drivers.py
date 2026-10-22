@@ -238,6 +238,25 @@ def test_scenario_adapter_records_each_scenario_into_its_own_directory(tmp_path:
     assert not (tmp_path / "out" / "run.mcap").exists()
 
 
+def test_scenario_adapter_exports_the_scene_into_each_scenarios_directory(tmp_path: Path, monkeypatch):
+    """A reset() into a new scenario directory exports the scene there too, though the world is
+    not rebuilt; a reset() in the same directory does not export it again."""
+    world = _write_world(tmp_path)
+    monkeypatch.setenv("ROQSIM_SCENE_EXPORT_DIR", "scene")
+    monkeypatch.delenv("RUN_OUTPUT_DIR", raising=False)
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(tmp_path / "out"))
+    sim.reset(output_dir=str(tmp_path / "out" / "0"))
+    sim.reset(output_dir=str(tmp_path / "out" / "1"))
+    second = tmp_path / "out" / "1" / "scene" / "scene.glb"
+    assert second.read_bytes()[:4] == b"glTF"
+    second.unlink()
+    sim.reset(output_dir=str(tmp_path / "out" / "1"))
+    sim.shutdown()
+    assert (tmp_path / "out" / "0" / "scene" / "scene.glb").is_file()
+    assert not second.exists()
+
+
 def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
     """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
     world = _write_world(tmp_path)

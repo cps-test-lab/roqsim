@@ -1150,8 +1150,8 @@ It **records** on the same environment contract the standalone runner uses (``RO
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_RECORD_TRACKS``, ``ROQSIM_RECORD_EXCLUDE`` -- see
 :ref:`recording-a-run`), with a relative path anchored the same way. A parameter file that runs
 several scenarios in one process hands ``reset()`` a directory per scenario, and the recording
-rolls with it: the scenario before is finished, with its summary, and the next one records into
-its own directory, with the engine kept rather than rebuilt. That is what turns a run into
+and the scene export roll with it: the scenario before is finished, with its summary, and the next
+one records and exports its scene into its own directory, with the engine kept rather than rebuilt. That is what turns a run into
 something replayable: the scene above is the world's geometry, and the recording is what moved
 in it.
 

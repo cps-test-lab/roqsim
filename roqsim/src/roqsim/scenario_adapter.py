@@ -32,10 +32,11 @@ makes that one scenario instead of N. Ordinary scenarios declare neither and sta
 simulator-agnostic: the world then comes from ``ROQSIM_WORLD``, set by whoever deployed the run.
 
 A runner that executes several scenarios in one process hands ``reset()`` each scenario's own
-output directory (scenario-execution's ``output_dir`` reset argument). The recording then rolls
-with it: the scenario before is finished and the next one records into its own directory, so a
-parameter file of many scenarios leaves one complete recording per scenario rather than one file
-for all of them. The engine is not rebuilt for it; a reset is what separates two scenarios.
+output directory (scenario-execution's ``output_dir`` reset argument). The recording and the scene
+export then roll with it: the scenario before is finished and the next one records and exports its
+scene into its own directory, so a parameter file of many scenarios leaves one complete recording
+per scenario rather than one file for all of them. The engine is not rebuilt for it; a reset is
+what separates two scenarios.
 
 Because the world is *compiled* when the engine is built (not on ``reset``), the engine is built
 lazily -- on the first of ``reset()``/``dt``/``step()`` -- so it is constructed with the world and
@@ -504,9 +505,10 @@ class MujocoSim(_Base):
         )
         if output_dir is not None and output_dir != self._run_dir:
             # A scenario with a directory of its own: the one before it is finished, with its
-            # summary, and this one's recording starts afresh in its directory below.
+            # summary, and this one's recording and scene export start afresh in its directory.
             self._finish_recording()
             self._run_dir = output_dir
+            self._scene_export_pending = True
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
         self._engine.reset(**kwargs)
         if self._scene_export_pending:
