@@ -56,6 +56,9 @@ components:
       # message is stamped in, so it has to be the frame the reading is measured in.
       site: "{device_name}_imu_optical_frame"
       frame_id: "{device_name}_imu_optical_frame"   # realsense2_camera constants.h / base_realsense_node.cpp
+      # The chain above publishes this frame from the gyro optical frame, and spawn_sensor sends it;
+      # a second transform from the IMU's own body would give the frame two parents.
+      emit_static_tf: false
       # One fused message carrying both channels, which is what the driver publishes with
       # `unite_imu_method` set (its default of 0 leaves accel and gyro on separate topics instead).
       topic: camera/imu
