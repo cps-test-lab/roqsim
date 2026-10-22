@@ -223,8 +223,20 @@ class Plugin:
         hardware topic names regardless of its scope. A relative value renames the endpoint inside
         its namespace, the way a vendor description names a robot's second scanner ``scan2`` under
         the robot's namespace.
+
+        Asked in ``configure`` or ``register_endpoints``: :meth:`check_topic_keys` holds the
+        ``topics:`` map to the names asked by then, so a name first asked later raises; one already
+        asked may be asked again.
         """
-        self.__dict__.setdefault("_topic_keys_read", set()).add(endpoint_name)
+        read = self.__dict__.setdefault("_topic_keys_read", set())
+        if endpoint_name not in read and self.__dict__.get("_topic_keys_checked"):
+            raise PluginError(
+                f"[{self.address} ({type(self).__name__})] topic_override({endpoint_name!r}) is asked "
+                "after the plugin's topics: were checked: a topic name must be asked for in "
+                "configure or register_endpoints, or a rename keyed on it is refused as reaching "
+                "nothing."
+            )
+        read.add(endpoint_name)
         return (self.config.get("topics") or {}).get(endpoint_name)
 
     def check_topic_keys(self) -> None:
@@ -235,8 +247,10 @@ class Plugin:
         publishes on by default (``contact_monitor``'s ``contact`` publishes ``collision``). A key
         naming the topic, or anything else, matches nothing, and the endpoint publishes under its
         default name as if no rename had been asked for. Checked once the plugin has registered its
-        endpoints, since every name it asks for has been asked by then.
+        endpoints, since every name it asks for has been asked by then; :meth:`topic_override`
+        refuses a name first asked after it.
         """
+        self.__dict__["_topic_keys_checked"] = True
         topics = self.config.get("topics")
         if not isinstance(topics, dict) or not topics:
             return
