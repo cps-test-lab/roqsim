@@ -103,4 +103,6 @@ def test_panda_hand_holds_a_thin_part_under_gravity_and_through_a_lift(tmp_path)
         eng.step()
     pos = np.asarray(cart.read_pose()[0])
     assert pos[2] - pos0[2] > 0.09
-    assert d.xpos[bid][2] - pos[2] == pytest.approx(held, abs=2e-3)
+    lowered = d.xpos[bid][2] - pos[2]
+    eng.shutdown()
+    assert lowered == pytest.approx(held, abs=2e-3)

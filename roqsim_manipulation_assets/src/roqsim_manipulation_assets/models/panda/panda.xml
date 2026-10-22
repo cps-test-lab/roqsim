@@ -286,7 +286,9 @@
     <!-- The fingers' position servo on the split tendon, ctrlrange (0, 0.04) remapped to (0, 255):
          gain = kp * 0.04 / 255. kp is 2000 N/m, not Menagerie's 100 N/m: a part that stops the
          fingers 6 mm short of the commanded closing is pressed with 6 N per pad (0.3 N at 100 N/m),
-         in the range the Franka Hand grasps with (70 N continuous); the force range caps it. -->
+         in the range the Franka Hand grasps with (70 N continuous); the force range caps it.
+         kv 40 N s/m keeps the fingers near critically damped (2 * sqrt(kp * 0.23 kg), the tendon's
+         effective inertia with the joints' armature), as Menagerie's kv 10 was at kp 100. -->
     <general class="panda" name="actuator8" tendon="split" forcerange="-100 100" ctrlrange="0 255"
       gainprm="0.31372549 0 0" biasprm="0 -2000 -40"/>
   </actuator>
