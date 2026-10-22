@@ -88,6 +88,20 @@ def test_a_welded_gripper_takes_the_worlds_servo_under_its_own_prefix(tmp_path):
     assert (row.control, row.source) == ("position", "each")
 
 
+def test_an_entry_that_changes_nothing_records_the_models_servo(tmp_path):
+    spawn = {
+        "model": "ur5e",
+        "prefix": "u_",
+        "end_effector": {"model": "robotiq_2f85", "actuators": {"each": {"fingers_actuator": {}}}},
+    }
+    (gain, p, d), row = _servo(tmp_path, spawn, "u_fingers_actuator", "ur5e")
+    assert (gain, p, d) == pytest.approx((ROBOTIQ_GAIN, ROBOTIQ_P, ROBOTIQ_D))
+    assert row.source == "model"
+    spawn = {"model": "panda", "actuators": {"each": {"actuator8": {"p": PANDA_P}}}}
+    _, row = _servo(tmp_path, spawn, "actuator8", "panda")
+    assert row.source == "model"
+
+
 def test_an_actuator_the_gripper_does_not_have_is_refused_naming_its_actuators(tmp_path):
     spawn = {
         "model": "ur5e",
