@@ -187,7 +187,7 @@ stray ``key: value`` space would silently truncate the ref. Short names have no 
 
 Order: no ``:`` → must be an entry-point (else error). Has ``:`` → file if the left side ends in ``.py`` or exists on disk, else module. Every failure raises ``PluginError`` naming the attempted form. A plugin file is executed once per process and reused until it changes on disk, so every resolution of one ref returns the same class.
 
-Validation is **delegated to each plugin** (``validate_config``); ``instantiate_plugins`` aggregates all errors across all plugins and raises once, namespaced ``[name (ref)] message``.
+Validation is **delegated to each plugin** (``validate_config``); ``instantiate_plugins`` aggregates all errors across all plugins and raises once, namespaced ``[name (ref)] message``. A plugin is constructed before its config is validated, so a constructor that raises on a value of the wrong type is reported in the same list, as ``could not be constructed``, beside what ``validate_config`` says of the same config.
 
 World definition (``sim.world``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

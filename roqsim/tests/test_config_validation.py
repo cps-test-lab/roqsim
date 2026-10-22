@@ -53,6 +53,56 @@ def test_errors_are_namespaced_by_plugin():
     assert "[second" not in msg  # second is valid
 
 
+class ConvertsInInit(Plugin):
+    """Reads a setting in its constructor, before validate_config has looked at it."""
+
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config, **kwargs)
+        self.speed = float(self.config.get("speed", 1.0))
+
+    def validate_config(self, config: dict) -> list[str]:
+        speed = config.get("speed", 1.0)
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+            return [f"'speed' must be a number, got {speed!r}"]
+        return []
+
+
+class NeedsItsConstructor(ConvertsInInit):
+    """A validator that reads what only the constructor sets."""
+
+    def validate_config(self, config: dict) -> list[str]:
+        return [] if self.speed > 0 else ["'speed' must be > 0"]
+
+
+CONVERTS = f"{__name__}:ConvertsInInit"
+
+
+def test_a_constructor_that_raises_on_its_config_is_reported_with_the_validators_message():
+    cfg = load_config_from_dict(
+        {"components": [{CONVERTS: {"speed": "fast"}, "name": "mover"}, {REF: {}, "name": "other"}]}
+    )
+    with pytest.raises(PluginError) as exc:
+        instantiate_plugins(cfg)
+    msg = str(exc.value)
+    assert f"[mover ({CONVERTS})] 'speed' must be a number, got 'fast'" in msg
+    assert f"[mover ({CONVERTS})] could not be constructed: ValueError" in msg
+    # Every other plugin's errors are still in the same report.
+    assert "[other" in msg and "missing 'required_key'" in msg
+    # The constructor's own traceback is kept.
+    assert isinstance(exc.value.__cause__, ValueError)
+
+
+def test_a_validator_that_needs_the_constructor_reports_only_the_constructor():
+    ref = f"{__name__}:NeedsItsConstructor"
+    cfg = load_config_from_dict({"components": [{ref: {"speed": [1]}, "name": "mover"}]})
+    with pytest.raises(PluginError) as exc:
+        instantiate_plugins(cfg)
+    msg = str(exc.value)
+    assert f"[mover ({ref})] could not be constructed: TypeError" in msg
+    # Its validator raised on the half-built instance; that says nothing of the config.
+    assert "validate_config raised" not in msg
+
+
 def test_missing_plugin_key_errors():
     # An entry with only the reserved 'name' key (no plugin ref) is rejected.
     with pytest.raises(PluginError, match="exactly one plugin-ref key"):

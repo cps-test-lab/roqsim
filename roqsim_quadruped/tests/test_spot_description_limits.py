@@ -16,7 +16,7 @@ import pytest
 from roqsim_quadruped.plugins.spot_locomotion import SpotLocomotionPlugin
 from roqsim_quadruped.policy import DEFAULT_POLICY
 
-from roqsim.config import load_config_from_dict
+from roqsim.config import PluginError, load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.models import resolve_model
 
@@ -62,6 +62,11 @@ def test_leg_link_offsets_are_the_descriptions(model, leg):
 def test_a_joint_velocity_limit_that_is_not_a_positive_speed_is_refused(limits):
     errors = SpotLocomotionPlugin({}).validate_config({"joint_velocity_limits": limits})
     assert any("joint_velocity_limits" in e for e in errors), errors
+
+
+def test_a_world_giving_limits_as_a_list_is_refused_by_name():
+    with pytest.raises(PluginError, match="'joint_velocity_limits' maps an MJCF joint name"):
+        _walking(joint_velocity_limits=[12.0])
 
 
 def test_a_positive_joint_velocity_limit_is_accepted():
