@@ -207,6 +207,39 @@ def test_registered_depth_through_the_colour_camera_is_refused():
         _engine(OAKD, depth_camera="cam", registered_depth=True)
 
 
+def test_registered_depth_without_depth_is_refused():
+    with pytest.raises(PluginError, match="registered_depth"):
+        _engine(depth_camera="cam_depth", registered_depth=True)
+
+
+def test_registered_depth_through_a_lens_lies_on_the_colour_pixels():
+    """A colour camera with ``distortion:`` publishes a warped image and those coefficients, and
+    the registered stream shares its ``camera_info``: so its depth is warped the same way."""
+    cv2 = pytest.importorskip("cv2")
+    lens = [-0.3, 0.1, 0.0, 0.0, 0.0]
+    ideal = _endpoint(
+        _engine(depth=True, depth_camera="cam_depth", registered_depth=True), "registered_depth"
+    ).read()
+    engine = _engine(depth=True, depth_camera="cam_depth", registered_depth=True, distortion=lens)
+    plugin = next(p for p in engine.plugins if hasattr(p, "registered_depth"))
+    frame = _endpoint(engine, "registered_depth").read()
+    want = cv2.remap(
+        ideal.data,
+        plugin._dist_map[0],
+        plugin._dist_map[1],
+        cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=np.inf,
+    )
+    assert not np.array_equal(want, ideal.data)
+    np.testing.assert_array_equal(frame.data, want)
+    assert (
+        _endpoint(engine, "registered_depth_camera_info").read()
+        == _endpoint(engine, "camera_info").read()
+    )
+    engine.shutdown()
+
+
 # -- the depth frame's stamp ------------------------------------------------------------------
 
 

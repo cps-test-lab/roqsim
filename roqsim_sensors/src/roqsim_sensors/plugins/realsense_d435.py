@@ -104,6 +104,12 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         self._cloud: PointCloud | None = None
         self._uv: tuple[np.ndarray, np.ndarray] | None = None
 
+    def validate_config(self, config: dict) -> list[str]:
+        errors = super().validate_config(config)
+        if config.get("registered_depth") and not (config.get("depth") or config.get("points")):
+            errors.append("'registered_depth' needs the depth stream on: set 'depth: true'")
+        return errors
+
     def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         if self.depth:
             # realsense-ros publishes depth aligned to colour (`align_depth.enable`) here.

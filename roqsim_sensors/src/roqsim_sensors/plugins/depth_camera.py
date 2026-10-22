@@ -47,9 +47,9 @@ depth *registered* into the colour image: the depth of every colour pixel, at th
 size and intrinsics, stamped in the colour frame -- what ``depth_image_proc``'s register node makes of
 the depth stream, and what a driver that registers on the device publishes beside it.
 ``registered_depth: true`` turns it on. It is rendered through the colour camera, so it is exactly
-aligned with the colour pixels rather than reprojected; it has its own ``camera_info`` sibling, uses
-``depth_encoding``, offers no ``compressedDepth`` companion, and costs one more depth pass only while
-something asks for it. A device whose depth already renders through the colour camera refuses it: its
+aligned with the colour pixels rather than reprojected, through the colour lens's ``distortion``
+too; it has its own ``camera_info`` sibling, uses ``depth_encoding``, offers no ``compressedDepth``
+companion, and costs one more depth pass only while something asks for it. A device whose depth already renders through the colour camera refuses it: its
 depth stream is the registered one.
 
 **The compressed companion.** A ``16UC1`` camera also offers ``<depth topic>/compressedDepth``, the
@@ -436,6 +436,20 @@ class DepthCameraPlugin(CameraPlugin):
             colour.update_scene(ctx.data, camera=self._cam_id)
             registered = colour.render().astype(np.float32)
             colour.disable_depth_rendering()
+            if self._dist_map is not None:
+                # It shares the colour stream's camera_info, distortion included, so it lies on the
+                # warped colour pixels. Nearest, not linear: blending two surfaces' ranges at an
+                # edge makes a range neither has.
+                import cv2
+
+                registered = cv2.remap(
+                    registered,
+                    self._dist_map[0],
+                    self._dist_map[1],
+                    cv2.INTER_NEAREST,
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=np.inf,
+                )
             self._registered, self._registered_invalid = self._clipped(registered)
         else:
             self._registered = None
