@@ -218,6 +218,11 @@ class SpotLocomotionPlugin(Plugin):
                 f"{', '.join(unknown)}; its joints are {', '.join(self._joint_order)}"
             )
         self._published_names = [self.joint_names.get(j, j) for j in self._joint_order]
+        if len(set(self._published_names)) != len(self._published_names):
+            raise RuntimeError(
+                f"spot_locomotion ({self.robot}): joint_names publishes two joints under one name: "
+                f"{', '.join(self._published_names)}"
+            )
         self._default_angles = np.array(cfg["default_angles"], dtype=np.float32)
         self._action_scale = float(cfg["action_scale"])
         self._lin_vel_scale = float(cfg.get("lin_vel_scale", 1.0))

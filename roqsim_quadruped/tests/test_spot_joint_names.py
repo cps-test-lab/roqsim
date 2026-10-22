@@ -86,3 +86,12 @@ def test_joint_states_publishes_the_mapped_names_and_the_policy_keeps_walking():
 def test_a_joint_spot_does_not_have_is_refused_by_name():
     with pytest.raises(RuntimeError, match="fl_knee"):
         _engine(joint_names={"fl_knee": "front_left_knee"})
+
+
+@pytest.mark.skipif(
+    not Path(POLICY).exists(),
+    reason=f"no Spot policy at {POLICY}: python -m roqsim_quadruped.policy.fetch_policy",
+)
+def test_a_name_another_joint_keeps_is_refused():
+    with pytest.raises(RuntimeError, match="two joints under one name"):
+        _engine(joint_names={"fl_hx": "fl_hy"})
