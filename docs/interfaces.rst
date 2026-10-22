@@ -72,6 +72,30 @@ Anything not stated keeps the model's own value, so a world says what the experi
 nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not joint names
 (``wrist_3_joint``) — a joint name is refused, naming the actuator that drives it.
 
+A gripper's finger servo is stated the same way. Where the hand is part of the model (``panda``,
+``frankie``, ``gen3``) it is named under the spawn's ``actuators:``; a gripper welded on with
+``end_effector:`` has a block of its own:
+
+.. code-block:: yaml
+
+   - spawn_arm:
+       model: panda
+       actuators:
+         each:
+           actuator8: {p: 3000, d: 50}      # the Franka Hand: N/m, N*s/m on the finger tendon
+   - spawn_arm:
+       model: ur5e
+       end_effector:
+         model: robotiq_2f85
+         actuators:
+           each:
+             fingers_actuator: {p: 300, d: 20}
+
+A finger servo on a tendon takes ``p`` and ``d`` only, both positive, and keeps its command and
+force ranges: a commanded width still closes the fingers to that width, with the stiffness the
+world stated. Unstated, the model's own servo holds (2000 N/m and 40 N*s/m on the Franka Hand).
+When the block also states a shared law for the arm, the finger entry names ``control: position``.
+
 The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
 interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
 That is a magnitude: it sets the larger bound of the model's ``forcerange`` and keeps the range's
