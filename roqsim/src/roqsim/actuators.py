@@ -149,8 +149,9 @@ MUJOCO_CONTROLS = {
 #: One gain block: the shared keys, and the same set again inside every ``each:`` entry. Units are
 #: declared because a paper states "kp = 2.0" with none, and a value wrong by a factor of a thousand
 #: is indistinguishable from a right one -- which is the failure this whole module exists to prevent.
-#: Each unit names both forms: a hinge's, and the linear one of a slide joint -- and, for ``p`` and
-#: ``d``, of a finger servo on a tendon (``_tendon_servo``), which pulls on a length.
+#: Each unit names both forms: a hinge's, and the linear one of a slide joint. ``p`` and ``d`` also
+#: fall on a finger servo's tendon (``_tendon_servo``), whose unit is its joints': N/m over slide
+#: joints (the Franka Hand), N*m/rad over hinges (the Robotiq 2F-85).
 GAIN_SCHEMA: dict[str, Field] = {
     "control": Field(
         str,
@@ -161,13 +162,13 @@ GAIN_SCHEMA: dict[str, Field] = {
     "p": Field(
         float,
         minimum=0.0,
-        unit="N*m/rad (N/m on a slide joint or a tendon)",
+        unit="N*m/rad (N/m on a slide joint or a tendon over slide joints)",
         doc="position-loop proportional gain (control: position)",
     ),
     "d": Field(
         float,
         minimum=0.0,
-        unit="N*m*s/rad (N*s/m on a slide joint or a tendon)",
+        unit="N*m*s/rad (N*s/m on a slide joint or a tendon over slide joints)",
         doc="damping/derivative gain (control: position, velocity)",
     ),
     "stiffness": Field(

@@ -512,8 +512,8 @@ def test_a_gain_of_the_wrong_type_is_refused_by_its_path():
     assert any(e.startswith("'actuators.p' must be float") for e in errors)
     errors = _config_errors({"each": {"a_act": {"p": -1.0}}})
     assert errors == [
-        "'actuators.each.a_act.p' must be >= 0.0 N*m/rad (N/m on a slide joint or a tendon), "
-        "got -1.0"
+        "'actuators.each.a_act.p' must be >= 0.0 N*m/rad "
+        "(N/m on a slide joint or a tendon over slide joints), got -1.0"
     ]
 
 
@@ -536,11 +536,13 @@ def test_every_gain_declares_its_unit():
 
 
 def test_p_and_d_publish_their_unit_on_a_tendon_too():
-    """A finger servo on a tendon reads p and d as N/m and N*s/m, and the schema says so."""
+    """A finger servo on a tendon over slide joints reads p and d as N/m and N*s/m."""
     each = next(f for f in ACTUATORS.describe("actuators")["fields"] if f["name"] == "each")
     fields = {f["name"]: f for f in each["values"]["fields"]}
-    assert fields["p"]["unit"] == "N*m/rad (N/m on a slide joint or a tendon)"
-    assert fields["d"]["unit"] == "N*m*s/rad (N*s/m on a slide joint or a tendon)"
+    assert fields["p"]["unit"] == "N*m/rad (N/m on a slide joint or a tendon over slide joints)"
+    assert fields["d"]["unit"] == (
+        "N*m*s/rad (N*s/m on a slide joint or a tendon over slide joints)"
+    )
 
 
 # -- limits the override does not state ----------------------------------------------------------
