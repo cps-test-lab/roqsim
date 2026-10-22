@@ -29,6 +29,10 @@ class PluginError(Exception):
     """Raised for plugin loading, configuration, or lifecycle failures."""
 
 
+#: How :meth:`Plugin.config_errors` begins its error for a ``validate_config`` that raised.
+VALIDATOR_RAISED = "validate_config raised:"
+
+
 class Plugin:
     """Base class for all roqsim plugins.
 
@@ -329,7 +333,7 @@ class Plugin:
         try:
             errors += self.validate_config(config) or []
         except Exception as exc:  # a plugin's validator itself blew up
-            errors.append(f"validate_config raised: {exc}")
+            errors.append(f"{VALIDATOR_RAISED} {exc}")
         errors += self._misplaced_enabled(config, errors)
         return errors
 

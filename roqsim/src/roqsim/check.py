@@ -206,7 +206,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     except PluginError as exc:
         report["problems"].append(_problem("config", str(exc)))
         return report
-    except Exception as exc:  # noqa: BLE001 - a plugin's constructor is the world's problem too
+    except Exception as exc:  # noqa: BLE001 - a config problem: nothing has been built yet
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
     report["reached"] = "config"
