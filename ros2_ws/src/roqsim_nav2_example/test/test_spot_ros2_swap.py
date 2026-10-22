@@ -90,6 +90,9 @@ def _consume(*args: str) -> dict:
         timeout=180,
     )
     print(done.stdout)
+    assert done.stdout.strip(), (
+        f"the consumer reported nothing (exit {done.returncode}):\n{done.stderr}"
+    )
     return json.loads(done.stdout)
 
 

@@ -9,7 +9,8 @@
 #
 #   * `odometry`, not `odom` (spot_driver/src/robot_state/state_middleware_handle.cpp:20-35), and
 #     `joint_states` under the driver's names (include/spot_driver/conversions/robot_state.hpp:34-42);
-#     both reliable + transient_local with a depth of 1, as the driver publishes them;
+#     both reliable + transient_local with a depth of 1, as the driver publishes them
+#     (state_middleware_handle.cpp:51-56, include/spot_driver/api/middleware_handle_base.hpp:14-20);
 #   * a velocity command that lapses after 0.125 s, the driver's `cmd_duration`
 #     (spot_driver/spot_driver/spot_ros2.py:383, 2720-2727).
 #
