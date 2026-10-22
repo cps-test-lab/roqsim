@@ -317,7 +317,9 @@
     <general name="actuator5" class="panda" joint="joint5" forcerange="-12 12" gainprm="2000" biasprm="0 -2000 -200" />
     <general name="actuator6" class="panda" joint="joint6" ctrlrange="-0.0175 3.7525" forcerange="-12 12" gainprm="2000" biasprm="0 -2000 -200" />
     <general name="actuator7" class="panda" joint="joint7" forcerange="-12 12" gainprm="2000" biasprm="0 -2000 -200" />
-    <general name="actuator8" class="panda" tendon="split" ctrlrange="0 255" forcerange="-100 100" gainprm="0.0156863" biasprm="0 -100 -10" />
+    <!-- The Franka Hand's finger servo, as in roqsim_manipulation_assets' panda.xml: kp 2000 N/m on the
+         split tendon, its ctrlrange (0, 0.04) remapped to (0, 255), so gain = kp * 0.04 / 255. -->
+    <general name="actuator8" class="panda" tendon="split" ctrlrange="0 255" forcerange="-100 100" gainprm="0.31372549" biasprm="0 -2000 -40" />
   </actuator>
   <sensor>
     <framepos objtype="site" objname="base_imu" name="base_pos" />
