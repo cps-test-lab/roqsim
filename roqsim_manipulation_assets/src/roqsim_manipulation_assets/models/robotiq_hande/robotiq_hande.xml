@@ -100,7 +100,9 @@
         material="hande_coupling"/>
       <geom class="hande_collision" name="hande_coupling_collision" type="cylinder"
         size="0.0375 0.0055" pos="0 0 0.0055"/>
-      <!-- Robotiq's TCP (manual 5.2.3), the fingertip ends, for matching a real cell's TCP. -->
+      <!-- Robotiq's TCP (manual 5.2.3), the fingertip ends, for matching a real cell's TCP. Its axes
+           are the gripper's, as on the other grippers; Robotiq's tcp_link is turned -90 degrees
+           about z from them, so a configuration written against tcp_link turns by that yaw. -->
       <site name="tcp" pos="0 0 0.157" type="sphere" size="0.003" group="5" rgba="0.9 0.2 0.2 1"/>
 
       <body name="hand_e_base_link" pos="0 0 0.011">
