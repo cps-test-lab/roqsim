@@ -32,9 +32,9 @@ this is the deterministic ground truth of the import pipeline.
 
 Usage::
 
-    roqsim assets inspect-prop path/to/models/free_chipboard_shelf            # report only
-    roqsim assets inspect-prop path/to/models/free_chipboard_shelf --fix-origin   # ground + centre, then re-report
-    roqsim assets inspect-prop path/to/models/free_chipboard_shelf --json     # machine-readable only
+    roqsim assets inspect-prop path/to/models/office_table            # report only
+    roqsim assets inspect-prop path/to/models/office_table --fix-origin   # ground + centre, then re-report
+    roqsim assets inspect-prop path/to/models/office_table --json     # machine-readable only
 
 Exits ``5`` (``roqsim.exit_status``) if any check is FAIL (so a CI/agent step fails loudly on a bad prop).
 """

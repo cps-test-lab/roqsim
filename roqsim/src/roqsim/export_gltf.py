@@ -2,8 +2,8 @@
 
 glTF is the standard format for 3D scenes: three.js, Blender and every engine load it, so a world
 exported this way is looked at, placed into or published without learning a format of roqsim's own.
-What the scene contains is decided by :mod:`roqsim.scene_content`, the walk ``roqsim export web``
-writes too, so the two exports agree on it; this module only spells it as glTF.
+What the scene contains is decided by :mod:`roqsim.scene_content`, the walk every scene export
+shares; this module only spells it as glTF.
 
 Usage::
 
@@ -21,29 +21,61 @@ viewer that reports points in a node's frame reports them, for ``world``, in the
 **Bodies.** Every body is a node, the child of its parent body's node, in MuJoCo's body tree, with
 the body's pose relative to its parent at the exported state: a free body where its world placed
 it, a mocap body where its plugin posed it, a jointed link at its configured joint value (glTF has
-no joints, so the angle is in the node), and a link on an unnamed joint at that joint's rest, as
-``export web`` shows it (:func:`roqsim.scene_content.exported_state`). A node is named exactly as
+no joints, so the angle is in the node), and a link on an unnamed joint at that joint's rest
+(:func:`roqsim.scene_content.exported_state`). A node is named exactly as
 its body is, and its ``extras`` repeat the name as ``body`` beside ``body_id``: a loader that
 rewrites names it finds awkward (three.js removes ``.``, ``:``, ``/`` and brackets) still leaves the
 exact name in the node's user data.
+
+**Joints.** A body's joints are listed in its node's ``extras.joints``, in the order MuJoCo
+composes them: ``name``, ``type`` (``hinge``, ``slide``, ``ball`` or ``free``), ``axis`` and
+``pos`` (the anchor) in the body's frame, ``qposadr``, and for a hinge or a slide ``ref``, the value
+at which the body sits at its ``body_pos``/``body_quat``. The scene's ``extras.initialJoints`` give
+the value of each named hinge and slide the node is posed at (an unnamed one is at ``ref``), so a
+viewer recovers the body's pose at ``ref`` from the node and moves it by ``q - ref`` for a joint
+value ``q`` -- turning about the axis through the anchor, or sliding along the axis -- exactly as
+MuJoCo does.
+
+**The scene's extras** state the contract they are written to, ``format`` (:data:`EXTRAS_FORMAT`)
+and ``version`` (:data:`EXTRAS_VERSION`), with ``initialJoints`` and, for a world with an authored
+``sim.view``, ``view`` (its ``lookat``, ``distance``, ``azimuth`` and ``elevation``).
 
 **Geoms.** A drawn geom is an unnamed child node of its body's node, at the geom's pose, holding
 one mesh; its ``extras`` carry ``geom`` (its name, where it has one), ``body`` and ``geom_id``.
 Primitives are tessellated (``--segments``) with their exact normals, MuJoCo meshes keep MuJoCo's
 own normals, and a plane is a quad of its size (an infinite plane one of the model's extent, which
-the export logs).
+the export logs). A surface MuJoCo shades with its faces' normals -- a box, a triangulated STL or
+OBJ -- carries none: glTF draws a primitive without normals flat, so its corners are welded into
+one vertex per position (:func:`flat_shaded`).
+
+**Colours.** MuJoCo writes a colour to the screen as it stands, so an ``rgba`` is an sRGB-encoded
+colour; glTF states a colour factor in linear space, so it is converted (:func:`srgb_to_linear`)
+and a viewer with sRGB output shows the colour MuJoCo shows.
+
+**Compression.** With ``--meshopt``, vertex and index data are written with
+``EXT_meshopt_compression`` (:mod:`roqsim.meshopt`): positions to :data:`POSITION_BITS` bits below
+each mesh's extent, normals and texture coordinates to fixed powers of two. ``--texture-format
+webp`` stores every image as WebP (``EXT_texture_webp``). Both are required extensions, so a viewer
+without them refuses the file rather than drawing it wrong.
+
+**Sensor cameras.** Every imaging sensor the world's plugins declare
+(:meth:`roqsim.plugin.Plugin.scene_cameras`) is a perspective camera on a node of its own, the child
+of the node of the body it is mounted on, at its mount pose, so it follows that body wherever a
+viewer moves it. MuJoCo's camera frame is glTF's (it looks down -z with +y up), so the pose is the
+MuJoCo camera's as it stands. The node and the camera are named after the sensor's address, and the
+node's ``extras`` carry ``sensor`` (that address), ``kind`` (``rgb`` or ``depth``) and the published
+image's ``width`` and ``height``.
 
 **View.** A world with an authored ``sim.view`` gets a perspective camera, on a root node of its own
 outside ``world`` with ``extras: {"roqsim": "view"}``, placed where ``roqsim render`` puts its
 default camera.
 
-**Skins.** A MuJoCo skin, and a flex drawn as one (as ``export web`` draws it), is a glTF skinned
+**Skins.** A MuJoCo skin, and a flex drawn as one (:mod:`roqsim.flex_skin`), is a glTF skinned
 mesh whose joints are its bone bodies' nodes, so a viewer that moves bodies by name deforms it. Its
 node is a root of the scene (glTF ignores a skinned mesh's node transform), with ``extras`` naming
 the skin's index and, for a flex, the flex.
 
-Left out: lights and the skybox (a viewer brings its own), joint metadata (``export web`` and
-``export urdf`` carry the kinematics), and collision-only geometry (group 3), as for ``export web``.
+Left out: lights and the skybox (a viewer brings its own), and collision-only geometry (group 3).
 """
 
 from __future__ import annotations
@@ -55,15 +87,25 @@ import logging
 import math
 import struct
 import sys
+from collections.abc import Sequence
 from importlib import metadata
 from pathlib import Path
 
 import mujoco
 import numpy as np
 
-from . import exit_status, logging_setup, tessellate
+from . import exit_status, logging_setup, meshopt, tessellate
 from .rendering import view_forward
-from .scene_content import Geom, Mesh, SceneContent, Skin, reindex, resolved_rgba, walk
+from .scene_content import (
+    Geom,
+    Mesh,
+    SceneContent,
+    SensorCamera,
+    Skin,
+    reindex,
+    resolved_rgba,
+    walk,
+)
 from .scene_source import (
     add_manifest_option,
     add_source_options,
@@ -89,6 +131,22 @@ _ELEMENT_ARRAY_BUFFER = 34963
 _GLB_MAGIC = 0x46546C67  # "glTF"
 _CHUNK_JSON = 0x4E4F534A
 _CHUNK_BIN = 0x004E4942
+_MESHOPT = "EXT_meshopt_compression"
+_WEBP = "EXT_texture_webp"
+
+#: What the scene's ``extras`` declare: the contract of the extras this file carries, so a reader
+#: refuses a file written to one it has not seen. Bumped when a key changes meaning, never when one
+#: is added.
+EXTRAS_FORMAT = "roqsim.scene"
+EXTRAS_VERSION = 1
+
+#: Compressed, a position keeps this many bits below the largest coordinate of its mesh along each
+#: axis: some fifteen micrometres on a metre-sized part, a millimetre on a fifty-metre wall.
+POSITION_BITS = 16
+#: Compressed, a normal is stored to this power of two, and a texture coordinate to that one: a
+#: quarter of a texel of a 1024-pixel image, however often the texture repeats.
+NORMAL_STEP = -10
+TEXCOORD_STEP = -12
 
 
 class GltfExportError(RuntimeError):
@@ -197,13 +255,54 @@ def mesh_triangles(
     return verts, normals, index, uv
 
 
+#: A mesh is drawn flat (:func:`flat_shaded`) when its corner normals follow their faces to within
+#: :data:`FLAT_DEGREES` over all but :data:`FLAT_SLACK` of its surface area.
+FLAT_DEGREES = 2.0
+FLAT_SLACK = 1e-3
+
+
+def flat_shaded(verts, normals, faces, uv):
+    """A mesh MuJoCo shades with its faces' normals, welded and without normals; else None.
+
+    glTF draws a primitive without ``NORMAL`` with flat normals, so such a mesh needs none of its
+    own, and the corners MuJoCo kept apart only to give each face its normal are one vertex again
+    (equal position and texture coordinate). Returns ``(verts, faces, uv)`` with the vertices welded.
+    A triangulated STL or OBJ export, where every face has vertices of its own, is most of a robot's
+    meshes. The test is by area, since the sliver triangles of such a file carry normals rounded far
+    from their own faces' and are too thin to show how they are shaded.
+    """
+    verts = np.asarray(verts, float)
+    faces = np.asarray(faces, np.int64).reshape(-1, 3)
+    tri = verts[faces]
+    face_n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    length = np.linalg.norm(face_n, axis=1)
+    solid = length > 1e-12 * max(1.0, float(np.abs(verts).max(initial=0.0))) ** 2
+    if not solid.any():
+        return None
+    area = length[solid]
+    face_n = face_n[solid] / area[:, None]
+    corner = np.asarray(normals, float)[faces[solid]]
+    corner = corner / np.maximum(np.linalg.norm(corner, axis=2, keepdims=True), 1e-300)
+    off = np.einsum("ijk,ik->ij", corner, face_n).min(axis=1) < math.cos(math.radians(FLAT_DEGREES))
+    if area[off].sum() > FLAT_SLACK * area.sum():
+        return None
+    rows = verts if uv is None else np.c_[verts, np.asarray(uv, float)]
+    _, first, inverse = np.unique(rows, axis=0, return_index=True, return_inverse=True)
+    welded_uv = None if uv is None else np.asarray(uv)[first]
+    return verts[first], inverse.reshape(-1)[faces], welded_uv
+
+
 # -- the glTF document -----------------------------------------------------------------------------
 
 
 class _Document:
     """The glTF JSON and its one binary buffer, built up as the scene is walked."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, compress: bool = False) -> None:
+        #: Whether vertex and index data go through ``EXT_meshopt_compression`` (:mod:`roqsim.meshopt`).
+        self.compress = compress
+        #: Bytes of the decoded views, laid out in the fallback buffer a compressed view names.
+        self.fallback = 0
         self.gltf: dict = {
             "asset": {"version": "2.0", "generator": f"roqsim {_producer_version()}"},
             "scene": 0,
@@ -227,11 +326,68 @@ class _Document:
         self.gltf["bufferViews"].append(view)
         return len(self.gltf["bufferViews"]) - 1
 
-    def accessor(self, array: np.ndarray, kind: str, *, minmax: bool = False) -> int:
-        """Add ``array`` as a float vertex attribute of ``kind`` (VEC2/VEC3/VEC4)."""
+    def _compressed_view(
+        self, raw: bytes, encoded: bytes, target: int, stride: int, count: int, mode: str, filt
+    ) -> int:
+        """A view whose bytes are ``encoded`` in the BIN chunk and decode to ``raw``."""
+        while len(self.bin) % 4:
+            self.bin.append(0)
+        ext = {
+            "buffer": 0,
+            "byteOffset": len(self.bin),
+            "byteLength": len(encoded),
+            "byteStride": stride,
+            "mode": mode,
+            "count": count,
+        }
+        if filt:
+            ext["filter"] = filt
+        self.bin.extend(encoded)
+        self.fallback += -self.fallback % 4
+        view = {"buffer": 1, "byteOffset": self.fallback, "byteLength": len(raw), "target": target}
+        if target == _ARRAY_BUFFER:
+            view["byteStride"] = stride
+        view["extensions"] = {_MESHOPT: ext}
+        self.fallback += len(raw)
+        self.gltf["bufferViews"].append(view)
+        return len(self.gltf["bufferViews"]) - 1
+
+    def _vertex_view(self, data: np.ndarray, words: np.ndarray | None = None) -> int:
+        """A vertex attribute's view: plain, or compressed (``words`` its filtered form)."""
+        raw = np.ascontiguousarray(data)
+        if not self.compress:
+            return self._view(raw.tobytes(), _ARRAY_BUFFER)
+        stored = raw if words is None else np.ascontiguousarray(words)
+        rows = stored.reshape(len(stored), -1).view(np.uint8)
+        return self._compressed_view(
+            raw.tobytes(),
+            meshopt.encode_vertex_buffer(rows),
+            _ARRAY_BUFFER,
+            rows.shape[1],
+            len(stored),
+            "ATTRIBUTES",
+            None if words is None else "EXPONENTIAL",
+        )
+
+    def accessor(
+        self, array: np.ndarray, kind: str, *, minmax: bool = False, step: int | str | None = None
+    ) -> int:
+        """Add ``array`` as a float vertex attribute of ``kind`` (VEC2/VEC3/VEC4).
+
+        Compressed, an attribute given a ``step`` is stored at that precision: a power-of-two
+        exponent, or ``"position"`` for :data:`POSITION_BITS` below the extent of each component.
+        The accessor then holds the values a reader decodes, and so do its bounds.
+        """
         data = np.ascontiguousarray(array, dtype="<f4")
+        words = None
+        if self.compress and step is not None:
+            if step == "position":
+                peak = np.abs(data).max(axis=0) if len(data) else np.ones(data.shape[1])
+                step = np.ceil(np.log2(np.maximum(peak, 2.0**-20))).astype(int) - POSITION_BITS
+            words, data = meshopt.exponential_filter(data, step)
+            data = np.ascontiguousarray(data, dtype="<f4")
         acc = {
-            "bufferView": self._view(data.tobytes(), _ARRAY_BUFFER),
+            "bufferView": self._vertex_view(data, words),
             "componentType": _FLOAT,
             "count": int(data.shape[0]),
             "type": kind,
@@ -245,9 +401,21 @@ class _Document:
     def indices(self, faces: np.ndarray, nvert: int) -> int:
         dtype, ctype = ("<u2", _USHORT) if nvert <= 0xFFFF else ("<u4", _UINT)
         data = np.ascontiguousarray(faces, dtype=dtype).ravel()
+        if self.compress:
+            view = self._compressed_view(
+                data.tobytes(),
+                meshopt.encode_index_buffer(faces),
+                _ELEMENT_ARRAY_BUFFER,
+                data.itemsize,
+                int(data.size),
+                "TRIANGLES",
+                None,
+            )
+        else:
+            view = self._view(data.tobytes(), _ELEMENT_ARRAY_BUFFER)
         self.gltf["accessors"].append(
             {
-                "bufferView": self._view(data.tobytes(), _ELEMENT_ARRAY_BUFFER),
+                "bufferView": view,
                 "componentType": ctype,
                 "count": int(data.size),
                 "type": "SCALAR",
@@ -258,15 +426,24 @@ class _Document:
     def raw_accessor(self, data: np.ndarray, ctype: int, kind: str, target: int | None) -> int:
         """Add ``data`` (already in its final little-endian dtype) as an accessor of ``kind``."""
         data = np.ascontiguousarray(data)
+        view = (
+            self._vertex_view(data) if target == _ARRAY_BUFFER else self._view(data.tobytes(), None)
+        )
         self.gltf["accessors"].append(
             {
-                "bufferView": self._view(data.tobytes(), target),
+                "bufferView": view,
                 "componentType": ctype,
                 "count": int(data.shape[0]),
                 "type": kind,
             }
         )
         return len(self.gltf["accessors"]) - 1
+
+    def require(self, extension: str) -> None:
+        """Name ``extension`` as used and required: a reader without it cannot draw the file."""
+        for key in ("extensionsUsed", "extensionsRequired"):
+            if extension not in self.gltf.setdefault(key, []):
+                self.gltf[key].append(extension)
 
     def node(self, node: dict) -> int:
         self.gltf["nodes"].append(node)
@@ -280,6 +457,11 @@ class _Document:
         while len(self.bin) % 4:
             self.bin.append(0)
         self.gltf["buffers"] = [{"byteLength": len(self.bin)}]
+        if self.fallback:
+            self.gltf["buffers"].append(
+                {"byteLength": self.fallback, "extensions": {_MESHOPT: {"fallback": True}}}
+            )
+            self.require(_MESHOPT)
         gltf = {k: v for k, v in self.gltf.items() if v != []}
         text = json.dumps(gltf, separators=(",", ":")).encode()
         text += b" " * (-len(text) % 4)
@@ -312,6 +494,12 @@ _LINEAR, _LINEAR_MIPMAP_LINEAR, _REPEAT = 9729, 9987, 10497
 _PIL_MODE = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}
 
 
+def srgb_to_linear(c: float) -> float:
+    """A colour channel as MuJoCo draws it (straight onto the screen, so sRGB-encoded) in the linear
+    space glTF states a colour factor in."""
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
 class _Materials:
     """glTF materials and the images they sample, one per distinct look, created on first use.
 
@@ -330,14 +518,14 @@ class _Materials:
         *,
         max_tex_dim: int,
         texture_format: str,
-        jpeg_quality: int,
+        texture_quality: int,
     ) -> None:
         self.doc = doc
         self.model = model
         self.content = content
         self.max_tex_dim = int(max_tex_dim)
         self.texture_format = texture_format
-        self.jpeg_quality = int(jpeg_quality)
+        self.texture_quality = int(texture_quality)
         self._index: dict[tuple, int] = {}
         self._images: dict[tuple, int] = {}
         self._clamped: set[str] = set()
@@ -396,7 +584,7 @@ class _Materials:
             )
         base = [min(max(c, 0.0), 1.0) for c in rgba]
         pbr: dict = {
-            "baseColorFactor": base,
+            "baseColorFactor": [*map(srgb_to_linear, base[:3]), base[3]],
             "metallicFactor": 0.0,
             "roughnessFactor": min(max(1.0 - shininess, 0.0), 1.0),
         }
@@ -406,7 +594,7 @@ class _Materials:
         if matid >= 0 and model.material(matid).name:
             mat["name"] = model.material(matid).name
         if emission > 0:
-            mat["emissiveFactor"] = [min(emission * c, 1.0) for c in base[:3]]
+            mat["emissiveFactor"] = [srgb_to_linear(min(emission * c, 1.0)) for c in base[:3]]
         if base[3] < 1.0:
             mat["alphaMode"] = "BLEND"
         self._index[key] = self.doc.add("materials", mat)
@@ -444,9 +632,14 @@ class _Materials:
         buf = io.BytesIO()
         if self.texture_format == "jpeg" and opaque:
             img.convert("L" if img.mode in ("L", "LA") else "RGB").save(
-                buf, "JPEG", quality=self.jpeg_quality
+                buf, "JPEG", quality=self.texture_quality
             )
             mime = "image/jpeg"
+        elif self.texture_format == "webp":
+            img.convert("RGB" if opaque else "RGBA").save(
+                buf, "WEBP", quality=self.texture_quality, method=6
+            )
+            mime = "image/webp"
         else:
             img.save(buf, "PNG", optimize=True)
             mime = "image/png"
@@ -463,7 +656,13 @@ class _Materials:
                     "wrapT": _REPEAT,
                 },
             )
-        self._images[key] = self.doc.add("textures", {"sampler": 0, "source": image})
+        if mime == "image/webp":
+            # No PNG beside it: a second copy of every image is what this format is chosen to avoid.
+            self.doc.require(_WEBP)
+            texture = {"sampler": 0, "extensions": {_WEBP: {"source": image}}}
+        else:
+            texture = {"sampler": 0, "source": image}
+        self._images[key] = self.doc.add("textures", texture)
         return self._images[key]
 
 
@@ -509,32 +708,49 @@ def export_gltf(
     view: dict | None = None,
     max_tex_dim: int = DEFAULT_MAX_TEX_DIM,
     texture_format: str = "png",
-    jpeg_quality: int = 85,
+    texture_quality: int = 85,
+    compress: bool = False,
     log: logging.Logger | None = None,
+    cameras: Sequence[SensorCamera] = (),
 ) -> dict:
     """Write the scene of ``model`` at the state in ``data`` to ``out`` as GLB; return the glTF JSON.
 
     ``segments`` is the count around a round primitive; by default the model's own
     ``visual/quality numslices``, so a texture lands on the facets MuJoCo draws.
     ``max_tex_dim`` caps an embedded image's longest side (0 keeps every image whole);
-    ``texture_format`` ``"jpeg"`` writes opaque images as JPEG at ``jpeg_quality``.
+    ``texture_format`` ``"jpeg"`` writes opaque images as JPEG and ``"webp"`` every image as WebP,
+    at ``texture_quality``; ``compress`` writes vertex and index data with
+    ``EXT_meshopt_compression`` (:mod:`roqsim.meshopt`). ``cameras``
+    are the sensor cameras to place (:attr:`roqsim.scene_source.CompiledSource.cameras`).
     """
     log = log or logger
-    content = walk(model, data, log)
-    doc = _Document()
+    content = walk(model, data, log, cameras)
+    doc = _Document(compress=compress)
     materials = _Materials(
         doc,
         model,
         content,
         max_tex_dim=max_tex_dim,
         texture_format=texture_format,
-        jpeg_quality=jpeg_quality,
+        texture_quality=texture_quality,
     )
     segments = max(3, int(segments if segments else model.vis.quality.numslices))
     extent = float(model.stat.extent)
 
     # Bodies: body b is node body_node[b], placed where the exported state puts it relative to its
     # parent -- a hinged link at its configured angle, since glTF has no joints to apply one.
+    joints_of: list[list[dict]] = [[] for _ in content.bodies]
+    for joint in content.joints:
+        entry = {
+            "name": joint.name,
+            "type": joint.type,
+            "axis": joint.axis,
+            "pos": joint.pos,
+            "qposadr": joint.qposadr,
+        }
+        if joint.ref is not None:
+            entry["ref"] = joint.ref
+        joints_of[joint.body].append(entry)
     body_node: list[int] = []
     for b, body in enumerate(content.bodies):
         if b == 0:
@@ -545,12 +761,25 @@ def export_gltf(
             if body.name:
                 node["name"] = body.name
         node["extras"] = {"body": body.name, "body_id": b}
+        if joints_of[b]:
+            node["extras"]["joints"] = joints_of[b]
         body_node.append(doc.node(node))
         if b > 0:
             doc.gltf["nodes"][body_node[body.parent]].setdefault("children", []).append(
                 body_node[b]
             )
     doc.gltf["scenes"][0]["nodes"].append(body_node[0])
+    extras: dict = {
+        "format": EXTRAS_FORMAT,
+        "version": EXTRAS_VERSION,
+        "initialJoints": content.initial_joints,
+    }
+    authored = {
+        k: view[k] for k in ("lookat", "distance", "azimuth", "elevation") if k in (view or {})
+    }
+    if authored:
+        extras["view"] = authored
+    doc.gltf["scenes"][0]["extras"] = extras
 
     meshes: dict[tuple, int] = {}
     infinite = []
@@ -582,6 +811,36 @@ def export_gltf(
     for i, skin in enumerate(content.skins):
         _skin(doc, skin, i, body_node, materials)
 
+    for sensor in content.cameras:
+        camera = doc.add(
+            "cameras",
+            {
+                "name": sensor.name,
+                "type": "perspective",
+                "perspective": {
+                    "yfov": sensor.yfov,
+                    "aspectRatio": sensor.aspect_ratio,
+                    "znear": sensor.znear,
+                    "zfar": sensor.zfar,
+                },
+            },
+        )
+        child = doc.node(
+            {
+                "name": sensor.name,
+                "translation": [float(v) for v in sensor.pos],
+                "rotation": _xyzw(sensor.quat),
+                "camera": camera,
+                "extras": {
+                    "sensor": sensor.name,
+                    "kind": sensor.kind,
+                    "width": sensor.width,
+                    "height": sensor.height,
+                },
+            }
+        )
+        doc.gltf["nodes"][body_node[sensor.body]].setdefault("children", []).append(child)
+
     cam = _camera_node(view or {}, model)
     if cam is not None:
         cam["camera"] = doc.add("cameras", cam.pop("camera_def"))
@@ -592,7 +851,7 @@ def export_gltf(
     out.write_bytes(blob)
     log.info(
         "exported %d bodies, %d geoms, %d skins (%d of them flexes), %d meshes, %d materials, "
-        "%d images -> %s (%d KiB, %d%% of it images; --max-tex-dim and --texture-format jpeg "
+        "%d images -> %s (%d KiB, %d%% of it images; --max-tex-dim and --texture-format webp "
         "make them smaller)",
         len(content.bodies),
         len(content.geoms),
@@ -642,17 +901,28 @@ def _skin(doc: _Document, skin: Skin, i: int, body_node: list[int], materials: _
             f"flex {skin.flex!r}" if skin.flex is not None else f"skin {i}",
             dropped,
         )
+    uv = None if mesh.uv is None else np.asarray(mesh.uv).reshape(-1, 2)
+    if doc.compress:
+        order, faces = meshopt.fetch_order(faces, len(verts))
+        verts, normals, joints, weights = (
+            verts[order],
+            normals[order],
+            joints[order],
+            weights[order],
+        )
+        uv = None if uv is None else uv[order]
     attributes = {
-        "POSITION": doc.accessor(zup_to_yup(verts), "VEC3", minmax=True),
-        "NORMAL": doc.accessor(zup_to_yup(normals), "VEC3"),
+        "POSITION": doc.accessor(zup_to_yup(verts), "VEC3", minmax=True, step="position"),
+        "NORMAL": doc.accessor(zup_to_yup(normals), "VEC3", step=NORMAL_STEP),
         "JOINTS_0": doc.raw_accessor(joints, _USHORT, "VEC4", _ARRAY_BUFFER),
+        # Not filtered: glTF wants each row to sum to 1, which a rounded weight would not.
         "WEIGHTS_0": doc.accessor(weights, "VEC4"),
     }
-    textured = mesh.uv is not None and materials.texture(skin.matid) is not None
+    textured = uv is not None and materials.texture(skin.matid) is not None
     if textured:
         rep = materials.model.mat_texrepeat[skin.matid]
         scl = texture_scale("skin", [0.0, 0.0, 0.0], rep, False, explicit=True)
-        attributes["TEXCOORD_0"] = doc.accessor(np.asarray(mesh.uv).reshape(-1, 2) * scl, "VEC2")
+        attributes["TEXCOORD_0"] = doc.accessor(uv * scl, "VEC2", step=TEXCOORD_STEP)
     primitive = {
         "attributes": attributes,
         "indices": doc.indices(faces, len(verts)),
@@ -765,12 +1035,21 @@ def _geom_mesh(
     if len(faces) == 0:
         cache[key] = None
         return None
-    attributes = {
-        "POSITION": doc.accessor(verts, "VEC3", minmax=True),
-        "NORMAL": doc.accessor(normals, "VEC3"),
-    }
-    if uv is not None and tex is not None:
-        attributes["TEXCOORD_0"] = doc.accessor(uv, "VEC2")
+    if tex is None:
+        uv = None
+    if (flat := flat_shaded(verts, normals, faces, uv)) is not None:
+        verts, faces, uv = flat
+        normals = None
+    if doc.compress:
+        order, faces = meshopt.fetch_order(faces, len(verts))
+        verts = np.asarray(verts)[order]
+        normals = None if normals is None else np.asarray(normals)[order]
+        uv = None if uv is None else np.asarray(uv)[order]
+    attributes = {"POSITION": doc.accessor(verts, "VEC3", minmax=True, step="position")}
+    if normals is not None:
+        attributes["NORMAL"] = doc.accessor(normals, "VEC3", step=NORMAL_STEP)
+    if uv is not None:
+        attributes["TEXCOORD_0"] = doc.accessor(uv, "VEC2", step=TEXCOORD_STEP)
     primitive = {
         "attributes": attributes,
         "indices": doc.indices(faces, len(verts)),
@@ -808,20 +1087,30 @@ def main(argv: list | None = None) -> int:
         default=DEFAULT_MAX_TEX_DIM,
         help=f"downscale every embedded image whose longest side exceeds this (0 keeps them whole). "
         f"Default {DEFAULT_MAX_TEX_DIM}. Textures are most of a large world's file: lower this, or "
-        "use --texture-format jpeg, where a world is too large for the device that loads it.",
+        "use --texture-format webp or jpeg, where a world is too large for the device that loads "
+        "it.",
     )
     parser.add_argument(
         "--texture-format",
-        choices=("png", "jpeg"),
+        choices=("png", "jpeg", "webp"),
         default="png",
-        help="how to embed opaque images: png (lossless, the default) or jpeg (several times "
-        "smaller for photographic textures). Images with transparency are always PNG.",
+        help="how to embed images: png (lossless, the default), jpeg (opaque images; images with "
+        "transparency stay PNG) or webp (every image, through EXT_texture_webp). Both lossy "
+        "formats are several times smaller for photographic textures.",
     )
     parser.add_argument(
-        "--jpeg-quality",
+        "--texture-quality",
         type=int,
         default=85,
-        help="JPEG quality, 1-95, with --texture-format jpeg (default 85)",
+        help="quality of a jpeg or webp image, 1-95 (default 85)",
+    )
+    parser.add_argument(
+        "--meshopt",
+        action="store_true",
+        help="compress vertex and index data with EXT_meshopt_compression, which a loader needs a "
+        "decoder for (three.js: GLTFLoader.setMeshoptDecoder). Positions keep "
+        f"{POSITION_BITS} bits below each mesh's extent, normals and texture coordinates "
+        "1/1024 and 1/4096.",
     )
     add_manifest_option(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -829,8 +1118,8 @@ def main(argv: list | None = None) -> int:
     refuse_options_for_mjcf(parser, args)
     if Path(args.out).suffix.lower() != ".glb":
         parser.error(f"--out must name a .glb file, got {args.out!r}")
-    if not 1 <= args.jpeg_quality <= 95:
-        parser.error(f"--jpeg-quality takes 1-95, got {args.jpeg_quality}")
+    if not 1 <= args.texture_quality <= 95:
+        parser.error(f"--texture-quality takes 1-95, got {args.texture_quality}")
     if args.max_tex_dim < 0:
         parser.error(f"--max-tex-dim takes 0 or more, got {args.max_tex_dim}")
     if args.segments is not None and args.segments < 3:
@@ -839,17 +1128,19 @@ def main(argv: list | None = None) -> int:
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_gltf")
 
-    model, data, view = compile_source(args, log)
+    src = compile_source(args, log)
     try:
         export_gltf(
-            model,
-            data,
+            src.model,
+            src.data,
             Path(args.out),
             segments=args.segments,
-            view=view,
+            view=src.view,
+            cameras=src.cameras,
             max_tex_dim=args.max_tex_dim,
             texture_format=args.texture_format,
-            jpeg_quality=args.jpeg_quality,
+            texture_quality=args.texture_quality,
+            compress=args.meshopt,
             log=log,
         )
     except GltfExportError as err:

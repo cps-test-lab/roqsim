@@ -18,12 +18,13 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <!-- CompressedImage encoding: Pillow for colour, numpy for the RVL depth codec
-       (roqsim_ros_bridge.image_codec / .rvl). Both are roqsim core deps too. -->
+       (roqsim.image_codec / roqsim.rvl, in roqsim core). -->
   <exec_depend>python3-pil</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>rosgraph_msgs</exec_depend>
@@ -44,6 +45,7 @@
        install_requires rather than here, where rosdep would look it up. -->
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>ur_msgs</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

@@ -15,9 +15,12 @@ dependencies = [
     "pyyaml>=6.0",
     "click>=8.1",   # the `roqsim` command tree (roqsim/commands.py); tools keep their own argparse
     # `roqsim render` writes its stills through Pillow, so it is a hard dependency of a shipped
-    # subcommand, not an optional extra. Two other sites (the splash overlay, the web exporter's
-    # texture downscale) degrade without it; the renderer cannot.
+    # subcommand, not an optional extra. The splash overlay degrades without it; the renderer cannot.
     "pillow>=9.0",
+    # A run is recorded as one mcap file (roqsim/capture.py), chunked and zstd-compressed so a
+    # killed run keeps every closed chunk; the reader (roqsim/recording.py) decompresses them.
+    "mcap>=1.2",
+    "zstandard>=0.21",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +82,9 @@ flex_material = "roqsim.plugins.flex_material:FlexMaterialPlugin"
 # than a robot family because every actuated thing has the question, and the measured part
 # (force * velocity) is the same for a wheel, a joint and a rotor.
 energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
+# WHERE a physics step's time goes: MuJoCo's own stage timers (collision, solver, integrator), which
+# it fills only while a time callback is installed. A measurement mode, carried switched off.
+step_timers = "roqsim.plugins.step_timers:StepTimersPlugin"
 
 # Ground that is not flat. Without it everything this substrate can stand a robot on is a plane, while
 # four of its ported platforms are outdoor machines whose papers are about what happens when it is not.
@@ -95,7 +101,6 @@ entity_control = "roqsim.plugins.entity_control:EntityControlPlugin"
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of
 # `roqsim export *` because they are already written into other people's configs and scripts.
 roqsim = "roqsim.commands:main"
-roqsim-export-web = "roqsim.export_web:main"
 roqsim-export-urdf = "roqsim.export_urdf:main"
 roqsim-export-srdf = "roqsim.export_srdf:main"
 

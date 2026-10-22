@@ -106,7 +106,11 @@ def test_a_package_ref_is_accepted_the_way_roqsim_sim_takes_one():
     pytest.importorskip("roqsim_mobile")
     report = check_world("roqsim_mobile:turtlebot4_demo")
     assert report["ok"] is True
-    assert {e["name"] for e in report["world"]["entities"]} == {"robot", "robot.rplidar", "robot.oakd"}
+    assert {e["name"] for e in report["world"]["entities"]} == {
+        "robot",
+        "robot.rplidar",
+        "robot.oakd",
+    }
     topics = {e["topic"] for e in report["world"]["endpoints"]}
     assert {"cmd_vel", "odom", "scan"} <= topics
 
@@ -274,12 +278,17 @@ def test_an_arm_home_that_buries_the_arm_in_the_table_is_named(tmp_path, capsys)
     )
     report = check_world(str(world))
     assert report["ok"] is True and report["warnings"]
-    messages = [w["message"] for w in report["warnings"]]
+    overlaps = [w for w in report["warnings"] if w["check"] == "interpenetration"]
+    messages = [w["message"] for w in overlaps]
     into_table = [m for m in messages if "geom 'table_top' (entity 'table')" in m]
     assert into_table, "the table is one side"
     assert all("(entity 'arm')" in m and " mm at reset" in m for m in into_table)
     assert all("(entity 'arm')" in m for m in messages), "every overlap here is the arm's"
-    assert "`home` (spawn_arm)" in report["warnings"][0]["hint"]
+    assert "`home` (spawn_arm)" in overlaps[0]["hint"]
+    # An arm under the default cone is the other finding this world has.
+    assert [w["check"] for w in report["warnings"] if w["check"] != "interpenetration"] == [
+        "friction-cone"
+    ]
 
     assert main([str(world)]) == 0, "a warning does not fail the check"
     out = capsys.readouterr().out
@@ -366,9 +375,12 @@ Link = _transport_class()
 
 def test_a_transport_plugin_is_validated_and_not_started(tmp_path):
     pytest.importorskip("roqsim_mobile")
-    world = GOOD + f"""
+    world = (
+        GOOD
+        + f"""
       - "{__name__}:Link": {{port: 4560}}
     """
+    )
     report = check_world(str(_world(tmp_path, world)))
     assert report["ok"] is True, report["problems"]
     assert report["reached"] == STAGES[-1]

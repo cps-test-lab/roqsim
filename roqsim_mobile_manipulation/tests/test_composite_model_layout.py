@@ -1,14 +1,15 @@
 """The one-folder-per-model layout holds, and every shipped model's meshes actually resolve.
 
-Three failures this catches, none of which the per-robot drive tests would:
+Four failures this catches, none of which the per-robot drive tests would:
 
 * a model whose ``<compiler meshdir=...>`` points anywhere but its own ``models/<name>/meshes/``
   -- MuJoCo does not error on an unresolvable mesh path, it compiles
   the model with the reference as given, so the robot silently loses its geometry;
-* a mesh (or licence) that no ``[tool.setuptools.package-data]`` glob matches. That installs cleanly
-  from an editable checkout and fails at RUN time inside a container, where the checkout is not there
-  to paper over it -- the reason those globs are patterns rather than an enumeration;
+* a mesh, licence or thumbnail that no ``[tool.setuptools.package-data]`` glob matches. That installs
+  cleanly from an editable checkout and fails at RUN time inside a container, where the checkout is
+  not there to paper over it -- the reason those globs are patterns rather than an enumeration;
 * a vendor mesh redistributed without the licence sidecar that permits it.
+* a mesh shipped in a model's ``meshes/`` that its MJCF never loads.
 
 Named ``test_composite_model_layout`` rather than the siblings' ``test_model_layout`` /
 ``test_sensor_model_layout`` / ``test_layout``: pytest cannot import two same-named test modules in
@@ -44,6 +45,32 @@ def test_every_model_is_a_folder():
     assert set(MODEL_NAMES) == {"frankie", "tiago_pro"}
 
 
+#: What a model folder's ``meshes/`` ships for the MJCF to load; ``*.materials.json`` sidecars are
+#: provenance, read by no model.
+_LOADED = (".obj", ".stl", ".png")
+
+
+@pytest.mark.parametrize("name", MODEL_NAMES)
+def test_every_shipped_mesh_is_one_the_model_loads(name):
+    """A file in ``meshes/`` that the MJCF never names is weight in every wheel and a reader's
+    false lead: it looks like the geometry the robot has, and the robot has none of it."""
+    asset = resolve_model(f"roqsim_mobile_manipulation:{name}")
+    spec = mujoco.MjSpec.from_file(str(asset.path))
+    apply_assets(spec, asset)
+    loaded = {
+        Path(f).resolve()
+        for f in [m.file for m in spec.meshes] + [t.file for t in spec.textures]
+        if f
+    }
+    shipped = MODELS_DIR / name / "meshes"
+    unused = sorted(
+        p.name
+        for p in (shipped.iterdir() if shipped.is_dir() else [])
+        if p.suffix.lower() in _LOADED and p.resolve() not in loaded
+    )
+    assert not unused, f"{name}: meshes/ ships files its MJCF never loads: {unused}"
+
+
 @pytest.mark.parametrize("name", MODEL_NAMES)
 def test_model_resolves_with_all_meshes(name):
     asset = resolve_model(f"roqsim_mobile_manipulation:{name}")
@@ -76,12 +103,14 @@ def test_package_data_globs_cover_every_shipped_file():
     data = tomllib.loads((root / "pyproject.toml").read_text())
     globs = data["tool"]["setuptools"]["package-data"]["roqsim_mobile_manipulation"]
     pkg = root / "src" / "roqsim_mobile_manipulation"
+    # The source tree's files, which are what a wheel is built from -- not MODELS_DIR, which is the
+    # installed copy and, outside an editable install, holds only what the globs already matched.
     missing = [
         str(p.relative_to(pkg))
-        for p in MODELS_DIR.rglob("*")
+        for p in (pkg / "models").rglob("*")
         if p.is_file()
-        # __init__.py is a module (and .pyc build litter); thumbnails are docs-only.
-        and p.suffix not in (".py", ".pyc", ".png")
+        # __init__.py is a module (and .pyc build litter).
+        and p.suffix not in (".py", ".pyc")
         and not any(fnmatch.fnmatch(str(p.relative_to(pkg)), g) for g in globs)
     ]
     assert not missing, f"not covered by package-data (would be absent from the wheel): {missing}"

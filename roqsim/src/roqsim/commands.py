@@ -334,6 +334,7 @@ def cli() -> None:
 cli.add_command(tool("roqsim.runner", "sim"))
 cli.add_command(tool("roqsim.render", "render"))
 cli.add_command(tool("roqsim.state", "state"))
+cli.add_command(tool("roqsim.rebuild", "rebuild"))
 cli.add_command(tool("roqsim.introspection", "plugins"))
 cli.add_command(tool("roqsim.catalog", "catalog"))
 cli.add_command(tool("roqsim.health", "health"))
@@ -349,9 +350,7 @@ def export_group() -> None:
     """Export a world or model to another format."""
 
 
-export_group.add_command(tool("roqsim.export_web", "web"))
 export_group.add_command(tool("roqsim.export_gltf", "gltf"))
-export_group.add_command(tool("roqsim.export_capture", "capture"))
 export_group.add_command(tool("roqsim.export_urdf", "urdf"))
 export_group.add_command(tool("roqsim.export_srdf", "srdf"))
 export_group.add_command(tool("roqsim.export_mesh", "mesh"))
@@ -373,7 +372,7 @@ def main(argv: list | None = None) -> int:
         return err.exit_code
     except click.Abort:
         click.echo("roqsim: aborted", err=True)
-        return 130
+        return exit_status.INTERRUPTED
 
 
 if __name__ == "__main__":  # pragma: no cover

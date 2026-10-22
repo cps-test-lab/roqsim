@@ -1,15 +1,15 @@
 """Render a world, scene, model or mesh to an image, headless.
 
 This is the *tool*; the rendering library it drives is :mod:`roqsim.rendering` (``FrameRenderer`` and the
-camera maths). Same relationship ``roqsim.export_web`` has with ``roqsim export web``.
+camera maths). Same relationship ``roqsim.export_gltf`` has with ``roqsim export gltf``.
 
     roqsim render world.yaml --out top.png --view elevation=-85 distance=45
     roqsim render roqsim_assets:industrial_table --out table.png        # one model, auto-framed
     roqsim render roqsim_scenes:depot --no-ceiling --out room.png
     roqsim render tiago_pick:tiago_pick --focus parcel --out parcel.png
     roqsim render prop.obj --out prop.png                        # a raw mesh, pre-finalization
-    roqsim render --state run.npz --from onset --out clip.mp4    # a run, the whole scene from above
-    roqsim render --state run.npz --camera-path orbit.yaml --overlay clock --out clip.mp4
+    roqsim render --state run.mcap --from onset --out clip.mp4    # a run, the whole scene from above
+    roqsim render --state run.mcap --camera-path orbit.yaml --overlay clock --out clip.mp4
 
 The positional argument takes the *same* shapes as ``roqsim sim`` (see :func:`roqsim.runner.config_for_input`)
 plus one more: a raw mesh. ``roqsim sim`` refuses meshes on purpose -- loose geometry is not something you
@@ -64,7 +64,7 @@ from .models import ModelError
 from .override_options import add_override_options, overrides_from_options
 from .recording import RecordingError
 from .rendering import FrameRenderer, GLBackendError, check_gl_backend, focus_camera
-from .viewer import GL_HELP, DisplayError
+from .viewer import GL_HELP, DisplayError, ViewError
 
 log = logging.getLogger(__name__)
 
@@ -600,7 +600,7 @@ def render_target(
     if video and not state:
         raise RenderError(
             f"--out {out.name} is a video, which needs a recording to animate: pass "
-            "--state run.npz. A world on its own has exactly one frame."
+            "--state run.mcap. A world on its own has exactly one frame."
         )
     if not state and not target:
         raise RenderError(
@@ -1443,6 +1443,7 @@ def main(argv: list | None = None) -> int:
         RenderError,
         RecordingError,
         DisplayError,
+        ViewError,
         PluginError,
         ModelError,
         CaptureError,

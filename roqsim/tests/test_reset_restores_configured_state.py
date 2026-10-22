@@ -248,6 +248,16 @@ PAYLOADS: dict[str, Any] = {
     "cmd": 1.0,
     "door": 1.0,
     "tare": None,
+    "zero_ftsensor": None,
+    "set_speed_slider": 0.5,
+    **{
+        f"{name}/target_frame": ([0.3, 0.2, 0.4], [1.0, 0.0, 0.0, 0.0])
+        for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
+    **{
+        f"{name}/target_wrench": ([0.0, 0.0, -5.0], [0.0, 0.0, 0.0])
+        for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
     "override": True,
 }
 
@@ -312,6 +322,20 @@ class Case:
     defect: str | None = None
 
 
+def _run_rtde_program(engine: Engine) -> None:
+    """A program that sets a TCP, tares and moves, still running when the trial resets."""
+
+    def program(c, r):
+        c.setTcp([0.0, 0.0, 0.05, 0.0, 0.0, 0.0])
+        c.zeroFtSensor()
+        while True:
+            t0 = c.initPeriod()
+            c.speedL([0.0, 0.0, -0.01, 0.0, 0.0, 0.0], 0.5)
+            c.waitPeriod(t0)
+
+    engine.ctx.blackboard.get("ur_rtde:ur5e").run(program)
+
+
 def _needs_file(path_of: Callable[[], Path], what: str) -> Callable[[], str | None]:
     def check() -> str | None:
         return None if path_of().exists() else f"{what} is not present ({path_of()})"
@@ -348,6 +372,7 @@ CASES: dict[str, Case] = {
     "clearance_monitor": Case(lambda _: _mobile({"clearance_monitor": {}})),
     "upright_monitor": Case(lambda _: _mobile({"upright_monitor": {}})),
     "energy_monitor": Case(lambda _: _mobile({"energy_monitor": {}})),
+    "step_timers": Case(lambda tmp: _world({"step_timers": {"path": str(tmp / "timers.csv")}})),
     "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
     "pose_publisher": Case(lambda _: _world(_robot("turtlebot4"))),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
@@ -382,14 +407,33 @@ CASES: dict[str, Case] = {
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
         {
-            "walker": {"walker": "MaleVisitorWalk", "waypoints": [[-1.0, 0.0], [1.0, 0.0]]},
+            "walker": {"walker": "MaleVisitorWalk", "pose": {"position": {"x": -1.0, "y": 0.0}}},
             "name": "ped",
+            "components": [
+                {"navigator": {"output": "walker", "speed": 1.0, "goals": [[1.0, 0.0]]}}
+            ],
         }
     ),
     # manipulation
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
+    "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
+    "ur_rtde": Case(lambda _: _arm({"ur_rtde": {"ft": "ft"}}), use=(_run_rtde_program,)),
+    "fzi_cartesian_controllers": Case(
+        lambda _: _arm(
+            {
+                "fzi_cartesian_controllers": {
+                    "ft": "ft",
+                    "controllers": {
+                        "cartesian_motion_controller": {"type": "motion"},
+                        "cartesian_compliance_controller": {"type": "compliance"},
+                    },
+                }
+            }
+        ),
+        use=(_switch_every_controller,),
+    ),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller,),
@@ -411,6 +455,7 @@ CASES: dict[str, Case] = {
     "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
+    "spot_body_camera": Case(lambda _: _sensor("spot_body_camera")),
     "fiducial_marker": _static(
         {
             "fiducial_marker": {
@@ -525,6 +570,7 @@ CASES: dict[str, Case] = {
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),
+    "hazard_marking": _static({"hazard_marking": {"prefix": "h_"}, "name": "marking"}),
     # aerial
     "quadrotor_controller": Case(
         lambda _: _world(_robot("crazyflie_2", name="drone"), density=1.225, viscosity=1.8e-5)
@@ -567,6 +613,10 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "keeps its link, arming and last controls across the episode boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
+    "fzi_cartesian_controllers": {
+        f"_registered['{c}'].transitions": _TRANSITIONS
+        for c in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
     **{
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
@@ -578,6 +628,13 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     **{name: {"_hits": _CAST_BUFFERS} for name in _RAY_SENSORS},
     **{name: {"_frames": _RENDERER} for name in _CAMERAS},
     **{name: {"_frames": _RENDERER, "_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
+    # A device with its own depth optics: a second renderer, and registered depth's mask.
+    "spot_body_camera": {
+        "_frames": _RENDERER,
+        "_depth_frames": _RENDERER,
+        "_invalid": _DEPTH_MASK,
+        "_registered_invalid": _DEPTH_MASK,
+    },
 }
 
 #: Plugins with no world here to configure them in.

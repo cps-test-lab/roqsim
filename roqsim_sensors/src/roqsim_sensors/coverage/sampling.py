@@ -9,6 +9,9 @@ baked scene, a floorplan STL, a hand-written MJCF) using only numpy and MuJoCo r
 * :func:`room_volume_points` -- a 3D grid of points in the room's free interior at a few heights.
   Answers "how much of the room can be observed."
 
+:func:`sample_set` is the two of them as one labelled point set -- what a coverage caller evaluates,
+shared so that two callers cannot disagree about what "the sample set" is.
+
 Free-space classification (for the volume grid) is raycast-based and deliberately conservative: a point
 is kept only if it is *enclosed* (an axis ray hits geometry on all four horizontal sides -- so points
 outside the building footprint, over the infinite floor plane, are dropped) and not *embedded* in a
@@ -163,8 +166,12 @@ def _classify_points(
     *,
     max_dist: float,
     geomgroup: np.ndarray,
+    enclosed_only: bool = True,
 ) -> np.ndarray:
     """Boolean mask: which points are enclosed (inside the building) and not embedded in a geom.
+
+    ``enclosed_only=False`` drops the enclosure test, for an open world (a cell on a table, a yard)
+    with no walls for a horizontal ray to meet: then only points inside a geom are removed.
 
     One :func:`roqsim.raycast.cast_many` for the whole grid rather than a call per point. Not a single
     batch -- ``mj_multiRay`` casts from one origin, and here every point *is* an origin -- but the
@@ -188,7 +195,7 @@ def _classify_points(
     # inside that geom rather than in free space beside it. Four of six is the majority test.
     facing = np.einsum("pij,ij->pi", hits.normal, _AXES6) > 0.0
     embedded = (hit & facing).sum(axis=1) >= 4
-    return enclosed & ~embedded
+    return (enclosed if enclosed_only else np.ones(len(points), dtype=bool)) & ~embedded
 
 
 def room_volume_points(
@@ -199,8 +206,13 @@ def room_volume_points(
     heights=(0.3, 1.0, 1.7),
     bounds: tuple[np.ndarray, np.ndarray] | None = None,
     include_groups=(0, 1, 2, 3),
+    enclosed_only: bool = True,
 ) -> np.ndarray:
-    """A 3D grid of free-interior room points at the given heights (world z)."""
+    """A 3D grid of free-interior room points at the given heights (world z).
+
+    ``enclosed_only`` keeps only points with something on every horizontal side (inside a room);
+    turn it off for an open world, where that test would drop every point.
+    """
     lo, hi = bounds if bounds is not None else world_bounds(model, data)
     xs = np.arange(lo[0], hi[0] + resolution, resolution)
     ys = np.arange(lo[1], hi[1] + resolution, resolution)
@@ -211,11 +223,66 @@ def room_volume_points(
     kept: list[np.ndarray] = []
     for h in heights:
         pts = np.column_stack([flat, np.full(len(flat), float(h))])
-        mask = _classify_points(model, data, pts, max_dist=max_dist, geomgroup=geomgroup)
+        mask = _classify_points(
+            model, data, pts, max_dist=max_dist, geomgroup=geomgroup, enclosed_only=enclosed_only
+        )
         kept.append(pts[mask])
     if not kept:
         return np.zeros((0, 3))
     return np.vstack(kept)
+
+
+# -- the combined sample set -------------------------------------------------------------------------
+
+
+def sample_set(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    volume: bool = True,
+    objects: bool = True,
+    resolution: float = 0.25,
+    heights=(0.3, 1.0, 1.7),
+    per_object: int = 64,
+    include_groups=(0, 1, 2, 3),
+    enclosed_only: bool = True,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """The two samplers above as one labelled point set -- what a coverage caller actually evaluates.
+
+    Returns ``(points (P,3), labels (P,) int, label_names)``. A volume point's label is ``-1`` (it
+    belongs to no object); a surface point's indexes ``label_names``. Volume points come first, so a
+    caller that needs the grid on its own can take the leading ``labels == -1`` block.
+
+    Shared rather than restated per caller so two callers cannot disagree about what "the sample set"
+    is: a coverage number is only comparable across evaluations that sampled the same way. Returns an
+    empty set rather than raising -- a caller with a name to put in the message is the one that should
+    refuse, and every caller here does. ``enclosed_only`` is :func:`room_volume_points`'s.
+    """
+    points_list: list[np.ndarray] = []
+    labels_list: list[np.ndarray] = []
+    names: list[str] = []
+    if volume:
+        vol = room_volume_points(
+            model,
+            data,
+            resolution=resolution,
+            heights=heights,
+            include_groups=include_groups,
+            enclosed_only=enclosed_only,
+        )
+        if len(vol):
+            points_list.append(vol)
+            labels_list.append(np.full(len(vol), -1))
+    if objects:
+        surf, lab, names = object_surface_points(
+            model, data, per_object=per_object, include_groups=include_groups
+        )
+        if len(surf):
+            points_list.append(surf)
+            labels_list.append(lab)
+    if not points_list:
+        return np.zeros((0, 3)), np.zeros(0, dtype=int), []
+    return np.vstack(points_list), np.concatenate(labels_list), names
 
 
 # -- gap clustering ----------------------------------------------------------------------------------

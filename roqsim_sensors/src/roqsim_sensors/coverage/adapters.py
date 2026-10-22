@@ -114,13 +114,16 @@ def _own_body(model, *, cam_id: int = -1, site_id: int = -1) -> int:
 
     A *hypothetical* placement (a pose, no in-world id) has no body and needs none: nothing of it
     exists to occlude. A spawned one always does, and its housing is in the way -- see
-    :attr:`SensorFov.body_exclude`.
+    :attr:`SensorFov.body_exclude` -- except on the world body, whose geometry is the walls: a camera
+    or site placed directly in ``<worldbody>`` excludes nothing.
     """
     if cam_id >= 0:
-        return int(model.cam_bodyid[cam_id])
-    if site_id >= 0:
-        return int(model.site_bodyid[site_id])
-    return -1
+        body = int(model.cam_bodyid[cam_id])
+    elif site_id >= 0:
+        body = int(model.site_bodyid[site_id])
+    else:
+        return -1
+    return body if body > 0 else -1
 
 
 # -- camera ------------------------------------------------------------------------------------------
@@ -149,7 +152,11 @@ def camera_adapter(model, data, placed: PlacedSensor) -> SensorFov:
         height = int(cfg.get("height", 480))
         fovy = float(cfg.get("fovy", 45.0))
         f = height / (2.0 * np.tan(np.radians(fovy) / 2.0))
-        intr = Intrinsics(width=width, height=height, fx=f, fy=f, cx=width / 2.0, cy=height / 2.0)
+        # A symmetric frustum's axis is the frame's centre, in pixel-centre coordinates as
+        # intrinsics_from_model publishes it.
+        intr = Intrinsics(
+            width=width, height=height, fx=f, fy=f, cx=(width - 1) / 2.0, cy=(height - 1) / 2.0
+        )
 
     # Horizontal half-angle from the intrinsics; vertical from fovy. Stored for reference -- FRUSTUM
     # membership uses the intrinsics rectangle, not these bands, but they describe the sector honestly.

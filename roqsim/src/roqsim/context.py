@@ -238,6 +238,34 @@ class Endpoint:
     #: default mapping; a hint block of ``None`` keeps it off that backend. Set for every decorated
     #: endpoint. ``False``: served only by a backend whose hint block it carries.
     transport: bool = False
+    #: In-process consumers holding this endpoint open (:meth:`claim`). A transport's subscriber count
+    #: cannot see a consumer that reads ``read`` directly -- another plugin on the physics thread -- so
+    #: such a consumer says so here, and a producer that skips work while nobody listens asks
+    #: :meth:`wanted`, which counts it.
+    claims: int = 0
+
+    def claim(self) -> None:
+        """Declare an in-process consumer of this endpoint; the producer keeps producing for it.
+
+        Pair it with :meth:`release`. Without a claim, a producer gated on ``has_subscribers`` -- a
+        camera, whose render a bridge switches off while no transport subscriber listens -- leaves
+        an in-process reader with nothing, or the last frame, whenever a bridge is loaded.
+        """
+        self.claims += 1
+
+    def release(self) -> None:
+        if self.claims <= 0:
+            raise RuntimeError(f"endpoint {self.name!r}: release() without a matching claim()")
+        self.claims -= 1
+
+    def wanted(self) -> bool:
+        """Whether anyone consumes this endpoint: an in-process claim, or a transport subscriber.
+
+        ``has_subscribers is None`` (no transport could tell) counts as yes, so an endpoint stays live
+        by default.
+        """
+        return self.claims > 0 or self.has_subscribers is None or bool(self.has_subscribers())
+
     #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
     #: :func:`endpoint_kind` infers from its direction and hints.
     kind: str = ""
@@ -567,8 +595,14 @@ class SimContext:
 
     # -- deterministic randomness -------------------------------------------------------------
 
-    def rng_for(self, name: str):  # -> numpy.random.Generator (imported lazily below)
+    def rng_for(self, name: str, *, per_episode: bool = False):  # -> numpy.random.Generator
         """A generator whose draws are a pure function of ``(seed, episode, sim_time, name)``.
+
+        ``per_episode=True`` drops ``sim_time`` from the key: the draw is the episode's, the same
+        whenever in the episode it is made. That is the generator for a quantity a trial holds
+        constant -- a sensor's bias, a drift rate -- which a time-keyed draw would make depend on
+        the moment it was first read. It has a counter slot of its own, so it never repeats the
+        time-keyed draw of the same name at ``sim_time`` 0.
 
         **Counter-based, not stateful**, and that is the whole point. A shared stateful generator's
         position depends on how many draws happened before it -- sensor rates, step count, and for
@@ -618,7 +652,10 @@ class SimContext:
                 "there is no run to reproduce and a picture is not a measurement."
             )
         seed = int(self.seed)
-        step = 0 if self.model is None or self.data is None else round(self.sim_time / self.dt)
+        if per_episode or self.model is None or self.data is None:
+            step = 0
+        else:
+            step = round(self.sim_time / self.dt)
         # A stable hash of the sensor name: Python's hash() is salted per process, which would make a
         # run irreproducible across processes -- exactly what this exists to prevent.
         import zlib
@@ -629,7 +666,9 @@ class SimContext:
         # episode, step) addresses a draw directly, with no stream to replay. A reset restarts
         # `sim_time`, so without this slot trial 2 would re-draw trial 1's noise step for step.
         return np.random.Generator(
-            np.random.Philox(key=seed, counter=[step, stream, int(self.episode), 0])
+            np.random.Philox(
+                key=seed, counter=[step, stream, int(self.episode), 1 if per_episode else 0]
+            )
         )
 
     # -- time ---------------------------------------------------------------------------------

@@ -43,13 +43,11 @@ from pathlib import Path
 
 import requests
 
-from roqsim import exit_status
+from roqsim import env, exit_status
 
 _FUEL_HOSTS = ("fuel.gazebosim.org", "fuel.ignitionrobotics.org")
 _CANONICAL_HOST = "fuel.gazebosim.org"
-_DEFAULT_CACHE = Path(
-    os.environ.get("ROQSIM_FUEL_CACHE", Path.home() / ".cache" / "roqsim" / "fuel")
-)
+_DEFAULT_CACHE = Path(env.get("ROQSIM_FUEL_CACHE") or Path.home() / ".cache" / "roqsim" / "fuel")
 _TIMEOUT = 60
 
 

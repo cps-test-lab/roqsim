@@ -119,30 +119,32 @@ def test_no_communication_on_an_offline_world_says_it_changed_nothing():
     assert "nothing was dropped" in _warnings_from([])
 
 
-# -- positional dispatch (_config_for_input) -----------------------------------------------------
+# -- positional dispatch (config_for_input) -----------------------------------------------------
 
 
 def test_xml_runs_as_the_world():
     """A .xml is a baked scene: it becomes sim.world (as an absolute path), no plugins added."""
-    cfg = runner._config_for_input("scene.xml", None)
+    cfg = runner.config_for_input("scene.xml", None)
     assert cfg.sim["world"].endswith("/scene.xml") and cfg.plugins == []
 
 
 def test_model_ref_is_shown_via_spawn_model():
     """A bare reference is welded into the default empty room by spawn_model."""
-    cfg = runner._config_for_input("roqsim_assets:industrial_table", None)
+    cfg = runner.config_for_input("roqsim_assets:industrial_table", None)
     assert [p.ref for p in cfg.plugins] == ["spawn_model"]
     assert cfg.plugins[0].config["model"] == "roqsim_assets:industrial_table"
 
 
 def test_raw_mesh_is_refused():
     """roqsim runs worlds/scenes/models, not geometry -- point at finalize instead."""
-    with pytest.raises(PluginError, match="raw meshes"):
-        runner._config_for_input("prop.obj", None)
+    with pytest.raises(PluginError, match="raw meshes") as err:
+        runner.config_for_input("prop.obj", None)
+    # A command of the tree, never a script by path.
+    assert "`roqsim assets finalize-mujoco`" in str(err.value) and ".py" not in str(err.value)
 
 
 def test_overrides_reach_a_synthesized_world():
-    cfg = runner._config_for_input("roqsim_assets:industrial_table", {"sim": {"pacing": "asap"}})
+    cfg = runner.config_for_input("roqsim_assets:industrial_table", {"sim": {"pacing": "asap"}})
     assert cfg.sim.get("pacing") == "asap"
 
 
@@ -165,11 +167,11 @@ def test_f9_still_works_with_no_record_flag(cli):
     from roqsim.runner import _DEFAULT_RECORD
 
     assert cli()["record"] is None
-    assert _DEFAULT_RECORD.endswith(".npz")
+    assert _DEFAULT_RECORD.endswith(".mcap")
 
 
 def test_record_takes_a_path(cli):
-    assert cli("--record", "/tmp/x.npz")["record"] == "/tmp/x.npz"
+    assert cli("--record", "/tmp/x.mcap")["record"] == "/tmp/x.mcap"
 
 
 def test_capture_fps_defaults_and_passes_through(cli):
@@ -181,7 +183,7 @@ def test_capture_fps_defaults_and_passes_through(cli):
 
 def test_recording_is_not_world_config(cli):
     """The twin of test_panels_are_not_world_config: capture describes a session, not an experiment."""
-    assert cli("--record", "/tmp/x.npz", "--capture-fps", "10")["overrides"] == {}
+    assert cli("--record", "/tmp/x.mcap", "--capture-fps", "10")["overrides"] == {}
 
 
 @pytest.mark.parametrize("world", ["world.yaml", "scene.xml", "w.yml"])
@@ -202,7 +204,7 @@ def test_record_refuses_to_eat_the_world(monkeypatch, capsys, world):
 
 def test_record_after_the_target_is_fine(cli):
     """The normal spelling must not be caught by that guard."""
-    assert cli("--record", "/tmp/out.npz")["record"] == "/tmp/out.npz"
+    assert cli("--record", "/tmp/out.mcap")["record"] == "/tmp/out.mcap"
 
 
 def test_video_off_by_default(cli):
@@ -271,15 +273,15 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
     runner.run(str(scene), headless=True, max_steps=1, video=str(tmp_path / "out.webm"))
-    assert seen["path"] == str(tmp_path / "out.npz")
+    assert seen["path"] == str(tmp_path / "out.mcap")
 
 
 # -- graceful stop -------------------------------------------------------------------------------
 #
 # A supervised run ends on SIGTERM, not Ctrl+C: a container teardown, `docker stop`, a scheduler
 # eviction and a campaign timeout all send it. Its *default* action kills the process outright, so no
-# `finally` runs and the recording and the run capture are both lost -- a campaign then finishes 1/1
-# clean and produces no `run.npz` at all. These pin that both signals flip run-control
+# `finally` runs and the recording's open chunk and summary are lost -- a campaign then finishes 1/1
+# clean and produces no finished `run.mcap` at all. These pin that both signals flip run-control
 # instead, and that the driver leaves the process's handlers as it found them.
 
 
@@ -415,7 +417,7 @@ def test_the_teardown_runs_inside_the_protected_window(monkeypatch, tmp_path):
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
-    runner.run(str(scene), headless=True, max_steps=1, record=str(tmp_path / "r.npz"))
+    runner.run(str(scene), headless=True, max_steps=1, record=str(tmp_path / "r.mcap"))
     assert closed == [True], "close() did not complete -- the flush was outside the signal window"
 
 
@@ -505,5 +507,5 @@ def test_a_recording_that_cannot_be_written_still_shuts_the_engine_down(probe, m
     monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     with pytest.raises(RecordingError, match="disk full"):
-        runner.run(str(world), headless=True, max_steps=1, record="r.npz", pacing="asap")
+        runner.run(str(world), headless=True, max_steps=1, record="r.mcap", pacing="asap")
     assert module.LOG == ["shutdown"]

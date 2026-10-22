@@ -43,7 +43,7 @@ def test_pacer_factor_parsing():
 # requested rate, which against a live stack is worse than being slow. Counting it is what
 # stops that absorption from being silent -- uncounted, a run holding 0.34x realtime for five
 # minutes reports nothing until its job deadline kills it, and the shortfall has to be
-# reconstructed from run.clock_map.csv afterwards.
+# reconstructed from the recording's clock channel afterwards.
 
 
 def test_pacer_reports_no_shortfall_when_it_keeps_up():
@@ -161,7 +161,7 @@ def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
             raise RecordingError("disk full")
 
     monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
-    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.npz"))
+    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.mcap"))
     sim = MujocoSim(world=_write_world(tmp_path))
     sim.setup()
     sim.reset()
@@ -223,7 +223,7 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.setup(output_dir=str(root))
     sim.reset()
     sim.shutdown()
-    assert (run_dir / "scene" / "scene.json").is_file()
+    assert (run_dir / "scene" / "scene.glb").read_bytes()[:4] == b"glTF"
     assert not (root / "scene").exists()
 
     # Without a per-run directory the scenario's own output_dir is the fallback.
@@ -232,4 +232,4 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.setup(output_dir=str(root))
     sim.reset()
     sim.shutdown()
-    assert (root / "scene" / "scene.json").is_file()
+    assert (root / "scene" / "scene.glb").is_file()

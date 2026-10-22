@@ -23,8 +23,10 @@ A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leav
         ...
 
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
-wall-time) and the one-shot load phases — plugin resolution, world load, compile, data creation —
-are recorded for :meth:`load_report`. Profiling off (the default) does no timing work at all.
+wall-time), so is the physics step itself (the ``<physics>`` row: ``mj_step``, or ``mj_step1``,
+``gravity_reaction`` and ``mj_step2`` for a step taken in two halves), and the one-shot load
+phases — plugin resolution, world load, compile, data creation — are recorded for
+:meth:`load_report`. Profiling off (the default) does no timing work at all.
 """
 
 from __future__ import annotations
@@ -54,6 +56,8 @@ from .context import SimContext
 from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
 from .interpenetration import Interpenetration, interpenetrations, summary
+from .lights import summary as lights_summary
+from .lights import undrawn_lights
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
@@ -65,6 +69,10 @@ _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
 # Reserved timing group for one-shot engine phases (resolve/load/compile). '<' cannot occur in a
 # plugin name, so this never collides with a per-plugin timing key.
 _ENGINE_GROUP = "<engine>"
+
+#: Timing group for the physics step under ``profile=True``: a row of :meth:`Engine.timing_report`
+#: beside the plugins', reserved the same way.
+PHYSICS_GROUP = "<physics>"
 
 _INTEGRATORS = {
     "euler": mujoco.mjtIntegrator.mjINT_EULER,
@@ -160,12 +168,13 @@ class Engine:
         #: joint -- between ``mj_step1`` and ``mj_step2`` (:class:`roqsim.actuators.GravityReaction`).
         #: ``None`` when the model has no such mechanism, and then :meth:`step` is one ``mj_step``.
         self._gravity_reaction: GravityReaction | None = None
-        # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
-        # perf_counter call (pre_step/post_step run once per plugin per physics step).
+        # Timing is strictly opt-in: with profile=False neither hooks, the physics step nor load
+        # phases pay for a perf_counter call (pre_step/post_step run once per plugin per step).
         self._profile = profile
         # timing[group][label] -> [total_seconds, call_count, max_seconds]; groups are plugin
-        # names plus the reserved _ENGINE_GROUP. Max is tracked at record time because unnamed
-        # plugin instances share their class name as key (240 spawn_models -> one row).
+        # names plus the reserved _ENGINE_GROUP and PHYSICS_GROUP. Max is tracked at record time
+        # because unnamed plugin instances share their class name as key (240 spawn_models -> one
+        # row).
         self._timing: dict[str, dict[str, list]] = defaultdict(
             lambda: defaultdict(lambda: [0.0, 0, 0.0])
         )
@@ -325,6 +334,11 @@ class Engine:
             self.ctx.model = spec.compile()
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
+        # Lights past the renderer's eight compile and are never drawn; every image of the world is
+        # then lit otherwise than it reads. Reported, never refused.
+        undrawn = undrawn_lights(self.ctx.model)
+        if undrawn:
+            self.logger.warning("%s", lights_summary(undrawn, self.ctx.model))
         self._gravity_reaction = GravityReaction.of(self.ctx.model)
         if self._gravity_reaction is not None and self.integrator.resolved == "rk4":
             # mj_step2 integrates RK4 as Euler, so stepping in two halves would run a different
@@ -483,12 +497,20 @@ class Engine:
             self._timed(plugin, "pre_step", plugin.pre_step, self.ctx)
         # 3) physics. In two halves when a drive holds a mechanism on a moving base, so its weight
         # reaches the ground through that base (roqsim.actuators.GravityReaction).
-        if self._gravity_reaction is None:
-            mujoco.mj_step(self.ctx.model, self.ctx.data)
+        m, d = self.ctx.model, self.ctx.data
+        if not self._profile:
+            if self._gravity_reaction is None:
+                mujoco.mj_step(m, d)
+            else:
+                mujoco.mj_step1(m, d)
+                self._gravity_reaction.apply(m, d)
+                mujoco.mj_step2(m, d)
+        elif self._gravity_reaction is None:
+            self._timed_physics("mj_step", mujoco.mj_step, m, d)
         else:
-            mujoco.mj_step1(self.ctx.model, self.ctx.data)
-            self._gravity_reaction.apply(self.ctx.model, self.ctx.data)
-            mujoco.mj_step2(self.ctx.model, self.ctx.data)
+            self._timed_physics("mj_step1", mujoco.mj_step1, m, d)
+            self._timed_physics("gravity_reaction", self._gravity_reaction.apply, m, d)
+            self._timed_physics("mj_step2", mujoco.mj_step2, m, d)
         # 4) sensors/transport/recording read state.
         for plugin in self.plugins:
             self._timed(plugin, "post_step", plugin.post_step, self.ctx)
@@ -534,7 +556,13 @@ class Engine:
         return self.ctx.dt
 
     def timing_report(self) -> dict[str, dict[str, float]]:
-        """Return ``{plugin_name: {hook: avg_microseconds_per_call}}`` for the ``--profile`` table."""
+        """Return ``{plugin_name: {hook: avg_microseconds_per_call}}`` for the ``--profile`` table.
+
+        The physics step is the :data:`PHYSICS_GROUP` row, so its per-step cost reads beside the
+        plugins' hooks: ``mj_step``, or ``mj_step1``/``gravity_reaction``/``mj_step2`` when a drive
+        holds a mechanism on a moving base. MuJoCo's own split of the step into its stages is the
+        ``step_timers`` plugin's.
+        """
         report: dict[str, dict[str, float]] = {}
         for pname, hooks in self._timing.items():
             if pname == _ENGINE_GROUP:
@@ -547,7 +575,7 @@ class Engine:
 
     def format_timing(self) -> str:
         report = self.timing_report()
-        lines = ["per-plugin hook timing (avg µs/call):"]
+        lines = ["physics step and per-plugin hook timing (avg µs/call):"]
         for pname in sorted(report):
             for hook, us in sorted(report[pname].items()):
                 lines.append(f"  {pname:24s} {hook:10s} {us:10.2f} µs")
@@ -599,6 +627,11 @@ class Engine:
         t0 = time.perf_counter()
         fn(*args)
         self._record(plugin.name, hook, time.perf_counter() - t0)
+
+    def _timed_physics(self, label: str, fn, *args) -> None:
+        t0 = time.perf_counter()
+        fn(*args)
+        self._record(PHYSICS_GROUP, label, time.perf_counter() - t0)
 
     def _record(self, group: str, label: str, dt: float) -> None:
         slot = self._timing[group][label]

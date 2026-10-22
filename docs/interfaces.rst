@@ -72,6 +72,30 @@ Anything not stated keeps the model's own value, so a world says what the experi
 nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not joint names
 (``wrist_3_joint``) — a joint name is refused, naming the actuator that drives it.
 
+A gripper's finger servo is stated the same way. Where the hand is part of the model (``panda``,
+``frankie``, ``gen3``) it is named under the spawn's ``actuators:``; a gripper welded on with
+``end_effector:`` has a block of its own:
+
+.. code-block:: yaml
+
+   - spawn_arm:
+       model: panda
+       actuators:
+         each:
+           actuator8: {p: 3000, d: 50}      # the Franka Hand: N/m, N*s/m on the finger tendon
+   - spawn_arm:
+       model: ur5e
+       end_effector:
+         model: robotiq_2f85
+         actuators:
+           each:
+             fingers_actuator: {p: 300, d: 20}
+
+A finger servo on a tendon takes ``p`` and ``d`` only, both positive, and keeps its command and
+force ranges: a commanded width still closes the fingers to that width, with the stiffness the
+world stated. Unstated, the model's own servo holds (2000 N/m and 40 N*s/m on the Franka Hand).
+When the block also states a shared law for the arm, the finger entry names ``control: position``.
+
 The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
 interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
 That is a magnitude: it sets the larger bound of the model's ``forcerange`` and keeps the range's
@@ -199,8 +223,9 @@ Choosing a GL backend
 ---------------------
 
 ``MUJOCO_GL`` selects the offscreen renderer, and which value works is a property of the **machine**:
-``egl`` needs a render device, and a CPU-only node needs ``osmesa``. Left unset, MuJoCo's own default
-fails on such a node with a message about a broken GL install -- the wrong diagnosis.
+``egl`` needs a render device unless its EGL renders in software, and a CPU-only node needs
+``osmesa``. Left unset, MuJoCo's own default fails on such a node with a message about a broken GL
+install -- the wrong diagnosis.
 
 **The variable is read once, while ``import mujoco`` runs, and binds ``GLContext`` there and then.**
 Setting it afterwards moves the variable and nothing else. Unset is not an error either: an empty
@@ -208,8 +233,10 @@ value falls through to ``glfw``, which on a headless node opens no display and a
 first ``mujoco.Renderer`` with ``mujoco.FatalError: gladLoadGL error``.
 
 So ``import roqsim`` picks one when ``MUJOCO_GL`` is unset (see
-:func:`roqsim.gl.select_offscreen_gl`): a render node means ``egl``, its absence means ``osmesa``.
-An explicit ``MUJOCO_GL`` is always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
+:func:`roqsim.gl.select_offscreen_gl`): a ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` decides,
+because MuJoCo's egl and osmesa backends each refuse to import under the other's; with neither
+named, a render node means ``egl`` and its absence means ``osmesa``. An explicit ``MUJOCO_GL`` is
+always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
 happen where the simulator runs -- a run configured on one machine and dispatched to another
 cannot know.
 
@@ -548,6 +575,62 @@ that list. A controller the world never declared cannot be loaded -- which is wh
 against the real robot for a name absent from its parameters, so it is the behaviour rather than a
 limitation.
 
+**A Universal Robots arm under the driver's names.** A stack written for ``ur_robot_driver`` looks
+for that driver's controllers by name. The world gives them: ``arm_controller`` with
+``controller_name: scaled_joint_trajectory_controller`` and ``controller_type:
+ur_controllers/ScaledJointTrajectoryController``, a ``force_torque`` entry named
+``force_torque_sensor_broadcaster``, and a ``ur_driver_interface`` entry, which adds
+``speed_scaling_state_broadcaster`` and ``io_and_status_controller``. The speed scaling starts at
+100 % and ``io_and_status_controller/set_speed_slider`` (``ur_msgs/SetSpeedSliderFraction``) sets it:
+a fraction in [0.01, 1.0] is applied, anything else is answered ``success: false`` and changes
+nothing, as on the driver. The scaled controller advances trajectory time at that factor, for an
+in-process trajectory and a ``follow_joint_trajectory`` goal alike, so at 0.5 the arm takes twice as
+long over the same path; ``speed_scaling_state_broadcaster/speed_scaling`` publishes the factor in
+effect, in percent. ``io_and_status_controller/zero_ftsensor`` is the wrist sensor's tare. The
+service type comes from ``ur_msgs``, which the ROS side must have installed. The world also lists the
+driver's unscaled ``joint_trajectory_controller`` inactive, as the driver does, since MoveIt chooses
+between the two by their state; activating it is refused. The driver's other GPIO surface has no
+simulated counterpart and is not served, so a stack that relies on it fails at the missing name::
+
+   - spawn_arm: {model: ur5e, prefix: ur5e_}
+     name: ur5e
+     components:
+       - arm_controller:
+           controller_name: scaled_joint_trajectory_controller
+           controller_type: ur_controllers/ScaledJointTrajectoryController
+         name: arm_controller
+       - force_torque: {site: fts_site, controller_name: force_torque_sensor_broadcaster}
+         name: force_torque_sensor_broadcaster
+       - ur_driver_interface: {ft: force_torque_sensor_broadcaster}
+         name: ur_driver
+
+**FZI's Cartesian controllers under their own law.** ``cartesian_admittance`` answers to the names of
+FZI's ``cartesian_controllers`` with a law of its own. ``fzi_cartesian_controllers`` runs FZI's law
+-- the forward-dynamics solver over a virtual model, ``pd_gains``, ``solver.error_scale`` and
+``iterations``, ``stiffness`` -- for any of the motion, force and compliance controllers it is given,
+each registered under its own name and switched like the rest. A stack's FZI gain file is therefore
+the world's, key for key. How well a compliant press holds its force depends on how faithfully the
+arm's servo realises each commanded position, as it does on the robot; the plugin's docstring states
+the measurement.
+
+**A Universal Robots arm driven over RTDE, without ROS.** A control loop that runs on a PC and
+drives a UR through ``ur_rtde``'s ``RTDEControlInterface`` and ``RTDEReceiveInterface`` is written as
+a function of those two objects. ``ur_rtde`` builds them for the robot; for the simulated arm, a
+``ur_rtde`` entry builds them, under the same method names, units and the controller's base frame.
+Its handle (``ur_rtde:<arm>``) runs such a function in lock-step with the physics, so one
+``waitPeriod`` is one control period of simulated time and a run is reproducible. It serves
+``speedL``, ``moveL``, ``zeroFtSensor``, ``setTcp``, the watchdog and the TCP pose, speed and force.
+It does not emulate the controller's own force law (``forceMode``), payload compensation or the
+safety system, and a method it does not serve fails at its name. The plugin's docstring states each
+semantic::
+
+   - spawn_arm: {model: ur5e, prefix: ur5e_}
+     name: ur5e
+     components:
+       - force_torque: {site: fts_site, frame: world}
+         name: ft
+       - ur_rtde: {ft: ft}
+
 Three semantics are worth stating because getting them wrong makes a scenario that works here fail
 on the arm:
 
@@ -662,6 +745,16 @@ A port known only at run time is registered by hand in ``configure``:
   rendered camera frame) may check it in ``post_step`` and skip the work when it's ``False``; ``None``
   (no bridge loaded, or one that doesn't report this) means "assume yes". See ``roqsim_sensors``'s
   camera plugins.
+* ``claims`` / ``claim()`` / ``release()`` / ``wanted()`` — the in-process side of the same question.
+  A plugin that reads another's endpoint directly, on the physics thread (a task plugin estimating a
+  pose from a camera frame), is a consumer no transport can count, so with a bridge loaded and no
+  transport subscriber the producer would skip the work it needs. It calls ``claim()`` once (and
+  ``release()`` when done); ``wanted()`` is true for a claim, a transport subscriber, or
+  ``has_subscribers is None``, and is what the camera plugins' render gate asks. A camera with
+  ``on_demand: true`` drops the last case: with no transport able to tell, it renders only while a
+  plugin holds a claim, so a stepped run pays for the frames it reads and no others. A rendered
+  ``Image`` carries ``stamp``, the sim time of its capture, so such a reader tells a fresh frame from
+  the one it already has.
 * ``lazy`` — opt this endpoint out of *publishing* while ``has_subscribers`` reports nobody listening,
   so its payload is never even read. Distinct from the check above, and both are needed: the producer's
   own check is an OR over every endpoint one render feeds (one depth subscriber justifies the whole GL
@@ -687,11 +780,49 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 
 * ``GetSimulatorFeatures`` — advertised capabilities.
 * ``GetEntities``, ``GetEntityState``, ``SetEntityState`` — list and read/teleport entities.
+  ``GetEntities`` narrows by its name ``filter``, a POSIX Extended regular expression searched in
+  each name (unanchored, as ``regexec`` matches; character classes such as ``[[:digit:]]`` are
+  read in the POSIX locale, and a backslash before an ordinary character, which POSIX leaves
+  undefined, is refused). It also narrows by ``bounds`` of ``TYPE_SPHERE`` in the world frame,
+  keeping each entity with a geom whose bounding sphere overlaps it -- a conservative test that may
+  keep an entity whose surface stops just short. It refuses a ``categories`` or ``tags`` filter
+  and ``TYPE_BOX`` or ``TYPE_CONVEX_HULL`` bounds with ``RESULT_FEATURE_UNSUPPORTED``, and a
+  pattern or sphere that is malformed with ``RESULT_OPERATION_FAILED`` naming the fault.
+  ``SetEntityState`` takes a state in a reference frame (see below) and refuses a zero-length
+  quaternion and a NaN or infinite component with ``INVALID_POSE``. ``GetEntityState`` reports the
+  world frame. The acceleration is ignored. A non-zero twist or
+  acceleration fails with ``RESULT_OPERATION_FAILED`` for an entity without a free joint (a mocap
+  body or welded scenery), which cannot carry one.
 * ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
-* ``StepSimulation`` — step N times while paused.
-* ``ResetSimulation`` — reset the world.
+* ``StepSimulation`` — step N times while paused; answers once the steps have run, and fails when the
+  simulation stops stepping or leaves the pause first.
+* ``ResetSimulation`` — reset the world; answers once the reset has run, and fails under a driver that
+  does not reset on request.
+
+Reference frames
+````````````````
+
+``SpawnEntity``'s ``initial_pose`` and ``SetEntityState``'s state name their frame in
+``header.frame_id``. Two kinds of name are accepted:
+
+* the world frame: an empty ``frame_id`` or ``world``;
+* a present entity, by its name exactly as ``GetEntities`` lists it, meaning that entity's root
+  body. The pose is composed with that entity's world pose, read on the physics thread in the
+  same transaction that writes the new pose, so it is relative to where the entity is at that
+  moment.
+
+Every other ``frame_id`` is refused with ``INVALID_POSE``: a body path such as
+``robot/base_link``, a TF frame name, an absent entity (it is not listed, so it is not known),
+and the entity being placed named as its own frame, since the write moves that frame.
+
+A ``SetEntityState`` twist in an entity's frame is *expressed* in that entity's axes: its linear
+and angular parts are rotated into the world by the entity's orientation, and the entity's own
+velocity is not added. ``EntityState`` says the twist is "observed in" the header's frame and
+refers to the ``geometry_msgs/VelocityStamped`` convention, which tells the frame a velocity is
+observed in apart from the frame it is measured against; ``EntityState`` names only the first, so
+the motion stays measured against the world, as ``GetEntityState`` reports it.
 
 Spawning is activation, not creation
 `````````````````````````````````````
@@ -702,7 +833,8 @@ name, as ``GetSpawnables`` lists it. ``name`` may be left empty or repeat the ``
 one would be a rename, which a compiled entity cannot take. A request with no ``uri`` selects by
 ``name``, which the service does not define but older callers rely on. A ``uri`` the world does not
 carry is refused rather than approximated, because the alternative is a trial that believes it
-spawned something. Spawning CONSUMES a spawnable, since it activates one entity rather than
+spawned something; one already present is refused with ``NAME_NOT_UNIQUE``, since its name is
+taken and renaming is never allowed. Spawning CONSUMES a spawnable, since it activates one entity rather than
 copying a model: ``GetSpawnables`` lists the absent ones, ``GetEntities`` the present ones, and an
 entity moves between the two lists as it is spawned and deleted. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite a
 caller to send geometry that nothing can load.
@@ -715,6 +847,13 @@ this flips (on its geoms, and on a flex's own copies of them) and why disabling 
 not enough: ``mj_multiRay`` ignores ``contype``/``conaffinity`` and tests the real triangles, so
 it is the zeroed alpha, and the absent geom group that roqsim's raycasts mask by default, that take
 an absent obstacle out of a lidar's returns.
+
+An absent entity is not found. The service identifies an entity as ``GetEntities`` or
+``SpawnEntity`` returns it, and an absent one is neither: ``GetEntities`` does not list it and
+``GetSpawnables`` offers it. So ``DeleteEntity``, ``GetEntityState`` and ``SetEntityState`` naming
+one answer ``RESULT_NOT_FOUND``, with a message saying it is absent and can be spawned. Only
+``SpawnEntity`` takes it, which is how it appears; the pose it should appear at is the
+request's ``initial_pose``.
 
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
@@ -733,11 +872,11 @@ to spawn.
 Moving one needs a free joint
 `````````````````````````````
 
-``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
-same joint with its ``initial_pose`` -- always, since a request that states no pose asks for the
-origin; to bring an entity back where it was, state that pose. A body compiled without one is
-welded scenery: it holds the pose the world gave it, and both services refuse to move it, naming the
-weld and the ``motion: physics`` that resolves it.
+``SetEntityState`` places an entity by writing its base free joint or its mocap pose, and
+``SpawnEntity`` does the same with its ``initial_pose`` -- always, since a request that states no
+pose asks for the origin; to bring an entity back where it was, state that pose. A body compiled
+with neither is welded scenery: it holds the pose the world gave it, and both services refuse to
+move it, naming the weld and the ``motion: driven`` or ``motion: physics`` that resolves it.
 
 This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
 exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an

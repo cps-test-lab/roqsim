@@ -158,7 +158,7 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 - **`conveyor`** — a velocity-driven belt an object rides via a friction pair; live speed over ROS.
   It is a **benchtop** unit (feet at z=0.76): put a table under it with `spawn_model` — the
   `industrial_table` prop is the one the belt is laid out for (spawn it at the belt's local
-  `[-0.13, 0.6, 0]`), and any other ~0.76 m top (e.g. `desk_diy`, 0.758) does just as well.
+  `[-0.13, 0.6, 0]`), and any other ~0.76 m top does just as well.
 - **`shelf`** — a parametric chipboard shelf built from boxes (`layers`/`width`/`depth`/`height`).
 - **`palm_tree`** — a parametric artificial palm-like tree: trunk on a pot, a two-tier crown of
   arching fronds, and fruit-bunch clusters with a site at each bunch centre. The library's
@@ -195,6 +195,14 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   picks the drawer side, `superstructure: false` leaves a bare table. The uprights and light frame are
   floor-referenced; the tool panel and monitor mount ride with the worktop (0.20 m / 0.40 m above it,
   the catalogue's mounting positions), so the reach ergonomics hold at either column setting.
+- **`hazard_marking`** — paint on the floor in diagonal warning stripes, yellow and black: the
+  outline of a rectangle (`band`), which marks a set-down place and leaves bare floor for the load
+  inside it, or the whole rectangle (`band: 0`) for a keep-clear zone. `pose` is its centre and yaw,
+  `length` / `width` its outer size, `stripe` / `angle` / `colors` the pattern; by default a 5 cm
+  band in traffic yellow and anthracite with stripes 0.7 of the band wide, as marking tape is
+  printed. Without contact and half a millimetre thick: a wheel rolls over it, a camera sees it, and
+  a ray aimed at the floor returns from it. The stripes are cut geometry, not a texture, so they
+  stay sharp at any distance and run through an outline's corners.
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers

@@ -16,22 +16,9 @@ turning monolithic MuJoCo code into cooperating plugins).
 Repository layout
 -----------------
 
-.. code-block:: text
-
-   roqsim/            core pip package (framework, ROS-free; depends on no sibling)
-   roqsim_sensors/    generic sensor plugins + models + the coverage analysis layer (depends on roqsim)
-   roqsim_assets/     prop library; roqsim_scenes/  baked scenes + world generators
-   roqsim_mobile/     wheeled BASE plugins + base models (depends on roqsim + roqsim_sensors)
-   roqsim_manipulation/         arm plugins only;  roqsim_manipulation_assets/  arm + gripper models
-   roqsim_mobile_manipulation/  base AND arm robots — the one package depending on both families
-   roqsim_humanoid/ roqsim_quadruped/   legged families;  roqsim_walker/  pedestrians (dynamic obstacles)
-   roqsim_scene_builder/          human-in-the-loop scene windows
-   scenario_execution_roqsim/     OSC actions (entity_moved, entity_monitor, entity_call, ...);
-                                    the ONLY package here that may import scenario_execution
-   ros2_ws/src/
-     roqsim_ros_bridge/            ROS 2 bridge + simulation_interfaces (plugins)
-     roqsim_nav2_example/   minimal nav2 example + goal test
-   docs/                 this documentation (+ architecture.rst)
+Each package is a sibling directory with its own ``pyproject.toml``, which states what it depends
+on; ``ros2_ws/src/`` holds the colcon packages. :doc:`installation` says what each one holds.
+``scenario_execution_roqsim`` is the only package that imports ``scenario_execution``.
 
 Golden rules
 ------------
@@ -48,7 +35,7 @@ Golden rules
   *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered
   ``True``. A bare ``value == enum`` still works, so the break is silent and partial: the
   filter just returns nothing, and an arm reports no joints instead of raising. ``int()`` on
-  the model value (or plain-``int`` members, as in ``export_capture._SCALAR_JOINTS``) is
+  the model value (or plain-``int`` members, as in ``capture._SCALAR_JOINTS``) is
   correct on every version.
 
 Developer workflow
@@ -100,7 +87,8 @@ a path or which package a tool lives in:
    python -m pydoc roqsim_scenes.cli.sdf_to_scene   # the reasoning behind it
 
 The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a world, ``roqsim render``
-draws one, and ``state``, ``check``, ``health``, ``catalog`` and ``plugins`` read a world, a run or the
+draws one, ``rebuild`` produces a recorded run's sensor streams, and ``state``, ``check``, ``health``,
+``catalog`` and ``plugins`` read a world, a run or the
 registries; the core's exporters are the ``roqsim export`` group. Every package tool is
 ``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).
 
@@ -127,6 +115,15 @@ A package that ships its first tool also declares the group itself, in its ``pyp
 
 That is the whole mechanism: any installed package can contribute a group this way, including one
 maintained outside this repository. It never edits the core.
+
+**A** ``ROQSIM_*`` **environment variable is registered, then read.** Code reads one with
+``roqsim.env.get(name)``, which raises for a name that is not registered, and a run refuses every
+``ROQSIM_*`` variable that is not (``roqsim/tests/test_env.py`` checks every name the tree spells).
+The core's own are ``roqsim.env.VARIABLES``; any other package declares the ones it reads as a mapping
+of name to a one-line description, under its own entry point::
+
+   [project.entry-points."roqsim.environment"]
+   roqsim_scenes = "roqsim_scenes.environment:VARIABLES"
 
 **You write no help text.** All three levels come from the docstring you already wrote — click takes
 the listing line from its first line, ``--help`` is your own ``argparse``, and ``python -m pydoc``
@@ -189,5 +186,9 @@ many?" (user docs: :doc:`coverage`). Design worth knowing when extending it:
   the layer must not depend on them). Free-space classification is deliberately conservative (drops are
   safe: they only make coverage look worse).
 * **Two front doors, one core:** the ``sensor_coverage_probe`` plugin (world-YAML toggle,
-  ``plugins/sensor_coverage_probe.py``) and the ``roqsim sensors coverage`` CLI (``coverage/cli.py``). The
+  ``plugins/sensor_coverage_probe.py``) and the ``roqsim sensors coverage`` CLI (``coverage/cli.py``),
+  whose ``swept`` command accumulates a moving sensor's field of view over a recorded run
+  (``coverage/swept.py``, each sample's state restored through :func:`roqsim.recording.open_recording`).
+  All of them build their points with ``coverage/sampling.py``'s ``sample_set`` on purpose: two
+  coverage figures are comparable only if they sampled the same way. The
   ``coverage`` extra (matplotlib, for the 2D heatmap) is optional; the 3D render needs only MuJoCo.

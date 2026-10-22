@@ -221,10 +221,10 @@ def unmask_self_collision(spec: mujoco.MjSpec) -> int:
 
     Why it is needed at all: contype/conaffinity is a SIMULATION choice, while the collision matrix
     asks a GEOMETRIC question. Robot models here routinely disable self-collision on purpose --
-    ``contype=2 / conaffinity=1`` on every collision geom, because the vendor's collision primitives of
-    neighbouring links overlap at rest and would fight (the TIAGo Pro's port log calls it A7; the G2
-    port does the same). Sampling such a model finds no contacts at all, so every pair is marked
-    ``Never`` and the SRDF switches MoveIt's self-collision checking off entirely.
+    ``contype=2 / conaffinity=1`` on every collision geom, because the vendor's collision primitives
+    of neighbouring links overlap at rest and would fight (the TIAGo Pro and the G2 both do this).
+    Sampling such a model finds no contacts at all, so every pair is marked ``Never`` and the SRDF
+    switches MoveIt's self-collision checking off entirely.
 
     Visual-only geoms (both flags already 0) are left alone: they carry no ``<collision>`` in the
     exported URDF either, so a link made only of them genuinely cannot collide.
@@ -505,6 +505,10 @@ def build_srdf(
         group = ET.SubElement(robot, "group", name=spec.name)
         ET.SubElement(group, "chain", base_link=spec.base_link, tip_link=spec.tip_link)
 
+        # An arm with no gripper joint has no hand to group: a group naming no joint is one
+        # srdfdom rejects, and the end effector built on it then names a group that does not exist.
+        if not spec.gripper_joint:
+            continue
         hand = ET.SubElement(robot, "group", name=spec.gripper_group)
         ET.SubElement(hand, "joint", name=spec.gripper_joint)
 
@@ -531,6 +535,8 @@ def build_srdf(
     # manifest gives arm_controller -- so a MoveIt named target and a GripperCommand agree.
     for spec in arms:
         for state, value in (("open", spec.gripper_open), ("closed", spec.gripper_close)):
+            if not spec.gripper_joint:
+                break
             grp = ET.SubElement(robot, "group_state", name=state, group=spec.gripper_group)
             ET.SubElement(grp, "joint", name=spec.gripper_joint, value=f"{value:.6g}")
         if spec.home:

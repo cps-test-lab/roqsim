@@ -34,7 +34,8 @@ and child both namespaced, stamp zero -- exactly as a ``static_tf`` hint's trans
 
 The reports of core plugins that a ROS stack reads as a standard message travel as that message:
 ``energy_monitor``'s ``EnergyReport`` as ``sensor_msgs/BatteryState``, ``contact_location``'s
-``ContactLocation`` as ``geometry_msgs/PointStamped`` (its centre).
+``ContactLocation`` as ``geometry_msgs/PointStamped`` (its centre), ``clearance_monitor``'s
+``ClearanceReport`` as ``diagnostic_msgs/DiagnosticStatus`` (each field one named reading).
 
 A package adds its own type once through the ``roqsim.ros2_types`` entry-point group
 (:data:`ENTRY_POINT_GROUP`): the entry loads a :class:`RosType`, or an iterable of them.
@@ -294,13 +295,9 @@ def _decode_imu(msg) -> T.Imu:
 
 
 def _fill_scan(msg, v: T.LaserScan, stamp, hints) -> None:
-    _header(msg, stamp, frame(hints, "frame_id", "lidar"))
-    msg.angle_min = float(v.angle_min)
-    msg.angle_max = float(v.angle_max)
-    msg.angle_increment = float(v.angle_increment)
-    msg.range_min = float(v.range_min)
-    msg.range_max = float(v.range_max)
-    msg.ranges = as_f32(v.ranges)
+    from .registry import fill_scan
+
+    fill_scan(msg, v, stamp, hints)
 
 
 def _decode_scan(msg) -> T.LaserScan:
@@ -317,6 +314,7 @@ def _decode_scan(msg) -> T.LaserScan:
 #: Bytes per pixel, and the numpy layout, of the encodings an Image carries.
 _ENCODINGS = {
     "rgb8": (3, np.uint8, 3),
+    "bgr8": (3, np.uint8, 3),
     "mono8": (1, np.uint8, 1),
     "16UC1": (2, np.uint16, 1),
     "32FC1": (4, np.float32, 1),
@@ -352,13 +350,9 @@ def _decode_compressed_image(msg) -> T.Image:
 
 
 def _fill_camera_info(msg, v: T.CameraInfo, stamp, hints) -> None:
-    _header(msg, stamp, frame(hints, "frame_id", "camera_optical_frame"))
-    msg.height, msg.width = int(v.height), int(v.width)
-    msg.distortion_model = "plumb_bob"
-    msg.d = [float(x) for x in v.d]
-    msg.k = [v.fx, 0.0, v.cx, 0.0, v.fy, v.cy, 0.0, 0.0, 1.0]
-    msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    msg.p = [v.fx, 0.0, v.cx, 0.0, 0.0, v.fy, v.cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+    from .registry import fill_camera_info
+
+    fill_camera_info(msg, v, stamp, hints)
 
 
 def _decode_camera_info(msg) -> T.CameraInfo:
@@ -371,7 +365,7 @@ def _decode_camera_info(msg) -> T.CameraInfo:
 def _fill_pointcloud(msg, v: T.PointCloud, stamp, hints) -> None:
     from .registry import fill_pointcloud
 
-    fill_pointcloud(msg, v, stamp, {"frame_id": "livox_frame", **hints})
+    fill_pointcloud(msg, v, stamp, hints)
 
 
 def _decode_pointcloud(msg) -> T.PointCloud:
@@ -555,10 +549,21 @@ for _rostype in (
 
 
 def _core_reports() -> tuple[RosType, ...]:
+    from roqsim.plugins.clearance_monitor import ClearanceReport
     from roqsim.plugins.contact_location import ContactLocation
     from roqsim.plugins.energy_monitor import EnergyReport
 
     return (
+        RosType(
+            ClearanceReport,
+            (
+                Wire(
+                    "diagnostic_msgs.msg.DiagnosticStatus",
+                    _fill_with("fill_diagnostic_status"),
+                    _published_only("a clearance report"),
+                ),
+            ),
+        ),
         RosType(
             EnergyReport,
             (

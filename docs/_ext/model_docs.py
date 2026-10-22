@@ -21,7 +21,7 @@ from importlib import import_module, metadata
 from pathlib import Path
 
 import yaml
-from _render import catalog_table, parse_rst, rubric
+from _render import catalog_table, parse_rst, rst_text, rubric
 from docutils.parsers.rst import Directive
 
 
@@ -124,7 +124,7 @@ def _license_clause(env, license_path: Path) -> str:
     if name is None:
         return f"see {link}"
     holder = _license_holder(text)
-    return f"{name}{f' (© {holder})' if holder else ''} -- {link}"
+    return f"{name}{f' (© {rst_text(holder)})' if holder else ''} -- {link}"
 
 
 def _license_line(env, license_paths: list[Path]) -> str | None:
@@ -168,11 +168,11 @@ def _headline(model_xml: Path) -> str | None:
 def _body(
     name: str, dist_name: str, description: str, plugins, assets, license_line, extra=None
 ) -> list[str]:
-    body = [f"**{name}** — ``{dist_name}``", ""]
+    body = [f"**{rst_text(name)}** — ``{dist_name}``", ""]
     if description:
-        body += [description, ""]
+        body += [rst_text(description), ""]
     if extra:
-        body += [extra, ""]
+        body += [rst_text(extra), ""]
     if plugins:
         body += ["Bundled plugins: " + ", ".join(f"``{p}``" for p in plugins) + ".", ""]
     if assets:
@@ -276,7 +276,7 @@ class SimSuiteModelsDirective(Directive):
                 lines += rubric(f"``{dist_name}``")
                 lines += [
                     f".. note:: Could not load model provider ``{ep.name}`` "
-                    f"({type(exc).__name__}: {exc}).",
+                    f"({type(exc).__name__}: {rst_text(str(exc))}).",
                     "",
                 ]
                 continue
@@ -289,7 +289,7 @@ class SimSuiteModelsDirective(Directive):
             # The package summary describes the package, so it is said once for the group -- each row
             # carries its own model's headline instead.
             if summary:
-                lines += [summary, ""]
+                lines += [rst_text(summary), ""]
             lines += catalog_table(env, rows)
         return parse_rst(self, lines)
 

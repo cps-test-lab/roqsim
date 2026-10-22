@@ -114,7 +114,7 @@ def test_a_registered_but_unimportable_plugin_is_dropped_too(monkeypatch):
     the ``roqsim_ros_bridge`` wheel *is* installed, so the entry point resolves and ``ep.load()`` runs --
     then dies on ``import rclpy`` because a geometry-only export never sourced ROS. That ImportError is
     not a PluginError, so it sailed straight through ``drop_transport_plugins`` and killed
-    ``roqsim export web`` inside the aux container, on the one plugin the function was trying to discard.
+    ``roqsim export gltf`` inside the aux container, on the one plugin the function was trying to discard.
     """
     from roqsim import registry
 

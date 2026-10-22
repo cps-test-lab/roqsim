@@ -23,7 +23,8 @@ from simulation_interfaces.srv import SpawnEntity
 
 from roqsim_ros_bridge.sim_interfaces import (
     _already_at,
-    _pose_of,
+    _pose_from,
+    _reference_frame,
     _resource_of,
     _spawn_target,
     _spawnable,
@@ -87,27 +88,38 @@ def test_a_default_request_states_the_origin():
     carries, so every plain spawn would be read as a request for the origin anyway, silently.
     Stating it as the contract is what makes that visible.
     """
-    assert _pose_of(_Request()) == ((0.0, 0.0, 0.0), IDENTITY)
+    assert _pose_from(_Request().initial_pose.pose)[0] == ((0.0, 0.0, 0.0), IDENTITY)
 
 
 def test_a_stated_pose_is_returned():
     yaw90 = _Quat(w=math.sqrt(0.5), z=math.sqrt(0.5))
     req = _Request(initial_pose=_Stamped(_Pose(_Vec(5.0, -4.0, 0.25), yaw90)))
-    pos, quat = _pose_of(req)
+    (pos, quat), _ = _pose_from(req.initial_pose.pose)
     assert pos == (5.0, -4.0, 0.25)
     assert quat == pytest.approx((yaw90.w, 0.0, 0.0, yaw90.z))
 
 
 def test_a_non_unit_quaternion_is_normalised():
     """MuJoCo reads a free joint's quaternion as a unit one, so a near-unit value would scale it."""
-    _, quat = _pose_of(_Request(initial_pose=_Stamped(_Pose(orientation=_Quat(w=2.0)))))
+    (_, quat), _ = _pose_from(_Pose(orientation=_Quat(w=2.0)))
     assert quat == pytest.approx(IDENTITY)
 
 
 def test_a_zero_length_quaternion_is_reported_not_repaired():
     """The one orientation that cannot be a rotation, and the service has a code that says so."""
-    req = _Request(initial_pose=_Stamped(_Pose(orientation=_Quat(w=0.0))))
-    assert _pose_of(req) is None
+    pose, why = _pose_from(_Pose(orientation=_Quat(w=0.0)))
+    assert pose is None
+    assert "quaternion" in why
+
+
+@pytest.mark.parametrize(
+    "bad", [_Pose(_Vec(math.nan, 0.0, 0.0)), _Pose(orientation=_Quat(w=math.inf))]
+)
+def test_a_non_finite_pose_is_reported_not_written(bad):
+    """A NaN written into qpos corrupts every later step, and INVALID_POSE is the code for it."""
+    pose, why = _pose_from(bad)
+    assert pose is None
+    assert "NaN or infinite" in why
 
 
 def test_geometry_is_refused_with_the_services_own_code():
@@ -210,16 +222,28 @@ def test_renaming_is_refused_rather_than_ignored():
     assert "allow_renaming" in message
 
 
+class _NoEntities:
+    @staticmethod
+    def get(name):
+        return None
+
+
 def test_an_unknown_frame_is_refused():
-    code, message = _unsupported_spawn_request(_Request(initial_pose=_Stamped(frame_id="map")))
-    assert code == SpawnEntity.Response.INVALID_POSE
-    assert "map" in message
+    frame, message = _reference_frame(
+        _Stamped(frame_id="map"), "obstacle_0", _NoEntities, field="initial_pose"
+    )
+    assert frame is None
+    assert "'map'" in message
 
 
 @pytest.mark.parametrize("frame_id", ["", "world"])
 def test_the_world_frame_is_accepted_by_either_spelling(frame_id):
     """Empty is the service's default for the world frame; 'world' is the name it gives it."""
-    assert _unsupported_spawn_request(_Request(initial_pose=_Stamped(frame_id=frame_id))) is None
+    stamped = _Stamped(frame_id=frame_id)
+    assert _reference_frame(stamped, "obstacle_0", _NoEntities, field="initial_pose") == (
+        None,
+        None,
+    )
 
 
 def test_an_ordinary_request_is_supported():

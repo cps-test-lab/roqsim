@@ -1345,7 +1345,10 @@ def _streamer(slot, params: tuple[Param, ...], where: str):
 
 
 def describe_endpoints(
-    ctx, backend: str = "ros2", rates: Mapping[str, float] | None = None
+    ctx,
+    backend: str = "ros2",
+    rates: Mapping[str, float] | None = None,
+    extra: Callable[[Endpoint], Mapping] | None = None,
 ) -> list[dict]:
     """Every endpoint a loaded world offers, with the rate each output is published at.
 
@@ -1355,7 +1358,8 @@ def describe_endpoints(
     (:func:`roqsim.rates.snap_rate`), so ``requested_hz`` is what the world asks for -- a transport's
     ``rates:`` entry *rates* over the endpoint's hint over its own rate -- and ``realised_hz`` what a
     run publishes at, ``every_steps`` physics steps apart. Both are ``None`` for an input, and for an
-    output published on every step or event-driven (a rate of 0).
+    output published on every step or event-driven (a rate of 0). *extra*, given an endpoint,
+    returns fields a caller adds to its row.
     """
     from .rates import snap_rate
 
@@ -1385,6 +1389,8 @@ def describe_endpoints(
                     grid = snap_rate(requested, dt)
                     row["realised_hz"] = float(grid.hz)
                     row["every_steps"] = grid.every
+        if extra is not None:
+            row.update(extra(ep))
         out.append(row)
     return sorted(out, key=lambda row: (row["owner"] or "", row["name"]))
 

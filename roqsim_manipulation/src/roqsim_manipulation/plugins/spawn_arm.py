@@ -20,9 +20,15 @@ spawns an arm onto a table, softens its joints and welds a gripper on::
         damping: 0.02
         each:
           wrist_3: {control: position, p: 2000, d: 500}
-      end_effector: {model: robotiq_2f85, pose: {position: {z: 0.011}}}
+      end_effector:
+        model: robotiq_2f85
+        pose: {position: {z: 0.011}}
+        actuators:          # the gripper's own, the same block: its finger servo's p and d
+          each:
+            fingers_actuator: {p: 300, d: 20}
 
-``home``/``base_body`` fall back to per-model defaults so a bare ``{model: ur10e}`` works.
+``base_body`` defaults to the model's root body, and ``home`` to a per-model default or the model's
+``home`` keyframe, so a bare ``{model: ur10e}`` works.
 
 **Riding a linear axis (``rail:``)**
 A gantry, a ceiling track or a seventh-axis floor rail is a *prismatic joint carrying the arm base*,
@@ -85,6 +91,10 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
 ``pose`` is an offset within it -- matching how a real tool adapter is specified.
 
+``end_effector.actuators`` is an ``actuators:`` block for the gripper's own actuators, resolved on
+the gripper's spec before the graft, as ``actuators:`` is on the arm's: the arm's block never falls
+on the gripper and the gripper's never on the arm. Its rows join the arm's in the recorded table.
+
 **Who carries the arm's weight.** Its drives, as a torque each joint's actuator supplies
 (:func:`roqsim.actuators.apply_gravity_compensation`): bounded by the actuator's force limit, so a
 drive too weak for its load sags, and pushing on the mount, so an arm on a ``mount:`` that moves --
@@ -145,14 +155,7 @@ from roqsim.schema import Field
 
 from ._arm import prefixed_joints
 
-# Per-model defaults so a world only needs `{model: ...}`. Keyed by model file stem.
-_DEFAULT_BASE_BODY = {
-    "ur10e": "base",
-    "ur5e": "base",
-    "panda": "link0",
-    "gen3": "base_link",
-    "open_manipulator_x": "link1",
-}
+# Per-model home poses so a world only needs `{model: ...}`. Keyed by model file stem.
 _DEFAULT_HOME = {
     "ur10e": [-1.5708, -1.5708, 1.5708, -1.5708, -1.5708, 0.0],
     # UR5e home from the reference implementation this model was ported from: elbow-up
@@ -247,7 +250,9 @@ MOUNT = {
 
 #: ``end_effector:`` -- the tool welded onto the arm. See the module docstring.
 END_EFFECTOR = {
-    "model": Field(str, required=True, doc="a gripper model (robotiq_2f85, schunk_pg70)"),
+    "model": Field(
+        str, required=True, doc="a gripper model (robotiq_2f85, robotiq_hande, schunk_pg70)"
+    ),
     "site": Field(
         str,
         doc="arm site to weld it to; default: the arm manifest's end_effector.site, else "
@@ -258,6 +263,7 @@ END_EFFECTOR = {
     "replaces": Field(
         list, default=[], doc="bodies of the arm model the tool supersedes, deleted first"
     ),
+    "actuators": ACTUATORS,
 }
 
 
@@ -297,7 +303,7 @@ class SpawnArmPlugin(Plugin):
             str, default="", doc="MJCF name prefix; distinct per arm, and non-empty on a mount"
         ),
         "base_body": Field(
-            str, doc="arm root body; default: the model's (ur10e: base, panda: link0)"
+            str, doc="body the arm's entity is registered at; default: the model's root body"
         ),
         "pose": Field(
             dict, doc="the mount, in the world or the mount body's frame: a geometry_msgs/Pose"
@@ -385,7 +391,8 @@ class SpawnArmPlugin(Plugin):
         self.arm_name = self.address
         self.prefix = self.config.get("prefix", "")
         stem = str(self.config.get("model", "")).rsplit("/", 1)[-1].removesuffix(".xml")
-        self.base_body = self.config.get("base_body", _DEFAULT_BASE_BODY.get(stem, "base"))
+        #: Unprefixed; resolved against the model in `build` when the world states none.
+        self.base_body: str | None = self.config.get("base_body")
         self.pos, self.quat = config_pose(self.config)
         self.home = list(self.config.get("home", _DEFAULT_HOME.get(stem, [])))
         if not self.home:
@@ -421,6 +428,9 @@ class SpawnArmPlugin(Plugin):
         #: Every actuator's final law and gains, filled in :meth:`build` and published at
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
+        #: The same for the end effector's own actuators, under its prefix; filled in by
+        #: `_attach_end_effector`.
+        self.ee_actuator_table: list = []
         self.ee_prefix = ee.get("prefix", "")
         self.ee_pos, self.ee_quat = config_pose(ee)
         self.ee_replaces = list(ee.get("replaces", []))
@@ -496,6 +506,7 @@ class SpawnArmPlugin(Plugin):
             except ModelError as exc:
                 errors.append(f"end_effector: {exc}")
             errors += _pose_errors(ee.get("pose"), f"spawn_arm '{self.address}' end_effector.pose")
+            errors += unread_gain_errors(ee.get("actuators"), where="end_effector.actuators")
             if isinstance(settings.model, str) and settings.model:
                 try:
                     manifest_end_effector_site(
@@ -508,6 +519,7 @@ class SpawnArmPlugin(Plugin):
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         asset = resolve_model(self.config["model"], base_dir=self.base_dir)
         child = mujoco.MjSpec.from_file(str(asset.path))
+        self.base_body = self._entity_body(child)
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (its own package
         # plus any borrowed via the manifest's `assets:`), so a model from another package -- or one
         # drawing meshes from several packages -- compiles regardless of CWD/attach order.
@@ -557,6 +569,29 @@ class SpawnArmPlugin(Plugin):
             r = self.settings.pedestal_half_width
             g.size = [r, r, self.pos[2] / 2.0]
             g.rgba = [0.25, 0.25, 0.27, 1.0]
+
+    def _entity_body(self, child: mujoco.MjSpec) -> str:
+        """The body the arm's entity is registered at: ``base_body``, else the model's root body.
+
+        Read from the arm's own spec before anything is grafted onto it. Every consumer of the
+        entity -- a contact monitor, presence, ``roqsim export moveit`` -- looks this name up in the
+        compiled model, so one that names no body there is refused here rather than at its first use.
+        """
+        model = self.config["model"]
+        if self.base_body is not None:
+            if child.body(self.base_body) is None:
+                raise RuntimeError(
+                    f"spawn_arm[{self.arm_name}]: base_body {self.base_body!r} is not a body of "
+                    f"arm model {model!r}"
+                )
+            return self.base_body
+        roots = [body.name for body in child.worldbody.bodies]
+        if len(roots) != 1 or not roots[0]:
+            raise RuntimeError(
+                f"spawn_arm[{self.arm_name}]: arm model {model!r} has root bodies {roots}, not one "
+                f"named root; set `base_body` to the arm's"
+            )
+        return roots[0]
 
     def _add_carriage(self, spec: mujoco.MjSpec, frame):
         """Insert the rail carriage at *frame* and return the frame the arm should attach to.
@@ -650,6 +685,14 @@ class SpawnArmPlugin(Plugin):
         # A tool whose <flexcomp> sits under <worldbody> and pins vertices there would lose the flex
         # in the attach below (roqsim.flex, rule 4); this puts it in a body on the flange instead.
         ee = lift_top_level_flexes(ee, ee_asset.path.stem)
+        # Before the graft, on the gripper's own spec, for the reason `actuators:` is resolved on
+        # the arm's before it: each block names the actuators its own model declares.
+        self.ee_actuator_table = resolve_actuators(
+            ee,
+            (self.config.get("end_effector") or {}).get("actuators"),
+            model_name=str(self.ee_model),
+            where="end_effector.actuators",
+        )
         # Whatever tool the arm model ships with goes first, or the new one is welded into it. The
         # ur10e carries a `ee_plate` 60 mm past its flange for the conveyor demo; a gripper attached
         # at `attachment_site` (0.1 m) lands inside it, so the two collide from the first step.
@@ -731,6 +774,13 @@ class SpawnArmPlugin(Plugin):
                 joint=(self.prefix + row.joint) if row.joint else "",
             )
             for row in self.actuator_table
+        ] + [
+            replace(
+                row,
+                name=self.prefix + self.ee_prefix + row.name,
+                joint=(self.prefix + self.ee_prefix + row.joint) if row.joint else "",
+            )
+            for row in self.ee_actuator_table
         ]
         self._apply_home(ctx)
 
@@ -747,7 +797,7 @@ class SpawnArmPlugin(Plugin):
         from the copy published on the entity. Those two must agree, or the arm spawns in one pose and
         is immediately servoed to another.
         """
-        return ([self.rail_home] + self.home) if (self.rail and self.home) else self.home
+        return [self.rail_home, *self.home] if self.rail else self.home
 
     def _apply_home(self, ctx: SimContext) -> None:
         home = self._home_vector()

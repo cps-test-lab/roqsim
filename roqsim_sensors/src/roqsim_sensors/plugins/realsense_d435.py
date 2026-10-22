@@ -89,15 +89,14 @@ class RealsenseD435Plugin(DepthCameraPlugin):
     DEFAULT_HEIGHT = 480
     DEFAULT_DEPTH_FRAME_ID = "camera_depth_optical_frame"
     DEFAULT_DEPTH_CAMERA = "d435_depth"
+    # The D435's own working range: min-Z ~0.28 m, usable to ~3 m. A wrong clip_far is not cosmetic
+    # here -- it is what decides whether the wall behind the subject ends up in the occupancy map
+    # as an obstacle.
+    DEFAULT_CLIP_NEAR = 0.28
+    DEFAULT_CLIP_FAR = 3.0
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
-        cfg = dict(config or {})
-        # The D435's own working range, not the OAK-D's 0.3-100 m: min-Z ~0.28 m, usable to ~3 m.
-        # A wrong clip_far is not cosmetic here -- it is what decides whether the wall behind the
-        # subject ends up in the occupancy map as an obstacle.
-        cfg.setdefault("clip_near", 0.28)
-        cfg.setdefault("clip_far", 3.0)
-        super().__init__(cfg, name=name, entity=entity, label=label)
+        super().__init__(config, name=name, entity=entity, label=label)
         self.points = bool(self.config.get("points", False))
         # `points` implies `depth`: the cloud IS the depth render, reprojected.
         self.depth = bool(self.config.get("depth", False)) or self.points
@@ -107,8 +106,12 @@ class RealsenseD435Plugin(DepthCameraPlugin):
 
     def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         if self.depth:
+            # realsense-ros publishes depth aligned to colour (`align_depth.enable`) here.
             self._add_depth_endpoints(
-                ctx, join_topic(DEPTH_PREFIX, "image_rect_raw"), self.depth_frame_id
+                ctx,
+                join_topic(DEPTH_PREFIX, "image_rect_raw"),
+                self.depth_frame_id,
+                registered_topic="camera/aligned_depth_to_color/image_raw",
             )
 
     # As expensive to serialise as the colour frame; see camera_common's `image`.

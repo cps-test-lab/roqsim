@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from roqsim import check, export_capture, export_gltf, export_moveit, export_web, render, runner
+from roqsim import check, export_gltf, export_moveit, render, runner
 from roqsim.engine import Engine
 
 WORLD = "sim:\n  timestep: 0.005\ncomponents:\n  - dummy: {}\n    name: d0\n"
@@ -35,7 +35,7 @@ def _raise(*args, **kwargs):
 
 
 def _recorded(world: str, out: Path) -> str:
-    path = out / "run.npz"
+    path = out / "run.mcap"
     runner.run(world, headless=True, max_steps=2, pacing="asap", record=str(path))
     return str(path)
 
@@ -61,11 +61,6 @@ def _check(world, out, monkeypatch):
     return check.main([world])
 
 
-def _export_web(world, out, monkeypatch):
-    monkeypatch.setattr(Engine, "reset", _raise)
-    return export_web.main(["--world", world, "--out", str(out)])
-
-
 def _export_gltf(world, out, monkeypatch):
     monkeypatch.setattr(Engine, "reset", _raise)
     return export_gltf.main(["--world", world, "--out", str(out / "x.glb")])
@@ -76,21 +71,13 @@ def _export_moveit(world, out, monkeypatch):
     return export_moveit.main(["--world", world, "--out", str(out)])
 
 
-def _export_capture(world, out, monkeypatch):
-    state = _recorded(world, out)
-    monkeypatch.setattr("roqsim.export_capture.write_capture", _raise)
-    return export_capture.main(["--state", state, "--out", str(out / "capture")])
-
-
 ENTRY_POINTS = {
     "sim": _sim,
     "render": _render,
     "render --state": _render_state,
     "check": _check,
-    "export web": _export_web,
     "export gltf": _export_gltf,
     "export moveit": _export_moveit,
-    "export capture": _export_capture,
 }
 
 

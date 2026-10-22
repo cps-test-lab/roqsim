@@ -2,7 +2,8 @@
 
 Every stage-1 importer writes a ``scene.json`` (a name, bounds and the world-space meshes) with
 :func:`stamp`, and every reader checks it with :func:`check`. The stamp names the format as well as
-its version because the web scene descriptor ``roqsim export web`` writes is also a ``scene.json``.
+its version because ``scene.json`` is a common file name, and another tool's file of that name is
+refused by what it says it is rather than read for the keys that happen to overlap.
 An unstamped manifest is version 1.
 """
 
@@ -26,8 +27,7 @@ def check(manifest: dict, where: str) -> int:
     if fmt is not None and fmt != FORMAT:
         raise ValueError(
             f"{where} is a {fmt!r} document, not a scene manifest ({FORMAT!r}). A scene directory "
-            f"holds the scene.json an importer wrote; the web scene descriptor shares the file "
-            f"name and is not one."
+            f"holds the scene.json an importer wrote; another tool's file of that name is not one."
         )
     return check_version(
         manifest, "version", reads=FORMAT_VERSION, document="scene manifest", where=str(where)

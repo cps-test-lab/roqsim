@@ -26,12 +26,12 @@ repository extends it without a change here.
 | `registry.py`, `models.py`, `world.py`, `textures.py` | Resolution of plugins, models, worlds and textures by name across installed packages; `entry_points.py` is the one cached scan of the installed entry points they all read. |
 | `runner.py` | The standalone driver (`roqsim sim`): loop, pacing, recording, and the optional viewer. |
 | `scenario_adapter.py` | The `scenario-execution` `SimulationInterface` driver. |
-| `capture.py`, `recording.py`, `state.py`, `render.py` | State recording and everything read or drawn from it afterwards — driver-level, not plugins. |
-| `export_web.py`, `export_gltf.py`, `export_capture.py`, `export_urdf.py`, `export_srdf.py` | A compiled world or a recorded run out to a browser scene descriptor, a glTF 2.0 file, a run capture, a URDF, or a MoveIt SRDF. |
-| `scene_source.py`, `scene_content.py`, `tessellate.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, and the primitives as triangles. |
+| `capture.py`, `mcap_format.py`, `recording.py`, `state.py`, `render.py` | State recording (one mcap file per run) and everything read or drawn from it afterwards — driver-level, not plugins. `health.py` tails that file from outside the run. |
+| `export_gltf.py`, `export_urdf.py`, `export_srdf.py` | A compiled world out to a glTF 2.0 file, a URDF, or a MoveIt SRDF. |
+| `scene_source.py`, `scene_content.py`, `tessellate.py`, `meshopt.py` | Shared by the scene exporters: the source options and the compile, the one walk that decides what a scene contains, the primitives as triangles, and the `EXT_meshopt_compression` encoders `export gltf --meshopt` writes with. |
 | `commands.py` | The `roqsim` command tree. |
 
-Core registers sixteen plugins, all world-agnostic (`roqsim plugins list` prints every one); among
+Core registers twenty-one plugins, all world-agnostic (`roqsim plugins list` prints every one); among
 them:
 
 - `dummy` — adds one free-floating box and counts its own hook invocations on the blackboard. It
@@ -58,7 +58,7 @@ them:
 ```bash
 roqsim sim roqsim_mobile:husky_demo          # a demo world from a sibling package (a viewer opens)
 roqsim sim world.yaml --headless --pacing asap --steps 1000 --profile
-roqsim sim world.yaml --seed 7 --record run.npz --video run.webm
+roqsim sim world.yaml --seed 7 --record run.mcap --video run.webm
 ```
 
 `roqsim` is the only name to know: `roqsim --help` lists the core's commands (`sim`, `render`, `check`

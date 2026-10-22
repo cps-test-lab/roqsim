@@ -714,10 +714,8 @@ def load_config(
     """
     # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. Resolved only by
     # `roqsim sim` and the scenario adapter, the ref would be a property of those two entry points
-    # rather than of a world -- and `roqsim-export-web` (which no human types, but which a consumer's
-    # scene cache runs to build a run view's geometry) would get the ref verbatim and report
-    # "world config /abs/cwd/pick_cell:pick_cell_ros2 does not exist". Downstream that surfaces
-    # as "no 3D geometry" for every run, so the whole batch looks broken rather than one caller.
+    # rather than of a world, and every other loader (an exporter, a scene cache) would read it as a
+    # path that does not exist.
     #
     # Guarded on the path not existing, the same way `extends` and `sim.world` decide: a real file
     # whose name contains a colon is still a file.
@@ -842,11 +840,8 @@ def world_sources(path: str | Path, *, skipped: list | None = None) -> list[Path
 def _plugin_sources(cfg, leaf: Path, problems: list) -> list:
     """What the world's components say they point at, asked component by component.
 
-    Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts. It did not
-    use to: expansion happened inside the engine, so this walked the declared entries only, and
-    ``prop_trajectory`` -- whose ``expand`` exists purely to hand its ``sources()`` the directory the
-    world lives in -- resolved its CSV against the caller's working directory instead, against what
-    its own docstring promises.
+    Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts, resolved
+    against the directory the world lives in rather than the caller's working directory.
 
     Still **per spec, skipping what does not resolve**: this function's contract is best-effort (see
     :func:`world_sources`), the same tolerance the ``extends`` walk has, and a ROS world in a
@@ -1296,6 +1291,75 @@ SIM_INTEGRATORS = ("auto", "euler", "rk4", "implicit", "implicitfast", "discrete
 #: The values ``sim.solver`` accepts: MuJoCo's constraint solvers by the name its XML uses.
 SIM_SOLVERS = ("pgs", "cg", "newton")
 
+#: The values ``sim.cone`` accepts: MuJoCo's friction cones by the name its XML uses.
+SIM_CONES = ("pyramidal", "elliptic")
+
+#: ``sim`` keys the engine writes onto a three-vector ``<option>`` field.
+_SIM_VECTORS = ("gravity", "wind")
+
+#: ``sim`` option keys that count solver passes, so a whole number of them, zero or more.
+_SIM_COUNTS = ("iterations", "ls_iterations", "noslip_iterations")
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _got(value) -> str:
+    """*value* as a refusal quotes it, saying so when YAML read a number as text.
+
+    YAML 1.1 reads ``1e-5`` -- an exponent without a decimal point -- as the string ``'1e-5'``.
+    """
+    if isinstance(value, str):
+        try:
+            float(value)
+        except ValueError:
+            return repr(value)
+        return f"the string {value!r} (YAML reads an exponent without a decimal point as text)"
+    return repr(value)
+
+
+def _validate_numbers(sim: dict) -> None:
+    """Refuse a ``sim`` value the engine would write onto MuJoCo's ``<option>`` in the wrong shape.
+
+    The engine applies these after every plugin has built, so unchecked a bad one surfaces there as
+    a bare ``TypeError`` or ``ValueError`` from a MuJoCo setter, naming neither the key nor the file.
+    """
+    for key in _SIM_VECTORS:
+        value = sim.get(key)
+        if value is None:
+            continue
+        if not (
+            isinstance(value, (list, tuple)) and len(value) == 3 and all(map(_is_number, value))
+        ):
+            raise PluginError(f"sim.{key}: expected 3 numbers, e.g. [0, 0, -9.81], got {value!r}")
+    for key in _SIM_COUNTS:
+        value = sim.get(key)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise PluginError(f"sim.{key}: expected a whole number >= 0, got {value!r}")
+    for key in ("impratio", "density", "viscosity"):
+        value = sim.get(key)
+        if value is not None and (not _is_number(value) or value < 0):
+            raise PluginError(f"sim.{key}: expected a number >= 0, got {_got(value)}")
+    timestep = sim.get("timestep")
+    if timestep is not None and (not _is_number(timestep) or timestep <= 0):
+        raise PluginError(f"sim.timestep: expected a number of seconds > 0, got {_got(timestep)}")
+    dedup = sim.get("dedup_assets")
+    if dedup is not None and not isinstance(dedup, bool):
+        raise PluginError(f"sim.dedup_assets: expected true or false, got {dedup!r}")
+
+
+def _validate_pacing(pacing) -> None:
+    """Refuse a ``sim.pacing`` the standalone driver's pacer would refuse, at load."""
+    from .clock import Pacer
+
+    try:
+        Pacer.from_config(pacing, dt=1.0)
+    except ValueError as exc:
+        raise PluginError(f"sim.pacing: {exc}") from None
+
 
 def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
     """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
@@ -1376,6 +1440,10 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = 
     _validate_seed((raw.get("sim") or {}).get("seed"))
     _validate_choice("integrator", (raw.get("sim") or {}).get("integrator"), SIM_INTEGRATORS)
     _validate_choice("solver", (raw.get("sim") or {}).get("solver"), SIM_SOLVERS)
+    _validate_choice("cone", (raw.get("sim") or {}).get("cone"), SIM_CONES)
+    _validate_numbers(raw.get("sim") or {})
+    if "pacing" in (raw.get("sim") or {}):
+        _validate_pacing(raw["sim"]["pacing"])
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
 
     component_assignments = [a for a in assignments if _is_component(a)]
@@ -1660,10 +1728,7 @@ def with_transport(
     makes it standalone-runnable. Transport is a property of *how a run is deployed*,
     not of the experiment, so it is added here rather than authored into the world.
 
-    This replaces hand-rolled rewrites that appended the same plugin to a temporary copy
-    of the world -- one of them implemented twice, in bash and in Python, in a single
-    experiment. Those also had to re-resolve the scene's relative path because the copy
-    lived elsewhere; nothing is copied here, so that problem does not arise.
+    Nothing is copied, so the world's relative paths resolve against its own directory.
 
     ``control`` additionally serves the ``simulation_interfaces`` control plane, which is
     what a scenario's ``osc.sim`` actions are clients of. Off by default: it is a handful
@@ -1832,8 +1897,7 @@ def expand_document(
     Runs while the document loads, so what a consumer gets back is what will actually run: a model's
     manifest components are in the list, not conjured later inside the engine. That is what lets
     ``roqsim scenes describe`` name a sensor the document never declared, and what makes a
-    manifest-supplied plugin's ``sources()`` visible to :func:`world_sources` -- which it was not,
-    so a prop trajectory's CSV resolved against the caller's working directory.
+    manifest-supplied plugin's ``sources()`` visible to :func:`world_sources`.
 
     Injected specs (a spawn plugin's manifest) land right after the entry that produced them, so
     build order still falls out of the document's shape. Whether to skip a default the document

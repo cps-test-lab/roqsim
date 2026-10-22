@@ -71,8 +71,13 @@ another deeper than the contact's tolerance (an arm's ``home`` that buries its t
 prop spawned into another), which the contact solver resolves on the first steps with forces large
 enough to fling them (:mod:`roqsim.interpenetration`). A warning rather than a problem because the
 world does start, the tolerance is a judgement rather than a rule, and an overlap can be deliberate;
-the run itself logs the same finding at reset, so it is in the run's record too. The others are the
-flex checks under ``derived`` below.
+the run itself logs the same finding at reset, so it is in the run's record too. ``friction-cone``
+is another: the world leaves MuJoCo's friction cone pyramidal while it carries an arm or an
+``object`` entity -- something a tool holds or a process moves by contact. A pyramidal cone
+quantises the direction of the tangential contact force to its facets, which is harmless for a
+base rolling over a floor and decides the outcome where a grasp holds, a pushed part turns or a
+belt carries; ``sim: {cone: elliptic}`` is the physically correct cone, and the warning says so
+unless the world already chose. The others are the flex checks under ``derived`` below.
 
 The inventory it prints when there are no problems is the other half: the entities that registered,
 the endpoints they publish (with topics), the model's own totals, and each flex -- what it compiled
@@ -80,6 +85,13 @@ into (dim, vertices, elements, ``dof`` mode, pins, parent body, entity, elastic,
 That is what an agent or a person needs to write the next thing -- a scenario that drives ``robot``,
 a bridge that expects ``scan`` -- without opening the world file and its manifests to work out what
 is in there.
+
+Each endpoint says, beside its ROS ``type`` and ``topic`` (before the namespace, which it gives
+separately) and its ``rate_hz``, what it costs to produce: ``lazy`` (not read while no transport
+subscriber listens), ``cost`` (``"render"``, ``"raycast"`` or ``null``, from the producing plugin's
+:meth:`~roqsim.plugin.Plugin.output_cost`) and ``rebuildable`` (``roqsim rebuild`` produces it
+afterwards from a ``roqsim sim --record`` recording, :mod:`roqsim.rebuild`). That is what a tool
+deciding before a run which streams to record live -- and which to leave to a rebuild -- reads.
 
 ``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
 elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
@@ -257,6 +269,7 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         from roqsim.interpenetration import as_warnings
 
         report["warnings"].extend(as_warnings(engine.interpenetrations))
+        report["warnings"].extend(friction_cone_warnings(engine))
 
         report["world"] = _inventory(engine, rates)
         from roqsim.endpoint import rate_snap_warnings
@@ -329,10 +342,22 @@ def _inventory(engine, rates: dict | None = None) -> dict:
 
     from roqsim.config import realised_values
     from roqsim.endpoint import describe_endpoints
+    from roqsim.rebuild import rebuildable_streams
 
     ctx = engine.ctx
     model = ctx.model
-    endpoints = describe_endpoints(ctx, "ros2", rates)
+    producers = {p.address: p for p in engine.plugins}
+    rebuildable = {(s.sensor, s.name) for s in rebuildable_streams(ctx, engine.plugins)[0]}
+
+    def cost_fields(endpoint) -> dict:
+        producer = producers.get(endpoint.producer)
+        return {
+            "lazy": bool(endpoint.lazy),
+            "cost": producer.output_cost(endpoint) if producer is not None else None,
+            "rebuildable": (endpoint.producer.replace(".", "/"), endpoint.name) in rebuildable,
+        }
+
+    endpoints = describe_endpoints(ctx, "ros2", rates, extra=cost_fields)
     entities = [
         {
             "name": entity.name,
@@ -403,6 +428,48 @@ def _derive(engine) -> tuple[dict, list[dict]]:
         derived["flexes"].append(row)
         warnings.extend(flex_warnings)
     return derived, warnings
+
+
+def friction_cone_warnings(engine) -> list[dict]:
+    """A pyramidal cone in a world whose outcome rides on tangential contact force.
+
+    The signal is what the world registered: an ``arm`` entity, or an ``object`` entity -- the
+    kind a conveyor's package, a carried part or a driven prop registers as, as opposed to a
+    ``prop`` that is scenery or an obstacle. A base pushing an obstacle is not reported: the
+    cone's quantisation shows in what is grasped, carried or turned, not in a bump.
+    """
+    import mujoco
+
+    model = getattr(engine.ctx, "model", None)
+    if model is None or int(model.opt.cone) != int(mujoco.mjtCone.mjCONE_PYRAMIDAL):
+        return []
+    entities = engine.ctx.entities.all()
+    arms = sorted(e.name for e in entities if e.kind == "arm")
+    objects = sorted(e.name for e in entities if e.kind == "object")
+    if not arms and not objects:
+        return []
+    carried = []
+    if arms:
+        carried.append(f"{'an arm' if len(arms) == 1 else 'arms'} ({', '.join(arms)})")
+    if objects:
+        carried.append(
+            f"{'an object' if len(objects) == 1 else 'objects'} moved by contact "
+            f"({', '.join(objects)})"
+        )
+    return [
+        _warning(
+            "friction-cone",
+            f"the friction cone is pyramidal (MuJoCo's default) and this world has "
+            f"{' and '.join(carried)}: a pyramidal cone quantises the direction of the "
+            f"tangential contact force to its facets, and what is grasped, pushed or carried "
+            f"slides and turns by that force",
+            hint=(
+                "set `sim: {cone: elliptic}` unless pyramidal is what the setup being reproduced "
+                "ran; a grasp also wants `sim: {noslip_iterations: 10}` (docs/architecture.rst, "
+                "contact overrides)"
+            ),
+        )
+    ]
 
 
 def _render_warnings(report: dict) -> list[str]:

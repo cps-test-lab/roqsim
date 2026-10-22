@@ -16,6 +16,7 @@ from roqsim_sensors.coverage.catalog import CATALOG, catalog_as_dict
 from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
 from roqsim_sensors.models import MODELS_DIR
+from roqsim_sensors.plugins.camera_common import Intrinsics
 
 from roqsim import exit_status
 from roqsim.manifest import manifest_fov
@@ -85,6 +86,32 @@ def test_frustum_projection_front_and_back():
     assert np.allclose(cam.rot @ np.array([0, 0, -1.0]), [1, 0, 0], atol=1e-9)
     local = cam.to_local(np.array([[5, 0, 0.0], [-5, 0, 0.0], [0, 0, 5.0]]))
     assert in_fov(cam, local).tolist() == [True, False, False]
+
+
+def test_frustum_spans_the_rendered_frame_in_pixel_centre_coordinates():
+    """camera_info's (cx, cy) count pixel centres, so the frame ends half a pixel beyond each edge
+    pixel: a ray a quarter pixel inside either edge is in view, one a quarter pixel outside is not.
+    """
+    width, height, f = 640, 480, 400.0
+    intr = Intrinsics(
+        width=width, height=height, fx=f, fy=f, cx=(width - 1) / 2.0, cy=(height - 1) / 2.0
+    )
+    cam = SensorFov(
+        kind=FovKind.FRUSTUM,
+        origin=np.zeros(3),
+        rot=np.eye(3),
+        h_fov=(-1.0, 1.0),
+        v_fov=(-1.0, 1.0),
+        range_min=0.0,
+        range_max=10.0,
+        range_is_physical=False,
+        sensor_type="camera",
+        intrinsics=intr,
+    )
+    # Optical frame: looks along -z; at z = -1 a point at x lands on u = cx + f * x.
+    us = [-0.25, -0.75, width - 0.75, width - 0.25]
+    pts = np.array([[(u - intr.cx) / f, 0.0, -1.0] for u in us])
+    assert in_fov(cam, pts).tolist() == [True, False, True, False]
 
 
 # -- adapters reuse plugin defaults ------------------------------------------------------------------
@@ -170,6 +197,32 @@ def test_including_group4_causes_occlusion():
     assert res.counts.tolist() == [0, 0]  # the group-4 box now blocks the near point too
 
 
+@pytest.mark.parametrize("mount", ["camera", "site"])
+def test_a_sensor_in_the_worldbody_is_occluded_by_the_worlds_walls(mount):
+    """A camera or site placed directly in ``<worldbody>`` rides the world body, whose geometry is
+    the walls; excluding its mount body from the raycasts would make every wall transparent."""
+    xml = _OCCLUSION_XML.replace(
+        "  </worldbody>",
+        '    <camera name="eye" pos="0 0 .5" xyaxes="0 -1 0  0 0 1" fovy="90"/>\n'
+        '    <site name="eye" pos="0 0 .5"/>\n'
+        "  </worldbody>",
+    )
+    m = mujoco.MjModel.from_xml_string(xml)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    obj = mujoco.mjtObj.mjOBJ_CAMERA if mount == "camera" else mujoco.mjtObj.mjOBJ_SITE
+    ident = mujoco.mj_name2id(m, obj, "eye")
+    placed = (
+        PlacedSensor("camera", cam_id=ident, config={"far": 10})
+        if mount == "camera"
+        else PlacedSensor("lidar", site_id=ident)
+    )
+    fov = build_fov(m, d, placed)
+    assert fov.body_exclude == -1
+    res = coverage(m, d, [fov], np.array([[2.0, 0, 0.5]]))  # behind the wall
+    assert res.counts.tolist() == [0]
+
+
 def test_coverage_fraction_and_by_type():
     m, d, cam = _occlusion_world()
     pts = np.array([[0.9, 0, 0.5], [2.0, 0, 0.5]])
@@ -213,6 +266,29 @@ def test_room_volume_points_are_interior():
     assert np.all(np.abs(pts[:, 0]) < 3.0) and np.all(np.abs(pts[:, 1]) < 3.0)
 
 
+def test_an_open_world_keeps_its_volume_points_only_when_asked():
+    """A cell on a table has no walls: the room test drops every point, `enclosed_only=False` keeps
+    them, still dropping the points inside a geom."""
+    from roqsim_sensors.coverage import sampling
+
+    m = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody>
+             <geom type="plane" size="5 5 0.1"/>
+             <geom name="table" type="box" size="0.5 0.5 0.4" pos="0 0 0.4"/>
+           </worldbody></mujoco>"""
+    )
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    bounds = (np.array([-1.0, -1.0, 0.0]), np.array([1.0, 1.0, 1.0]))
+    room = sampling.room_volume_points(m, d, resolution=0.1, heights=(0.3, 0.9), bounds=bounds)
+    assert len(room) == 0
+    open_ = sampling.room_volume_points(m, d, resolution=0.1, heights=(0.3, 0.9), bounds=bounds, enclosed_only=False)
+    assert len(open_) > 0
+    inside = (np.abs(open_[:, 0]) < 0.45) & (np.abs(open_[:, 1]) < 0.45) & (open_[:, 2] < 0.8)
+    assert not inside.any()
+    assert (open_[:, 2] == 0.9).sum() > (open_[:, 2] == 0.3).sum()  # above the table nothing is embedded
+
+
 def test_object_surface_points_label_the_table_not_walls():
     from roqsim_sensors.coverage import sampling
 
@@ -220,6 +296,58 @@ def test_object_surface_points_label_the_table_not_walls():
     pts, labels, names = sampling.object_surface_points(m, d, per_object=32)
     assert "table" in names
     assert not any("wall" in n or "floor" in n for n in names)  # structure excluded by name
+
+
+@pytest.mark.parametrize("sample", ["volume", "objects", "both"])
+def test_the_cli_samples_exactly_what_the_plugins_sample(sample):
+    """One sample set for every caller: two coverage figures are comparable only if they sampled
+    the same points, so the CLI goes through the same helper the runtime plugins use."""
+    from argparse import Namespace
+
+    from roqsim_sensors.coverage import cli, sampling
+
+    m, d = _room()
+    args = Namespace(sample=sample, resolution=0.5, heights=[0.5, 1.0], per_object=16)
+    points, labels, names = cli._build_samples(m, d, args)
+    expected = sampling.sample_set(
+        m,
+        d,
+        volume=sample in ("volume", "both"),
+        objects=sample in ("objects", "both"),
+        resolution=0.5,
+        heights=(0.5, 1.0),
+        per_object=16,
+    )
+    assert len(points) > 0
+    np.testing.assert_array_equal(points, expected[0])
+    np.testing.assert_array_equal(labels, expected[1])
+    assert names == expected[2]
+
+
+def test_open_reaches_the_sample_set():
+    """``--open`` is a sampling option like the others, so it goes through ``sample_set`` too: in a
+    world with no walls it is what keeps any volume point at all."""
+    from argparse import Namespace
+
+    from roqsim_sensors.coverage import cli, sampling
+
+    m = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody>
+             <geom type="plane" size="2 2 0.1"/>
+             <geom name="table" type="box" size="0.5 0.5 0.4" pos="0 0 0.4"/>
+           </worldbody></mujoco>"""
+    )
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    args = Namespace(sample="volume", resolution=0.25, heights=[0.9], per_object=16, open=True)
+    points, labels, _ = cli._build_samples(m, d, args)
+    expected = sampling.sample_set(
+        m, d, objects=False, resolution=0.25, heights=(0.9,), enclosed_only=False
+    )
+    assert len(points) > 0
+    np.testing.assert_array_equal(points, expected[0])
+    np.testing.assert_array_equal(labels, expected[1])
+    assert len(cli._sample_set(m, d, Namespace(**{**vars(args), "open": False}))[0]) == 0
 
 
 def test_build_report_schema_and_gaps():

@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 import os
 
+from . import env
+
 _logger = logging.getLogger(__name__)
 
 #: Preferred offscreen backend where a render device exists. ``MUJOCO_GL`` selects only the
@@ -51,6 +53,10 @@ _RENDER_NODE_PREFIX = "renderD"
 #: ``ROQSIM_NO_GL_PRELOAD`` (see :func:`roqsim.viewer.ensure_gl_preload`), for a caller that wants
 #: to own the decision -- including the decision to make no decision.
 _OPT_OUT = "ROQSIM_NO_GL_SELECT"
+
+#: The ``PYOPENGL_PLATFORM`` values that name an offscreen backend: a process told to use one cannot
+#: import MuJoCo under the other, so :func:`select_offscreen_gl` follows it.
+_PYOPENGL_BACKENDS = ("egl", "osmesa")
 
 #: An NVIDIA GPU is visible to this process. Paired with *no* render node at all (see
 #: :func:`render_node`) it describes one specific mistake and nothing else -- see
@@ -129,13 +135,13 @@ def chosen_backend() -> str | None:
 def select_offscreen_gl() -> str | None:
     """Choose the **offscreen** GL backend for *this machine*, and apply it if unset.
 
-    ``egl`` needs a render device; without one it fails at import complaining about a
-    broken GL install, which is the wrong diagnosis for a node that simply has no GPU.
-    So: a render node means ``egl``, and a CPU-only node means ``osmesa``.
+    ``egl`` usually needs a render device; without one it fails at import complaining about
+    a broken GL install, which is the wrong diagnosis for a node that simply has no GPU.
+    So: a render node means ``egl``, and a CPU-only node means ``osmesa`` -- unless
+    ``PYOPENGL_PLATFORM`` names one of the two, which then decides.
 
-    ``DISPLAY`` deliberately does **not** enter into it, though the shell script this
-    replaces did check it. That script set ``MUJOCO_GL`` for the whole process, window
-    included; this picks only the offscreen renderer, and offscreen never wants ``glfw``
+    ``DISPLAY`` deliberately does **not** enter into it: this picks only the offscreen
+    renderer, never the window's, and offscreen never wants ``glfw``
     -- a window is opened by ``mujoco.viewer`` through its own glfw context, independently
     of ``MUJOCO_GL`` (see :data:`DEFAULT_MUJOCO_GL`). Trusting ``DISPLAY`` here is worse
     than useless in a container: a base image may set ``DISPLAY=:0`` unconditionally --
@@ -148,19 +154,28 @@ def select_offscreen_gl() -> str | None:
     selection made there is made too late to have any effect (see the module docstring).
 
     This also has to happen **where the simulator runs**, not where a run is configured: the
-    two are different machines whenever a campaign is dispatched anywhere. It is what
-    retires the 22-line shell script three packages had each copied.
+    two are different machines whenever a campaign is dispatched anywhere.
 
     Returns the backend in effect, or ``None`` under :data:`_OPT_OUT`. Never overrides an
-    explicit ``MUJOCO_GL``, and is idempotent.
+    explicit ``MUJOCO_GL``, follows a ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` where
+    ``MUJOCO_GL`` is unset, and is idempotent.
     """
     global _chosen
-    if os.environ.get(_OPT_OUT):
+    if env.get(_OPT_OUT):
         return None
     existing = os.environ.get("MUJOCO_GL")
     if existing:
         return existing
-    backend = "egl" if render_node() is not None else "osmesa"
+    # PyOpenGL's platform is a choice too, and the stronger one: MuJoCo's egl and osmesa backends
+    # each refuse to import under the other's PYOPENGL_PLATFORM, which they compare lowercased. A
+    # machine whose EGL renders in software (Mesa's surfaceless platform) has no render node, so the
+    # probe below would pick osmesa against an environment that asked for egl, and the import would
+    # fail.
+    platform = os.environ.get("PYOPENGL_PLATFORM", "").lower()
+    if platform in _PYOPENGL_BACKENDS:
+        backend = platform
+    else:
+        backend = "egl" if render_node() is not None else "osmesa"
     os.environ["MUJOCO_GL"] = backend
     _chosen = backend
     if backend == "osmesa" and gpu_without_render_node():

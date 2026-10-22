@@ -33,8 +33,8 @@ scene_to_mjcf.py  (scene.json + scene.yaml → <name>.xml)   ← venv (has mujoc
 
 Every importer stamps its `scene.json` with `"format": "roqsim_scenes.scene_manifest"` and a
 `"version"` (`roqsim_scenes.scene_manifest`); an unstamped one is version 1. Every reader (the bake,
-`scene-to-map`, `scene-to-floorplan`) refuses another format by name — the web descriptor
-`roqsim export web` writes is also a `scene.json` — and a version newer than it reads.
+`scene-to-map`, `scene-to-floorplan`) refuses another format by name — `scene.json` is a common
+file name — and a version newer than it reads.
 
 A world that is **generated rather than authored** takes a different route. Its input is a 2D
 occupancy grid — no source file, no meshes to convert, pin or hull — and there are two ways down from
@@ -340,7 +340,9 @@ Each marker becomes a `spawn_model` in the world YAML. `--markers-map` maps a ma
 to place — either a bare name (`"single_bed"`) or `{"model": "single_bed", "yaw_deg": 180}` to also
 set the prop's heading (about +Z, 0 = +x, CCW → the yaw of `spawn_model`'s `pose`). A heading the human dragged in
 the 2D window (the marker's own `yaw_deg`) is honoured too; a `--markers-map` `yaw_deg` overrides it.
-An unmapped marker is a hard error — props are never silently dropped.
+An unmapped marker is a hard error — props are never silently dropped. So is a map entry for a
+marker or door the floorplan does not have, or a key the generator does not read (`--doors-map`
+lists its keys in `--help`): nothing would read it, so it would be ignored.
 
 ## Look at a floorplan: `roqsim-floorplan-to-png`
 

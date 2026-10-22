@@ -42,6 +42,8 @@ realsense_d435 = "roqsim_sensors.plugins.realsense_d435:RealsenseD435Plugin"
 realsense_d415 = "roqsim_sensors.plugins.realsense_d415:RealsenseD415Plugin"
 realsense_d455 = "roqsim_sensors.plugins.realsense_d455:RealsenseD455Plugin"
 zivid = "roqsim_sensors.plugins.zivid:ZividPlugin"
+# One body camera station of a Boston Dynamics Spot, on the spot_ros2 driver's topics.
+spot_body_camera = "roqsim_sensors.plugins.spot_body_camera:SpotBodyCameraPlugin"
 spawn_sensor = "roqsim_sensors.plugins.spawn_sensor:SpawnSensorPlugin"
 fiducial_marker = "roqsim_sensors.plugins.fiducial_marker:FiducialMarkerPlugin"
 sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCoverageProbePlugin"
@@ -83,6 +85,8 @@ roqsim_sensors = [
     "models/*/*.xml",
     "models/*/*.manifest.yaml",
     "models/*/*_LICENSE",
+    # `roqsim catalog` reports the `<model>.thumb.png` beside each MJCF (`make thumbnails`).
+    "models/*/*.thumb.png",
     "models/*/meshes/*",
     "worlds/*.yaml",
 ]
