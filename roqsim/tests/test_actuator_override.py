@@ -220,6 +220,23 @@ def test_an_entry_restating_what_the_shared_keys_do_is_recorded_as_the_shared_ke
     assert (rows["a_act"].source, rows["a_act"].effort_limit) == ("shared", 50.0)
 
 
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"control": "position", "each": {"a_act": {"d": 400.0}}},
+        {"effort_limit": 120.0, "each": {"a_act": {"effort_limit": 120.0}}},
+    ],
+)
+def test_an_entry_and_shared_keys_that_change_nothing_are_recorded_as_the_models(override):
+    untouched = _spec().compile()
+    spec = _spec()
+    rows = _by_name(resolve(spec, override, model_name="probe"))
+    assert (rows["a_act"].source, rows["b_act"].source) == ("model", "model")
+    got = spec.compile()
+    for field in ("actuator_biasprm", "actuator_forcerange", "actuator_forcelimited"):
+        assert np.array_equal(getattr(untouched, field), getattr(got, field)), field
+
+
 def test_an_entry_that_changes_one_value_is_recorded_as_the_entrys():
     rows = _by_name(resolve(_spec(), {"control": "position", "each": {"a_act": {"d": 1.0}}},
                             model_name="probe"))

@@ -372,6 +372,7 @@ def resolve(spec, override, *, model_name: str, where: str = "actuators") -> lis
         if (
             entry
             and shared
+            and plan[0].source != "model"
             and _same_plan(
                 plan, _plan(act, shared, shared.get("control", row.control), row, "shared")
             )
