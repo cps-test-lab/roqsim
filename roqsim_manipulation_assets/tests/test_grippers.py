@@ -133,8 +133,8 @@ def test_gripper_open_command_opens(
 ):
     """The ctrl value called open widens the jaws, not narrows them.
 
-    Every gripper reaches its open end at the LOW end of ctrlrange, which for the Schunk and the
-    Hand-E means negative tendon coefficients.
+    Every gripper reaches its open end at the LOW end of ctrlrange, which for the Schunk means
+    negative tendon coefficients.
     """
     m = _gripper_spec(model).compile()
     d = mujoco.MjData(m)

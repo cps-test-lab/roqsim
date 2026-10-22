@@ -66,7 +66,7 @@ def test_mass_centre_of_mass_and_inertia_are_the_manuals():
     assert np.diag(inertia) * 1e6 == pytest.approx(INERTIA_KG_MM2, rel=0.05)
 
 
-# --- the travel: references/gripper.md's battery for a parallel gripper ---------------------------
+# --- the travel: aperture, pad alignment, coupling and symmetry -----------------------------------
 
 #: Register counts along the travel, and how far the measured aperture may sit from the linear map.
 REGISTER = (0, 64, 128, 192, 255)
@@ -298,7 +298,7 @@ BOX_XY = (-0.45, 0.0)
 
 
 def test_the_ur5e_picks_a_box_and_holds_it():
-    """references/gripper.md E-G4: lifted, and still in the jaws after a dwell, not merely nudged.
+    """Lifted, and still between both pads after a dwell, not merely nudged.
 
     The arm spawns at the grasp stance: driven there from home, the fingers would sweep the box away
     first, and a check made only at the lift would score that as a pick.
