@@ -405,17 +405,23 @@ def _model_dependent_errors(shared, entry, merged, control, row, name, where) ->
 
 
 def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) -> ResolvedActuator:
-    """Write one actuator's law and gains, completely -- or nothing, if no value changes.
+    """Write what *merged* changes of one actuator's law, gains and limits, and nothing else.
 
-    Every parameter the law uses is written, never only the ones that changed: MuJoCo's ``set_to_*``
-    helpers leave the previous law's parameters in place (``set_to_motor`` after ``set_to_velocity``
-    keeps the old ``biasprm``), so a partial write leaves a stale term acting on the joint.
+    A new law is written whole, never over the previous one's parameters: MuJoCo's ``set_to_*``
+    helpers leave them in place (``set_to_motor`` after ``set_to_velocity`` keeps the old
+    ``biasprm``), so a partial write leaves a stale term acting on the joint.
 
-    A block that names neither a law nor a gain (``{}``, or limits alone) leaves the law as the model
-    has it, whatever its form. One that restates the model's own values (``control: position`` on a
-    position servo) leaves the actuator as it is, and its row keeps ``source: model``. The law is
-    compared parameter by parameter, not through the row: a row summarises a servo whose gain and
-    bias terms disagree by its gain, and restating that gain still writes the law it names.
+    What is written depends on what the block changes, because a row summarises a law it cannot
+    always state (a motor whose gain is not 1, a servo whose bias term disagrees with its gain):
+
+    - a control other than the model's: the whole law, in its canonical form;
+    - the model's control (stated or not) with gains: only the terms those gains govern -- ``p``
+      the gain and the stiffness term, ``d`` the damping term -- unless the actuator is not in the
+      law's form at all, when the whole law is written;
+    - neither (``{}``, ``control`` restating the model's, limits alone): the law as the model has it.
+
+    A block that changes no parameter leaves the actuator as it is, and its row keeps
+    ``source: model``.
     """
     # A limit the override does not state stays exactly as the model has it, flag included: a
     # single-acting drive's one-sided forcerange is the model's to state, not the table's.
@@ -425,42 +431,52 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
     ctrlrange = row.ctrlrange
     if "ctrlrange" in merged:
         ctrlrange = (float(merged["ctrlrange"][0]), float(merged["ctrlrange"][1]))
-    resolved = replace(row, source=source, effort_limit=effort_limit, ctrlrange=ctrlrange)
+    gains = {k: merged.get(k, getattr(row, k)) for k in _GAINS[control]}
+    gains = {k: (0.0 if v is None else float(v)) for k, v in gains.items()}
+    resolved = replace(
+        row,
+        control=control,
+        source=source,
+        p=gains.get("p"),
+        d=gains.get("d"),
+        stiffness=gains.get("stiffness"),
+        damping=gains.get("damping"),
+        effort_limit=effort_limit,
+        ctrlrange=ctrlrange,
+    )
 
+    biastype = mujoco.mjtBias.mjBIAS_NONE if control == "effort" else mujoco.mjtBias.mjBIAS_AFFINE
+    in_form = act.gaintype == mujoco.mjtGain.mjGAIN_FIXED and act.biastype == biastype
+    stated = [k for k in _GAINS[control] if k in merged]
     law = None
-    if any(key in merged for key in ("control", *_GAINS["position"], *_GAINS["impedance"])):
-        gains = {k: merged.get(k, getattr(row, k)) for k in _GAINS[control]}
-        gains = {k: (0.0 if v is None else float(v)) for k, v in gains.items()}
+    if control != row.control or (stated and not in_form):
         if control == "effort":
-            law = (mujoco.mjtBias.mjBIAS_NONE, _prm(1.0), _prm())
+            law = (_prm(1.0), _prm())
         elif control == "velocity":
-            law = (mujoco.mjtBias.mjBIAS_AFFINE, _prm(gains["d"]), _prm(0.0, 0.0, -gains["d"]))
+            law = (_prm(gains["d"]), _prm(0.0, 0.0, -gains["d"]))
         else:  # position, impedance -- one affine joint law, its gains named for the controller
             k = gains["p" if control == "position" else "stiffness"]
             c = gains["d" if control == "position" else "damping"]
-            law = (mujoco.mjtBias.mjBIAS_AFFINE, _prm(k), _prm(0.0, -k, -c))
-        resolved = replace(
-            resolved,
-            control=control,
-            p=gains.get("p"),
-            d=gains.get("d"),
-            stiffness=gains.get("stiffness"),
-            damping=gains.get("damping"),
-        )
-        if (
-            act.gaintype == mujoco.mjtGain.mjGAIN_FIXED
-            and act.biastype == law[0]
-            and list(act.gainprm) == law[1]
-            and list(act.biasprm) == law[2]
-        ):
-            law = None  # the actuator already runs exactly this law
+            law = (_prm(k), _prm(0.0, -k, -c))
+    elif stated:
+        gainprm, biasprm = list(act.gainprm), list(act.biasprm)
+        for key in stated:
+            value = gains[key]
+            if key in ("p", "stiffness") or control == "velocity":
+                gainprm[0] = value
+            if key in ("p", "stiffness"):
+                biasprm[1] = -value
+            else:
+                biasprm[2] = -value
+        if (gainprm, biasprm) != (list(act.gainprm), list(act.biasprm)):
+            law = (gainprm, biasprm)
     if law is None and replace(resolved, source=row.source) == row:
         return row
 
     if law is not None:
-        # Every parameter of the law, never only the ones that changed (see above).
         act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-        act.biastype, act.gainprm, act.biasprm = law
+        act.biastype = biastype
+        act.gainprm, act.biasprm = law
     if "effort_limit" in merged:
         act.forcerange = _scaled_forcerange(act, effort_limit)
         act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE

@@ -193,6 +193,25 @@ def test_a_block_naming_no_law_leaves_a_law_the_row_summarises_as_it_is(override
     assert list(spec.actuator("s").biasprm[:3]) == [0.0, -1000.0, -400.0]
 
 
+@pytest.mark.parametrize(
+    "entry", [{"m": {"control": "effort"}, "s": {"control": "position"}}, {"s": {"d": 400.0}}]
+)
+def test_restating_the_models_law_leaves_a_law_the_row_summarises_as_it_is(entry):
+    spec = _spec(_UNSUMMARISED)
+    rows = _by_name(resolve(spec, {"each": entry}, model_name="odd"))
+    assert {r.source for r in rows.values()} == {"model"}
+    assert list(spec.actuator("m").gainprm[:1]) == [50.0]
+    assert list(spec.actuator("s").biasprm[:3]) == [0.0, -1000.0, -400.0]
+
+
+def test_a_stated_gain_writes_only_the_terms_it_governs():
+    spec = _spec(_UNSUMMARISED)
+    row = _by_name(resolve(spec, {"each": {"s": {"d": 50.0}}}, model_name="odd"))["s"]
+    assert (row.d, row.source) == (50.0, "each")
+    assert spec.actuator("s").gainprm[0] == 2000.0
+    assert list(spec.actuator("s").biasprm[:3]) == [0.0, -1000.0, -50.0]
+
+
 def test_an_entry_that_changes_one_value_is_recorded_as_the_entrys():
     rows = _by_name(resolve(_spec(), {"control": "position", "each": {"a_act": {"d": 1.0}}},
                             model_name="probe"))
