@@ -5,7 +5,8 @@ controller** that turns a body-frame velocity command into smooth physically-sim
 
 It is the quadruped analogue of `roqsim_humanoid`'s `g1_locomotion` (and, at the interface, of
 `roqsim_mobile`'s `diff_drive`): the world spawns the robot with the generic `spawn_robot` plugin,
-and the model's manifest injects the `spot_locomotion` controller + `lidar`. The controller declares
+and the model's manifest injects the `spot_locomotion` controller, a `lidar` and Spot's five body
+camera stations. The controller declares
 the same backend-neutral endpoints (`cmd_vel` in, `odom` / `joint_states` out), so the ROS 2 bridge
 and nav2 drive Spot with no robot-specific wiring.
 
@@ -25,6 +26,28 @@ and nav2 drive Spot with no robot-specific wiring.
   `external/external_assets.yaml`).
 - `plugins/spot_locomotion.py` — the controller: builds the 48-dim observation, runs the policy at
   50 Hz, and writes leg position targets to the 12 actuators.
+
+## Body cameras
+
+`spot.manifest.yaml` mounts the five stations of a real Spot -- `frontleft`, `frontright`, `left`,
+`right`, `back` -- as `spot_body_camera` devices (`roqsim_sensors`), each publishing what the
+`spot_ros2` driver publishes for it: a greyscale `camera/<station>/image` with its `camera_info`,
+`depth/<station>/image` in millimetres, and `depth_registered/<station>/image`, stamped in Spot's own
+frames (`body` → `head` → `frontleft`/`frontright`, `body` → `left`/`right`/`back`, each station →
+`<station>_fisheye`). `body` is published as an identity child of `base_link`, so a consumer that
+looks up a camera from `body`, as it would on the real robot, finds it.
+
+The front pair looks across: `frontleft` sits on the left and looks to the right, 20° down. Every
+image arrives rotated as the real one does -- rotating it by the Spot SDK's `ROTATION_ANGLE`
+(frontleft −78°, frontright −102°, right 180°) levels it. Where each pose and lens comes from is in
+the manifest and in `THIRD_PARTY.md`; `tests/test_spot_cameras.py` holds every value as a fixture
+naming its source.
+
+The stations render on demand: only for a ROS subscriber or an in-process claim, so a run that
+reads no image pays nothing. A world that wants colour bodies sets `color_encoding: bgr8` on a
+station (`components: [{spawn_sensor: {}, name: frontleft, components: [{spot_body_camera:
+{color_encoding: bgr8}}]}]` under the `spawn_robot`); one that wants none switches a station off with
+`enabled: false`.
 
 ## Policy weights — fetched, not committed (licensing)
 

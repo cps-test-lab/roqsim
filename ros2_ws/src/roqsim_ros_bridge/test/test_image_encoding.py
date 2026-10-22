@@ -19,6 +19,7 @@ STAMP = None  # the converter only assigns it; no field of it is read here
 def test_step_and_data_follow_the_encoding():
     for encoding, payload in (
         ("rgb8", np.zeros((48, 64, 3), np.uint8)),
+        ("bgr8", np.zeros((48, 64, 3), np.uint8)),
         ("mono8", np.zeros((48, 64), np.uint8)),
         ("16UC1", np.zeros((48, 64), np.uint16)),
         ("32FC1", np.zeros((48, 64), np.float32)),

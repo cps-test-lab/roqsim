@@ -67,3 +67,16 @@ def test_every_schema_carries_its_dependencies():
         assert "MSG: builtin_interfaces/Time" in schema
     assert "MSG: sensor_msgs/PointField" in rm.SCHEMAS[rm.POINT_CLOUD2]
     assert "MSG: sensor_msgs/RegionOfInterest" in rm.SCHEMAS[rm.CAMERA_INFO]
+
+
+def test_a_bgr8_frame_compresses_to_the_colour_an_rgb8_one_does():
+    """The codec reads RGB, so a bgr8 frame is put back in that order: both decode to one colour."""
+    rgb = np.zeros((8, 8, 3), np.uint8)
+    rgb[..., 0] = 200  # red
+    as_rgb = rm.compressed_image_fields(rgb, "rgb8", {"format": "png"})
+    as_bgr = rm.compressed_image_fields(
+        np.ascontiguousarray(rgb[..., ::-1]), "bgr8", {"format": "png"}
+    )
+    assert as_bgr["data"] == as_rgb["data"]
+    assert as_bgr["format"] == "bgr8; png compressed bgr8"
+    assert rm.image_fields(rgb[..., ::-1], "bgr8")["step"] == 24

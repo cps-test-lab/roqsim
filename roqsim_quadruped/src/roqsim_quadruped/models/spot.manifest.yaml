@@ -14,6 +14,19 @@
 # from what sits beside it (THIRD_PARTY.md).
 license: LICENSE.mujoco_menagerie
 
+# Spot's own frames (Spot SDK docs/concepts/geometry_and_frames.md @ 04537dd; spot_ros2
+# spot_driver/src/object_sync/object_synchronizer.cpp @ 949feb7). `body` is the robot's body frame:
+# spot_description (@ 156d180, urdf/spot_macro.xacro:37-41) puts `base_link` at it, an identity
+# child, and this MJCF's `base_link` is that point too (its hips sit at the description's
+# +-0.29785, +-0.055), so `body` is published as an identity child of `base_link` and a tf lookup
+# between the two resolves either way round. `head` carries the front pair, as Spot's frame tree
+# has it (body -> head -> frontleft/frontright). Its pose is not published anywhere; it is placed at
+# the midpoint of the two front stations, aligned with `body` -- an assumption, and the only one in
+# the frame tree that no source states.
+frames:
+  - {name: body, parent: base_link}
+  - {name: head, parent: body, pose: {position: {x: 0.415, z: -0.01}}}
+
 components:
   - spot_locomotion:                               # RL flat-terrain walking policy; config bundled
       # spot_description's joint velocity limits (rai-opensource/spot_description @ 156d180,
@@ -39,3 +52,80 @@ components:
       # Nothing is excluded: the site stands 0.12 m above the body, clear of every geom, so no ray starts
       # inside robot geometry, and a robot part in the scan plane would be a real return.
       exclude_body: ''
+
+  # The five body camera stations, each a spot_body_camera device mounted at the station's depth frame
+  # (`<station>`, the optical frame: z out of the lens, x right and y down in the picture) and named
+  # after it, so it publishes spot_ros2's topics and frames (see the plugin's docstring).
+  #
+  # Where each pose comes from. Boston Dynamics publishes no camera extrinsics -- the robot reports
+  # them at runtime (Spot SDK docs/concepts/robot_services.md) -- so the position and the direction of
+  # view are the DARPA SubT Spot model's, estimated there from real-robot data (osrf/subt
+  # submitted_models/bosdyn_spot/model.sdf @ 083c6a8, links camera_<station>, whose rpy is quoted per
+  # station), turned from a Gazebo camera link into the optical frame. The roll about the optical
+  # axis is Boston Dynamics': it is set so that rotating the raw image by the SDK's
+  # ROTATION_ANGLE levels it (python/examples/get_image/get_image.py:21-27 @ 04537dd:
+  # frontleft -78, frontright -102, left 0, right 180, back 0 degrees). SubT agrees for frontleft,
+  # left and back, and is 180 degrees off for frontright and right, where the SDK wins.
+  #
+  # Every position sits on its housing in the body mesh. The front pair looks across: frontleft is
+  # on the left and looks 31.8 deg to the right, frontright the mirror; both look 20.3 deg down. The
+  # sides look 11.5 deg down, the back 17.2 deg.
+  #
+  # on_demand: a camera renders only for a consumer that asks -- a ROS subscriber or an in-process
+  # claim -- so a run that reads no image pays nothing for fifteen streams.
+  - spawn_sensor:
+      model: spot_body_camera
+      device_name: frontleft
+      parent_frame: head
+      # SubT camera_frontleft: xyz 0.415 0.037 -0.01, rpy 1.35556 0.353917 -0.554196.
+      pose:
+        position: {y: 0.037}
+        orientation: {x: 0.140744, y: 0.80838, z: -0.212978, w: 0.530427}
+    name: frontleft
+    components:
+      - spot_body_camera: {on_demand: true}
+  - spawn_sensor:
+      model: spot_body_camera
+      device_name: frontright
+      parent_frame: head
+      # SubT camera_frontright: xyz 0.415 -0.037 -0.01, rpy -1.35556 0.353917 0.554196; rolled 180 deg
+      # to the SDK's -102.
+      pose:
+        position: {y: -0.037}
+        orientation: {x: -0.140744, y: 0.80838, z: 0.212978, w: 0.530427}
+    name: frontright
+    components:
+      - spot_body_camera: {on_demand: true}
+  - spawn_sensor:
+      model: spot_body_camera
+      device_name: left
+      parent_frame: body
+      # SubT camera_left: xyz -0.125 0.12 0.035, rpy 0 0.2 pi/2.
+      pose:
+        position: {x: -0.125, y: 0.12, z: 0.035}
+        orientation: {x: -0.774167, y: 0.0, z: 0.0, w: 0.632981}
+    name: left
+    components:
+      - spot_body_camera: {on_demand: true}
+  - spawn_sensor:
+      model: spot_body_camera
+      device_name: right
+      parent_frame: body
+      # SubT camera_right: xyz -0.125 -0.12 0.035, rpy 0 0.2 -pi/2; rolled 180 deg to the SDK's 180.
+      pose:
+        position: {x: -0.125, y: -0.12, z: 0.035}
+        orientation: {x: 0.774167, y: 0.0, z: 0.0, w: 0.632981}
+    name: right
+    components:
+      - spot_body_camera: {on_demand: true}
+  - spawn_sensor:
+      model: spot_body_camera
+      device_name: back
+      parent_frame: body
+      # SubT camera_back: xyz -0.425 0 0.01, rpy 0 0.3 pi.
+      pose:
+        position: {x: -0.425, z: 0.01}
+        orientation: {x: -0.569105, y: -0.569105, z: 0.419666, w: 0.419666}
+    name: back
+    components:
+      - spot_body_camera: {on_demand: true}
