@@ -742,12 +742,12 @@ class FrameRenderer:
         """Populate the scene from *data* through :attr:`camera`, with this renderer's planes."""
         self._renderer.update_scene(data, self.camera, scene_option=scene_option or self._vopt)
         set_clip_planes(self._renderer.scene, self._near, self._far)
-        cam = self._renderer.scene.camera[0]
-        if cam.frustum_far <= cam.frustum_near:
-            raise ValueError(
-                f"far clip plane {cam.frustum_far:g} m is not beyond the near one "
-                f"{cam.frustum_near:g} m"
-            )
+        for cam in self._renderer.scene.camera:
+            if cam.frustum_far <= cam.frustum_near:
+                raise ValueError(
+                    f"far clip plane {cam.frustum_far:g} m is not beyond the near one "
+                    f"{cam.frustum_near:g} m"
+                )
 
     @property
     def raw(self) -> mujoco.Renderer:

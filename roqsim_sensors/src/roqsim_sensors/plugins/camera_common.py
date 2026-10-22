@@ -37,7 +37,7 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import Endpoint, SimContext
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 from roqsim.rendering import FrameRenderer, hold_gc
 from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
@@ -434,9 +434,10 @@ class CameraPlugin(Plugin):
             self._dist_map = _build_distortion_map(self._intr)
         near, far = self._render_planes(m)
         if far <= near:
-            raise RuntimeError(
-                f"{type(self).__name__}: 'render_near' ({near:g} m) is not nearer than the model's "
-                f"far plane ({far:g} m, visual/map zfar times its extent)"
+            # A config error, raised here because only the compiled model knows its far plane.
+            raise PluginError(
+                f"{self.address}: 'render_near' ({near:g} m) must be nearer than the model's far "
+                f"plane ({far:g} m, visual/map zfar times its extent)"
             )
         self._planes = (near, far)
 

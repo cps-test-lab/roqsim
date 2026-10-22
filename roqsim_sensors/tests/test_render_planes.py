@@ -16,7 +16,7 @@ from roqsim_sensors.plugins.camera_common import DEFAULT_RENDER_NEAR, CameraPlug
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim.engine import Engine
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 from roqsim.rendering import FrameRenderer
 from roqsim.scene_source import declared_cameras
 
@@ -36,10 +36,9 @@ class _BigRoom(Plugin):
     extent puts the model's own near plane 0.5 m out."""
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        # The engine's own floor is the ground; a second plane here would be coplanar with it and
+        # z-fight, and every face below stays clear of the floor for the same reason.
         spec.stat.extent = EXTENT
-        spec.worldbody.add_geom(
-            type=mujoco.mjtGeom.mjGEOM_PLANE, size=[20, 20, 0.1], rgba=[0.3, 0.3, 0.3, 1]
-        )
         spec.worldbody.add_geom(
             type=mujoco.mjtGeom.mjGEOM_BOX,
             pos=[-PLATE - 0.005, 0, 0.5],
@@ -48,8 +47,8 @@ class _BigRoom(Plugin):
         )
         spec.worldbody.add_geom(
             type=mujoco.mjtGeom.mjGEOM_BOX,
-            pos=[-WALL - 0.1, 0, 2],
-            size=[0.1, 10, 2],
+            pos=[-WALL - 0.1, 0, 2.05],
+            size=[0.1, 4, 2],
             rgba=[0, 0, 1, 1],
         )
         for name, y in (("cam", 0.0), ("cam2", 0.001)):
@@ -147,21 +146,33 @@ def test_the_model_is_not_written_during_a_render():
 
 
 def test_a_moved_near_plane_keeps_the_field_of_view():
-    """The frustum's sides scale with its near plane, so the picture is the same one, nearer cut.
-
-    Both planes here cut the plate and nothing else, so the two frames must agree.
-    """
+    """The frustum's sides scale with its near plane, so the view's angles are the model's and the
+    plate covers the same pixels whichever near plane draws it."""
     engine = _engine()
     m, d = engine.ctx.model, engine.ctx.data
     cam = m.camera("cam").id
-    own = FrameRenderer(m, 64, 48, camera=cam)
-    moved = FrameRenderer(m, 64, 48, camera=cam, near=1.0)
-    a, b = own.render(d).astype(int), moved.render(d).astype(int)
-    # A zoomed or shifted view would move the wall's edge and the floor's horizon in every row; the
-    # rows above the floor's grazing near edge (the bottom two) agree to a level.
-    assert np.abs(a - b)[:40].max() <= 2
-    own.close()
-    moved.close()
+
+    def angles(near):
+        frames = FrameRenderer(m, 64, 48, camera=cam, near=near)
+        frame = frames.render(d)
+        mask = (frame[..., 0] > 100) & (frame[..., 2] < 40)
+        sides = [
+            (
+                c.frustum_top / c.frustum_near,
+                c.frustum_bottom / c.frustum_near,
+                c.frustum_center / c.frustum_near,
+                c.frustum_width / c.frustum_near,
+            )
+            for c in frames.scene.camera
+        ]
+        frames.close()
+        return np.array(sides), mask
+
+    own, _ = angles(None)
+    for near in (0.01, 0.04, 1.0):
+        np.testing.assert_allclose(angles(near)[0], own, rtol=1e-5)
+    near_mask, nearer_mask = angles(0.04)[1], angles(0.01)[1]
+    assert near_mask.any() and np.array_equal(near_mask, nearer_mask)
     engine.shutdown()
 
 
@@ -274,8 +285,8 @@ def test_a_depth_camera_must_render_from_no_further_than_it_senses():
     assert OakDCameraPlugin({}).validate_config({"render_near": 0.3, "clip_near": 0.3}) == []
 
 
-def test_a_render_near_beyond_the_models_far_plane_is_refused_at_configure():
-    with pytest.raises(Exception, match="render_near"):
+def test_a_render_near_beyond_the_models_far_plane_is_a_config_error_at_configure():
+    with pytest.raises(PluginError, match=r"lost.*'render_near' \(10000 m\) must be nearer"):
         _engine((D415, "lost", {"camera": "cam", "render_near": 1e4}))
 
 
