@@ -49,6 +49,11 @@ station (`components: [{spawn_sensor: {}, name: frontleft, components: [{spot_bo
 {color_encoding: bgr8}}]}]` under the `spawn_robot`); one that wants none switches a station off with
 `enabled: false`.
 
+The state interface stays roqsim's own (`odom`, `fl_hx` …, nav2's `/scan`), which the nav2 example
+reads. A world that wants the driver's -- `odometry`, `front_left_hip_x` …, its QoS and its 0.125 s
+command lapse -- renames them through `spot_locomotion`'s `topics:`, `qos:`, `joint_names:` and
+`cmd_vel_timeout:`, as `ros2_ws/src/roqsim_nav2_example/worlds/spot_ros2_interface.yaml` does.
+
 ## Policy weights — fetched, not committed (licensing)
 
 The pretrained policy `spot_policy.pt` comes from NVIDIA's public Isaac asset server. It is
