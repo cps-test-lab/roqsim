@@ -49,8 +49,8 @@ the depth stream, and what a driver that registers on the device publishes besid
 ``registered_depth: true`` turns it on. It is rendered through the colour camera, so it is exactly
 aligned with the colour pixels rather than reprojected, through the colour lens's ``distortion``
 too; it has its own ``camera_info`` sibling, uses ``depth_encoding``, offers no ``compressedDepth``
-companion, and costs one more depth pass only while something asks for it. A device whose depth already renders through the colour camera refuses it: its
-depth stream is the registered one.
+companion, and costs one more depth pass only while something asks for it. A device whose depth
+already renders through the colour camera refuses it: its depth stream is the registered one.
 
 **The compressed companion.** A ``16UC1`` camera also offers ``<depth topic>/compressedDepth``, the
 transport a RealSense driver advertises for depth -- so ``compressed: false`` is the opt-out for both
@@ -239,7 +239,7 @@ class DepthCameraPlugin(CameraPlugin):
         self._depth_frame_id = frame_id
         if self.registered_depth:
             self._registered_topic = registered_topic or join_topic(
-                self.DEFAULT_TOPIC_PREFIX, "depth_registered/image_rect"
+                self.topic_prefix, "depth_registered/image_rect"
             )
 
     # As expensive to serialise as the colour frame; see camera_common's `image`.
@@ -248,7 +248,7 @@ class DepthCameraPlugin(CameraPlugin):
         rate="rate_hz",
         lazy=True,
         when="_depth_topic",
-        ros2=lambda self: {"topic": self._depth_topic, "frame_id": self._depth_frame_id},
+        ros2=lambda self: self._ros2(topic=self._depth_topic, frame_id=self._depth_frame_id),
     )
     def depth_image(self) -> Image | None:
         """The depth frame in the encoding this camera advertises; nothing before the first capture."""
@@ -267,10 +267,7 @@ class DepthCameraPlugin(CameraPlugin):
     @endpoint.out(
         rate="rate_hz",
         when="_depth_topic",
-        ros2=lambda self: {
-            "topic": "{depth}/../camera_info",
-            "frame_id": self._depth_frame_id,
-        },
+        ros2=lambda self: self._ros2(topic="{depth}/../camera_info", frame_id=self._depth_frame_id),
     )
     def depth_camera_info(self) -> CameraInfo:
         """The pinhole intrinsics of the depth frame."""
@@ -285,12 +282,12 @@ class DepthCameraPlugin(CameraPlugin):
         when=lambda self: (
             bool(self._depth_topic) and self.compressed and self.depth_encoding == "16UC1"
         ),
-        ros2=lambda self: {
-            "type": "sensor_msgs.msg.CompressedImage",
-            "topic": "{depth}/compressedDepth",
-            "frame_id": self._depth_frame_id,
-            "format": self.depth_codec,
-        },
+        ros2=lambda self: self._ros2(
+            type="sensor_msgs.msg.CompressedImage",
+            topic="{depth}/compressedDepth",
+            frame_id=self._depth_frame_id,
+            format=self.depth_codec,
+        ),
     )
     def depth_compressed(self) -> Image | None:
         """The depth frame, compressedDepth-encoded on the wire."""
@@ -303,7 +300,7 @@ class DepthCameraPlugin(CameraPlugin):
         rate="rate_hz",
         lazy=True,
         when="_registered_topic",
-        ros2=lambda self: {"topic": self._registered_topic, "frame_id": self.frame_id},
+        ros2=lambda self: self._ros2(topic=self._registered_topic, frame_id=self.frame_id),
     )
     def registered_depth_image(self) -> Image | None:
         """Depth registered into the colour image; nothing before the first capture."""
@@ -323,10 +320,9 @@ class DepthCameraPlugin(CameraPlugin):
     @endpoint.out(
         rate="rate_hz",
         when="_registered_topic",
-        ros2=lambda self: {
-            "topic": "{registered_depth}/../camera_info",
-            "frame_id": self.frame_id,
-        },
+        ros2=lambda self: self._ros2(
+            topic="{registered_depth}/../camera_info", frame_id=self.frame_id
+        ),
     )
     def registered_depth_camera_info(self) -> CameraInfo:
         """The pinhole intrinsics of the registered depth frame: the colour frame's."""

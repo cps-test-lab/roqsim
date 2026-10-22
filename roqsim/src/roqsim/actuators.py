@@ -75,6 +75,9 @@ Keys under ``each:`` are **actuator** names as the model declares them, unprefix
 child spec before it is attached, so no prefix has been applied yet. A joint name is refused naming
 the actuator that drives it, rather than resolved silently -- two namespaces in one mapping would
 mean a reader of someone else's world could not tell which a key was without opening the MJCF.
+
+**A gripper's finger servo on a tendon** is named under ``each:`` too, and takes ``p`` and ``d``
+only (``_tendon_servo``): the shared keys describe joint laws and never fall on it.
 """
 
 from __future__ import annotations
@@ -146,7 +149,9 @@ MUJOCO_CONTROLS = {
 #: One gain block: the shared keys, and the same set again inside every ``each:`` entry. Units are
 #: declared because a paper states "kp = 2.0" with none, and a value wrong by a factor of a thousand
 #: is indistinguishable from a right one -- which is the failure this whole module exists to prevent.
-#: The rotational unit is named; a slide joint's is the linear equivalent (N/m, N*s/m, N).
+#: Each unit names both forms: a hinge's, and the linear one of a slide joint. ``p`` and ``d`` also
+#: fall on a finger servo's tendon (``_tendon_servo``), whose unit is its joints': N/m over slide
+#: joints (the Franka Hand), N*m/rad over hinges (the Robotiq 2F-85).
 GAIN_SCHEMA: dict[str, Field] = {
     "control": Field(
         str,
@@ -157,25 +162,31 @@ GAIN_SCHEMA: dict[str, Field] = {
     "p": Field(
         float,
         minimum=0.0,
-        unit="N*m/rad",
+        unit="N*m/rad (N/m on a slide joint or a tendon over slide joints)",
         doc="position-loop proportional gain (control: position)",
     ),
     "d": Field(
         float,
         minimum=0.0,
-        unit="N*m*s/rad",
+        unit="N*m*s/rad (N*s/m on a slide joint or a tendon over slide joints)",
         doc="damping/derivative gain (control: position, velocity)",
     ),
     "stiffness": Field(
-        float, minimum=0.0, unit="N*m/rad", doc="joint stiffness (control: impedance)"
+        float,
+        minimum=0.0,
+        unit="N*m/rad (N/m on a slide joint)",
+        doc="joint stiffness (control: impedance)",
     ),
     "damping": Field(
-        float, minimum=0.0, unit="N*m*s/rad", doc="joint damping (control: impedance)"
+        float,
+        minimum=0.0,
+        unit="N*m*s/rad (N*s/m on a slide joint)",
+        doc="joint damping (control: impedance)",
     ),
     "effort_limit": Field(
         float,
         minimum=0.0,
-        unit="N*m",
+        unit="N*m (N on a slide joint)",
         doc="torque magnitude cap; URDF's <limit effort=>. A one-sided forcerange keeps its side",
     ),
     "ctrlrange": Field(
@@ -221,9 +232,10 @@ class ResolvedActuator:
     name: str
     joint: str
     control: str
-    #: ``model`` -- nothing said otherwise; ``shared`` -- the block's own keys; ``each`` -- a named
-    #: entry. Reported per actuator rather than per key: an entry that names one gain still leaves
-    #: that actuator described by the block as a whole.
+    #: ``model`` -- nothing stated changes it, an entry restating the model's values included;
+    #: ``shared`` -- the block's own keys; ``each`` -- a named entry. Reported per actuator rather
+    #: than per key: an entry that names one gain still leaves that actuator described by the block
+    #: as a whole.
     source: str
     p: float | None = None
     d: float | None = None
@@ -337,26 +349,38 @@ def resolve(spec, override, *, model_name: str, where: str = "actuators") -> lis
             continue
         merged = {**shared, **(entry or {})}
         source = "each" if entry else "shared"
-        # A shared law falling on a transmission that is not a joint. Because this runs before an
-        # end effector is grafted on, it can only be the model's own (a Franka's tendon-driven
-        # fingers), never a gripper someone bolted to an arm -- so the fix really is to name it.
+        # A transmission that is not a joint: a gripper's finger servo on a tendon (the Franka
+        # Hand's, a Robotiq's). The shared keys describe joint laws and never fall on it; naming it
+        # under `each:` restates its servo's p and d, and nothing else (`_tendon_servo`).
         if not _is_joint(act):
+            label = _TRN_LABEL.get(act.trntype, "non-joint transmission")
             if entry is None:
                 errors.append(
                     f"'{where}' states a joint law, but {model_name}'s '{act.name}' drives a "
-                    f"{_TRN_LABEL.get(act.trntype, 'non-joint transmission')}, which has no joint "
-                    f"stiffness or position. Name it under '{where}.each' to say what it should do."
+                    f"{label}, which has no joint stiffness or position. Name it under "
+                    f"'{where}.each' to say what it should do: a finger servo on a tendon takes "
+                    f"'{where}.each.{act.name}: {{p: ..., d: ...}}'."
                 )
+                resolved.append(row)
             else:
-                errors.append(
-                    f"'{where}.each.{act.name}' drives a "
-                    f"{_TRN_LABEL.get(act.trntype, 'non-joint transmission')}, not a joint."
-                )
-            resolved.append(row)
+                row, entry_errors = _tendon_servo(act, entry, row, f"{where}.each.{act.name}")
+                errors += entry_errors
+                resolved.append(row)
             continue
         control = merged.get("control", row.control)
         errors += _model_dependent_errors(shared, entry, merged, control, row, act.name, where)
-        resolved.append(_apply(act, merged, control, row, source))
+        plan = _plan(act, merged, control, row, source)
+        if (
+            entry
+            and shared
+            and plan[0].source != "model"
+            and _same_plan(
+                plan, _plan(act, shared, shared.get("control", row.control), row, "shared")
+            )
+        ):
+            # The entry restates what the shared keys already do to this actuator.
+            plan = (replace(plan[0], source="shared"), plan[1])
+        resolved.append(_write(act, merged, *plan))
 
     if errors:
         raise PluginError("; ".join(errors))
@@ -392,46 +416,39 @@ def _model_dependent_errors(shared, entry, merged, control, row, name, where) ->
     return errors
 
 
-def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) -> ResolvedActuator:
-    """Write one actuator's law and gains, completely.
+def _plan(act, merged: dict, control: str, row: ResolvedActuator, source: str):
+    """What *merged* changes of one actuator's law, gains and limits, and nothing else.
 
-    Every parameter the law uses is written, never only the ones that changed: MuJoCo's ``set_to_*``
-    helpers leave the previous law's parameters in place (``set_to_motor`` after ``set_to_velocity``
-    keeps the old ``biasprm``), so a partial write leaves a stale term acting on the joint.
+    Returns the actuator's row, which is *row* itself when nothing changes, and the law to write
+    as ``(gainprm, biasprm)``, or ``None`` to keep the actuator's; :func:`_write` applies them.
+
+    A new law is written whole, never over the previous one's parameters: MuJoCo's ``set_to_*``
+    helpers leave them in place (``set_to_motor`` after ``set_to_velocity`` keeps the old
+    ``biasprm``), so a partial write leaves a stale term acting on the joint.
+
+    What is written depends on what the block changes, because a row summarises a law it cannot
+    always state (a motor whose gain is not 1, a servo whose bias term disagrees with its gain):
+
+    - a control other than the model's: the whole law, in its canonical form;
+    - the model's control (stated or not) with gains: only the terms those gains govern -- ``p``
+      the gain and the stiffness term, ``d`` the damping term (and the gain, under ``velocity``)
+      -- unless the actuator is not in the law's form at all, when the whole law is written;
+    - neither (``{}``, ``control`` restating the model's, limits alone): the law as the model has it.
+
+    A block that changes no parameter leaves the actuator as it is, and its row keeps
+    ``source: model``.
     """
-    gains = {k: merged.get(k, getattr(row, k)) for k in _GAINS[control]}
-    gains = {k: (0.0 if v is None else float(v)) for k, v in gains.items()}
-
-    act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-    if control == "effort":
-        act.biastype = mujoco.mjtBias.mjBIAS_NONE
-        act.gainprm = _prm(1.0)
-        act.biasprm = _prm()
-    elif control == "velocity":
-        act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
-        act.gainprm = _prm(gains["d"])
-        act.biasprm = _prm(0.0, 0.0, -gains["d"])
-    else:  # position, impedance -- one affine joint law, its gains named for the controller
-        k = gains["p" if control == "position" else "stiffness"]
-        c = gains["d" if control == "position" else "damping"]
-        act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
-        act.gainprm = _prm(k)
-        act.biasprm = _prm(0.0, -k, -c)
-
     # A limit the override does not state stays exactly as the model has it, flag included: a
     # single-acting drive's one-sided forcerange is the model's to state, not the table's.
     effort_limit = row.effort_limit
     if "effort_limit" in merged:
         effort_limit = float(merged["effort_limit"])
-        act.forcerange = _scaled_forcerange(act, effort_limit)
-        act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
     ctrlrange = row.ctrlrange
     if "ctrlrange" in merged:
-        ctrlrange = merged["ctrlrange"]
-        act.ctrlrange = [float(ctrlrange[0]), float(ctrlrange[1])]
-        act.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
-
-    return replace(
+        ctrlrange = (float(merged["ctrlrange"][0]), float(merged["ctrlrange"][1]))
+    gains = {k: merged.get(k, getattr(row, k)) for k in _GAINS[control]}
+    gains = {k: (0.0 if v is None else float(v)) for k, v in gains.items()}
+    resolved = replace(
         row,
         control=control,
         source=source,
@@ -439,9 +456,119 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
         d=gains.get("d"),
         stiffness=gains.get("stiffness"),
         damping=gains.get("damping"),
-        effort_limit=None if effort_limit is None else float(effort_limit),
-        ctrlrange=None if ctrlrange is None else (float(ctrlrange[0]), float(ctrlrange[1])),
+        effort_limit=effort_limit,
+        ctrlrange=ctrlrange,
     )
+
+    biastype = mujoco.mjtBias.mjBIAS_NONE if control == "effort" else mujoco.mjtBias.mjBIAS_AFFINE
+    in_form = act.gaintype == mujoco.mjtGain.mjGAIN_FIXED and act.biastype == biastype
+    stated = [k for k in _GAINS[control] if k in merged]
+    law = None
+    if control != row.control or (stated and not in_form):
+        if control == "effort":
+            law = (_prm(1.0), _prm())
+        elif control == "velocity":
+            law = (_prm(gains["d"]), _prm(0.0, 0.0, -gains["d"]))
+        else:  # position, impedance -- one affine joint law, its gains named for the controller
+            k = gains["p" if control == "position" else "stiffness"]
+            c = gains["d" if control == "position" else "damping"]
+            law = (_prm(k), _prm(0.0, -k, -c))
+    elif stated:
+        gainprm, biasprm = list(act.gainprm), list(act.biasprm)
+        for key in stated:
+            value = gains[key]
+            if key in ("p", "stiffness") or control == "velocity":
+                gainprm[0] = value
+            if key in ("p", "stiffness"):
+                biasprm[1] = -value
+            else:
+                biasprm[2] = -value
+        if (gainprm, biasprm) != (list(act.gainprm), list(act.biasprm)):
+            law = (gainprm, biasprm)
+    if law is None and replace(resolved, source=row.source) == row:
+        return row, None
+    return resolved, law
+
+
+def _same_plan(a, b) -> bool:
+    """Whether two :func:`_plan` results change the actuator alike, whoever is credited."""
+    return replace(a[0], source="") == replace(b[0], source="") and a[1] == b[1]
+
+
+def _write(act, merged: dict, resolved: ResolvedActuator, law) -> ResolvedActuator:
+    """Apply a :func:`_plan` to the spec's actuator; a row left the model's writes nothing."""
+    if resolved.source == "model":
+        return resolved
+    if law is not None:
+        act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
+        act.biastype = (
+            mujoco.mjtBias.mjBIAS_NONE
+            if resolved.control == "effort"
+            else mujoco.mjtBias.mjBIAS_AFFINE
+        )
+        act.gainprm, act.biasprm = law
+    if "effort_limit" in merged:
+        act.forcerange = _scaled_forcerange(act, resolved.effort_limit)
+        act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+    if "ctrlrange" in merged:
+        act.ctrlrange = list(resolved.ctrlrange)
+        act.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
+    return resolved
+
+
+def _tendon_servo(act, entry: dict, row: ResolvedActuator, at: str):
+    """Restate a position servo on a tendon -- a gripper's finger servo -- with *entry*'s p and d.
+
+    The servo pulls the tendon's length towards its command with stiffness ``p`` (N/m on a tendon
+    over slide joints) and damping ``d`` (N*s/m). Those are the only two keys it takes: the joint
+    laws do not apply to a length, and its command range and force range are the gripper's
+    interface, which ``arm_controller`` maps its commands onto.
+
+    The command scale is kept. A finger servo often takes its command in another unit than the
+    tendon's length -- the Franka Hand's and the Robotiq's 0..255 -- which MuJoCo states as a gain
+    of ``p`` times that scale, so ``gainprm`` is rescaled with ``p`` and a command still closes the
+    fingers to the same width. Returns the row and the errors, never a partial write.
+    """
+    label = _TRN_LABEL.get(act.trntype, "non-joint transmission")
+    model_p = -float(act.biasprm[1])
+    if act.trntype != mujoco.mjtTrn.mjTRN_TENDON or row.control != "position" or model_p <= 0.0:
+        return row, [
+            f"'{at}' drives a {label} under control: {row.control}; only a position servo on a "
+            f"tendon (a gripper's finger servo) can be restated, with p and d."
+        ]
+    errors: list[str] = []
+    control = entry.get("control")
+    if control is not None and control != "position":
+        errors.append(
+            f"'{at}.control: {control}' -- a finger servo on a {label} is a position servo on the "
+            f"tendon's length and stays one; state its p and d, with control: position or none."
+        )
+    stated = sorted(k for k, v in entry.items() if v is not None and k not in ("control", "p", "d"))
+    if stated:
+        errors.append(
+            f"'{at}' states {', '.join(stated)}; a finger servo on a {label} takes p and d only. "
+            f"Its command and force ranges are the gripper's interface and stay the model's."
+        )
+    for key, what in (("p", "holds nothing"), ("d", "rings")):
+        value = entry.get(key)
+        if value is not None and float(value) <= 0.0:
+            errors.append(
+                f"'{at}.{key}' must be > 0, got {value}: a finger servo without it {what}."
+            )
+    if errors:
+        return row, errors
+
+    p = float(entry["p"]) if entry.get("p") is not None else model_p
+    d = float(entry["d"]) if entry.get("d") is not None else -float(act.biasprm[2])
+    if (p, d) == (row.p, row.d):
+        return row, []  # restates the model's servo: left as it is, and recorded as the model's
+    gainprm = list(act.gainprm)
+    gainprm[0] = float(act.gainprm[0]) / model_p * p
+    biasprm = list(act.biasprm)
+    biasprm[1], biasprm[2] = -p, -d
+    act.gainprm = gainprm
+    act.biasprm = biasprm
+    return replace(row, source="each", p=p, d=d), []
 
 
 #: How a non-joint transmission reads in an error, so the message says what the thing IS.
@@ -497,7 +624,10 @@ def _model_row(act) -> ResolvedActuator:
         ctrlrange=_range(act.ctrlrange) if _is_limited(act.ctrllimited, act.ctrlrange) else None,
     )
     if control == "position":
-        return replace(row, p=gain, d=damping)
+        # On a joint, MuJoCo's position servo states its gain twice, as gainprm and as -biasprm[1].
+        # A finger servo on a tendon scales its command (the Franka Hand's 0..255), so its gainprm
+        # carries that scale and its stiffness is the bias term alone.
+        return replace(row, p=gain if _is_joint(act) else -float(act.biasprm[1]), d=damping)
     if control == "velocity":
         return replace(row, d=gain)
     return row

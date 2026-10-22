@@ -15,9 +15,9 @@ open/closed values in that joint's own units. ``spawn_arm`` pulls it in via
 manifest on top -- which is how a bare arm and a separate hand reach the same state as a
 factory-assembled one.
 
-Grippers here are standalone and attachable (``robotiq_2f85``, ``schunk_pg70``): root body at the
-origin with the fingers along +z, the tool-flange convention MuJoCo Menagerie arms use for their
-``attachment_site``, so welding one onto an arm needs no rotation.
+Grippers here are standalone and attachable (``robotiq_2f85``, ``robotiq_hande``, ``schunk_pg70``):
+root body at the origin with the fingers along +z, the tool-flange convention MuJoCo Menagerie arms
+use for their ``attachment_site``, so welding one onto an arm needs no rotation.
 
 ``MESHES_DIR`` is this directory rather than a ``meshes/`` child, because with per-model folders the
 root a mesh reference resolves against IS the models root: a model of its own reaches its meshes

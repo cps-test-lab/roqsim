@@ -14,9 +14,9 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
-The render is always RGB; it is converted after the lens and before the blur and noise, so the
-noise is in levels of the published frame, and every consumer of the frame -- the raw image, the
-compressed one, a recording -- reads the same pixels.
+The render is always RGB; it is converted after the lens and before the noise, so the noise is in the
+published encoding's own levels (a ``mono8`` frame gets grey-level noise), and every consumer of the
+frame -- the raw image, the compressed one, a recording -- reads the same pixels.
 
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
@@ -283,6 +283,15 @@ class CameraPlugin(Plugin):
     DEFAULT_CAMERA = "camera"
     DEFAULT_FRAME_ID = "camera_optical_frame"
     DEFAULT_TOPIC_PREFIX = ""
+    #: The colour image's topic under the prefix, and the compressed companion's (a template over
+    #: the image topic, after a world's rename): image_transport's names unless a driver uses others.
+    IMAGE_LEAF = "image_raw"
+    COMPRESSED_TOPIC = "{image}/compressed"
+    #: The QoS the device's own driver publishes its streams with, as a
+    #: :func:`roqsim.endpoint.qos_profile` spec; ``None`` leaves the transport's default. It reaches
+    #: the endpoints whose hints are built through :meth:`_ros2` (this class's and
+    #: ``DepthCameraPlugin``'s). A world's ``qos:`` still wins.
+    ROS2_QOS: dict | str | None = None
     DEFAULT_RATE_HZ = 30.0
     DEFAULT_COLOR_ENCODING = "rgb8"
     DEFAULT_WIDTH = 640
@@ -296,6 +305,8 @@ class CameraPlugin(Plugin):
         # mount in its own config, and one attribute covers all three mounts.
         self.robot = self.entity
         self.camera = self.config.get("camera", self.DEFAULT_CAMERA)
+        #: The prefix the device's topics share; a subclass whose layout depends on its config sets it.
+        self.topic_prefix = self.DEFAULT_TOPIC_PREFIX
         self.rate_hz = float(self.config.get("rate_hz", self.DEFAULT_RATE_HZ))
         self.frame_id = self.config.get("frame_id", self.DEFAULT_FRAME_ID)
         # A compressed companion to `image`, on by default: real camera drivers advertise both, and an
@@ -422,10 +433,9 @@ class CameraPlugin(Plugin):
         rate="rate_hz",
         lazy=True,
         when="color",
-        ros2=lambda self: {
-            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "image_raw"),
-            "frame_id": self.frame_id,
-        },
+        ros2=lambda self: self._ros2(
+            topic=join_topic(self.topic_prefix, self.IMAGE_LEAF), frame_id=self.frame_id
+        ),
     )
     def image(self) -> Image | None:
         """The colour frame; nothing before the first capture of a trial."""
@@ -442,13 +452,13 @@ class CameraPlugin(Plugin):
         rate="rate_hz",
         lazy=True,
         when=lambda self: self.color and self.compressed,
-        ros2=lambda self: {
-            "type": "sensor_msgs.msg.CompressedImage",
-            "topic": "{image}/compressed",
-            "frame_id": self.frame_id,
-            "format": "jpeg",
-            "quality": self.jpeg_quality,
-        },
+        ros2=lambda self: self._ros2(
+            type="sensor_msgs.msg.CompressedImage",
+            topic=self.COMPRESSED_TOPIC,
+            frame_id=self.frame_id,
+            format="jpeg",
+            quality=self.jpeg_quality,
+        ),
     )
     def image_compressed(self) -> Image | None:
         """The colour frame, JPEG-compressed on the wire."""
@@ -457,14 +467,17 @@ class CameraPlugin(Plugin):
     # It describes every stream off this camera, so a label-only camera publishes it too.
     @endpoint.out(
         rate="rate_hz",
-        ros2=lambda self: {
-            "topic": join_topic(self.DEFAULT_TOPIC_PREFIX, "camera_info"),
-            "frame_id": self.frame_id,
-        },
+        ros2=lambda self: self._ros2(
+            topic=join_topic(self.topic_prefix, "camera_info"), frame_id=self.frame_id
+        ),
     )
     def camera_info(self) -> CameraInfo:
         """The pinhole intrinsics of the published frame."""
         return camera_info_of(self._intr)
+
+    def _ros2(self, **hints) -> dict:
+        """An endpoint's ROS 2 hints, with the device's :attr:`ROS2_QOS` where it states one."""
+        return hints if self.ROS2_QOS is None else {"qos": self.ROS2_QOS, **hints}
 
     def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         """Hook for subclasses to resolve what their additional outputs need (e.g. depth)."""
