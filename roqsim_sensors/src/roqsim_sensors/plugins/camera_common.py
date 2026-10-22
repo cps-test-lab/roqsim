@@ -14,9 +14,9 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
-The render is always RGB; the conversion is the last step of a capture, after the lens and the noise
-are applied, so every consumer of the frame -- the raw image, the compressed one, a recording --
-reads the same pixels.
+The render is always RGB; it is converted after the lens and before the blur and noise, so the
+noise is in levels of the published frame, and every consumer of the frame -- the raw image, the
+compressed one, a recording -- reads the same pixels.
 
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
