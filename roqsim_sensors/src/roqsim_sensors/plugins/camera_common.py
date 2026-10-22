@@ -14,9 +14,9 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
-The render is always RGB; it is converted after the lens and before the noise, so the noise is in the
-published encoding's own levels (a ``mono8`` frame gets grey-level noise), and every consumer of the
-frame -- the raw image, the compressed one, a recording -- reads the same pixels.
+The render is always RGB; it is converted after the lens and before the blur and the noise, so the
+noise is in the published encoding's own levels (a ``mono8`` frame gets grey-level noise), and every
+consumer of the frame -- the raw image, the compressed one, a recording -- reads the same pixels.
 
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
@@ -538,9 +538,10 @@ class CameraPlugin(Plugin):
             if self._dist_map is not None:
                 # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
                 # views of the SAME array, so warping downstream would either pay twice or warp
-                # twice. Depth is deliberately untouched -- a real RealSense publishes an
-                # already-rectified depth stream with D = 0, so distorting it would move the sim
-                # AWAY from the sensor.
+                # twice. The depth camera's own depth stream is deliberately untouched -- a real
+                # RealSense publishes it already rectified, with D = 0, so distorting it would move
+                # the sim AWAY from the sensor. Registered depth shares this lens and is warped
+                # with it (depth_camera.py).
                 import cv2
 
                 rgb = cv2.remap(
