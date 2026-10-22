@@ -223,6 +223,94 @@ def test_a_shared_gain_on_a_models_own_tendon_actuator_is_refused():
     with pytest.raises(PluginError) as exc:
         resolve(_spec(_TENDON), {"control": "impedance", "stiffness": 2.0}, model_name="grip_probe")
     assert "tendon" in str(exc.value)
+    assert "'actuators.each.grip: {p: ..., d: ...}'" in str(exc.value)
+
+
+#: A gripper's finger servo: a position servo on a tendon over two slide joints, its command
+#: remapped to 0..255 as the Franka Hand's and the Robotiq's are -- gainprm = kp * 0.04 / 255.
+_FINGERS = """
+<mujoco model="hand_probe">
+  <worldbody>
+    <body name="hand">
+      <body name="l"><joint name="f1" type="slide" range="0 0.04"/><geom size="0.01" mass="0.02"/></body>
+      <body name="r"><joint name="f2" type="slide" range="0 0.04"/><geom size="0.01" mass="0.02"/></body>
+    </body>
+  </worldbody>
+  <tendon><fixed name="split"><joint joint="f1" coef="0.5"/><joint joint="f2" coef="0.5"/></fixed></tendon>
+  <actuator>
+    <general name="fingers" tendon="split" ctrlrange="0 255" forcerange="-100 100"
+             biastype="affine" gainprm="0.31372549" biasprm="0 -2000 -40"/>
+    <general name="squeeze" tendon="split" gainprm="1"/>
+  </actuator>
+</mujoco>
+"""
+_SCALE = 0.04 / 255
+
+
+def _fingers(entry: dict):
+    spec = _spec(_FINGERS)
+    rows = _by_name(resolve(spec, {"each": {"fingers": entry}}, model_name="hand"))
+    return spec.actuator("fingers"), rows["fingers"]
+
+
+def test_a_finger_servo_reports_its_stiffness_not_its_command_gain():
+    """The remapped command puts kp * 0.04 / 255 in gainprm; the servo's stiffness is the bias."""
+    row = _by_name(resolve(_spec(_FINGERS), None, model_name="hand"))["fingers"]
+    assert (row.control, row.p, row.d, row.source) == ("position", 2000.0, 40.0, "model")
+
+
+def test_a_finger_servos_p_and_d_reach_the_actuator_and_keep_its_command_scale():
+    act, row = _fingers({"p": 3000.0, "d": 50.0})
+    assert act.biasprm[1] == -3000.0 and act.biasprm[2] == -50.0
+    # A command still closes the fingers to the same tendon length: gain / stiffness unchanged.
+    assert act.gainprm[0] == pytest.approx(3000.0 * _SCALE)
+    assert list(act.ctrlrange) == [0.0, 255.0] and list(act.forcerange) == [-100.0, 100.0]
+    assert (row.p, row.d, row.source) == (3000.0, 50.0, "each")
+
+
+def test_a_finger_servo_keeps_the_gain_it_was_not_given():
+    act, row = _fingers({"d": 60.0, "control": "position"})
+    assert act.biasprm[1] == -2000.0 and act.gainprm[0] == pytest.approx(2000.0 * _SCALE)
+    assert (row.p, row.d) == (2000.0, 60.0)
+
+
+def test_a_shared_law_beside_a_named_finger_servo_falls_on_the_joints_only():
+    spec = mujoco.MjSpec.from_string(_FINGERS.replace(
+        "<actuator>", '<actuator><general name="lift" joint="f1" gainprm="10" biasprm="0 -10 -1" '
+        'biastype="affine"/>'
+    ).replace('<general name="squeeze" tendon="split" gainprm="1"/>', ""))
+    rows = _by_name(resolve(
+        spec,
+        {"control": "impedance", "stiffness": 5.0, "each": {"fingers": {"control": "position", "p": 900.0}}},
+        model_name="hand",
+    ))
+    assert rows["lift"].control == "impedance" and rows["lift"].stiffness == 5.0
+    assert (rows["fingers"].control, rows["fingers"].p) == ("position", 900.0)
+
+
+@pytest.mark.parametrize(
+    "entry, message",
+    [
+        ({"control": "impedance"}, "'actuators.each.fingers.control: impedance' -- a finger servo"),
+        ({"stiffness": 3000.0}, "states stiffness; a finger servo on a tendon takes p and d only"),
+        ({"effort_limit": 50.0, "ctrlrange": [0, 1]}, "states ctrlrange, effort_limit;"),
+        ({"p": 0.0}, "'actuators.each.fingers.p' must be > 0, got 0.0"),
+        ({"d": 0.0}, "'actuators.each.fingers.d' must be > 0, got 0.0"),
+    ],
+)
+def test_a_finger_servo_takes_positive_p_and_d_only(entry, message):
+    spec = _spec(_FINGERS)
+    with pytest.raises(PluginError) as exc:
+        resolve(spec, {"each": {"fingers": entry}}, model_name="hand")
+    assert message in str(exc.value)
+    # Refused whole: nothing was written.
+    assert spec.actuator("fingers").biasprm[1] == -2000.0
+
+
+def test_a_tendon_actuator_that_is_no_position_servo_is_refused():
+    with pytest.raises(PluginError) as exc:
+        resolve(_spec(_FINGERS), {"each": {"squeeze": {"p": 10.0}}}, model_name="hand")
+    assert "'actuators.each.squeeze' drives a tendon under control: effort" in str(exc.value)
 
 
 def test_a_gain_the_models_own_law_does_not_read_is_refused():
