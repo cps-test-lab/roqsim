@@ -151,6 +151,14 @@ def test_a_block_that_changes_nothing_is_recorded_as_the_models(override):
         assert np.array_equal(getattr(untouched, field), getattr(got, field)), field
 
 
+def test_restating_a_gain_writes_the_law_it_names_on_a_servo_the_row_summarises():
+    """A servo whose gain and bias disagree reads as p = its gain; stating that p is a change."""
+    spec = _spec(_MODEL.replace('biasprm="0 -2000 -400"', 'biasprm="0 -1000 -400"'))
+    row = _by_name(resolve(spec, {"each": {"a_act": {"p": 2000.0}}}, model_name="probe"))["a_act"]
+    assert row.source == "each"
+    assert spec.actuator("a_act").biasprm[1] == -2000.0
+
+
 def test_an_entry_that_changes_one_value_is_recorded_as_the_entrys():
     rows = _by_name(resolve(_spec(), {"control": "position", "each": {"a_act": {"d": 1.0}}},
                             model_name="probe"))
