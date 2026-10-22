@@ -2,9 +2,9 @@
 pads under its own weight and through a lift.
 
 The fingers are a position servo on the hand's split tendon, so the grip on a part narrower than
-the commanded closing is the servo's stiffness times the remaining travel. A hand too soft there
-lets the part slide down the pads -- which 50 g did at Menagerie's 100 N/m -- without any grasp
-failing loudly: the arm just carries the part lower than it took it.
+the commanded closing is the servo's stiffness times the remaining travel. Too soft a servo lets the
+part slide down the pads without any grasp failing loudly: the arm carries the part lower than it
+took it.
 """
 
 from __future__ import annotations
@@ -54,7 +54,14 @@ def _world(tmp_path):
                         }
                     ],
                 },
-                {"spawn_model": {"model": str(part), "motion": "physics"}, "name": "part"},
+                {
+                    "spawn_model": {
+                        "model": str(part),
+                        "motion": "physics",
+                        "pose": {"position": {"x": 1.0, "y": 0.0, "z": 0.0}},
+                    },
+                    "name": "part",
+                },
             ],
         },
         base_dir=tmp_path,
@@ -68,7 +75,9 @@ def test_panda_hand_holds_a_thin_part_under_gravity_and_through_a_lift(tmp_path)
     eng.reset()
     m, d = eng.ctx.model, eng.ctx.data
     cart = eng.ctx.blackboard.require("cartesian:panda")
-    grip = next(e for e in eng.ctx.interface.all() if e.owner == "panda" and e.name == "gripper_cmd")
+    grip = next(
+        e for e in eng.ctx.interface.all() if e.owner == "panda" and e.name == "gripper_cmd"
+    )
     bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "thin_part")
     jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "free")
     q, v = int(m.jnt_qposadr[jid]), int(m.jnt_dofadr[jid])
