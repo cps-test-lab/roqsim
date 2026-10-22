@@ -771,10 +771,10 @@ perspective camera on a node of its own, the child of the node of the body it is
 mount pose, so it follows that body when a viewer moves it. The node and the camera are named after
 the sensor's address (``robot.oakd.oakd_camera``), the projection is the one the sensor publishes
 (``yfov`` and ``aspectRatio`` from its intrinsics, ``znear``/``zfar`` the clip planes the sensor
-renders with), and the node's ``extras`` carry ``sensor`` (the address), ``kind`` (``rgb``, or
-``depth`` for a device that publishes depth and no colour) and the image's ``width`` and
-``height``. A viewer renders
-the scene from that node to see what the sensor saw, with no image stored.
+renders with: its ``render_near`` and the model's far plane), and the node's ``extras`` carry
+``sensor`` (the address), ``kind`` (``rgb``, or ``depth`` for a device that publishes depth and no
+colour) and the image's ``width`` and ``height``. A viewer renders the scene from that node to see
+what the sensor saw, with no image stored.
 
 **Size.** By default only core glTF is written, which every loader reads. ``--max-tex-dim`` caps
 every image's longest side (default 1024, 0 keeps them whole). ``--texture-format jpeg`` stores

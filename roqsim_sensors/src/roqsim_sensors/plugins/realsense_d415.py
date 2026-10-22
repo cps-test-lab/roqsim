@@ -12,7 +12,7 @@ camera, and a ``d415_depth`` camera at the depth optical frame for a depth path 
 attach it to a robot or mount it standalone with ``spawn_sensor``.
 
 Config: see ``camera_common.CameraPlugin`` (``camera``, ``width``/``height``, ``fovy``,
-``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``, ``clip_near``/``clip_far``). Defaults
+``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``, ``render_near``). Defaults
 below match the D415's 640x480@30fps colour profile.
 """
 

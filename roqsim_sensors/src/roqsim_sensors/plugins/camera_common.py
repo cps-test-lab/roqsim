@@ -47,6 +47,10 @@ from roqsim.types import CameraInfo, Image
 # defaults agree by both citing image_transport, not by sharing a symbol.
 DEFAULT_JPEG_QUALITY = 95
 
+#: The near plane in metres every camera pass renders with unless a world sets ``render_near``: a
+#: physical distance nearer than any device's working range, independent of the world's size.
+DEFAULT_RENDER_NEAR = 0.01
+
 #: The colour encodings a camera publishes, as ROS spells them.
 COLOR_ENCODINGS = ("rgb8", "bgr8", "mono8")
 
@@ -224,10 +228,6 @@ def _build_distortion_map(intr: Intrinsics) -> tuple[np.ndarray, np.ndarray]:
     return m[..., 0].copy(), m[..., 1].copy()
 
 
-def _optional_float(value) -> float | None:
-    return None if value is None else float(value)
-
-
 def camera_info_of(intr: Intrinsics) -> CameraInfo:
     """The ``camera_info`` payload of *intr*."""
     return CameraInfo(intr.width, intr.height, intr.fx, intr.fy, intr.cx, intr.cy, list(intr.d))
@@ -257,9 +257,7 @@ class CameraPlugin(Plugin):
                                  #   coefficients, so camera_info keeps describing its own pixels
           noise: null            # {gaussian_sigma: grey levels, blur_sigma: px}: the colour image's
                                  #   blur, then additive noise from ctx.rng_for (after `distortion`)
-          clip_near: null        # m; the near clip plane this camera renders with. null is the
-          clip_far: null         #   model's own (visual/map znear/zfar times its extent), which in a
-                                 #   large world stands tens of cm out; see "Clip planes" below
+          render_near: 0.01      # m, > 0; the near plane every pass renders with -- see below
           on_demand: false       # render only for a consumer that asks -- a transport subscriber or
                                  #   an in-process claim (Endpoint.claim); without a transport, a
                                  #   stepped run then renders nothing until a plugin claims a frame
@@ -274,10 +272,14 @@ class CameraPlugin(Plugin):
                                  # (overrides namespace+default; see Plugin.topic_override)
                                  # `image_compressed` follows `image` unless hardwired itself.
 
-    **Clip planes.** Each camera renders every pass with its own planes, set in its own renderer's
-    scene (:class:`roqsim.rendering.FrameRenderer`), so one camera's planes change no other camera,
-    the viewer or an export. A plane that is not a distance > 0, or a far plane not beyond the near
-    one, is a configuration error.
+    **Render planes.** Every pass of a camera -- colour, depth, registered depth, labels -- is drawn
+    between ``render_near`` and the model's own far plane (``visual/map zfar`` times its extent).
+    The near plane is a physical distance rather than the model's, which ``visual/map znear`` times
+    the extent puts tens of centimetres out in a large world, so what a camera sees does not depend
+    on the world's size. The planes are set in the camera's own renderer's scene
+    (:class:`roqsim.rendering.FrameRenderer`), so the model, the viewer, an export and every other
+    camera keep theirs. What a depth camera *senses* is a separate range, applied after the render
+    (``depth_camera``).
     """
 
     parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
@@ -333,8 +335,7 @@ class CameraPlugin(Plugin):
         self._intr_cfg = {k: self.config.get(k) for k in ("fx", "fy", "cx", "cy")}
         self._distortion_cfg = self.config.get("distortion")
         self.on_demand = bool(self.config.get("on_demand", False))
-        self.clip_near = _optional_float(self.config.get("clip_near"))
-        self.clip_far = _optional_float(self.config.get("clip_far"))
+        self.render_near = float(self.config.get("render_near", DEFAULT_RENDER_NEAR))
         #: The (near, far) planes in metres every pass renders with, resolved in configure().
         self._planes: tuple[float, float] | None = None
         noise = self.config.get("noise") or {}
@@ -368,7 +369,9 @@ class CameraPlugin(Plugin):
             )
         if not 1 <= int(config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)) <= 100:
             errors.append("'jpeg_quality' must be between 1 and 100")
-        errors += self._validate_clip_planes(config)
+        render_near = float(config.get("render_near", DEFAULT_RENDER_NEAR))
+        if not (math.isfinite(render_near) and render_near > 0):
+            errors.append("'render_near' must be a distance > 0 m")
         for key in ("fx", "fy"):
             if config.get(key) is not None and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
@@ -400,23 +403,13 @@ class CameraPlugin(Plugin):
                 )
         return errors
 
-    def _validate_clip_planes(self, config: dict) -> list[str]:
-        """The render planes, each a distance > 0 when given, the far one beyond the near one."""
-        errors = []
-        near, far = config.get("clip_near"), config.get("clip_far")
-        for key, value in (("clip_near", near), ("clip_far", far)):
-            if value is not None and not (math.isfinite(float(value)) and float(value) > 0):
-                errors.append(f"'{key}' must be a distance > 0 m, or null for the model's own")
-        if near is not None and far is not None and float(far) <= float(near):
-            errors.append(f"'clip_far' ({far} m) must be > 'clip_near' ({near} m)")
-        return errors
-
     def _render_planes(self, model) -> tuple[float, float]:
-        """The (near, far) planes in metres this camera renders with: its own, else the model's."""
-        extent = float(model.stat.extent)
-        near = self.clip_near if self.clip_near is not None else float(model.vis.map.znear) * extent
-        far = self.clip_far if self.clip_far is not None else float(model.vis.map.zfar) * extent
-        return near, far
+        """The (near, far) planes in metres every pass renders with.
+
+        Near is ``render_near``, a physical distance; far is the model's own far plane. Neither
+        follows the model's near plane, which grows with the world.
+        """
+        return self.render_near, float(model.vis.map.zfar) * float(model.stat.extent)
 
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
@@ -441,11 +434,9 @@ class CameraPlugin(Plugin):
             self._dist_map = _build_distortion_map(self._intr)
         near, far = self._render_planes(m)
         if far <= near:
-            # One plane set, the other the model's: only the model can tell whether they cross.
             raise RuntimeError(
-                f"{type(self).__name__}: clip planes {near:g}-{far:g} m are empty; the model's own "
-                "planes stand where visual/map znear/zfar times its extent puts them -- set both "
-                "'clip_near' and 'clip_far'"
+                f"{type(self).__name__}: 'render_near' ({near:g} m) is not nearer than the model's "
+                f"far plane ({far:g} m, visual/map zfar times its extent)"
             )
         self._planes = (near, far)
 

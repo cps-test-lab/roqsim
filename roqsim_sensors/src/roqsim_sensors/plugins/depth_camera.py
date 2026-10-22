@@ -12,21 +12,19 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
                               #   the device's own, else the colour `camera`
       depth_width: null       # override the depth camera's MJCF resolution (a separate depth
       depth_height: null      #   camera only; through the colour camera, `width`/`height` apply)
-      clip_near: 0.3          # m, > 0; outside [clip_near, clip_far] a pixel reads "no return"
+      clip_near: 0.3          # m, >= render_near; outside [clip_near, clip_far] reads "no return"
       clip_far: 100.0         # m; both default to the device's DEFAULT_CLIP_NEAR/_FAR
       depth_encoding: 32FC1   # or 16UC1 -- see below
       depth_codec: png        # png | rvl: the 16UC1 compressedDepth companion's codec
       registered_depth: false # also publish depth registered into the colour image -- see below
 
-**Clip planes.** ``clip_near``/``clip_far`` are the device's working range, not its render
-planes. Every pass of the device renders with the model's own planes widened to take in that range:
-the near plane brought in to ``clip_near`` where the model's stands beyond it (a large world puts it
-tens of centimetres out), the far one out to ``clip_far``. Only this device's renderers carry them
-(:class:`roqsim.rendering.FrameRenderer`); the model, the viewer and every other camera keep their
-own. They are widened, never narrowed, because a plane at the working range would cut away what
-lies in front of it: a surface nearer than ``clip_near`` occludes the scene behind it and reads "no
-return", as on the device, rather than vanishing and letting the wall behind it read as a range;
-and the colour stream sees past ``clip_far``.
+**What is drawn and what is sensed.** Every pass is drawn between ``render_near`` and the model's
+far plane, like any camera's (``camera_common``). ``clip_near``/``clip_far`` are the device's
+working range, applied to the depth image after the render: a pixel outside it reads "no return".
+So a surface nearer than ``clip_near`` is drawn, hides what lies behind it and reads "no return",
+as on the device, rather than vanishing and letting the wall behind it read as a range; and the
+colour stream sees past ``clip_far``. ``render_near`` must not exceed ``clip_near``, or the render
+would cut away part of the range the device senses.
 
 **Which camera depth comes from.** Depth is rendered from the camera at the frame it is stamped in.
 A device that images depth through its own optics -- a RealSense's stereo pair, whose depth frame is
@@ -86,6 +84,7 @@ from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
 
 from .camera_common import (
+    DEFAULT_RENDER_NEAR,
     CameraPlugin,
     Intrinsics,
     camera_info_of,
@@ -172,9 +171,13 @@ class DepthCameraPlugin(CameraPlugin):
             )
         clip_near = float(config.get("clip_near", self.DEFAULT_CLIP_NEAR))
         clip_far = float(config.get("clip_far", self.DEFAULT_CLIP_FAR))
-        if not clip_near > 0:
-            # The near plane is brought in to it, and a render plane at 0 m is no projection.
-            errors.append("'clip_near' must be > 0 m")
+        render_near = float(config.get("render_near", DEFAULT_RENDER_NEAR))
+        if clip_near < render_near:
+            # The render would cut away the near end of the range the device senses.
+            errors.append(
+                f"'clip_near' ({clip_near} m) must be >= 'render_near' ({render_near} m), the "
+                "near plane the camera renders with"
+            )
         if clip_far <= clip_near:
             errors.append(
                 f"'clip_far' ({clip_far} m) must be > 'clip_near' ({clip_near} m); each defaults "
@@ -218,17 +221,6 @@ class DepthCameraPlugin(CameraPlugin):
                 "needs depth_encoding: 16UC1 (its codec is 16-bit) and 'compressed' left on"
             )
         return errors
-
-    def _validate_clip_planes(self, config: dict) -> list[str]:
-        # The same keys are this device's working range, validated with the rest of its config.
-        return []
-
-    def _render_planes(self, model) -> tuple[float, float]:
-        """The model's planes widened to take in [clip_near, clip_far] (see the module docstring)."""
-        extent = float(model.stat.extent)
-        near = min(float(model.vis.map.znear) * extent, self.clip_near)
-        far = max(float(model.vis.map.zfar) * extent, self.clip_far)
-        return near, far
 
     def scene_cameras(self, ctx: SimContext) -> list[SensorCamera]:
         """The colour image where it is published, else the depth image of a device that has one."""
