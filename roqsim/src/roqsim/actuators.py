@@ -75,6 +75,9 @@ Keys under ``each:`` are **actuator** names as the model declares them, unprefix
 child spec before it is attached, so no prefix has been applied yet. A joint name is refused naming
 the actuator that drives it, rather than resolved silently -- two namespaces in one mapping would
 mean a reader of someone else's world could not tell which a key was without opening the MJCF.
+
+**A gripper's finger servo on a tendon** is named under ``each:`` too, and takes ``p`` and ``d``
+only (``_tendon_servo``): the shared keys describe joint laws and never fall on it.
 """
 
 from __future__ import annotations
@@ -337,22 +340,23 @@ def resolve(spec, override, *, model_name: str, where: str = "actuators") -> lis
             continue
         merged = {**shared, **(entry or {})}
         source = "each" if entry else "shared"
-        # A shared law falling on a transmission that is not a joint. Because this runs before an
-        # end effector is grafted on, it can only be the model's own (a Franka's tendon-driven
-        # fingers), never a gripper someone bolted to an arm -- so the fix really is to name it.
+        # A transmission that is not a joint: a gripper's finger servo on a tendon (the Franka
+        # Hand's, a Robotiq's). The shared keys describe joint laws and never fall on it; naming it
+        # under `each:` restates its servo's p and d, and nothing else (`_tendon_servo`).
         if not _is_joint(act):
+            label = _TRN_LABEL.get(act.trntype, "non-joint transmission")
             if entry is None:
                 errors.append(
                     f"'{where}' states a joint law, but {model_name}'s '{act.name}' drives a "
-                    f"{_TRN_LABEL.get(act.trntype, 'non-joint transmission')}, which has no joint "
-                    f"stiffness or position. Name it under '{where}.each' to say what it should do."
+                    f"{label}, which has no joint stiffness or position. Name it under "
+                    f"'{where}.each' to say what it should do: a finger servo on a tendon takes "
+                    f"'{where}.each.{act.name}: {{p: ..., d: ...}}'."
                 )
+                resolved.append(row)
             else:
-                errors.append(
-                    f"'{where}.each.{act.name}' drives a "
-                    f"{_TRN_LABEL.get(act.trntype, 'non-joint transmission')}, not a joint."
-                )
-            resolved.append(row)
+                row, entry_errors = _tendon_servo(act, entry, row, f"{where}.each.{act.name}")
+                errors += entry_errors
+                resolved.append(row)
             continue
         control = merged.get("control", row.control)
         errors += _model_dependent_errors(shared, entry, merged, control, row, act.name, where)
@@ -444,6 +448,59 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
     )
 
 
+def _tendon_servo(act, entry: dict, row: ResolvedActuator, at: str):
+    """Restate a position servo on a tendon -- a gripper's finger servo -- with *entry*'s p and d.
+
+    The servo pulls the tendon's length towards its command with stiffness ``p`` (N/m on a tendon
+    over slide joints) and damping ``d`` (N*s/m). Those are the only two keys it takes: the joint
+    laws do not apply to a length, and its command range and force range are the gripper's
+    interface, which ``arm_controller`` maps its commands onto.
+
+    The command scale is kept. A finger servo often takes its command in another unit than the
+    tendon's length -- the Franka Hand's and the Robotiq's 0..255 -- which MuJoCo states as a gain
+    of ``p`` times that scale, so ``gainprm`` is rescaled with ``p`` and a command still closes the
+    fingers to the same width. Returns the row and the errors, never a partial write.
+    """
+    label = _TRN_LABEL.get(act.trntype, "non-joint transmission")
+    model_p = -float(act.biasprm[1])
+    if act.trntype != mujoco.mjtTrn.mjTRN_TENDON or row.control != "position" or model_p <= 0.0:
+        return row, [
+            f"'{at}' drives a {label} under control: {row.control}; only a position servo on a "
+            f"tendon (a gripper's finger servo) can be restated, with p and d."
+        ]
+    errors: list[str] = []
+    control = entry.get("control")
+    if control is not None and control != "position":
+        errors.append(
+            f"'{at}.control: {control}' -- a finger servo on a {label} is a position servo on the "
+            f"tendon's length and stays one; state its p and d, with control: position or none."
+        )
+    stated = sorted(k for k, v in entry.items() if v is not None and k not in ("control", "p", "d"))
+    if stated:
+        errors.append(
+            f"'{at}' states {', '.join(stated)}; a finger servo on a {label} takes p and d only. "
+            f"Its command and force ranges are the gripper's interface and stay the model's."
+        )
+    for key, what in (("p", "holds nothing"), ("d", "rings")):
+        value = entry.get(key)
+        if value is not None and float(value) <= 0.0:
+            errors.append(
+                f"'{at}.{key}' must be > 0, got {value}: a finger servo without it {what}."
+            )
+    if errors:
+        return row, errors
+
+    p = float(entry["p"]) if entry.get("p") is not None else model_p
+    d = float(entry["d"]) if entry.get("d") is not None else -float(act.biasprm[2])
+    gainprm = list(act.gainprm)
+    gainprm[0] = float(act.gainprm[0]) / model_p * p
+    biasprm = list(act.biasprm)
+    biasprm[1], biasprm[2] = -p, -d
+    act.gainprm = gainprm
+    act.biasprm = biasprm
+    return replace(row, source="each", p=p, d=d), []
+
+
 #: How a non-joint transmission reads in an error, so the message says what the thing IS.
 _TRN_LABEL = {
     mujoco.mjtTrn.mjTRN_TENDON: "tendon",
@@ -497,7 +554,10 @@ def _model_row(act) -> ResolvedActuator:
         ctrlrange=_range(act.ctrlrange) if _is_limited(act.ctrllimited, act.ctrlrange) else None,
     )
     if control == "position":
-        return replace(row, p=gain, d=damping)
+        # On a joint, MuJoCo's position servo states its gain twice, as gainprm and as -biasprm[1].
+        # A finger servo on a tendon scales its command (the Franka Hand's 0..255), so its gainprm
+        # carries that scale and its stiffness is the bias term alone.
+        return replace(row, p=gain if _is_joint(act) else -float(act.biasprm[1]), d=damping)
     if control == "velocity":
         return replace(row, d=gain)
     return row
