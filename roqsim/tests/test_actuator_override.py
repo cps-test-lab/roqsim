@@ -159,6 +159,40 @@ def test_restating_a_gain_writes_the_law_it_names_on_a_servo_the_row_summarises(
     assert spec.actuator("a_act").biasprm[1] == -2000.0
 
 
+#: A motor whose gain is not 1 and a servo whose bias term disagrees with its gain: laws the table
+#: row summarises rather than states.
+_UNSUMMARISED = """
+<mujoco model="odd">
+  <worldbody>
+    <body name="a"><joint name="m_joint"/><geom size="0.1"/>
+      <body name="b" pos="0 0 .3"><joint name="s_joint"/><geom size="0.1"/></body>
+    </body>
+  </worldbody>
+  <actuator>
+    <general name="m" joint="m_joint" gainprm="50" ctrlrange="-1 1"/>
+    <general name="s" joint="s_joint" gaintype="fixed" biastype="affine" gainprm="2000"
+             biasprm="0 -1000 -400" ctrlrange="-3 3"/>
+  </actuator>
+</mujoco>
+"""
+
+
+@pytest.mark.parametrize(
+    "override, source",
+    [
+        ({"each": {"m": {}, "s": {}}}, "model"),
+        ({"each": {"m": {"ctrlrange": [-2.0, 2.0]}, "s": {"ctrlrange": [-1.0, 1.0]}}}, "each"),
+        ({"effort_limit": 30.0}, "shared"),
+    ],
+)
+def test_a_block_naming_no_law_leaves_a_law_the_row_summarises_as_it_is(override, source):
+    spec = _spec(_UNSUMMARISED)
+    rows = _by_name(resolve(spec, override, model_name="odd"))
+    assert {r.source for r in rows.values()} == {source}
+    assert list(spec.actuator("m").gainprm[:1]) == [50.0]
+    assert list(spec.actuator("s").biasprm[:3]) == [0.0, -1000.0, -400.0]
+
+
 def test_an_entry_that_changes_one_value_is_recorded_as_the_entrys():
     rows = _by_name(resolve(_spec(), {"control": "position", "each": {"a_act": {"d": 1.0}}},
                             model_name="probe"))
