@@ -368,7 +368,17 @@ def resolve(spec, override, *, model_name: str, where: str = "actuators") -> lis
             continue
         control = merged.get("control", row.control)
         errors += _model_dependent_errors(shared, entry, merged, control, row, act.name, where)
-        resolved.append(_apply(act, merged, control, row, source))
+        plan = _plan(act, merged, control, row, source)
+        if (
+            entry
+            and shared
+            and _same_plan(
+                plan, _plan(act, shared, shared.get("control", row.control), row, "shared")
+            )
+        ):
+            # The entry restates what the shared keys already do to this actuator.
+            plan = (replace(plan[0], source="shared"), plan[1])
+        resolved.append(_write(act, merged, *plan))
 
     if errors:
         raise PluginError("; ".join(errors))
@@ -404,8 +414,11 @@ def _model_dependent_errors(shared, entry, merged, control, row, name, where) ->
     return errors
 
 
-def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) -> ResolvedActuator:
-    """Write what *merged* changes of one actuator's law, gains and limits, and nothing else.
+def _plan(act, merged: dict, control: str, row: ResolvedActuator, source: str):
+    """What *merged* changes of one actuator's law, gains and limits, and nothing else.
+
+    Returns the actuator's row, which is *row* itself when nothing changes, and the law to write
+    as ``(gainprm, biasprm)``, or ``None`` to keep the actuator's; :func:`_write` applies them.
 
     A new law is written whole, never over the previous one's parameters: MuJoCo's ``set_to_*``
     helpers leave them in place (``set_to_motor`` after ``set_to_velocity`` keeps the old
@@ -416,8 +429,8 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
 
     - a control other than the model's: the whole law, in its canonical form;
     - the model's control (stated or not) with gains: only the terms those gains govern -- ``p``
-      the gain and the stiffness term, ``d`` the damping term -- unless the actuator is not in the
-      law's form at all, when the whole law is written;
+      the gain and the stiffness term, ``d`` the damping term (and the gain, under ``velocity``)
+      -- unless the actuator is not in the law's form at all, when the whole law is written;
     - neither (``{}``, ``control`` restating the model's, limits alone): the law as the model has it.
 
     A block that changes no parameter leaves the actuator as it is, and its row keeps
@@ -471,17 +484,32 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
         if (gainprm, biasprm) != (list(act.gainprm), list(act.biasprm)):
             law = (gainprm, biasprm)
     if law is None and replace(resolved, source=row.source) == row:
-        return row
+        return row, None
+    return resolved, law
 
+
+def _same_plan(a, b) -> bool:
+    """Whether two :func:`_plan` results change the actuator alike, whoever is credited."""
+    return replace(a[0], source="") == replace(b[0], source="") and a[1] == b[1]
+
+
+def _write(act, merged: dict, resolved: ResolvedActuator, law) -> ResolvedActuator:
+    """Apply a :func:`_plan` to the spec's actuator; a row left the model's writes nothing."""
+    if resolved.source == "model":
+        return resolved
     if law is not None:
         act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-        act.biastype = biastype
+        act.biastype = (
+            mujoco.mjtBias.mjBIAS_NONE
+            if resolved.control == "effort"
+            else mujoco.mjtBias.mjBIAS_AFFINE
+        )
         act.gainprm, act.biasprm = law
     if "effort_limit" in merged:
-        act.forcerange = _scaled_forcerange(act, effort_limit)
+        act.forcerange = _scaled_forcerange(act, resolved.effort_limit)
         act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
     if "ctrlrange" in merged:
-        act.ctrlrange = list(ctrlrange)
+        act.ctrlrange = list(resolved.ctrlrange)
         act.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
     return resolved
 

@@ -212,6 +212,14 @@ def test_a_stated_gain_writes_only_the_terms_it_governs():
     assert list(spec.actuator("s").biasprm[:3]) == [0.0, -1000.0, -50.0]
 
 
+@pytest.mark.parametrize("entry", [{}, {"control": "position"}, {"effort_limit": 50.0}])
+def test_an_entry_restating_what_the_shared_keys_do_is_recorded_as_the_shared_keys(entry):
+    rows = _by_name(
+        resolve(_spec(), {"effort_limit": 50.0, "each": {"a_act": entry}}, model_name="probe")
+    )
+    assert (rows["a_act"].source, rows["a_act"].effort_limit) == ("shared", 50.0)
+
+
 def test_an_entry_that_changes_one_value_is_recorded_as_the_entrys():
     rows = _by_name(resolve(_spec(), {"control": "position", "each": {"a_act": {"d": 1.0}}},
                             model_name="probe"))
