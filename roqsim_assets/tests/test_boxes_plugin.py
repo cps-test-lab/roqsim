@@ -12,6 +12,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
+from roqsim.plugin import PluginError
 from roqsim_assets.plugins.boxes import BoxesPlugin
 
 _TWO = [
@@ -112,3 +113,14 @@ def test_instances_is_required():
 def test_instances_must_be_a_list():
     plugin = BoxesPlugin({}, label="boxes")
     assert "must be a list" in plugin.validate_config({"instances": {"pose": {"position": {"x": 0, "y": 0}}}})[0]
+
+
+def test_an_instance_topics_key_naming_no_endpoint_it_renames_is_refused():
+    """The engine checks the topics: of the entries it lists; an instance's are checked here."""
+    instances = [dict(_TWO[0]), {**_TWO[1], "topics": {"pose": "/pillar_pose"}}]
+    with pytest.raises(PluginError, match="'pose'"):
+        _build(name="obstacles", instances=instances)
+
+
+def test_instances_without_a_topics_key_configure():
+    _build(name="obstacles", instances=[dict(entry) for entry in _TWO])
