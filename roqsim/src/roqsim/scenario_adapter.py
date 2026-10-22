@@ -497,8 +497,9 @@ class MujocoSim(_Base):
         self._logger = kwargs.get("logger")
         self._output_dir = kwargs.get("output_dir")
 
-    def reset(self, world=None, world_overrides=None, headless=None, output_dir=None,
-              **kwargs) -> None:
+    def reset(
+        self, world=None, world_overrides=None, headless=None, output_dir=None, **kwargs
+    ) -> None:
         self._build(
             world or self._default_world,
             world_overrides if world_overrides is not None else self._default_overrides,
