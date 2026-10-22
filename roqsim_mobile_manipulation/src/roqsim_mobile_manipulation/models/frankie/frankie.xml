@@ -317,7 +317,7 @@
     <general name="actuator5" class="panda" joint="joint5" forcerange="-12 12" gainprm="2000" biasprm="0 -2000 -200" />
     <general name="actuator6" class="panda" joint="joint6" ctrlrange="-0.0175 3.7525" forcerange="-12 12" gainprm="2000" biasprm="0 -2000 -200" />
     <general name="actuator7" class="panda" joint="joint7" forcerange="-12 12" gainprm="2000" biasprm="0 -2000 -200" />
-    <general name="actuator8" class="panda" tendon="split" ctrlrange="0 255" forcerange="-100 100" gainprm="0.0156863" biasprm="0 -100 -10" />
+    <general name="actuator8" class="panda" tendon="split" ctrlrange="0 255" forcerange="-100 100" gainprm="0.31372549" biasprm="0 -2000 -40" />
   </actuator>
   <sensor>
     <framepos objtype="site" objname="base_imu" name="base_pos" />
