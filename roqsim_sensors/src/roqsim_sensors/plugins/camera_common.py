@@ -14,9 +14,9 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
-The render is always RGB; the conversion is the last step of a capture, after the lens and the noise
-are applied, so every consumer of the frame -- the raw image, the compressed one, a recording --
-reads the same pixels.
+The render is always RGB; it is converted after the lens and before the noise, so the noise is in the
+published encoding's own levels (a ``mono8`` frame gets grey-level noise), and every consumer of the
+frame -- the raw image, the compressed one, a recording -- reads the same pixels.
 
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
@@ -287,9 +287,10 @@ class CameraPlugin(Plugin):
     #: the image topic, after a world's rename): image_transport's names unless a driver uses others.
     IMAGE_LEAF = "image_raw"
     COMPRESSED_TOPIC = "{image}/compressed"
-    #: The QoS the device's own driver publishes every stream with, as a
-    #: :func:`roqsim.endpoint.qos_profile` spec; ``None`` leaves the transport's default. A world's
-    #: ``qos:`` still wins.
+    #: The QoS the device's own driver publishes its streams with, as a
+    #: :func:`roqsim.endpoint.qos_profile` spec; ``None`` leaves the transport's default. It reaches
+    #: the endpoints whose hints are built through :meth:`_ros2` (this class's and
+    #: ``DepthCameraPlugin``'s). A world's ``qos:`` still wins.
     ROS2_QOS: dict | str | None = None
     DEFAULT_RATE_HZ = 30.0
     DEFAULT_COLOR_ENCODING = "rgb8"

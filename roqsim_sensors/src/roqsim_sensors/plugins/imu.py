@@ -85,6 +85,7 @@ Config::
                                 #   layout (the D435i's IMU is `camera/imu`); `topics: {imu: /abs}`
                                 #   still hardwires an absolute one and wins over this
       rate_hz: 100.0            # endpoint publish rate
+      emit_static_tf: true      # publish body -> frame_id; false where a device's frame chain does
       orientation: true         # publish attitude; false -> orientation_covariance[0] = -1
       accel_stddev: 0.0         # m/s^2, additive Gaussian white noise, per axis
       gyro_stddev: 0.0          # rad/s, likewise
@@ -96,7 +97,9 @@ Config::
 
 Endpoint ``imu`` (out) reads a :class:`roqsim.types.Imu`, a ``sensor_msgs/Imu`` on ``imu/data`` over
 ROS -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the
-static ``body -> frame_id`` transform. An :class:`ImuReader` is published on the blackboard under
+static ``body -> frame_id`` transform (unless ``emit_static_tf: false``: a device model whose
+``frames:`` chain already publishes ``frame_id``, as the D435i's does, sets it, since a second parent
+for one frame leaves whichever a consumer sees last). An :class:`ImuReader` is published on the blackboard under
 ``imu:<address>`` for in-process consumers.
 
 **Nothing is computed while nothing is listening.** The reading is assembled in the endpoint's
@@ -187,6 +190,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         "pose": "likewise -- the mount pose is geometry, not a per-frame value.",
         "frame_id": "a consumer that saw the frame change mid-run reads it as two sensors.",
         "rate_hz": "the endpoint's rate gate is fixed when the bridge binds it.",
+        "emit_static_tf": "the static TF is published once, at configure.",
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -201,7 +205,8 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         # simply names its channels differently from a standalone IMU (`camera/imu`) should not have
         # to give up the namespace to say so, which is what an absolute override would cost it.
         self.topic = str(self.config.get("topic") or "imu/data")
-        self._static_tf: dict = {}  # the mount transform, set at configure
+        self.emit_static_tf = bool(self.config.get("emit_static_tf", True))
+        self._static_tf: dict | None = None  # the mount transform, set at configure when emitted
         self.orientation = bool(self.config.get("orientation", True))
         self.accel_stddev = float(self.config.get("accel_stddev", 0.0))
         self.gyro_stddev = float(self.config.get("gyro_stddev", 0.0))
@@ -397,7 +402,8 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
 
         # The fault switch, if this sensor declares one.
         self.register_fault(ctx)
-        self._static_tf = self._mount_tf(m, prefix)
+        if self.emit_static_tf:
+            self._static_tf = self._mount_tf(m, prefix)
 
     # Read only while something subscribes -- see the module docstring. `imu/data` by default, where
     # robot_localization and a standalone driver look; `topic:` is how a device states its own layout.
@@ -407,7 +413,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         ros2=lambda self: {
             "topic": self.topic,
             "frame_id": self.frame_id,
-            "static_tf": self._static_tf,
+            **({"static_tf": self._static_tf} if self._static_tf is not None else {}),
         },
     )
     def imu(self) -> Imu:
