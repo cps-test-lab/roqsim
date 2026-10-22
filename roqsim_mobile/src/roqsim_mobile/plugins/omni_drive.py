@@ -137,6 +137,7 @@ class OmniDrivePlugin(Plugin):
             "a commanded angular speed above it is clipped to it",
         ),
     )
+
     #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
     #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
     requires_owner = True

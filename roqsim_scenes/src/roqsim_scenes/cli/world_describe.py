@@ -480,12 +480,12 @@ def main(argv=None) -> int:
         "errors": None,
     }
     if args.entities or args.overridable or args.body_tree:
+        # The transport's per-endpoint rates, read before it goes: they are what a run publishes
+        # each output at.
+        rates = transport_rate_overrides(config)
         # The scene is what these questions are about, and a describe publishes nothing, so the
         # transport goes before the build -- see the module docstring for why the strict variant.
         # `components` is already in `result`, so the bridge stays in the reported list.
-        # The transport's per-endpoint rates, before the transport goes: they are what a run
-        # publishes each output at.
-        rates = transport_rate_overrides(config)
         dropped = drop_transport(config)
         if dropped:
             result["dropped_transport"] = dropped
@@ -508,13 +508,11 @@ def main(argv=None) -> int:
                 if args.entities:
                     # Last, so everything above describes the model as compiled: a reset moves the
                     # state to where a trial starts, which is what the warnings are about.
-                    from roqsim.config import undocumented_key_warnings
+                    from roqsim.config import realised_values, undocumented_key_warnings
                     from roqsim.endpoint import describe_endpoints, rate_snap_warnings
                     from roqsim.interpenetration import as_warnings
 
                     result["endpoints"] = describe_endpoints(ctx, "ros2", rates)
-                    from roqsim.config import realised_values
-
                     result["realised"] = realised_values(engine.plugins)
                     stage = "reset"
                     engine.reset()
