@@ -128,6 +128,35 @@ def test_the_table_describes_a_model_nobody_overrode():
     assert rows["a_act"].joint == "a_joint"
 
 
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"each": {"a_act": {}}},
+        {"each": {"a_act": {"control": "position", "p": 2000.0, "d": 400.0}}},
+        {"control": "position"},
+        {"effort_limit": 120.0, "ctrlrange": [-3.14, 3.14]},
+    ],
+)
+def test_a_block_that_changes_nothing_is_recorded_as_the_models(override):
+    """An entry restating the model's own values says nothing the model did not, and the table
+    says so; the actuator is left as the model has it."""
+    untouched = _spec().compile()
+    spec = _spec()
+    rows = _by_name(resolve(spec, override, model_name="probe"))
+    assert rows["a_act"] == _by_name(resolve(_spec(), None, model_name="probe"))["a_act"]
+    assert rows["a_act"].source == "model"
+    got = spec.compile()
+    for field in ("actuator_gainprm", "actuator_biasprm", "actuator_forcerange",
+                  "actuator_ctrlrange", "actuator_forcelimited", "actuator_ctrllimited"):
+        assert np.array_equal(getattr(untouched, field), getattr(got, field)), field
+
+
+def test_an_entry_that_changes_one_value_is_recorded_as_the_entrys():
+    rows = _by_name(resolve(_spec(), {"control": "position", "each": {"a_act": {"d": 1.0}}},
+                            model_name="probe"))
+    assert (rows["a_act"].source, rows["b_act"].source) == ("each", "model")
+
+
 def test_no_override_leaves_the_compiled_model_identical():
     """The invariant is the COMPILED model, not the MJCF text.
 
@@ -274,6 +303,17 @@ def test_a_finger_servo_keeps_the_gain_it_was_not_given():
     assert (row.p, row.d) == (2000.0, 60.0)
 
 
+@pytest.mark.parametrize(
+    "entry", [{}, {"control": "position"}, {"p": 2000.0, "d": 40.0}]
+)
+def test_a_finger_servo_entry_that_changes_nothing_is_recorded_as_the_models(entry):
+    gainprm = list(_spec(_FINGERS).actuator("fingers").gainprm)
+    act, row = _fingers(entry)
+    assert (row.p, row.d, row.source) == (2000.0, 40.0, "model")
+    # Left as the model has it: not even the command gain is recomputed.
+    assert list(act.gainprm) == gainprm and act.biasprm[1] == -2000.0
+
+
 def test_a_shared_law_beside_a_named_finger_servo_falls_on_the_joints_only():
     spec = mujoco.MjSpec.from_string(_FINGERS.replace(
         "<actuator>", '<actuator><general name="lift" joint="f1" gainprm="10" biasprm="0 -10 -1" '
@@ -385,7 +425,10 @@ def test_a_gain_of_the_wrong_type_is_refused_by_its_path():
     errors = _config_errors({"control": "position", "p": "soft"})
     assert any(e.startswith("'actuators.p' must be float") for e in errors)
     errors = _config_errors({"each": {"a_act": {"p": -1.0}}})
-    assert errors == ["'actuators.each.a_act.p' must be >= 0.0 N*m/rad, got -1.0"]
+    assert errors == [
+        "'actuators.each.a_act.p' must be >= 0.0 N*m/rad (N/m on a slide joint or a tendon), "
+        "got -1.0"
+    ]
 
 
 def test_each_entry_reads_with_every_gain_it_left_out_at_its_default():
@@ -404,6 +447,14 @@ def test_every_gain_declares_its_unit():
 
     for name in ("p", "d", "stiffness", "damping", "effort_limit"):
         assert GAIN_SCHEMA[name].unit, name
+
+
+def test_p_and_d_publish_their_unit_on_a_tendon_too():
+    """A finger servo on a tendon reads p and d as N/m and N*s/m, and the schema says so."""
+    each = next(f for f in ACTUATORS.describe("actuators")["fields"] if f["name"] == "each")
+    fields = {f["name"]: f for f in each["values"]["fields"]}
+    assert fields["p"]["unit"] == "N*m/rad (N/m on a slide joint or a tendon)"
+    assert fields["d"]["unit"] == "N*m*s/rad (N*s/m on a slide joint or a tendon)"
 
 
 # -- limits the override does not state ----------------------------------------------------------

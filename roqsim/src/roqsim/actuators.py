@@ -149,7 +149,8 @@ MUJOCO_CONTROLS = {
 #: One gain block: the shared keys, and the same set again inside every ``each:`` entry. Units are
 #: declared because a paper states "kp = 2.0" with none, and a value wrong by a factor of a thousand
 #: is indistinguishable from a right one -- which is the failure this whole module exists to prevent.
-#: The rotational unit is named; a slide joint's is the linear equivalent (N/m, N*s/m, N).
+#: Each unit names both forms: a hinge's, and the linear one of a slide joint -- and, for ``p`` and
+#: ``d``, of a finger servo on a tendon (``_tendon_servo``), which pulls on a length.
 GAIN_SCHEMA: dict[str, Field] = {
     "control": Field(
         str,
@@ -160,25 +161,31 @@ GAIN_SCHEMA: dict[str, Field] = {
     "p": Field(
         float,
         minimum=0.0,
-        unit="N*m/rad",
+        unit="N*m/rad (N/m on a slide joint or a tendon)",
         doc="position-loop proportional gain (control: position)",
     ),
     "d": Field(
         float,
         minimum=0.0,
-        unit="N*m*s/rad",
+        unit="N*m*s/rad (N*s/m on a slide joint or a tendon)",
         doc="damping/derivative gain (control: position, velocity)",
     ),
     "stiffness": Field(
-        float, minimum=0.0, unit="N*m/rad", doc="joint stiffness (control: impedance)"
+        float,
+        minimum=0.0,
+        unit="N*m/rad (N/m on a slide joint)",
+        doc="joint stiffness (control: impedance)",
     ),
     "damping": Field(
-        float, minimum=0.0, unit="N*m*s/rad", doc="joint damping (control: impedance)"
+        float,
+        minimum=0.0,
+        unit="N*m*s/rad (N*s/m on a slide joint)",
+        doc="joint damping (control: impedance)",
     ),
     "effort_limit": Field(
         float,
         minimum=0.0,
-        unit="N*m",
+        unit="N*m (N on a slide joint)",
         doc="torque magnitude cap; URDF's <limit effort=>. A one-sided forcerange keeps its side",
     ),
     "ctrlrange": Field(
@@ -224,9 +231,10 @@ class ResolvedActuator:
     name: str
     joint: str
     control: str
-    #: ``model`` -- nothing said otherwise; ``shared`` -- the block's own keys; ``each`` -- a named
-    #: entry. Reported per actuator rather than per key: an entry that names one gain still leaves
-    #: that actuator described by the block as a whole.
+    #: ``model`` -- nothing stated changes it, an entry restating the model's values included;
+    #: ``shared`` -- the block's own keys; ``each`` -- a named entry. Reported per actuator rather
+    #: than per key: an entry that names one gain still leaves that actuator described by the block
+    #: as a whole.
     source: str
     p: float | None = None
     d: float | None = None
@@ -397,14 +405,38 @@ def _model_dependent_errors(shared, entry, merged, control, row, name, where) ->
 
 
 def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) -> ResolvedActuator:
-    """Write one actuator's law and gains, completely.
+    """Write one actuator's law and gains, completely -- or nothing, if no value changes.
 
     Every parameter the law uses is written, never only the ones that changed: MuJoCo's ``set_to_*``
     helpers leave the previous law's parameters in place (``set_to_motor`` after ``set_to_velocity``
     keeps the old ``biasprm``), so a partial write leaves a stale term acting on the joint.
+
+    A block that restates the model's own values (``{}``, or ``control: position`` on a position
+    servo) leaves the actuator as the model has it, and its row keeps ``source: model``.
     """
     gains = {k: merged.get(k, getattr(row, k)) for k in _GAINS[control]}
     gains = {k: (0.0 if v is None else float(v)) for k, v in gains.items()}
+    # A limit the override does not state stays exactly as the model has it, flag included: a
+    # single-acting drive's one-sided forcerange is the model's to state, not the table's.
+    effort_limit = row.effort_limit
+    if "effort_limit" in merged:
+        effort_limit = float(merged["effort_limit"])
+    ctrlrange = row.ctrlrange
+    if "ctrlrange" in merged:
+        ctrlrange = (float(merged["ctrlrange"][0]), float(merged["ctrlrange"][1]))
+    resolved = replace(
+        row,
+        control=control,
+        source=source,
+        p=gains.get("p"),
+        d=gains.get("d"),
+        stiffness=gains.get("stiffness"),
+        damping=gains.get("damping"),
+        effort_limit=effort_limit,
+        ctrlrange=ctrlrange,
+    )
+    if replace(resolved, source=row.source) == row:
+        return row
 
     act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
     if control == "effort":
@@ -421,31 +453,13 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
         act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
         act.gainprm = _prm(k)
         act.biasprm = _prm(0.0, -k, -c)
-
-    # A limit the override does not state stays exactly as the model has it, flag included: a
-    # single-acting drive's one-sided forcerange is the model's to state, not the table's.
-    effort_limit = row.effort_limit
     if "effort_limit" in merged:
-        effort_limit = float(merged["effort_limit"])
         act.forcerange = _scaled_forcerange(act, effort_limit)
         act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
-    ctrlrange = row.ctrlrange
     if "ctrlrange" in merged:
-        ctrlrange = merged["ctrlrange"]
-        act.ctrlrange = [float(ctrlrange[0]), float(ctrlrange[1])]
+        act.ctrlrange = list(ctrlrange)
         act.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
-
-    return replace(
-        row,
-        control=control,
-        source=source,
-        p=gains.get("p"),
-        d=gains.get("d"),
-        stiffness=gains.get("stiffness"),
-        damping=gains.get("damping"),
-        effort_limit=None if effort_limit is None else float(effort_limit),
-        ctrlrange=None if ctrlrange is None else (float(ctrlrange[0]), float(ctrlrange[1])),
-    )
+    return resolved
 
 
 def _tendon_servo(act, entry: dict, row: ResolvedActuator, at: str):
@@ -492,6 +506,8 @@ def _tendon_servo(act, entry: dict, row: ResolvedActuator, at: str):
 
     p = float(entry["p"]) if entry.get("p") is not None else model_p
     d = float(entry["d"]) if entry.get("d") is not None else -float(act.biasprm[2])
+    if (p, d) == (row.p, row.d):
+        return row, []  # restates the model's servo: left as it is, and recorded as the model's
     gainprm = list(act.gainprm)
     gainprm[0] = float(act.gainprm[0]) / model_p * p
     biasprm = list(act.biasprm)
