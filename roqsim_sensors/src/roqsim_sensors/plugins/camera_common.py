@@ -224,6 +224,10 @@ def _build_distortion_map(intr: Intrinsics) -> tuple[np.ndarray, np.ndarray]:
     return m[..., 0].copy(), m[..., 1].copy()
 
 
+def _optional_float(value) -> float | None:
+    return None if value is None else float(value)
+
+
 def camera_info_of(intr: Intrinsics) -> CameraInfo:
     """The ``camera_info`` payload of *intr*."""
     return CameraInfo(intr.width, intr.height, intr.fx, intr.fy, intr.cx, intr.cy, list(intr.d))
@@ -253,6 +257,9 @@ class CameraPlugin(Plugin):
                                  #   coefficients, so camera_info keeps describing its own pixels
           noise: null            # {gaussian_sigma: grey levels, blur_sigma: px}: the colour image's
                                  #   blur, then additive noise from ctx.rng_for (after `distortion`)
+          clip_near: null        # m; the near clip plane this camera renders with. null is the
+          clip_far: null         #   model's own (visual/map znear/zfar times its extent), which in a
+                                 #   large world stands tens of cm out; see "Clip planes" below
           on_demand: false       # render only for a consumer that asks -- a transport subscriber or
                                  #   an in-process claim (Endpoint.claim); without a transport, a
                                  #   stepped run then renders nothing until a plugin claims a frame
@@ -266,6 +273,11 @@ class CameraPlugin(Plugin):
                                  #   {image: /camera/color/image_raw, camera_info: /camera/color/camera_info}
                                  # (overrides namespace+default; see Plugin.topic_override)
                                  # `image_compressed` follows `image` unless hardwired itself.
+
+    **Clip planes.** Each camera renders every pass with its own planes, set in its own renderer's
+    scene (:class:`roqsim.rendering.FrameRenderer`), so one camera's planes change no other camera,
+    the viewer or an export. A plane that is not a distance > 0, or a far plane not beyond the near
+    one, is a configuration error.
     """
 
     parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
@@ -321,6 +333,10 @@ class CameraPlugin(Plugin):
         self._intr_cfg = {k: self.config.get(k) for k in ("fx", "fy", "cx", "cy")}
         self._distortion_cfg = self.config.get("distortion")
         self.on_demand = bool(self.config.get("on_demand", False))
+        self.clip_near = _optional_float(self.config.get("clip_near"))
+        self.clip_far = _optional_float(self.config.get("clip_far"))
+        #: The (near, far) planes in metres every pass renders with, resolved in configure().
+        self._planes: tuple[float, float] | None = None
         noise = self.config.get("noise") or {}
         self._noise_sigma = float(noise.get("gaussian_sigma", 0.0))
         self._blur_sigma = float(noise.get("blur_sigma", 0.0))
@@ -352,6 +368,7 @@ class CameraPlugin(Plugin):
             )
         if not 1 <= int(config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)) <= 100:
             errors.append("'jpeg_quality' must be between 1 and 100")
+        errors += self._validate_clip_planes(config)
         for key in ("fx", "fy"):
             if config.get(key) is not None and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
@@ -383,6 +400,24 @@ class CameraPlugin(Plugin):
                 )
         return errors
 
+    def _validate_clip_planes(self, config: dict) -> list[str]:
+        """The render planes, each a distance > 0 when given, the far one beyond the near one."""
+        errors = []
+        near, far = config.get("clip_near"), config.get("clip_far")
+        for key, value in (("clip_near", near), ("clip_far", far)):
+            if value is not None and not (math.isfinite(float(value)) and float(value) > 0):
+                errors.append(f"'{key}' must be a distance > 0 m, or null for the model's own")
+        if near is not None and far is not None and float(far) <= float(near):
+            errors.append(f"'clip_far' ({far} m) must be > 'clip_near' ({near} m)")
+        return errors
+
+    def _render_planes(self, model) -> tuple[float, float]:
+        """The (near, far) planes in metres this camera renders with: its own, else the model's."""
+        extent = float(model.stat.extent)
+        near = self.clip_near if self.clip_near is not None else float(model.vis.map.znear) * extent
+        far = self.clip_far if self.clip_far is not None else float(model.vis.map.zfar) * extent
+        return near, far
+
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
@@ -404,6 +439,15 @@ class CameraPlugin(Plugin):
         )
         if self._distortion_cfg is not None:
             self._dist_map = _build_distortion_map(self._intr)
+        near, far = self._render_planes(m)
+        if far <= near:
+            # One plane set, the other the model's: only the model can tell whether they cross.
+            raise RuntimeError(
+                f"{type(self).__name__}: clip planes {near:g}-{far:g} m are empty; the model's own "
+                "planes stand where visual/map znear/zfar times its extent puts them -- set both "
+                "'clip_near' and 'clip_far'"
+            )
+        self._planes = (near, far)
 
         self._configure_extra(ctx, prefix)
 
@@ -414,7 +458,10 @@ class CameraPlugin(Plugin):
         return [self._scene_camera("rgb", self._cam_id, self._intr)]
 
     def _scene_camera(self, kind: str, cam_id: int, intr: Intrinsics) -> SensorCamera:
-        return SensorCamera(self.address, cam_id, kind, intr.width, intr.height, intr.fx, intr.fy)
+        near, far = self._planes
+        return SensorCamera(
+            self.address, cam_id, kind, intr.width, intr.height, intr.fx, intr.fy, near, far
+        )
 
     #: Endpoints this camera declares that need no render: a lone subscriber to one of them (an
     #: rviz panel on camera_info, say) must not switch the renderer on.
@@ -527,13 +574,17 @@ class CameraPlugin(Plugin):
         self._last_capture = ctx.sim_time
         self._stamp = float(ctx.sim_time)
         if self._frames is None:
+            near, far = self._planes
             self._frames = FrameRenderer(
-                ctx.model, self._intr.width, self._intr.height, camera=self._cam_id
+                ctx.model,
+                self._intr.width,
+                self._intr.height,
+                camera=self._cam_id,
+                near=near,
+                far=far,
             )
         # One GL critical section for every pass off this renderer: see `hold_gc`.
         with hold_gc():
-            r = self._frames.raw
-            r.disable_depth_rendering()
             rgb = self._frames.render(ctx.data).copy()
             if self._dist_map is not None:
                 # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
@@ -555,7 +606,7 @@ class CameraPlugin(Plugin):
             if self._blur_sigma > 0 or self._noise_sigma > 0:
                 frame = self._degrade(ctx, frame)
             self._color_frame = frame
-            self._capture_extra(ctx, r)
+            self._capture_extra(ctx, self._frames)
 
     def _degrade(self, ctx: SimContext, frame: np.ndarray) -> np.ndarray:
         """Blur, then additive Gaussian noise: the colour stream's own errors, after the lens.
@@ -575,8 +626,11 @@ class CameraPlugin(Plugin):
             ).astype(np.uint8)
         return out
 
-    def _capture_extra(self, ctx: SimContext, renderer: mujoco.Renderer) -> None:
-        """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer."""
+    def _capture_extra(self, ctx: SimContext, frames: FrameRenderer) -> None:
+        """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer.
+
+        *frames* carries this camera's clip planes; a pass drawn through ``frames.raw`` would not.
+        """
 
     def on_reset(self, ctx: SimContext) -> None:
         """Clear the capture gate and the payloads, because a reset restarts ``sim_time`` at 0.

@@ -107,6 +107,15 @@ def test_the_projection_is_the_published_images():
     assert cam.zfar == pytest.approx(float(model.vis.map.zfar) * extent)
 
 
+def test_a_sensor_that_states_its_planes_is_exported_with_them():
+    """A sensor renders with its own clip planes, so its exported projection carries those."""
+    model, data = _model()
+    sensor = _sensor(model)
+    sensor.znear, sensor.zfar = 0.04, 7.5
+    _content, (cam,) = _cameras(model, data, [sensor])
+    assert (cam.znear, cam.zfar) == (0.04, 7.5)
+
+
 def test_non_square_pixels_widen_the_aspect_ratio():
     """aspectRatio is the ratio of the half-angle tangents, so fx < fy (wider pixels) widens it."""
     model, data = _model()

@@ -135,10 +135,10 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         """The depth frame reprojected to points in the depth optical frame."""
         return self._cloud
 
-    def _capture_extra(self, ctx: SimContext, renderer) -> None:
+    def _capture_extra(self, ctx: SimContext, frames) -> None:
         if not self.depth:
             return
-        super()._capture_extra(ctx, renderer)
+        super()._capture_extra(ctx, frames)
         if self.points:
             self._cloud = PointCloud(points=self._reproject(self._depth))
 

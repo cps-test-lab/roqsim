@@ -12,12 +12,21 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
                               #   the device's own, else the colour `camera`
       depth_width: null       # override the depth camera's MJCF resolution (a separate depth
       depth_height: null      #   camera only; through the colour camera, `width`/`height` apply)
-      clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return". The
-                              #   model's near clip plane is brought in to it if it lies beyond
+      clip_near: 0.3          # m, > 0; outside [clip_near, clip_far] a pixel reads "no return"
       clip_far: 100.0         # m; both default to the device's DEFAULT_CLIP_NEAR/_FAR
       depth_encoding: 32FC1   # or 16UC1 -- see below
       depth_codec: png        # png | rvl: the 16UC1 compressedDepth companion's codec
       registered_depth: false # also publish depth registered into the colour image -- see below
+
+**Clip planes.** ``clip_near``/``clip_far`` are the device's working range, not its render
+planes. Every pass of the device renders with the model's own planes widened to take in that range:
+the near plane brought in to ``clip_near`` where the model's stands beyond it (a large world puts it
+tens of centimetres out), the far one out to ``clip_far``. Only this device's renderers carry them
+(:class:`roqsim.rendering.FrameRenderer`); the model, the viewer and every other camera keep their
+own. They are widened, never narrowed, because a plane at the working range would cut away what
+lies in front of it: a surface nearer than ``clip_near`` occludes the scene behind it and reads "no
+return", as on the device, rather than vanishing and letting the wall behind it read as a range;
+and the colour stream sees past ``clip_far``.
 
 **Which camera depth comes from.** Depth is rendered from the camera at the frame it is stamped in.
 A device that images depth through its own optics -- a RealSense's stereo pair, whose depth frame is
@@ -67,8 +76,6 @@ depth topics that disagree.
 
 from __future__ import annotations
 
-import logging
-
 import mujoco
 import numpy as np
 
@@ -85,8 +92,6 @@ from .camera_common import (
     intrinsics_from_model,
     join_topic,
 )
-
-_logger = logging.getLogger(__name__)
 
 #: uint16 millimetres saturate here, so this is the largest range `16UC1` can carry.
 MAX_16UC1_RANGE_M = 65.535
@@ -167,8 +172,9 @@ class DepthCameraPlugin(CameraPlugin):
             )
         clip_near = float(config.get("clip_near", self.DEFAULT_CLIP_NEAR))
         clip_far = float(config.get("clip_far", self.DEFAULT_CLIP_FAR))
-        if clip_near < 0:
-            errors.append("'clip_near' must be >= 0")
+        if not clip_near > 0:
+            # The near plane is brought in to it, and a render plane at 0 m is no projection.
+            errors.append("'clip_near' must be > 0 m")
         if clip_far <= clip_near:
             errors.append(
                 f"'clip_far' ({clip_far} m) must be > 'clip_near' ({clip_near} m); each defaults "
@@ -213,6 +219,17 @@ class DepthCameraPlugin(CameraPlugin):
             )
         return errors
 
+    def _validate_clip_planes(self, config: dict) -> list[str]:
+        # The same keys are this device's working range, validated with the rest of its config.
+        return []
+
+    def _render_planes(self, model) -> tuple[float, float]:
+        """The model's planes widened to take in [clip_near, clip_far] (see the module docstring)."""
+        extent = float(model.stat.extent)
+        near = min(float(model.vis.map.znear) * extent, self.clip_near)
+        far = max(float(model.vis.map.zfar) * extent, self.clip_far)
+        return near, far
+
     def scene_cameras(self, ctx: SimContext) -> list[SensorCamera]:
         """The colour image where it is published, else the depth image of a device that has one."""
         if self.color or not self._depth_topic:
@@ -234,7 +251,6 @@ class DepthCameraPlugin(CameraPlugin):
         why it is not built here from a prefix); a world's ``topics: {depth: ...}`` renames it.
         """
         self._resolve_depth_camera(ctx)
-        self._near_plane_within_range(ctx)
         self._depth_topic = topic
         self._depth_frame_id = frame_id
         if self.registered_depth:
@@ -335,33 +351,6 @@ class DepthCameraPlugin(CameraPlugin):
         self._registered_ep = next((ep for ep in endpoints if ep.name == "registered_depth"), None)
         return endpoints
 
-    def _near_plane_within_range(self, ctx: SimContext) -> None:
-        """Bring the model's near clip plane in to ``clip_near``, if it lies beyond it.
-
-        MuJoCo clips every camera at one near plane, ``visual/map znear`` times the model's extent,
-        and the extent grows with the world: in a 20 m room the plane stands 0.2 m out, so a device
-        whose working range starts nearer reads "no return" -- and its colour image shows nothing --
-        across that gap, with nothing saying why. The plane is a model field the renderer reads per
-        frame, so it is lowered here, never raised: other cameras keep seeing what they saw, now
-        from nearer.
-        """
-        m = ctx.model
-        extent = float(m.stat.extent)
-        if self.clip_near <= 0 or extent <= 0:
-            return
-        near = float(m.vis.map.znear) * extent
-        # The plane is single precision (MuJoCo's visual block is float), so a plane another camera
-        # already brought to this range reads back a few ULP off it; a relative margin leaves it be.
-        if near > self.clip_near * (1.0 + 1e-6):
-            m.vis.map.znear = self.clip_near / extent
-            _logger.info(
-                "%s: the model's near clip plane stood %.3f m out, beyond this camera's clip_near "
-                "%.3f m; lowered to it",
-                self.address,
-                near,
-                self.clip_near,
-            )
-
     def _resolve_depth_camera(self, ctx: SimContext) -> None:
         """The depth camera's id and intrinsics: the colour camera's own when depth renders through it."""
         if self.depth_camera == self.camera:
@@ -412,26 +401,26 @@ class DepthCameraPlugin(CameraPlugin):
         # rewrite a buffer a consumer still held (the colour path copies for the same reason).
         return mm.astype(np.uint16)
 
-    def _capture_extra(self, ctx: SimContext, renderer) -> None:
-        colour = renderer
+    def _capture_extra(self, ctx: SimContext, frames: FrameRenderer) -> None:
+        colour = frames
         if self._depth_cam_id != self._cam_id:
             if self._depth_frames is None:
                 intr = self._depth_intr
+                near, far = self._planes
                 self._depth_frames = FrameRenderer(
-                    ctx.model, intr.width, intr.height, camera=self._depth_cam_id
+                    ctx.model,
+                    intr.width,
+                    intr.height,
+                    camera=self._depth_cam_id,
+                    near=near,
+                    far=far,
                 )
-            renderer = self._depth_frames.raw
-        renderer.enable_depth_rendering()
-        renderer.update_scene(ctx.data, camera=self._depth_cam_id)
-        depth = renderer.render().astype(np.float32)
-        renderer.disable_depth_rendering()
+            frames = self._depth_frames
+        depth = frames.render_depth(ctx.data)
         self._depth, self._invalid = self._clipped(depth)
         self._depth_wire = None  # a new frame invalidates the encoded copy of the last one
         if self._registered_ep is not None and self._asked_for(self._registered_ep):
-            colour.enable_depth_rendering()
-            colour.update_scene(ctx.data, camera=self._cam_id)
-            registered = colour.render().astype(np.float32)
-            colour.disable_depth_rendering()
+            registered = colour.render_depth(ctx.data)
             if self._dist_map is not None:
                 # It shares the colour stream's camera_info, distortion included, so it lies on the
                 # warped colour pixels. Nearest, not linear: blending two surfaces' ranges at an

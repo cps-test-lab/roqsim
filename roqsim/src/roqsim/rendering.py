@@ -8,6 +8,13 @@ scene-review tool all share it instead of re-deriving the pattern.
 Rendering is GL-context- and thread-affine (see ``docs/future_work.rst``): create and drive a
 ``FrameRenderer`` on one thread only, and honour the single-writer rule — the ``data`` you render
 from must not be mutated by another thread meanwhile.
+
+**Clip planes.** MuJoCo derives every camera's near and far plane from the model,
+``visual/map znear``/``zfar`` times ``stat.extent``, so in a large world the near plane stands tens
+of centimetres out. A :class:`FrameRenderer` given ``near``/``far`` renders with its own planes
+instead: it sets them on the GL cameras of its own ``MjvScene`` after each ``update_scene``, and
+linearises its depth reads with them. The planes live in that scene, never in the shared model,
+which a viewer and every other renderer read meanwhile.
 """
 
 from __future__ import annotations
@@ -603,6 +610,49 @@ def hold_gc():
             gc.enable()
 
 
+def set_clip_planes(scene: mujoco.MjvScene, near: float | None, far: float | None) -> None:
+    """Move the clip planes of *scene*'s GL cameras to *near*/*far* metres, keeping the view.
+
+    ``mjv_updateScene`` fills each ``MjvGLCamera`` from the model's planes; this overrides them in
+    the scene alone. A perspective frustum's sides are given at the near plane, so they scale with
+    it, which keeps the field of view; an orthographic one's are absolute. ``None`` keeps a plane.
+    """
+    for cam in scene.camera:
+        if near is not None:
+            old = float(cam.frustum_near)
+            if not cam.orthographic:
+                scale = near / old
+                cam.frustum_bottom *= scale
+                cam.frustum_top *= scale
+                cam.frustum_center *= scale
+                cam.frustum_width *= scale
+            cam.frustum_near = near
+        if far is not None:
+            cam.frustum_far = far
+
+
+def linear_depth(
+    buffer: np.ndarray, near: float, far: float, orthographic: bool = False
+) -> np.ndarray:
+    """Metres along the view axis from a depth buffer *buffer* rendered with planes *near*/*far*.
+
+    The formula ``mujoco.Renderer.render`` applies (reversed Z, the projection's terms in float32
+    as ``glFrustum`` computes them, the inversion in float64), but with the planes of this render
+    rather than the model's.
+    """
+    zfar, znear = np.float32(far), np.float32(near)
+    z = buffer.astype(np.float64)
+    if orthographic:
+        out = zfar - z * (zfar - znear)
+    else:
+        c_coef = -(zfar + znear) / (zfar - znear)
+        d_coef = -(np.float32(2) * zfar * znear) / (zfar - znear)
+        c_coef = np.float32(-0.5) * c_coef - np.float32(0.5)
+        d_coef = np.float32(-0.5) * d_coef
+        out = d_coef / (z + c_coef)
+    return out.astype(np.float32)
+
+
 class FrameRenderer:
     """Owns a ``mujoco.Renderer`` and the camera it renders through.
 
@@ -612,8 +662,12 @@ class FrameRenderer:
 
     For interactive navigation of a free camera, :meth:`move_camera` forwards mouse deltas to
     MuJoCo's own :func:`mujoco.mjv_moveCamera` — the exact routine the native viewer uses — so the
-    orbit/pan/zoom feel matches. The underlying renderer is exposed as :attr:`raw` for callers that
-    need extra passes (e.g. depth).
+    orbit/pan/zoom feel matches. :meth:`render_depth` and :meth:`render_segmentation` are the other
+    passes; the underlying renderer is exposed as :attr:`raw`, but a pass drawn through it directly
+    renders with the model's planes, not :attr:`near`/:attr:`far`.
+
+    ``near``/``far`` are this renderer's clip planes in metres (see the module docstring); ``None``
+    keeps the model's. Both are settable between renders.
     """
 
     def __init__(
@@ -623,6 +677,9 @@ class FrameRenderer:
         height: int,
         camera: mujoco.MjvCamera | int | str | None = None,
         geomgroup: Sequence[int] | None = None,
+        *,
+        near: float | None = None,
+        far: float | None = None,
     ) -> None:
         # Before anything touches GL: a wrong backend aborts the process inside MjrContext with a
         # message that explains nothing, and this is the funnel every renderer in the tree goes
@@ -654,6 +711,43 @@ class FrameRenderer:
         self.camera: mujoco.MjvCamera | int | str = (
             camera if camera is not None else default_free_camera(model)
         )
+        self._near: float | None = None
+        self._far: float | None = None
+        self.near = near
+        self.far = far
+
+    @property
+    def near(self) -> float | None:
+        """The near clip plane in metres; ``None`` is the model's own."""
+        return self._near
+
+    @near.setter
+    def near(self, value: float | None) -> None:
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise ValueError(f"near clip plane must be a finite distance > 0 m, got {value!r}")
+        self._near = None if value is None else float(value)
+
+    @property
+    def far(self) -> float | None:
+        """The far clip plane in metres; ``None`` is the model's own."""
+        return self._far
+
+    @far.setter
+    def far(self, value: float | None) -> None:
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise ValueError(f"far clip plane must be a finite distance > 0 m, got {value!r}")
+        self._far = None if value is None else float(value)
+
+    def _update_scene(self, data: mujoco.MjData, scene_option: mujoco.MjvOption | None = None):
+        """Populate the scene from *data* through :attr:`camera`, with this renderer's planes."""
+        self._renderer.update_scene(data, self.camera, scene_option=scene_option or self._vopt)
+        set_clip_planes(self._renderer.scene, self._near, self._far)
+        cam = self._renderer.scene.camera[0]
+        if cam.frustum_far <= cam.frustum_near:
+            raise ValueError(
+                f"far clip plane {cam.frustum_far:g} m is not beyond the near one "
+                f"{cam.frustum_near:g} m"
+            )
 
     @property
     def raw(self) -> mujoco.Renderer:
@@ -677,11 +771,61 @@ class FrameRenderer:
         # MuJoCo's own default happens to mask the same group. A contract this tree states in
         # `presence` must not rest on another project's default. Behaviourally a no-op today
         # (MjvOption() IS that default, plus our one line), which is why it is safe to make real.
-        self._renderer.update_scene(data, self.camera, scene_option=self._vopt)
+        self._update_scene(data)
         if decorate is not None:
             decorate(self._renderer.scene)
         with hold_gc():
             return self._renderer.render()
+
+    def render_depth(self, data: mujoco.MjData) -> np.ndarray:
+        """Render ``data`` through :attr:`camera`; depth in metres, ``(height, width)`` float32.
+
+        ``mujoco.Renderer``'s own depth mode linearises with the model's planes, so this draws and
+        reads the depth buffer itself and linearises it with the planes the scene was drawn with.
+        A pixel nothing was drawn at (cleared to 0 under reversed Z) reads ``inf``, not the far
+        plane.
+        """
+        r = self._renderer
+        self._update_scene(data)
+        scene = r.scene
+        cam = scene.camera[0]
+        near, far, ortho = float(cam.frustum_near), float(cam.frustum_far), bool(cam.orthographic)
+        flags = scene.flags.copy()
+        # As mujoco.Renderer does for depth: flat ID colours, which make the far range more exact.
+        scene.flags[mujoco.mjtRndFlag.mjRND_SEGMENT] = True
+        scene.flags[mujoco.mjtRndFlag.mjRND_IDCOLOR] = True
+        buffer = np.empty((self.height, self.width), dtype=np.float32)
+        try:
+            # The renderer's own rect and contexts (mujoco is pinned to the series they belong to).
+            if r._gl_context:
+                r._gl_context.make_current()
+            with hold_gc():
+                mujoco.mjr_render(r._rect, scene, r._mjr_context)
+                mujoco.mjr_readPixels(None, buffer, r._rect, r._mjr_context)
+        finally:
+            np.copyto(scene.flags, flags)
+        depth = linear_depth(buffer, near, far, ortho)
+        depth[buffer == 0.0] = np.inf
+        # GL reads bottom row first (EGL, OSMesa and GLFW alike).
+        return np.ascontiguousarray(np.flipud(depth)) if r._gl_context else depth
+
+    def render_segmentation(
+        self, data: mujoco.MjData, scene_option: mujoco.MjvOption | None = None
+    ) -> np.ndarray:
+        """``mujoco.Renderer``'s segmentation pass through :attr:`camera`, with this renderer's
+        planes.
+
+        ``(height, width, 2)`` int32 object id and type, ``(-1, -1)`` for background. *scene_option*
+        replaces the renderer's own options for this pass.
+        """
+        r = self._renderer
+        self._update_scene(data, scene_option)
+        r.enable_segmentation_rendering()
+        try:
+            with hold_gc():
+                return r.render()
+        finally:
+            r.disable_segmentation_rendering()
 
     def move_camera(self, action: int, dx: float, dy: float) -> None:
         """Apply a mouse move to a free camera via MuJoCo's own handler.

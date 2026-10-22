@@ -161,7 +161,8 @@ class SensorCamera:
     """An imaging sensor as a plugin declares it (:meth:`roqsim.plugin.Plugin.scene_cameras`).
 
     ``fx``/``fy`` are the focal lengths in pixels of the ``width`` x ``height`` image the sensor
-    publishes. ``kind`` is what the image holds: ``"rgb"`` or ``"depth"``.
+    publishes. ``kind`` is what the image holds: ``"rgb"`` or ``"depth"``. ``znear``/``zfar`` are the
+    clip planes in metres the sensor renders with; ``None`` is the model's own.
     """
 
     sensor: str  # the plugin's address
@@ -171,6 +172,8 @@ class SensorCamera:
     height: int
     fx: float
     fy: float
+    znear: float | None = None
+    zfar: float | None = None
 
 
 @dataclass
@@ -626,13 +629,13 @@ def sensor_cameras(
     ``yfov`` follows from ``fy`` and the image height, and ``aspect_ratio`` is the ratio of the two
     half-angle tangents (``width * fy / (height * fx)``), which is ``width / height`` for square
     pixels. A principal point off the image centre is not expressible in this projection. The clip
-    planes are the ones MuJoCo renders every camera with: ``visual/map`` ``znear``/``zfar`` scaled
-    by the model's extent.
+    planes are the ones the sensor renders with, and where it states none, the model's own:
+    ``visual/map`` ``znear``/``zfar`` scaled by the model's extent.
     """
     fixed = int(mujoco.mjtCamLight.mjCAMLIGHT_FIXED)
     extent = float(model.stat.extent)
-    znear = float(model.vis.map.znear) * extent
-    zfar = float(model.vis.map.zfar) * extent
+    model_znear = float(model.vis.map.znear) * extent
+    model_zfar = float(model.vis.map.zfar) * extent
     out = []
     for s in sensors:
         if int(model.cam_mode[s.camera]) != fixed:
@@ -651,8 +654,8 @@ def sensor_cameras(
                 quat=model.cam_quat[s.camera].tolist(),
                 yfov=2.0 * math.atan(s.height / (2.0 * s.fy)),
                 aspect_ratio=(s.width * s.fy) / (s.height * s.fx),
-                znear=znear,
-                zfar=zfar,
+                znear=model_znear if s.znear is None else float(s.znear),
+                zfar=model_zfar if s.zfar is None else float(s.zfar),
                 kind=s.kind,
                 width=int(s.width),
                 height=int(s.height),
