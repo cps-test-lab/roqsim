@@ -23,6 +23,8 @@ from roqsim.plugin import PluginError
 PANDA_P, PANDA_D, PANDA_SCALE = 2000.0, 40.0, 0.04 / 255
 #: robotiq_2f85.xml's: kp 100, kv 10, from Menagerie, with a 0..255 command and its gain as stated.
 ROBOTIQ_P, ROBOTIQ_D, ROBOTIQ_GAIN = 100.0, 10.0, 0.3137255
+#: robotiq_hande.xml's: kp 4e5 N/m, kv 0, its 0..255 command scaled onto 0..0.025 m of finger travel.
+HANDE_P, HANDE_D, HANDE_SCALE = 4e5, 0.0, 0.025 / 255
 
 
 def _servo(tmp_path, spawn: dict, actuator: str, entity: str):
@@ -130,3 +132,14 @@ def test_the_gripper_block_is_checked_before_anything_is_compiled():
     assert any(
         "'end_effector.actuators.each.fingers_actuator.d' must be >= 0.0" in e for e in errors
     )
+
+
+def test_the_hand_e_keeps_its_own_servo_or_takes_the_worlds(tmp_path):
+    spawn = {"model": "ur5e", "prefix": "u_", "end_effector": {"model": "robotiq_hande"}}
+    (gain, p, d), row = _servo(tmp_path, spawn, "u_fingers_actuator", "ur5e")
+    assert (p, d) == (HANDE_P, HANDE_D) and gain == pytest.approx(HANDE_P * HANDE_SCALE)
+    assert row.source == "model"
+    spawn["end_effector"]["actuators"] = {"each": {"fingers_actuator": {"p": 2e5, "d": 100.0}}}
+    (gain, p, d), row = _servo(tmp_path, spawn, "u_fingers_actuator", "ur5e")
+    assert (p, d) == (2e5, 100.0) and gain == pytest.approx(2e5 * HANDE_SCALE)
+    assert row.source == "each"
