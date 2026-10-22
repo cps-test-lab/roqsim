@@ -322,6 +322,20 @@ class Case:
     defect: str | None = None
 
 
+def _run_rtde_program(engine: Engine) -> None:
+    """A program that sets a TCP, tares and moves, still running when the trial resets."""
+
+    def program(c, r):
+        c.setTcp([0.0, 0.0, 0.05, 0.0, 0.0, 0.0])
+        c.zeroFtSensor()
+        while True:
+            t0 = c.initPeriod()
+            c.speedL([0.0, 0.0, -0.01, 0.0, 0.0, 0.0], 0.5)
+            c.waitPeriod(t0)
+
+    engine.ctx.blackboard.get("ur_rtde:ur5e").run(program)
+
+
 def _needs_file(path_of: Callable[[], Path], what: str) -> Callable[[], str | None]:
     def check() -> str | None:
         return None if path_of().exists() else f"{what} is not present ({path_of()})"
@@ -405,6 +419,7 @@ CASES: dict[str, Case] = {
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
     "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
+    "ur_rtde": Case(lambda _: _arm({"ur_rtde": {"ft": "ft"}}), use=(_run_rtde_program,)),
     "fzi_cartesian_controllers": Case(
         lambda _: _arm(
             {
@@ -440,6 +455,7 @@ CASES: dict[str, Case] = {
     "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
+    "spot_body_camera": Case(lambda _: _sensor("spot_body_camera")),
     "fiducial_marker": _static(
         {
             "fiducial_marker": {
@@ -612,6 +628,13 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     **{name: {"_hits": _CAST_BUFFERS} for name in _RAY_SENSORS},
     **{name: {"_frames": _RENDERER} for name in _CAMERAS},
     **{name: {"_frames": _RENDERER, "_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
+    # A device with its own depth optics: a second renderer, and registered depth's mask.
+    "spot_body_camera": {
+        "_frames": _RENDERER,
+        "_depth_frames": _RENDERER,
+        "_invalid": _DEPTH_MASK,
+        "_registered_invalid": _DEPTH_MASK,
+    },
 }
 
 #: Plugins with no world here to configure them in.

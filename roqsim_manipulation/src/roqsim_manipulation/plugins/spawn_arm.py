@@ -20,7 +20,12 @@ spawns an arm onto a table, softens its joints and welds a gripper on::
         damping: 0.02
         each:
           wrist_3: {control: position, p: 2000, d: 500}
-      end_effector: {model: robotiq_2f85, pose: {position: {z: 0.011}}}
+      end_effector:
+        model: robotiq_2f85
+        pose: {position: {z: 0.011}}
+        actuators:          # the gripper's own, the same block: its finger servo's p and d
+          each:
+            fingers_actuator: {p: 300, d: 20}
 
 ``base_body`` defaults to the model's root body, and ``home`` to a per-model default or the model's
 ``home`` keyframe, so a bare ``{model: ur10e}`` works.
@@ -85,6 +90,10 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
 ``pose`` is an offset within it -- matching how a real tool adapter is specified.
+
+``end_effector.actuators`` is an ``actuators:`` block for the gripper's own actuators, resolved on
+the gripper's spec before the graft, as ``actuators:`` is on the arm's: the arm's block never falls
+on the gripper and the gripper's never on the arm. Its rows join the arm's in the recorded table.
 
 **Who carries the arm's weight.** Its drives, as a torque each joint's actuator supplies
 (:func:`roqsim.actuators.apply_gravity_compensation`): bounded by the actuator's force limit, so a
@@ -241,7 +250,9 @@ MOUNT = {
 
 #: ``end_effector:`` -- the tool welded onto the arm. See the module docstring.
 END_EFFECTOR = {
-    "model": Field(str, required=True, doc="a gripper model (robotiq_2f85, schunk_pg70)"),
+    "model": Field(
+        str, required=True, doc="a gripper model (robotiq_2f85, robotiq_hande, schunk_pg70)"
+    ),
     "site": Field(
         str,
         doc="arm site to weld it to; default: the arm manifest's end_effector.site, else "
@@ -252,6 +263,7 @@ END_EFFECTOR = {
     "replaces": Field(
         list, default=[], doc="bodies of the arm model the tool supersedes, deleted first"
     ),
+    "actuators": ACTUATORS,
 }
 
 
@@ -416,6 +428,9 @@ class SpawnArmPlugin(Plugin):
         #: Every actuator's final law and gains, filled in :meth:`build` and published at
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
+        #: The same for the end effector's own actuators, under its prefix; filled in by
+        #: `_attach_end_effector`.
+        self.ee_actuator_table: list = []
         self.ee_prefix = ee.get("prefix", "")
         self.ee_pos, self.ee_quat = config_pose(ee)
         self.ee_replaces = list(ee.get("replaces", []))
@@ -491,6 +506,7 @@ class SpawnArmPlugin(Plugin):
             except ModelError as exc:
                 errors.append(f"end_effector: {exc}")
             errors += _pose_errors(ee.get("pose"), f"spawn_arm '{self.address}' end_effector.pose")
+            errors += unread_gain_errors(ee.get("actuators"), where="end_effector.actuators")
             if isinstance(settings.model, str) and settings.model:
                 try:
                     manifest_end_effector_site(
@@ -669,6 +685,14 @@ class SpawnArmPlugin(Plugin):
         # A tool whose <flexcomp> sits under <worldbody> and pins vertices there would lose the flex
         # in the attach below (roqsim.flex, rule 4); this puts it in a body on the flange instead.
         ee = lift_top_level_flexes(ee, ee_asset.path.stem)
+        # Before the graft, on the gripper's own spec, for the reason `actuators:` is resolved on
+        # the arm's before it: each block names the actuators its own model declares.
+        self.ee_actuator_table = resolve_actuators(
+            ee,
+            (self.config.get("end_effector") or {}).get("actuators"),
+            model_name=str(self.ee_model),
+            where="end_effector.actuators",
+        )
         # Whatever tool the arm model ships with goes first, or the new one is welded into it. The
         # ur10e carries a `ee_plate` 60 mm past its flange for the conveyor demo; a gripper attached
         # at `attachment_site` (0.1 m) lands inside it, so the two collide from the first step.
@@ -750,6 +774,13 @@ class SpawnArmPlugin(Plugin):
                 joint=(self.prefix + row.joint) if row.joint else "",
             )
             for row in self.actuator_table
+        ] + [
+            replace(
+                row,
+                name=self.prefix + self.ee_prefix + row.name,
+                joint=(self.prefix + self.ee_prefix + row.joint) if row.joint else "",
+            )
+            for row in self.ee_actuator_table
         ]
         self._apply_home(ctx)
 

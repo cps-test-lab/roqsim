@@ -6,7 +6,7 @@ position-hold controller, a Cartesian/force-control layer, and backend-neutral `
 `roqsim_mobile` (ROS-free; ROS coupling lives in `roqsim_ros_bridge`).
 
 **No arm models live here.** They are in [`roqsim_manipulation_assets`](../roqsim_manipulation_assets)
-(`ur10e`, `ur5e`, `panda`, `gen3`, `open_manipulator_x`, the `robotiq_2f85` / `schunk_pg70` grippers,
+(`ur10e`, `ur5e`, `panda`, `gen3`, `open_manipulator_x`, the `robotiq_2f85` / `robotiq_hande` / `schunk_pg70` grippers,
 and the demo worlds). The split exists so that a package needing only the shared limb controller — a
 humanoid's arms, a mobile manipulator's arm, a gantry — does not install 115 MB of geometry it never
 loads. The dependency runs assets → plugins and never the reverse: a model's manifest names the
