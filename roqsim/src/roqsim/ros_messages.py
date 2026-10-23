@@ -97,7 +97,7 @@ def message_type(payload_cls: type | None, hints: dict) -> str | None:
 # -- fields -------------------------------------------------------------------------------------
 
 #: Bytes per pixel of each encoding an ``Image`` may carry.
-IMAGE_ENCODING_BYTES = {"rgb8": 3, "mono8": 1, "16UC1": 2, "32FC1": 4}
+IMAGE_ENCODING_BYTES = {"rgb8": 3, "bgr8": 3, "mono8": 1, "16UC1": 2, "32FC1": 4}
 
 
 def image_fields(array: np.ndarray, encoding: str) -> dict:
@@ -148,10 +148,13 @@ def compressed_image_fields(array: np.ndarray, encoding: str, hints: dict) -> di
     """
     if encoding in COMPRESSED_WIRE:
         fmt = hints.get("format", "jpeg")
+        # The codec reads three channels as RGB (image_codec's module docstring), so a bgr8 frame
+        # is put back in that order, or the decoded colour has red and blue exchanged.
+        pixels = array[..., ::-1] if encoding == "bgr8" else array
         return {
             "format": f"{encoding}; {fmt} compressed {COMPRESSED_WIRE[encoding]}",
             "data": image_codec.encode(
-                array, fmt=fmt, quality=hints.get("quality", image_codec.DEFAULT_JPEG_QUALITY)
+                pixels, fmt=fmt, quality=hints.get("quality", image_codec.DEFAULT_JPEG_QUALITY)
             ),
         }
     if encoding != "16UC1":
