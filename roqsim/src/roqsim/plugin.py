@@ -64,6 +64,12 @@ class Plugin:
     #: Published by ``roqsim plugins describe`` beside ``strict_keys``.
     OPEN_KEYS: str = ""
 
+    #: What this plugin realises from its config, as ``(key, attribute, unit, effect)``: the config
+    #: key, the attribute holding the value it runs with, the unit, and what the value does to a
+    #: command or a reading. :meth:`realised` turns it into rows; a plugin with more to say (a value
+    #: derived from several keys, a default that switches something off) extends that method.
+    REALISED: tuple = ()
+
     #: Set True on a plugin whose ``post_step`` only *reads* ``data`` (no writes, no shared mutable
     #: state) so a future executor may run it concurrently with other parallel-safe post_steps.
     parallel_safe: bool = False
@@ -221,8 +227,51 @@ class Plugin:
         hardware topic names regardless of its scope. A relative value renames the endpoint inside
         its namespace, the way a vendor description names a robot's second scanner ``scan2`` under
         the robot's namespace.
+
+        Asked in ``configure`` or ``register_endpoints``: :meth:`check_topic_keys` holds the
+        ``topics:`` map to the names asked by then, so a name first asked later raises; one already
+        asked may be asked again.
         """
+        read = self.__dict__.setdefault("_topic_keys_read", set())
+        if endpoint_name not in read and self.__dict__.get("_topic_keys_checked"):
+            raise PluginError(
+                f"[{self.address} ({type(self).__name__})] topic_override({endpoint_name!r}) is asked "
+                "after the plugin's topics: were checked: a topic name must be asked for in "
+                "configure or register_endpoints, or a rename keyed on it is refused as reaching "
+                "nothing."
+            )
+        read.add(endpoint_name)
         return (self.config.get("topics") or {}).get(endpoint_name)
+
+    def check_topic_keys(self) -> None:
+        """Refuse a ``topics:`` key this plugin never asked for.
+
+        A rename is keyed on the name the plugin asks :meth:`topic_override` for -- an endpoint's own
+        name, or a role a plugin names its endpoints by -- which can differ from the topic it
+        publishes on by default (``contact_monitor``'s ``contact`` publishes ``collision``). A key
+        naming the topic, or anything else, matches nothing, and the endpoint publishes under its
+        default name as if no rename had been asked for. Checked once the plugin has registered its
+        endpoints, since every name it asks for has been asked by then; :meth:`topic_override`
+        refuses a name first asked after it.
+        """
+        self.__dict__["_topic_keys_checked"] = True
+        topics = self.config.get("topics")
+        if not isinstance(topics, dict) or not topics:
+            return
+        read = sorted(self.__dict__.get("_topic_keys_read", ()))
+        unknown = sorted(key for key in topics if key not in read)
+        if unknown:
+            raise PluginError(
+                f"[{self.address} ({type(self).__name__})] topics: {', '.join(map(repr, unknown))} "
+                f"{'is' if len(unknown) == 1 else 'are'} not a name this plugin renames, so the "
+                "rename would reach nothing. A rename is keyed on the endpoint's name, not on its "
+                "topic"
+                + (
+                    f"; this plugin's are: {', '.join(read)}."
+                    if read
+                    else ", and this plugin renames none."
+                )
+            )
 
     @property
     def settings(self):
@@ -285,7 +334,79 @@ class Plugin:
             errors += self.validate_config(config) or []
         except Exception as exc:  # a plugin's validator itself blew up
             errors.append(f"{VALIDATOR_RAISED} {exc}")
+        errors += self._misplaced_enabled(config, errors)
         return errors
+
+    def realised(self) -> list[dict]:
+        """The values this plugin runs with, where they shape what a run can do or report.
+
+        One row per value: ``{key, value, unit, source, effect}``, ``source`` saying whether the
+        world (``config``) or the plugin's default (``default``) set it. Read after ``configure`` by
+        ``roqsim check`` and ``roqsim scenes describe``, so a caller sees before a run that a drive
+        clips a command at its cap, or that a reading carries no noise, rather than finding it in
+        the results.
+        """
+        rows = []
+        for key, attribute, unit, effect in type(self).REALISED:
+            value = getattr(self, attribute, None)
+            rows.append(
+                {
+                    "key": key,
+                    "value": value,
+                    "unit": unit,
+                    "source": "config" if key in (self.config or {}) else "default",
+                    "effect": effect,
+                }
+            )
+        return rows
+
+    @classmethod
+    def undocumented_keys(cls, config: dict) -> list[str]:
+        """The keys of *config* that this plugin, with no schema, does not document.
+
+        A plugin with a schema checks its keys itself (:attr:`STRICT_KEYS`); one that publishes no
+        keys at all cannot be held to any. For the rest a key outside its ``Config::`` block is most
+        often a typo or a key a newer version reads -- and it may also be one this plugin reads
+        without documenting it, which is why the answer is a warning and not a refusal.
+        """
+        if cls.CONFIG_SCHEMA:
+            return []
+        from .introspection import published_keys
+        from .schema import INJECTED_KEYS
+
+        documented = published_keys(cls)
+        if not documented:
+            return []
+
+        return sorted(
+            key
+            for key in config or {}
+            if key not in documented and key not in INJECTED_KEYS and key != "enabled"
+        )
+
+    def _misplaced_enabled(self, config: dict, errors: list[str]) -> list[str]:
+        """Refuse ``enabled`` inside a config that does not read it.
+
+        ``enabled`` is the reserved sibling of the plugin ref -- run this component or not -- and
+        written one level too deep it is a config key nothing reads, so the component runs. A plugin
+        that documents an ``enabled`` key of its own reads it, and one whose own checks already
+        named it (``ceiling``, for which the sibling would mean the opposite) has said it better.
+        """
+        if "enabled" not in (config or {}):
+            return []
+        from .introspection import published_keys
+
+        if "enabled" in published_keys(type(self)):
+            return []
+        if any("'enabled'" in error for error in errors):
+            return []
+        return [
+            "'enabled' is the reserved sibling key meaning 'run this component at all', not a "
+            "config key of this plugin, which reads none: inside config it is ignored and the "
+            "component runs. Move it out one level, beside the plugin ref:\n"
+            "  - <plugin>: {...}\n"
+            f"    enabled: {config['enabled']!r}"
+        ]
 
     def validate_presence(self, config: dict) -> list[str]:
         """Check ``present:``, and refuse it where it would do nothing.

@@ -22,6 +22,7 @@ a plugin's catalog entry against its source.
 * :func:`list_plugins` -- every registered ``roqsim.plugins`` entry, one line per plugin.
 * :func:`get_plugin_details` -- one plugin's full detail, including its ``Config::``
   block parsed into structured fields.
+* :func:`published_keys` -- the top-level config keys a plugin class publishes.
 * :func:`undeclared_config_reads` -- the config keys a plugin class reads but does not publish.
 
 The doc-extraction helpers here (:func:`_own_or_module_doc`, :func:`_summary_and_config`,
@@ -292,7 +293,7 @@ def _parse_config_block(doc: str) -> list[dict]:
     return fields
 
 
-def _config_parameters(cls) -> list[dict]:
+def config_parameters(cls) -> list[dict]:
     """The ``Config::`` fields a plugin accepts: its own block's, then each base plugin's it inherits.
 
     A device built on shared machinery documents what distinguishes it (a lidar's fan) and inherits
@@ -464,7 +465,7 @@ def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
     Returns ``{name, kind: "plugin", doc, parameters, flags, package, class}`` where
-    ``parameters`` is :func:`_config_parameters`'s output -- the plugin's ``Config::`` block and
+    ``parameters`` is :func:`config_parameters`'s output -- the plugin's ``Config::`` block and
     those of the base plugins it inherits keys from (empty if none has one, whether because it
     takes no config or because nobody wrote one) -- or ``{"error": "..."}``.
 
@@ -500,7 +501,7 @@ def get_plugin_details(name: str) -> dict:
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
-        "parameters": _schema_parameters(schema) if schema else _config_parameters(cls),
+        "parameters": _schema_parameters(schema) if schema else config_parameters(cls),
         "flags": _flags(cls),
         "package": _dist_name(ep),
         "class": ep.value,
@@ -609,12 +610,18 @@ def _config_keys_read(cls: type) -> set[str]:
     )
 
 
-def _published_keys(cls: type) -> set[str]:
-    """The top-level keys *cls* publishes: its schema's, else its and its bases' ``Config::`` keys."""
+def published_keys(cls: type) -> frozenset[str]:
+    """The top-level keys *cls* publishes: its schema's, else its and its bases' ``Config::`` keys.
+
+    A nested mapping in a ``Config::`` block is published as its own key: :func:`config_parameters`
+    lists ``noise`` and then ``noise.stddev``, so a world writing ``noise: {stddev: ...}`` sets a
+    published key, and the dotted children add none. Empty where the plugin publishes no keys,
+    which is "unknown", not "takes no keys".
+    """
     schema = getattr(cls, "CONFIG_SCHEMA", None)
     if schema:
-        return set(schema)
-    return {f["name"] for f in _config_parameters(cls) if "." not in f["name"]}
+        return frozenset(schema)
+    return frozenset(f["name"] for f in config_parameters(cls) if "." not in f["name"])
 
 
 def undeclared_config_reads(cls: type) -> list[str]:
@@ -636,7 +643,7 @@ def undeclared_config_reads(cls: type) -> list[str]:
     """
     from roqsim.schema import INJECTED_KEYS
 
-    return sorted(_config_keys_read(cls) - _published_keys(cls) - INJECTED_KEYS)
+    return sorted(_config_keys_read(cls) - published_keys(cls) - INJECTED_KEYS)
 
 
 # ── Module CLI (python -m roqsim.introspection <subcommand>) ─────────────────────

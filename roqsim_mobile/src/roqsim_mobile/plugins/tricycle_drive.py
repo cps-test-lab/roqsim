@@ -133,6 +133,12 @@ def _is_name_list(value) -> bool:
 class TricycleDrivePlugin(Plugin):
     """See the module docstring."""
 
+    REALISED = (
+        ("max_linear_vel", "max_v", "m/s", "a commanded linear speed above it is clipped to it"),
+        ("max_wheel_speed", "max_wheel", "m/s", "a tread speed above it scales the command down"),
+        ("max_steer_angle", "max_steer", "rad", "a steering angle beyond it is clipped to it"),
+    )
+
     #: Drives an entity's actuators, so it belongs inside that entity's ``components:`` block.
     requires_owner = True
 

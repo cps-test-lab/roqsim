@@ -131,10 +131,12 @@ class CylindersPlugin(Plugin):
             child.build(spec, ctx)
 
     def configure(self, ctx: SimContext) -> None:
-        # The engine registers endpoints of the plugins it lists; a child's are this plugin's to add.
+        # The engine registers endpoints of the plugins it lists, and checks their topics: once they
+        # have; a child's are this plugin's to add and check.
         for child in self._children:
             child.configure(ctx)
             child.register_endpoints(ctx)
+            child.check_topic_keys()
 
     def on_reset(self, ctx: SimContext) -> None:
         for child in self._children:

@@ -376,6 +376,7 @@ class Engine:
                 # be set; here rather than inside each plugin so that a plugin registering an entity
                 # gets the world's `present:` honoured by declaring that it registers one.
                 plugin.apply_declared_presence(self.ctx)
+                plugin.check_topic_keys()
         except BaseException:
             self._shutdown_plugins(configured, " after a configure failed")
             raise

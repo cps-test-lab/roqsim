@@ -1136,11 +1136,21 @@ def _assign_one(a: Assignment, spec: PluginSpec, config_path: tuple) -> None:
             f"the document."
         )
     node = spec.config
-    for key in config_path[:-1]:
+    for depth, key in enumerate(config_path[:-1]):
         nxt = node.get(key)
-        if not isinstance(nxt, dict):
+        if nxt is None:
             nxt = {}
             node[key] = nxt
+        elif not isinstance(nxt, dict):
+            # Walking through it would replace the value with a mapping holding one key, which
+            # drops everything else the value said and leaves the plugin reading a shape it may
+            # not take -- with the run looking configured.
+            here = ".".join(config_path[: depth + 1])
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' walks into '{here}' of '{spec.address}', which is a "
+                f"{type(nxt).__name__}, not a mapping: a path can only name keys of a mapping. Set "
+                f"'{here}' itself to the whole new value."
+            )
         node = nxt
     node[config_path[-1]] = a.value
 
@@ -1794,6 +1804,24 @@ def _prune_unresolved(cfg: SimConfig) -> None:
     cfg.unresolved = [(ref, msg) for ref, msg in cfg.unresolved if ref in live]
 
 
+def transport_rate_overrides(cfg: SimConfig) -> dict[str, float]:
+    """The ``rates:`` the world's transport plugins set per endpoint name, merged.
+
+    Read before a reader drops the transport, so the rate a world would publish an output at can
+    still be stated (:func:`roqsim.endpoint.describe_endpoints`). A ref that does not resolve is
+    skipped: whether it is transport cannot be told, and it is reported where it is dropped.
+    """
+    rates: dict[str, float] = {}
+    for spec in cfg.plugins:
+        try:
+            cls = resolve_plugin(spec.ref, base_dir=cfg.base_dir)
+        except PluginError:
+            continue
+        if cls.transport_only and isinstance((spec.config or {}).get("rates"), dict):
+            rates.update(spec.config["rates"])
+    return rates
+
+
 def drop_transport(cfg: SimConfig) -> list[str]:
     """Drop the transport plugins from *cfg* and return their labels -- for a deliberately offline run.
 
@@ -2171,4 +2199,53 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
         raise PluginError(
             "plugin config validation failed:\n  - " + "\n  - ".join(errors)
         ) from cause
+    for warning in undocumented_key_warnings(instances):
+        _logger.warning("%s %s", warning["message"], warning["hint"])
     return instances
+
+
+def realised_values(plugins: list[Plugin]) -> list[dict]:
+    """``[{address, plugin, values}]`` for each configured plugin that reports realised values.
+
+    What :meth:`roqsim.plugin.Plugin.realised` says, read after ``configure`` by ``roqsim check``
+    and ``roqsim scenes describe``: the caps a drive clips commands at, a reading that carries no
+    noise -- values a world's author did not necessarily write, and a run cannot exceed.
+    """
+    out = []
+    for inst in plugins:
+        values = inst.realised()
+        if values:
+            out.append({"address": inst.address, "plugin": type(inst).__name__, "values": values})
+    return out
+
+
+def undocumented_key_warnings(plugins: list[Plugin]) -> list[dict]:
+    """One warning per plugin whose config holds keys it does not document.
+
+    In ``roqsim check``'s ``{"check", "message", "hint"}`` shape, because ``roqsim check`` and
+    ``roqsim scenes describe`` report them beside a world that loads: a plugin with no schema accepts
+    any key, so a misspelled one leaves its setting at the default with the run looking configured.
+    A warning rather than a refusal, since a plugin may read a key its ``Config::`` block leaves out
+    (:meth:`roqsim.plugin.Plugin.undocumented_keys`).
+    """
+    warnings = []
+    for inst in plugins:
+        keys = type(inst).undocumented_keys(inst.config)
+        if not keys:
+            continue
+        listed = ", ".join(repr(key) for key in keys)
+        warnings.append(
+            {
+                "check": "config-key",
+                "message": (
+                    f"{inst.address} ({type(inst).__name__}): {listed} "
+                    f"{'is not a key' if len(keys) == 1 else 'are not keys'} this plugin documents, "
+                    "so unless it reads them undocumented they are ignored and their setting stays at "
+                    "its default."
+                ),
+                "hint": f"check the spelling against `roqsim plugins describe {type(inst).__name__}`",
+                "keys": keys,
+                "address": inst.address,
+            }
+        )
+    return warnings

@@ -27,7 +27,7 @@ from importlib.metadata import entry_points
 
 import pytest
 
-from roqsim.introspection import _config_keys_read, undeclared_config_reads
+from roqsim.introspection import _config_keys_read, published_keys, undeclared_config_reads
 from roqsim.plugin import Plugin
 from roqsim.registry import ENTRY_POINT_GROUP
 
@@ -222,3 +222,25 @@ class _Publishes(Plugin):
 
 def test_a_read_key_is_undeclared_unless_published_or_injected():
     assert undeclared_config_reads(_Publishes) == ["b"]
+
+
+class _Nests(Plugin):
+    """A plugin whose ``noise`` is a nested mapping.
+
+    Config::
+
+        rate_hz: 10
+        noise:
+          stddev: 0.01
+    """
+
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config, **kwargs)
+        self.noise = self.config.get("noise")
+
+
+def test_a_nested_mapping_is_published_as_its_own_key():
+    """``noise.stddev`` publishes ``noise``: the guard and a world's key check read the same list."""
+    assert published_keys(_Nests) == {"rate_hz", "noise"}
+    assert undeclared_config_reads(_Nests) == []
+    assert _Nests.undocumented_keys({"noise": {"stddev": 0.1}, "nosie": {}}) == ["nosie"]
