@@ -105,6 +105,13 @@ def test_the_poses_are_the_descriptions_in_the_mount_frame(engine):
     # quat="0 0 0 -1"), so the body stands at the stated yaw plus pi.
     yaw = np.arctan2(r[1, 0], r[0, 0])
     assert np.cos(yaw - (YAW + np.pi)) == pytest.approx(1.0, abs=1e-9)
+    # The vendor's UR base_link is yawed -pi/2, so at zero joints the arm reaches along the base's -y.
+    for j in range(m.njnt):
+        if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE and m.joint(j).name.startswith("ur5e_"):
+            d.qpos[m.jnt_qposadr[j]] = 0.0
+    mujoco.mj_kinematics(m, d)
+    pos, _ = in_base("ur5e_wrist_1_link")
+    assert pos[1] - ARM[1] < -0.8 and abs(pos[0] - ARM[0]) < 0.2, pos
 
 
 def test_the_arm_stands_on_the_top_plate(engine):
