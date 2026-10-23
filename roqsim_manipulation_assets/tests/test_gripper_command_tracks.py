@@ -40,6 +40,14 @@ GRIPPERS = [
         (0.0301, -0.001),
         id="ur5e+schunk_pg70",
     ),
+    # Robotiq's robotiq_description: hande_left_finger_joint is the finger's travel, 0 open to
+    # 0.025 m closed, like the 2F knuckle.
+    pytest.param(
+        {"model": "ur5e", "end_effector": {"model": "robotiq_hande"}},
+        "hande_left_finger_joint",
+        (0.0, 0.025),
+        id="ur5e+robotiq_hande",
+    ),
     # franka_description: finger_joint1 0.04 m apart per finger when open.
     pytest.param({"model": "panda"}, "finger_joint1", (0.04, 0.0), id="panda"),
 ]

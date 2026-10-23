@@ -1,0 +1,45 @@
+# UR5e with a Robotiq Hand-E — standalone demo world (roqsim_manipulation_assets).
+#
+# Standalone: roqsim sim roqsim_manipulation_assets/src/roqsim_manipulation_assets/worlds/ur5e_robotiq_hande_demo.yaml
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory + GripperCommand), add the ros2_bridge
+# plugin from the roqsim_ros_bridge package; `roqsim export moveit --tip-site pinch` writes the
+# matching MoveIt configuration.
+#
+# Where the tool is (along tool0's z, the UR flange frame; checked by tests/test_robotiq_hande.py):
+#   - The Hand-E's coupling face sits on the UR5e's `tool_site`, the outer face of the FT adapter
+#     stack, 59.0 mm out from the flange.
+#   - Robotiq's TCP (the fingertip ends, manual 5.2.3): site `tcp`, 157.0 mm from the coupling face,
+#     216.0 mm from tool0. On a cell with the Hand-E straight on the flange, the TCP to set on the UR
+#     controller is the manual's 157.0 mm; the other 59.0 mm here are the stack's.
+#   - The grasp centre a pick driver reaches: site `pinch`, the middle of the pads, 146.75 mm from the
+#     coupling face, 205.75 mm from tool0.
+#   - The fingers close along tool0's x.
+#
+# The gripper: ctrl is Robotiq's position register (0 open .. 255 closed); a GripperCommand position
+# is the finger travel in metres in Robotiq's convention (0.0 open .. 0.025 closed); max_effort
+# clamps the force of each jaw, up to the datasheet's 185 N.
+
+sim:
+  pacing: realtime
+
+  # NOT optional for a grasping world, and the gripper deliberately does not carry them: they are
+  # world-scoped, so a model that pinned them would reconfigure the contact solver for every other
+  # robot in the scene (see vx300s_demo.yaml).
+  cone: elliptic
+  impratio: 10
+  noslip_iterations: 10
+
+components:
+  # arm_controller comes from the ur5e manifest, the gripper's half of it from robotiq_hande's; the
+  # ur5e manifest sends an end effector to its tool_site.
+  - spawn_arm:
+      model: ur5e
+      prefix: "ur5e_"
+      end_effector: {model: robotiq_hande}
+    name: ur5e
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion (remove once a bridge drives the arm).
+    components:
+      - arm_controller:
+          test_target: [0.0, -1.2, 1.4, -1.77, -1.57, 0.0]

@@ -314,6 +314,7 @@ def _decode_scan(msg) -> T.LaserScan:
 #: Bytes per pixel, and the numpy layout, of the encodings an Image carries.
 _ENCODINGS = {
     "rgb8": (3, np.uint8, 3),
+    "bgr8": (3, np.uint8, 3),
     "mono8": (1, np.uint8, 1),
     "16UC1": (2, np.uint16, 1),
     "32FC1": (4, np.float32, 1),
