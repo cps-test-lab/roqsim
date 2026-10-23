@@ -62,7 +62,8 @@ without them refuses the file rather than drawing it wrong.
 (:meth:`roqsim.plugin.Plugin.scene_cameras`) is a perspective camera on a node of its own, the child
 of the node of the body it is mounted on, at its mount pose, so it follows that body wherever a
 viewer moves it. MuJoCo's camera frame is glTF's (it looks down -z with +y up), so the pose is the
-MuJoCo camera's as it stands. The node and the camera are named after the sensor's address, and the
+MuJoCo camera's as it stands. Its ``znear``/``zfar`` are the clip planes the sensor renders with,
+which need not be the model's. The node and the camera are named after the sensor's address, and the
 node's ``extras`` carry ``sensor`` (that address), ``kind`` (``rgb`` or ``depth``) and the published
 image's ``width`` and ``height``.
 

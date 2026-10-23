@@ -14,9 +14,9 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
-The render is always RGB; it is converted after the lens and before the noise, so the noise is in the
-published encoding's own levels (a ``mono8`` frame gets grey-level noise), and every consumer of the
-frame -- the raw image, the compressed one, a recording -- reads the same pixels.
+The render is always RGB; it is converted after the lens and before the blur and the noise, so the
+noise is in the published encoding's own levels (a ``mono8`` frame gets grey-level noise), and every
+consumer of the frame -- the raw image, the compressed one, a recording -- reads the same pixels.
 
 Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
 ``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
@@ -37,7 +37,7 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import Endpoint, SimContext
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 from roqsim.rendering import FrameRenderer, hold_gc
 from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
@@ -46,6 +46,10 @@ from roqsim.types import CameraInfo, Image
 # imported from the bridge: a sensor package must not depend on a transport backend, so the two
 # defaults agree by both citing image_transport, not by sharing a symbol.
 DEFAULT_JPEG_QUALITY = 95
+
+#: The near plane in metres every camera pass renders with unless a world sets ``render_near``: a
+#: physical distance nearer than any device's working range, independent of the world's size.
+DEFAULT_RENDER_NEAR = 0.01
 
 #: The colour encodings a camera publishes, as ROS spells them.
 COLOR_ENCODINGS = ("rgb8", "bgr8", "mono8")
@@ -253,6 +257,7 @@ class CameraPlugin(Plugin):
                                  #   coefficients, so camera_info keeps describing its own pixels
           noise: null            # {gaussian_sigma: grey levels, blur_sigma: px}: the colour image's
                                  #   blur, then additive noise from ctx.rng_for (after `distortion`)
+          render_near: 0.01      # m, > 0; the near plane every pass renders with -- see below
           on_demand: false       # render only for a consumer that asks -- a transport subscriber or
                                  #   an in-process claim (Endpoint.claim); without a transport, a
                                  #   stepped run then renders nothing until a plugin claims a frame
@@ -266,6 +271,15 @@ class CameraPlugin(Plugin):
                                  #   {image: /camera/color/image_raw, camera_info: /camera/color/camera_info}
                                  # (overrides namespace+default; see Plugin.topic_override)
                                  # `image_compressed` follows `image` unless hardwired itself.
+
+    **Render planes.** Every pass of a camera -- colour, depth, registered depth, labels -- is drawn
+    between ``render_near`` and the model's own far plane (``visual/map zfar`` times its extent).
+    The near plane is a physical distance rather than the model's, which ``visual/map znear`` times
+    the extent puts tens of centimetres out in a large world, so what a camera sees does not depend
+    on the world's size. The planes are set in the camera's own renderer's scene
+    (:class:`roqsim.rendering.FrameRenderer`), so the model, the viewer, an export and every other
+    camera keep theirs. What a depth camera *senses* is a separate range, applied after the render
+    (``depth_camera``).
     """
 
     parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
@@ -321,6 +335,9 @@ class CameraPlugin(Plugin):
         self._intr_cfg = {k: self.config.get(k) for k in ("fx", "fy", "cx", "cy")}
         self._distortion_cfg = self.config.get("distortion")
         self.on_demand = bool(self.config.get("on_demand", False))
+        self.render_near = float(self.config.get("render_near", DEFAULT_RENDER_NEAR))
+        #: The (near, far) planes in metres every pass renders with, resolved in configure().
+        self._planes: tuple[float, float] | None = None
         noise = self.config.get("noise") or {}
         self._noise_sigma = float(noise.get("gaussian_sigma", 0.0))
         self._blur_sigma = float(noise.get("blur_sigma", 0.0))
@@ -352,6 +369,9 @@ class CameraPlugin(Plugin):
             )
         if not 1 <= int(config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)) <= 100:
             errors.append("'jpeg_quality' must be between 1 and 100")
+        render_near = float(config.get("render_near", DEFAULT_RENDER_NEAR))
+        if not (math.isfinite(render_near) and render_near > 0):
+            errors.append("'render_near' must be a distance > 0 m")
         for key in ("fx", "fy"):
             if config.get(key) is not None and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
@@ -383,6 +403,14 @@ class CameraPlugin(Plugin):
                 )
         return errors
 
+    def _render_planes(self, model) -> tuple[float, float]:
+        """The (near, far) planes in metres every pass renders with.
+
+        Near is ``render_near``, a physical distance; far is the model's own far plane. Neither
+        follows the model's near plane, which grows with the world.
+        """
+        return self.render_near, float(model.vis.map.zfar) * float(model.stat.extent)
+
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
@@ -404,6 +432,14 @@ class CameraPlugin(Plugin):
         )
         if self._distortion_cfg is not None:
             self._dist_map = _build_distortion_map(self._intr)
+        near, far = self._render_planes(m)
+        if far <= near:
+            # A config error, raised here because only the compiled model knows its far plane.
+            raise PluginError(
+                f"{self.address}: 'render_near' ({near:g} m) must be nearer than the model's far "
+                f"plane ({far:g} m, visual/map zfar times its extent)"
+            )
+        self._planes = (near, far)
 
         self._configure_extra(ctx, prefix)
 
@@ -414,7 +450,10 @@ class CameraPlugin(Plugin):
         return [self._scene_camera("rgb", self._cam_id, self._intr)]
 
     def _scene_camera(self, kind: str, cam_id: int, intr: Intrinsics) -> SensorCamera:
-        return SensorCamera(self.address, cam_id, kind, intr.width, intr.height, intr.fx, intr.fy)
+        near, far = self._planes
+        return SensorCamera(
+            self.address, cam_id, kind, intr.width, intr.height, intr.fx, intr.fy, near, far
+        )
 
     #: Endpoints this camera declares that need no render: a lone subscriber to one of them (an
     #: rviz panel on camera_info, say) must not switch the renderer on.
@@ -527,20 +566,25 @@ class CameraPlugin(Plugin):
         self._last_capture = ctx.sim_time
         self._stamp = float(ctx.sim_time)
         if self._frames is None:
+            near, far = self._planes
             self._frames = FrameRenderer(
-                ctx.model, self._intr.width, self._intr.height, camera=self._cam_id
+                ctx.model,
+                self._intr.width,
+                self._intr.height,
+                camera=self._cam_id,
+                near=near,
+                far=far,
             )
         # One GL critical section for every pass off this renderer: see `hold_gc`.
         with hold_gc():
-            r = self._frames.raw
-            r.disable_depth_rendering()
             rgb = self._frames.render(ctx.data).copy()
             if self._dist_map is not None:
                 # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
                 # views of the SAME array, so warping downstream would either pay twice or warp
-                # twice. Depth is deliberately untouched -- a real RealSense publishes an
-                # already-rectified depth stream with D = 0, so distorting it would move the sim
-                # AWAY from the sensor.
+                # twice. The depth camera's own depth stream is deliberately untouched -- a real
+                # RealSense publishes it already rectified, with D = 0, so distorting it would move
+                # the sim AWAY from the sensor. Registered depth shares this lens and is warped
+                # with it (depth_camera.py).
                 import cv2
 
                 rgb = cv2.remap(
@@ -554,7 +598,7 @@ class CameraPlugin(Plugin):
             if self._blur_sigma > 0 or self._noise_sigma > 0:
                 frame = self._degrade(ctx, frame)
             self._color_frame = frame
-            self._capture_extra(ctx, r)
+            self._capture_extra(ctx, self._frames)
 
     def _degrade(self, ctx: SimContext, frame: np.ndarray) -> np.ndarray:
         """Blur, then additive Gaussian noise: the colour stream's own errors, after the lens.
@@ -574,8 +618,11 @@ class CameraPlugin(Plugin):
             ).astype(np.uint8)
         return out
 
-    def _capture_extra(self, ctx: SimContext, renderer: mujoco.Renderer) -> None:
-        """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer."""
+    def _capture_extra(self, ctx: SimContext, frames: FrameRenderer) -> None:
+        """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer.
+
+        *frames* carries this camera's clip planes; a pass drawn through ``frames.raw`` would not.
+        """
 
     def on_reset(self, ctx: SimContext) -> None:
         """Clear the capture gate and the payloads, because a reset restarts ``sim_time`` at 0.

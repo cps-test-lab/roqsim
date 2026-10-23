@@ -207,6 +207,39 @@ def test_registered_depth_through_the_colour_camera_is_refused():
         _engine(OAKD, depth_camera="cam", registered_depth=True)
 
 
+def test_registered_depth_without_depth_is_refused():
+    with pytest.raises(PluginError, match="registered_depth"):
+        _engine(depth_camera="cam_depth", registered_depth=True)
+
+
+def test_registered_depth_through_a_lens_lies_on_the_colour_pixels():
+    """A colour camera with ``distortion:`` publishes a warped image and those coefficients, and
+    the registered stream shares its ``camera_info``: so its depth is warped the same way."""
+    cv2 = pytest.importorskip("cv2")
+    lens = [-0.3, 0.1, 0.0, 0.0, 0.0]
+    ideal = _endpoint(
+        _engine(depth=True, depth_camera="cam_depth", registered_depth=True), "registered_depth"
+    ).read()
+    engine = _engine(depth=True, depth_camera="cam_depth", registered_depth=True, distortion=lens)
+    plugin = next(p for p in engine.plugins if hasattr(p, "registered_depth"))
+    frame = _endpoint(engine, "registered_depth").read()
+    want = cv2.remap(
+        ideal.data,
+        plugin._dist_map[0],
+        plugin._dist_map[1],
+        cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=np.inf,
+    )
+    assert not np.array_equal(want, ideal.data)
+    np.testing.assert_array_equal(frame.data, want)
+    assert (
+        _endpoint(engine, "registered_depth_camera_info").read()
+        == _endpoint(engine, "camera_info").read()
+    )
+    engine.shutdown()
+
+
 # -- the depth frame's stamp ------------------------------------------------------------------
 
 
@@ -216,76 +249,4 @@ def test_a_depth_frame_carries_the_sim_time_it_was_captured_at():
         frame = _endpoint(engine, name).read()
         assert isinstance(frame, Image)
         assert frame.stamp == pytest.approx(engine.ctx.sim_time), name
-    engine.shutdown()
-
-
-# -- the near clip plane ----------------------------------------------------------------------
-
-
-class _BigRoom(Plugin):
-    """A box 0.15 m in front of a depth camera, in a world 40 m across, where MuJoCo's default near
-    plane (znear 0.01 of the extent) stands about 0.2 m out."""
-
-    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        spec.worldbody.add_geom(
-            type=mujoco.mjtGeom.mjGEOM_PLANE, size=[20, 20, 0.1], rgba=[0.3, 0.3, 0.3, 1]
-        )
-        spec.worldbody.add_geom(
-            type=mujoco.mjtGeom.mjGEOM_BOX, pos=[15, 15, 1], size=[1, 1, 1], rgba=[1, 1, 1, 1]
-        )
-        spec.worldbody.add_geom(
-            type=mujoco.mjtGeom.mjGEOM_BOX, pos=[-0.2, 0, 0.5], size=[0.05, 0.3, 0.3]
-        )
-        spec.worldbody.add_camera(
-            name="cam", pos=[0, 0, 0.5], xyaxes=[0, 1, 0, 0, 0, 1], fovy=45, resolution=[64, 48]
-        )
-
-
-def test_a_depth_camera_sees_from_its_own_clip_near_in_a_large_world():
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [
-                {f"{__name__}:_BigRoom": {}},
-                {OAKD: {"camera": "cam", "depth_camera": "cam", "clip_near": 0.1}},
-            ],
-        }
-    )
-    engine = Engine(cfg)
-    engine.ctx.seed = 1
-    engine.setup()
-    m = engine.ctx.model
-    assert m.vis.map.znear * m.stat.extent == pytest.approx(0.1)
-    engine.reset()
-    engine.step()
-    depth = _endpoint(engine, "depth").read().data
-    assert depth[24, 32] == pytest.approx(0.15, abs=1e-3)
-    engine.shutdown()
-
-
-def test_the_near_plane_is_never_pushed_out():
-    engine = _engine(OAKD, depth_camera="cam", clip_near=5.0, clip_far=10.0)
-    m = engine.ctx.model
-    assert m.vis.map.znear * m.stat.extent < 5.0
-    engine.shutdown()
-
-
-def test_a_second_camera_at_the_same_range_leaves_the_plane_where_the_first_put_it(caplog):
-    import logging
-
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [
-                {f"{__name__}:_BigRoom": {}},
-                {OAKD: {"camera": "cam", "depth_camera": "cam", "clip_near": 0.1}},
-                {OAKD: {"camera": "cam", "depth_camera": "cam", "clip_near": 0.1}, "name": "two"},
-            ],
-        }
-    )
-    engine = Engine(cfg)
-    engine.ctx.seed = 1
-    with caplog.at_level(logging.INFO, logger="roqsim_sensors.plugins.depth_camera"):
-        engine.setup()
-    assert len([r for r in caplog.records if "lowered" in r.getMessage()]) == 1
     engine.shutdown()
