@@ -27,7 +27,9 @@ from roqsim.engine import Engine
 CABINET = [0.025, 0.0, 0.35]
 ARM_IN_CABINET = [0.133, 0.0, 0.416]
 ARM = [CABINET[0] + ARM_IN_CABINET[0], 0.0, CABINET[2] + ARM_IN_CABINET[2]]
-YAW = -1.5708
+#: The spawn yaw for the vendor's -pi/2: the ur5e model's root body is a half turn from its spawn
+#: frame (docs/plugins.rst).
+YAW = 1.5708
 
 
 def _world(tmp_path, riser=None):

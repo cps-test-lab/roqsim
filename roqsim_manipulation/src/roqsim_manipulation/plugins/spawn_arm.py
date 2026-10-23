@@ -89,7 +89,7 @@ rather than floating where its ``pose`` puts it::
       robot: base
       body: base_link
       riser: {model: mpo_cabinet, pose: {position: {x: 0.025, z: 0.35}}}
-    pose: {position: {x: 0.158, z: 0.766}, orientation: {yaw: -1.5708}}
+    pose: {position: {x: 0.158, z: 0.766}, orientation: {yaw: 1.5708}}
 
 The riser's ``pose`` and the arm's are both in the **mount body's** frame, which is how a robot's
 description states them, so neither has to be re-expressed relative to the other. The riser must be
