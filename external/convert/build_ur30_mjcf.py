@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 
 UR_URL = "https://github.com/UniversalRobots/Universal_Robots_ROS2_Description.git"
-# Pinned. If this moves, roqsim_manipulation_assets/THIRD_PARTY.md and the port log move with it.
+# Pinned. ur30.xml and UR30_LICENSE beside it record this revision, and the generator writes both.
 UR_COMMIT = "970bf8aaed1ffa160ca86ab4bb6c04181f7b592d"
 UR_SUBDIR = "config/ur30"
 
