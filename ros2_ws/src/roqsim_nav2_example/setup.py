@@ -41,6 +41,7 @@ setup(
                 "worlds/depot_nav2.yaml",
                 "worlds/g1_nav2.yaml",
                 "worlds/spot_nav2.yaml",
+                "worlds/spot_ros2_interface.yaml",
                 "worlds/piracer_nav2.yaml",
             ],
         ),

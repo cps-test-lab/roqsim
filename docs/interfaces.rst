@@ -72,6 +72,30 @@ Anything not stated keeps the model's own value, so a world says what the experi
 nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not joint names
 (``wrist_3_joint``) — a joint name is refused, naming the actuator that drives it.
 
+A gripper's finger servo is stated the same way. Where the hand is part of the model (``panda``,
+``frankie``, ``gen3``) it is named under the spawn's ``actuators:``; a gripper welded on with
+``end_effector:`` has a block of its own:
+
+.. code-block:: yaml
+
+   - spawn_arm:
+       model: panda
+       actuators:
+         each:
+           actuator8: {p: 3000, d: 50}      # the Franka Hand: N/m, N*s/m on the finger tendon
+   - spawn_arm:
+       model: ur5e
+       end_effector:
+         model: robotiq_2f85
+         actuators:
+           each:
+             fingers_actuator: {p: 300, d: 20}
+
+A finger servo on a tendon takes ``p`` and ``d`` only, both positive, and keeps its command and
+force ranges: a commanded width still closes the fingers to that width, with the stiffness the
+world stated. Unstated, the model's own servo holds (2000 N/m and 40 N*s/m on the Franka Hand).
+When the block also states a shared law for the arm, the finger entry names ``control: position``.
+
 The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
 interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
 That is a magnitude: it sets the larger bound of the model's ``forcerange`` and keeps the range's
@@ -199,8 +223,9 @@ Choosing a GL backend
 ---------------------
 
 ``MUJOCO_GL`` selects the offscreen renderer, and which value works is a property of the **machine**:
-``egl`` needs a render device, and a CPU-only node needs ``osmesa``. Left unset, MuJoCo's own default
-fails on such a node with a message about a broken GL install -- the wrong diagnosis.
+``egl`` needs a render device unless its EGL renders in software, and a CPU-only node needs
+``osmesa``. Left unset, MuJoCo's own default fails on such a node with a message about a broken GL
+install -- the wrong diagnosis.
 
 **The variable is read once, while ``import mujoco`` runs, and binds ``GLContext`` there and then.**
 Setting it afterwards moves the variable and nothing else. Unset is not an error either: an empty
@@ -208,8 +233,10 @@ value falls through to ``glfw``, which on a headless node opens no display and a
 first ``mujoco.Renderer`` with ``mujoco.FatalError: gladLoadGL error``.
 
 So ``import roqsim`` picks one when ``MUJOCO_GL`` is unset (see
-:func:`roqsim.gl.select_offscreen_gl`): a render node means ``egl``, its absence means ``osmesa``.
-An explicit ``MUJOCO_GL`` is always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
+:func:`roqsim.gl.select_offscreen_gl`): a ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` decides,
+because MuJoCo's egl and osmesa backends each refuse to import under the other's; with neither
+named, a render node means ``egl`` and its absence means ``osmesa``. An explicit ``MUJOCO_GL`` is
+always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
 happen where the simulator runs -- a run configured on one machine and dispatched to another
 cannot know.
 

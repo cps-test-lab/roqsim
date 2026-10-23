@@ -28,11 +28,11 @@ hand-assemble.
 
 - **One YAML file per world.** Robots, sensors, props and scene declared together; plugins hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
-- **40 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
+- **41 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
   Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, ROX-Diff, LGDXRobot2,
-  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 12 arms and 2 grippers (UR10e, UR5e, UR30,
+  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 12 arms and 3 grippers (UR10e, UR5e, UR30,
   Panda, Gen3, xArm7, LBR iiwa 7 and 14, M1013, OpenManipulator-X, ViperX 300s, WidowX 250s; Robotiq
-  2F-85, Schunk PG+70), 2 mobile manipulators (TIAGo Pro, Frankie), 4 humanoids (Unitree G1,
+  2F-85 and Hand-E, Schunk PG+70), 2 mobile manipulators (TIAGo Pro, Frankie), 4 humanoids (Unitree G1,
   G1 + Dex1, LimX Oli, AgiBot G2), Boston Dynamics Spot, the Crazyflie 2 and an X500 — each
   vendored with pinned upstream provenance, the X500 authored from PX4's own airframe definition.
 - **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with
@@ -105,7 +105,7 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 
 | license | assets |
 | --- | --- |
-| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
+| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq 2F-85 (ROS-Industrial), Robotiq Hand-E (© Robotiq), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
 | Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, Maker's Pet oomwoo! One and Mini |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
 | MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |

@@ -1,0 +1,19 @@
+# Gripper half of the arm_controller config, shipped with the Robotiq Hand-E description.
+#
+# An END-EFFECTOR manifest (see robotiq_2f85.manifest.yaml for the mechanism): `spawn_arm:
+# {end_effector: {model: robotiq_hande}}` merges these keys into the arm's own arm_controller, so a
+# world swaps between the three grippers with one line.
+components:
+  - arm_controller:
+      # The Hand-E's ctrl is Robotiq's position register, 0 (open) .. 255 (closed), as the 2F-85's
+      # is. Start open, so a plan can approach an object.
+      gripper_ctrl: 0.0
+      # Prismatic fingers, so the gripper position arm_controller reports and a GripperCommand
+      # carries is the finger's travel in METRES. The joint name and its convention are those of
+      # Robotiq's robotiq_description: 0 open to 0.025 closed, like the 2F-85 knuckle's 0 open, so
+      # MoveIt's gripper joint and MuJoCo's are the same string with the same values.
+      gripper_joint: hande_left_finger_joint
+      # 0.025 m per finger is the datasheet's 50 mm stroke; measured between the pad faces on this
+      # model: 50.0 mm open, 0.0 mm closed.
+      gripper_open: 0.0
+      gripper_close: 0.025

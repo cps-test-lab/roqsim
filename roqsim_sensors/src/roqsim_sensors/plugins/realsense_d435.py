@@ -106,8 +106,12 @@ class RealsenseD435Plugin(DepthCameraPlugin):
 
     def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         if self.depth:
+            # realsense-ros publishes depth aligned to colour (`align_depth.enable`) here.
             self._add_depth_endpoints(
-                ctx, join_topic(DEPTH_PREFIX, "image_rect_raw"), self.depth_frame_id
+                ctx,
+                join_topic(DEPTH_PREFIX, "image_rect_raw"),
+                self.depth_frame_id,
+                registered_topic="camera/aligned_depth_to_color/image_raw",
             )
 
     # As expensive to serialise as the colour frame; see camera_common's `image`.

@@ -455,6 +455,7 @@ CASES: dict[str, Case] = {
     "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
+    "spot_body_camera": Case(lambda _: _sensor("spot_body_camera")),
     "fiducial_marker": _static(
         {
             "fiducial_marker": {
@@ -627,6 +628,13 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     **{name: {"_hits": _CAST_BUFFERS} for name in _RAY_SENSORS},
     **{name: {"_frames": _RENDERER} for name in _CAMERAS},
     **{name: {"_frames": _RENDERER, "_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
+    # A device with its own depth optics: a second renderer, and registered depth's mask.
+    "spot_body_camera": {
+        "_frames": _RENDERER,
+        "_depth_frames": _RENDERER,
+        "_invalid": _DEPTH_MASK,
+        "_registered_invalid": _DEPTH_MASK,
+    },
 }
 
 #: Plugins with no world here to configure them in.

@@ -11,8 +11,8 @@ Four layers, because each catches a different mistake:
 * **the plugin** -- what ``arm_controller`` publishes and does: the endpoint's ``effort_key`` hint, the
   limit, the force range a clamp writes, saturation at the model's own range, and the reset.
 * **the callers** -- the values existing scenarios and MoveIt send are accepted, never refused.
-* **the physics** -- that the clamp is what the gripper puts into an object: the force each PG+70 jaw
-  presses with, and the effort a 2F-85 knuckle saturates at when closed on a parcel.
+* **the physics** -- that the clamp is what the gripper puts into an object: the force each PG+70 and
+  Hand-E jaw presses with, and the effort a 2F-85 knuckle saturates at when closed on a parcel.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ SHIPPED = [
     pytest.param("robotiq_2f85", "robotiq_85_left_knuckle_joint", 0.5, 2.5, id="robotiq_2f85"),
     pytest.param("gen3", "robotiq_85_left_knuckle_joint", 0.5, 2.5, id="gen3"),
     pytest.param("schunk_pg70", "finger_left_joint", 0.5, 100.0, id="schunk_pg70"),
+    pytest.param("robotiq_hande", "hande_left_finger_joint", 0.5, 185.0, id="robotiq_hande"),
     pytest.param("unitree_g1_dex1", "left_dex1_finger_joint_1", 1.0, 20.0, id="unitree_g1_dex1"),
     pytest.param("vx300s", "left_finger", 1.0, 35.0, id="vx300s"),
     pytest.param("wx250s", "left_finger", 1.0, 35.0, id="wx250s"),
@@ -41,6 +42,11 @@ SHIPPED = [
 #: The PG+70's limit on one jaw, and the two clamps the physics check closes at, inside it.
 PG70_LIMIT_N = 100.0
 PG70_CLAMPS_N = (20.0, 50.0)
+
+#: The Hand-E's limit on one jaw -- the datasheet's 185 N grip force, which Robotiq's manual (5.2.2,
+#: W = 2 F mu / Sf) makes the force of each jaw -- and clamps from its 20 N minimum up to the limit.
+HANDE_LIMIT_N = 185.0
+HANDE_CLAMPS_N = (20.0, 100.0, 185.0)
 
 #: The 2F-85's knuckle limit, and a clamp inside it.
 F85_LIMIT_NM = 2.5
@@ -60,7 +66,7 @@ _PARCEL_WORLD = """<mujoco model="grip_force">
   <worldbody>
     <body name="parcel" pos="0 0 {pz}">
       <freejoint/>
-      <geom name="parcel" type="box" size="0.03 0.0225 0.01875" mass="0.211" condim="4"
+      <geom name="parcel" type="box" size="{hx} {hy} 0.01875" mass="0.211" condim="4"
             friction="1.2 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.005 1"/>
     </body>
   </worldbody>
@@ -83,7 +89,17 @@ _GRASP = {
         0.0,
         (0.0, 255.0),
     ),
+    "robotiq_hande": (
+        0.14675,
+        0.01025,
+        ("hande_left_finger_joint", "hande_right_finger_joint"),
+        0.0,
+        (0.0, 255.0),
+    ),
 }
+
+#: Grippers whose jaws close along their own x, so the parcel's 45 mm side is turned to lie there.
+_CLOSES_ALONG_X = {"robotiq_hande"}
 
 
 def _compiled(model: str) -> mujoco.MjModel:
@@ -155,7 +171,12 @@ def test_every_shipped_gripper_can_take_a_clamp(model, joint, gain, limit):
 
 
 @pytest.mark.parametrize(
-    "gripper,limit", [("schunk_pg70", PG70_LIMIT_N), ("robotiq_2f85", F85_LIMIT_NM)]
+    "gripper,limit",
+    [
+        ("schunk_pg70", PG70_LIMIT_N),
+        ("robotiq_2f85", F85_LIMIT_NM),
+        ("robotiq_hande", HANDE_LIMIT_N),
+    ],
 )
 def test_the_endpoint_names_the_effort_entry_and_its_limit(tmp_path, gripper, limit):
     assert _effort(_engine(tmp_path, gripper)).limit == pytest.approx(limit)
@@ -225,8 +246,9 @@ def _closed_on_a_parcel(gripper: str, effort_limit: float):
     """The gripper closed on a parcel in zero g, with its joint effort clamped at ``effort_limit``."""
     jaw_plane, jaw_half_z, joints, home, (ctrl_open, ctrl_close) = _GRASP[gripper]
     palm_z = 0.5
+    hx, hy = (0.0225, 0.03) if gripper in _CLOSES_ALONG_X else (0.03, 0.0225)
     world = mujoco.MjSpec.from_string(
-        _PARCEL_WORLD.format(pz=palm_z - (jaw_plane + 0.01875 - jaw_half_z))
+        _PARCEL_WORLD.format(pz=palm_z - (jaw_plane + 0.01875 - jaw_half_z), hx=hx, hy=hy)
     )
     frame = world.worldbody.add_frame()
     frame.pos = [0.0, 0.0, palm_z]
@@ -254,10 +276,23 @@ def _closed_on_a_parcel(gripper: str, effort_limit: float):
     return m, d, joint_ids[0]
 
 
-@pytest.mark.parametrize("clamp", PG70_CLAMPS_N)
-def test_each_pg70_jaw_presses_with_the_clamp(clamp):
-    m, d, _ = _closed_on_a_parcel("schunk_pg70", clamp)
-    pads = [_named(m, mujoco.mjtObj.mjOBJ_GEOM, n) for n in ("finger_left_pad", "finger_right_pad")]
+_JAW_FORCE_CASES = [
+    pytest.param(
+        "schunk_pg70", ("finger_left_pad", "finger_right_pad"), c, id=f"schunk_pg70-{c:g}N"
+    )
+    for c in PG70_CLAMPS_N
+] + [
+    pytest.param(
+        "robotiq_hande", ("hande_left_pad", "hande_right_pad"), c, id=f"robotiq_hande-{c:g}N"
+    )
+    for c in HANDE_CLAMPS_N
+]
+
+
+@pytest.mark.parametrize("gripper,pad_names,clamp", _JAW_FORCE_CASES)
+def test_each_jaw_presses_with_the_clamp(gripper, pad_names, clamp):
+    m, d, _ = _closed_on_a_parcel(gripper, clamp)
+    pads = [_named(m, mujoco.mjtObj.mjOBJ_GEOM, n) for n in pad_names]
     parcel = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "parcel")
     wrench = np.zeros(6)
     per_jaw = []
