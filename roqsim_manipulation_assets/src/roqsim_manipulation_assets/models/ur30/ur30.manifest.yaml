@@ -1,0 +1,17 @@
+# Default controller shipped with the ur30 arm description.
+#
+# `spawn_arm: {model: ur30}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override a default, nest an entry with the same label under that spawn_arm's
+# `components:` (it merges into this one, per key); to opt out, set `spawn_arm` config
+# `default_plugins: false`.
+#
+# The F/T sensor is deliberately NOT in this manifest. The arm ships the `fts_site` (its flange,
+# where the UR30's built-in sensor measures); whether a run measures the wrench is the experiment's
+# choice -- a world adds `force_torque`.
+components:
+  - arm_controller: {}   # the home target keeps the plugin/model defaults
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`: `tool_site`, on
+# the flange face inside the `tool0` body, so a tool hangs below the `fts_site` cut.
+end_effector:
+  site: tool_site

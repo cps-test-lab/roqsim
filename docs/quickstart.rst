@@ -28,10 +28,10 @@ not what it gets: the achieved factor is a property of the host's load, a step t
 is never made up, and the runner warns at the end of a run it could not pace. So a duration a trial
 must actually get is counted on simulated time — the recording's ``t``, or ``/clock`` for a node —
 and never on a wall clock, which buys a varying amount of it. Headless works anywhere, offscreen
-sensors included: ``import roqsim`` picks a backend that exists on this machine (``egl`` where there
-is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be set by hand
-— set it only to override that choice. To record a run, add ``--record`` — see
-:ref:`recording-a-run` below.
+sensors included: ``import roqsim`` picks a backend that exists on this machine (the one
+``PYOPENGL_PLATFORM`` names, else ``egl`` where there is a render device and ``osmesa`` where there
+is not), so ``MUJOCO_GL`` need not be set by hand — set it only to override that choice. To record
+a run, add ``--record`` — see :ref:`recording-a-run` below.
 
 A running simulation prints ``control: <uri>`` and serves its endpoints and run control there:
 ``roqsim endpoints``, ``roqsim read``, ``roqsim call`` and ``roqsim ctl pause|resume|step N`` from
@@ -770,10 +770,11 @@ texture on a drawn geom is refused, naming the material. Lights and the skybox a
 perspective camera on a node of its own, the child of the node of the body it is mounted on, at its
 mount pose, so it follows that body when a viewer moves it. The node and the camera are named after
 the sensor's address (``robot.oakd.oakd_camera``), the projection is the one the sensor publishes
-(``yfov`` and ``aspectRatio`` from its intrinsics, ``znear``/``zfar`` the planes MuJoCo renders it
-with), and the node's ``extras`` carry ``sensor`` (the address), ``kind`` (``rgb``, or ``depth`` for a
-device that publishes depth and no colour) and the image's ``width`` and ``height``. A viewer renders
-the scene from that node to see what the sensor saw, with no image stored.
+(``yfov`` and ``aspectRatio`` from its intrinsics, ``znear``/``zfar`` the clip planes the sensor
+renders with: its ``render_near`` and the model's far plane), and the node's ``extras`` carry
+``sensor`` (the address), ``kind`` (``rgb``, or ``depth`` for a device that publishes depth and no
+colour) and the image's ``width`` and ``height``. A viewer renders the scene from that node to see
+what the sensor saw, with no image stored.
 
 **Size.** By default only core glTF is written, which every loader reads. ``--max-tex-dim`` caps
 every image's longest side (default 1024, 0 keeps them whole). ``--texture-format jpeg`` stores
@@ -1141,15 +1142,19 @@ which is what makes a stepped run able to render at all.
 The adapter can also leave the scene next to the run: set ``ROQSIM_SCENE_EXPORT_DIR`` and every
 (re)built world is exported as ``scene.glb`` into that directory after ``reset()`` — the file
 ``roqsim export gltf`` writes with its default options, but of the *exact* simulated world
-(``world_overrides`` included), captured at its true initial pose. A relative path is anchored to ``RUN_OUTPUT_DIR`` when it
-is set, else to the scenario's ``output_dir`` (which scenario-execution passes to ``setup()``), else to
-the process working directory.
+(``world_overrides`` included), captured at its true initial pose. A relative path is anchored to
+the scenario's own directory when scenario-execution hands one to ``reset()`` (its ``output_dir``
+argument), else to ``RUN_OUTPUT_DIR`` when it is set, else to the ``output_dir`` scenario-execution
+passes to ``setup()``, else to the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_RECORD_TRACKS``, ``ROQSIM_RECORD_EXCLUDE`` -- see
-:ref:`recording-a-run`), with a relative path anchored to ``RUN_OUTPUT_DIR`` when it is set, else to
-the scenario's ``output_dir``. That is what turns a run into something replayable: the scene
-above is the world's geometry, and the recording is what moved in it.
+:ref:`recording-a-run`), with a relative path anchored the same way. A parameter file that runs
+several scenarios in one process hands ``reset()`` a directory per scenario, and the recording
+and the scene export roll with it: the scenario before is finished, with its summary, and the next
+one records and exports its scene into its own directory, with the engine kept rather than rebuilt. That is what turns a run into
+something replayable: the scene above is the world's geometry, and the recording is what moved
+in it.
 
 What a scenario can ask the simulation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

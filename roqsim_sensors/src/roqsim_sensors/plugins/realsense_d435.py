@@ -104,10 +104,20 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         self._cloud: PointCloud | None = None
         self._uv: tuple[np.ndarray, np.ndarray] | None = None
 
+    def validate_config(self, config: dict) -> list[str]:
+        errors = super().validate_config(config)
+        if config.get("registered_depth") and not (config.get("depth") or config.get("points")):
+            errors.append("'registered_depth' needs the depth stream on: set 'depth: true'")
+        return errors
+
     def _configure_extra(self, ctx: SimContext, prefix: str) -> None:
         if self.depth:
+            # realsense-ros publishes depth aligned to colour (`align_depth.enable`) here.
             self._add_depth_endpoints(
-                ctx, join_topic(DEPTH_PREFIX, "image_rect_raw"), self.depth_frame_id
+                ctx,
+                join_topic(DEPTH_PREFIX, "image_rect_raw"),
+                self.depth_frame_id,
+                registered_topic="camera/aligned_depth_to_color/image_raw",
             )
 
     # As expensive to serialise as the colour frame; see camera_common's `image`.
@@ -125,10 +135,10 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         """The depth frame reprojected to points in the depth optical frame."""
         return self._cloud
 
-    def _capture_extra(self, ctx: SimContext, renderer) -> None:
+    def _capture_extra(self, ctx: SimContext, frames) -> None:
         if not self.depth:
             return
-        super()._capture_extra(ctx, renderer)
+        super()._capture_extra(ctx, frames)
         if self.points:
             self._cloud = PointCloud(points=self._reproject(self._depth))
 

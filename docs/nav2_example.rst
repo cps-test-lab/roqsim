@@ -79,6 +79,15 @@ Each starts the sim + ROS 2 bridge (``roqsim_ros_bridge``) on its world (``world
   to fetch it and carries on if it cannot, ``python -m roqsim_quadruped.policy.fetch_policy`` fetches
   it, or ``SPOT_POLICY_PATH`` names a copy (see ``roqsim_quadruped/README.md``). Without one,
   ``spot_locomotion`` refuses to load.
+* Spot's body cameras publish the topics and frames the ``spot_ros2`` driver does
+  (``camera/<station>/image``, ``depth/<station>/image``, ``depth_registered/<station>/image``,
+  each with its ``camera_info``, Spot's frames under ``body``), so a perception node written against
+  the real robot runs on ``spot_nav2.yaml`` unchanged. ``worlds/spot_ros2_interface.yaml`` adds the
+  driver's state interface as well -- ``odometry``, its joint names, its QoS and its 0.125 s command
+  lapse -- for an application that reads those; nav2 keeps ``spot_nav2.yaml``, whose ``/odom`` it
+  reads. ``test/test_spot_ros2_swap.py`` runs a consumer written from ``spot_ros2``'s interface
+  alone (``test/spot_ros2_consumer.py``, its expectations pinned in
+  ``test/spot_ros2_interface.json``) against both.
 
 Car-like robots: the PiRacer
 ----------------------------

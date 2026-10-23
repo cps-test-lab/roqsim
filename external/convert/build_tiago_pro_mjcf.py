@@ -8,8 +8,7 @@ script owns the whole chain and is the reproducible record of the port:
 
 Everything a URDF cannot express is added in ``postprocess()``: the holonomic planar drive, the
 visual/collision split, the IMU site, actuators, the 14 gripper ``<mimic>`` couplings as MJCF
-joint equalities, sensors, and the home keyframe. See the package THIRD_PARTY.md for the assumptions
-and their sensitivity.
+joint equalities, sensors, and the home keyframe.
 
 Requires ROS 2 (for ``xacro``) -- PAL's description is xacro-only, so there is no ROS-free path to
 the URDF. The script builds a throwaway ament index over the pinned checkouts, so no colcon
@@ -44,8 +43,8 @@ from sources import resolve_source  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Pinned upstream revisions. All six are Apache-2.0 (c) PAL Robotics S.L. -- the licence text is
-# vendored once as models/tiago_pro/tiago_pro_LICENSE. Bumping a pin here must also update the provenance
-# table in the package THIRD_PARTY.md; the two must not drift.
+# vendored once as models/tiago_pro/tiago_pro_LICENSE. Bumping a pin here must also update the pin
+# table in that file; the two must not drift.
 # ---------------------------------------------------------------------------------------------
 PAL = "https://github.com/pal-robotics"
 SOURCES = {

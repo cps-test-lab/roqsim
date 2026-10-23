@@ -31,6 +31,13 @@ configuration -- can also declare a ``world`` parameter and select the world its
 makes that one scenario instead of N. Ordinary scenarios declare neither and stay
 simulator-agnostic: the world then comes from ``ROQSIM_WORLD``, set by whoever deployed the run.
 
+A runner that executes several scenarios in one process hands ``reset()`` each scenario's own
+output directory (scenario-execution's ``output_dir`` reset argument). The recording and the scene
+export then roll with it: the scenario before is finished and the next one records and exports its
+scene into its own directory, so a parameter file of many scenarios leaves one complete recording
+per scenario rather than one file for all of them. The engine is not rebuilt for it; a reset is
+what separates two scenarios.
+
 Because the world is *compiled* when the engine is built (not on ``reset``), the engine is built
 lazily -- on the first of ``reset()``/``dt``/``step()`` -- so it is constructed with the world and
 overrides in place. A later ``reset()`` naming a different world, or different overrides, rebuilds.
@@ -264,6 +271,8 @@ class MujocoSim(_Base):
         self._viewer: PassiveViewer | None = None
         self._scene_export_pending = False
         self._output_dir: str | None = None
+        #: The directory of the scenario being run, when the runner names one per scenario.
+        self._run_dir: str | None = None
         self._recorder = None
 
     # -- build ------------------------------------------------------------------------------------
@@ -374,21 +383,20 @@ class MujocoSim(_Base):
     def _resolve_out(self, value: str) -> Path:
         """Resolve a relative output path against THIS RUN's directory.
 
-        ``RUN_OUTPUT_DIR`` first, because the scenario's own ``output_dir`` is the campaign root
-        (scenario-execution is started with ``-o /out``) while a run's results are collected from
-        ``/out/<config>/<run>``. Anchored at the root, every run of a sweep writes the same
-        ``run.mcap``, each overwriting the last -- which looks like a working recording until you
-        notice every configuration replays identically, and leaves the run directories with no
-        recording at all.
-
-        A campaign runner that packs several runs into one job sets no ``RUN_OUTPUT_DIR`` (one
-        variable cannot serve them all), and there the scenario's ``output_dir`` is still the best
-        answer available -- so it stays the fallback rather than an error.
+        The scenario's own directory first, when the runner named one on ``reset()``: it is the
+        one place that is this scenario's and no other's. Then ``RUN_OUTPUT_DIR``, which a
+        campaign runner sets for a job of one run. Last the ``output_dir`` of ``setup()``, which is
+        the runner's root (scenario-execution is started with ``-o /out``) while a run's results
+        are collected from ``/out/<config>/<run>``: anchored there, every run of a sweep writes the
+        same ``run.mcap``, each overwriting the last -- which looks like a working recording until
+        you notice every configuration replays identically, and leaves the run directories with no
+        recording at all. It stays the fallback rather than an error because a single scenario run
+        by hand has nothing more specific.
         """
         path = Path(value)
         if path.is_absolute():
             return path
-        base = os.environ.get("RUN_OUTPUT_DIR") or self._output_dir
+        base = self._run_dir or os.environ.get("RUN_OUTPUT_DIR") or self._output_dir
         return Path(base) / path if base else path
 
     def _start_recording(self) -> None:
@@ -489,11 +497,19 @@ class MujocoSim(_Base):
         self._logger = kwargs.get("logger")
         self._output_dir = kwargs.get("output_dir")
 
-    def reset(self, world=None, world_overrides=None, headless=None, **kwargs) -> None:
+    def reset(
+        self, world=None, world_overrides=None, headless=None, output_dir=None, **kwargs
+    ) -> None:
         self._build(
             world or self._default_world,
             world_overrides if world_overrides is not None else self._default_overrides,
         )
+        if output_dir is not None and output_dir != self._run_dir:
+            # A scenario with a directory of its own: the one before it is finished, with its
+            # summary, and this one's recording and scene export start afresh in its directory.
+            self._finish_recording()
+            self._run_dir = output_dir
+            self._scene_export_pending = True
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
         self._engine.reset(**kwargs)
         if self._scene_export_pending:
