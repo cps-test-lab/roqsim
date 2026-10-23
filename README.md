@@ -105,7 +105,7 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 
 | license | assets |
 | --- | --- |
-| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq 2F-85 (ROS-Industrial), Robotiq Hand-E (© Robotiq), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
+| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq 2F-85 (ROS-Industrial), UR30 (parameters © Universal Robots; the UR10e's meshes), Robotiq Hand-E (© Robotiq), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
 | Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, Maker's Pet oomwoo! One and Mini |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
 | MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |

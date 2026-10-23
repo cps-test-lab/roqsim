@@ -10,9 +10,8 @@ Sources:
   [UM] UR30 user manual, PolyScope 5.19, "Maximum Payload".
   [UD] Universal_Robots_ROS2_Description config/ur30 (the generator's pinned input).
 
-The payload test is the one the arm is here for: 25 kg held by a 3.6 kg bore gripper whose centre of
-gravity lies on the tool axis, everywhere a cell beside a pallet cage reaches with the tool pointing
-down, within the joint torque limits -- at rest and at the accelerations such a cell moves at.
+The payload tests hold a 28.6 kg payload whose centre of gravity lies on the tool axis, over a grid
+of tool-down poses, within the joint torque limits -- at rest and at 3 m/s^2.
 """
 
 from __future__ import annotations
@@ -45,15 +44,13 @@ RANGE_RAD = {"shoulder_pan_joint": 2 * math.pi, "shoulder_lift_joint": 2 * math.
 RATED_PAYLOAD_KG = 30.0
 FULL_PERFORMANCE_CURVE = {0.0: 30.0, 0.1: 30.0}
 
-# What a heavy-part cell hangs on the flange: a 3.6 kg bore gripper and a 25 kg part, their common
-# centre of gravity on the tool axis 0.12 m out.
+# The payload: 28.6 kg, its centre of gravity on the tool axis 0.12 m out from the flange.
 PAYLOAD_KG = 25.0 + 3.6
 PAYLOAD_COG_Z = 0.12
-# The cell's accelerations: 3 m/s^2 along each axis (see the bore gripper's carry test).
+# The acceleration the payload must be held at: 3 m/s^2 along each axis.
 ACCEL = 3.0
 
-#: Where such a cell reaches, tool down: horizontal distance from the base axis and flange height
-#: above the base, from the bottom layer of a pallet cage beside the arm up to a station top. The
+#: Tool-down poses: horizontal distance from the base axis and flange height above the base. The
 #: tool-down workspace narrows as the flange rises (the wrist sits d5 + d6 above it), so the grid is
 #: what the arm reaches, not a rectangle.
 REACH_GRID = [(0.5, 0.3), (0.8, 0.3), (1.05, 0.3), (0.5, 0.6), (0.8, 0.6), (1.0, 0.45), (0.5, 0.9)]
@@ -129,13 +126,13 @@ def test_ur30_carries_the_ft_cut_at_its_flange(ur30):
     assert np.allclose(fts, flange, atol=1e-9) and np.allclose(tool, flange, atol=1e-9)
 
 
-def test_cell_payload_is_inside_the_vendor_payload_curve():
+def test_payload_is_inside_the_vendor_payload_curve():
     """Mass under the rated payload, centre of gravity on the tool axis (zero horizontal offset)."""
     assert PAYLOAD_KG <= FULL_PERFORMANCE_CURVE[0.0]
     assert PAYLOAD_KG <= RATED_PAYLOAD_KG
 
 
-# --- the payload at the cell's reach --------------------------------------------------------------
+# --- the payload across the reach grid ------------------------------------------------------------
 
 
 def _with_payload(mass: float, cog_z: float) -> mujoco.MjModel:
@@ -180,7 +177,7 @@ def _limits(m) -> np.ndarray:
     return np.array([m.actuator_forcerange[i][1] for i in range(6)])
 
 
-def test_ur30_holds_the_cell_payload_within_its_torque_limits():
+def test_ur30_holds_the_payload_within_its_torque_limits():
     """At every pose of the grid, static and at 3 m/s^2 along each axis, every joint stays inside."""
     m = _with_payload(PAYLOAD_KG, PAYLOAD_COG_Z)
     d = mujoco.MjData(m)
@@ -245,7 +242,7 @@ def _flange_drift_mm(tmp_path: Path, mass: float, seconds: float = 5.0) -> float
     return drift
 
 
-def test_ur30_holds_the_cell_payload_still_in_simulation(tmp_path):
+def test_ur30_holds_the_payload_still_in_simulation(tmp_path):
     """Spawned through spawn_arm with the payload welded on, the arm stands where it was put."""
     assert _flange_drift_mm(tmp_path, PAYLOAD_KG) < 1.0
 
