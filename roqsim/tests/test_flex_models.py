@@ -296,6 +296,68 @@ def test_friction_is_what_the_flex_contacts_use(tmp_path):
         assert {round(float(c.friction[0]), 6) for c in contacts} == {expected}
 
 
+def test_two_flex_props_rest_on_each_other_through_a_flex_flex_contact(tmp_path):
+    """Two spawned models, each bringing a flex, collide flex against flex after both attaches.
+
+    The lower block is pinned to its welded base plate, the upper one free and dropped onto it: it
+    must come to rest on the lower flex rather than fall through it, and the contact that carries it
+    names both flexes -- by element on each side, as a flex-flex contact does in MuJoCo 3.14.
+    """
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {"spawn_model": {"model": str(_write(tmp_path, "slab", SLAB)), "motion": "static"}},
+                {
+                    "spawn_model": {
+                        "model": str(_write(tmp_path, "based", ON_A_BASE)),
+                        "prefix": "lo_",
+                        "pose": {"position": {"x": 0.0, "y": 0.0, "z": TOP}},
+                        "motion": "static",
+                    },
+                    "name": "lower",
+                },
+                {
+                    "spawn_model": {
+                        "model": str(_write(tmp_path, "soft_block", FREE_BLOCK)),
+                        "prefix": "up_",
+                        "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.1}},
+                    },
+                    "name": "upper",
+                },
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        assert engine.ctx.entities.get("lower").meta["flexes"] == ["lo_soft"]
+        assert engine.ctx.entities.get("upper").meta["flexes"] == ["up_soft"]
+        lower = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_FLEX, "lo_soft")
+        upper = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_FLEX, "up_soft")
+        _settle(engine, 1.0)
+        between = [c for c in _flex_contacts(model, data) if set(c.flex) == {lower, upper}]
+        assert between, "no contact between the two flexes"
+        assert all((c.vert == -1).all() and (c.elem >= 0).all() for c in between)
+
+        def vertices(flex):
+            start, count = model.flex_vertadr[flex], model.flex_vertnum[flex]
+            return data.flexvert_xpos[start : start + count]
+
+        # Resting on the lower flex: above its top layer, by no more than the two collision shells.
+        gap = vertices(upper)[:, 2].min() - vertices(lower)[:, 2].max()
+        assert 0.0 < gap < 0.005, (
+            f"the upper block's bottom is {gap * 1e3:.1f} mm above the lower's top"
+        )
+        assert np.abs(data.qvel).max() < 0.05
+    finally:
+        engine.shutdown()
+
+
 # -- presence: a flex prop made absent and back ---------------------------------------------------
 
 
