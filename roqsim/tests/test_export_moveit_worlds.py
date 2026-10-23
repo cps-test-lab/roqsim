@@ -29,6 +29,7 @@ SHIPPED = [
     "roqsim_manipulation_assets:m1013_demo",
     "roqsim_manipulation_assets:open_manipulator_x_demo",
     "roqsim_manipulation_assets:ur10e_demo",
+    "roqsim_manipulation_assets:ur30_demo",
     "roqsim_manipulation_assets:vx300s_demo",
     "roqsim_manipulation_assets:xarm7_demo",
     "roqsim_mobile_manipulation:frankie_demo",

@@ -653,6 +653,33 @@ def linear_depth(
     return out.astype(np.float32)
 
 
+def has_clear_geoms(model: mujoco.MjModel) -> bool:
+    """Whether any geom of ``model`` is drawn see-through: its own or its material's alpha below 1."""
+    alpha = np.array(model.geom_rgba[:, 3])
+    mat = np.asarray(model.geom_matid)
+    textured = mat >= 0
+    alpha[textured] = np.asarray(model.mat_rgba)[mat[textured], 3]
+    return bool(np.any((alpha > 0.0) & (alpha < 1.0)))
+
+
+def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene) -> None:
+    """Take every see-through geom of a populated scene out of the shadow pass.
+
+    MuJoCo's shadow map is binary: every geom it draws into it blocks the light completely, so a
+    pane of glass or a shrink film at 10 % opacity throws the same full shadow as a steel plate, and
+    a part wrapped in film renders as if it stood in the dark. MuJoCo leaves a geom out of the shadow
+    pass when its category is ``mjCAT_DECOR`` and uses the category for nothing else once the scene
+    is built, so a transparent geom is moved there. It is still drawn and still blended; it only no
+    longer darkens what is behind it.
+    """
+    decor = int(mujoco.mjtCatBit.mjCAT_DECOR)
+    for i in range(scene.ngeom):
+        geom = scene.geoms[i]
+        # By its resolved alpha: MuJoCo sets `transparent` itself, but only inside mjr_render.
+        if geom.rgba[3] < 1.0:
+            geom.category = decor
+
+
 class FrameRenderer:
     """Owns a ``mujoco.Renderer`` and the camera it renders through.
 
@@ -693,6 +720,7 @@ class FrameRenderer:
         self.width = int(width)
         self.height = int(height)
         self._renderer = mujoco.Renderer(model, self.height, self.width)
+        self._clear_geoms = has_clear_geoms(model)
         _log_gl_once()
         self._vopt = mujoco.MjvOption()
         # An absent entity is not in the picture either. Its geoms already have zero alpha, but
@@ -772,6 +800,8 @@ class FrameRenderer:
         # `presence` must not rest on another project's default. Behaviourally a no-op today
         # (MjvOption() IS that default, plus our one line), which is why it is safe to make real.
         self._update_scene(data)
+        if self._clear_geoms:
+            clear_geoms_cast_no_shadow(self._renderer.scene)
         if decorate is not None:
             decorate(self._renderer.scene)
         with hold_gc():
