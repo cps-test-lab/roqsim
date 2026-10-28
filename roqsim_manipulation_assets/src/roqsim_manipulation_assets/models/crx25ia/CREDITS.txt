@@ -1,0 +1,6 @@
+FANUC CRX-25iA (crx25ia)
+  Source:    https://github.com/FANUC-CORPORATION/fanuc_description @ fb40c9803a826ba68c7c8e28ba904a25efa7fcd2 (v2.3.0),
+             fanuc_crx_description, URDF crx30ia
+  Author:    FANUC America Corporation and FANUC CORPORATION
+  License:   Apache-2.0 (full text and changes: CRX25IA_LICENSE beside this file)
+  Converted: external/convert/build_fanuc_mjcf.py

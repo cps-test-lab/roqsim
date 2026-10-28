@@ -1,0 +1,24 @@
+# FANUC M-20iD/25 (FANUC's URDF name m20_25_18d; R-50iA name M-20/25-18D), an industrial arm:
+# 25 kg payload, 1831 mm reach, 250 kg (FANUC Europe MDS-03437-EN "M-20iD/25 (Hollow wrist)").
+# Generated from FANUC's own description: external/convert/build_fanuc_mjcf.py.
+#
+# The arm answers under FANUC's driver names: joints J1..J6 (spawn_arm's `prefix` and
+# arm_controller's `joint_prefix` add the driver's prefix), FANUC's controller names.
+components:
+  - arm_controller:
+      controller_name: joint_trajectory_controller
+      joint_state_broadcaster_name: joint_state_broadcaster
+      # A servo handed only positions trails a trajectory by kv*qd/kp; FANUC's own controller
+      # does not.
+      trajectory_feedforward: velocity
+      # FANUC's maximum speeds (datasheet and description agree), rad/s: 210, 210, 265, 420, 420,
+      # 720 deg/s.
+      max_velocity:
+        J1: 3.66519
+        J2: 3.66519
+        J3: 4.62512
+        J4: 7.33038
+        J5: 7.33038
+        J6: 12.5664
+end_effector:
+  site: tool_site
