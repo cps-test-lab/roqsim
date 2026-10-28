@@ -21,9 +21,10 @@ Not from FANUC, and said so in the MJCF header and the LICENSE file:
 
 - **Meshes.** COLLADA visuals converted per material through ``dae2obj.py`` (pycollada, node
   transforms applied) and decimated with ``reduce-mesh``. The forearm lettering ("FANUC Robot
-  M-20" / "FANUC Robot CRX-30iA", a red word mark and dark text, each one flat material piece) is
-  **dropped**: Apache-2.0 grants no trademark right, and on the CRX-25iA the lettering would also name
-  the wrong model. The collision meshes are FANUC's convex STLs, rewritten as OBJ in metres.
+  M-20" / "FANUC Robot CRX-30iA", a red word mark and dark text, each one flat material piece
+  filling letter-shaped openings in the forearm) is **painted over**: merged into the forearm piece
+  in its colour, so the surface stays closed and reads blank. Apache-2.0 grants no trademark right,
+  and on the CRX-25iA the lettering would also name the wrong model. The collision meshes are FANUC's convex STLs, rewritten as OBJ in metres.
 - **Actuators.** URDF has none. Each joint gets an affine position servo whose gains follow from one
   formula (``servo_gains``); armature stands in for reflected rotor inertia, which FANUC does not
   publish. ``forcerange`` is the description's ``effort``.
@@ -72,7 +73,7 @@ STEMS = ["base", "j1", "j2", "j3", "j4", "j5", "j6"]
 #: the other vendor-converted arms (lbr_iiwa14 58k, m1013 43k).
 TARGET_FACES = 4000
 
-#: A lettering piece is a decal: one of its extents is under this (metres).
+#: A lettering piece is flat: one of its extents is under this (metres).
 DECAL_THICKNESS = 0.025
 
 #: Servo bandwidth per joint (Hz) and damping ratio. The base axes move the arm, the wrist axes a
@@ -98,7 +99,12 @@ VARIANTS = {
         # axis (J1-J3 ~1e-3 kg*m^2 x 140^2, J4-J6 ~1e-4 x 100^2). An assumption; the port log
         # records its sensitivity.
         "armature": [20.0, 20.0, 10.0, 1.0, 1.0, 0.5],
-        "decals": {"j4": [[0.898, 0.0, 0.0], [0.149, 0.149, 0.149]]},
+        "lettering": {
+            "j4": {
+                "into": [0.898, 0.898, 0.0],
+                "pieces": [[0.898, 0.0, 0.0], [0.149, 0.149, 0.149]],
+            }
+        },
         "fts": False,
     },
     "crx25ia": {
@@ -111,7 +117,9 @@ VARIANTS = {
         # As above, for the CRX's smaller motors and strain-wave reducers (J1-J3 ~2.5e-4 x 140^2,
         # J4-J6 ~5e-5 x 100^2).
         "armature": [5.0, 5.0, 2.5, 0.5, 0.5, 0.3],
-        "decals": {"j4": [[1.0, 0.0, 0.0], [0.102, 0.102, 0.102]]},
+        "lettering": {
+            "j4": {"into": [1.0, 1.0, 1.0], "pieces": [[1.0, 0.0, 0.0], [0.102, 0.102, 0.102]]}
+        },
         "fts": True,
     },
 }
@@ -171,8 +179,48 @@ def _faces(path: Path) -> int:
     return sum(1 for ln in path.read_text().splitlines() if ln.startswith("f "))
 
 
+def _append(dst: Path, src: Path) -> None:
+    """Append one compacted OBJ's geometry to another's."""
+    have = sum(1 for ln in dst.read_text().splitlines() if ln.startswith("v "))
+    lines = src.read_text().splitlines()
+    verts = [ln for ln in lines if ln.startswith("v ")]
+    faces = [
+        "f " + " ".join(str(int(t) + have) for t in ln.split()[1:])
+        for ln in lines
+        if ln.startswith("f ")
+    ]
+    text = dst.read_text().splitlines()
+    dst.write_text(
+        "\n".join([ln for ln in text if ln.startswith("v ")] + verts)
+        + "\n"
+        + "\n".join([ln for ln in text if ln.startswith("f ")] + faces)
+        + "\n"
+    )
+
+
+def _strip_normals(path: Path) -> None:
+    """Drop exported normals, so MuJoCo derives smooth ones from the shared vertices.
+
+    Blender's OBJ export writes about one normal per face after a decimation, which renders every
+    triangle flat-shaded.
+    """
+    out = []
+    for ln in path.read_text().splitlines():
+        if ln.startswith("vn "):
+            continue
+        if ln.startswith("f "):
+            ln = "f " + " ".join(t.split("/")[0] for t in ln.split()[1:])
+        out.append(ln)
+    path.write_text("\n".join(out) + "\n")
+
+
 def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> dict[str, list]:
-    """Collada -> per-material OBJ -> decimated OBJ (decals dropped); STL hulls -> OBJ in metres."""
+    """Collada -> per-material OBJ -> decimated OBJ; STL hulls -> OBJ in metres.
+
+    The forearm lettering is cut into the body mesh, its letters separate flat pieces filling the
+    openings. Leaving them out would leave letter-shaped holes, so each is merged into the body
+    piece it sits in and takes the body's colour: the surface stays closed and carries no lettering.
+    """
     variant = VARIANTS[name]
     src = description / f"meshes/{variant['fanuc_id']}"
     meshes = pkg / "meshes"
@@ -194,17 +242,27 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
         )
         found = json.loads((raw / "materials.json").read_text())
         for stem in STEMS:
-            decals = [list(c) for c in variant["decals"].get(stem, [])]
-            dropped = []
-            materials[stem] = []
+            lettering = variant["lettering"].get(stem, {"into": None, "pieces": []})
+            pieces = [list(c) for c in lettering["pieces"]]
+            body = next((sub for sub, rgb in found[stem] if rgb == lettering["into"]), None)
+            if pieces and body is None:
+                raise RuntimeError(f"{name} {stem}: no piece coloured {lettering['into']}")
+            merged = []
             for sub, rgb in found[stem]:
                 extent = _compact(raw / f"{sub}.obj")
-                if rgb in decals:
+                if rgb in pieces:
                     if extent.min() > DECAL_THICKNESS:
                         raise RuntimeError(
-                            f"{name} {sub} {rgb} is not flat ({extent}): not a decal"
+                            f"{name} {sub} {rgb} is not flat ({extent}): not lettering"
                         )
-                    dropped.append(rgb)
+                    merged.append((sub, rgb))
+            if sorted(rgb for _, rgb in merged) != sorted(pieces):
+                raise RuntimeError(f"{name} {stem}: expected lettering {pieces}, found {merged}")
+            for sub, _ in merged:
+                _append(raw / f"{body}.obj", raw / f"{sub}.obj")
+            materials[stem] = []
+            for sub, rgb in found[stem]:
+                if rgb in pieces:
                     continue
                 out = f"{stem}_visual_{len(materials[stem])}"
                 target = meshes / f"{out}.obj"
@@ -226,6 +284,7 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
                         cwd=ROOT,
                         capture_output=True,
                     )
+                    _strip_normals(target)
                     how = f"decimated to {TARGET_FACES} triangles"
                 else:
                     shutil.copyfile(raw / f"{sub}.obj", target)
@@ -235,15 +294,14 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
                         f"{out}.obj: {variant['title']} visual mesh, {stem}, colour {rgb}.",
                         f"Derived from FANUC-CORPORATION/fanuc_description @ {COMMIT},",
                         f"  {variant['package']}/meshes/{variant['fanuc_id']}/visual/{stem}.dae.",
-                        f"Modified by the roqsim authors: converted from COLLADA, one material, {how}",
+                        f"Modified by the roqsim authors: converted from COLLADA, one material, {how}"
+                        + (", the forearm lettering merged in" if sub == body and merged else ""),
                         "  (external/convert/build_fanuc_mjcf.py). Apache-2.0: see the LICENSE beside the model.",
                     ],
                     spdx,
                 )
                 target.write_text(header + target.read_text())
                 materials[stem].append([out, rgb])
-            if sorted(dropped) != sorted(decals):
-                raise RuntimeError(f"{name} {stem}: expected decals {decals}, found {dropped}")
 
     import trimesh
 
@@ -448,7 +506,7 @@ TEMPLATE = """<mujoco model="{name}">
 
     Not FANUC's:
     - Visual meshes are FANUC's COLLADA split per material and decimated; the forearm lettering
-      (word mark and model name) is left out. Collision is FANUC's convex hull per link.
+      (word mark and model name) is painted over in the forearm's colour. Collision is FANUC's convex hull per link.
     - Each joint is an affine position servo. With I the joint's largest diagonal mass-matrix entry
       over the home, zero and stretched poses (armature included) and w = 2*pi*f:
         kp = max(I * w^2, tau_payload / {sag} deg),  kv = 2 * zeta * sqrt(kp * I),  zeta = 1,
@@ -562,7 +620,7 @@ def license_header(name: str, spdx: list[str]) -> list[str]:
         "  - the MJCF is generated from FANUC's URDF; actuators, servo gains, armature, the",
         "    tool_site/fts_site sites, the contact excludes and the home keyframe are not FANUC's;",
         "  - visual meshes converted from COLLADA to OBJ, split per material and decimated; the",
-        "    forearm lettering pieces are left out;",
+        "    forearm lettering is painted over (merged into the forearm in its colour);",
         "  - collision meshes rewritten as OBJ in metres.",
         "Every derived file names its source file and carries FANUC's SPDX lines.",
         "",

@@ -19,7 +19,7 @@
 
     Not FANUC's:
     - Visual meshes are FANUC's COLLADA split per material and decimated; the forearm lettering
-      (word mark and model name) is left out. Collision is FANUC's convex hull per link.
+      (word mark and model name) is painted over in the forearm's colour. Collision is FANUC's convex hull per link.
     - Each joint is an affine position servo. With I the joint's largest diagonal mass-matrix entry
       over the home, zero and stretched poses (armature included) and w = 2*pi*f:
         kp = max(I * w^2, tau_payload / 1 deg),  kv = 2 * zeta * sqrt(kp * I),  zeta = 1,

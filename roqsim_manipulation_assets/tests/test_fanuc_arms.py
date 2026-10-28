@@ -442,18 +442,19 @@ LETTERING = {
 
 
 @arms
-def test_the_forearm_lettering_is_left_out(name):
-    """Apache-2.0 grants no trademark right, and on the CRX-25iA the text would name the 30iA."""
+def test_the_forearm_lettering_is_painted_over(name):
+    """No J4 piece is lettering-coloured: the letters fill openings in the forearm, so the converter
+    merges them into it in its colour. Apache-2.0 grants no trademark right, and on the CRX-25iA
+    the text would name the 30iA."""
     model = _model(name)
     for i in range(model.ngeom):
         if model.geom_bodyid[i] != model.body("J4_link").id or model.geom_group[i] != 2:
             continue
         rgb = tuple(float(c) for c in model.mat_rgba[model.geom_matid[i]][:3])
         mesh = model.geom_dataid[i]
-        start, count = model.mesh_vertadr[mesh], model.mesh_vertnum[mesh]
-        flat = np.ptp(model.mesh_vert[start : start + count], axis=0).min() < 0.025
-        lettering = any(np.allclose(rgb, c, atol=1e-3) for c in LETTERING[name])
-        assert not (flat and lettering), f"{model.mesh(mesh).name} is lettering"
+        assert not any(np.allclose(rgb, c, atol=1e-3) for c in LETTERING[name]), (
+            f"{model.mesh(mesh).name} carries a lettering colour"
+        )
 
 
 @arms
