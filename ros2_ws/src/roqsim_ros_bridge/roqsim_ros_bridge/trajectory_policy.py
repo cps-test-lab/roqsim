@@ -30,6 +30,9 @@ PREEMPTED = "Current goal cancelled due to new incoming action."
 SUCCEEDED = "Goal successfully reached!"
 #: The result string of a goal that left its path tolerance.
 PATH_VIOLATED = "Aborted due to path tolerance violation"
+#: What upstream counts as a zero final velocity: ``std::numeric_limits<float>::epsilon()``. A
+#: planner's last point carries velocities of order 1e-17 rather than exact zeros.
+ZERO_VELOCITY = 1.1920928955078125e-07
 
 
 def rejection(names: Sequence[str], last_velocities: Sequence[float], hints: dict) -> str | None:
@@ -51,10 +54,10 @@ def rejection(names: Sequence[str], last_velocities: Sequence[float], hints: dic
                 f"Joints on incoming trajectory don't match the controller joints: "
                 f"{len(names)} given, {len(owned)} expected"
             )
-    if not hints.get("allow_nonzero_velocity_at_trajectory_end", True) and any(
-        v != 0.0 for v in last_velocities
-    ):
-        return "Velocity of last trajectory point of joint is not zero"
+    if not hints.get("allow_nonzero_velocity_at_trajectory_end", True):
+        for name, v in zip(names, last_velocities, strict=False):
+            if abs(v) > ZERO_VELOCITY:
+                return f"Velocity of last trajectory point of joint {name} is not zero: {v:.15f}"
     return None
 
 

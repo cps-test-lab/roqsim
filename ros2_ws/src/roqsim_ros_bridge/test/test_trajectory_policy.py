@@ -39,6 +39,12 @@ def test_a_moving_end_is_rejected_where_it_is_not_allowed():
     assert rejection(JOINTS, [0.0] * 5 + [0.1], {"joint_names": JOINTS}) is None
 
 
+def test_a_planners_rounding_at_the_end_is_at_rest():
+    """Upstream compares against the float epsilon: MoveIt's last point carries ~1e-17."""
+    assert rejection(JOINTS, [1e-17, -3e-12, 0.0, 1e-9, 0.0, 1e-7], STRICT) is None
+    assert "J6" in rejection(JOINTS, [0.0] * 5 + [2e-7], STRICT)
+
+
 def test_a_goal_without_velocities_is_at_rest():
     assert rejection(JOINTS, [], STRICT) is None
 
@@ -81,7 +87,9 @@ def test_goals_on_two_controllers_do_not_replace_each_other():
 def test_starting_goals_from_many_threads_leaves_exactly_one_current():
     goals = CurrentGoal()
     tokens = []
-    threads = [threading.Thread(target=lambda: tokens.append(goals.start("arm"))) for _ in range(50)]
+    threads = [
+        threading.Thread(target=lambda: tokens.append(goals.start("arm"))) for _ in range(50)
+    ]
     for t in threads:
         t.start()
     for t in threads:
