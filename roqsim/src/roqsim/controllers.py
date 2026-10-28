@@ -77,6 +77,11 @@ class Controller:
     #: Called with the new activity when this controller is switched. The controller keeps its own
     #: flag; this registry keeps the lifecycle state and the two are set together.
     apply: Callable[[bool], None] | None = None
+    #: Asked with the wanted activity before a switch changes anything; a string is the reason the
+    #: transition is refused, ``None`` lets it through. A controller a simulation lists but cannot
+    #: run refuses here, so the refusal leaves every state as it was and its reason reaches the
+    #: caller -- ``apply`` runs after the state has changed and cannot refuse.
+    veto: Callable[[bool], str | None] | None = None
     #: Appended with ``(sim_time, previous_state, new_state)`` on every transition, so a run can say
     #: WHEN a hand-over happened rather than inferring it from when the motion changed.
     transitions: list[tuple[float, str, str]] = field(default_factory=list)
@@ -177,8 +182,18 @@ class ControllerRegistry:
         plan_off = {n for n in deactivate if known(n)}
         plan_on: list[str] = []
 
+        for name in list(plan_off):
+            reason = self._vetoed(self.get(name, namespace), False)
+            if reason:
+                plan_off.discard(name)
+                problems.append(reason)
+
         for name in activate:
             if not known(name):
+                continue
+            reason = self._vetoed(self.get(name, namespace), True)
+            if reason:
+                problems.append(reason)
                 continue
             held = [b for b in self.blockers(name, namespace) if b not in plan_off]
             if held and strictness == FORCE_AUTO:
@@ -200,6 +215,12 @@ class ControllerRegistry:
         if problems:
             return (strictness != STRICT), "; ".join(problems)
         return True, "ok"
+
+    @staticmethod
+    def _vetoed(controller: Controller, active: bool) -> str | None:
+        if controller.veto is None or controller.state == (ACTIVE if active else INACTIVE):
+            return None
+        return controller.veto(active)
 
     def restore(self, controller: Controller, state: str, sim_time: float) -> None:
         """Put *controller* back in *state* without arbitration, recording the transition.
