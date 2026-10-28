@@ -474,3 +474,93 @@ def test_every_derived_file_names_fanuc_and_its_licence(name):
         assert "SPDX-FileCopyrightText: 2025-2026, FANUC CORPORATION" in head, path.name
         assert "SPDX-License-Identifier: Apache-2.0" in head, path.name
         assert re.search(r"Modified by the roqsim authors", head), path.name
+
+
+# -- collision ------------------------------------------------------------------------------------
+
+#: Links whose one FANUC hull closed over a recess by more than 20 mm (`roqsim assets collision
+#: diff --tol 20`) and that collide as several convex pieces instead.
+SPLIT = {"m20id25": ["base_link", "J1_link", "J2_link", "J3_link"], "crx25ia": ["J2_link"]}
+
+
+def _self_contacts(model, data, q) -> set[tuple[str, str]]:
+    data.qpos[:] = q
+    mujoco.mj_forward(model, data)
+    return {
+        tuple(
+            sorted(
+                (
+                    model.body(model.geom_bodyid[c.geom1]).name,
+                    model.body(model.geom_bodyid[c.geom2]).name,
+                )
+            )
+        )
+        for c in data.contact[: data.ncon]
+        if c.dist < 0
+    }
+
+
+@arms
+def test_no_self_contact_at_home_or_zero(name):
+    model = _model(name)
+    data = mujoco.MjData(model)
+    assert _self_contacts(model, data, model.key("home").qpos) == set()
+    assert _self_contacts(model, data, np.zeros(6)) == set()
+
+
+@arms
+def test_self_collision_rate(name):
+    """Random poses within FANUC's limits that self-collide: few, and never the excluded pairs.
+
+    The iiwa and xArm bound is 22%; these arms measure 6% (M-20) and 8% (CRX, whose folded wrist
+    really meets the upper arm).
+    """
+    model = _model(name)
+    data = mujoco.MjData(model)
+    rng = np.random.default_rng(1)
+    hits = 0
+    for _ in range(1500):
+        q = [rng.uniform(*model.jnt_range[j]) for j in range(6)]
+        hits += bool(_self_contacts(model, data, q))
+    assert hits / 1500 < 0.10
+
+
+@arms
+def test_collision_pieces_sit_on_their_link(name):
+    """Each collision piece lies within 10 mm of its link's visual extent (CoACD remeshes before it
+    decomposes), and the split links have their pieces."""
+    model = _model(name)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    def extent(geoms):
+        pts = []
+        for g in geoms:
+            mesh = model.geom_dataid[g]
+            v = model.mesh_vert[
+                model.mesh_vertadr[mesh] : model.mesh_vertadr[mesh] + model.mesh_vertnum[mesh]
+            ]
+            pts.append(v @ data.geom_xmat[g].reshape(3, 3).T + data.geom_xpos[g])
+        pts = np.vstack(pts)
+        return pts.min(0), pts.max(0)
+
+    for link in LINKS:
+        body = model.body(link).id
+        visual = [
+            g
+            for g in range(model.ngeom)
+            if model.geom_bodyid[g] == body and model.geom_group[g] == 2
+        ]
+        collision = [
+            g
+            for g in range(model.ngeom)
+            if model.geom_bodyid[g] == body and model.geom_group[g] == 3
+        ]
+        assert (
+            len(collision) == (4 if name == "m20id25" else 3)
+            if link in SPLIT[name]
+            else len(collision) == 1
+        )
+        vlo, vhi = extent(visual)
+        clo, chi = extent(collision)
+        assert np.all(clo >= vlo - 0.01) and np.all(chi <= vhi + 0.01), link

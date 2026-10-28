@@ -41,6 +41,58 @@
       ]
     ]
   ],
+  "collision": {
+    "J1_link": [
+      [
+        "J1_link_collision",
+        "0 0 0"
+      ]
+    ],
+    "J2_link": [
+      [
+        "J2_link_collision_0",
+        "-0 0 -0.37"
+      ],
+      [
+        "J2_link_collision_1",
+        "-0 0 -0.37"
+      ],
+      [
+        "J2_link_collision_2",
+        "-0 0 -0.37"
+      ]
+    ],
+    "J3_link": [
+      [
+        "J3_link_collision",
+        "0 0 0"
+      ]
+    ],
+    "J4_link": [
+      [
+        "J4_link_collision",
+        "0 0 0"
+      ]
+    ],
+    "J5_link": [
+      [
+        "J5_link_collision",
+        "0 -0.185 0"
+      ]
+    ],
+    "J6_link": [
+      [
+        "J6_link_collision",
+        "0.18 0 0"
+      ]
+    ],
+    "base_link": [
+      [
+        "base_link_collision",
+        "0 0 0"
+      ]
+    ]
+  },
   "j1": [
     [
       "j1_visual_0",

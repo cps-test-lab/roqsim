@@ -23,7 +23,9 @@
 
     Not FANUC's:
     - Visual meshes are FANUC's COLLADA split per material and decimated; the forearm lettering
-      (word mark and model name) is painted over in the forearm's colour. Collision is FANUC's convex hull per link.
+      (word mark and model name) is painted over in the forearm's colour.
+    - Collision is FANUC's convex hull per link, except where that hull closes over a recess by
+      more than 20 mm (J2_link): there, convex pieces of the visual mesh (CoACD).
     - Each joint is an affine position servo. With I the joint's largest diagonal mass-matrix entry
       over the home, zero and stretched poses (armature included) and w = 2*pi*f:
         kp = max(I * w^2, tau_payload / 1 deg),  kv = 2 * zeta * sqrt(kp * I),  zeta = 1,
@@ -87,7 +89,9 @@
     <mesh file="j6_visual_1.obj" inertia="shell"/>
     <mesh file="base_link_collision.obj"/>
     <mesh file="J1_link_collision.obj"/>
-    <mesh file="J2_link_collision.obj"/>
+    <mesh file="J2_link_collision_0.obj"/>
+    <mesh file="J2_link_collision_1.obj"/>
+    <mesh file="J2_link_collision_2.obj"/>
     <mesh file="J3_link_collision.obj"/>
     <mesh file="J4_link_collision.obj"/>
     <mesh file="J5_link_collision.obj"/>
@@ -114,7 +118,9 @@
           <inertial pos="-0.00009 -0.27645 0.42608" mass="41.783" fullinertia="7.230469225 7.188756572 0.310511653 -1.50504E-05 -0.001548667 0.346298742"/>
           <joint name="J2" axis="0 1 0" range="-3.13985 3.13985" armature="5"/>
           <geom class="visual" mesh="j2_visual_0" pos="-0 0 -0.37" material="mat_j2_visual_0"/>
-          <geom class="collision" mesh="J2_link_collision" pos="0 0 0"/>
+          <geom class="collision" mesh="J2_link_collision_0" pos="-0 0 -0.37"/>
+          <geom class="collision" mesh="J2_link_collision_1" pos="-0 0 -0.37"/>
+          <geom class="collision" mesh="J2_link_collision_2" pos="-0 0 -0.37"/>
           <body name="J3_link" pos="0 0 0.95">
             <inertial pos="0.04858 -0.05541 -0.00002" mass="11.493" fullinertia="0.07644438 0.088680582 0.113440904 0.032033116 -0.000109013 0.00008535"/>
             <joint name="J3" axis="0 -1 0" range="-4.71239 4.71239" armature="2.5"/>

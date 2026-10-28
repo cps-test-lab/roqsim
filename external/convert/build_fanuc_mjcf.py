@@ -24,14 +24,18 @@ Not from FANUC, and said so in the MJCF header and the LICENSE file:
   M-20" / "FANUC Robot CRX-30iA", a red word mark and dark text, each one flat material piece
   filling letter-shaped openings in the forearm) is **painted over**: merged into the forearm piece
   in its colour, so the surface stays closed and reads blank. Apache-2.0 grants no trademark right,
-  and on the CRX-25iA the lettering would also name the wrong model. The collision meshes are FANUC's convex STLs, rewritten as OBJ in metres.
+  and on the CRX-25iA the lettering would also name the wrong model.
+- **Collision.** FANUC's convex STL per link, rewritten as OBJ in metres; where that one hull
+  closes over a recess by more than 20 mm (``roqsim assets collision diff --tol 20``), a few convex
+  pieces of the visual mesh instead (CoACD, ``pip install coacd``, seeded). Chain neighbours, and
+  any other pair measured not to touch, are excluded.
 - **Actuators.** URDF has none. Each joint gets an affine position servo whose gains follow from one
   formula (``servo_gains``); armature stands in for reflected rotor inertia, which FANUC does not
   publish. ``forcerange`` is the description's ``effort``.
 - **Sites.** ``tool_site`` on ``fanuc_flange`` (z out of the flange), and on the CRX an ``fts_site``
   there for the embedded force sensing.
 
-Needs ``xacro`` (``pip install xacro``) and ``pycollada`` (``pip install pycollada``) and Blender
+Needs ``xacro``, ``pycollada``, ``trimesh`` and ``coacd`` (pip) and Blender
 (``reduce-mesh``) to rebuild; the committed model needs none of them.
 
 Usage::
@@ -43,6 +47,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import math
 import shutil
@@ -76,6 +81,10 @@ TARGET_FACES = 4000
 #: A lettering piece is flat: one of its extents is under this (metres).
 DECAL_THICKNESS = 0.025
 
+#: CoACD's concavity threshold for a split link, and its seed (the decomposition is randomised).
+SPLIT_THRESHOLD = 0.05
+SPLIT_SEED = 1
+
 #: Servo bandwidth per joint (Hz) and damping ratio. The base axes move the arm, the wrist axes a
 #: tool; a wrist servo as slow as a base servo lags every tool motion.
 BANDWIDTH_HZ = [8.0, 8.0, 8.0, 12.0, 12.0, 12.0]
@@ -106,6 +115,19 @@ VARIANTS = {
             }
         },
         "fts": False,
+        # Links whose single hull closes over a recess a neighbour or a workpiece enters, by more
+        # than COLLISION_TOLERANCE (`roqsim assets collision diff`): decomposed into this many
+        # convex pieces of the visual mesh. The rest keep FANUC's hull.
+        "split": {"base_link": 4, "J1_link": 4, "J2_link": 4, "J3_link": 4},
+        # Non-adjacent pairs that cannot touch, each with the measurement that says so.
+        "exclude": [
+            (
+                "J4_link",
+                "J6_link",
+                "J6 turns inside J4's wrist fork across J5, its visual mesh a constant 16 mm clear\n"
+                "         of the fork over J5's whole range; the fork's hull closes over it in every pose.",
+            )
+        ],
     },
     "crx25ia": {
         "title": "FANUC CRX-25iA",
@@ -121,6 +143,8 @@ VARIANTS = {
             "j4": {"into": [1.0, 1.0, 1.0], "pieces": [[1.0, 0.0, 0.0], [0.102, 0.102, 0.102]]}
         },
         "fts": True,
+        "split": {"J2_link": 3},
+        "exclude": [],
     },
 }
 
@@ -214,7 +238,9 @@ def _strip_normals(path: Path) -> None:
     path.write_text("\n".join(out) + "\n")
 
 
-def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> dict[str, list]:
+def convert_meshes(
+    name: str, description: Path, pkg: Path, spdx: list[str], urdf: ET.Element
+) -> dict[str, list]:
     """Collada -> per-material OBJ -> decimated OBJ; STL hulls -> OBJ in metres.
 
     The forearm lettering is cut into the body mesh, its letters separate flat pieces filling the
@@ -222,6 +248,7 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
     piece it sits in and takes the body's colour: the surface stays closed and carries no lettering.
     """
     variant = VARIANTS[name]
+    links_by_name = {link.get("name"): link for link in urdf.findall("link")}
     src = description / f"meshes/{variant['fanuc_id']}"
     meshes = pkg / "meshes"
     if meshes.exists():
@@ -241,6 +268,11 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
             capture_output=True,
         )
         found = json.loads((raw / "materials.json").read_text())
+        keep = Path(tempfile.mkdtemp())
+        raw_whole = {}
+        for stem in STEMS:
+            raw_whole[stem] = keep / f"{stem}.obj"
+            shutil.copyfile(raw / f"{stem}.obj", raw_whole[stem])
         for stem in STEMS:
             lettering = variant["lettering"].get(stem, {"into": None, "pieces": []})
             pieces = [list(c) for c in lettering["pieces"]]
@@ -305,7 +337,43 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
 
     import trimesh
 
-    for link, stem in zip(LINKS, STEMS, strict=False):
+    collision: dict[str, list] = {}
+    for link, stem in zip(LINKS, STEMS, strict=True):
+        visual_pos = _pure(links_by_name[link].find("visual"))
+        if link in variant["split"]:
+            import coacd
+
+            coacd.set_log_level("error")
+            whole = trimesh.load(raw_whole[stem], process=True)
+            parts = coacd.run_coacd(
+                coacd.Mesh(whole.vertices, whole.faces),
+                threshold=SPLIT_THRESHOLD,
+                max_convex_hull=variant["split"][link],
+                seed=SPLIT_SEED,
+                max_ch_vertex=64,
+                preprocess_mode="auto",
+            )
+            collision[link] = []
+            for k, (v, f) in enumerate(parts):
+                hull = trimesh.Trimesh(v, f).convex_hull
+                out = f"{link}_collision_{k}"
+                header = obj_header(
+                    [
+                        f"{out}.obj: {variant['title']} collision piece {k}, {link}.",
+                        f"Derived from FANUC-CORPORATION/fanuc_description @ {COMMIT},",
+                        f"  {variant['package']}/meshes/{variant['fanuc_id']}/visual/{stem}.dae.",
+                        "Modified by the roqsim authors: a convex piece of the visual mesh (CoACD "
+                        f"{importlib.metadata.version('coacd')}, threshold {SPLIT_THRESHOLD}, seed {SPLIT_SEED}),",
+                        "  in place of FANUC's one hull, which closes over the link's recesses",
+                        "  (external/convert/build_fanuc_mjcf.py). Apache-2.0: see the LICENSE beside the model.",
+                    ],
+                    spdx,
+                )
+                body = "".join(f"v {p[0]:.7g} {p[1]:.7g} {p[2]:.7g}\n" for p in hull.vertices)
+                body += "".join(f"f {a + 1} {b + 1} {c + 1}\n" for a, b, c in hull.faces)
+                (meshes / f"{out}.obj").write_text(header + body)
+                collision[link].append([out, visual_pos])
+            continue
         stl = trimesh.load(src / f"collision/{stem}.stl", process=False)
         scale = 0.001 if stl.extents.max() > 20 else 1.0  # the CRX's STLs are in millimetres
         v = np.asarray(stl.vertices) * scale
@@ -324,6 +392,10 @@ def convert_meshes(name: str, description: Path, pkg: Path, spdx: list[str]) -> 
         body = "".join(f"v {p[0]:.7g} {p[1]:.7g} {p[2]:.7g}\n" for p in v)
         body += "".join(f"f {a + 1} {b + 1} {c + 1}\n" for a, b, c in stl.faces)
         (meshes / f"{link}_collision.obj").write_text(header + body)
+        collision[link] = [[f"{link}_collision", _pure(links_by_name[link].find("collision"))]]
+    shutil.rmtree(keep)
+    # Beside the colours in the same sidecar: which collision pieces each link has, and where.
+    materials["collision"] = collision
     return materials
 
 
@@ -359,7 +431,8 @@ def build(
             palette[f"mat_{sub}"] = rgb
             assets.append(f'    <mesh file="{sub}.obj" inertia="shell"/>\n')
     for link in LINKS:
-        assets.append(f'    <mesh file="{link}_collision.obj"/>\n')
+        for mesh, _ in materials["collision"][link]:
+            assets.append(f'    <mesh file="{mesh}.obj"/>\n')
     material_block = "".join(
         f'    <material name="{n}" rgba="{" ".join(fmt(c) for c in rgb)} 1"/>\n'
         for n, rgb in sorted(palette.items())
@@ -407,10 +480,8 @@ def build(
             body += (
                 f'{indent}  <geom class="visual" mesh="{sub}" pos="{vpos}" material="mat_{sub}"/>\n'
             )
-        body += (
-            f'{indent}  <geom class="collision" mesh="{link_name}_collision"'
-            f' pos="{_pure(link.find("collision"))}"/>\n'
-        )
+        for mesh, pos in materials["collision"][link_name]:
+            body += f'{indent}  <geom class="collision" mesh="{mesh}" pos="{pos}"/>\n'
         if i == 0:
             body += f'{indent}  <site name="wbase" pos="{_pure(wbase)}"/>\n'
         closing.append(indent)
@@ -443,6 +514,8 @@ def build(
     excludes = "".join(
         f'    <exclude body1="{a}" body2="{b}"/>\n' for a, b in zip(LINKS, LINKS[1:], strict=False)
     )
+    for a, b, why in variant["exclude"]:
+        excludes += f'    <!-- {why} -->\n    <exclude body1="{a}" body2="{b}"/>\n'
     speeds = ", ".join(
         fmt(math.degrees(float(joints[j].find("limit").get("velocity")))) for j in JOINTS
     )
@@ -474,6 +547,7 @@ def build(
         excludes=excludes,
         home=home,
         crx_note=CRX_NOTE if name == "crx25ia" else "",
+        split=", ".join(variant["split"]),
     )
 
 
@@ -506,7 +580,9 @@ TEMPLATE = """<mujoco model="{name}">
 
     Not FANUC's:
     - Visual meshes are FANUC's COLLADA split per material and decimated; the forearm lettering
-      (word mark and model name) is painted over in the forearm's colour. Collision is FANUC's convex hull per link.
+      (word mark and model name) is painted over in the forearm's colour.
+    - Collision is FANUC's convex hull per link, except where that hull closes over a recess by
+      more than 20 mm ({split}): there, convex pieces of the visual mesh (CoACD).
     - Each joint is an affine position servo. With I the joint's largest diagonal mass-matrix entry
       over the home, zero and stretched poses (armature included) and w = 2*pi*f:
         kp = max(I * w^2, tau_payload / {sag} deg),  kv = 2 * zeta * sqrt(kp * I),  zeta = 1,
@@ -621,7 +697,8 @@ def license_header(name: str, spdx: list[str]) -> list[str]:
         "    tool_site/fts_site sites, the contact excludes and the home keyframe are not FANUC's;",
         "  - visual meshes converted from COLLADA to OBJ, split per material and decimated; the",
         "    forearm lettering is painted over (merged into the forearm in its colour);",
-        "  - collision meshes rewritten as OBJ in metres.",
+        "  - collision meshes rewritten as OBJ in metres; on the links whose one hull closes",
+        "    over a recess, convex pieces of the visual mesh instead (CoACD).",
         "Every derived file names its source file and carries FANUC's SPDX lines.",
         "",
         'Trademarks: Apache-2.0 section 6 grants none. "FANUC" and the model names say only',
@@ -664,13 +741,13 @@ def main() -> int:
         pkg.mkdir(parents=True, exist_ok=True)
         target = pkg / f"{name}.xml"
         materials_file = pkg / "meshes" / f"{name}.materials.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            urdf = expand(variant, description, Path(tmp))
         if args.check:
             materials = json.loads(materials_file.read_text())
         else:
-            materials = convert_meshes(name, description, pkg, spdx)
+            materials = convert_meshes(name, description, pkg, spdx, urdf)
             materials_file.write_text(json.dumps(materials, indent=2, sort_keys=True) + "\n")
-        with tempfile.TemporaryDirectory() as tmp:
-            urdf = expand(variant, description, Path(tmp))
         # Twice: the gains are computed from the compiled model, which the first pass provides.
         xml = build(
             name,
