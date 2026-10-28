@@ -695,3 +695,53 @@ def test_axes_move_no_faster_than_fanucs_speeds(name):
         assert data.qpos[qadr] == pytest.approx(target, abs=np.radians(0.1))
     finally:
         engine.shutdown()
+
+
+@arms
+@pytest.mark.parametrize("gripper", ["robotiq_hande", "robotiq_2f85"])
+def test_a_gripper_mounts_on_the_tool_site(name, gripper):
+    """A world names only the gripper: it lands on tool_site, pointing out of FANUC's flange."""
+    engine = _engine(name, end_effector={"model": gripper})
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        tool = data.site("tool_site")
+        pinch = next(
+            data.site(i) for i in range(model.nsite) if model.site(i).name.endswith("pinch")
+        )
+        out = pinch.xpos - tool.xpos
+        axis = tool.xmat.reshape(3, 3)[:, 2]
+        assert 0.05 < float(out @ axis) < 0.3, "the grasp point is not out along the flange axis"
+        assert np.linalg.norm(out - (out @ axis) * axis) < 1e-3, (
+            "the gripper is off the flange axis"
+        )
+        # Mounted, the arm still holds its home pose with the gripper's weight on it.
+        arm = engine.ctx.blackboard.get("arm:arm")
+        qadr = _qadr(engine, arm)
+        for _ in range(1500):
+            engine.step()
+        assert np.degrees(np.abs(data.qpos[qadr] - model.key("home").qpos[qadr])).max() < 0.1
+    finally:
+        engine.shutdown()
+
+
+@arms
+def test_the_demo_world_runs_and_reaches_its_target(name):
+    """The shipped demo world loads as a world YAML alone and drives the arm to its test_target."""
+    import roqsim_manipulation_assets
+
+    path = Path(roqsim_manipulation_assets.__file__).parent / "worlds" / f"{name}_demo.yaml"
+    world = yaml.safe_load(path.read_text())
+    world["sim"]["pacing"] = "asap"
+    entry = next(c for c in world["components"] if "spawn_arm" in c)
+    target = entry["components"][0]["arm_controller"]["test_target"]
+    engine = Engine(load_config_from_dict(world, base_dir=path.parent), preview=True)
+    engine.setup()
+    engine.reset()
+    try:
+        arm = engine.ctx.blackboard.get(f"arm:{entry['name']}")
+        qadr = _qadr(engine, arm)
+        for _ in range(3000):
+            engine.step()
+        assert np.degrees(np.abs(engine.ctx.data.qpos[qadr] - target)).max() < 0.1
+    finally:
+        engine.shutdown()
