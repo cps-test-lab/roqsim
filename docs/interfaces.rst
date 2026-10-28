@@ -555,7 +555,8 @@ controllers is served none.
    * - ``switch_controller``
      - activate and deactivate, atomically
    * - ``load_controller`` / ``configure_controller``
-     - move a **declared** controller to ``inactive``
+     - move a **declared** controller to ``inactive``; one a robot declares but its launch does not
+       spawn (``arm_controller``'s ``forward_command_controller``) is listed only from then on
    * - ``unload_controller``
      - refused while the controller is active, as upstream refuses it
    * - ``list_hardware_interfaces``
@@ -603,6 +604,339 @@ simulated counterpart and is not served, so a stack that relies on it fails at t
          name: force_torque_sensor_broadcaster
        - ur_driver_interface: {ft: force_torque_sensor_broadcaster}
          name: ur_driver
+
+**A FANUC arm under the driver's names** (``fanuc_driver``). The ``m20id25`` (M-20iD/25) and
+``crx25ia`` (CRX-25iA) manifests give a bare ``spawn_arm`` the names, types and replies of FANUC's
+ROS 2 driver (FANUC-CORPORATION/fanuc_driver, pinned at ``da5db3f611cd``): ``arm_controller`` as
+``joint_trajectory_controller`` of type ``fanuc_controllers/ScaledJointTrajectoryController`` with
+the driver's constraints, and a ``fanuc_driver_interface`` entry with the driver's own gpio map,
+which adds the GPIO controller, the force sensor broadcasters and the motion gate. Trajectory time
+runs at ``speed_scaling_factor`` (``std_msgs/Int32``, clamped to [0, 100] silently, through the
+driver's 0.2 s first-order lag) times the CRX's collaborative speed scaling, for an in-process
+trajectory and a ``follow_joint_trajectory`` goal alike. ``set_gen_override`` is the controller's
+general override: stored, range-checked as the controller checks it and read back, and it retimes
+nothing, since FANUC says to keep it at 100 while streaming. Where the M-20iD/25 and the CRX differ
+on the robot they differ here: only the CRX senses force (embedded, ``fs_type`` 1), stops on contact
+(an alarm until ``reset``), has collaborative speed scaling and ``set_payload_comp``, and ends
+Stream Motion on a payload change; their I/O is the gpio map FANUC's launch files load for each.
+The ROS side needs ``fanuc_msgs`` (built from the driver's repository; it has no binary release).
+Every name the driver exposes, and what the simulated arm does with it:
+
+.. list-table:: ``fanuc_driver`` against the simulated arm (namespace ``""``)
+   :header-rows: 1
+   :widths: 10 30 26 12 22
+
+   * - kind
+     - name
+     - type
+     - here
+     - why
+   * - controller
+     - ``controller_manager``
+     - ``update_rate 500``
+     - served with a difference
+     - The bridge's manager (list, switch, load, configure, unload, list_hardware_interfaces). 500 Hz is the physics step (2 ms); the ``update_rate`` parameter itself is not readable over ROS.
+   * - controller
+     - ``joint_trajectory_controller``
+     - ``fanuc_controllers/ScaledJointTrajectoryController``
+     - served
+     - Active at start, as the driver's ``initial_controller`` default spawns it.
+   * - controller
+     - ``joint_state_broadcaster``
+     - ``joint_state_broadcaster/JointStateBroadcaster``
+     - served
+     - 
+   * - controller
+     - ``forward_position_controller``
+     - ``forward_command_controller/ForwardCommandController``
+     - served
+     - Defined, not spawned: listed once ``load_controller`` names it; it and the trajectory controller claim the same joints.
+   * - controller
+     - ``fanuc_gpio_controller``
+     - ``fanuc_controllers/FanucGPIOController``
+     - served with a difference
+     - Its topics and services exist for the whole run rather than from configure to deactivate.
+   * - controller
+     - ``fanuc_force_sensor_broadcaster``
+     - ``fanuc_controllers/FanucForceSensorBroadcaster``
+     - served
+     - 
+   * - controller
+     - ``force_torque_sensor_broadcaster``
+     - ``force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster``
+     - served
+     - 
+   * - controller
+     - ``fanuc_rmi_controller``
+     - ``fanuc_controllers/FanucRMIController``
+     - not served
+     - RMI's motion-instruction interpreter is not simulated; not listed, so a spawner or a call fails at the name.
+   * - topic
+     - ``/joint_states``
+     - ``sensor_msgs/msg/JointState``
+     - served with a difference
+     - Every control period, position and velocity, no effort. The velocity is the simulator's joint velocity, not the driver's finite difference over the control period.
+   * - topic
+     - ``/dynamic_joint_states``
+     - ``control_msgs/msg/DynamicJointState``
+     - served
+     - The joints and the hardware's other state interfaces: the configured I/O, ``FloatReg``, ``Status``, ``ConnectionStatus``, ``Force``, ``ft_sensor``.
+   * - topic
+     - ``/speed_scaling_factor``
+     - ``std_msgs/msg/Int32``
+     - served
+     - Subscribed: clamped to [0, 100] silently, through a 0.2 s first-order lag.
+   * - topic
+     - ``/joint_trajectory_controller/joint_trajectory``
+     - ``trajectory_msgs/msg/JointTrajectory``
+     - served
+     - Subscribed.
+   * - topic
+     - ``/joint_trajectory_controller/controller_state``
+     - ``control_msgs/msg/JointTrajectoryControllerState``
+     - served
+     - 100 Hz.
+   * - topic
+     - ``/forward_position_controller/commands``
+     - ``std_msgs/msg/Float64MultiArray``
+     - served
+     - Subscribed; applied while that controller is active.
+   * - topic
+     - ``/force_torque_sensor_broadcaster/wrench``
+     - ``geometry_msgs/msg/WrenchStamped``
+     - served
+     - In ``<prefix>fanuc_flange``.
+   * - topic
+     - ``/fanuc_force_sensor_broadcaster/force_sensor``
+     - ``fanuc_msgs/msg/ForceSensor``
+     - served with a difference
+     - CRX: ``fs_type`` 1, the external wrench estimated from the contact forces on the arm (a joint-torque sensor's view). Industrial: ``fs_type`` 0 and zeros until ``cfg_force_sensor`` selects an external sensor.
+   * - topic
+     - ``/fanuc_gpio_controller/io_state``
+     - ``fanuc_msgs/msg/IOState``
+     - served
+     - The gpio map's ``io_state`` blocks.
+   * - topic
+     - ``/fanuc_gpio_controller/analog_io_state``
+     - ``fanuc_msgs/msg/AnalogIOState``
+     - served
+     - 
+   * - topic
+     - ``/fanuc_gpio_controller/num_reg_state``
+     - ``fanuc_msgs/msg/NumRegState``
+     - served
+     - 
+   * - topic
+     - ``/fanuc_gpio_controller/io_cmd``
+     - ``fanuc_msgs/msg/IOCmd``
+     - served
+     - Subscribed; unconfigured entries ignored.
+   * - topic
+     - ``/fanuc_gpio_controller/analog_io_cmd``
+     - ``fanuc_msgs/msg/AnalogIOCmd``
+     - served
+     - Subscribed, indexed as the driver indexes it (a second block is mis-indexed there too).
+   * - topic
+     - ``/fanuc_gpio_controller/num_reg_cmd``
+     - ``fanuc_msgs/msg/NumRegCmd``
+     - served
+     - Subscribed.
+   * - topic
+     - ``/fanuc_gpio_controller/connection_status``
+     - ``fanuc_msgs/msg/ConnectionStatus``
+     - served with a difference
+     - True while the simulator streams; false once a CRX payload change ends Stream Motion. No network connection exists to lose.
+   * - topic
+     - ``/fanuc_gpio_controller/robot_status``
+     - ``fanuc_msgs/msg/RobotStatus``
+     - served with a difference
+     - No teach pendant or e-stop chain is simulated: ``tp_enabled`` and ``e_stopped`` are false.
+   * - topic
+     - ``/fanuc_gpio_controller/collaborative_speed_scaling``
+     - ``fanuc_msgs/msg/CollaborativeSpeedScaling``
+     - served
+     - 1.0 on an industrial arm; on a CRX, what the simulation sets.
+   * - topic
+     - ``/fanuc_gpio_controller/robot_status_ext``
+     - ``fanuc_msgs/msg/RobotStatusExt``
+     - served with a difference
+     - ~30 Hz. ``speed_clamp_limit`` is 0 and ``control_mode`` empty: no source says what an unclamped controller reports.
+   * - topic
+     - ``/fanuc_gpio_controller/rmi_status``
+     - ``fanuc_msgs/msg/RMIStatus``
+     - not served
+     - It reports the state of an RMI program, and no RMI session exists.
+   * - service
+     - ``/fanuc_gpio_controller/get_bool_io``
+     - ``fanuc_msgs/srv/GetBoolIO``
+     - served with a difference
+     - DI, RI, DO, RO, F, UO, UI; else ``result`` 1. Any index answers, unset ones false.
+   * - service
+     - ``/fanuc_gpio_controller/set_bool_io``
+     - ``fanuc_msgs/srv/SetBoolIO``
+     - served
+     - DO, RO, F; an output the gpio map's ``io_cmd`` owns is rewritten from that command a period later.
+   * - service
+     - ``/fanuc_gpio_controller/get_analog_io``
+     - ``fanuc_msgs/srv/GetAnalogIO``
+     - served
+     - AI, AO.
+   * - service
+     - ``/fanuc_gpio_controller/set_analog_io``
+     - ``fanuc_msgs/srv/SetAnalogIO``
+     - served
+     - AO.
+   * - service
+     - ``/fanuc_gpio_controller/get_group_io``
+     - ``fanuc_msgs/srv/GetGroupIO``
+     - served
+     - GI, GO.
+   * - service
+     - ``/fanuc_gpio_controller/set_group_io``
+     - ``fanuc_msgs/srv/SetGroupIO``
+     - served
+     - GO.
+   * - service
+     - ``/fanuc_gpio_controller/get_num_reg``
+     - ``fanuc_msgs/srv/GetNumReg``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/set_num_reg``
+     - ``fanuc_msgs/srv/SetNumReg``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/get_pos_reg``
+     - ``fanuc_msgs/srv/GetPosReg``
+     - served with a difference
+     - An unset register reads as Cartesian zeros.
+   * - service
+     - ``/fanuc_gpio_controller/set_pos_reg``
+     - ``fanuc_msgs/srv/SetPosReg``
+     - served
+     - Configuration flags clamped to 1.
+   * - service
+     - ``/fanuc_gpio_controller/set_gen_override``
+     - ``fanuc_msgs/srv/SetGenOverride``
+     - served
+     - 1..100 stored and read back in ``robot_status_ext``, else ``result`` 1; it retimes nothing (FANUC: keep it at 100 while streaming).
+   * - service
+     - ``/fanuc_gpio_controller/set_payload_id``
+     - ``fanuc_msgs/srv/SetPayloadID``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/get_payload_id``
+     - ``fanuc_msgs/srv/GetPayloadID``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/set_payload_value``
+     - ``fanuc_msgs/srv/SetPayloadValue``
+     - served
+     - On a CRX it ends Stream Motion, as FANUC documents; the declared mass feeds the CRX's force estimate.
+   * - service
+     - ``/fanuc_gpio_controller/get_payload_value``
+     - ``fanuc_msgs/srv/GetPayloadValue``
+     - served
+     - Centre of gravity / 100 and inertia / 10000, as the driver returns them.
+   * - service
+     - ``/fanuc_gpio_controller/set_payload_comp``
+     - ``fanuc_msgs/srv/SetPayloadComp``
+     - served
+     - CRX only; else ``result`` 1.
+   * - service
+     - ``/fanuc_gpio_controller/get_payload_comp``
+     - ``fanuc_msgs/srv/GetPayloadComp``
+     - served
+     - CRX only.
+   * - service
+     - ``/fanuc_gpio_controller/read_error``
+     - ``fanuc_msgs/srv/ReadError``
+     - served with a difference
+     - The simulator's alarms (``SIM-001`` contact stop, ``SIM-002`` invalid override), not FANUC's alarm texts; ``count`` outside 1..5 is ``result`` 1.
+   * - service
+     - ``/fanuc_gpio_controller/get_uframe_utool``
+     - ``fanuc_msgs/srv/GetUFrameUTool``
+     - served
+     - ``group`` 0 answers as 1.
+   * - service
+     - ``/fanuc_gpio_controller/set_uframe_utool``
+     - ``fanuc_msgs/srv/SetUFrameUTool``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/get_uframe_data``
+     - ``fanuc_msgs/srv/GetUFrameData``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/set_uframe_data``
+     - ``fanuc_msgs/srv/SetUFrameData``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/get_utool_data``
+     - ``fanuc_msgs/srv/GetUToolData``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/set_utool_data``
+     - ``fanuc_msgs/srv/SetUToolData``
+     - served
+     - 
+   * - service
+     - ``/fanuc_gpio_controller/get_cartesian_position``
+     - ``fanuc_msgs/srv/GetCartesianPosition``
+     - served with a difference
+     - mm and degrees in FANUC's world frame (the description's ``wbase``) with the active UFrame and UTool; the configuration flags are 0, the turn numbers computed.
+   * - service
+     - ``/fanuc_gpio_controller/get_tcp_speed``
+     - ``fanuc_msgs/srv/GetTCPSpeed``
+     - served
+     - mm/s.
+   * - service
+     - ``/fanuc_gpio_controller/switch_control_state``
+     - ``fanuc_msgs/srv/SwitchControlState``
+     - served
+     - STOP closes the arm to motion, START opens it, another status is -1.
+   * - service
+     - ``/fanuc_gpio_controller/reset``
+     - ``fanuc_msgs/srv/Reset``
+     - served
+     - Clears an alarm (a CRX contact stop).
+   * - service
+     - ``/fanuc_force_sensor_broadcaster/cfg_force_sensor``
+     - ``fanuc_msgs/srv/CfgForceSensor``
+     - served
+     - ``result`` 0 always, as the driver answers.
+   * - service
+     - ``/joint_trajectory_controller/query_state``
+     - ``control_msgs/srv/QueryTrajectoryState``
+     - not served
+     - The bridge feeds a goal as setpoints and keeps no trajectory to sample at a requested time.
+   * - service
+     - ``/fanuc_rmi_controller/*``
+     - ``rmi_msgs/srv/*``
+     - not served
+     - See ``fanuc_rmi_controller``.
+   * - action
+     - ``/joint_trajectory_controller/follow_joint_trajectory``
+     - ``control_msgs/action/FollowJointTrajectory``
+     - served with a difference
+     - Graded by the driver's constraints: 0.05 rad goal and 0.25 rad path per joint, no goal time limit; partial goals and a moving end rejected; a new goal ends the running one; aborted with the driver's "Aborted: STMO is inactive (!motion_possible)" while motion is not possible. A replaced goal ends ABORTED, where upstream may end it CANCELED.
+   * - parameter
+     - ``robot_ip, rmi_port, stream_motion_port, payload_schedule, out_cmd_interp_buff_target, motion_control, encoding, force_sensor_type``
+     - ``hardware plugin``
+     - not served
+     - The hardware plugin's connection and session settings; there is no hardware plugin. The gpio map is the world's ``gpio_topic_config``.
+   * - parameter
+     - ``controller parameters``
+     - ``ros2_controllers.yaml``
+     - not served
+     - A controller's parameters are not readable over ROS; the world's configuration holds them.
+
 
 **FZI's Cartesian controllers under their own law.** ``cartesian_admittance`` answers to the names of
 FZI's ``cartesian_controllers`` with a law of its own. ``fzi_cartesian_controllers`` runs FZI's law
