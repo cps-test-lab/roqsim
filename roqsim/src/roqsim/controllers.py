@@ -82,6 +82,11 @@ class Controller:
     #: run refuses here, so the refusal leaves every state as it was and its reason reaches the
     #: caller -- ``apply`` runs after the state has changed and cannot refuse.
     veto: Callable[[bool], str | None] | None = None
+    #: Whether ``list_controllers`` shows it. A controller a robot's parameter file declares but its
+    #: launch never spawns is not loaded, so ros2_control does not list it until ``load_controller``
+    #: names it; the registry keeps it, unlisted, so that load has something to load. An unlisted
+    #: controller cannot be switched.
+    listed: bool = True
     #: Appended with ``(sim_time, previous_state, new_state)`` on every transition, so a run can say
     #: WHEN a hand-over happened rather than inferring it from when the motion changed.
     transitions: list[tuple[float, str, str]] = field(default_factory=list)
@@ -176,7 +181,8 @@ class ControllerRegistry:
         activate, deactivate = list(dict.fromkeys(activate)), list(dict.fromkeys(deactivate))
 
         def known(n: str) -> bool:
-            return self.get(n, namespace) is not None
+            controller = self.get(n, namespace)
+            return controller is not None and controller.listed
 
         problems = [n for n in (*activate, *deactivate) if not known(n)]
         plan_off = {n for n in deactivate if known(n)}

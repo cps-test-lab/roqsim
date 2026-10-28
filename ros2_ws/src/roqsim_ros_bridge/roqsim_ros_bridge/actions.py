@@ -47,6 +47,14 @@ from roqsim.endpoint import ParameterError, bind
 
 from .extensions import EXTENSION_GROUP, load_extensions
 from .params import payload_for
+from .trajectory_policy import (
+    CURRENT_GOALS,
+    PATH_VIOLATED,
+    PREEMPTED,
+    SUCCEEDED,
+    path_tolerances,
+    rejection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +68,24 @@ def action_handler(type_path: str):
         return fn
 
     return register
+
+
+# action-type-string -> check(goal_request, endpoint) -> reason to REJECT the goal, or None
+GOAL_CHECKS: dict[str, Callable[[Any, Any], str | None]] = {}
+
+
+def goal_check(type_path: str):
+    def register(fn):
+        GOAL_CHECKS[type_path] = fn
+        return fn
+
+    return register
+
+
+def goal_rejection(type_path: str, goal_request, endpoint) -> str | None:
+    """Why the goal is rejected before it executes (a ``GoalResponse.REJECT``), or ``None``."""
+    check = GOAL_CHECKS.get(type_path)
+    return check(goal_request, endpoint) if check is not None else None
 
 
 def get_action_handler(type_path: str) -> Callable[[Any, Any, Callable[[Any], None], Any], Any]:
@@ -205,8 +231,27 @@ class _TrajectoryClock:
         return self._base + (now - self._t0) * scale
 
 
+@goal_check("control_msgs.action.FollowJointTrajectory")
+def follow_joint_trajectory_rejection(goal_request, endpoint) -> str | None:
+    """What a JointTrajectoryController's goal callback rejects (:func:`trajectory_policy.rejection`)."""
+    traj = goal_request.trajectory
+    last = list(traj.points[-1].velocities) if traj.points else []
+    return rejection(list(traj.joint_names), last, _hints(endpoint))
+
+
 @action_handler("control_msgs.action.FollowJointTrajectory")
 def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
+    """Execute a trajectory goal; see :func:`_follow_joint_trajectory`. One goal executes per
+    controller: starting this one ends the one running, as upstream's ``preempt_active_goal``."""
+    key = id(endpoint)
+    token = CURRENT_GOALS.start(key)
+    try:
+        return _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
+    finally:
+        CURRENT_GOALS.finish(key, token)
+
+
+def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token):
     """Follow a JointTrajectory by feeding each waypoint at its scheduled trajectory time.
 
     This is the interaction MoveIt2's ``moveit_simple_controller_manager`` drives to execute
@@ -240,6 +285,18 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     terminal status is ``CANCELED`` and ``error_string`` says the goal was cancelled, so a consumer
     that reads only ``error_code`` can still tell an execution that was cut short from one that ran
     to its end.
+
+    The rest of what a JointTrajectoryController does, where the controller's hints ask for it:
+
+    - **Path tolerance** (``path_tolerance``, or the goal's ``path_tolerance``): a joint trailing
+      the trajectory by more aborts it with ``PATH_TOLERANCE_VIOLATED`` and holds the arm.
+    - **No time limit** when the goal time tolerance resolves to 0, upstream's convention: the goal
+      waits until the joints are inside its tolerance, or it is cancelled or replaced.
+    - **One goal at a time**: a new goal ends this one with ``INVALID_GOAL`` and upstream's
+      "Current goal cancelled due to new incoming action." The new goal commands the arm from there.
+    - **The motion gate**: while the producer's ``motion_blocked`` gives a reason (a robot controller
+      that cannot move, ``arm_controller``'s "The motion gate"), the goal is aborted with
+      ``INVALID_GOAL`` and that reason, and the arm holds.
     """
     traj = goal_handle.request.trajectory
     names = list(traj.joint_names)
@@ -265,6 +322,12 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         result.error_string = (
             "the trajectory controller is not active; activate it before sending a goal"
         )
+        return result
+
+    if getattr(handle, "motion_blocked", None) is not None and handle.motion_blocked() is not None:
+        goal_handle.abort()
+        result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+        result.error_string = handle.motion_blocked()
         return result
 
     refusal = (
@@ -293,6 +356,27 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     hints = _hints(endpoint)
     tol = _goal_tolerances(goal_handle.request, hints, names)
     final = list(traj.points[-1].positions) if traj.points else []
+    path_tol = path_tolerances(getattr(goal_handle.request, "path_tolerance", ()), hints, names)
+    blocked = getattr(handle, "motion_blocked", None)
+
+    def ended(code: int, message: str):
+        """Abort with *code* and *message*, the arm left as the caller of this finds it."""
+        goal_handle.abort()
+        result.error_code = code
+        result.error_string = message
+        logger.warning("trajectory goal ended: %s", message)
+        return result
+
+    def interrupted(commanded: list[float]):
+        """The result when something other than this goal's own progress ends it, else ``None``."""
+        if not CURRENT_GOALS.is_current(key, token):
+            # Replaced: the new goal commands the arm, so nothing is held here.
+            return ended(FollowJointTrajectory.Result.INVALID_GOAL, PREEMPTED)
+        reason = blocked() if blocked is not None else None
+        if reason is not None:
+            hold_at_measured(commanded)
+            return ended(FollowJointTrajectory.Result.INVALID_GOAL, reason)
+        return None
 
     def hold_at_measured(commanded: list[float]) -> list[float]:
         """Command the arm to hold where it IS, and return the positions commanded.
@@ -369,10 +453,20 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         while (now := clock()) < target_t:
             if goal_handle.is_cancel_requested:
                 return cancelled(fed)
+            if (stop := interrupted(fed)) is not None:
+                return stop
             # Once per physics step at most: the payload goes onto the physics thread's queue, and
             # posting faster than it steps only lengthens the queue.
             if span > 0.0 and ctx.sim_time != last_fed:
                 last_fed = ctx.sim_time
+                # Graded before the next setpoint: where the joints are against where the
+                # trajectory put them, as the controller's state tolerance check does.
+                if path_tol and last_fed is not None and fed is not prev_pos:
+                    if _worst_violation(names, fed, measured(fed), path_tol) is not None:
+                        hold_at_measured(fed)
+                        return ended(
+                            FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED, PATH_VIOLATED
+                        )
                 fed = _sample(prev_pos, prev_vel, positions, vels, (now - prev_t) / span, span)
                 _send(on_payload, endpoint, names=names, positions=fed)
             time.sleep(0.002)
@@ -395,17 +489,18 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         # The joints are given until the goal time tolerance to get inside it: the trajectory ends
         # at its last waypoint, but a position servo is still converging when the clock says stop.
         grace = _dur_to_sec(goal_handle.request.goal_time_tolerance)
-        deadline = ctx.sim_time + (
-            grace
-            if grace > 0.0
-            else float(hints.get("goal_time_tolerance", DEFAULT_GOAL_TIME_TOLERANCE))
-        )
+        if grace <= 0.0:
+            grace = float(hints.get("goal_time_tolerance", DEFAULT_GOAL_TIME_TOLERANCE))
+        # 0 is upstream's "no limit": wait for the joints, however long they take.
+        deadline = ctx.sim_time + grace if grace > 0.0 else float("inf")
         while True:
             violation = _worst_violation(names, final, measured(final), tol)
             if violation is None or ctx.sim_time >= deadline:
                 break
             if goal_handle.is_cancel_requested:
                 return cancelled(final)
+            if (stop := interrupted(final)) is not None:
+                return stop
             time.sleep(0.002)
 
     if violation is not None:
@@ -420,6 +515,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
 
     goal_handle.succeed()
     result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+    result.error_string = SUCCEEDED
     return result
 
 

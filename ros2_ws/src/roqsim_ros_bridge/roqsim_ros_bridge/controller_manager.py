@@ -92,6 +92,8 @@ class ControllerManagerServices:
 
     def _list(self, request, response):
         for controller in self._mine():
+            if not controller.listed:
+                continue  # declared, never loaded: ros2_control does not list it either
             state = ControllerState()
             state.name = controller.name
             state.type = controller.type
@@ -137,11 +139,17 @@ class ControllerManagerServices:
     # -- lifecycle -------------------------------------------------------------------------------
 
     def _load(self, request, response):
-        """Move a declared controller to ``inactive``; refuse a name the world never declared."""
+        """Move a declared controller to ``inactive``; refuse a name the world never declared.
+
+        A declared but unlisted controller (:attr:`roqsim.controllers.Controller.listed`) is loaded
+        here: from now on ``list_controllers`` shows it and a switch may activate it.
+        """
         controller = self._registry.get(request.name, self._ns)
         response.ok = controller is not None
-        if controller is not None and controller.state == UNCONFIGURED:
-            controller.state = INACTIVE
+        if controller is not None:
+            controller.listed = True
+            if controller.state == UNCONFIGURED:
+                controller.state = INACTIVE
         return response
 
     def _configure(self, request, response):
