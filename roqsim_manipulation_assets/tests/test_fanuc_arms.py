@@ -564,3 +564,134 @@ def test_collision_pieces_sit_on_their_link(name):
         vlo, vhi = extent(visual)
         clo, chi = extent(collision)
         assert np.all(clo >= vlo - 0.01) and np.all(chi <= vhi + 0.01), link
+
+
+# -- the arm, through spawn_arm and its manifest's arm_controller ---------------------------------
+
+#: Upper arm and forearm horizontal, forward: the largest gravity torque on J2 and J3.
+STRETCHED = [0.0, math.pi / 2, math.pi / 2, 0.0, 0.0, 0.0]
+
+
+def _qadr(engine, arm) -> list[int]:
+    model = engine.ctx.model
+    return [int(model.jnt_qposadr[model.joint(j).id]) for j in arm.joint_names]
+
+
+@arms
+def test_holds_home_and_stretched_under_gravity(name):
+    engine = _engine(name)
+    try:
+        arm = engine.ctx.blackboard.get("arm:arm")
+        data, qadr = engine.ctx.data, _qadr(engine, arm)
+        assert data.qpos[qadr] == pytest.approx(_model(name).key("home").qpos)
+        for target in (None, STRETCHED):
+            if target is not None:
+                arm.set_targets(arm.joint_names, target)
+                for _ in range(2000):
+                    engine.step()
+            start = data.qpos[qadr].copy()
+            for _ in range(1500):
+                engine.step()
+            drift = np.degrees(np.abs(data.qpos[qadr] - start)).max()
+            assert drift < 0.05, f"sagged {drift:.3f} deg at {target}"
+    finally:
+        engine.shutdown()
+
+
+@arms
+def test_rated_payload_held_stretched_out(name):
+    """FANUC's rated payload at the flange, arm horizontal: under 1 deg of sag, no axis saturated.
+
+    A downward force at the flange (``xfrc_applied``) rather than a welded body, so spawn_arm's
+    gravity compensation cannot carry it: the servos must, as the gain formula sized them to.
+    """
+    engine = _engine(name)
+    try:
+        arm = engine.ctx.blackboard.get("arm:arm")
+        model, data, qadr = engine.ctx.model, engine.ctx.data, _qadr(engine, arm)
+        arm.set_targets(arm.joint_names, STRETCHED)
+        for _ in range(2000):
+            engine.step()
+        body, site = model.body("J6_link").id, model.site("tool_site").id
+        force = np.array([0.0, 0.0, -DATASHEET[name]["payload"] * 9.81])
+        peak = np.zeros(model.nu)
+        for _ in range(1500):
+            lever = data.site_xpos[site] - data.xipos[body]
+            data.xfrc_applied[body, :3] = force
+            data.xfrc_applied[body, 3:] = np.cross(lever, force)
+            engine.step()
+            peak = np.maximum(peak, np.abs(data.actuator_force))
+        sag = np.degrees(np.abs(data.qpos[qadr] - STRETCHED)).max()
+        assert sag < 1.0, f"rated payload sags the arm {sag:.2f} deg"
+        assert (peak < model.actuator_forcerange[:, 1] * 0.999).all(), f"saturated: {peak}"
+    finally:
+        engine.shutdown()
+
+
+#: The tracking test's poses, rad: each moves every axis, inside every limit, clear of self-contact.
+POSES = [
+    [0.0, 0.0, 0.0, 0.0, -math.pi / 2, 0.0],
+    [0.8, 0.5, 0.3, 1.0, -1.0, 1.5],
+    [-0.8, -0.3, 0.6, -1.0, -0.6, -1.5],
+    [0.3, 0.8, 1.2, 0.5, -1.2, 0.0],
+    [0.0, 0.0, 0.0, 0.0, -math.pi / 2, 0.0],
+]
+
+
+@arms
+def test_tracks_a_trajectory_at_fanucs_speeds(name):
+    """Through four poses on quintic segments timed so the fastest axis peaks at FANUC's speed.
+
+    Graded against FANUC's own driver constraints (ros2_controllers.yaml: 0.25 rad path, 0.05 rad
+    goal per joint), and against what the servos are sized to: within a degree throughout.
+    """
+    from roqsim_manipulation.trajectory import JointTrajectory
+
+    engine = _engine(name)
+    try:
+        arm = engine.ctx.blackboard.get("arm:arm")
+        model, data, qadr = engine.ctx.model, engine.ctx.data, _qadr(engine, arm)
+        poses = np.array(POSES)
+        speed = np.radians(DATASHEET[name]["speed_deg"])
+        segments = [
+            max(1.875 * np.abs(b - a) / speed) for a, b in zip(poses, poses[1:], strict=False)
+        ]
+        times = np.concatenate([[0.0], np.cumsum(segments)])
+        zeros = np.zeros_like(poses)
+        # The current pose is the first knot: before it, a trajectory holds its first position.
+        arm.follow_trajectory(arm.joint_names, times, poses, zeros, zeros)
+        reference = JointTrajectory.build(times, poses, zeros, zeros)
+        start, worst, peak = data.time, np.zeros(6), np.zeros(6)
+        for _ in range(int((times[-1] + 0.5) / model.opt.timestep)):
+            engine.step()
+            expected = reference.sample(min(data.time - start, times[-1]))[0]
+            worst = np.maximum(worst, np.abs(data.qpos[qadr] - expected))
+            peak = np.maximum(peak, np.abs(data.qvel[qadr]))
+            assert (np.abs(data.actuator_force) < model.actuator_forcerange[:, 1] * 0.999).all()
+        assert (worst < 0.25).all(), f"driver path tolerance broken: {np.degrees(worst)} deg"
+        assert np.degrees(worst).max() < 1.0, f"tracking error {np.degrees(worst)} deg"
+        assert (np.abs(data.qpos[qadr] - poses[-1]) < 0.05).all()
+        assert np.degrees(np.abs(data.qpos[qadr] - poses[-1])).max() < 0.01
+        assert (peak <= speed * 1.05).all(), f"{np.degrees(peak)} deg/s"
+    finally:
+        engine.shutdown()
+
+
+@arms
+def test_axes_move_no_faster_than_fanucs_speeds(name):
+    """A step to a far pose is limited to the datasheet speeds by the manifest's max_velocity."""
+    engine = _engine(name)
+    try:
+        arm = engine.ctx.blackboard.get("arm:arm")
+        data, qadr = engine.ctx.data, _qadr(engine, arm)
+        target = POSES[3]
+        arm.set_targets(arm.joint_names, target)
+        peak = np.zeros(6)
+        for _ in range(2500):
+            engine.step()
+            peak = np.maximum(peak, np.abs(data.qvel[qadr]))
+        speed = np.radians(DATASHEET[name]["speed_deg"])
+        assert (peak <= speed * 1.05).all(), np.degrees(peak)
+        assert data.qpos[qadr] == pytest.approx(target, abs=np.radians(0.1))
+    finally:
+        engine.shutdown()
