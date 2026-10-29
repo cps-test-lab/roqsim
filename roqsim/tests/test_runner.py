@@ -539,7 +539,7 @@ def test_a_control_plane_reset_restarts_the_recording(tmp_path):
     engine.setup()
     engine.reset()
     rate = snap_fps(25, engine.dt)
-    recorder = StateRecorder(engine.ctx, tmp_path / "run.npz", rate, world="w")
+    recorder = StateRecorder(engine.ctx, tmp_path / "run.mcap", rate, world="w")
     pacer = Pacer.from_config("asap", engine.dt)
     try:
         runner._run_headless(engine, pacer, 1000, recorder)  # 2 s of sim time
