@@ -1059,6 +1059,18 @@ waypoint has been *fed* would make a blocked or saturated arm indistinguishable 
 that did the job, and MoveIt forwards that verdict unchanged, so the caller would see a clean execution
 against a scene that never moved.
 
+The rest of a JointTrajectoryController's policy follows the controller's hints where a robot states
+them (``arm_controller``'s ``path_tolerance``, ``allow_partial_joints_goal``,
+``allow_nonzero_velocity_at_trajectory_end``): a goal the controller would refuse is rejected before
+it executes, a joint trailing the trajectory by more than its path tolerance aborts it with
+``PATH_TOLERANCE_VIOLATED``, and a goal time tolerance of 0 waits for the joints without limit,
+upstream's convention. Two of upstream's rules hold for every arm, whether or not it states hints:
+one goal executes per controller, so a new one ends the running one with "Current goal cancelled
+due to new incoming action.", and a goal that reaches its tolerance succeeds with "Goal successfully
+reached!" as its ``error_string``. And a producer that cannot move now
+-- ``arm_controller``'s motion gate, closed by a driver interface -- aborts its goal with the reason.
+These decisions are ROS-free (``roqsim_ros_bridge/trajectory_policy.py``) and tested without ROS.
+
 **The control socket (``ipc``).** The second backend, :class:`roqsim.ipc.bridge.IpcBridge`, is core
 roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default
 (``--control``, ``ROQSIM_CONTROL``; ``none`` disables) together with the ``run_control`` plugin,

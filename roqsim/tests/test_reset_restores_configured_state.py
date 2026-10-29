@@ -261,6 +261,46 @@ PAYLOADS: dict[str, Any] = {
         for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
     },
     "override": True,
+    "forward_commands": ([0.1, 0.1, 0.1, 0.0, -1.4, 0.1],),
+    # fanuc_driver_interface: its inputs and its services' requests, as the driver's messages are.
+    "speed_scaling_factor": 40,
+    "fanuc_gpio_controller.io_cmd": [{"io_type": {"type": "DO"}, "index": 101, "value": True}],
+    "fanuc_gpio_controller.analog_io_cmd": [],
+    "fanuc_gpio_controller.num_reg_cmd": [{"index": 3, "value": 2.0}],
+    **{
+        f"fanuc_gpio_controller.{name}": request
+        for name, request in {
+            "get_bool_io": {"io_type": {"type": "DO"}, "index": 101},
+            "set_bool_io": {"io_type": {"type": "DO"}, "index": 120, "value": True},
+            "get_analog_io": {"io_type": {"type": "AO"}, "index": 1},
+            "set_analog_io": {"io_type": {"type": "AO"}, "index": 1, "value": 2.0},
+            "get_group_io": {"io_type": {"type": "GO"}, "index": 1},
+            "set_group_io": {"io_type": {"type": "GO"}, "index": 1, "value": 3},
+            "get_num_reg": {"index": 1},
+            "set_num_reg": {"index": 1, "value": 4.0},
+            "get_pos_reg": {"index": 1},
+            "set_pos_reg": {"index": 1, "representation": "Joint", "j1": 5.0},
+            "set_gen_override": {"value": 50},
+            "set_payload_id": {"payload_schedule_id": 2},
+            "get_payload_id": {},
+            "set_payload_value": {"payload_schedule_id": 1, "mass": 2.0},
+            "get_payload_value": {"payload_schedule_id": 1},
+            "set_payload_comp": {"payload_schedule_id": 1, "mass": 2.0},
+            "get_payload_comp": {"payload_schedule_id": 1},
+            "read_error": {"count": 1},
+            "get_uframe_utool": {"group": 0},
+            "set_uframe_utool": {"uframe_number": 1, "utool_number": 1, "group": 0},
+            "get_uframe_data": {"uframe_number": 1, "group": 0},
+            "set_uframe_data": {"uframe_number": 1, "frame": {"x": 10.0}, "group": 0},
+            "get_utool_data": {"utool_number": 1, "group": 0},
+            "set_utool_data": {"utool_number": 1, "frame": {"z": 50.0}, "group": 0},
+            "get_cartesian_position": {"group": 0},
+            "get_tcp_speed": {"group": 0},
+            "switch_control_state": {"status": 0},
+            "reset": {},
+        }.items()
+    },
+    "fanuc_force_sensor_broadcaster.cfg_force_sensor": {"do_reset": 1, "fs_type": 2},
 }
 
 
@@ -336,6 +376,15 @@ def _run_rtde_program(engine: Engine) -> None:
             c.waitPeriod(t0)
 
     engine.ctx.blackboard.get("ur_rtde:ur5e").run(program)
+
+
+def _use_fanuc_driver(engine: Engine) -> None:
+    """What a trial does to a FANUC controller: scale, stop, override, write a register."""
+    eps = {e.name: e for e in engine.ctx.interface.all() if e.owner == "crx"}
+    eps["speed_scaling_factor"].write(10)
+    eps["fanuc_gpio_controller.set_num_reg"].write({"index": 1, "value": 3.0})
+    eps["fanuc_gpio_controller.set_gen_override"].write({"value": 30})
+    eps["fanuc_gpio_controller.switch_control_state"].write({"status": 0})
 
 
 def _needs_file(path_of: Callable[[], Path], what: str) -> Callable[[], str | None]:
@@ -421,6 +470,13 @@ CASES: dict[str, Case] = {
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
     "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
+    # The CRX's manifest carries the interface.
+    "fanuc_driver_interface": Case(
+        lambda _: _world(
+            {"spawn_arm": {"model": "crx25ia", "namespace": "crx"}, "name": "crx"}, timestep=0.002
+        ),
+        use=(_use_fanuc_driver,),
+    ),
     "ur_rtde": Case(lambda _: _arm({"ur_rtde": {"ft": "ft"}}), use=(_run_rtde_program,)),
     "fzi_cartesian_controllers": Case(
         lambda _: _arm(

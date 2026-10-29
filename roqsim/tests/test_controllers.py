@@ -274,3 +274,37 @@ def test_a_switch_names_a_controller_within_one_robots_manager():
     assert ok
     assert r.get("c", "alice").state == ACTIVE
     assert r.get("c", "bob").state == INACTIVE, "bob's manager was not asked"
+
+
+def test_a_vetoed_activation_changes_nothing_and_says_why():
+    """A refusal is decided before any state moves, so a strict hand-over does not half-happen."""
+    applied: list[bool] = []
+    r = ControllerRegistry()
+    r.register(Controller(name="served", type="t", claims=("j/position",), owner="arm"))
+    r.register(
+        Controller(
+            name="listed_only",
+            type="t",
+            claims=("j/position",),
+            owner="arm",
+            state=INACTIVE,
+            apply=applied.append,
+            veto=lambda active: "not served in simulation" if active else None,
+        )
+    )
+
+    ok, message = r.switch(activate=["listed_only"], deactivate=["served"], strictness=STRICT)
+
+    assert not ok and "not served in simulation" in message
+    assert r.get("served").state == ACTIVE
+    assert r.get("listed_only").state == INACTIVE
+    assert applied == [] and r.get("listed_only").transitions == []
+
+
+def test_a_veto_that_lets_the_transition_through_is_a_normal_switch():
+    r = ControllerRegistry()
+    r.register(
+        Controller(name="c", type="t", owner="arm", state=INACTIVE, veto=lambda active: None)
+    )
+    assert r.switch(activate=["c"], strictness=STRICT) == (True, "ok")
+    assert r.get("c").state == ACTIVE

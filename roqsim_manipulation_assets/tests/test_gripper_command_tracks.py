@@ -48,6 +48,19 @@ GRIPPERS = [
         (0.0, 0.025),
         id="ur5e+robotiq_hande",
     ),
+    # The FANUC arms take a tool on FANUC's fanuc_flange (their tool_site).
+    pytest.param(
+        {"model": "crx25ia", "end_effector": {"model": "robotiq_hande"}},
+        "hande_left_finger_joint",
+        (0.0, 0.025),
+        id="crx25ia+robotiq_hande",
+    ),
+    pytest.param(
+        {"model": "m20id25", "end_effector": {"model": "robotiq_2f85"}},
+        "robotiq_85_left_knuckle_joint",
+        (0.0, 0.8),
+        id="m20id25+robotiq_2f85",
+    ),
     # franka_description: finger_joint1 0.04 m apart per finger when open.
     pytest.param({"model": "panda"}, "finger_joint1", (0.04, 0.0), id="panda"),
 ]
