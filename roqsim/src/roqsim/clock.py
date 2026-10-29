@@ -27,7 +27,7 @@ class Pacer:
     **It also counts the steps it could not pace**, which is the only record that a run failed
     the timing it asked for. Falling behind is absorbed deliberately (see :meth:`wait`), so
     without a counter the run simply produces slower sim time and says nothing -- a campaign
-    then has to reconstruct the shortfall from ``run.clock_map.csv`` afterwards, if anyone
+    then has to reconstruct the shortfall from the recording's ``clock`` channel afterwards, if anyone
     thinks to look.
     """
 

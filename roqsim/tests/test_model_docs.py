@@ -115,3 +115,34 @@ def test_a_flat_provider_takes_the_licence_the_model_declares(model_docs, tmp_pa
 
     manifest.write_text("license: LICENSE.vendor_b\n")
     assert model_docs._license_files(model) == [tmp_path / "LICENSE.vendor_b"]
+
+
+def test_a_rows_prose_reads_as_itself_whatever_markup_it_resembles(model_docs, tmp_path):
+    """A model package writes its header and credits as plain text, not as RST.
+
+    A title like ``"Crate_ Lid Open"`` is a reference to an undefined target in RST, which fails the
+    ``-W`` docs build for every installation that has the package -- so the row must carry the text
+    escaped, and render it back character for character.
+    """
+    from docutils.core import publish_doctree
+    from docutils.nodes import system_message
+
+    headline = "A crate_ with *one* lid open, |held| by a `strap` [1]_."
+    credit = '"Crate_ Lid Open" by some_one (https://example.com/some_one), terms::'
+    prop = tmp_path / "crate"
+    prop.mkdir()
+    (prop / "crate.xml").write_text(f'<mujoco model="crate">\n  <!-- {headline} -->\n</mujoco>\n')
+    (prop / "CREDITS.txt").write_text(f"{credit}\nlicensed under CC-BY-4.0\n")
+    env = type("Env", (), {"srcdir": str(tmp_path)})()
+    rows = model_docs._provider_rows(env, tmp_path, "some_models", "")
+    rst = "\n".join(model_docs.catalog_table(env, rows))
+
+    doctree = publish_doctree(
+        rst, settings_overrides={"report_level": 5, "halt_level": 5, "warning_stream": False}
+    )
+
+    problems = [m.astext() for m in doctree.findall(system_message)]
+    assert not problems, problems
+    text = doctree.astext()
+    assert headline in text
+    assert credit in text

@@ -28,8 +28,8 @@ components:
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
   # Velodyne VLP-16 on the vendor's tower, cast as a PLANAR scan at the sensor's own scan height: what
-  # a 2D costmap receives after pointcloud_to_laserscan (port log A5 says when a true 16-plane model
-  # would be needed instead).
+  # a 2D costmap receives after pointcloud_to_laserscan. A stack that consumes the 3D point cloud
+  # (a voxel layer, say) needs a true 16-plane model instead.
   # The mount is jackal_description's vlp16_mount (accessories/vlp16_mount.urdf.xacro @ 4ddf9b5): the
   # tower's plate joint at height 0.1 on mid_mount, the VLP-16 at the plate origin. Clearpath's ROS 2
   # sample puts `velodyne_lidar` at the same place, xyz (0, 0, 0.1) on default_mount (clearpath_config

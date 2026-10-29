@@ -1,0 +1,42 @@
+# base_visual_1.obj: FANUC CRX-25iA visual mesh, base, colour [0.7333, 0.7333, 0.7333].
+# Derived from FANUC-CORPORATION/fanuc_description @ fb40c9803a826ba68c7c8e28ba904a25efa7fcd2,
+#   fanuc_crx_description/meshes/crx30ia/visual/base.dae.
+# Modified by the roqsim authors: converted from COLLADA, one material, not decimated
+#   (external/convert/build_fanuc_mjcf.py). Apache-2.0: see the LICENSE beside the model.
+# SPDX-FileCopyrightText: 2025-2026, FANUC America Corporation
+# SPDX-FileCopyrightText: 2025-2026, FANUC CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+v -0.158321 -0.015516 0.073200
+v -0.158321 -0.015516 0.072000
+v -0.158321 -0.038797 0.072000
+v -0.158321 -0.039170 0.071952
+v -0.158321 -0.039502 0.071817
+v -0.158321 -0.039781 0.071593
+v -0.158321 -0.039958 0.071312
+v -0.158321 -0.040018 0.071000
+v -0.158321 -0.040018 0.025600
+v -0.158321 -0.039958 0.025288
+v -0.158321 -0.039781 0.025007
+v -0.158321 -0.039502 0.024783
+v -0.158321 -0.039170 0.024648
+v -0.158321 -0.038797 0.024600
+v -0.158321 -0.015516 0.024600
+v -0.158321 -0.015516 0.023400
+v -0.158321 -0.041479 0.023400
+v -0.158321 -0.041479 0.073200
+f 7 6 18
+f 5 18 6
+f 18 5 4
+f 15 14 16
+f 12 11 17
+f 10 17 11
+f 2 1 3
+f 18 3 1
+f 3 18 4
+f 7 18 8
+f 17 8 18
+f 8 17 9
+f 10 9 17
+f 16 14 17
+f 13 17 14
+f 17 13 12

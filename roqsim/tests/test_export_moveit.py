@@ -542,6 +542,38 @@ def test_a_flag_that_names_one_robot_is_refused_for_a_pair(tmp_path, capsys):
     )
 
 
+@pytest.mark.parametrize(
+    "gripper,joint,opened,closed",
+    [
+        ("robotiq_2f85", "robotiq_85_left_knuckle_joint", 0.0, 0.8),
+        ("robotiq_hande", "hande_left_finger_joint", 0.0, 0.025),
+    ],
+)
+def test_a_gripper_swaps_by_the_names_of_its_states(tmp_path, gripper, joint, opened, closed):
+    """Each gripper exports the same group, controller and named states, in its own joint's units.
+
+    A MoveIt client that commands ``open``/``closed`` on the ``gripper`` group through
+    ``gripper_controller`` therefore works unchanged when the world swaps one gripper for another.
+    """
+    world = yaml.safe_load(yaml.safe_dump(_WORLD))
+    world["components"][0]["spawn_arm"]["end_effector"]["model"] = gripper
+    code, out = _run_cli(tmp_path, world, "--tip-site", "pinch")
+    assert code == 0
+    srdf = ET.parse(out / "ur5e.srdf").getroot()
+    states = {
+        s.get("name"): {j.get("name"): float(j.get("value")) for j in s.findall("joint")}
+        for s in srdf.findall("group_state[@group='gripper']")
+    }
+    assert states == {
+        "open": {joint: pytest.approx(opened)},
+        "closed": {joint: pytest.approx(closed)},
+    }
+    manager = yaml.safe_load((out / "moveit_controllers.yaml").read_text(encoding="utf-8"))[
+        "moveit_simple_controller_manager"
+    ]
+    assert manager["gripper_controller"]["joints"] == [joint]
+
+
 def test_one_arm_still_gets_the_group_called_arm(tmp_path):
     """Existing configs and launch files name it, so a one-arm world keeps emitting it literally."""
     _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")

@@ -52,6 +52,9 @@ roqsim_walker = "roqsim_walker.models"
 [project.entry-points."roqsim.commands"]
 walker = "roqsim_walker.cli:walker"
 
+[project.entry-points."roqsim.environment"]
+roqsim_walker = "roqsim_walker.environment:VARIABLES"
+
 [tool.setuptools]
 # The CC-BY attribution the bundled assets require travels in the wheel's metadata (dist-info).
 license-files = ["THIRD_PARTY.md"]

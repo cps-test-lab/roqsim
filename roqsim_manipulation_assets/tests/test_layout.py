@@ -68,9 +68,11 @@ def test_package_data_globs_cover_every_shipped_file():
     data = tomllib.loads((root / "pyproject.toml").read_text())
     globs = data["tool"]["setuptools"]["package-data"]["roqsim_manipulation_assets"]
     pkg = root / "src" / "roqsim_manipulation_assets"
+    # The source tree's files, which are what a wheel is built from -- not MODELS_DIR, which is the
+    # installed copy and, outside an editable install, holds only what the globs already matched.
     missing = [
         str(p.relative_to(pkg))
-        for p in MODELS_DIR.rglob("*")
+        for p in (pkg / "models").rglob("*")
         if p.is_file()
         # __init__.py is a module (and .pyc build litter).
         and p.suffix not in (".py", ".pyc")

@@ -8,8 +8,7 @@ primitive below is RT Corporation's own value, read out of the expanded xacro.
 
 Worth recording next to its siblings: **RT Corporation ships this description under plain MIT**,
 while the same vendor's CRANE-X7 and Sciurus17 model files are under a non-commercial agreement that
-puts both out of reach. The platform ledger has all three, and this is why it reads the licence per
-repository rather than per vendor.
+puts both out of reach. A licence therefore has to be read per repository, not per vendor.
 
 Two small things the source does that the generator handles:
 

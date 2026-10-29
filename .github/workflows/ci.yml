@@ -12,9 +12,22 @@ on:
   pull_request:
 
 jobs:
+  # The whole of `make ci` on the runner image GitHub calls latest; on Ubuntu 24.04, whose Python roqsim
+  # keeps supporting, the packages install and every shipped world runs (`make smoke`) -- what an
+  # older interpreter breaks first, in minutes. An image that moves to a newer Ubuntu and Python shows
+  # up as one of the two failing. The latest one keeps the check's name the repository's rules
+  # require, and publishes the docs.
   core:
-    name: core (lint, tests, smoke, docs)
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os == 'ubuntu-latest' && 'core (lint, tests, smoke, docs)' || format('core (smoke) on {0}', matrix.os) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: ci
+          - os: ubuntu-24.04
+            target: smoke
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,14 +50,15 @@ jobs:
 
       # lint + test + smoke + check + doc. `make test` skips the ros2_ws suite when ROS is not
       # sourced, which is exactly right here -- the `ros` job below owns that half.
-      - name: make ci
-        run: make ci
+      - name: make ${{ matrix.target }}
+        run: make ${{ matrix.target }}
 
       # The site is the docs `make ci` just built, from the same run that linted, tested and
       # scrubbed this commit -- so a published page cannot come from a build that failed. The
       # artifact is produced on pull requests too, where it is downloadable for review; only the
       # `pages` job below publishes it, and only from main.
       - name: Package the docs for GitHub Pages
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/html
@@ -70,7 +84,7 @@ jobs:
             ros-jazzy-nav2-minimal-tb4-description \
             ros-jazzy-nav2-simple-commander \
             ros-jazzy-simulation-interfaces ros-jazzy-controller-manager-msgs \
-            ros-jazzy-ackermann-msgs
+            ros-jazzy-ackermann-msgs ros-jazzy-ur-msgs
 
       - name: Create venv and install packages
         run: make venv

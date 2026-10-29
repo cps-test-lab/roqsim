@@ -12,7 +12,7 @@
     THE MASSES ARE NOT TRUSTWORTHY, and provably so rather than suspiciously: each 38 mm caster
     sphere is declared at 12.7 kg, which is exactly the mass of the MPO-700's steering modules in the
     same repository. 50.8 kg of this 84.4 kg robot sits in four casters. Geometry and kinematics are
-    sound; use this model for navigation, not for dynamics. See the port log.
+    sound; use this model for navigation, not for dynamics.
 
     The casters are FIXED in the description - passive spheres, not articulated wheels - so they
     slide rather than roll. They carry a low-friction contact class with `priority`, without which

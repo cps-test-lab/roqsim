@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _render import catalog_table, parse_rst, rubric
+from _render import catalog_table, parse_rst, rst_text, rubric
 from docutils.parsers.rst import Directive
 
 try:
@@ -32,7 +32,7 @@ def _credits_lines(folder: Path) -> list[str]:
     for raw in credits.read_text().splitlines():
         line = raw.strip()
         if line:
-            out += [line, ""]
+            out += [rst_text(line), ""]
     return out
 
 
@@ -40,7 +40,7 @@ def _texture_rows(assets_dir: Path) -> list[tuple[Path | None, list[str]]]:
     rows: list[tuple[Path | None, list[str]]] = []
     for folder in sorted(p for p in assets_dir.iterdir() if p.is_dir()):
         name = folder.name
-        body = [f"**{name}**", ""]
+        body = [f"**{rst_text(name)}**", ""]
         manifest = folder / "manifest.yaml"
         if yaml is not None and manifest.exists():
             data = yaml.safe_load(manifest.read_text()) or {}
@@ -71,7 +71,7 @@ class SimSuiteTexturesDirective(Directive):
                 self,
                 [
                     f".. note:: ``roqsim_assets`` is not installed "
-                    f"({type(exc).__name__}: {exc}).",
+                    f"({type(exc).__name__}: {rst_text(str(exc))}).",
                     "",
                 ],
             )

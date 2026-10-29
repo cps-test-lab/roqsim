@@ -150,13 +150,21 @@ class ToolCommand(click.Command):
         argparse takes its program name from ``argv[0]``, which here is the ``roqsim`` launcher -- so a
         tool's own usage line would read ``usage: roqsim [-h] --grid ...`` and send the reader off to
         spell an invocation that does not exist. It has to name the path they actually typed.
+
+        Under ``python -m roqsim.commands`` argparse (3.14 and later) ignores ``argv[0]`` and names
+        ``__main__``'s module spec instead, so the spec is hidden for as long as the tool runs.
         """
-        original = sys.argv[0]
+        main = sys.modules.get("__main__")
+        original, spec = sys.argv[0], getattr(main, "__spec__", None)
         sys.argv[0] = ctx.command_path if ctx else original
+        if ctx and spec is not None:
+            main.__spec__ = None
         try:
             yield
         finally:
             sys.argv[0] = original
+            if spec is not None:
+                main.__spec__ = spec
 
     def _run(self, args, ctx):
         """Call the module's ``main`` with `args`, however it expects to receive them.
@@ -334,7 +342,9 @@ def cli() -> None:
 cli.add_command(tool("roqsim.runner", "sim"))
 cli.add_command(tool("roqsim.render", "render"))
 cli.add_command(tool("roqsim.state", "state"))
+cli.add_command(tool("roqsim.rebuild", "rebuild"))
 cli.add_command(tool("roqsim.introspection", "plugins"))
+cli.add_command(tool("roqsim.renderers", "renderers"))
 cli.add_command(tool("roqsim.catalog", "catalog"))
 cli.add_command(tool("roqsim.health", "health"))
 cli.add_command(tool("roqsim.check", "check"))
@@ -349,9 +359,7 @@ def export_group() -> None:
     """Export a world or model to another format."""
 
 
-export_group.add_command(tool("roqsim.export_web", "web"))
 export_group.add_command(tool("roqsim.export_gltf", "gltf"))
-export_group.add_command(tool("roqsim.export_capture", "capture"))
 export_group.add_command(tool("roqsim.export_urdf", "urdf"))
 export_group.add_command(tool("roqsim.export_srdf", "srdf"))
 export_group.add_command(tool("roqsim.export_mesh", "mesh"))

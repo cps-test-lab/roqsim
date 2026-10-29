@@ -186,7 +186,7 @@ def test_a_grippers_tendon_actuator_is_out_of_scope(tmp_path):
     `actuators:` is resolved before the end effector is grafted into the arm's spec, so a shared
     joint law lands on the arm's own actuators and never on the gripper's tendon -- which has no
     joint stiffness, and whose presence would otherwise refuse a block that was only ever about the
-    arm's joints.
+    arm's joints. The gripper's servo is recorded beside them, as its model states it.
     """
     world = tmp_path / "gripper.yaml"
     world.write_text(
@@ -203,7 +203,10 @@ def test_a_grippers_tendon_actuator_is_out_of_scope(tmp_path):
         names = [model.actuator(i).name for i in range(model.nu)]
         assert "ur5e_fingers_actuator" in names, "the gripper lost its actuator"
         table = {row.name: row for row in engine.ctx.actuator_tables["ur5e"]}
-        assert "ur5e_fingers_actuator" not in table, "the gripper's tendon was rewritten as a joint"
+        gripper = table.pop("ur5e_fingers_actuator")
+        assert (gripper.control, gripper.source) == ("position", "model"), (
+            "the gripper's tendon was rewritten as a joint"
+        )
         assert len(table) == 6 and {r.control for r in table.values()} == {"impedance"}
     finally:
         engine.shutdown()

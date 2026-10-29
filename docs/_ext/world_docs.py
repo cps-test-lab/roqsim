@@ -15,7 +15,7 @@ from __future__ import annotations
 from importlib import import_module, metadata
 from pathlib import Path
 
-from _render import catalog_table, parse_rst, rubric
+from _render import catalog_table, parse_rst, rst_text, rubric
 from docutils.parsers.rst import Directive
 
 
@@ -79,7 +79,7 @@ class SimSuiteWorldsDirective(Directive):
                 lines += rubric(f"``{dist_name}``")
                 lines += [
                     f".. note:: Could not load world provider ``{ep.name}`` "
-                    f"({type(exc).__name__}: {exc}).",
+                    f"({type(exc).__name__}: {rst_text(str(exc))}).",
                     "",
                 ]
                 continue
@@ -88,9 +88,9 @@ class SimSuiteWorldsDirective(Directive):
             summary = _summary(dist_name)
             rows = []
             for name, mjcf in names:
-                body = [f"**{name}** — ``{dist_name}``", ""]
+                body = [f"**{rst_text(name)}** — ``{dist_name}``", ""]
                 if summary:
-                    body += [summary, ""]
+                    body += [rst_text(summary), ""]
                 body += [
                     f"Baked MJCF scene. Reference as ``{ep.name}:{name}`` in ``sim.world``.",
                     "",

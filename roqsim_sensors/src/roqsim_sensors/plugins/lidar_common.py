@@ -69,6 +69,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     """Base for a ``post_step`` range sensor built on :func:`roqsim.raycast.cast`."""
 
     parallel_safe = True  # post_step only reads data + writes its own payload buffer
+    # A cast is a function of the state, and its noise of (seed, sim time), so a recording can
+    # rebuild it (roqsim.rebuild). A live `fault:` write is not in a recording: a rebuild casts nominal.
+    rebuild_cost = "raycast"
 
     #: Name of the endpoint the device declares, and the key a world's ``topics:`` map renames it by.
     ENDPOINT_NAME = "scan"
@@ -369,6 +372,14 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             # Nobody listening and the sensor opted out: the cast is the whole cost, so skip it too.
             # `has_subscribers is None` (no transport) is "assume yes", as for the cameras.
             return
+        self.capture(ctx)
+
+    def output_cost(self, endpoint) -> str | None:
+        """``raycast`` for the payload endpoint; nothing for the fault endpoints."""
+        return self.rebuild_cost if endpoint is self._endpoint else None
+
+    def capture(self, ctx: SimContext) -> None:
+        """Cast every ray for the state ``ctx.data`` holds, now, and build the payload."""
         self._last_cast = ctx.sim_time
         m, d = ctx.model, ctx.data
         origin = d.site_xpos[self._site_id]

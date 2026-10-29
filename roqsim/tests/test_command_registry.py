@@ -235,13 +235,17 @@ def test_listing_the_tree_does_not_import_the_tools(tree):
         "with contextlib.redirect_stdout(io.StringIO()):\n"  # the listing itself is not the answer
         "    try: c.main(['scenes', '--help'])\n"
         "    except SystemExit: pass\n"
-        "print('|'.join(m for m in ('torch', 'scipy', 'PIL', 'lxml') if m in sys.modules),"
-        " file=sys.stderr)"
+        "print('LEAKED:' + '|'.join(m for m in ('torch', 'scipy', 'PIL', 'lxml')"
+        " if m in sys.modules), file=sys.stderr)"
     )
     out = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, timeout=300, cwd=REPO
     )
-    leaked = out.stderr.strip().splitlines()[-1] if out.stderr.strip() else ""
+    # Its own line: a group whose package was installed without its requirements says so on
+    # stderr too, and that line is not the answer.
+    answer = [line for line in out.stderr.splitlines() if line.startswith("LEAKED:")]
+    assert answer, f"the probe did not answer: {out.stderr}"
+    leaked = answer[-1][len("LEAKED:") :]
     assert not leaked, f"listing the tools imported them: {leaked}"
 
 
@@ -269,9 +273,8 @@ _STATES_ITS_EXIT_STATUS = {
     "health",
     "catalog",
     "plugins",
-    "export web",
+    "renderers",
     "export gltf",
-    "export capture",
     "export urdf",
     "export srdf",
     "export mesh",
@@ -313,17 +316,15 @@ def _missing_input_cases(root: Path) -> dict[str, list[str]]:
         "assets reduce-mesh": [f"{nope}.glb", str(root / "out.obj")],
         "sim": [f"{nope}.yaml", "--headless"],
         "render": [f"{nope}.yaml", "--out", str(root / "x.png")],
-        "render --state": ["--state", f"{nope}.npz", "--out", str(root / "x.png")],
-        "state": ["--state", f"{nope}.npz", "--check"],
+        "render --state": ["--state", f"{nope}.mcap", "--out", str(root / "x.png")],
+        "state": ["--state", f"{nope}.mcap", "--check"],
         "check": [f"{nope}.yaml"],
         "health": [nope],
         "catalog": ["model", "nope_xyz"],
         "plugins": ["describe", "nope_xyz"],
-        "export web": ["--world", f"{nope}.yaml", "--out", str(root / "web")],
-        "export web --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "web")],
+        "renderers": ["describe", "nope_xyz"],
         "export gltf": ["--world", f"{nope}.yaml", "--out", str(root / "x.glb")],
         "export gltf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.glb")],
-        "export capture": ["--state", f"{nope}.npz", "--out", str(root / "cap")],
         "export urdf": ["--world", f"{nope}.yaml", "--out", str(root / "x.urdf")],
         "export urdf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.urdf")],
         "export srdf --mjcf": [
@@ -401,15 +402,7 @@ _FOREIGN_PATTERNS = (re.compile(r"\bskills?\b"), re.compile(r"resolution_attempt
 #: writer's output unreadable by the very consumer whose specification defines it. Keep this list
 #: short, per-line rather than per-file, and each entry justified -- an unexplained entry here is how
 #: the check decays into a convention.
-_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
-    # The wire identifier a consumer matches on, and the citation saying where that format is
-    # specified. Renaming either would not make this file standalone -- it would make its output
-    # unreadable, and leave a reader unable to find the spec it implements.
-    "roqsim/src/roqsim/export_capture.py": ('FORMAT = "robovast.run_capture"',
-                                            "The format is defined by the consumer that reads it"),
-    # Same: the pose table this writer fills in is somebody else's published contract.
-    "roqsim/src/roqsim/capture.py": ("pose-table contract",),
-}
+_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {}
 
 
 # -- an input the tool cannot load is one sentence, not a traceback ---------------------------------

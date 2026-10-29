@@ -1,0 +1,7 @@
+spot_body_camera.xml contains no third-party geometry: a Spot's camera housings are part of the
+Spot body mesh, so this device is a mount and two MuJoCo cameras, and nothing renders of it. It is
+part of roqsim_sensors, under that package's licence (Apache-2.0).
+
+Its numbers -- image sizes, focal lengths, principal points, the fisheye-to-depth offset -- are
+facts, not copied geometry, and each names its source in spot_body_camera.xml and
+spot_body_camera.manifest.yaml.

@@ -44,13 +44,13 @@ def _recording(tmp_path, view: str = ""):
     model, data, _ctx, _view, _cam = render.build_target(str(world), None)
     ctx = _Ctx(model, data)
     recorder = StateRecorder(
-        ctx, tmp_path / "run.npz", snap_fps(25, model.opt.timestep), world=str(world)
+        ctx, tmp_path / "run.mcap", snap_fps(25, model.opt.timestep), world=str(world)
     )
     for _ in range(600):
         mujoco.mj_step(model, data)
         recorder.sample(ctx)
     recorder.close()
-    rec = open_recording(tmp_path / "run.npz")
+    rec = open_recording(tmp_path / "run.mcap")
     rec.build()
     return rec
 
@@ -70,7 +70,7 @@ def rec(tmp_path):
 @pytest.fixture
 def doc(rec, tmp_path):
     return shot_document(
-        rec, rec.at(0.4), _camera(), state=str(tmp_path / "run.npz"), label="a moment"
+        rec, rec.at(0.4), _camera(), state=str(tmp_path / "run.mcap"), label="a moment"
     )
 
 
@@ -90,9 +90,9 @@ def test_the_id_is_filename_safe_and_says_where_it_came_from(doc):
 
 
 def test_two_shots_of_one_moment_get_their_own_ids(rec, tmp_path):
-    first = shot_document(rec, rec.at(0.4), _camera(), state="run.npz", label="x")
+    first = shot_document(rec, rec.at(0.4), _camera(), state="run.mcap", label="x")
     second = shot_document(
-        rec, rec.at(0.4), _camera(), state="run.npz", label="x", taken=(first["id"],)
+        rec, rec.at(0.4), _camera(), state="run.mcap", label="x", taken=(first["id"],)
     )
     assert second["id"] != first["id"]
 
@@ -124,7 +124,7 @@ def test_the_camera_survives_the_command_line(doc):
 def test_a_shot_taken_through_the_recorded_camera_states_no_view(rec):
     """No ``--view`` at all is what leaves the render following the camera the run was watched
     through; a view echoed back would override the very thing it was describing."""
-    doc = shot_document(rec, rec.at(0.4), None, state="run.npz", label="recorded")
+    doc = shot_document(rec, rec.at(0.4), None, state="run.mcap", label="recorded")
     assert doc["camera_source"] == "recorded"
     assert "view" not in doc
     assert "--view" not in render_args(doc)
@@ -134,7 +134,7 @@ def test_a_tracked_world_is_untracked_explicitly(tmp_path):
     """``--view`` merges over the world's own ``sim.view``, and any ``track`` target keeps the
     camera tracking with ``lookat`` ignored -- so a hand-framed shot has to turn both keys off."""
     rec = _recording(tmp_path, view="  view: {track: DummyPlugin, distance: 3.0}")
-    doc = shot_document(rec, rec.at(0.4), _camera(), state="run.npz", label="framed")
+    doc = shot_document(rec, rec.at(0.4), _camera(), state="run.mcap", label="framed")
     assert doc["view"]["track"] is None
     assert doc["view"]["follow_heading"] is False
     args = render_args(doc)
@@ -150,8 +150,8 @@ def test_an_untracked_world_says_nothing_about_tracking(doc):
 
 
 def test_no_ceiling_is_emitted_only_when_it_is_asked_for(rec):
-    plain = shot_document(rec, rec.at(0.4), _camera(), state="run.npz")
-    opened = shot_document(rec, rec.at(0.4), _camera(), state="run.npz", no_ceiling=True)
+    plain = shot_document(rec, rec.at(0.4), _camera(), state="run.mcap")
+    opened = shot_document(rec, rec.at(0.4), _camera(), state="run.mcap", no_ceiling=True)
     assert "--no-ceiling" not in render_args(plain)
     assert "--no-ceiling" in render_args(opened)
 
@@ -171,7 +171,7 @@ def test_appending_keeps_every_document(tmp_path, rec):
     ids = []
     for index, when in enumerate((0.2, 0.4, 0.6)):
         doc = shot_document(
-            rec, rec.at(when), _camera(), state="run.npz", label=f"shot {index}", taken=tuple(ids)
+            rec, rec.at(when), _camera(), state="run.mcap", label=f"shot {index}", taken=tuple(ids)
         )
         ids.append(doc["id"])
         assert append_shot(path, doc) == index + 1
@@ -203,7 +203,7 @@ def test_a_view_can_name_the_body_a_camera_follows():
     doc = {
         "schema": 1,
         "id": "tracked",
-        "state": "run.npz",
+        "state": "run.mcap",
         "at": 3.0,
         "size": "960x540",
         "png": "out.png",
@@ -225,7 +225,7 @@ def test_a_camera_path_and_overlays_survive_the_command_line():
     doc = {
         "schema": 1,
         "id": "clip",
-        "state": "run.npz",
+        "state": "run.mcap",
         "from": "onset",
         "to": "onset+10",
         "size": "960x540",
@@ -251,7 +251,7 @@ def test_a_path_file_is_passed_as_given():
     doc = {
         "schema": 1,
         "id": "c",
-        "state": "run.npz",
+        "state": "run.mcap",
         "from": 0,
         "size": "960x540",
         "video": "c.mp4",
@@ -267,7 +267,7 @@ def test_a_fixed_camera_is_one_or_the_other():
     doc = {
         "schema": 1,
         "id": "c",
-        "state": "run.npz",
+        "state": "run.mcap",
         "at": 1.0,
         "size": "960x540",
         "png": "c.png",
