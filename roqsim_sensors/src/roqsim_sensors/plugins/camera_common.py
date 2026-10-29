@@ -1,4 +1,4 @@
-"""Shared MuJoCo-camera rendering base for RGB(-D) sensor plugins (``mujoco.Renderer``, GL).
+"""Shared camera base for RGB(-D) sensor plugins, drawn through roqsim's render service.
 
 Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera>`` and publish an
 ``image`` + ``camera_info`` output endpoint the same way, so that plumbing lives here once:
@@ -6,11 +6,19 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 * :func:`intrinsics_from_model` -- pinhole intrinsics from the MJCF camera's own ``resolution``/
   ``fovy`` (falling back to plugin config, then a per-sensor default), so the camera's optics are
   described once, in the model, not duplicated into plugin config.
-* :class:`CameraPlugin` -- resolves the camera, owns a lazily-created ``mujoco.Renderer``, throttles
-  capture to ``rate_hz``, skips rendering when no endpoint the render feeds reports a subscriber (see
+* :class:`CameraPlugin` -- resolves the camera, registers a view of it with the render service
+  (``ctx.render``, :class:`roqsim.rendering.RenderService`), throttles capture to ``rate_hz``, asks for
+  no frame when no endpoint the render feeds reports a subscriber (see
   ``roqsim.context.Endpoint.has_subscribers``), and declares the endpoints. Subclasses set
   class-level defaults, may override ``_configure_extra``/``_capture_extra`` to add more outputs
-  (e.g. depth), and declare those outputs' endpoints on their own methods.
+  (e.g. depth) and ``_passes`` to say which images those need, and declare those outputs' endpoints
+  on their own methods.
+
+A camera renders nothing itself. Each tick the engine asks every view whether it is due -- this
+camera's rate gate and lazy check -- and draws the due ones as one batch per renderer, between the
+physics step and ``post_step``; the camera's ``post_step`` then turns its frame into its streams. A
+frame is stamped with the sim time of the state it was drawn from, which in the render service's
+``async`` mode is a tick or more before the one that publishes it.
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
@@ -38,7 +46,8 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin, PluginError
-from roqsim.rendering import FrameRenderer, hold_gc
+from roqsim.render_api import Frame, RenderError
+from roqsim.rendering import RenderService, RenderView
 from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
 
@@ -258,6 +267,8 @@ class CameraPlugin(Plugin):
           noise: null            # {gaussian_sigma: grey levels, blur_sigma: px}: the colour image's
                                  #   blur, then additive noise from ctx.rng_for (after `distortion`)
           render_near: 0.01      # m, > 0; the near plane every pass renders with -- see below
+          renderer: null         # the renderer this camera draws through (a `roqsim renderers` name,
+                                 #   or module:Class); null: the world's sim.renderer
           on_demand: false       # render only for a consumer that asks -- a transport subscriber or
                                  #   an in-process claim (Endpoint.claim); without a transport, a
                                  #   stepped run then renders nothing until a plugin claims a frame
@@ -277,12 +288,12 @@ class CameraPlugin(Plugin):
     The near plane is a physical distance rather than the model's, which ``visual/map znear`` times
     the extent puts tens of centimetres out in a large world, so what a camera sees does not depend
     on the world's size. The planes are set in the camera's own renderer's scene
-    (:class:`roqsim.rendering.FrameRenderer`), so the model, the viewer, an export and every other
+    (:class:`roqsim.rendering.MujocoRenderer`), so the model, the viewer, an export and every other
     camera keep theirs. What a depth camera *senses* is a separate range, applied after the render
     (``depth_camera``).
     """
 
-    parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
+    parallel_safe = False  # reads frames the render service delivers on the physics thread
     # A frame is the render of the state at its stamp plus noise keyed on (seed, sim time), so a
     # recording can rebuild every stream off this camera (roqsim.rebuild).
     rebuild_cost = "render"
@@ -336,6 +347,8 @@ class CameraPlugin(Plugin):
         self._distortion_cfg = self.config.get("distortion")
         self.on_demand = bool(self.config.get("on_demand", False))
         self.render_near = float(self.config.get("render_near", DEFAULT_RENDER_NEAR))
+        #: This camera's renderer when it names its own; else the world's ``sim.renderer``.
+        self.renderer = self.config.get("renderer")
         #: The (near, far) planes in metres every pass renders with, resolved in configure().
         self._planes: tuple[float, float] | None = None
         noise = self.config.get("noise") or {}
@@ -347,7 +360,13 @@ class CameraPlugin(Plugin):
         self._prefix = ""
         self._cam_id = -1
         self._intr: Intrinsics | None = None
-        self._frames: FrameRenderer | None = None
+        #: This camera's views, by pass: ``color`` always, a subclass may add more (``depth``).
+        self._views: dict[str, RenderView] = {}
+        #: The last consumed snapshot's frames, by pass.
+        self._frames: dict[str, Passes] = {}
+        #: The images each view was asked for at the last due tick, and that tick's sim time.
+        self._plan: dict[str, frozenset[str]] = {}
+        self._plan_at: float | None = None
         #: The colour frame of the last capture, in ``color_encoding``.
         self._color_frame: np.ndarray | None = None
         self._last_capture = float("-inf")
@@ -369,6 +388,17 @@ class CameraPlugin(Plugin):
             )
         if not 1 <= int(config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)) <= 100:
             errors.append("'jpeg_quality' must be between 1 and 100")
+        renderer = config.get("renderer")
+        if renderer is not None:
+            if not isinstance(renderer, str) or not renderer:
+                errors.append(f"'renderer' must be a renderer name, got {renderer!r}")
+            else:
+                from roqsim.registry import resolve_renderer  # noqa: PLC0415 -- only when named
+
+                try:
+                    resolve_renderer(renderer)
+                except PluginError as err:
+                    errors.append(f"'renderer': {err}")
         render_near = float(config.get("render_near", DEFAULT_RENDER_NEAR))
         if not (math.isfinite(render_near) and render_near > 0):
             errors.append("'render_near' must be a distance > 0 m")
@@ -442,6 +472,54 @@ class CameraPlugin(Plugin):
         self._planes = (near, far)
 
         self._configure_extra(ctx, prefix)
+        self._register_views(ctx)
+
+    def _view_cameras(self) -> dict[str, tuple[int, Intrinsics]]:
+        """The MuJoCo camera and intrinsics of each pass: the colour camera; a subclass adds its own."""
+        return {"color": (self._cam_id, self._intr)}
+
+    def _passes(self, ctx: SimContext | None) -> dict[str, set[str]]:
+        """The images each pass draws at this tick; with no *ctx*, every image it may ever ask for.
+
+        The colour frame is always drawn: every subclass's extra output comes off the same render.
+        """
+        return {"color": {"rgb"}}
+
+    def _register_views(self, ctx: SimContext) -> None:
+        """One view per pass with the render service; nothing renders until the view is due."""
+        service = RenderService.of(ctx)
+        near, far = self._planes
+        declared = self._passes(None)
+        for key, (cam_id, intr) in self._view_cameras().items():
+            self._views[key] = service.view(
+                f"{self.address}/{key}",
+                camera=cam_id,
+                width=intr.width,
+                height=intr.height,
+                near=near,
+                far=far,
+                images=sorted(declared.get(key, ())),
+                renderer=self.renderer,
+                wants=self._wants(ctx, key),
+                group=self.address,
+            )
+
+    def _wants(self, ctx: SimContext, key: str):
+        """The gate the render service asks of view *key* each tick: its images, or nothing."""
+
+        def wants():
+            if key == "color":
+                # The colour view is registered first, so it decides for every pass of this tick.
+                if not self._due(ctx):
+                    return None
+                self._last_capture = ctx.sim_time
+                self._plan = {k: frozenset(v) for k, v in self._passes(ctx).items() if v}
+                self._plan_at = ctx.sim_time
+            if self._plan_at != ctx.sim_time:
+                return None
+            return self._plan.get(key)
+
+        return wants
 
     def scene_cameras(self, ctx: SimContext) -> list[SensorCamera]:
         """The colour image, through the camera it is rendered from; nothing without one."""
@@ -557,48 +635,70 @@ class CameraPlugin(Plugin):
         return self.rebuild_cost if endpoint in self._rendered else None
 
     def post_step(self, ctx: SimContext) -> None:
-        if not self._due(ctx):
+        frames = self._take()
+        if frames is None and self._due(ctx):
+            # Nothing ticked this camera's views -- a harness driving plugins by hand rather than
+            # an engine -- so render now, through the same service, as a tick would have.
+            self.capture(ctx)
             return
-        self.capture(ctx)
+        if frames is not None:
+            self._consume(ctx, frames)
+
+    def _take(self) -> dict[str, Frame] | None:
+        """This camera's frames delivered since the last take, every pass of one snapshot."""
+        if not self._views:
+            return None
+        keys = list(self._views)
+        # At once: the passes of one snapshot are delivered together, and read together.
+        taken = dict(
+            zip(keys, self._views["color"].service.take(list(self._views.values())), strict=True)
+        )
+        colour = taken["color"]
+        if colour is None:
+            return None
+        return {
+            key: frame
+            for key, frame in taken.items()
+            if frame is not None and frame.sim_time == colour.sim_time
+        }
 
     def capture(self, ctx: SimContext) -> None:
         """Render every pass of this camera for the state ``ctx.data`` holds, now."""
         self._last_capture = ctx.sim_time
-        self._stamp = float(ctx.sim_time)
-        if self._frames is None:
-            near, far = self._planes
-            self._frames = FrameRenderer(
-                ctx.model,
-                self._intr.width,
-                self._intr.height,
-                camera=self._cam_id,
-                near=near,
-                far=far,
-            )
-        # One GL critical section for every pass off this renderer: see `hold_gc`.
-        with hold_gc():
-            rgb = self._frames.render(ctx.data).copy()
-            if self._dist_map is not None:
-                # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
-                # views of the SAME array, so warping downstream would either pay twice or warp
-                # twice. The depth camera's own depth stream is deliberately untouched -- a real
-                # RealSense publishes it already rectified, with D = 0, so distorting it would move
-                # the sim AWAY from the sensor. Registered depth shares this lens and is warped
-                # with it (depth_camera.py).
-                import cv2
+        plan = {k: frozenset(v) for k, v in self._passes(ctx).items() if v}
+        views = [(self._views[k], images) for k, images in plan.items()]
+        drawn = ctx.render.render_now(views, ctx.data)
+        for view, _ in views:
+            view.take()  # consumed here, not by the next post_step
+        self._consume(ctx, {k: f for k, f in zip(plan, drawn, strict=True)})
 
-                rgb = cv2.remap(
-                    rgb,
-                    self._dist_map[0],
-                    self._dist_map[1],
-                    cv2.INTER_LINEAR,
-                    borderMode=cv2.BORDER_CONSTANT,
-                )
-            frame = encode_color(rgb, self.color_encoding)
-            if self._blur_sigma > 0 or self._noise_sigma > 0:
-                frame = self._degrade(ctx, frame)
-            self._color_frame = frame
-            self._capture_extra(ctx, self._frames)
+    def _consume(self, ctx: SimContext, frames: dict[str, Frame]) -> None:
+        """Turn one snapshot's frames into this camera's streams."""
+        colour = frames["color"]
+        self._stamp = float(colour.sim_time)
+        self._frames = {k: Passes(f) for k, f in frames.items()}
+        rgb = self._frames["color"].render(ctx.data)
+        if self._dist_map is not None:
+            # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
+            # views of the SAME array, so warping downstream would either pay twice or warp
+            # twice. The depth camera's own depth stream is deliberately untouched -- a real
+            # RealSense publishes it already rectified, with D = 0, so distorting it would move
+            # the sim AWAY from the sensor. Registered depth shares this lens and is warped
+            # with it (depth_camera.py).
+            import cv2
+
+            rgb = cv2.remap(
+                rgb,
+                self._dist_map[0],
+                self._dist_map[1],
+                cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+            )
+        frame = encode_color(rgb, self.color_encoding)
+        if self._blur_sigma > 0 or self._noise_sigma > 0:
+            frame = self._degrade(ctx, frame)
+        self._color_frame = frame
+        self._capture_extra(ctx, self._frames["color"])
 
     def _degrade(self, ctx: SimContext, frame: np.ndarray) -> np.ndarray:
         """Blur, then additive Gaussian noise: the colour stream's own errors, after the lens.
@@ -612,16 +712,17 @@ class CameraPlugin(Plugin):
         if self._blur_sigma > 0:
             out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
         if self._noise_sigma > 0:
-            rng = ctx.rng_for(self.draw_key("noise"))
+            # Keyed on the frame's own stamp, the snapshot it was drawn from.
+            rng = ctx.rng_for(self.draw_key("noise"), at=self._stamp)
             out = np.clip(
                 out.astype(np.float32) + rng.normal(0.0, self._noise_sigma, out.shape), 0, 255
             ).astype(np.uint8)
         return out
 
-    def _capture_extra(self, ctx: SimContext, frames: FrameRenderer) -> None:
-        """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer.
+    def _capture_extra(self, ctx: SimContext, frames: Passes) -> None:
+        """Hook for subclasses to capture additional passes (e.g. depth) off the same snapshot.
 
-        *frames* carries this camera's clip planes; a pass drawn through ``frames.raw`` would not.
+        *frames* is the colour view's frame; every image in it was drawn with this camera's planes.
         """
 
     def on_reset(self, ctx: SimContext) -> None:
@@ -641,12 +742,45 @@ class CameraPlugin(Plugin):
         self._last_capture = float("-inf")
         self._color_frame = None
         self._stamp = None
+        self._plan, self._plan_at = {}, None
+        self._frames = {}
         self._reset_extra(ctx)
 
     def _reset_extra(self, ctx: SimContext) -> None:
         """Hook for subclasses to clear the payloads ``_capture_extra`` produces."""
 
     def shutdown(self, ctx: SimContext) -> None:
-        if self._frames is not None:
-            self._frames.close()
-            self._frames = None
+        # The views are the render service's; it closes with the engine.
+        self._views = {}
+        self._frames = {}
+
+
+class Passes:
+    """One view's frame, offered to a camera's processing pass by pass.
+
+    ``render``/``render_depth``/``render_segmentation`` answer with a copy of the image the render
+    service drew for this tick, so a hook may modify what it is given. An image the camera's
+    :meth:`CameraPlugin._passes` did not ask for this tick was not drawn, and asking for it raises.
+    """
+
+    def __init__(self, frame: Frame) -> None:
+        self.frame = frame
+
+    def _image(self, kind: str) -> np.ndarray:
+        image = self.frame.image(kind)
+        if image is None:
+            raise RenderError(
+                f"{self.frame.id}: no {kind} image was drawn for this tick; the camera's _passes "
+                f"must ask for it"
+            )
+        # A C-contiguous copy of its own: a frame's colour may be a view of the batch's atlas.
+        return np.array(image, order="C")
+
+    def render(self, data=None, decorate=None) -> np.ndarray:
+        return self._image("rgb")
+
+    def render_depth(self, data=None) -> np.ndarray:
+        return self._image("depth")
+
+    def render_segmentation(self, data=None, scene_option=None) -> np.ndarray:
+        return self._image("segmentation")

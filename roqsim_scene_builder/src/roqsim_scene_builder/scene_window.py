@@ -455,6 +455,8 @@ def run_window(
     with contextlib.ExitStack() as stack:
         stack.callback(engine.shutdown)
         width, height = size
+        # MuJoCo's renderer whatever the world's sim.renderer: the review edits the MuJoCo world, so
+        # it shows that world's geometry, picks it and draws its dots into MuJoCo's scene.
         fr = FrameRenderer(engine.ctx.model, width, height)
         stack.callback(fr.close)
         ctx = engine.ctx

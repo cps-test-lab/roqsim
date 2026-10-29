@@ -60,6 +60,7 @@ from .lights import summary as lights_summary
 from .lights import undrawn_lights
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
+from .rendering import RenderService
 from .seed import PREVIEW_SEED
 from .solref import floor_rule, floor_text, solref_floor
 from .world import build_world, world_file
@@ -73,6 +74,8 @@ _ENGINE_GROUP = "<engine>"
 #: Timing group for the physics step under ``profile=True``: a row of :meth:`Engine.timing_report`
 #: beside the plugins', reserved the same way.
 PHYSICS_GROUP = "<physics>"
+#: Timing group for the render service's per-tick batch (``tick``), under ``profile=True``.
+RENDER_GROUP = "<render>"
 
 _INTEGRATORS = {
     "euler": mujoco.mjtIntegrator.mjINT_EULER,
@@ -334,6 +337,8 @@ class Engine:
             self.ctx.model = spec.compile()
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
+        # Before configure, where every camera registers its view; nothing renders until one is due.
+        self.ctx.render = RenderService.for_config(self.ctx.model, self.config, logger=self.logger)
         # Lights past the renderer's eight compile and are never drawn; every image of the world is
         # then lit otherwise than it reads. Reported, never refused.
         undrawn = undrawn_lights(self.ctx.model)
@@ -376,8 +381,12 @@ class Engine:
                 # be set; here rather than inside each plugin so that a plugin registering an entity
                 # gets the world's `present:` honoured by declaring that it registers one.
                 plugin.apply_declared_presence(self.ctx)
+            # Every camera has registered: a renderer that cannot give what one asks for fails the
+            # load here, naming it, rather than at its first frame.
+            self.ctx.render.check()
         except BaseException:
             self._shutdown_plugins(configured, " after a configure failed")
+            self.ctx.render.close()
             raise
 
     def _apply_contact_override(self, spec) -> None:
@@ -468,6 +477,8 @@ class Engine:
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
         # Set on every reset, so no trial reads the previous one's parameters.
         self.ctx.blackboard.set("reset_params", dict(params))
+        # A reset restarts sim time: a frame rendered before it would carry a stamp from the future.
+        self.ctx.render.clear()
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
@@ -510,10 +521,19 @@ class Engine:
             self._timed_physics("mj_step1", mujoco.mj_step1, m, d)
             self._timed_physics("gravity_reaction", self._gravity_reaction.apply, m, d)
             self._timed_physics("mj_step2", mujoco.mj_step2, m, d)
-        # 4) sensors/transport/recording read state.
+        # 4) the cameras due this tick, as one batch per renderer, read in post_step.
+        render = self.ctx.render
+        if render.views:
+            if self._profile:
+                t0 = time.perf_counter()
+                render.tick(d)
+                self._record(RENDER_GROUP, "tick", time.perf_counter() - t0)
+            else:
+                render.tick(d)
+        # 5) sensors/transport/recording read state.
         for plugin in self.plugins:
             self._timed(plugin, "post_step", plugin.post_step, self.ctx)
-        # 5) snapshot for cross-thread readers.
+        # 6) snapshot for cross-thread readers.
         self.ctx.publish_snapshot({"time": self.ctx.sim_time})
 
     def idle(self) -> int:
@@ -540,6 +560,8 @@ class Engine:
         if not self._setup_done:
             return
         self._shutdown_plugins(self.plugins, "")
+        # After the plugins, which may still read a frame in their shutdown.
+        self.ctx.render.close()
         self._setup_done = False
 
     def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:

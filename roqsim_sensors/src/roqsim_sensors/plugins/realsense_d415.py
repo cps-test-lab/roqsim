@@ -1,4 +1,4 @@
-"""Sensor plugin: Intel RealSense D415 colour stream, via ``mujoco.Renderer`` (GL, offscreen).
+"""Sensor plugin: Intel RealSense D415 colour stream, drawn through the render service.
 
 RGB only -- no depth/IR yet (unlike :mod:`realsense_d435`, which has an opt-in depth +
 point-cloud path; add one here the same way once a D415 world needs it). Topic/frame naming follows
