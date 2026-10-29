@@ -12,15 +12,21 @@ on:
   pull_request:
 
 jobs:
-  # On the runner image GitHub calls latest, and on Ubuntu 24.04 with its Python, which roqsim keeps
-  # supporting: an image that moves to a newer Ubuntu and Python shows up as one of the two failing.
-  # The latest one keeps the check's name the repository's rules require, and publishes the docs.
+  # The whole of `make ci` on the runner image GitHub calls latest; on Ubuntu 24.04, whose Python roqsim
+  # keeps supporting, the packages install and every shipped world runs (`make smoke`) -- what an
+  # older interpreter breaks first, in minutes. An image that moves to a newer Ubuntu and Python shows
+  # up as one of the two failing. The latest one keeps the check's name the repository's rules
+  # require, and publishes the docs.
   core:
-    name: core (lint, tests, smoke, docs)${{ matrix.os != 'ubuntu-latest' && format(' on {0}', matrix.os) || '' }}
+    name: ${{ matrix.os == 'ubuntu-latest' && 'core (lint, tests, smoke, docs)' || format('core (smoke) on {0}', matrix.os) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04]
+        include:
+          - os: ubuntu-latest
+            target: ci
+          - os: ubuntu-24.04
+            target: smoke
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +50,8 @@ jobs:
 
       # lint + test + smoke + check + doc. `make test` skips the ros2_ws suite when ROS is not
       # sourced, which is exactly right here -- the `ros` job below owns that half.
-      - name: make ci
-        run: make ci
+      - name: make ${{ matrix.target }}
+        run: make ${{ matrix.target }}
 
       # The site is the docs `make ci` just built, from the same run that linted, tested and
       # scrubbed this commit -- so a published page cannot come from a build that failed. The
