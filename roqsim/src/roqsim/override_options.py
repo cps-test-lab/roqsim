@@ -67,15 +67,34 @@ def add_override_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_renderer_option(parser: argparse.ArgumentParser) -> None:
+    """Add ``--renderer NAME``: the world's ``sim.renderer``, through the same override path.
+
+    It is ``--set sim.renderer=NAME`` spelled as a flag, applied last, so ``roqsim renderers list``
+    names what it takes and a run and a render choose a renderer the same way.
+    """
+    parser.add_argument(
+        "--renderer",
+        metavar="NAME",
+        help="the renderer every camera draws through (sim.renderer; `roqsim renderers list`), "
+        "e.g. --renderer mujoco",
+    )
+
+
 def overrides_from_options(args: argparse.Namespace) -> dict:
-    """The nested override dict *args* spells: every ``--override`` file in order, then ``--set``.
+    """The nested override dict *args* spells: every ``--override`` file in order, then ``--set``,
+    then ``--renderer`` where the command offers it.
 
     Raises :class:`roqsim.plugin.PluginError` for a file that cannot be read, is not YAML or is not
     a mapping, and for a ``--set`` that is not ``path=value``.
     """
-    return deep_merge(
+    merged = deep_merge(
         overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
     )
+    renderer = getattr(args, "renderer", None)
+    if renderer:
+        merged = deep_merge(merged, {"sim": {"renderer": renderer}})
+    return merged
 
 
 #: The options that act on a world YAML, and the ``argparse`` dest each is read back from.
@@ -84,6 +103,7 @@ WORLD_OPTIONS = {
     "--override": "override_files",
     "--skip-plugins": "skip_plugins",
     "--settle-steps": "settle_steps",
+    "--renderer": "renderer",
 }
 
 

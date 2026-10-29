@@ -1,7 +1,7 @@
 """The image converters: `step` per encoding, the mismatches they refuse, and which codec
 serves which stream.
 
-Needs ROS on the path (the registry resolves real message types), unlike its `image_codec` sibling.
+Needs ROS on the path (the registry resolves real message types), unlike `roqsim.image_codec`'s own tests.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from sensor_msgs.msg import CompressedImage, Image
 
-from roqsim_ros_bridge.image_codec import encode_depth
+from roqsim.image_codec import encode_depth
 from roqsim_ros_bridge.registry import fill_compressed_image, fill_image
 
 STAMP = None  # the converter only assigns it; no field of it is read here
@@ -19,6 +19,7 @@ STAMP = None  # the converter only assigns it; no field of it is read here
 def test_step_and_data_follow_the_encoding():
     for encoding, payload in (
         ("rgb8", np.zeros((48, 64, 3), np.uint8)),
+        ("bgr8", np.zeros((48, 64, 3), np.uint8)),
         ("mono8", np.zeros((48, 64), np.uint8)),
         ("16UC1", np.zeros((48, 64), np.uint16)),
         ("32FC1", np.zeros((48, 64), np.float32)),

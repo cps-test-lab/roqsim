@@ -33,7 +33,8 @@ from typing import Any
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
-from . import image_codec
+from roqsim import ros_messages as rm
+
 from .frames import namespaced
 from .typemap import odometry_pose
 
@@ -129,8 +130,8 @@ def get_decoder(type_path: str) -> Callable[[Any], dict[str, Any]]:
 
 # -- shared helpers ----------------------------------------------------------------------------
 def to_time_msg(t: float) -> Time:
-    sec = int(t)
-    return Time(sec=sec, nanosec=int(round((t - sec) * 1e9)))
+    sec, nanosec = rm.stamp(t)
+    return Time(sec=sec, nanosec=nanosec)
 
 
 def yaw_to_quat(yaw: float) -> Quaternion:
@@ -204,41 +205,35 @@ def fill_scan(msg, payload, stamp: Time, hints: dict) -> None:
     msg.header.stamp = stamp
     # Generic fallback only: every lidar producer sets frame_id (defaulting to its site). A
     # robot-specific name here would stamp one robot's scan in another's frame.
-    msg.header.frame_id = frame(hints, "frame_id", "lidar")
-    msg.angle_min = float(payload.angle_min)
-    msg.angle_max = float(payload.angle_max)
-    msg.angle_increment = float(payload.angle_increment)
-    msg.range_min = float(payload.range_min)
-    msg.range_max = float(payload.range_max)
-    # float32[] slot accepts a matching-dtype numpy array directly -- one C-level copy, no per-ray
-    # Python float boxing. inf == "no return", which LaserScan permits.
-    msg.ranges = _as_f32(payload.ranges)
+    msg.header.frame_id = frame(hints, "frame_id", rm.DEFAULT_FRAME[rm.LASER_SCAN])
+    fields = rm.scan_fields(payload)
+    for key in ("angle_min", "angle_max", "angle_increment", "range_min", "range_max"):
+        setattr(msg, key, fields[key])
+    # float32[] slot from the numpy buffer -- one C-level copy, no per-ray Python float boxing.
+    # inf == "no return", which LaserScan permits.
+    msg.ranges = _as_f32(fields["ranges"])
 
 
 @converter("sensor_msgs.msg.PointCloud2")
 def fill_pointcloud(msg, payload, stamp: Time, hints: dict) -> None:
-    # payload: a livox_mid360 PointCloud with .points, an (N, 3) float32 array of XYZ in the sensor
-    # frame. Emitted as an unorganized cloud (height=1, width=N) of three FLOAT32 fields; the raw
-    # (N, 3) buffer is already the wire layout (x,y,z contiguous per point), so one tobytes() copies it.
-    import numpy as np
+    # payload: anything with .points, an (N, 3) float32 array of XYZ in the sensor frame; the layout
+    # is roqsim.ros_messages.pointcloud_fields'.
     from sensor_msgs.msg import PointField
 
-    pts = np.ascontiguousarray(payload.points, dtype=np.float32).reshape(-1, 3)
-    n = int(pts.shape[0])
+    fields = rm.pointcloud_fields(payload.points)
     msg.header.stamp = stamp
-    msg.header.frame_id = frame(hints, "frame_id", "livox_frame")
-    msg.height = 1
-    msg.width = n
+    msg.header.frame_id = frame(hints, "frame_id", rm.DEFAULT_FRAME[rm.POINT_CLOUD2])
+    msg.height = fields["height"]
+    msg.width = fields["width"]
     msg.fields = [
-        PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
-        PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
-        PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        PointField(name=name, offset=offset, datatype=datatype, count=count)
+        for name, offset, datatype, count in fields["fields"]
     ]
-    msg.is_bigendian = False
-    msg.point_step = 12
-    msg.row_step = 12 * n
-    msg.data = pts.tobytes()
-    msg.is_dense = True
+    msg.is_bigendian = fields["is_bigendian"]
+    msg.point_step = fields["point_step"]
+    msg.row_step = fields["row_step"]
+    msg.data = fields["data"]
+    msg.is_dense = fields["is_dense"]
 
 
 @converter("tf2_msgs.msg.TFMessage")
@@ -646,50 +641,17 @@ def fill_controller_state(msg, payload, stamp: Time, hints: dict) -> None:
     msg.error.positions = _as_f64([d - a for d, a in zip(desired, actual, strict=True)])
 
 
-# Bytes per pixel for the encodings roqsim_sensors' camera plugins use. One converter serves
-# colour and depth alike (and any future mono/IR stream) via the `encoding` hint -- no per-stream
-# message-filling code needed in a robot package.
-_IMAGE_ENCODING_BYTES = {"rgb8": 3, "mono8": 1, "16UC1": 2, "32FC1": 4}
-
-
+# One converter serves colour and depth alike (and any future mono/IR stream) via the `encoding`
+# hint -- no per-stream message-filling code needed in a robot package. The fields, their checks and
+# the codecs are roqsim.ros_messages', which an offline writer of the same messages shares.
 @converter("sensor_msgs.msg.Image")
 def fill_image(msg, payload, stamp: Time, hints: dict) -> None:
     # payload: a raw (H, W[, C]) numpy array (uint8 rgb8, or float32 32FC1 depth, ...).
-    encoding = hints.get("encoding", "rgb8")
-    try:
-        stride = _IMAGE_ENCODING_BYTES[encoding]
-    except KeyError:
-        raise ValueError(
-            f"unsupported image encoding {encoding!r}; expected one of "
-            f"{sorted(_IMAGE_ENCODING_BYTES)}"
-        ) from None
-    # The encoding and the array's dtype are chosen independently -- by the producer's hint and by
-    # its render code -- and a mismatch is not a visible failure: `step` would be right for the
-    # encoding while `data` holds a different number of bytes, so the far end decodes a garbled or
-    # truncated image and nothing says why. Depth is where this bites (float32 metres under a 16UC1
-    # hint, or the reverse), so it fails on the first publish instead.
-    per_pixel = payload.itemsize * (payload.shape[2] if payload.ndim > 2 else 1)
-    if per_pixel != stride:
-        raise ValueError(
-            f"encoding {encoding!r} needs {stride} bytes per pixel, but the payload has "
-            f"{per_pixel} (dtype {payload.dtype}, shape {payload.shape})"
-        )
-    height, width = payload.shape[:2]
+    fields = rm.image_fields(payload, hints.get("encoding", "rgb8"))
     msg.header.stamp = stamp
-    msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
-    msg.height = height
-    msg.width = width
-    msg.encoding = encoding
-    msg.is_bigendian = 0
-    msg.step = width * stride
-    msg.data = payload.tobytes()
-
-
-# Compressed colour follows image_transport's convention for ``CompressedImage.format``:
-# "<source encoding>; <codec> compressed <encoding of the decoded result>". The mapping is THEIRS, not
-# ours -- consumers (cv_bridge, `image_transport republish`, rqt_image_view) read this string, so
-# inventing our own spelling would break every one of them.
-_COMPRESSED_WIRE = {"rgb8": "bgr8", "bgr8": "bgr8", "mono8": "mono8"}
+    msg.header.frame_id = frame(hints, "frame_id", rm.DEFAULT_FRAME[rm.IMAGE])
+    for key, value in fields.items():
+        setattr(msg, key, value)
 
 
 @converter("sensor_msgs.msg.CompressedImage")
@@ -697,75 +659,20 @@ def fill_compressed_image(msg, payload, stamp: Time, hints: dict) -> None:
     # payload: the SAME array `fill_image` publishes for this stream. One neutral payload, two wire
     # formats -- a producer offers both by declaring a second endpoint and nothing else, and needs no
     # codec of its own.
-    #
-    # Colour and depth share the message type and nothing else -- different codecs, framing and
-    # format strings -- so this dispatches rather than growing one function with a branch. The
-    # ENCODING decides, not the codec: `png` names a colour codec and a depth codec, and they are
-    # different pipelines producing different bytes.
-    encoding = hints.get("encoding", "rgb8")
     msg.header.stamp = stamp
-    msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
-    if encoding in _COMPRESSED_WIRE:
-        _fill_compressed_colour(msg, payload, encoding, hints.get("format", "jpeg"), hints)
-    else:
-        _fill_compressed_depth(msg, payload, encoding, hints)
-
-
-def _fill_compressed_colour(msg, payload, encoding: str, fmt: str, hints: dict) -> None:
-    wire = _COMPRESSED_WIRE[encoding]
-    msg.format = f"{encoding}; {fmt} compressed {wire}"
-    msg.data = image_codec.encode(
-        payload, fmt=fmt, quality=hints.get("quality", image_codec.DEFAULT_JPEG_QUALITY)
-    )
-
-
-def _fill_compressed_depth(msg, payload, encoding: str, hints: dict) -> None:
-    if encoding != "16UC1":
-        # Everything that is not a colour encoding lands here, so the message names both routes.
-        # 32FC1 is the interesting case: the reference carries it through an inverse-depth
-        # QUANTISATION into 16 bits before PNG -- lossy, a different pipeline, and not implemented --
-        # so the answer is to publish depth as 16UC1 millimetres, which is what hardware does anyway.
-        raise TypeError(
-            f"cannot compress encoding {encoding!r}: colour compresses as one of "
-            f"{sorted(_COMPRESSED_WIRE)}, and compressedDepth's codecs are 16-bit only. Publish the "
-            "depth as 16UC1 (the device's own format), or leave it raw."
-        )
-    fmt = hints.get("format", "png")
-    # image_transport's own spelling for this transport: "<source encoding>; compressedDepth <codec>".
-    msg.format = f"{encoding}; compressedDepth {fmt}"
-    msg.data = image_codec.encode_depth(
-        payload, fmt=fmt, png_level=hints.get("png_level", image_codec.DEFAULT_PNG_LEVEL)
-    )
+    msg.header.frame_id = frame(hints, "frame_id", rm.DEFAULT_FRAME[rm.COMPRESSED_IMAGE])
+    fields = rm.compressed_image_fields(payload, hints.get("encoding", "rgb8"), hints)
+    msg.format = fields["format"]
+    msg.data = fields["data"]
 
 
 @converter("sensor_msgs.msg.CameraInfo")
 def fill_camera_info(msg, payload, stamp: Time, hints: dict) -> None:
-    # payload: a roqsim_sensors camera_common.Intrinsics (width, height, fx, fy, cx, cy, d).
+    # payload: a CameraInfo, or anything with its fields (width, height, fx, fy, cx, cy, d).
     msg.header.stamp = stamp
-    msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
-    msg.height = payload.height
-    msg.width = payload.width
-    msg.distortion_model = "plumb_bob"
-    # Whatever the camera plugin says its pixels carry -- zeros for a plain MuJoCo render (an ideal
-    # pinhole), the configured coefficients when that plugin warped the frame to match a real lens.
-    # getattr, so an Intrinsics from an older roqsim_sensors still converts.
-    msg.d = [float(v) for v in getattr(payload, "d", None) or [0.0] * 5]
-    msg.k = [payload.fx, 0.0, payload.cx, 0.0, payload.fy, payload.cy, 0.0, 0.0, 1.0]
-    msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    msg.p = [
-        payload.fx,
-        0.0,
-        payload.cx,
-        0.0,
-        0.0,
-        payload.fy,
-        payload.cy,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-        0.0,
-    ]
+    msg.header.frame_id = frame(hints, "frame_id", rm.DEFAULT_FRAME[rm.CAMERA_INFO])
+    for key, value in rm.camera_info_fields(payload).items():
+        setattr(msg, key, value)
 
 
 # -- decoders (inbound: ROS message -> named parameters) ---------------------------------------

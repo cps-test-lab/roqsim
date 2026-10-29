@@ -70,8 +70,8 @@ MOUNT_XYZ = (0.15, 0.0, 0.38)  # base link -> panda_link0, fixed joint, no rotat
 BOX_L, BOX_W, BOX_H = 0.68, 0.47, 0.38  # declared base collision box
 
 # Substrate assumptions (the URDF models the base as a virtual yaw+prismatic joint pair with NO wheels,
-# no inertials and no ground clearance, so all of this is ours and is recorded in
-# the port log). The LD-60 carries its drive wheels inboard, under the shell.
+# no inertials and no ground clearance, so all of this is ours: LD-60-class values, not datasheet
+# figures). The LD-60 carries its drive wheels inboard, under the shell.
 WHEEL_R = 0.0625  # drive wheel radius
 WHEEL_HW = 0.025  # wheel half-width
 WHEEL_SEP = 0.36  # track: axle y = +/- 0.18, comfortably inside the 0.47 m body width
@@ -83,8 +83,8 @@ CASTER_R = WHEEL_R
 #   * Two casters BOTH near the wheel plane (lift 3 mm) turn the single-axle base into a see-saw: it
 #     rocked +/-1.8 deg fore-aft and BOTH DRIVE WHEELS LEFT THE GROUND periodically (measured normal
 #     force exactly 0 N on each wheel while they spun at the full commanded 4.775 rad/s). The robot
-#     crept forward at 0.10 m/s against a 0.3 m/s command -- the G2 port log's "casters too low -> they
-#     carry the load and the wheels lose traction" failure, arrived at from the opposite direction.
+#     crept forward at 0.10 m/s against a 0.3 m/s command: the casters carried the load and the
+#     wheels lost traction.
 # The stable arrangement is a tripod: the two drive wheels plus the FRONT caster carry the load, and
 # the rear caster is lifted clear as a pure anti-tip stop. It is stable because the CoM (x = +0.058 m,
 # pulled forward by the arm) lies BETWEEN the wheel axle (x = 0) and the front caster (x = +0.26), so
@@ -133,7 +133,7 @@ CHANNEL_REAR_X = SCAN_ORIGIN[0] + (BOX_W / 2) / math.tan(math.radians(CHANNEL_HA
 # smoothness or effort measurement taken on this arm. It is a PD-servo/timestep interaction (kp 4500 /
 # kd 450 with armature 0.1), not a Frankie defect, and it disappears with a smaller step: mean 0.007 at
 # 1 ms and exactly 0.000 at 0.5 ms. The demo world therefore runs at 0.5 ms and this script verifies
-# quiescence there. A substrate artifact: it belongs in the port log beside the model.
+# quiescence there.
 VERIFIED_TIMESTEP = 0.0005
 
 # Arm rest pose -- `qr`, the ready pose shipped by the Robotics Toolbox Frankie model
@@ -318,7 +318,7 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
 
   <actuator>
     <!-- Velocity servos, as diff_drive expects. kv/forcerange sized to move a ~63 kg base without
-         stalling against caster friction; see port log. -->
+         stalling against caster friction. -->
     <velocity name="left_wheel_motor" joint="left_wheel_joint" kv="40" ctrlrange="-20 20"
               forcerange="-80 80"/>
     <velocity name="right_wheel_motor" joint="right_wheel_joint" kv="40" ctrlrange="-20 20"

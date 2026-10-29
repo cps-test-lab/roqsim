@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """A renderer that is garbage-collected must not take a live renderer's GL objects with it.
 
-``mujoco.Renderer.close`` frees its GL context before its render context, so the ``glDelete*``
-calls of the second land in whatever context is current -- another renderer's, with the same
-object names. The symptom is a segmentation pass that reads back pixel values no geom has.
+Freeing a render context is a run of ``glDelete*`` calls that land in whatever context is current;
+freed after its GL context (as ``mujoco.Renderer.close`` does), they hit another renderer's objects
+of the same names. The symptom is a segmentation pass that reads back pixel values no geom has.
 """
 
 from __future__ import annotations
@@ -47,13 +47,7 @@ def _renderer(model) -> FrameRenderer:
 
 
 def _ids(frame: FrameRenderer, data) -> np.ndarray:
-    raw = frame.raw
-    raw.enable_segmentation_rendering()
-    raw.update_scene(data, camera=0)
-    try:
-        return raw.render()[..., 0]
-    finally:
-        raw.disable_segmentation_rendering()
+    return frame.render_segmentation(data)[..., 0]
 
 
 def test_a_collected_renderer_leaves_a_live_one_intact(model_data):
@@ -81,4 +75,4 @@ def test_close_is_idempotent_and_survives_a_second_call(model_data):
     frame.close()
     frame.close()
     with pytest.raises(AttributeError):
-        frame.render(data)
+        frame.render(data)  # a closed renderer says so rather than drawing nothing

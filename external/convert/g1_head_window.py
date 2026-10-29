@@ -23,8 +23,7 @@ gap, which no ray reaches. The mass and inertia of the head are not derived from
 this cut is used: both models carry the vendor's explicit inertials.
 
 The opening is a documented deviation: Unitree publishes no drawing of the head's window, so its
-extent is the sensor's field and housing rather than the real part's outline. See the
-``unitree_g1_dex1`` port log.
+extent is the sensor's field and housing rather than the real part's outline.
 
 Used by ``build_g1_dex1.py`` on the unitree_ros head mesh. Run directly, it cuts the decimated head
 mesh ``unitree_g1`` vendors (``models/meshes/head_link.STL``) into ``head_link_mid360_window.STL``:

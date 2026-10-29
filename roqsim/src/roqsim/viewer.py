@@ -48,7 +48,7 @@ import weakref
 import mujoco
 import numpy as np
 
-from . import keys, overlay
+from . import env, keys, overlay
 from .exit_status import NO_GL
 from .gl import DEFAULT_MUJOCO_GL
 from .key_state import KeyState
@@ -122,9 +122,9 @@ def ensure_gl_preload() -> None:
     Call this before opening a window (``not headless`` and :func:`has_display`); it must run
     before ``mujoco.viewer`` loads GL.
     """
-    if os.environ.get("ROQSIM_GL_PRELOADED"):
+    if env.get("ROQSIM_GL_PRELOADED"):
         return  # already re-exec'd in this chain; never loop
-    if os.environ.get("ROQSIM_NO_GL_PRELOAD"):
+    if env.get("ROQSIM_NO_GL_PRELOAD"):
         return  # explicit opt-out
     existing = os.environ.get("LD_PRELOAD", "")
     if "libGLEW" in existing:

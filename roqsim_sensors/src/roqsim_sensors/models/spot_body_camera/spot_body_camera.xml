@@ -1,0 +1,32 @@
+<mujoco model="spot_body_camera">
+  <!--
+    One body camera station of a Boston Dynamics Spot: a projected-IR stereo pair with a fisheye
+    imager. `spawn_sensor` mounts it at the station's depth frame (`<station>`), so the `mount` body
+    IS that frame, in Spot's camera convention, which is ROS's optical one: z out of the lens, x right
+    and y down in the picture (Spot SDK docs/concepts/geometry_and_frames.md @ 04537dd).
+
+    Boston Dynamics publishes no camera intrinsics or sizes; the robot reports them at runtime. The
+    values are the DARPA SubT Spot model's, estimated there from real-robot data
+    (osrf/subt submitted_models/bosdyn_spot/model.sdf @ 083c6a8, `<station>_fisheye_image` and
+    `<station>_depth`):
+      fisheye 640x480, fx = fy = 257.487, cx 319.5, cy 239.5 (102.35 deg horizontal)
+      depth   424x240, fx = fy = 170.6,   cx 211.5, cy 119.5 (102.3 deg horizontal)
+    Each lens is written as sensorsize + focalpixel + principalpixel, so MuJoCo renders the published
+    K; the principal point is the frame's centre, offset 0 here. The fisheye imager sits 1 cm from
+    the depth frame along -x (the SubT sensor pose, 0.01 m along its camera link's +y).
+
+    Both cameras are the optical frame turned into MuJoCo's camera convention (looks down -z, +y up):
+    xyaxes "1 0 0 0 -1 0".
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0" mass="0.01" diaginertia="1e-06 1e-06 1e-06"/>
+      <camera name="spot_fisheye" pos="-0.01 0 0" xyaxes="1 0 0 0 -1 0" resolution="640 480"
+              sensorsize="0.00384 0.00288" focalpixel="257.487 257.487" principalpixel="0 0"/>
+      <camera name="spot_depth" pos="0 0 0" xyaxes="1 0 0 0 -1 0" resolution="424 240"
+              sensorsize="0.002544 0.00144" focalpixel="170.6 170.6" principalpixel="0 0"/>
+    </body>
+  </worldbody>
+</mujoco>

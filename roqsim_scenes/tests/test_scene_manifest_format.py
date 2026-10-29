@@ -1,10 +1,9 @@
 """A scene manifest states its format and version, and the bake refuses one it cannot read.
 
-``scene.json`` is the stage-1 output every importer writes and the bake reads. It also shares its
-file name with the web scene descriptor ``roqsim export web`` writes, so a manifest that says what it
-is can be told from that file, and one written to a later contract is refused by name rather than
-baked with the keys that happen to overlap. Absent means version 1, the layout every manifest
-written before the stamp existed has.
+``scene.json`` is the stage-1 output every importer writes and the bake reads. It is a common file
+name, so a manifest that says what it is can be told from another tool's file of that name, and one
+written to a later contract is refused by name rather than baked with the keys that happen to
+overlap. Absent means version 1, the layout every manifest written before the stamp existed has.
 """
 
 from __future__ import annotations
@@ -60,9 +59,9 @@ def test_a_newer_version_is_refused_naming_both(tmp_path):
 
 
 def test_another_format_is_refused_naming_it(tmp_path):
-    """The web descriptor shares the file name; baking it would fail far from the cause."""
-    scene = _scene(tmp_path, format="roqsim.web_scene", version=1)
-    with pytest.raises(ValueError, match=r"'roqsim\.web_scene'.*roqsim_scenes\.scene_manifest"):
+    """Another tool's scene.json shares the file name; baking it would fail far from the cause."""
+    scene = _scene(tmp_path, format="example.other_scene", version=1)
+    with pytest.raises(ValueError, match=r"'example\.other_scene'.*roqsim_scenes\.scene_manifest"):
         _bake(scene)
 
 
@@ -76,7 +75,7 @@ def test_the_blender_writer_stamps_the_same_pair():
 
 def test_every_reader_checks_the_stamp(tmp_path):
     """The map and floorplan readers refuse what the bake refuses, before reading a key."""
-    _scene(tmp_path, format="roqsim.web_scene", version=1)
+    _scene(tmp_path, format="example.other_scene", version=1)
     with pytest.raises(ValueError, match="not a scene manifest"):
         scene_to_floorplan.floorplan_of(tmp_path)
     _scene(tmp_path, format=sm.FORMAT, version=sm.FORMAT_VERSION + 1)

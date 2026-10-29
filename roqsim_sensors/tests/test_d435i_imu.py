@@ -159,3 +159,34 @@ def test_a_world_that_models_a_plain_d435_can_switch_the_imu_off():
     assert not [e for e in engine.ctx.interface.all() if e.name == "imu"]
     # The camera is untouched: switching one manifest component off is not opting out of the model.
     assert [e for e in engine.ctx.interface.all() if e.name == "image"]
+
+
+# -- TF ----------------------------------------------------------------------------------------
+
+
+def test_the_imu_frame_reaches_the_mount_through_the_devices_own_chain():
+    """``camera_imu_optical_frame`` has exactly one parent, the chain's gyro optical frame, and the
+    published transforms carry it to ``world`` where the reading's site is. The IMU's own static
+    transform would hang the same frame from the bare ``mount`` body, which nothing publishes --
+    so robot_localization, looking the frame up to rotate the gyro, finds no path to the base."""
+    engine = _spawn()
+    imu_ep = next(e for e in engine.ctx.interface.all() if e.name == "imu" and e.owner == "cam")
+    assert "static_tf" not in imu_ep.backend["ros2"]
+    frames = next(e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == "cam")
+    links = [vars(t) for t in frames.read().transforms]
+    children = [t["child"] for t in links]
+    assert children.count("camera_imu_optical_frame") == 1
+    by_child = {t["child"]: t for t in links}
+    assert by_child["camera_imu_optical_frame"]["parent"] == "camera_gyro_optical_frame"
+    pos, frame = np.zeros(3), "camera_imu_optical_frame"
+    while frame in by_child:
+        t = by_child[frame]
+        q = np.asarray(t["rotation"], dtype=float)
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, q)
+        pos = rot.reshape(3, 3) @ pos + np.asarray(t["translation"])
+        frame = t["parent"]
+    assert frame == "world"
+    m, d = engine.ctx.model, engine.ctx.data
+    site = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, _imu(engine)._resolved_site)
+    assert pos == pytest.approx(d.site_xpos[site], abs=1e-6)

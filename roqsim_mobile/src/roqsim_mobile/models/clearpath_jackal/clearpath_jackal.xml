@@ -15,13 +15,13 @@
     0.5106 x 0.430 m, i.e. the datasheet hull) and this model is used for an experiment whose only
     failure criterion is contact -- a robot that can drive its fenders through a box would score
     collisions wrong. So they collide here, and the Nav2 footprint is set to the same hull. This is
-    the one deliberate departure from the vendor collision geometry; see the port log.
+    the one deliberate departure from the vendor collision geometry.
 
     Drive: TRUE 4-wheel skid-steer -- all four wheels driven, left pair and right pair commanded
     together. In-place rotation comes from the wheels scrubbing laterally, so wheel<->floor friction
     is set by explicit contact pairs (MuJoCo max-combines friction and scene floors are usually
     high-friction). The residual yaw deficit is corrected by the diff_drive `slip_factor`; see the
-    manifest and the port log for its calibration.
+    manifest for its calibration.
 
     Meshes are the vendor's binary STL in metres, installed and bound-checked by
     external/convert/convert_jackal_meshes.py. They are visual-only geoms (group 2, no contacts).
@@ -109,7 +109,7 @@
            `armature` is the drivetrain's reflected rotor inertia (rotor inertia x gear ratio^2), a
            real physical term the URDF omits. It is load-bearing here, not decoration: the bare wheel
            spin inertia is only 0.0024 kg.m^2, so a velocity servo stiff enough to overcome scrub
-           has a time constant far below dt and rings. See the port log's A1. -->
+           has a time constant far below dt and rings. -->
       <body name="front_left_wheel" pos="0.131 0.187795 0.0345">
         <joint name="front_left_wheel_joint" type="hinge" axis="0 1 0" armature="0.02" frictionloss="0.15"/>
         <inertial pos="0 0 0" mass="0.477" diaginertia="0.0013 0.0024 0.0013"/>

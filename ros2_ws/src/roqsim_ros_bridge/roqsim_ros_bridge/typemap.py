@@ -295,13 +295,9 @@ def _decode_imu(msg) -> T.Imu:
 
 
 def _fill_scan(msg, v: T.LaserScan, stamp, hints) -> None:
-    _header(msg, stamp, frame(hints, "frame_id", "lidar"))
-    msg.angle_min = float(v.angle_min)
-    msg.angle_max = float(v.angle_max)
-    msg.angle_increment = float(v.angle_increment)
-    msg.range_min = float(v.range_min)
-    msg.range_max = float(v.range_max)
-    msg.ranges = as_f32(v.ranges)
+    from .registry import fill_scan
+
+    fill_scan(msg, v, stamp, hints)
 
 
 def _decode_scan(msg) -> T.LaserScan:
@@ -318,6 +314,7 @@ def _decode_scan(msg) -> T.LaserScan:
 #: Bytes per pixel, and the numpy layout, of the encodings an Image carries.
 _ENCODINGS = {
     "rgb8": (3, np.uint8, 3),
+    "bgr8": (3, np.uint8, 3),
     "mono8": (1, np.uint8, 1),
     "16UC1": (2, np.uint16, 1),
     "32FC1": (4, np.float32, 1),
@@ -353,13 +350,9 @@ def _decode_compressed_image(msg) -> T.Image:
 
 
 def _fill_camera_info(msg, v: T.CameraInfo, stamp, hints) -> None:
-    _header(msg, stamp, frame(hints, "frame_id", "camera_optical_frame"))
-    msg.height, msg.width = int(v.height), int(v.width)
-    msg.distortion_model = "plumb_bob"
-    msg.d = [float(x) for x in v.d]
-    msg.k = [v.fx, 0.0, v.cx, 0.0, v.fy, v.cy, 0.0, 0.0, 1.0]
-    msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    msg.p = [v.fx, 0.0, v.cx, 0.0, 0.0, v.fy, v.cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+    from .registry import fill_camera_info
+
+    fill_camera_info(msg, v, stamp, hints)
 
 
 def _decode_camera_info(msg) -> T.CameraInfo:
@@ -372,7 +365,7 @@ def _decode_camera_info(msg) -> T.CameraInfo:
 def _fill_pointcloud(msg, v: T.PointCloud, stamp, hints) -> None:
     from .registry import fill_pointcloud
 
-    fill_pointcloud(msg, v, stamp, {"frame_id": "livox_frame", **hints})
+    fill_pointcloud(msg, v, stamp, hints)
 
 
 def _decode_pointcloud(msg) -> T.PointCloud:

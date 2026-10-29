@@ -54,7 +54,7 @@ MIMIC = {
 # per-joint actuator gains: (kp, forcerange)   effort from URDF; kp sized to hold against gravity
 # (kp, forcerange). Torso-lift joints carry the whole upper body on a lever, so they need a stiff
 # servo and a large force ceiling (the source effort of 50 N.m cannot hold the torso; raised to hold
-# pose -- a documented substrate assumption, see port log). Arms/head/grippers use their source effort.
+# pose -- a simulation choice, not a vendor value). Arms/head/grippers use their source effort.
 POS_GAINS = {}
 for j in BODY:
     POS_GAINS[j] = (8000, 300)
@@ -197,8 +197,8 @@ def main():
                     g.set("condim", "3")
                     # slide friction 0.5: enough traction to drive/hold a slope, low enough that the
                     # 4 fixed (welded-swerve) wheels can scrub during a turn. In-place yaw is still
-                    # limited (~0.2-0.3 of commanded) -- inherent to a rigid 4-wheel skid-steer; see
-                    # the port log. Straight-line drive is unaffected.
+                    # limited (~0.2-0.3 of commanded) -- inherent to a rigid 4-wheel skid-steer.
+                    # Straight-line drive is unaffected.
                     g.set("friction", "0.5 0.01 0.001")
                     g.set("priority", "2")
                     g.set("contype", "2")
@@ -226,7 +226,7 @@ def main():
     # the source inertials put the robot CoM at ~0.52 m over a 0.46x0.44 m wheel footprint, so the 4
     # thin drive wheels alone let it wheelie/tip. Four low-friction support spheres at the base corners
     # sit co-planar with the wheel contact (bottom at floor), keeping the base level while the wheels
-    # still provide traction. Documented substrate assumption; see port log.
+    # still provide traction. A simulation choice, not the vendor's geometry.
     for cx in (0.30, -0.30):
         for cy in (0.22, -0.22):
             inserts.append(ET.Element("geom", {

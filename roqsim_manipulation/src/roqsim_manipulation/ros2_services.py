@@ -21,6 +21,10 @@ the package imports the bridge. Free of ROS imports, as the bridge's own service
 handler touches only the request's and response's members, and the type is resolved by the bridge
 when an endpoint asks for it.
 
+It also registers the message and service types the driver interfaces trade as plain mappings
+(``fanuc_driver_interface``'s ``fanuc_msgs``, ``arm_controller``'s ``dynamic_joint_states``); see
+:mod:`roqsim_manipulation.ros2_mapping`.
+
 ``ur_msgs/SetSpeedSliderFraction`` is ``ur_driver_interface``'s ``set_speed_slider``. Its response is
 a bare ``success``, with no message to carry a reason, so the reply is the command's own verdict and
 anything that kept the command from giving one is logged.
@@ -35,7 +39,11 @@ from roqsim_ros_bridge import physics
 from roqsim_ros_bridge.params import payload_for
 from roqsim_ros_bridge.services import service_handler
 
+from . import ros2_mapping
+
 logger = logging.getLogger(__name__)
+
+ros2_mapping.register()
 
 
 @service_handler("ur_msgs.srv.SetSpeedSliderFraction")

@@ -3,7 +3,8 @@
 # For testing only: the built-in empty room, localized by a static map->odom transform. An
 # experiment starts from depot_nav2.yaml (docs/nav2_example.rst).
 #
-# spawn_robot pulls in the spot robot description (its spot_locomotion controller + lidar), so this
+# spawn_robot pulls in the spot robot description (its spot_locomotion controller, lidar and five
+# body camera stations, which render only while something subscribes to them), so this
 # world only places the robot and wires transport. The ros2_bridge publishes clock/odom/
 # tf(odom->base_link)/scan/joint_states, and -- because the lidar declares its mount frame -- the
 # static base_link->lidar TF, so the launch file needs no robot_state_publisher / URDF chain.
@@ -22,7 +23,8 @@ sim:
   pacing: realtime
 
 components:
-  # spot_locomotion + lidar come from the spot model manifest (models/spot.manifest.yaml).
+  # spot_locomotion, the lidar and the body cameras come from the spot model manifest
+  # (models/spot.manifest.yaml).
   - spawn_robot:
       model: spot
       pose:
