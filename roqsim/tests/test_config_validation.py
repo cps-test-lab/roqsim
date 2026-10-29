@@ -192,6 +192,7 @@ _SIM_SAMPLES = {
     "name": "Lab",
     "noslip_iterations": 3,
     "pacing": "asap",
+    "render": {"mode": "async"},
     "renderer": "mujoco",
     "renderers": {"mujoco": {"atlas": True}},
     "seed": 7,

@@ -67,6 +67,10 @@ SETTINGS_BLOCK = "sim.renderers"
 #: The renderer a world draws through when it names none: MuJoCo's own, registered as ``mujoco``.
 DEFAULT_RENDERER = "mujoco"
 
+#: ``sim.render.mode``: ``sync`` waits each tick for the frames due in it; ``async`` renders them on a
+#: worker thread from a snapshot while physics steps on.
+RENDER_MODES = ("sync", "async")
+
 
 class RenderError(RuntimeError):
     """A render that could not be given: a renderer that failed, a worker that died, a missing GPU.
@@ -183,6 +187,9 @@ class SceneDescription:
     base_dir: Any = None
     #: Every body's name, by id: what a renderer elsewhere matches poses to.
     body_names: list[str] = field(default_factory=list)
+    #: Whether ``model`` is this renderer's own copy (a renderer off the physics thread gets one),
+    #: which it updates from each snapshot's ``model_values``; the shared model it never writes.
+    private_model: bool = False
 
 
 @dataclass

@@ -17,7 +17,8 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 A camera renders nothing itself. Each tick the engine asks every view whether it is due -- this
 camera's rate gate and lazy check -- and draws the due ones as one batch per renderer, between the
 physics step and ``post_step``; the camera's ``post_step`` then turns its frame into its streams. A
-frame is stamped with the sim time of the state it was drawn from.
+frame is stamped with the sim time of the state it was drawn from, which in the render service's
+``async`` mode is a tick or more before the one that publishes it.
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
@@ -705,7 +706,8 @@ class CameraPlugin(Plugin):
         if self._blur_sigma > 0:
             out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
         if self._noise_sigma > 0:
-            rng = ctx.rng_for(self.draw_key("noise"))
+            # Keyed on the frame's own stamp, the snapshot it was drawn from.
+            rng = ctx.rng_for(self.draw_key("noise"), at=self._stamp)
             out = np.clip(
                 out.astype(np.float32) + rng.normal(0.0, self._noise_sigma, out.shape), 0, 255
             ).astype(np.uint8)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import math
+import time
 
 import mujoco
 import numpy as np
@@ -247,18 +248,25 @@ class _Before:
         self.fr.close()
 
 
-def _run(ticks: int = 60) -> dict[float, bytes]:
+def _run(mode: str, ticks: int = 60) -> dict[float, bytes]:
     """Every published colour frame of two noisy cameras, by its stamp, over *ticks* steps."""
     ring = _ring(2)
     for entry in ring:
         entry["components"][0]["realsense_d415"]["noise"] = {"gaussian_sigma": 4.0}
-    engine = _engine([*_props(), *ring])
+    engine = _engine([*_props(), *ring], sim={"render": {"mode": mode}})
     for ep in _images(engine):
         ep.claim()
     out: dict[float, bytes] = {}
+    # Paced in async mode, and for as long as it takes the first frames drawn off the physics
+    # thread to arrive (the worker opens its context first), bounded.
+    deadline = time.monotonic() + 30.0
     try:
-        for _ in range(ticks):
+        for i in range(ticks * 50):
+            if i >= ticks and (mode == "sync" or len(out) >= 4 or time.monotonic() > deadline):
+                break
             engine.step()
+            if mode == "async":
+                time.sleep(0.004)
             for ep in _images(engine):
                 image = ep.read()
                 if image is not None:
@@ -268,7 +276,33 @@ def _run(ticks: int = 60) -> dict[float, bytes]:
     return out
 
 
-def test_a_run_is_reproduced_byte_for_byte():
-    """A picture is a function of the state and the seed: two runs agree, noise included."""
-    first, second = _run(), _run()
+def test_sync_is_deterministic_and_an_async_frame_is_the_sync_frame_of_its_stamp():
+    """A picture is a function of the state and the seed: two sync runs agree byte for byte, and
+    every frame async mode publishes is the one sync mode drew for the same stamp, noise included."""
+    first, second = _run("sync"), _run("sync")
     assert first and first == second
+    late = _run("async")
+    assert late
+    assert all(first[key] == pixels for key, pixels in late.items() if key in first)
+    assert set(late) <= set(first)
+
+
+def test_two_mujoco_workers_hold_two_contexts_and_draw_the_same_frames():
+    def frames(workers: int):
+        before = _gl_contexts()
+        engine = _engine([*_props(), *_ring(4)], sim={"render": {"workers": workers}})
+        for ep in _images(engine):
+            ep.claim()
+        for _ in range(30):
+            engine.step()
+        contexts = _gl_contexts() - before
+        out = {ep.producer: ep.read().data.copy() for ep in _images(engine)}
+        engine.shutdown()
+        return contexts, out
+
+    one_contexts, one = frames(1)
+    two_contexts, two = frames(2)
+    assert (one_contexts, two_contexts) == (1, 2)
+    assert one.keys() == two.keys()
+    for key in one:
+        np.testing.assert_array_equal(one[key], two[key], err_msg=key)

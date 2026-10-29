@@ -20,11 +20,13 @@ which a viewer and every other renderer read meanwhile.
 from __future__ import annotations
 
 import contextlib
+import copy
 import gc
 import logging
 import math
 import os
 import sys
+import threading
 from collections.abc import Collection, Mapping, Sequence
 
 import mujoco
@@ -38,6 +40,7 @@ from .render_api import (
     CAMERA_MODELS,
     DEFAULT_RENDERER,
     IMAGES,
+    RENDER_MODES,
     CameraRequest,
     CameraSpec,
     Frame,
@@ -698,8 +701,8 @@ def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene) -> None:
 
 #: The model arrays that change at run time and that drawing reads: :mod:`roqsim.presence` hides an
 #: absent entity by moving its geoms to :data:`~roqsim.presence.ABSENT_GEOM_GROUP` and zeroing their
-#: alpha. A snapshot carries them, so a renderer that does not read the shared model -- one in
-#: another process -- draws the presence of the tick it renders.
+#: alpha. A snapshot carries them, so a renderer off the physics thread draws the presence of the
+#: tick it renders and never reads the shared model while the physics thread writes it.
 RUNTIME_MODEL_FIELDS = ("geom_rgba", "geom_group")
 
 #: The geoms a scene holds unless a camera asks for more (``mujoco.Renderer``'s default).
@@ -924,6 +927,7 @@ class MujocoRenderer(Renderer):
     def __init__(self, settings=None) -> None:
         super().__init__(settings)
         self.model: mujoco.MjModel | None = None
+        self._private = False
         self._gl = None
         self._con: mujoco.MjrContext | None = None
         self._scene: mujoco.MjvScene | None = None
@@ -944,6 +948,7 @@ class MujocoRenderer(Renderer):
 
         model = scene.model
         self.model = model
+        self._private = bool(scene.private_model)
         width = max([int(model.vis.global_.offwidth)] + [c.width for c in scene.cameras])
         height = max([int(model.vis.global_.offheight)] + [c.height for c in scene.cameras])
         if gl_context.GLContext is not None:
@@ -995,6 +1000,11 @@ class MujocoRenderer(Renderer):
         if self._con is None:
             raise RenderError("MuJoCo's renderer was used before open() or after close()")
         model, data = self.model, snapshot.data
+        if self._private:
+            # This renderer's own copy of the model, off the physics thread: the values presence
+            # changes at run time come with the snapshot.
+            for name, values in snapshot.model_values.items():
+                np.copyto(getattr(model, name), values)
         self.stats["batches"] += 1
         frames = [Frame(r.id, snapshot.sim_time, snapshot.step) for r in requests]
         use_atlas = bool(self.settings.get("atlas", True))
@@ -1179,6 +1189,8 @@ class RenderView:
         self.spec = spec
         self.renderer = renderer
         self.wants = wants
+        #: Which instance of its renderer draws it (:attr:`RenderService.workers`).
+        self.shard = 0
         self._frame: Frame | None = None
         self._fresh = False
 
@@ -1192,11 +1204,16 @@ class RenderView:
         return self._frame
 
     def take(self) -> Frame | None:
-        """The newest frame delivered since the last ``take``, else ``None``."""
-        if not self._fresh:
-            return None
-        self._fresh = False
-        return self._frame
+        """The newest frame delivered since the last ``take``, else ``None``.
+
+        Raises the failure of a render worker that died, rather than answering "no frame yet".
+        """
+        self.service.raise_worker_error()
+        with self.service._lock:
+            if not self._fresh:
+                return None
+            self._fresh = False
+            return self._frame
 
     def _deliver(self, frame: Frame) -> None:
         self._frame = frame
@@ -1204,8 +1221,113 @@ class RenderView:
 
     def clear(self) -> None:
         """Forget the frames: a reset restarts sim time, and an old frame would carry a future stamp."""
-        self._frame = None
-        self._fresh = False
+        with self.service._lock:
+            self._frame = None
+            self._fresh = False
+
+
+class _Job:
+    """One batch for a worker: the snapshot it is drawn from, and the views and images asked."""
+
+    def __init__(self, snapshot: StateSnapshot, batch, requests, epoch: int, buffer) -> None:
+        self.snapshot = snapshot
+        self.batch = batch
+        self.requests = requests
+        self.epoch = epoch
+        self.buffer = buffer
+        self.frames: list[Frame] | None = None
+        self.error: BaseException | None = None
+        self.done = threading.Event()
+
+
+class _Worker:
+    """A thread that owns one renderer and its context, and renders the newest batch it is handed.
+
+    A slot of one: a batch posted while another waits replaces it, and the replaced one is dropped
+    (counted in the service's ``dropped``), so a renderer slower than the ticks falls behind by at
+    most one batch and nothing queues. The renderer is opened, used and closed on this thread only,
+    so a thread-affine GL context is safe, and it draws its own copy of the model, updated from each
+    snapshot's runtime values, so it never reads the shared model while the physics thread writes it.
+    A renderer that raises ends the worker; the error is raised on the physics thread at the next
+    tick or read.
+    """
+
+    #: Snapshot buffers: one being drawn, one waiting, one being filled.
+    BUFFERS = 3
+
+    def __init__(self, service: RenderService, name: str, shard: int = 0) -> None:
+        self.service = service
+        self.name = name
+        self.shard = shard
+        self.cv = threading.Condition()
+        self.pending: _Job | None = None
+        self.stopping = False
+        self.error: BaseException | None = None
+        self.renderer: Renderer | None = None
+        self.opened = threading.Event()
+        # On the physics thread, before the worker starts: the copy and the buffers read the model.
+        self.scene = service.describe(name, private=True, shard=shard)
+        self.free = [mujoco.MjData(service.model) for _ in range(self.BUFFERS)]
+        self.thread = threading.Thread(
+            target=self._run, name=f"roqsim-render-{name}-{shard}", daemon=True
+        )
+        self.thread.start()
+        self.opened.wait()
+        if self.error is not None:
+            raise RenderError(f"renderer {name!r} failed to open: {self.error}") from self.error
+
+    def buffer(self) -> mujoco.MjData:
+        with self.cv:
+            return self.free.pop()
+
+    def post(self, job: _Job) -> None:
+        with self.cv:
+            dropped, self.pending = self.pending, job
+            if dropped is not None:
+                self.free.append(dropped.buffer)
+                self.service.stats["dropped"] += 1
+                dropped.done.set()
+            self.cv.notify()
+
+    def _run(self) -> None:
+        try:
+            self.renderer = self.service._construct(self.name)
+            self.renderer.open(self.scene)
+        except BaseException as err:  # noqa: BLE001 -- handed to the physics thread
+            self.error = err
+            self.opened.set()
+            return
+        self.opened.set()
+        try:
+            while True:
+                with self.cv:
+                    while self.pending is None and not self.stopping:
+                        self.cv.wait()
+                    if self.pending is None:
+                        return
+                    job, self.pending = self.pending, None
+                try:
+                    job.frames = self.service._draw(self.name, self.renderer, job)
+                except BaseException as err:  # noqa: BLE001 -- handed to the physics thread
+                    job.error = self.error = err
+                    return
+                finally:
+                    with self.cv:
+                        self.free.append(job.buffer)
+                    job.done.set()
+        finally:
+            renderer, self.renderer = self.renderer, None
+            with contextlib.suppress(Exception):
+                renderer.close()
+
+    def stop(self) -> None:
+        with self.cv:
+            self.stopping = True
+            pending, self.pending = self.pending, None
+            if pending is not None:
+                pending.done.set()
+            self.cv.notify()
+        self.thread.join(timeout=30)
 
 
 class RenderService:
@@ -1229,21 +1351,37 @@ class RenderService:
         *,
         renderer: str = DEFAULT_RENDERER,
         renderers: Mapping[str, Mapping] | None = None,
+        mode: str = "sync",
+        workers: int = 1,
         base_dir=None,
         logger: logging.Logger | None = None,
     ) -> None:
+        if mode not in RENDER_MODES:
+            raise ValueError(f"render mode {mode!r}; one of {', '.join(RENDER_MODES)}")
+        if int(workers) < 1:
+            raise ValueError(f"render workers {workers!r}: at least 1")
+        #: How many instances of each renderer share its cameras (``sim.render.workers``): one
+        #: context each, and in ``async`` mode one thread each. Cameras are dealt to them in turn.
+        self.workers = int(workers)
         self.model = model
         self.default_renderer = renderer
         self.settings = {str(k): dict(v or {}) for k, v in (renderers or {}).items()}
+        self.mode = mode
         self.base_dir = base_dir
         self.logger = logger or _logger
         self.views: list[RenderView] = []
         self._classes: dict[str, type] = {}
-        self._renderers: dict[str, Renderer] = {}
+        self._renderers: dict[tuple[str, int], Renderer] = {}
         self._snapshot_data: mujoco.MjData | None = None
         self._closed = False
-        #: Batches and frames since construction.
-        self.stats = {"batches": 0, "frames": 0, "ticks": 0}
+        #: Guards the views' frames, which a worker delivers while the physics thread reads them.
+        self._lock = threading.Lock()
+        self._workers: dict[tuple[str, int], _Worker] = {}
+        #: Bumped by :meth:`clear`: a batch drawn from before a reset is not delivered after it.
+        self._epoch = 0
+        #: Batches and frames since construction; ``dropped`` counts stale batches an ``async``
+        #: worker never drew because a newer one replaced them.
+        self.stats = {"batches": 0, "frames": 0, "ticks": 0, "dropped": 0}
 
     @classmethod
     def for_config(cls, model: mujoco.MjModel, config, logger=None) -> RenderService:
@@ -1252,6 +1390,8 @@ class RenderService:
             model,
             renderer=config.renderer,
             renderers=config.renderers,
+            mode=config.render["mode"],
+            workers=config.render["workers"],
             base_dir=getattr(config, "base_dir", None),
             logger=logger,
         )
@@ -1269,6 +1409,8 @@ class RenderService:
                 ctx.model,
                 renderer=sim.get("renderer") or DEFAULT_RENDERER,
                 renderers=sim.get("renderers") or {},
+                mode=(sim.get("render") or {}).get("mode", "sync"),
+                workers=(sim.get("render") or {}).get("workers", 1),
                 logger=ctx.logger,
             )
         return ctx.render
@@ -1311,7 +1453,10 @@ class RenderService:
             max_geom=max_geom,
         )
         view = RenderView(self, spec, renderer or self.default_renderer, wants)
-        if view.renderer in self._renderers:
+        # Dealt to the renderer's instances in turn: the shard is the service's choice, never a
+        # camera's, so a second context, GPU or process changes no camera plugin.
+        view.shard = sum(1 for v in self.views if v.renderer == view.renderer) % self.workers
+        if any(name == view.renderer for name, _ in [*self._renderers, *self._workers]):
             raise RenderError(
                 f"view {id!r} registered after renderer {view.renderer!r} opened; register every "
                 "camera in configure"
@@ -1358,15 +1503,15 @@ class RenderService:
         if problems:
             raise PluginError("; ".join(problems))
 
-    def _renderer(self, name: str) -> Renderer:
-        """The opened renderer *name*, constructed and opened on first use."""
+    def _renderer(self, name: str, shard: int = 0) -> Renderer:
+        """The opened instance *shard* of renderer *name*, constructed and opened on first use."""
         if self._closed:
             raise RenderError("the render service is closed")
-        renderer = self._renderers.get(name)
+        renderer = self._renderers.get((name, shard))
         if renderer is None:
             renderer = self._construct(name)
-            renderer.open(self.describe(name))
-            self._renderers[name] = renderer
+            renderer.open(self.describe(name, shard=shard))
+            self._renderers[(name, shard)] = renderer
         return renderer
 
     def _construct(self, name: str) -> Renderer:
@@ -1377,28 +1522,55 @@ class RenderService:
             raise RenderError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
         return cls(settings)
 
-    def describe(self, name: str) -> SceneDescription:
-        """The scene renderer *name* is opened with: the model and every camera it will draw."""
+    def describe(
+        self, name: str, private: bool = False, shard: int | None = None
+    ) -> SceneDescription:
+        """The scene renderer *name* is opened with: the model and every camera it will draw.
+
+        *private* hands it a copy of the model of its own (a renderer off the physics thread);
+        *shard* keeps the cameras dealt to that instance.
+        """
         return SceneDescription(
-            model=self.model,
+            model=copy.copy(self.model) if private else self.model,
+            private_model=private,
             moving=moving_bodies(self.model),
-            cameras=[v.spec for v in self.views if v.renderer == name],
+            cameras=[
+                v.spec
+                for v in self.views
+                if v.renderer == name and (shard is None or v.shard == shard)
+            ],
             settings=dict(self.settings.get(name, {})),
             base_dir=self.base_dir,
             body_names=[self.model.body(i).name for i in range(self.model.nbody)],
         )
 
-    def renderer(self, name: str | None = None) -> Renderer | None:
-        """The opened renderer *name* (the default one), or ``None`` before its first batch."""
-        return self._renderers.get(name or self.default_renderer)
+    def renderer(self, name: str | None = None, shard: int = 0) -> Renderer | None:
+        """The opened renderer *name* (the default one), or ``None`` before its first batch.
+
+        *shard* picks one of its instances when ``sim.render.workers`` deals its cameras to more.
+        """
+        name = name or self.default_renderer
+        worker = self._workers.get((name, shard))
+        if worker is not None:
+            return worker.renderer
+        return self._renderers.get((name, shard))
+
+    def raise_worker_error(self) -> None:
+        """Raise, on the caller's thread, the failure of a render worker that died."""
+        for (name, shard), worker in self._workers.items():
+            if worker.error is not None:
+                raise RenderError(
+                    f"the render worker {shard} of {name!r} died: {worker.error}"
+                ) from worker.error
 
     # -- per tick --------------------------------------------------------------------------------
 
-    def snapshot(self, data: mujoco.MjData) -> StateSnapshot:
+    def snapshot(self, data: mujoco.MjData, buffer: mujoco.MjData | None = None) -> StateSnapshot:
         """Copy what a render reads off *data*; the renderer never sees the live ``MjData``."""
-        if self._snapshot_data is None:
-            self._snapshot_data = mujoco.MjData(self.model)
-        buffer = self._snapshot_data
+        if buffer is None:
+            if self._snapshot_data is None:
+                self._snapshot_data = mujoco.MjData(self.model)
+            buffer = self._snapshot_data
         mujoco.mj_copyData(buffer, self.model, data)
         timestep = float(self.model.opt.timestep)
         return StateSnapshot(
@@ -1462,56 +1634,99 @@ class RenderService:
                 due.append((view, images))
         if not due:
             return 0
-        self._render(due, data)
+        self._render(due, data, wait=False)
         return len(due)
 
     def render_now(self, views: Sequence[tuple[RenderView, Collection[str]]], data, decorate=None):
         """Draw *views* (each with the images asked for) from the state *data* holds, now."""
         return self._render(list(views), data, decorate)
 
-    def _render(self, due, data, decorate=None) -> list[Frame]:
-        """Draw *due* from *data*, as one batch per renderer, and deliver the frames to the views."""
-        snapshot = self.snapshot(data)
-        by_renderer: dict[str, list] = {}
+    def _render(self, due, data, decorate=None, wait: bool = True) -> list[Frame]:
+        """Draw *due* from *data*: here (``sync``), or by each renderer's worker (``async``).
+
+        In ``async`` mode a tick (``wait`` false) hands the batches over and returns; the frames
+        reach the views when drawn. :meth:`render_now` waits for them in either mode.
+        """
+        self.raise_worker_error()
+        by_renderer: dict[tuple[str, int], list] = {}
         for view, images in due:
-            by_renderer.setdefault(view.renderer, []).append((view, images))
-        frames: list[Frame] = []
-        for name, batch in by_renderer.items():
+            by_renderer.setdefault((view.renderer, view.shard), []).append((view, images))
+        if self.mode == "sync":
+            snapshot = self.snapshot(data)
+            frames: list[Frame] = []
+            for (name, shard), batch in by_renderer.items():
+                requests = [self.request(v, imgs, snapshot, decorate) for v, imgs in batch]
+                job = _Job(snapshot, batch, requests, self._epoch, None)
+                frames += self._draw(name, self._renderer(name, shard), job)
+            return frames
+        jobs = []
+        for (name, shard), batch in by_renderer.items():
+            worker = self._worker(name, shard)
+            buffer = worker.buffer()
+            snapshot = self.snapshot(data, buffer)
             requests = [self.request(v, imgs, snapshot, decorate) for v, imgs in batch]
-            frames += self._draw(name, self._renderer(name), snapshot, batch, requests)
+            job = _Job(snapshot, batch, requests, self._epoch, buffer)
+            worker.post(job)
+            jobs.append(job)
+        if not wait:
+            return []
+        frames = []
+        for job in jobs:
+            job.done.wait()
+            if job.error is not None:
+                raise RenderError(f"renderer failed: {job.error}") from job.error
+            if job.frames is None:
+                # Replaced by a tick's newer batch before it was drawn: ask again.
+                return self._render(due, data, decorate, wait=True)
+            frames += job.frames
         return frames
 
-    def _draw(self, name: str, renderer: Renderer, snapshot, batch, requests) -> list[Frame]:
-        """Render one batch and deliver its frames to its views."""
+    def _worker(self, name: str, shard: int = 0) -> _Worker:
+        if self._closed:
+            raise RenderError("the render service is closed")
+        worker = self._workers.get((name, shard))
+        if worker is None:
+            worker = self._workers[(name, shard)] = _Worker(self, name, shard)
+        return worker
+
+    def _draw(self, name: str, renderer: Renderer, job: _Job) -> list[Frame]:
+        """Render one job and deliver its frames to its views (on whichever thread renders)."""
         try:
-            out = renderer.render(snapshot, requests)
+            out = renderer.render(job.snapshot, job.requests)
         except RenderError:
             raise
         except Exception as err:
             raise RenderError(f"renderer {name!r} failed: {err}") from err
-        if len(out) != len(requests):
+        if len(out) != len(job.requests):
             raise RenderError(
-                f"renderer {name!r} returned {len(out)} frames for {len(requests)} requests"
+                f"renderer {name!r} returned {len(out)} frames for {len(job.requests)} requests"
             )
-        for (view, images), frame in zip(batch, out, strict=True):
+        for (view, images), frame in zip(job.batch, out, strict=True):
             missing = [i for i in images if frame.image(i) is None]
             if missing:
                 raise RenderError(
                     f"renderer {name!r} returned no {', '.join(missing)} for camera {view.id!r}"
                 )
-        for (view, _), frame in zip(batch, out, strict=True):
-            view._deliver(frame)
-        self.stats["batches"] += 1
-        self.stats["frames"] += len(out)
+        with self._lock:
+            if job.epoch == self._epoch:
+                for (view, _), frame in zip(job.batch, out, strict=True):
+                    view._deliver(frame)
+            self.stats["batches"] += 1
+            self.stats["frames"] += len(out)
         return list(out)
 
     def clear(self) -> None:
-        """Forget every view's frames (an engine reset)."""
+        """Forget every view's frames (an engine reset); a batch still being drawn is not delivered."""
+        with self._lock:
+            self._epoch += 1
         for view in self.views:
             view.clear()
 
     def close(self) -> None:
         """Close every renderer it opened. Idempotent; the service renders nothing afterwards."""
+        workers, self._workers = self._workers, {}
+        for worker in workers.values():
+            worker.stop()  # the worker closes its renderer on its own thread
         renderers, self._renderers = self._renderers, {}
         self._closed = True
         for name, renderer in renderers.items():

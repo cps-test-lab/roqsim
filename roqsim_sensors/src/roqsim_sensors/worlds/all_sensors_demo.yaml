@@ -33,6 +33,8 @@
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
   renderer: mujoco          # what draws every camera (the default); `roqsim renderers list` names the rest
+  render:
+    mode: sync              # sync: each tick waits for its frames | async: drawn off the physics thread
 
 components:
   # --- Livox Mid-360 3D lidar (mast-mounted, centre of the room) --------------------------------

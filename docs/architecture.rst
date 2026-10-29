@@ -716,10 +716,19 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as
    ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG,
    since RVL has no C library behind it).
--  **On the physics thread.** The tick waits for its frames, so every frame is drawn from the state
-   it is published with, and a run is reproducible frame for frame; drawing off the physics thread
-   from a snapshot is future work (:doc:`future_work`).
--  **MuJoCo's renderer** holds one ``MjrContext`` and one upload, whatever the camera
+-  **Two modes** (``sim.render.mode``). ``sync``, the default, draws on the physics thread and the
+   tick waits for its frames: deterministic, and what lockstep (§10) requires -- a world with
+   ``sim.sync.enabled`` cannot ask for ``async``. ``async`` gives each renderer a worker thread that
+   opens, drives and closes it (a GL context is thread-affine) and draws its own copy of the model,
+   updated from each snapshot; the physics thread hands it the batch and steps on. A slot of one:
+   a batch posted while another waits replaces it (newest wins, the replaced ones counted as
+   ``dropped``), so nothing queues, and a frame is stamped with its snapshot's time, a tick or more
+   before the one that publishes it; its noise is drawn at that time (``ctx.rng_for(..., at=)``), so
+   an async frame is the sync frame of its stamp. A worker whose renderer failed raises on the
+   physics thread at the next tick. ``sim.render.workers`` deals each renderer's cameras to that many
+   instances (a context each; a thread each in ``async``) -- the seam a second GPU or process goes
+   behind, which no camera plugin sees.
+-  **MuJoCo's renderer** holds one ``MjrContext`` and one upload per instance, whatever the camera
    count, and sizes its offscreen framebuffer to its largest camera in its own context, never in the
    shared model. Per batch it builds the scene once (``mjv_updateScene``); each camera then sets only
    its view (``mjv_updateCamera``), its lights (``mjv_makeLights``: the headlight follows the camera)
@@ -902,7 +911,7 @@ Design:
 -  **Config:** ``sim.sync = {enabled, timeout_s, wait_for: [sensors, control]}``; default off. ``GetSimulatorFeatures`` reports whether sync stepping is active.
 -  **Safety:** timeout + a deadlock diagnostic (which gate never fired) prevents a missing/late node from hanging the sim.
 
-The command-queue model (§7) is the substrate: sync mode adds a *wait on named gates*, not a new concurrency scheme. A camera's frames already belong to their tick (§8); a camera's producer gate would be satisfied by its ``post_step``, once its frame is in. ``register_gate``/``gates`` exist and are reset each ``reset()``, and the engine does not wait on them. ``roqsim_aerial``'s ``px4_sitl`` is the one user: it registers a consumer gate and waits on it in its own ``post_step``, with the timeout and deadlock diagnostic this section requires.
+The command-queue model (§7) is the substrate: sync mode adds a *wait on named gates*, not a new concurrency scheme. A camera's frames already belong to their tick when the render service is in its default ``sync`` mode (§8), which is why a world turning lockstep on cannot ask for ``async``; a camera's producer gate would be satisfied by its ``post_step``, once its frame is in. ``register_gate``/``gates`` exist and are reset each ``reset()``, and the engine does not wait on them. ``roqsim_aerial``'s ``px4_sitl`` is the one user: it registers a consumer gate and waits on it in its own ``post_step``, with the timeout and deadlock diagnostic this section requires.
 
 .. _11-performance--benchmarking-impl:
 

@@ -12,16 +12,14 @@ Rendering beyond the render service
 -----------------------------------
 
 **Context.** Every image is drawn through the render service (§8): one context and one upload per
-renderer, one scene build per tick, an atlas read back once. What it leaves:
+renderer instance, one scene build per tick, an atlas read back once, and an ``async`` mode that
+draws off the physics thread from a snapshot. What it leaves:
 
-- *Off the physics thread.* The tick waits for its frames. A render worker that owns the context
-  and draws from the snapshot the physics thread hands it, newest snapshot first and nothing
-  queued, each frame stamped with its snapshot's sim time and its noise drawn there, would let
-  physics step on; lockstep (§10) would keep waiting. The renderer contract already hands a
-  renderer a snapshot and never the live ``MjData``, so it is a change to the service alone.
 - *Post-processing on the physics thread.* A camera's own work on its frame -- ``mono8``
   conversion, the depth clip, the lens map, noise -- and a bridge's encoding (JPEG, PNG, RVL) still
-  run in ``post_step``. For a depth camera that is most of its cost once the draw is shared.
+  run in ``post_step``. For a depth camera that is most of its cost once the draw is shared; moving
+  it to the worker that drew the frame is the next step, and needs the camera's processing to be a
+  function of the frame and the seed alone, which it already is.
 - *Depth through the atlas.* Colour is read back once per batch; depth and segmentation are still
   read per camera. A depth atlas needs the depth attachment's format matched and the reversed-Z
   read reproduced exactly.
@@ -31,8 +29,9 @@ renderer, one scene build per tick, an atlas read back once. What it leaves:
 - *Deferred read-back.* A pixel-buffer object would let the atlas read of one batch overlap the next
   batch's draws, at the price of every frame arriving a tick later; with one read per batch that
   price buys little, so it is not built.
-- *More than one GPU.* The service would deal a renderer's cameras to several instances, each with
-  a context of its own, on a device of its own (an EGL device per instance).
+- *More than one GPU.* ``sim.render.workers`` deals cameras to several instances, each with a
+  context of its own, all on the device the GL backend chose. Placing each worker's context on a
+  device of its own (an EGL device per worker) is what a second GPU needs.
 - *A batch renderer.* MuJoCo Warp's ray-traced batch renderer takes exactly what the contract gives
   (the model once, a state per tick, a batch of heterogeneous cameras) and suits worlds with very
   many cameras that accept its look; it would stand behind the interface as a renderer of its own.

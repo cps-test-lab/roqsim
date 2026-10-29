@@ -88,9 +88,19 @@ def test_a_mistyped_settings_key_names_key_block_and_valid_keys():
     assert "colour" in text
 
 
+def test_the_render_mode_is_one_of_two():
+    with pytest.raises(PluginError, match="render.mode"):
+        load_config_from_dict(_world({"render": {"mode": "later"}}))
+    with pytest.raises(PluginError, match="sim.render"):
+        load_config_from_dict(_world({"render": {"modes": "sync"}}))
+    cfg = load_config_from_dict(_world({"render": {"mode": "async"}}))
+    assert cfg.render["mode"] == "async"
+
+
 def test_defaults_when_a_world_says_nothing():
     cfg = load_config_from_dict(_world({}))
     assert cfg.renderer == "mujoco"
+    assert cfg.render == {"mode": "sync", "workers": 1}
     assert cfg.renderers == {}
 
 
