@@ -2,7 +2,7 @@
 
 Why this exists
 ===============
-``export urdf`` and ``export web`` both keep a model as a body tree, because their consumers plan or
+``export urdf`` and ``export gltf`` both keep a model as a body tree, because their consumers plan or
 animate it. A second class of consumer wants the opposite: one rigid mesh and nothing else. Model-based
 6D pose estimators (render-and-compare and ICP alike) take a single mesh and return the pose *of that
 mesh's frame*; CAD tools import one solid or one mesh body and know nothing about joints. Neither can

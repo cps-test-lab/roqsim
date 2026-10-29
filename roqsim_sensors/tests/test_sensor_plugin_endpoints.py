@@ -30,6 +30,8 @@ DEPTH = {
     "depth": ("out", "Image"),
     "depth_camera_info": ("out", "CameraInfo"),
     "depth_compressed": ("out", "Image"),
+    "registered_depth": ("out", "Image"),
+    "registered_depth_camera_info": ("out", "CameraInfo"),
 }
 
 #: plugin class -> {endpoint name: (kind, payload type)}

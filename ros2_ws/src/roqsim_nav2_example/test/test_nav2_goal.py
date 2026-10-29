@@ -1,6 +1,7 @@
 """Headless nav2 goal-reaching integration test.
 
-Launches the minimal nav2 + roqsim TurtleBot stack, sends one goal via
+Launches the minimal nav2 + roqsim TurtleBot stack (and the Spot one, where its walking policy has been
+fetched), sends one goal via
 ``nav2_simple_commander.BasicNavigator``, and asserts the robot reaches within a loose radius under a
 generous timeout. Skips cleanly if ROS / nav2 is not available (so `pytest` without ROS is a no-op).
 
@@ -56,16 +57,28 @@ def _wait_active(nav, node_names, timeout):
     return True
 
 
-@pytest.fixture
-def nav2_stack():
+def _spot_policy() -> str | None:
+    """The Spot walking policy's path, if it is here (it is fetched, not committed)."""
+    try:
+        from roqsim_quadruped.policy import DEFAULT_POLICY
+    except ImportError:
+        return None
+    path = os.environ.get("SPOT_POLICY_PATH") or str(DEFAULT_POLICY)
+    return path if os.path.exists(path) else None
+
+
+@pytest.fixture(params=["nav2_turtlebot.launch.py", "nav2_spot.launch.py"])
+def nav2_stack(request):
     ros2 = shutil.which("ros2")
     if ros2 is None:
         pytest.skip("ros2 CLI not on PATH (ROS not sourced)")
+    if "spot" in request.param and _spot_policy() is None:
+        pytest.skip("no Spot policy: python -m roqsim_quadruped.policy.fetch_policy")
     env = dict(os.environ)
     env.setdefault("MUJOCO_GL", "egl")
     # Run the launch tree under THIS interpreter so ExecuteProcess(sys.executable, ...) has roqsim.
     proc = subprocess.Popen(
-        [sys.executable, ros2, "launch", "roqsim_nav2_example", "nav2_turtlebot.launch.py"],
+        [sys.executable, ros2, "launch", "roqsim_nav2_example", request.param],
         env=env,
         start_new_session=True,
         stdout=subprocess.DEVNULL,

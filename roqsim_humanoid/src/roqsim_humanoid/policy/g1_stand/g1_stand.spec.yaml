@@ -71,7 +71,7 @@ observation:
   # walk policy stepping at zero command.
 
 # What the policy was TRAINED for. Outside this it does not fail, it just balances worse -- which is
-# why the range is recorded machine-readably instead of only in a port log nobody reads before editing
+# why the range is recorded machine-readably instead of only in prose nobody reads before editing
 # a world YAML.
 envelope:
   payload_kg: [0.0, 1.0]

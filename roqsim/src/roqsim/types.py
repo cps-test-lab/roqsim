@@ -277,7 +277,7 @@ class Image:
 
     Attributes:
         data: (height, width) or (height, width, channels) pixels
-        encoding: the pixel encoding, as ROS spells it (rgb8, mono8, 16UC1, 32FC1)
+        encoding: the pixel encoding, as ROS spells it (rgb8, bgr8, mono8, 16UC1, 32FC1)
         stamp: the simulated time the frame was captured, in seconds; ``None`` when the producer
             does not say. Two reads with the same stamp are the same frame, which is how an
             in-process consumer tells a fresh frame from the one it already has.

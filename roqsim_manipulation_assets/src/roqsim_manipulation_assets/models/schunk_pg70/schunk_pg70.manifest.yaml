@@ -14,6 +14,6 @@ components:
       # The URDF's stroke exactly, kept rather than widened to the PG+70 datasheet's 70 mm so that
       # MoveIt's joint limits and MuJoCo's agree. MEASURED aperture between the jaw inner faces:
       # 61.2 mm at q=0.0301, 0 mm at q=-0.001. Note this is NARROWER than the 2F-85's 85 mm, so a
-      # world that swaps to this gripper may have to shrink its payload -- see the port log.
+      # world that swaps to this gripper may have to shrink its payload.
       gripper_open: 0.0301
       gripper_close: -0.001

@@ -526,7 +526,9 @@ class SimContext:
         self.interface = InterfaceRegistry()
         #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
         self.entity_poses: set[str] = set()
-        self.render = None  # lazily set to a RenderService when first needed
+        #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
+        #: set by the engine at setup, or made on first use (:meth:`RenderService.of`).
+        self.render = None
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of
         #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``
@@ -595,8 +597,14 @@ class SimContext:
 
     # -- deterministic randomness -------------------------------------------------------------
 
-    def rng_for(self, name: str, *, per_episode: bool = False):  # -> numpy.random.Generator
+    def rng_for(
+        self, name: str, *, per_episode: bool = False, at: float | None = None
+    ):  # -> numpy.random.Generator
         """A generator whose draws are a pure function of ``(seed, episode, sim_time, name)``.
+
+        ``at`` is the sim time to key the draw on, when it is not now: a camera frame rendered off
+        the physics thread is stamped with its snapshot's time and draws its noise there, so the
+        picture is the same whichever tick it is published in.
 
         ``per_episode=True`` drops ``sim_time`` from the key: the draw is the episode's, the same
         whenever in the episode it is made. That is the generator for a quantity a trial holds
@@ -655,7 +663,7 @@ class SimContext:
         if per_episode or self.model is None or self.data is None:
             step = 0
         else:
-            step = round(self.sim_time / self.dt)
+            step = round((self.sim_time if at is None else float(at)) / self.dt)
         # A stable hash of the sensor name: Python's hash() is salted per process, which would make a
         # run irreproducible across processes -- exactly what this exists to prevent.
         import zlib

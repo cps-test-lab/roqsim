@@ -1,0 +1,2 @@
+[roqsim.renderers]
+testext = roqsim_render_testext:TestExtRenderer

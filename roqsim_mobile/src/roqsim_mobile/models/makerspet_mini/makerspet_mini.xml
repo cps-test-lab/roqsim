@@ -12,13 +12,13 @@
     The scan frame is INVERTED (the description's scan_joint carries rpy="0 -pi 0"), and kept: it is
     the frame the robot stamps its scan in. Its height is not the description's 0.0704 but the
     manufacturer's CAD, the LD14P's optical block 72.25 mm above the floor - see
-    build_makerspet_mjcf.CAD_SCAN_HEIGHT, the manifest and the port log.
+    build_makerspet_mjcf.CAD_SCAN_HEIGHT and the manifest.
 
     DEVIATION: the head ends at z 0.04935 in base_link, the bottom face of the scanner puck. The
     description's head encloses the scan plane; the real robot carries its LiDAR in an open gap. The
     collision cylinder is shortened to that height and the hemisphere visual ships cut there as
     hemisphere_scan_gap.stl; the head's mass and inertia are the description's. See
-    build_makerspet_mjcf.open_scan_gap and the port log.
+    build_makerspet_mjcf.open_scan_gap.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
@@ -111,7 +111,8 @@
     <!-- Velocity servos, one per wheel. ctrlrange is the robot's own navigation.yaml top speed over
          its wheel radius, doubled for headroom; forcerange is its motor_stall_torque. kv is kept
          paired with the wheel class's armature so kv*dt/I stays just under 1 - see the wheel
-         default above, and the port log for the measurement. -->
+         default above. Measured with this pairing: 0.973 of commanded speed straight, 0.965-0.969
+         of commanded yaw. -->
     <velocity name="wheel_left_motor" joint="wheel_left_joint" kv="1.0" ctrlrange="-9 9" forcerange="-0.49 0.49"/>
     <velocity name="wheel_right_motor" joint="wheel_right_joint" kv="1.0" ctrlrange="-9 9" forcerange="-0.49 0.49"/>
   </actuator>

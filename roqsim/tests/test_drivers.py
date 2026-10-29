@@ -43,7 +43,7 @@ def test_pacer_factor_parsing():
 # requested rate, which against a live stack is worse than being slow. Counting it is what
 # stops that absorption from being silent -- uncounted, a run holding 0.34x realtime for five
 # minutes reports nothing until its job deadline kills it, and the shortfall has to be
-# reconstructed from run.clock_map.csv afterwards.
+# reconstructed from the recording's clock channel afterwards.
 
 
 def test_pacer_reports_no_shortfall_when_it_keeps_up():
@@ -161,7 +161,7 @@ def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
             raise RecordingError("disk full")
 
     monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
-    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.npz"))
+    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.mcap"))
     sim = MujocoSim(world=_write_world(tmp_path))
     sim.setup()
     sim.reset()
@@ -213,6 +213,50 @@ def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, mon
     sim.shutdown()
 
 
+def test_scenario_adapter_records_each_scenario_into_its_own_directory(tmp_path: Path, monkeypatch):
+    """A reset() told the scenario's output directory finishes the recording before it and
+    starts one there; a reset() in the same directory is a reset within that recording."""
+    from roqsim.mcap_format import is_finished
+
+    world = _write_world(tmp_path)
+    monkeypatch.setenv("ROQSIM_RECORD", "run.mcap")
+    monkeypatch.delenv("RUN_OUTPUT_DIR", raising=False)
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(tmp_path / "out"))
+    sim.reset(output_dir=str(tmp_path / "out" / "cfg" / "0"))
+    for _ in range(3):
+        sim.step()
+    sim.reset(output_dir=str(tmp_path / "out" / "cfg" / "1"))
+    first = tmp_path / "out" / "cfg" / "0" / "run.mcap"
+    assert is_finished(first), "the first scenario's recording is finished"
+    sim.reset(output_dir=str(tmp_path / "out" / "cfg" / "1"))
+    for _ in range(3):
+        sim.step()
+    sim.shutdown()
+    second = tmp_path / "out" / "cfg" / "1" / "run.mcap"
+    assert is_finished(second)
+    assert not (tmp_path / "out" / "run.mcap").exists()
+
+
+def test_scenario_adapter_exports_the_scene_into_each_scenarios_directory(tmp_path: Path, monkeypatch):
+    """A reset() into a new scenario directory exports the scene there too, though the world is
+    not rebuilt; a reset() in the same directory does not export it again."""
+    world = _write_world(tmp_path)
+    monkeypatch.setenv("ROQSIM_SCENE_EXPORT_DIR", "scene")
+    monkeypatch.delenv("RUN_OUTPUT_DIR", raising=False)
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(tmp_path / "out"))
+    sim.reset(output_dir=str(tmp_path / "out" / "0"))
+    sim.reset(output_dir=str(tmp_path / "out" / "1"))
+    second = tmp_path / "out" / "1" / "scene" / "scene.glb"
+    assert second.read_bytes()[:4] == b"glTF"
+    second.unlink()
+    sim.reset(output_dir=str(tmp_path / "out" / "1"))
+    sim.shutdown()
+    assert (tmp_path / "out" / "0" / "scene" / "scene.glb").is_file()
+    assert not second.exists()
+
+
 def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
     """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
     world = _write_world(tmp_path)
@@ -223,7 +267,7 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.setup(output_dir=str(root))
     sim.reset()
     sim.shutdown()
-    assert (run_dir / "scene" / "scene.json").is_file()
+    assert (run_dir / "scene" / "scene.glb").read_bytes()[:4] == b"glTF"
     assert not (root / "scene").exists()
 
     # Without a per-run directory the scenario's own output_dir is the fallback.
@@ -232,4 +276,4 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.setup(output_dir=str(root))
     sim.reset()
     sim.shutdown()
-    assert (root / "scene" / "scene.json").is_file()
+    assert (root / "scene" / "scene.glb").is_file()

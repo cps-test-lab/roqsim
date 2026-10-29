@@ -1,7 +1,8 @@
 """``roqsim sensors`` -- what the robot can actually see.
 
-Coverage is the one sensor question a static world can answer offline: how much of a room, and which
-objects, are observed by how many sensors. Everything else about a sensor is a runtime plugin.
+Coverage is the one sensor question answered offline, from a world or from a recorded run: how much
+of a room, and which objects, are observed by how many sensors, and what a moving sensor ever saw.
+Everything else about a sensor is a runtime plugin.
 
     python -m pydoc roqsim_sensors.coverage.cli
 """
@@ -15,7 +16,7 @@ from roqsim.commands import tool
 
 @click.group("sensors")
 def sensors() -> None:
-    """Estimate and optimise sensor coverage of a fixed world."""
+    """Estimate and optimise sensor coverage of a world or a recorded run."""
 
 
 sensors.add_command(tool("roqsim_sensors.coverage.cli", "coverage"))

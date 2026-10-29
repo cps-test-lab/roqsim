@@ -1,16 +1,14 @@
 """Scene plugin: a **parametric** chipboard shelf built from primitive boxes at build time.
 
-The customizable counterpart to the baked ``free_chipboard_shelf`` / ``free_chipboard_shelf_half_depth``
-mesh models: instead of frozen geometry, the shelf is generated from box geoms so its dimensions -- most
+Instead of frozen mesh geometry, the shelf is generated from box geoms so its dimensions -- most
 usefully the **number of layers** -- are config, not vertex data. ``layers: 8`` gives an eight-board
-shelf; ``depth: 0.40`` reproduces the half-depth variant without a separate model. Like ``spawn_model``
-the prop is welded in place (static scenery, no free joint).
+shelf; ``depth: 0.40`` a half-depth one. Like ``spawn_model`` the prop is welded in place (static
+scenery, no free joint).
 
 Geometry (all metres): ``layers`` horizontal boards (box half-extents ``[depth/2, width/2,
 thickness/2]``) evenly stacked in Z between the base-board height and the top, plus four vertical corner
-uprights spanning the full height. The boards reuse the real chipboard colour map from the mesh model's
-``textures/`` (grey uprights, matching the mesh's frame material); if that model can't be resolved the
-boards fall back to a plain wood ``rgba`` and a warning is logged.
+uprights spanning the full height. The boards are a plain chipboard colour and the uprights grey; the
+shelf needs no asset beyond this module.
 
 Config::
 
@@ -19,53 +17,34 @@ Config::
       pose:                 # world placement, a geometry_msgs/Pose (roqsim.pose); omitted
         position: {x: 0.0, y: 0.0, z: 0.0}          #   components are 0
         orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
-      layers: 5           # number of boards (int >= 2; default 5, matching the mesh model)
+      layers: 5           # number of boards (int >= 2; default 5)
       width: 1.51         # board size along Y, m   (default 1.51)
       depth: 0.80         # board size along X, m   (default 0.80; half-depth => 0.40)
       height: 2.00        # overall shelf height, m (default 2.00)
       thickness: 0.02     # board thickness, m      (default 0.02)
       leg: 0.04           # square cross-section of a corner upright, m (default 0.04)
-
-Defaults reproduce the baked ``free_chipboard_shelf`` (5 boards, ~0.80 x 1.51 x 2.0 m) so it is a
-drop-in, parameterised replacement.
 """
 
 from __future__ import annotations
 
-import logging
-
 import mujoco
 
 from roqsim.context import Entity, SimContext
-from roqsim.models import ModelError, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import config_pose, config_pose_errors
 
-logger = logging.getLogger("roqsim_assets.shelf")
-
-# Height (m) of the bottom board's centre above the floor. Lifted from the baked mesh (base board at
-# z~=0.077..0.082), so the parametric shelf seats its lowest board where the mesh model does.
+# Height (m) of the bottom board's centre above the floor: a base board raised clear of the floor.
 _Z0 = 0.08
 
-# The mesh model whose chipboard colour map + frame colour the boards reuse, and the relative texture
-# it ships. Kept in sync with free_chipboard_shelf.xml.
-_TEXTURE_MODEL = "free_chipboard_shelf"
-_TEXTURE_REL = "textures/Material.001_diffuse.png"
-_FRAME_RGBA = [0.72, 0.72, 0.74, 1.0]  # neutral grey, copied from the mesh model's frame material
-_WOOD_FALLBACK_RGBA = [
-    0.82,
-    0.70,
-    0.52,
-    1.0,
-]  # plain chipboard tone when the texture can't be found
-_TEXTURE_TILE_M = 1.0  # real-world metres one chipboard texture tile spans (via texuniform)
+_FRAME_RGBA = [0.72, 0.72, 0.74, 1.0]  # neutral grey uprights
+_CHIPBOARD_RGBA = [0.82, 0.70, 0.52, 1.0]  # plain chipboard tone for the boards
 
 
 class ShelfPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
-    _ROOT_BODY = "free_chipboard_shelf"  # matches the mesh model's root body name
+    _ROOT_BODY = "shelf"
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -162,49 +141,14 @@ class ShelfPlugin(Plugin):
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def _materials(self, child: mujoco.MjSpec) -> tuple[str, str]:
-        """Add the chipboard + grey-frame materials to the child spec; return their names.
-
-        The boards reuse the real chipboard texture shipped with the ``free_chipboard_shelf`` mesh
-        model (resolved via the model provider, so it works cross-package). If that model or its
-        texture cannot be found the boards fall back to a plain wood colour -- logged, not fatal, so a
-        missing optional asset never sinks the whole run.
-        """
+        """Add the chipboard + grey-frame materials to the child spec; return their names."""
         frame_mat = child.add_material()
         frame_mat.name = "shelf_frame"
         frame_mat.rgba = _FRAME_RGBA
 
         chipboard = child.add_material()
         chipboard.name = "shelf_chipboard"
-
-        texture_path = None
-        try:
-            asset = resolve_model(_TEXTURE_MODEL)
-            candidate = asset.path.parent / _TEXTURE_REL
-            if candidate.is_file():
-                texture_path = str(candidate)
-            else:
-                logger.warning(
-                    "shelf: chipboard texture %s not found; using a plain wood colour", candidate
-                )
-        except ModelError as exc:
-            logger.warning(
-                "shelf: model %r unresolved (%s); using a plain wood colour for the boards",
-                _TEXTURE_MODEL,
-                exc,
-            )
-
-        if texture_path is None:
-            chipboard.rgba = _WOOD_FALLBACK_RGBA
-            return "shelf_chipboard", "shelf_frame"
-
-        tex = child.add_texture()
-        tex.name = "shelf_chipboard_tex"
-        tex.type = mujoco.mjtTexture.mjTEXTURE_2D
-        tex.builtin = mujoco.mjtBuiltin.mjBUILTIN_NONE
-        tex.file = texture_path
-        chipboard.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "shelf_chipboard_tex"
-        chipboard.texuniform = True  # texrepeat is repetitions-per-metre (real-world scale)
-        chipboard.texrepeat = [1.0 / _TEXTURE_TILE_M, 1.0 / _TEXTURE_TILE_M]
+        chipboard.rgba = _CHIPBOARD_RGBA
         return "shelf_chipboard", "shelf_frame"
 
     def configure(self, ctx: SimContext) -> None:
