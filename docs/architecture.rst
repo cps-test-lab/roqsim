@@ -721,9 +721,12 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    from a snapshot is future work (:doc:`future_work`).
 -  **MuJoCo's renderer** holds one ``MjrContext`` and one upload, whatever the camera
    count, and sizes its offscreen framebuffer to its largest camera in its own context, never in the
-   shared model. Each camera of a batch builds the scene through its own camera
-   (``mjv_updateScene``), sets its clip planes, is drawn at the origin of the framebuffer and read
-   back; depth and segmentation draw with flat ID colours as ``mujoco.Renderer`` draws them. The pictures are those a
+   shared model. Per batch it builds the scene once (``mjv_updateScene``); each camera then sets only
+   its view (``mjv_updateCamera``), its lights (``mjv_makeLights``: the headlight follows the camera)
+   and its clip planes, is drawn at the origin of the framebuffer, and its colour image is copied on
+   the GPU into its tile of one atlas, read back once per batch. Depth and segmentation keep a pass
+   of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them. A camera with
+   its own geom groups or decorations gets a build of its own. The pictures are those a
    ``mujoco.Renderer`` per camera drew (``roqsim/tests/test_render_service_pixels.py``). Under
    MuJoCo's default 4x MSAA a frame is not bit-reproducible on every GPU, with or without the service:
    a run may differ from another in a handful of values by one level; a model with

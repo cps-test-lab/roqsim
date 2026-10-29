@@ -3,7 +3,7 @@
 """A world's cameras draw through one render service: what that costs, and that it changes no frame.
 
 What scales is tested here with the cameras themselves: one GL context for any number of cameras,
-nothing drawn for a camera nobody reads, every frame stamped with the
+one scene build per tick, nothing drawn for a camera nobody reads, every frame stamped with the
 sim time of the state it was drawn from, and a Spot body camera's three streams as they were drawn
 before the service, pixel for pixel.
 """
@@ -113,7 +113,7 @@ def _gl_contexts() -> int:
     return sum(1 for o in gc.get_objects() if cls is not None and isinstance(o, cls))
 
 
-def test_one_gl_context_for_eight_cameras():
+def test_one_gl_context_and_one_scene_build_per_tick_for_eight_cameras():
     before = _gl_contexts()
     engine = _engine([*_props(), *_ring(8)])
     for ep in _images(engine):
@@ -126,7 +126,8 @@ def test_one_gl_context_for_eight_cameras():
     assert _gl_contexts() - before == 1
     ticks = renderer.stats["batches"]
     assert ticks == 5  # 50 Hz over 0.1 s of 2 ms steps
-    assert renderer.stats["draws"] == 8 * ticks  # every due camera, in one context
+    assert renderer.stats["scene_builds"] == ticks  # one build for all eight cameras
+    assert renderer.stats["readbacks"] == ticks  # and one read-back, of the atlas
     engine.shutdown()
     assert _gl_contexts() - before == 0
 

@@ -12,11 +12,7 @@ Rendering beyond the render service
 -----------------------------------
 
 **Context.** Every image is drawn through the render service (§8): one context and one upload per
-renderer. What it leaves:
-
-- *One scene build and one read-back per tick.* Each camera builds the scene and reads its image
-  back on its own. The scene could be built once per batch, each camera then setting only its view,
-  its lights and its planes, and every colour image copied into one buffer read back once.
+renderer, one scene build per tick, an atlas read back once. What it leaves:
 
 - *Off the physics thread.* The tick waits for its frames. A render worker that owns the context
   and draws from the snapshot the physics thread hands it, newest snapshot first and nothing
@@ -26,9 +22,15 @@ renderer. What it leaves:
 - *Post-processing on the physics thread.* A camera's own work on its frame -- ``mono8``
   conversion, the depth clip, the lens map, noise -- and a bridge's encoding (JPEG, PNG, RVL) still
   run in ``post_step``. For a depth camera that is most of its cost once the draw is shared.
+- *Depth through the atlas.* Colour is read back once per batch; depth and segmentation are still
+  read per camera. A depth atlas needs the depth attachment's format matched and the reversed-Z
+  read reproduced exactly.
 - *A shadow map shared across one tick's cameras.* MuJoCo redraws it inside every ``mjr_render``,
   although it depends only on the lights, and the shadow pass is a large share of a draw. Sharing it
   needs owning MuJoCo's draw loop.
+- *Deferred read-back.* A pixel-buffer object would let the atlas read of one batch overlap the next
+  batch's draws, at the price of every frame arriving a tick later; with one read per batch that
+  price buys little, so it is not built.
 - *More than one GPU.* The service would deal a renderer's cameras to several instances, each with
   a context of its own, on a device of its own (an EGL device per instance).
 - *A batch renderer.* MuJoCo Warp's ray-traced batch renderer takes exactly what the contract gives

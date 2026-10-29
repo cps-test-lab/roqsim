@@ -183,7 +183,7 @@ def test_a_frame_renderer_draws_what_a_renderer_drew_before(world, camera):
 
 
 def test_a_batch_of_cameras_draws_what_each_drew_alone(world):
-    """Three cameras of different sizes in one context, each as a renderer of its own drew it."""
+    """One scene build for three cameras of different sizes, colour through the atlas."""
     model, data = world
     service = RenderService(model)
     sizes = {"persp": (200, 150), "side": (96, 64), "ortho": (128, 128)}
@@ -194,7 +194,7 @@ def test_a_batch_of_cameras_draws_what_each_drew_alone(world):
     for _ in range(2):
         frames = service.render_now([(v, ("rgb", "depth")) for v in views.values()], data)
     renderer = service.renderer()
-    assert renderer.stats["scene_builds"] == 6  # each camera its own, in two batches of three
+    assert renderer.stats["scene_builds"] == 2  # one per batch, for all three cameras
     # The framebuffer the service draws in: the largest camera, or the model's declared size.
     fb = (max(320, 200), max(240, 150))
     try:
@@ -205,6 +205,23 @@ def test_a_batch_of_cameras_draws_what_each_drew_alone(world):
             old.close()
     finally:
         service.close()
+
+
+def test_the_atlas_and_one_readback_per_camera_give_the_same_pixels(world):
+    model, data = world
+    out = {}
+    for atlas in (True, False):
+        service = RenderService(model, renderers={"mujoco": {"atlas": atlas}})
+        views = [
+            service.view(n, camera=n, width=120, height=90) for n in ("persp", "side", "ortho")
+        ]
+        for _ in range(2):
+            frames = service.render_now([(v, ("rgb",)) for v in views], data)
+        out[atlas] = [f.rgb for f in frames]
+        assert service.renderer().stats["readbacks"] == (2 if atlas else 6)
+        service.close()
+    for a, b in zip(out[True], out[False], strict=True):
+        np.testing.assert_array_equal(a, b)
 
 
 def test_the_renderer_never_writes_the_shared_model(world):

@@ -15,7 +15,7 @@ The lines a world writes
      renderer: mujoco        # which renderer draws every camera; MuJoCo's when omitted.
                              # Any name `roqsim renderers list` shows, or module:Class / file.py:Class.
      renderers:              # one settings block per renderer, validated by that renderer
-       mujoco: {}            # `roqsim renderers describe mujoco` lists its keys
+       mujoco: {atlas: true} # `roqsim renderers describe mujoco` lists its keys
 
    components:
      - spawn_sensor:

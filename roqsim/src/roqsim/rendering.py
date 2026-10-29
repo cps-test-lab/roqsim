@@ -45,6 +45,7 @@ from .render_api import (
     RendererCapabilities,
     RenderError,
     SceneDescription,
+    Setting,
     StateSnapshot,
 )
 
@@ -765,12 +766,132 @@ def _vopt(geomgroup) -> mujoco.MjvOption:
     return vopt
 
 
+class _Atlas:
+    """One single-sampled colour framebuffer every view's colour image is copied into, read back once.
+
+    MuJoCo draws each view at the origin of its own offscreen framebuffer, as a lone
+    ``mujoco.Renderer`` does, so a view's pixels do not depend on where its tile is; the view is
+    then copied into its tile on the GPU (``glBlitFramebuffer``, an exact copy between buffers of
+    one format). Read through MuJoCo's resolve buffer first when MuJoCo multisamples, which is what
+    ``mjr_readPixels`` does too. Tiles are shelf-packed per batch, so a view nobody wanted takes no
+    tile; the buffer grows to the largest batch it has held and never shrinks.
+    """
+
+    def __init__(self) -> None:
+        from OpenGL import GL  # noqa: PLC0415 -- MuJoCo's egl and osmesa backends need it anyway
+
+        self.GL = GL
+        self.fbo = None
+        self.rbo = None
+        self.width = 0
+        self.height = 0
+        self.max_size = int(GL.glGetIntegerv(GL.GL_MAX_RENDERBUFFER_SIZE))
+
+    def _clear_errors(self) -> None:
+        """Drop GL errors MuJoCo's own calls left behind, which it does not check.
+
+        PyOpenGL checks ``glGetError`` after every call it makes, so an error MuJoCo raised and
+        ignored -- a light past the eight it draws is a ``GL_INVALID_ENUM`` in every frame -- would
+        be reported as this atlas's.
+        """
+        GL = self.GL
+        for _ in range(64):
+            if GL.glGetError() == GL.GL_NO_ERROR:
+                return
+
+    def pack(self, sizes: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Tile origins for *sizes*, in order; grows the buffer to hold them."""
+        row_limit = max(
+            max(w for w, _ in sizes),
+            int(math.ceil(math.sqrt(len(sizes))) * max(w for w, _ in sizes)),
+        )
+        row_limit = min(row_limit, self.max_size)
+        x = y = shelf = 0
+        origins = []
+        width = 0
+        for w, h in sizes:
+            if x + w > row_limit:
+                x, y, shelf = 0, y + shelf, 0
+            origins.append((x, y))
+            x += w
+            shelf = max(shelf, h)
+            width = max(width, x)
+        height = y + shelf
+        if width > self.max_size or height > self.max_size:
+            raise RenderError(
+                f"the colour images of one batch ({len(sizes)} views) need a {width}x{height} "
+                f"buffer, more than this GL allows ({self.max_size}); render fewer views per batch"
+            )
+        self._ensure(width, height)
+        return origins
+
+    def _ensure(self, width: int, height: int) -> None:
+        GL = self.GL
+        if width <= self.width and height <= self.height:
+            return
+        self._clear_errors()
+        width, height = max(width, self.width), max(height, self.height)
+        self.free()
+        self.fbo = GL.glGenFramebuffers(1)
+        self.rbo = GL.glGenRenderbuffers(1)
+        GL.glBindRenderbuffer(GL.GL_RENDERBUFFER, self.rbo)
+        GL.glRenderbufferStorage(GL.GL_RENDERBUFFER, GL.GL_RGBA8, width, height)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.fbo)
+        GL.glFramebufferRenderbuffer(
+            GL.GL_FRAMEBUFFER, GL.GL_COLOR_ATTACHMENT0, GL.GL_RENDERBUFFER, self.rbo
+        )
+        status = GL.glCheckFramebufferStatus(GL.GL_FRAMEBUFFER)
+        GL.glBindRenderbuffer(GL.GL_RENDERBUFFER, 0)
+        if status != GL.GL_FRAMEBUFFER_COMPLETE:
+            raise RenderError(f"the colour atlas framebuffer is incomplete (GL status {status})")
+        self.width, self.height = width, height
+
+    def copy_in(self, con: mujoco.MjrContext, w: int, h: int, origin: tuple[int, int]) -> None:
+        """Copy the ``w x h`` image MuJoCo just drew at its origin into the tile at *origin*."""
+        GL = self.GL
+        self._clear_errors()
+        src = con.offFBO
+        if con.offSamples:
+            # Resolve exactly as mjr_readPixels does, then copy the resolved pixels.
+            GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, con.offFBO)
+            GL.glBindFramebuffer(GL.GL_DRAW_FRAMEBUFFER, con.offFBO_r)
+            GL.glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL.GL_COLOR_BUFFER_BIT, GL.GL_NEAREST)
+            src = con.offFBO_r
+        x, y = origin
+        GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, src)
+        GL.glBindFramebuffer(GL.GL_DRAW_FRAMEBUFFER, self.fbo)
+        GL.glBlitFramebuffer(0, 0, w, h, x, y, x + w, y + h, GL.GL_COLOR_BUFFER_BIT, GL.GL_NEAREST)
+        mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, con)
+
+    def read(self, width: int, height: int, con: mujoco.MjrContext) -> np.ndarray:
+        """The atlas' bottom-left ``width x height``, as GL stores it (bottom row first)."""
+        GL = self.GL
+        self._clear_errors()
+        out = np.empty((height, width, 3), dtype=np.uint8)
+        GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, self.fbo)
+        GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT0)
+        GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)
+        GL.glReadPixels(0, 0, width, height, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, out)
+        mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, con)
+        return out
+
+    def free(self) -> None:
+        GL = self.GL
+        if self.fbo is not None:
+            GL.glDeleteFramebuffers(1, [self.fbo])
+            GL.glDeleteRenderbuffers(1, [self.rbo])
+        self.fbo = self.rbo = None
+        self.width = self.height = 0
+
+
 class MujocoRenderer(Renderer):
     """MuJoCo's own OpenGL renderer: one context and one upload for every camera of a world.
 
-    Each camera of a batch builds the scene from the snapshot through its own camera, sets its clip
-    planes, is drawn at the origin of the offscreen buffer and read back; depth and segmentation
-    draw with flat ID colours, as ``mujoco.Renderer`` draws them. The pictures are
+    Per batch it builds the scene once from the snapshot; each camera then only sets its view, its
+    lights (the headlight follows the camera) and its clip planes, is drawn at the origin of the
+    offscreen buffer and copied into its tile of one colour atlas, which is read back once. Depth
+    and segmentation keep a pass of their own per camera (they draw with flat ID colours). A camera
+    with its own geom groups or decorations gets a scene built for it alone. The pictures are
     ``mujoco.Renderer``'s: see the module docstring for the planes, and :class:`FrameRenderer` for
     the see-through geoms that cast no shadow.
     """
@@ -780,11 +901,25 @@ class MujocoRenderer(Renderer):
         camera_models=frozenset(CAMERA_MODELS),
         composes_moving_bodies=True,
         draws_static=True,
-        batched=False,
+        batched=True,
         deterministic=True,
         in_process=True,
         decorations=True,
     )
+    SETTINGS = {
+        "atlas": Setting(
+            True,
+            "copy every camera's colour image into one buffer and read it back once per batch; "
+            "false reads each camera back by itself (the same pixels, more read-backs)",
+        ),
+    }
+
+    @classmethod
+    def validate_config(cls, settings) -> list[str]:
+        errors = super().validate_config(settings)
+        if isinstance(settings, Mapping) and not isinstance(settings.get("atlas", True), bool):
+            errors.append(f"'atlas' must be true or false, got {settings['atlas']!r}")
+        return errors
 
     def __init__(self, settings=None) -> None:
         super().__init__(settings)
@@ -792,6 +927,7 @@ class MujocoRenderer(Renderer):
         self._gl = None
         self._con: mujoco.MjrContext | None = None
         self._scene: mujoco.MjvScene | None = None
+        self._atlas: _Atlas | None = None
         self._clear_geoms = False
         self._vopts: dict = {}
         #: Scene builds and draws since open (what a test counts).
@@ -838,6 +974,10 @@ class MujocoRenderer(Renderer):
         gl, self._gl = self._gl, None
         if gl is not None:
             gl.make_current()
+        if self._atlas is not None and gl is not None:
+            with contextlib.suppress(Exception):
+                self._atlas.free()
+        self._atlas = None
         if con is not None:
             con.free()
         if gl is not None:
@@ -857,14 +997,41 @@ class MujocoRenderer(Renderer):
         model, data = self.model, snapshot.data
         self.stats["batches"] += 1
         frames = [Frame(r.id, snapshot.sim_time, snapshot.step) for r in requests]
+        use_atlas = bool(self.settings.get("atlas", True))
+        colour = [i for i, r in enumerate(requests) if "rgb" in r.images]
         # One GL critical section for the whole batch: the collector must not run a dead renderer's
         # teardown (which makes its own context current) between this context's calls; see hold_gc.
         with hold_gc():
             if self._gl is not None:
                 self._gl.make_current()
-            for request, frame in zip(requests, frames, strict=True):
-                self._draw(model, data, request, frame)
+            origins: dict[int, tuple[int, int]] = {}
+            if use_atlas and colour:
+                if self._atlas is None:
+                    self._atlas = _Atlas()
+                sizes = [(requests[i].camera.width, requests[i].camera.height) for i in colour]
+                origins = dict(zip(colour, self._atlas.pack(sizes), strict=True))
+                # Growing the atlas binds its framebuffer; MuJoCo draws into its own.
+                mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, self._con)
+            for group in self._groups(requests):
+                self._build(model, data, requests[group[0]])
+                for i in group:
+                    self._draw(model, data, requests[i], frames[i], origins.get(i))
+            if origins:
+                self._read_atlas(requests, frames, origins)
         return frames
+
+    @staticmethod
+    def _scene_key(request: CameraRequest):
+        spec = request.camera
+        decorate = None if request.decorate is None else id(request)
+        return (spec.geomgroup, decorate)
+
+    def _groups(self, requests: Sequence[CameraRequest]) -> list[list[int]]:
+        """Requests that share one scene build: the same geom groups and no decorations of their own."""
+        groups: dict = {}
+        for i, r in enumerate(requests):
+            groups.setdefault(self._scene_key(r), []).append(i)
+        return list(groups.values())
 
     def _vopt_for(self, geomgroup) -> mujoco.MjvOption:
         if geomgroup not in self._vopts:
@@ -881,21 +1048,28 @@ class MujocoRenderer(Renderer):
             )
         return _fixed_camera(int(cam))
 
-    def _build(self, model, data, request: CameraRequest) -> tuple[float, float, bool]:
-        """Populate the scene from *data* through *request*'s camera, with its planes."""
+    def _build(self, model, data, first: CameraRequest) -> None:
+        """Populate the scene from *data*: every geom, once, for all the requests that share it."""
         scene = self._scene
         mujoco.mjv_updateScene(
             model,
             data,
-            self._vopt_for(request.camera.geomgroup),
+            self._vopt_for(first.camera.geomgroup),
             None,
-            self._mjv_camera(request),
+            self._mjv_camera(first),
             mujoco.mjtCatBit.mjCAT_ALL.value,
             scene,
         )
         self.stats["scene_builds"] += 1
         if self._clear_geoms:
             clear_geoms_cast_no_shadow(scene)
+
+    def _set_view(self, model, data, request: CameraRequest) -> tuple[float, float, bool]:
+        """Point the built scene at *request*'s camera: its view, its lights and its planes."""
+        scene = self._scene
+        mujoco.mjv_updateCamera(model, data, self._mjv_camera(request), scene)
+        # The headlight follows the camera, and mjv_makeLights reads the scene's camera.
+        mujoco.mjv_makeLights(model, data, scene)
         spec = request.camera
         set_clip_planes(scene, spec.near, spec.far)
         for cam in scene.camera:
@@ -907,23 +1081,27 @@ class MujocoRenderer(Renderer):
         cam = scene.camera[0]
         return float(cam.frustum_near), float(cam.frustum_far), bool(cam.orthographic)
 
-    def _draw(self, model, data, request, frame: Frame) -> None:
+    def _draw(self, model, data, request, frame: Frame, origin) -> None:
         spec = request.camera
         w, h = spec.width, spec.height
         rect = mujoco.MjrRect(0, 0, w, h)
         scene, con = self._scene, self._con
-        near, far, ortho = self._build(model, data, request)
+        near, far, ortho = self._set_view(model, data, request)
         if request.decorate is not None:
-            # Its markers go in once the scene and its planes are this camera's.
+            # A decorated request has its scene to itself (see _groups); its markers go in once
+            # the scene and its planes are this camera's.
             request.decorate(scene)
         flip = self._gl is not None  # GL reads the bottom row first (EGL, OSMesa and GLFW alike)
         if "rgb" in request.images:
             mujoco.mjr_render(rect, scene, con)
             self.stats["draws"] += 1
-            rgb = np.empty((h, w, 3), dtype=np.uint8)
-            mujoco.mjr_readPixels(rgb, None, rect, con)
-            self.stats["readbacks"] += 1
-            frame.rgb = np.flipud(rgb) if flip else rgb
+            if origin is not None:
+                self._atlas.copy_in(con, w, h, origin)
+            else:
+                rgb = np.empty((h, w, 3), dtype=np.uint8)
+                mujoco.mjr_readPixels(rgb, None, rect, con)
+                self.stats["readbacks"] += 1
+                frame.rgb = np.flipud(rgb) if flip else rgb
         if "depth" in request.images:
             frame.depth = self._depth(rect, near, far, ortho, flip)
         if "segmentation" in request.images:
@@ -971,6 +1149,22 @@ class MujocoRenderer(Renderer):
         segid2output[segids, 1] = np.array([g.objtype for g in visible], np.int32)
         seg = segid2output[segimage]
         return np.ascontiguousarray(np.flipud(seg)) if flip else seg
+
+    def _read_atlas(self, requests, frames, origins) -> None:
+        width = max(x + requests[i].camera.width for i, (x, _) in origins.items())
+        height = max(y + requests[i].camera.height for i, (_, y) in origins.items())
+        atlas = self._atlas.read(width, height, self._con)
+        self.stats["readbacks"] += 1
+        # One flip of the whole atlas (a view), and each frame a view of its tile: the atlas is
+        # fresh per batch, so a frame shares it with no other batch, and a consumer that needs its
+        # own contiguous copy makes the one copy it needs.
+        flip = self._gl is not None
+        if flip:
+            atlas = np.flipud(atlas)
+        for i, (x, y) in origins.items():
+            w, h = requests[i].camera.width, requests[i].camera.height
+            top = height - (y + h) if flip else y
+            frames[i].rgb = atlas[top : top + h, x : x + w]
 
 
 class RenderView:

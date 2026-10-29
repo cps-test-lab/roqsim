@@ -193,7 +193,7 @@ _SIM_SAMPLES = {
     "noslip_iterations": 3,
     "pacing": "asap",
     "renderer": "mujoco",
-    "renderers": {"mujoco": {}},
+    "renderers": {"mujoco": {"atlas": True}},
     "seed": 7,
     "solver": "newton",
     "sync": {"enabled": False},

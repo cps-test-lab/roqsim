@@ -765,7 +765,7 @@ class Passes:
                 f"{self.frame.id}: no {kind} image was drawn for this tick; the camera's _passes "
                 f"must ask for it"
             )
-        # A C-contiguous copy of its own, which the camera's processing may modify.
+        # A C-contiguous copy of its own: a frame's colour may be a view of the batch's atlas.
         return np.array(image, order="C")
 
     def render(self, data=None, decorate=None) -> np.ndarray:
