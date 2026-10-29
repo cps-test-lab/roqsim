@@ -1128,8 +1128,8 @@ endpoint (``Endpoint.topic``) and a hand-built one reads via ``Plugin.topic_over
 (``roqsim/plugin.py``) when it fills the backend ``topic``. An absolute topic (leading ``/``) is
 published verbatim by the ROS backend (``_resolve_topic`` in ``ros2_bridge.py``), bypassing
 ``ep.namespace`` (and the node namespace); a relative topic renames the endpoint inside its
-namespace — how a robot manifest gives a second scanner the vendor's ``scan2`` under the robot's
-namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
+namespace — how a robot manifest gives each scanner the vendor's topic (``lidar_1/scan_filtered``,
+``lidar_2/scan_filtered``) under the robot's namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
 
