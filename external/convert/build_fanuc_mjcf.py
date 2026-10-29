@@ -105,8 +105,11 @@ VARIANTS = {
         "reach": 1.831,
         # Reflected rotor inertia (kg*m^2): not published. Order-of-magnitude estimate, rotor
         # inertia of the axis' servo motor class times the square of a typical gear ratio for the
-        # axis (J1-J3 ~1e-3 kg*m^2 x 140^2, J4-J6 ~1e-4 x 100^2). An assumption; the port log
-        # records its sensitivity.
+        # axis (J1-J3 ~1e-3 kg*m^2 x 140^2, J4-J6 ~1e-4 x 100^2). An assumption. servo_gains
+        # re-derives kp and kv from the inertia it includes, so bandwidth and damping stay as set
+        # and what the armature moves is the stiffness against an outside force: halving or
+        # doubling it changes kp by -7/+15 % on J1-J2, -21/+43 % on J3, and about in proportion
+        # on J4-J6, whose inertia it dominates.
         "armature": [20.0, 20.0, 10.0, 1.0, 1.0, 0.5],
         "lettering": {
             "j4": {
@@ -137,7 +140,8 @@ VARIANTS = {
         "payload": 25.0,
         "reach": 1.889,
         # As above, for the CRX's smaller motors and strain-wave reducers (J1-J3 ~2.5e-4 x 140^2,
-        # J4-J6 ~5e-5 x 100^2).
+        # J4-J6 ~5e-5 x 100^2). Halving or doubling it changes kp by -4/+7 % on J1-J2, -13/+26 %
+        # on J3, and up to proportionally on J4-J6.
         "armature": [5.0, 5.0, 2.5, 0.5, 0.5, 0.3],
         "lettering": {
             "j4": {"into": [1.0, 1.0, 1.0], "pieces": [[1.0, 0.0, 0.0], [0.102, 0.102, 0.102]]}

@@ -49,7 +49,9 @@ components:
   - fanuc_driver_interface:
       collaborative: true
       # Assumed (FANUC publishes no contact-stop threshold): the order of magnitude of ISO/TS 15066's
-      # transient contact forces. The port log records its sensitivity.
+      # permissible contact forces, whose quasi-static limits run from 65 N (face) to 220 N (thigh).
+      # It is a threshold and nothing else reads it: a contact whose estimated force falls inside
+      # that band stops the arm or not depending on the value; one well outside it does not change.
       contact_stop_force: 150.0
       # FANUC's example_gpio_config.yaml (fanuc_hardware_interface/config, Apache-2.0), the gpio map
       # fanuc_moveit.launch.py loads by default for a CRX.
