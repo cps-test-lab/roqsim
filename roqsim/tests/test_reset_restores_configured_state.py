@@ -45,6 +45,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from installed_requirements import not_installed_with_its_requirements
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
@@ -52,6 +53,7 @@ from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegist
 from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.rendering import RenderService
 from roqsim.types import JointState
 
 #: Physics steps a trial runs for, split around the setter calls.
@@ -203,7 +205,7 @@ def _trajectory_world(tmp_path: Path) -> dict:
 
 
 def _plugins(engine: Engine, name: str) -> list[Plugin]:
-    cls = _entry_point_classes()[name]
+    cls = _entry_point(name).load()
     return [p for p in engine.plugins if type(p) is cls]
 
 
@@ -593,7 +595,6 @@ _RAY_SENSORS = ("lidar", "range_sensor", "livox_mid360", "seyond_robin_w1g")
 _CAMERAS = ("realsense_d415", "segmentation_camera")
 _DEPTH_CAMERAS = ("oakd_camera", "realsense_d435", "realsense_d455", "zivid")
 _CAST_BUFFERS = "the cast's output buffers, rewritten by every cast before anything reads them"
-_RENDERER = "the renderer, made at the first capture and kept for the run"
 _DEPTH_MASK = (
     "the last depth frame's invalid pixels, read only with that frame, which the reset clears"
 )
@@ -626,12 +627,9 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "_caution._radius": _MEASURED_ONCE,
     },
     **{name: {"_hits": _CAST_BUFFERS} for name in _RAY_SENSORS},
-    **{name: {"_frames": _RENDERER} for name in _CAMERAS},
-    **{name: {"_frames": _RENDERER, "_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
-    # A device with its own depth optics: a second renderer, and registered depth's mask.
+    **{name: {"_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
+    # A device with its own depth optics: registered depth's mask as well.
     "spot_body_camera": {
-        "_frames": _RENDERER,
-        "_depth_frames": _RENDERER,
         "_invalid": _DEPTH_MASK,
         "_registered_invalid": _DEPTH_MASK,
     },
@@ -658,6 +656,8 @@ SKIPPED: dict[str, str] = {
 _SHARED = (
     SimContext,
     Engine,
+    # The world's render service, which every camera's view belongs to and the engine resets.
+    RenderService,
     Plugin,
     Blackboard,
     EntityRegistry,
@@ -792,8 +792,9 @@ def _show(value) -> str:
 
 
 @functools.cache
-def _entry_point_classes() -> dict[str, type]:
-    return {ep.name: ep.load() for ep in entry_points(group="roqsim.plugins")}
+def _entry_point(name: str):
+    """The ``roqsim.plugins`` entry *name*, not loaded: one plugin's import is that plugin's test's."""
+    return next(ep for ep in entry_points(group="roqsim.plugins") if ep.name == name)
 
 
 @functools.cache
@@ -823,6 +824,8 @@ def _params():
 @pytest.mark.parametrize("name", list(_params()))
 def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
     case = CASES[name]
+    if reason := not_installed_with_its_requirements(_entry_point(name)):
+        pytest.skip(reason)
     if reason := case.unavailable():
         pytest.skip(reason)
     engine = Engine(load_config_from_dict(case.world(tmp_path), base_dir=tmp_path))

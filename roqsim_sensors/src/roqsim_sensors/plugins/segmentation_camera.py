@@ -414,8 +414,14 @@ class SegmentationCameraPlugin(CameraPlugin):
 
     # -- capture ------------------------------------------------------------------------------
 
+    def _passes(self, ctx):
+        """The label pass is the colour view's, so labels and colour share one snapshot and planes."""
+        passes = super()._passes(ctx)
+        passes["color"].add("segmentation")
+        return passes
+
     def _capture_extra(self, ctx: SimContext, frames) -> None:
-        # Through the colour renderer, so the labels are clipped at the planes the colour frame is.
+        # Through the colour view, so the labels are clipped at the planes the colour frame is.
         seg = frames.render_segmentation(ctx.data, self._seg_opt)
 
         # (H, W, 2) int32: [..., 0] is the object id and [..., 1] its mjtObj type; background is

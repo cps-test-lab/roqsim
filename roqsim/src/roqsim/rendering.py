@@ -1,13 +1,13 @@
-"""Offscreen frame rendering — one owner of the ``mujoco.Renderer`` lifecycle.
+"""Offscreen rendering: the render service every image roqsim draws comes through.
 
-Rendering an RGB frame from a model + data is the same three calls everywhere (create a
-``mujoco.Renderer``, ``update_scene(data, camera)``, ``render()``), so this collects them behind
-:class:`FrameRenderer`: the thumbnail tool, the RGB(-D) camera sensor, and the interactive
-scene-review tool all share it instead of re-deriving the pattern.
+:class:`RenderService` owns the renderers and their contexts. A world's cameras each register a
+view with it and are drawn as one batch per tick; a tool with no tick (``roqsim render``, the
+thumbnails, the scene review, coverage) draws through :class:`FrameRenderer`, one view of a service
+of its own. Behind the service stands a renderer (:mod:`roqsim.render_api`): MuJoCo's own,
+:class:`MujocoRenderer`, unless a world names another. A renderer reads a snapshot of the state, never
+the live ``MjData``, and never writes the shared ``MjModel``.
 
-Rendering is GL-context- and thread-affine (see ``docs/future_work.rst``): create and drive a
-``FrameRenderer`` on one thread only, and honour the single-writer rule — the ``data`` you render
-from must not be mutated by another thread meanwhile.
+MuJoCo's renderer is GL-context- and thread-affine: it is opened, driven and closed on one thread.
 
 **Clip planes.** MuJoCo derives every camera's near and far plane from the model,
 ``visual/map znear``/``zfar`` times ``stat.extent``, so in a large world the near plane stands tens
@@ -24,14 +24,29 @@ import gc
 import logging
 import math
 import os
-from collections.abc import Sequence
+import sys
+from collections.abc import Collection, Mapping, Sequence
 
 import mujoco
 import numpy as np
 
 from . import raycast
 from .exit_status import NO_GL
+from .plugin import PluginError
 from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, subtree_body_ids
+from .render_api import (
+    CAMERA_MODELS,
+    DEFAULT_RENDERER,
+    IMAGES,
+    CameraRequest,
+    CameraSpec,
+    Frame,
+    Renderer,
+    RendererCapabilities,
+    RenderError,
+    SceneDescription,
+    StateSnapshot,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -680,21 +695,664 @@ def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene) -> None:
             geom.category = decor
 
 
+#: The model arrays that change at run time and that drawing reads: :mod:`roqsim.presence` hides an
+#: absent entity by moving its geoms to :data:`~roqsim.presence.ABSENT_GEOM_GROUP` and zeroing their
+#: alpha. A snapshot carries them, so a renderer that does not read the shared model -- one in
+#: another process -- draws the presence of the tick it renders.
+RUNTIME_MODEL_FIELDS = ("geom_rgba", "geom_group")
+
+#: The geoms a scene holds unless a camera asks for more (``mujoco.Renderer``'s default).
+DEFAULT_MAX_GEOM = 10000
+
+
+def _fixed_camera(camera_id: int) -> mujoco.MjvCamera:
+    """The ``MjvCamera`` ``mujoco.Renderer.update_scene`` makes of a camera id (``-1``: free)."""
+    cam = mujoco.MjvCamera()
+    cam.fixedcamid = camera_id
+    cam.type = mujoco.mjtCamera.mjCAMERA_FIXED if camera_id >= 0 else mujoco.mjtCamera.mjCAMERA_FREE
+    return cam
+
+
+def resolve_camera(model: mujoco.MjModel, camera) -> mujoco.MjvCamera | int:
+    """A camera argument as a renderer takes it: an ``MjvCamera`` as given, a name or id as an id."""
+    if isinstance(camera, mujoco.MjvCamera):
+        return camera
+    camera_id = camera
+    if isinstance(camera_id, str):
+        camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, camera_id)
+        if camera_id == -1:
+            raise ValueError(f'The camera "{camera}" does not exist.')
+    camera_id = int(camera_id)
+    if camera_id < -1 or camera_id >= model.ncam:
+        raise ValueError(f"The camera id {camera_id} is out of range [-1, {model.ncam}).")
+    return camera_id
+
+
+def camera_model_of(model: mujoco.MjModel, camera) -> str:
+    """Which :data:`roqsim.render_api.CAMERA_MODELS` entry *camera* projects as."""
+    if isinstance(camera, mujoco.MjvCamera):
+        if camera.type == mujoco.mjtCamera.mjCAMERA_FIXED and camera.fixedcamid >= 0:
+            camera = int(camera.fixedcamid)
+        else:
+            return "free"
+    if camera < 0:
+        return "free"
+    ortho = int(model.cam_projection[camera]) == int(mujoco.mjtProjection.mjPROJ_ORTHOGRAPHIC)
+    return "orthographic" if ortho else "pinhole"
+
+
+def moving_bodies(model: mujoco.MjModel) -> np.ndarray:
+    """Per body, whether it moves: it is not welded to the world, or it is a mocap body."""
+    return (np.asarray(model.body_weldid) != 0) | (np.asarray(model.body_mocapid) >= 0)
+
+
+def _vopt(geomgroup) -> mujoco.MjvOption:
+    """The scene options every roqsim render draws with; see :class:`FrameRenderer`."""
+    vopt = mujoco.MjvOption()
+    # An absent entity is not in the picture either. Its geoms already have zero alpha, but
+    # excluding the group is what makes absence one decision rather than several that could
+    # drift -- and it is the same group every raycast mask excludes.
+    vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
+    if geomgroup is not None:
+        # Draw only the named groups. A model separates what it SHOWS from what it COLLIDES --
+        # group 2 for visual meshes, group 3 for the primitives physics uses -- and a picture of
+        # the visual half cannot answer a question about the other one. Absence stays excluded
+        # regardless: it is a property of the entity, not a drawing preference, and letting a
+        # caller re-enable it here would make absence two decisions instead of one.
+        for group in range(len(vopt.geomgroup)):
+            vopt.geomgroup[group] = 1 if group in geomgroup else 0
+        vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
+    return vopt
+
+
+class MujocoRenderer(Renderer):
+    """MuJoCo's own OpenGL renderer: one context and one upload for every camera of a world.
+
+    Each camera of a batch builds the scene from the snapshot through its own camera, sets its clip
+    planes, is drawn at the origin of the offscreen buffer and read back; depth and segmentation
+    draw with flat ID colours, as ``mujoco.Renderer`` draws them. The pictures are
+    ``mujoco.Renderer``'s: see the module docstring for the planes, and :class:`FrameRenderer` for
+    the see-through geoms that cast no shadow.
+    """
+
+    capabilities = RendererCapabilities(
+        images=frozenset(IMAGES),
+        camera_models=frozenset(CAMERA_MODELS),
+        composes_moving_bodies=True,
+        draws_static=True,
+        batched=False,
+        deterministic=True,
+        in_process=True,
+        decorations=True,
+    )
+
+    def __init__(self, settings=None) -> None:
+        super().__init__(settings)
+        self.model: mujoco.MjModel | None = None
+        self._gl = None
+        self._con: mujoco.MjrContext | None = None
+        self._scene: mujoco.MjvScene | None = None
+        self._clear_geoms = False
+        self._vopts: dict = {}
+        #: Scene builds and draws since open (what a test counts).
+        self.stats = {"scene_builds": 0, "draws": 0, "readbacks": 0, "batches": 0}
+
+    # -- lifecycle -------------------------------------------------------------------------------
+
+    def open(self, scene: SceneDescription) -> None:
+        # Before anything touches GL: a wrong backend aborts the process inside MjrContext with a
+        # message that explains nothing, and every renderer in the tree goes through here, so one
+        # check covers cameras, the thumbnailer and `roqsim render` alike.
+        check_gl_backend()
+        from mujoco.rendering.classic import gl_context  # noqa: PLC0415 -- bound by import mujoco
+
+        model = scene.model
+        self.model = model
+        width = max([int(model.vis.global_.offwidth)] + [c.width for c in scene.cameras])
+        height = max([int(model.vis.global_.offheight)] + [c.height for c in scene.cameras])
+        if gl_context.GLContext is not None:
+            self._gl = gl_context.GLContext(width, height)
+            self._gl.make_current()
+        self._con = mujoco.MjrContext(model, mujoco.mjtFontScale.mjFONTSCALE_150.value)
+        # The framebuffer must hold the largest camera. It is sized here, in this renderer's own
+        # context, so the shared model's declared size is never written.
+        if width > self._con.offWidth or height > self._con.offHeight:
+            mujoco.mjr_resizeOffscreen(width, height, self._con)
+        mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, self._con)
+        self._con.readDepthMap = mujoco.mjtDepthMap.mjDEPTH_ZEROFAR
+        max_geom = max([DEFAULT_MAX_GEOM] + [c.max_geom or 0 for c in scene.cameras])
+        self._scene = mujoco.MjvScene(model=model, maxgeom=max_geom)
+        self._clear_geoms = has_clear_geoms(model)
+        _log_gl_once()
+
+    def close(self) -> None:
+        """Free the context with ITS OWN GL context current, so its deletes hit its own objects.
+
+        ``MjrContext.free`` is a run of ``glDelete*`` calls that land in whatever context is current
+        at that moment. With more than one renderer alive that is the other renderer's context, and
+        GL object names are per context and start from one -- so the framebuffer and textures of a
+        live renderer would be deleted in place of the dead one's, and it would render garbage from
+        then on. Idempotent.
+        """
+        con, self._con = self._con, None
+        gl, self._gl = self._gl, None
+        if gl is not None:
+            gl.make_current()
+        if con is not None:
+            con.free()
+        if gl is not None:
+            gl.free()
+        self._scene = None
+
+    @property
+    def scene(self) -> mujoco.MjvScene | None:
+        """The ``MjvScene`` the last view was drawn with."""
+        return self._scene
+
+    # -- drawing ---------------------------------------------------------------------------------
+
+    def render(self, snapshot: StateSnapshot, requests: Sequence[CameraRequest]) -> list[Frame]:
+        if self._con is None:
+            raise RenderError("MuJoCo's renderer was used before open() or after close()")
+        model, data = self.model, snapshot.data
+        self.stats["batches"] += 1
+        frames = [Frame(r.id, snapshot.sim_time, snapshot.step) for r in requests]
+        # One GL critical section for the whole batch: the collector must not run a dead renderer's
+        # teardown (which makes its own context current) between this context's calls; see hold_gc.
+        with hold_gc():
+            if self._gl is not None:
+                self._gl.make_current()
+            for request, frame in zip(requests, frames, strict=True):
+                self._draw(model, data, request, frame)
+        return frames
+
+    def _vopt_for(self, geomgroup) -> mujoco.MjvOption:
+        if geomgroup not in self._vopts:
+            self._vopts[geomgroup] = _vopt(geomgroup)
+        return self._vopts[geomgroup]
+
+    def _mjv_camera(self, request: CameraRequest) -> mujoco.MjvCamera:
+        cam = request.camera.mujoco_camera
+        if isinstance(cam, mujoco.MjvCamera):
+            return cam
+        if cam is None:
+            raise RenderError(
+                f"camera {request.id!r} names no MuJoCo camera; MuJoCo's renderer draws through one"
+            )
+        return _fixed_camera(int(cam))
+
+    def _build(self, model, data, request: CameraRequest) -> tuple[float, float, bool]:
+        """Populate the scene from *data* through *request*'s camera, with its planes."""
+        scene = self._scene
+        mujoco.mjv_updateScene(
+            model,
+            data,
+            self._vopt_for(request.camera.geomgroup),
+            None,
+            self._mjv_camera(request),
+            mujoco.mjtCatBit.mjCAT_ALL.value,
+            scene,
+        )
+        self.stats["scene_builds"] += 1
+        if self._clear_geoms:
+            clear_geoms_cast_no_shadow(scene)
+        spec = request.camera
+        set_clip_planes(scene, spec.near, spec.far)
+        for cam in scene.camera:
+            if cam.frustum_far <= cam.frustum_near:
+                raise ValueError(
+                    f"far clip plane {cam.frustum_far:g} m is not beyond the near one "
+                    f"{cam.frustum_near:g} m"
+                )
+        cam = scene.camera[0]
+        return float(cam.frustum_near), float(cam.frustum_far), bool(cam.orthographic)
+
+    def _draw(self, model, data, request, frame: Frame) -> None:
+        spec = request.camera
+        w, h = spec.width, spec.height
+        rect = mujoco.MjrRect(0, 0, w, h)
+        scene, con = self._scene, self._con
+        near, far, ortho = self._build(model, data, request)
+        if request.decorate is not None:
+            # Its markers go in once the scene and its planes are this camera's.
+            request.decorate(scene)
+        flip = self._gl is not None  # GL reads the bottom row first (EGL, OSMesa and GLFW alike)
+        if "rgb" in request.images:
+            mujoco.mjr_render(rect, scene, con)
+            self.stats["draws"] += 1
+            rgb = np.empty((h, w, 3), dtype=np.uint8)
+            mujoco.mjr_readPixels(rgb, None, rect, con)
+            self.stats["readbacks"] += 1
+            frame.rgb = np.flipud(rgb) if flip else rgb
+        if "depth" in request.images:
+            frame.depth = self._depth(rect, near, far, ortho, flip)
+        if "segmentation" in request.images:
+            frame.segmentation = self._segmentation(rect, flip)
+
+    def _flat_pass(self, rect, rgb=None, depth=None) -> None:
+        """Draw with flat ID colours, as ``mujoco.Renderer`` does for depth and segmentation."""
+        scene = self._scene
+        flags = scene.flags.copy()
+        scene.flags[mujoco.mjtRndFlag.mjRND_SEGMENT] = True
+        scene.flags[mujoco.mjtRndFlag.mjRND_IDCOLOR] = True
+        try:
+            mujoco.mjr_render(rect, scene, self._con)
+            mujoco.mjr_readPixels(rgb, depth, rect, self._con)
+        finally:
+            np.copyto(scene.flags, flags)
+        self.stats["draws"] += 1
+        self.stats["readbacks"] += 1
+
+    def _depth(self, rect, near: float, far: float, ortho: bool, flip: bool) -> np.ndarray:
+        """Depth in metres, linearised with the planes the scene was drawn with; ``inf`` for none.
+
+        ``mujoco.Renderer``'s own depth mode linearises with the model's planes, so this reads the
+        depth buffer and linearises it with this camera's. A pixel nothing was drawn at (cleared to
+        0 under reversed Z) reads ``inf``, not the far plane.
+        """
+        buffer = np.empty((rect.height, rect.width), dtype=np.float32)
+        self._flat_pass(rect, depth=buffer)
+        depth = linear_depth(buffer, near, far, ortho)
+        depth[buffer == 0.0] = np.inf
+        return np.ascontiguousarray(np.flipud(depth)) if flip else depth
+
+    def _segmentation(self, rect, flip: bool) -> np.ndarray:
+        """``(H, W, 2)`` int32 object id and type, ``(-1, -1)`` for background."""
+        out = np.empty((rect.height, rect.width, 3), dtype=np.uint8)
+        self._flat_pass(rect, rgb=out)
+        image3 = out.astype(np.uint32)
+        segimage = image3[:, :, 0] + image3[:, :, 1] * (2**8) + image3[:, :, 2] * (2**16)
+        scene = self._scene
+        ngeoms = scene.ngeom
+        segid2output = np.full((ngeoms + 1, 2), fill_value=-1, dtype=np.int32)
+        visible = [g for g in scene.geoms[:ngeoms] if g.segid != -1]
+        segids = np.array([g.segid + 1 for g in visible], np.int32)
+        segid2output[segids, 0] = np.array([g.objid for g in visible], np.int32)
+        segid2output[segids, 1] = np.array([g.objtype for g in visible], np.int32)
+        seg = segid2output[segimage]
+        return np.ascontiguousarray(np.flipud(seg)) if flip else seg
+
+
+class RenderView:
+    """One camera registered with a :class:`RenderService`: what it is, and its newest frame.
+
+    ``wants`` is the camera's own gate, asked every tick: it returns the images it wants drawn this
+    tick, or nothing, so a camera nobody consumes is in no batch and costs nothing.
+    """
+
+    def __init__(self, service: RenderService, spec: CameraSpec, renderer: str, wants) -> None:
+        self.service = service
+        self.spec = spec
+        self.renderer = renderer
+        self.wants = wants
+        self._frame: Frame | None = None
+        self._fresh = False
+
+    @property
+    def id(self) -> str:
+        return self.spec.id
+
+    @property
+    def frame(self) -> Frame | None:
+        """The newest frame delivered to this view, taken or not."""
+        return self._frame
+
+    def take(self) -> Frame | None:
+        """The newest frame delivered since the last ``take``, else ``None``."""
+        if not self._fresh:
+            return None
+        self._fresh = False
+        return self._frame
+
+    def _deliver(self, frame: Frame) -> None:
+        self._frame = frame
+        self._fresh = True
+
+    def clear(self) -> None:
+        """Forget the frames: a reset restarts sim time, and an old frame would carry a future stamp."""
+        self._frame = None
+        self._fresh = False
+
+
+class RenderService:
+    """The one place images come from: every camera's renderer, its GL context and its batches.
+
+    A world's cameras register a :class:`RenderView` each (:meth:`view`). Each tick the engine calls
+    :meth:`tick` between the physics step and the plugins' ``post_step``: every view is asked whether
+    it is due, one :class:`~roqsim.render_api.StateSnapshot` is taken, and the due views are handed
+    to their renderers as one batch per renderer; a view's frame is then read in ``post_step``
+    (:meth:`RenderView.take`). :meth:`render_now` draws given views at once, for a caller with no
+    tick (``roqsim render``, a thumbnail, :class:`FrameRenderer`).
+
+    A renderer is resolved and checked against its views when the world loads (:meth:`check`), and
+    constructed and opened only when its first batch comes, so a world whose cameras nobody reads
+    opens no context.
+    """
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        *,
+        renderer: str = DEFAULT_RENDERER,
+        renderers: Mapping[str, Mapping] | None = None,
+        base_dir=None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.model = model
+        self.default_renderer = renderer
+        self.settings = {str(k): dict(v or {}) for k, v in (renderers or {}).items()}
+        self.base_dir = base_dir
+        self.logger = logger or _logger
+        self.views: list[RenderView] = []
+        self._classes: dict[str, type] = {}
+        self._renderers: dict[str, Renderer] = {}
+        self._snapshot_data: mujoco.MjData | None = None
+        self._closed = False
+        #: Batches and frames since construction.
+        self.stats = {"batches": 0, "frames": 0, "ticks": 0}
+
+    @classmethod
+    def for_config(cls, model: mujoco.MjModel, config, logger=None) -> RenderService:
+        """The service a world's ``sim`` block describes (a :class:`~roqsim.config.SimConfig`)."""
+        return cls(
+            model,
+            renderer=config.renderer,
+            renderers=config.renderers,
+            base_dir=getattr(config, "base_dir", None),
+            logger=logger,
+        )
+
+    @classmethod
+    def of(cls, ctx) -> RenderService:
+        """*ctx*'s render service, made from its world's ``sim`` block if the engine set none.
+
+        The engine sets one at setup; a harness that configures plugins on a bare
+        :class:`~roqsim.context.SimContext` gets one here, on first use.
+        """
+        if ctx.render is None:
+            sim = (ctx.config or {}).get("sim") or {}
+            ctx.render = cls(
+                ctx.model,
+                renderer=sim.get("renderer") or DEFAULT_RENDERER,
+                renderers=sim.get("renderers") or {},
+                logger=ctx.logger,
+            )
+        return ctx.render
+
+    # -- registration ----------------------------------------------------------------------------
+
+    def view(
+        self,
+        id: str,
+        *,
+        camera,
+        width: int,
+        height: int,
+        near: float | None = None,
+        far: float | None = None,
+        images: Collection[str] = ("rgb",),
+        renderer: str | None = None,
+        wants=None,
+        geomgroup: Sequence[int] | None = None,
+        decorated: bool = False,
+        max_geom: int | None = None,
+    ) -> RenderView:
+        """Register a camera; nothing renders until it is due (``wants``) or asked (:meth:`render_now`)."""
+        camera = resolve_camera(self.model, camera)
+        unknown = sorted(set(images) - set(IMAGES))
+        if unknown:
+            raise ValueError(f"view {id!r}: unknown image(s) {unknown}; one of {', '.join(IMAGES)}")
+        spec = CameraSpec(
+            id=id,
+            width=int(width),
+            height=int(height),
+            model=camera_model_of(self.model, camera),
+            fovy=self._fovy(camera),
+            near=near,
+            far=far,
+            images=frozenset(images),
+            mujoco_camera=camera,
+            geomgroup=None if geomgroup is None else tuple(int(g) for g in geomgroup),
+            decorated=decorated,
+            max_geom=max_geom,
+        )
+        view = RenderView(self, spec, renderer or self.default_renderer, wants)
+        if view.renderer in self._renderers:
+            raise RenderError(
+                f"view {id!r} registered after renderer {view.renderer!r} opened; register every "
+                "camera in configure"
+            )
+        self.views.append(view)
+        return view
+
+    def _fovy(self, camera) -> float:
+        if isinstance(camera, mujoco.MjvCamera):
+            if camera.type == mujoco.mjtCamera.mjCAMERA_FIXED and camera.fixedcamid >= 0:
+                return float(self.model.cam_fovy[camera.fixedcamid])
+            return float(self.model.vis.global_.fovy)
+        if camera < 0:
+            return float(self.model.vis.global_.fovy)
+        return float(self.model.cam_fovy[camera])
+
+    # -- the renderers ---------------------------------------------------------------------------
+
+    def renderer_class(self, name: str) -> type:
+        if name not in self._classes:
+            from .registry import resolve_renderer  # noqa: PLC0415 -- avoids an import cycle
+
+            self._classes[name] = resolve_renderer(name, self.base_dir)
+        return self._classes[name]
+
+    def check(self) -> None:
+        """Refuse, naming the camera, a view its renderer cannot give; resolves every renderer.
+
+        Called when the world loads, and raises the world-load error (:class:`PluginError`). A
+        renderer that cannot give what a camera asks for is never stood in for by another.
+        """
+        problems = []
+        for view in self.views:
+            cls = self.renderer_class(view.renderer)
+            caps = cls.capabilities_for(self.settings.get(view.renderer, {}))
+            missing = caps.missing(sorted(view.spec.images), view.spec.model, view.spec.decorated)
+            if missing:
+                problems.append(
+                    f"camera {view.id!r} asks renderer {view.renderer!r} for {', '.join(missing)}; "
+                    f"it renders images {', '.join(sorted(caps.images))} through camera models "
+                    f"{', '.join(sorted(caps.camera_models))}"
+                    + ("" if caps.decorations else " and draws no decorations")
+                )
+        if problems:
+            raise PluginError("; ".join(problems))
+
+    def _renderer(self, name: str) -> Renderer:
+        """The opened renderer *name*, constructed and opened on first use."""
+        if self._closed:
+            raise RenderError("the render service is closed")
+        renderer = self._renderers.get(name)
+        if renderer is None:
+            renderer = self._construct(name)
+            renderer.open(self.describe(name))
+            self._renderers[name] = renderer
+        return renderer
+
+    def _construct(self, name: str) -> Renderer:
+        cls = self.renderer_class(name)
+        settings = self.settings.get(name, {})
+        errors = cls.validate_config(settings)
+        if errors:
+            raise RenderError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
+        return cls(settings)
+
+    def describe(self, name: str) -> SceneDescription:
+        """The scene renderer *name* is opened with: the model and every camera it will draw."""
+        return SceneDescription(
+            model=self.model,
+            moving=moving_bodies(self.model),
+            cameras=[v.spec for v in self.views if v.renderer == name],
+            settings=dict(self.settings.get(name, {})),
+            base_dir=self.base_dir,
+            body_names=[self.model.body(i).name for i in range(self.model.nbody)],
+        )
+
+    def renderer(self, name: str | None = None) -> Renderer | None:
+        """The opened renderer *name* (the default one), or ``None`` before its first batch."""
+        return self._renderers.get(name or self.default_renderer)
+
+    # -- per tick --------------------------------------------------------------------------------
+
+    def snapshot(self, data: mujoco.MjData) -> StateSnapshot:
+        """Copy what a render reads off *data*; the renderer never sees the live ``MjData``."""
+        if self._snapshot_data is None:
+            self._snapshot_data = mujoco.MjData(self.model)
+        buffer = self._snapshot_data
+        mujoco.mj_copyData(buffer, self.model, data)
+        timestep = float(self.model.opt.timestep)
+        return StateSnapshot(
+            sim_time=float(data.time),
+            step=int(round(float(data.time) / timestep)) if timestep > 0 else 0,
+            xpos=np.array(data.xpos),
+            xquat=np.array(data.xquat),
+            model_values={f: np.array(getattr(self.model, f)) for f in RUNTIME_MODEL_FIELDS},
+            data=buffer,
+        )
+
+    def request(self, view: RenderView, images, snapshot: StateSnapshot, decorate=None):
+        """The :class:`~roqsim.render_api.CameraRequest` for *view* at *snapshot*."""
+        pos, quat = self._camera_pose(view.spec.mujoco_camera, snapshot.data)
+        return CameraRequest(
+            camera=view.spec,
+            images=frozenset(images),
+            pos=pos,
+            quat=quat,
+            fovy=view.spec.fovy,
+            decorate=decorate,
+        )
+
+    def _camera_pose(self, camera, data) -> tuple[np.ndarray, np.ndarray]:
+        """A camera's world pose (``w, x, y, z``; MuJoCo's camera frame) in the state *data* holds."""
+        quat = np.zeros(4)
+        if isinstance(camera, mujoco.MjvCamera):
+            if camera.type == mujoco.mjtCamera.mjCAMERA_FIXED and camera.fixedcamid >= 0:
+                camera = int(camera.fixedcamid)
+            else:
+                # A free or tracking camera: its eye and frame as MuJoCo derives them.
+                forward, up = np.zeros(3), np.zeros(3)
+                pos = np.zeros(3)
+                lookat = np.array(camera.lookat, dtype=float)
+                az, el = math.radians(camera.azimuth), math.radians(camera.elevation)
+                forward[:] = [
+                    math.cos(el) * math.cos(az),
+                    math.cos(el) * math.sin(az),
+                    math.sin(el),
+                ]
+                pos[:] = lookat - float(camera.distance) * forward
+                up[:] = [-math.sin(el) * math.cos(az), -math.sin(el) * math.sin(az), math.cos(el)]
+                right = np.cross(forward, up)
+                mat = np.column_stack((right, up, -forward)).reshape(-1)
+                mujoco.mju_mat2Quat(quat, mat)
+                return pos, quat
+        if camera < 0:
+            return self._camera_pose(default_free_camera(self.model), data)
+        mujoco.mju_mat2Quat(quat, np.asarray(data.cam_xmat[camera], dtype=float))
+        return np.array(data.cam_xpos[camera]), quat
+
+    def tick(self, data: mujoco.MjData) -> int:
+        """Render every view due now; the engine calls it after the physics step. Returns how many."""
+        self.stats["ticks"] += 1
+        due = []
+        for view in self.views:
+            if view.wants is None:
+                continue
+            images = view.wants()
+            if images:
+                due.append((view, images))
+        if not due:
+            return 0
+        self._render(due, data)
+        return len(due)
+
+    def render_now(self, views: Sequence[tuple[RenderView, Collection[str]]], data, decorate=None):
+        """Draw *views* (each with the images asked for) from the state *data* holds, now."""
+        return self._render(list(views), data, decorate)
+
+    def _render(self, due, data, decorate=None) -> list[Frame]:
+        """Draw *due* from *data*, as one batch per renderer, and deliver the frames to the views."""
+        snapshot = self.snapshot(data)
+        by_renderer: dict[str, list] = {}
+        for view, images in due:
+            by_renderer.setdefault(view.renderer, []).append((view, images))
+        frames: list[Frame] = []
+        for name, batch in by_renderer.items():
+            requests = [self.request(v, imgs, snapshot, decorate) for v, imgs in batch]
+            frames += self._draw(name, self._renderer(name), snapshot, batch, requests)
+        return frames
+
+    def _draw(self, name: str, renderer: Renderer, snapshot, batch, requests) -> list[Frame]:
+        """Render one batch and deliver its frames to its views."""
+        try:
+            out = renderer.render(snapshot, requests)
+        except RenderError:
+            raise
+        except Exception as err:
+            raise RenderError(f"renderer {name!r} failed: {err}") from err
+        if len(out) != len(requests):
+            raise RenderError(
+                f"renderer {name!r} returned {len(out)} frames for {len(requests)} requests"
+            )
+        for (view, images), frame in zip(batch, out, strict=True):
+            missing = [i for i in images if frame.image(i) is None]
+            if missing:
+                raise RenderError(
+                    f"renderer {name!r} returned no {', '.join(missing)} for camera {view.id!r}"
+                )
+        for (view, _), frame in zip(batch, out, strict=True):
+            view._deliver(frame)
+        self.stats["batches"] += 1
+        self.stats["frames"] += len(out)
+        return list(out)
+
+    def clear(self) -> None:
+        """Forget every view's frames (an engine reset)."""
+        for view in self.views:
+            view.clear()
+
+    def close(self) -> None:
+        """Close every renderer it opened. Idempotent; the service renders nothing afterwards."""
+        renderers, self._renderers = self._renderers, {}
+        self._closed = True
+        for name, renderer in renderers.items():
+            try:
+                renderer.close()
+            except Exception:  # noqa: BLE001 -- one renderer's failure must not keep another open
+                # At interpreter exit the GL display may already be gone; nothing is left to free.
+                if not sys.is_finalizing():
+                    self.logger.exception("renderer %s failed to close", name)
+
+    def __del__(self) -> None:
+        # Attribute access can fail during interpreter shutdown; there is nothing to do then.
+        with contextlib.suppress(Exception):
+            self.close()
+
+
 class FrameRenderer:
-    """Owns a ``mujoco.Renderer`` and the camera it renders through.
+    """One view drawn through a render service of its own: what a tool with no world tick uses.
 
     ``camera`` may be a :class:`mujoco.MjvCamera` (a free/orbit camera; the default is
     :func:`default_free_camera`) or an ``int`` camera id / camera name for a fixed MJCF ``<camera>``.
-    :meth:`render` returns a fresh ``(height, width, 3)`` uint8 array each call.
+    :meth:`render` returns a fresh ``(height, width, 3)`` uint8 array each call; :meth:`render_depth`
+    and :meth:`render_segmentation` are the other passes. ``renderer`` names the renderer it draws
+    through (MuJoCo's by default) and ``settings`` its settings block, as a world's ``sim.renderer``
+    and ``sim.renderers.<name>`` do. ``max_geom`` raises the geoms its scene holds, for a caller that
+    decorates it with many markers.
 
     For interactive navigation of a free camera, :meth:`move_camera` forwards mouse deltas to
-    MuJoCo's own :func:`mujoco.mjv_moveCamera` — the exact routine the native viewer uses — so the
-    orbit/pan/zoom feel matches. :meth:`render_depth` and :meth:`render_segmentation` are the other
-    passes; the underlying renderer is exposed as :attr:`raw`, but a pass drawn through it directly
-    renders with the model's planes, not :attr:`near`/:attr:`far`.
+    MuJoCo's own :func:`mujoco.mjv_moveCamera` -- the exact routine the native viewer uses -- so the
+    orbit/pan/zoom feel matches, and :meth:`select` ray-picks MuJoCo's scene.
 
     ``near``/``far`` are this renderer's clip planes in metres (see the module docstring); ``None``
-    keeps the model's. Both are settable between renders.
+    keeps the model's. Both are settable between renders. A see-through geom throws no shadow:
+    every renderer here moves a geom whose resolved alpha is below 1 out of MuJoCo's shadow pass
+    (:func:`clear_geoms_cast_no_shadow`).
     """
 
     def __init__(
@@ -707,42 +1365,35 @@ class FrameRenderer:
         *,
         near: float | None = None,
         far: float | None = None,
+        renderer: str = DEFAULT_RENDERER,
+        settings: Mapping | None = None,
+        max_geom: int | None = None,
     ) -> None:
         # Before anything touches GL: a wrong backend aborts the process inside MjrContext with a
-        # message that explains nothing, and this is the funnel every renderer in the tree goes
-        # through, so one check here covers cameras, the thumbnailer and `roqsim render` alike.
+        # message that explains nothing; checked here too, so it fails at construction.
         check_gl_backend()
-        # The offscreen framebuffer must be at least as large as the requested frame, or MuJoCo
-        # clips the render; bump the model's declared size before constructing the renderer.
-        model.vis.global_.offwidth = max(int(width), int(model.vis.global_.offwidth))
-        model.vis.global_.offheight = max(int(height), int(model.vis.global_.offheight))
         self.model = model
         self.width = int(width)
         self.height = int(height)
-        self._renderer = mujoco.Renderer(model, self.height, self.width)
-        self._clear_geoms = has_clear_geoms(model)
-        _log_gl_once()
-        self._vopt = mujoco.MjvOption()
-        # An absent entity is not in the picture either. Its geoms already have zero alpha, but
-        # excluding the group is what makes absence one decision rather than several that could
-        # drift -- and it is the same group every raycast mask excludes.
-        self._vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
-        if geomgroup is not None:
-            # Draw only the named groups. A model separates what it SHOWS from what it COLLIDES --
-            # group 2 for visual meshes, group 3 for the primitives physics uses -- and a picture of
-            # the visual half cannot answer a question about the other one. Absence stays excluded
-            # regardless: it is a property of the entity, not a drawing preference, and letting a
-            # caller re-enable it here would make absence two decisions instead of one.
-            for group in range(len(self._vopt.geomgroup)):
-                self._vopt.geomgroup[group] = 1 if group in geomgroup else 0
-            self._vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
         self.camera: mujoco.MjvCamera | int | str = (
             camera if camera is not None else default_free_camera(model)
         )
+        self._geomgroup = geomgroup
+        self._max_geom = max_geom
+        self._service = RenderService(
+            model, renderer=renderer, renderers={renderer: dict(settings or {})}
+        )
+        self._view: RenderView | None = None
+        self._pick_scene: mujoco.MjvScene | None = None
+        self._vopt = _vopt(geomgroup)
         self._near: float | None = None
         self._far: float | None = None
         self.near = near
         self.far = far
+        # Open the renderer now, as a renderer of a single view always has: a GL that cannot render
+        # here fails at construction, not at the first frame.
+        self._view_for(self.camera)
+        self._service._renderer(renderer)
 
     @property
     def near(self) -> float | None:
@@ -766,26 +1417,59 @@ class FrameRenderer:
             raise ValueError(f"far clip plane must be a finite distance > 0 m, got {value!r}")
         self._far = None if value is None else float(value)
 
-    def _update_scene(self, data: mujoco.MjData, scene_option: mujoco.MjvOption | None = None):
-        """Populate the scene from *data* through :attr:`camera`, with this renderer's planes."""
-        self._renderer.update_scene(data, self.camera, scene_option=scene_option or self._vopt)
-        set_clip_planes(self._renderer.scene, self._near, self._far)
-        for cam in self._renderer.scene.camera:
-            if cam.frustum_far <= cam.frustum_near:
-                raise ValueError(
-                    f"far clip plane {cam.frustum_far:g} m is not beyond the near one "
-                    f"{cam.frustum_near:g} m"
-                )
-
     @property
-    def raw(self) -> mujoco.Renderer:
-        """The underlying ``mujoco.Renderer`` (for extra passes such as depth)."""
-        return self._renderer
+    def service(self) -> RenderService:
+        """The render service this renderer draws through."""
+        return self._service
+
+    def _view_for(self, camera) -> RenderView:
+        """This renderer's one view, pointed at *camera*, with its model and planes as they are now."""
+        resolved = resolve_camera(self.model, camera)
+        if self._view is None:
+            self._view = self._service.view(
+                "frame_renderer",
+                camera=resolved,
+                width=self.width,
+                height=self.height,
+                images=IMAGES,
+                geomgroup=self._geomgroup,
+                max_geom=self._max_geom,
+            )
+        spec = self._view.spec
+        spec.mujoco_camera = resolved
+        spec.model = camera_model_of(self.model, resolved)
+        spec.fovy = self._service._fovy(resolved)
+        spec.near, spec.far = self._near, self._far
+        return self._view
+
+    def _draw(self, data: mujoco.MjData, image: str, decorate=None) -> Frame:
+        if self._service is None:
+            raise AttributeError("this FrameRenderer is closed")
+        view = self._view_for(self.camera)
+        caps = self._service.renderer_class(view.renderer).capabilities_for(
+            self._service.settings.get(view.renderer, {})
+        )
+        missing = caps.missing([image], view.spec.model, decorate is not None)
+        if missing:
+            raise RenderError(
+                f"renderer {view.renderer!r} cannot give {', '.join(missing)} for this view"
+            )
+        (frame,) = self._service.render_now([(view, (image,))], data, decorate)
+        return frame
 
     @property
     def scene(self) -> mujoco.MjvScene:
-        """The renderer's ``MjvScene`` (needed by :func:`mujoco.mjv_moveCamera`)."""
-        return self._renderer.scene
+        """The ``MjvScene`` the last frame was drawn from (needed by :func:`mujoco.mjv_moveCamera`).
+
+        MuJoCo's renderer's own scene; for another renderer, one built on the CPU for picking.
+        """
+        renderer = self._service.renderer() if self._service is not None else None
+        scene = getattr(renderer, "scene", None)
+        if scene is not None:
+            return scene
+        if self._pick_scene is None:
+            self._pick_scene = mujoco.MjvScene(self.model, maxgeom=DEFAULT_MAX_GEOM)
+        return self._pick_scene
 
     def render(self, data: mujoco.MjData, decorate=None) -> np.ndarray:
         """Update the scene from ``data`` through :attr:`camera` and return an RGB frame.
@@ -794,68 +1478,31 @@ class FrameRenderer:
         before rasterisation, so a caller can append transient marker geoms (e.g. via
         :func:`mujoco.mjv_initGeom`) that render in 3D and track the camera.
         """
-        # The options built in __init__ -- passed, not merely held: without this the absent-geom
-        # mask there was dead code, and the colour path excluded an absent entity only because
-        # MuJoCo's own default happens to mask the same group. A contract this tree states in
-        # `presence` must not rest on another project's default. Behaviourally a no-op today
-        # (MjvOption() IS that default, plus our one line), which is why it is safe to make real.
-        self._update_scene(data)
-        if self._clear_geoms:
-            clear_geoms_cast_no_shadow(self._renderer.scene)
-        if decorate is not None:
-            decorate(self._renderer.scene)
-        with hold_gc():
-            return self._renderer.render()
+        return np.array(self._draw(data, "rgb", decorate).rgb, order="C")
 
     def render_depth(self, data: mujoco.MjData) -> np.ndarray:
         """Render ``data`` through :attr:`camera`; depth in metres, ``(height, width)`` float32.
 
-        ``mujoco.Renderer``'s own depth mode linearises with the model's planes, so this draws and
-        reads the depth buffer itself and linearises it with the planes the scene was drawn with.
-        A pixel nothing was drawn at (cleared to 0 under reversed Z) reads ``inf``, not the far
-        plane.
+        Linearised with the planes the scene was drawn with; a pixel nothing was drawn at reads
+        ``inf``, not the far plane.
         """
-        r = self._renderer
-        self._update_scene(data)
-        scene = r.scene
-        cam = scene.camera[0]
-        near, far, ortho = float(cam.frustum_near), float(cam.frustum_far), bool(cam.orthographic)
-        flags = scene.flags.copy()
-        # As mujoco.Renderer does for depth: flat ID colours, which make the far range more exact.
-        scene.flags[mujoco.mjtRndFlag.mjRND_SEGMENT] = True
-        scene.flags[mujoco.mjtRndFlag.mjRND_IDCOLOR] = True
-        buffer = np.empty((self.height, self.width), dtype=np.float32)
-        try:
-            # The renderer's own rect and contexts (mujoco is pinned to the series they belong to).
-            if r._gl_context:
-                r._gl_context.make_current()
-            with hold_gc():
-                mujoco.mjr_render(r._rect, scene, r._mjr_context)
-                mujoco.mjr_readPixels(None, buffer, r._rect, r._mjr_context)
-        finally:
-            np.copyto(scene.flags, flags)
-        depth = linear_depth(buffer, near, far, ortho)
-        depth[buffer == 0.0] = np.inf
-        # GL reads bottom row first (EGL, OSMesa and GLFW alike).
-        return np.ascontiguousarray(np.flipud(depth)) if r._gl_context else depth
+        return self._draw(data, "depth").depth
 
     def render_segmentation(
         self, data: mujoco.MjData, scene_option: mujoco.MjvOption | None = None
     ) -> np.ndarray:
-        """``mujoco.Renderer``'s segmentation pass through :attr:`camera`, with this renderer's
-        planes.
+        """The segmentation pass through :attr:`camera`, with this renderer's planes.
 
-        ``(height, width, 2)`` int32 object id and type, ``(-1, -1)`` for background. *scene_option*
-        replaces the renderer's own options for this pass.
+        ``(height, width, 2)`` int32 object id and type, ``(-1, -1)`` for background.
+        *scene_option* is accepted for the options of :class:`FrameRenderer`'s own (absence
+        excluded); one that draws other geom groups is refused.
         """
-        r = self._renderer
-        self._update_scene(data, scene_option)
-        r.enable_segmentation_rendering()
-        try:
-            with hold_gc():
-                return r.render()
-        finally:
-            r.disable_segmentation_rendering()
+        if scene_option is not None and list(scene_option.geomgroup) != list(self._vopt.geomgroup):
+            raise ValueError(
+                "render_segmentation: a scene_option drawing other geom groups than this "
+                "renderer's; construct the FrameRenderer with that geomgroup instead"
+            )
+        return self._draw(data, "segmentation").segmentation
 
     def move_camera(self, action: int, dx: float, dy: float) -> None:
         """Apply a mouse move to a free camera via MuJoCo's own handler.
@@ -877,7 +1524,7 @@ class FrameRenderer:
                 _MOVE_CAMERA_TAKES_SCENE = False
                 return
         if _MOVE_CAMERA_TAKES_SCENE:
-            mujoco.mjv_moveCamera(self.model, action, dx, dy, self._renderer.scene, self.camera)
+            mujoco.mjv_moveCamera(self.model, action, dx, dy, self.scene, self.camera)
         else:
             mujoco.mjv_moveCamera(self.model, action, dx, dy, self.camera)
 
@@ -910,7 +1557,7 @@ class FrameRenderer:
         ``relx``/``rely`` are normalized in ``[0, 1]``: ``relx`` from the left, ``rely`` from the
         **bottom** (OpenGL convention). ``geom_id`` and ``body_id`` are ``-1`` when the click misses
         all geometry; ``world_point`` is the 3D hit point (meaningful only on a hit). Call after a
-        :meth:`render`, whose ``update_scene`` populates the scene this casts against.
+        :meth:`render`, whose scene this casts against.
         """
         selpnt = np.zeros(3)
         geomid = np.zeros(1, np.int32)
@@ -923,7 +1570,7 @@ class FrameRenderer:
             self.width / self.height,
             relx,
             rely,
-            self._renderer.scene,
+            self.scene,
             selpnt,
             geomid,
             flexid,
@@ -932,27 +1579,10 @@ class FrameRenderer:
         return int(geomid[0]), int(body_id), selpnt.copy()
 
     def close(self) -> None:
-        """Free the renderer with ITS OWN context current, so its deletes hit its own objects.
-
-        ``mujoco.Renderer.close`` frees the GL context first and the ``MjrContext`` second, and
-        freeing the latter is a run of ``glDelete*`` calls that land in whatever context is current
-        at that moment. With more than one renderer alive that is the other renderer's context, and
-        GL object names are per context and start from one -- so the framebuffer and textures of a
-        live renderer are deleted in place of the dead one's, and it renders garbage from then on.
-        Freeing in the other order, under the dying context, is the fix; the ``getattr`` guards keep
-        this working against a MuJoCo that no longer exposes the two members or has fixed the order
-        itself. Idempotent, and also what ``__del__`` runs.
-        """
-        renderer, self._renderer = self._renderer, None
-        if renderer is None:
-            return
-        gl_context = getattr(renderer, "_gl_context", None)
-        mjr_context = getattr(renderer, "_mjr_context", None)
-        if gl_context is not None and mjr_context is not None:
-            gl_context.make_current()
-            mjr_context.free()
-            renderer._mjr_context = None
-        renderer.close()
+        """Close the renderer and its context. Idempotent, and also what ``__del__`` runs."""
+        service, self._service = self._service, None
+        if service is not None:
+            service.close()
 
     def __del__(self) -> None:
         # Attribute access can fail during interpreter shutdown; there is nothing to do then.

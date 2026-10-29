@@ -32,6 +32,7 @@
 
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
+  renderer: mujoco          # what draws every camera (the default); `roqsim renderers list` names the rest
 
 components:
   # --- Livox Mid-360 3D lidar (mast-mounted, centre of the room) --------------------------------
