@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from roqsim_mcp.mcp_server import create_server
 
@@ -107,6 +108,8 @@ def test_the_server_tells_a_client_what_every_tool_is_for():
     async def _names():
         return {t.name for t in await server.list_tools()}
 
-    missing = {name for name in _run(_names()) if name not in instructions}
+    missing = {
+        name for name in _run(_names()) if not re.search(rf"\b{re.escape(name)}\b", instructions)
+    }
     assert not missing, f"the instructions do not mention {sorted(missing)}"
     assert "`use`" in instructions
