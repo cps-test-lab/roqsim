@@ -46,6 +46,7 @@ from .render_api import (
     RenderError,
     SceneDescription,
     StateSnapshot,
+    image_mismatch,
 )
 
 _logger = logging.getLogger(__name__)
@@ -696,10 +697,10 @@ def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene) -> None:
 
 
 #: The model arrays that change at run time and that drawing reads: :mod:`roqsim.presence` hides an
-#: absent entity by moving its geoms to :data:`~roqsim.presence.ABSENT_GEOM_GROUP` and zeroing their
-#: alpha. A snapshot carries them, so a renderer that does not read the shared model -- one in
-#: another process -- draws the presence of the tick it renders.
-RUNTIME_MODEL_FIELDS = ("geom_rgba", "geom_group")
+#: absent entity by moving its geoms and its flexes to :data:`~roqsim.presence.ABSENT_GEOM_GROUP`
+#: and zeroing their alpha. A snapshot carries them, so a renderer that does not read the shared
+#: model -- one in another process -- draws the presence of the tick it renders.
+RUNTIME_MODEL_FIELDS = ("geom_rgba", "geom_group", "flex_rgba", "flex_group")
 
 #: The geoms a scene holds unless a camera asks for more (``mujoco.Renderer``'s default).
 DEFAULT_MAX_GEOM = 10000
@@ -784,6 +785,7 @@ class MujocoRenderer(Renderer):
         deterministic=True,
         in_process=True,
         decorations=True,
+        geom_groups=True,
     )
 
     def __init__(self, settings=None) -> None:
@@ -973,6 +975,17 @@ class MujocoRenderer(Renderer):
         return np.ascontiguousarray(np.flipud(seg)) if flip else seg
 
 
+def draws_with_gl(renderer: str, base_dir=None) -> bool:
+    """Whether *renderer* is MuJoCo's GL renderer (or built on it), so a GL failure is its own."""
+    from .registry import resolve_renderer  # noqa: PLC0415 -- avoids an import cycle
+
+    try:
+        cls = resolve_renderer(renderer, base_dir)
+    except PluginError:
+        return False
+    return issubclass(cls, MujocoRenderer)
+
+
 class RenderView:
     """One camera registered with a :class:`RenderService`: what it is, and its newest frame.
 
@@ -1153,13 +1166,19 @@ class RenderService:
         for view in self.views:
             cls = self.renderer_class(view.renderer)
             caps = cls.capabilities_for(self.settings.get(view.renderer, {}))
-            missing = caps.missing(sorted(view.spec.images), view.spec.model, view.spec.decorated)
+            missing = caps.missing(
+                sorted(view.spec.images),
+                view.spec.model,
+                view.spec.decorated,
+                view.spec.geomgroup is not None,
+            )
             if missing:
                 problems.append(
                     f"camera {view.id!r} asks renderer {view.renderer!r} for {', '.join(missing)}; "
                     f"it renders images {', '.join(sorted(caps.images))} through camera models "
                     f"{', '.join(sorted(caps.camera_models))}"
-                    + ("" if caps.decorations else " and draws no decorations")
+                    + ("" if caps.decorations else ", draws no decorations")
+                    + ("" if caps.geom_groups else ", draws every geom group")
                 )
         if problems:
             raise PluginError("; ".join(problems))
@@ -1306,16 +1325,37 @@ class RenderService:
                 f"renderer {name!r} returned {len(out)} frames for {len(requests)} requests"
             )
         for (view, images), frame in zip(batch, out, strict=True):
-            missing = [i for i in images if frame.image(i) is None]
-            if missing:
-                raise RenderError(
-                    f"renderer {name!r} returned no {', '.join(missing)} for camera {view.id!r}"
-                )
+            self._check_frame(name, view, images, frame, snapshot)
         for (view, _), frame in zip(batch, out, strict=True):
             view._deliver(frame)
         self.stats["batches"] += 1
         self.stats["frames"] += len(out)
         return list(out)
+
+    @staticmethod
+    def _check_frame(name: str, view: RenderView, images, frame: Frame, snapshot) -> None:
+        """Refuse a frame that is not the one asked for: its camera, its stamp, its images."""
+        problems = []
+        if frame.id != view.id:
+            problems.append(f"it is camera {frame.id!r}'s")
+        if frame.sim_time != snapshot.sim_time or frame.step != snapshot.step:
+            problems.append(
+                f"it is stamped t={frame.sim_time!r} step {frame.step!r}, the snapshot "
+                f"t={snapshot.sim_time!r} step {snapshot.step!r}"
+            )
+        for kind in images:
+            image = frame.image(kind)
+            if image is None:
+                problems.append(f"it has no {kind}")
+                continue
+            mismatch = image_mismatch(kind, image, view.spec.width, view.spec.height)
+            if mismatch:
+                problems.append(f"its {mismatch}")
+        if problems:
+            raise RenderError(
+                f"renderer {name!r} returned a frame for camera {view.id!r} that is not the one "
+                f"asked for: {'; '.join(problems)}"
+            )
 
     def clear(self) -> None:
         """Forget every view's frames (an engine reset)."""
@@ -1375,9 +1415,6 @@ class FrameRenderer:
         settings: Mapping | None = None,
         max_geom: int | None = None,
     ) -> None:
-        # Before anything touches GL: a wrong backend aborts the process inside MjrContext with a
-        # message that explains nothing; checked here too, so it fails at construction.
-        check_gl_backend()
         self.model = model
         self.width = int(width)
         self.height = int(height)
@@ -1455,7 +1492,9 @@ class FrameRenderer:
         caps = self._service.renderer_class(view.renderer).capabilities_for(
             self._service.settings.get(view.renderer, {})
         )
-        missing = caps.missing([image], view.spec.model, decorate is not None)
+        missing = caps.missing(
+            [image], view.spec.model, decorate is not None, view.spec.geomgroup is not None
+        )
         if missing:
             raise RenderError(
                 f"renderer {view.renderer!r} cannot give {', '.join(missing)} for this view"
