@@ -1,4 +1,4 @@
-"""Sensor plugin: OAK-D Pro RGB-D camera via ``mujoco.Renderer`` (GL, offscreen).
+"""Sensor plugin: OAK-D Pro RGB-D camera, drawn through the render service.
 
 Mirrors the Gazebo TurtleBot 4 ``rgbd_camera`` topic (a ``sensor_msgs/Image`` colour + depth pair,
 each with its own ``CameraInfo`` -- ``rgbd_camera/camera_info`` and

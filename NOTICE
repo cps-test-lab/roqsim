@@ -19,6 +19,7 @@ The authoritative, per-asset records are:
   * a THIRD_PARTY.md in each package that vendors third-party content
         roqsim_assets/THIRD_PARTY.md
         roqsim_humanoid/THIRD_PARTY.md
+        roqsim_manipulation_assets/THIRD_PARTY.md
         roqsim_quadruped/THIRD_PARTY.md
         roqsim_scenes/THIRD_PARTY.md
         roqsim_walker/THIRD_PARTY.md
@@ -63,6 +64,8 @@ Apache License 2.0
   Husarion ROSbot                 (c) Husarion, via rosbot_ros
   Husarion Panther                (c) Husarion, via husarion_ugv_ros
   Doosan Robotics M1013           (c) Doosan Robotics, via dsr_description2
+  FANUC M-20iD/25, CRX-25iA       (c) FANUC America Corporation and FANUC CORPORATION, via
+                                  fanuc_description; modified (see each model's LICENSE file)
   Maker's Pet oomwoo! One         (c) Ilia O. (makerspet.com)
   Maker's Pet Mini                (c) Ilia O. (makerspet.com)
   Intel RealSense D415/D435/D455 meshes

@@ -62,7 +62,7 @@ from .engine import Engine
 from .gl import select_offscreen_gl
 from .mcap_format import RECORDING_SUFFIX, recording_path
 from .models import ModelError
-from .override_options import add_override_options, overrides_from_options
+from .override_options import add_override_options, add_renderer_option, overrides_from_options
 from .plugin import PluginError
 from .rendering import GLBackendError
 from .replay import is_recording
@@ -1189,6 +1189,7 @@ def main(argv: list | None = None) -> int:
         f"--record-tracks; an exclude wins over an include (${RECORD_EXCLUDE_VAR} when unset)",
     )
     add_override_options(parser)
+    add_renderer_option(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 

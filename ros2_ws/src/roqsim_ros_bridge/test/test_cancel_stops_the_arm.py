@@ -24,6 +24,7 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 
 from roqsim.context import Endpoint, SimContext
 from roqsim_ros_bridge.actions import follow_joint_trajectory, gripper_command
+from roqsim_ros_bridge.trajectory_policy import SUCCEEDED
 
 JOINTS = ["shoulder_pan_joint", "elbow_joint"]
 #: Sim seconds one pass of the stand-in physics thread advances the clock by.
@@ -271,7 +272,7 @@ def test_a_trajectory_that_runs_to_its_end_still_succeeds():
 
     assert handle.status == "succeeded"
     assert result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
-    assert result.error_string == ""
+    assert result.error_string == SUCCEEDED
     assert arm.position == pytest.approx([0.4, -0.2], abs=1e-2)
     assert handle.feedback, "a completed execution still reports feedback per waypoint"
 

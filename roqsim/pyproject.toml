@@ -29,6 +29,11 @@ test = ["pytest>=7.0"]
 ipc = ["pyzmq>=22"]
 
 # Built-in core plugins. Robot-family plugins live in sibling packages (e.g. roqsim_mobile).
+# Renderers behind the render service (roqsim.render_api); MuJoCo's own is the default.
+[project.entry-points."roqsim.renderers"]
+mujoco = "roqsim.rendering:MujocoRenderer"
+socket = "roqsim.render_socket:SocketRenderer"
+
 [project.entry-points."roqsim.plugins"]
 dummy = "roqsim.plugins.dummy:DummyPlugin"
 spawn_model = "roqsim.plugins.spawn_model:SpawnModelPlugin"

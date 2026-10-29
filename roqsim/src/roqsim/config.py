@@ -101,6 +101,7 @@ import yaml
 from .document import check_version, refuse_unknown_keys
 from .plugin import VALIDATOR_RAISED, Plugin, PluginError
 from .registry import resolve_plugin
+from .render_api import DEFAULT_RENDERER, RENDER_MODES
 from .world import resolve_world_yaml_ref
 
 _logger = logging.getLogger("roqsim.config")
@@ -468,6 +469,21 @@ class SimConfig:
     @property
     def sync(self) -> dict:
         return dict(self.sim.get("sync", {}) or {})
+
+    @property
+    def renderer(self) -> str:
+        """The renderer every camera draws through unless it names its own (``sim.renderer``)."""
+        return str(self.sim.get("renderer") or DEFAULT_RENDERER)
+
+    @property
+    def render(self) -> dict:
+        """The render service's own settings (``sim.render``), defaults filled in."""
+        return {**RENDER_DEFAULTS, **(self.sim.get("render") or {})}
+
+    @property
+    def renderers(self) -> dict:
+        """Each renderer's settings block (``sim.renderers.<name>``)."""
+        return {str(k): dict(v or {}) for k, v in (self.sim.get("renderers") or {}).items()}
 
     @property
     def view(self) -> dict:
@@ -1222,6 +1238,9 @@ SIM_KEYS = frozenset(
         "integrator",
         "name",
         "pacing",
+        "render",
+        "renderer",
+        "renderers",
         "seed",
         "sync",
         "timestep",
@@ -1351,6 +1370,60 @@ def _validate_pacing(pacing) -> None:
         raise PluginError(f"sim.pacing: {exc}") from None
 
 
+#: ``sim.render`` -- the render service's settings -- and their defaults: the mode, how many
+#: instances of each renderer its cameras are dealt to (one context each; one thread each in async),
+#: and how long a caller waits for a worker to open or to draw a batch before naming it hung.
+RENDER_DEFAULTS = {"mode": "sync", "workers": 1, "timeout_s": 60.0}
+
+
+def validate_render(sim: dict, base_dir: Path | None) -> None:
+    """Refuse a ``sim.renderer`` / ``sim.render`` / ``sim.renderers`` a run could not use, at load.
+
+    Every renderer the world names is resolved (an unknown one lists those installed), and each one
+    given a settings block validates it with its own ``validate_config``, so a mistyped key names
+    the key, the block and the valid ones.
+    """
+    from .registry import resolve_renderer  # noqa: PLC0415 -- only worlds that name one pay
+
+    renderer = sim.get("renderer")
+    if renderer is not None and (not isinstance(renderer, str) or not renderer):
+        raise PluginError(f"sim.renderer: a renderer name, got {renderer!r}")
+    render = sim.get("render")
+    if render is not None:
+        if not isinstance(render, dict):
+            raise PluginError(
+                f"sim.render: a mapping of the render service's settings, got {render!r}"
+            )
+        refuse_unknown_keys(render, frozenset(RENDER_DEFAULTS), "sim.render", error=PluginError)
+        _validate_choice("render.mode", render.get("mode"), RENDER_MODES)
+        workers = render.get("workers", 1)
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise PluginError(f"sim.render.workers: a whole number >= 1, got {workers!r}")
+        timeout = render.get("timeout_s", 60.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise PluginError(f"sim.render.timeout_s: a number of seconds > 0, got {timeout!r}")
+        if render.get("mode") == "async" and ((sim.get("sync") or {}).get("enabled")):
+            raise PluginError(
+                "sim.render.mode: async cannot run with sim.sync.enabled: a lockstep tick waits "
+                "for the frames due in it, which is sync mode"
+            )
+    blocks = sim.get("renderers")
+    if blocks is not None and not isinstance(blocks, dict):
+        raise PluginError(
+            f"sim.renderers: a mapping of renderer name to its settings, got {blocks!r}"
+        )
+    named = dict(blocks or {})
+    if renderer is not None:
+        named.setdefault(renderer, None)
+    for name, settings in named.items():
+        if name == DEFAULT_RENDERER and settings is None:
+            continue
+        cls = resolve_renderer(str(name), base_dir)
+        errors = cls.validate_config(settings or {})
+        if errors:
+            raise PluginError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
+
+
 def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
     """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
 
@@ -1435,6 +1508,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = 
     if "pacing" in (raw.get("sim") or {}):
         _validate_pacing(raw["sim"]["pacing"])
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
+    validate_render(raw.get("sim") or {}, base_dir)
 
     component_assignments = [a for a in assignments if _is_component(a)]
     plugins = flatten_specs(

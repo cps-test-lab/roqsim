@@ -30,10 +30,12 @@ WORKDIR /ws
 #    is what roqsim_create3_toolbox launches over the TurtleBot 4 model, unchanged from its release;
 #    the gz toolbox pulls only ros_gz_interfaces, not a Gazebo runtime. ur_msgs carries the type of
 #    the set_speed_slider service ur_driver_interface declares; the bridge stops at start-up in a
-#    world that declares it without the message package (the UR driver itself is not needed).
+#    world that declares it without the message package (the UR driver itself is not needed). git
+#    fetches fanuc_msgs in step 5.
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        git \
         python3-pip \
         python3-colcon-common-extensions \
         libegl1 \
@@ -116,7 +118,18 @@ COPY container/files/check_runtime_deps.py /tmp/check_runtime_deps.py
 RUN python3 /tmp/check_runtime_deps.py && rm /tmp/check_runtime_deps.py
 
 # 5) Volatile layer: colcon-build the ROS 2 workspace (bridge, nav2 example, goal actions), copied
-#    with the sources above.
+#    with the sources above, and fanuc_msgs: the message package of FANUC's ROS 2 driver, whose
+#    types fanuc_driver_interface serves. It has no binary release, so it is built from FANUC's
+#    repository (Apache-2.0) at the commit roqsim's interface reproduces; only that package is
+#    fetched, and the checkout is refused unless it is that commit.
+ARG FANUC_DRIVER_COMMIT=da5db3f611cdc9dffe687e056c4e79bea584bf5c
+RUN git clone --quiet --filter=blob:none --no-checkout \
+        https://github.com/FANUC-CORPORATION/fanuc_driver.git /tmp/fanuc_driver && \
+    git -C /tmp/fanuc_driver sparse-checkout set --cone fanuc_msgs && \
+    git -C /tmp/fanuc_driver checkout --quiet "${FANUC_DRIVER_COMMIT}" && \
+    test "$(git -C /tmp/fanuc_driver rev-parse HEAD)" = "${FANUC_DRIVER_COMMIT}" && \
+    mv /tmp/fanuc_driver/fanuc_msgs ros2_ws/src/fanuc_msgs && \
+    rm -rf /tmp/fanuc_driver
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ros2_ws && \
     colcon build --event-handlers console_direct+
