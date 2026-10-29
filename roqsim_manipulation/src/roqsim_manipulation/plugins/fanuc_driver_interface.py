@@ -28,9 +28,8 @@ behaviour below cites the driver file it reproduces. The arm itself is ``arm_con
   at ``0.01 * lag * collaborative_speed_scaling`` (``scaled_joint_trajectory_controller.cpp``). At 0
   the trajectory stops and its goal stays active.
 - **The motion gate** (``arm_controller``'s): closed while ``motion_possible`` is 0 -- after
-  ``switch_control_state`` STOP, in an alarm (a CRX contact stop), and on a CRX whose payload was
-  changed, which ends Stream Motion on the robot. A goal is then aborted with the driver's
-  "Aborted: STMO is inactive (!motion_possible)".
+  ``switch_control_state`` STOP and in an alarm (a CRX contact stop). A goal is then aborted with
+  the driver's "Aborted: STMO is inactive (!motion_possible)".
 - **I/O** from the driver's own ``gpio_topic_config`` (its gpio yaml, inline): ``io_state``,
   ``num_reg_state`` and ``analog_io_state`` publish the blocks it lists every control period;
   ``io_cmd``, ``num_reg_cmd`` and ``analog_io_cmd`` take the values for the blocks it lists and
@@ -199,7 +198,6 @@ class FanucDriverInterfacePlugin(Plugin):
         self._payload_comp: dict[int, dict] = {}
         self._fs_type = FS_EMBEDDED if self.collaborative else FS_UNSELECTED
         self._force = np.zeros(6)
-        self._streaming = True  # the hardware's Stream Motion: ends on a CRX payload change
         self._motion_enabled = True  # switch_control_state
         self._in_error = False
         self._alarms: deque[str] = deque(maxlen=5)
@@ -222,7 +220,7 @@ class FanucDriverInterfacePlugin(Plugin):
         return index
 
     def motion_possible(self) -> bool:
-        return self._streaming and self._motion_enabled and not self._in_error
+        return self._motion_enabled and not self._in_error
 
     def _gate(self) -> str | None:
         return None if self.motion_possible() else STMO_INACTIVE
@@ -508,8 +506,8 @@ class FanucDriverInterfacePlugin(Plugin):
             "collaborative_speed_scaling": self._collab,
         }
         rows["ConnectionStatus"] = {
-            "is_connected": float(self._streaming),
-            "motion_command_type": 2.0 if self._streaming else 0.0,  # 2: position
+            "is_connected": 1.0,  # the simulator streams for as long as it runs
+            "motion_command_type": 2.0,  # position
         }
         names = ("force_x", "force_y", "force_z", "moment_x", "moment_y", "moment_z")
         rows["Force"] = {
@@ -590,7 +588,7 @@ class FanucDriverInterfacePlugin(Plugin):
             (
                 f"{controller}/connection_status",
                 "ConnectionStatus",
-                lambda: {"is_connected": self._streaming},
+                lambda: {"is_connected": True},
                 self.io_rate_hz,
             ),
             (f"{controller}/robot_status", "RobotStatus", self._robot_status, self.io_rate_hz),
@@ -767,10 +765,9 @@ class FanucDriverInterfacePlugin(Plugin):
         self._collab = float(value)
 
     def set_input(self, io_type: str, index: int, value: bool) -> None:
-        """Drive an input (DI, RI, UI, WI, SI) from the simulation: what the cell's wiring does on
-        the robot.
+        """Drive an input (DI, RI, UI, WI, SI) from the simulation.
 
-        A roqsim-side input, not a driver name."""
+        What the cell's wiring does on the robot; a roqsim-side input, not a driver name."""
         if io_type not in ("DI", "RI", "UI", "WI", "SI"):
             raise ValueError(f"{io_type} is not an input")
         self._bool[(io_type, int(index))] = bool(value)
@@ -879,9 +876,6 @@ class FanucDriverInterfacePlugin(Plugin):
             k: float(r.get(k, 0.0))
             for k in ("mass", "cg_x", "cg_y", "cg_z", "in_x", "in_y", "in_z")
         }
-        if self.collaborative:
-            # A CRX takes a payload change through its DCS, which ends Stream Motion.
-            self._streaming = False
         return {"result": 0}
 
     def get_payload_value(self, r: dict) -> dict:

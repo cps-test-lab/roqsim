@@ -382,16 +382,28 @@ def test_the_payload_reads_back_as_the_driver_scales_it(name):
     )
 
 
-def test_a_crx_payload_change_ends_stream_motion_and_an_m20_one_does_not():
-    crx, m20 = _engine("crx25ia"), _engine("m20id25")
-    for engine in (crx, m20):
-        _call(engine, "fanuc_gpio_controller/set_payload_value", payload_schedule_id=1, mass=1.0)
-        _steps(engine, 1)
-    assert not _driver(crx).motion_possible()
-    assert _endpoints(crx)["fanuc_gpio_controller.connection_status"].read() == {
-        "is_connected": False
+@arms
+def test_a_payload_change_leaves_stream_motion_running(name):
+    engine = _engine(name)
+    arm = engine.ctx.blackboard.get("arm:arm")
+    assert _call(
+        engine, "fanuc_gpio_controller/set_payload_value", payload_schedule_id=1, mass=1.0
+    ) == {"result": 0}
+    _steps(engine, 1)
+    assert _driver(engine).motion_possible() and arm.motion_blocked() is None
+    assert _endpoints(engine)["fanuc_gpio_controller.connection_status"].read() == {
+        "is_connected": True
     }
-    assert _driver(m20).motion_possible()
+    start = np.array(arm.read_state()[1])
+    arm.follow_trajectory(arm.joint_names, [0.0, 1.0], [start, start + 0.1])
+    while arm.trajectory_active():
+        engine.step()
+    _steps(engine, 200)
+    assert np.array(arm.read_state()[1]) == pytest.approx(start + 0.1, abs=5e-3)
+
+
+def test_set_payload_comp_is_the_crxs_only():
+    crx, m20 = _engine("crx25ia"), _engine("m20id25")
     assert _call(
         m20, "fanuc_gpio_controller/set_payload_comp", payload_schedule_id=1, mass=1.0
     ) == {"result": 1}
@@ -512,8 +524,7 @@ def test_the_crx_force_estimate_agrees_with_the_contact_on_the_tool():
     driver = _driver(engine)
     driver.contact_stop_force = 1e9  # measure, do not stop
     # The Hand-E's own weight is the controller's to know: declared, it is taken off. Declared in
-    # the controller's store, as a cell configures it before streaming starts: on a CRX the
-    # service ends Stream Motion.
+    # the controller's store, as a cell configures it before streaming starts.
     tool = sum(engine.ctx.model.body_mass[b] for b in driver._tool_bodies)
     driver._payload_value[1] = {"mass": float(tool)}
     _press(engine, depth=0.15)

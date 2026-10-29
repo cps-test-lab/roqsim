@@ -617,8 +617,7 @@ trajectory and a ``follow_joint_trajectory`` goal alike. ``set_gen_override`` is
 general override: stored, range-checked as the controller checks it and read back, and it retimes
 nothing, since FANUC says to keep it at 100 while streaming. Where the M-20iD/25 and the CRX differ
 on the robot they differ here: only the CRX senses force (embedded, ``fs_type`` 1), stops on contact
-(an alarm until ``reset``), has collaborative speed scaling and ``set_payload_comp``, and ends
-Stream Motion on a payload change; their I/O is the gpio map FANUC's launch files load for each.
+(an alarm until ``reset``), and has collaborative speed scaling and ``set_payload_comp``; their I/O is the gpio map FANUC's launch files load for each.
 The ROS side needs ``fanuc_msgs`` (built from the driver's repository; it has no binary release).
 Every name the driver exposes, and what the simulated arm does with it:
 
@@ -745,7 +744,7 @@ Every name the driver exposes, and what the simulated arm does with it:
      - ``/fanuc_gpio_controller/connection_status``
      - ``fanuc_msgs/msg/ConnectionStatus``
      - served with a difference
-     - True while the simulator streams; false once a CRX payload change ends Stream Motion. No network connection exists to lose.
+     - Always true: the simulator streams for as long as it runs. No network connection exists to lose.
    * - topic
      - ``/fanuc_gpio_controller/robot_status``
      - ``fanuc_msgs/msg/RobotStatus``
@@ -835,7 +834,7 @@ Every name the driver exposes, and what the simulated arm does with it:
      - ``/fanuc_gpio_controller/set_payload_value``
      - ``fanuc_msgs/srv/SetPayloadValue``
      - served
-     - On a CRX it ends Stream Motion, as FANUC documents; the declared mass feeds the CRX's force estimate.
+     - Stored per schedule and read back; streaming goes on, as the driver only forwards the payload to the controller. The declared mass feeds the CRX's force estimate.
    * - service
      - ``/fanuc_gpio_controller/get_payload_value``
      - ``fanuc_msgs/srv/GetPayloadValue``
