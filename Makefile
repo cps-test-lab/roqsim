@@ -29,7 +29,9 @@ PYTEST     := $(PY) -m pytest
 # number and not `auto`: on a many-core machine `-n auto` asks for one worker per core, wants tens
 # of GB, and is OOM-killed (exit 137) rather than merely slow. Raise JOBS if you have the RAM;
 # `make test JOBS=1` is the serial fallback and the first thing to try if a parallel run looks
-# flaky.
+# flaky. The budget also rests on the root conftest.py, which runs the cycle collector after every
+# test: a built world is a reference cycle, and left to the collector's own schedule a worker on
+# Python 3.14 holds many gigabytes of finished tests' MuJoCo models and data.
 # xdist is named explicitly because PYTEST_DISABLE_PLUGIN_AUTOLOAD above switches autoload off
 # wholesale -- without `-p xdist` the plugin is simply absent and `-n` is an unrecognised argument.
 # --dist loadfile keeps every test in a file on one worker, which is what lets a module-scoped
