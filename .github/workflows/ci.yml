@@ -12,9 +12,16 @@ on:
   pull_request:
 
 jobs:
+  # On the runner image GitHub calls latest, and on Ubuntu 24.04 with its Python, which roqsim keeps
+  # supporting: an image that moves to a newer Ubuntu and Python shows up as one of the two failing.
+  # The latest one keeps the check's name the repository's rules require, and publishes the docs.
   core:
-    name: core (lint, tests, smoke, docs)
-    runs-on: ubuntu-latest
+    name: core (lint, tests, smoke, docs)${{ matrix.os != 'ubuntu-latest' && format(' on {0}', matrix.os) || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +52,7 @@ jobs:
       # artifact is produced on pull requests too, where it is downloadable for review; only the
       # `pages` job below publishes it, and only from main.
       - name: Package the docs for GitHub Pages
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/html
