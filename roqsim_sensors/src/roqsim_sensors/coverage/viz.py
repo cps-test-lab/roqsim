@@ -113,7 +113,7 @@ def render_coverage_3d(
         sel = np.linspace(0, len(points) - 1, max_markers).astype(int)
         points, counts = points[sel], counts[sel]
 
-    # The model's declared offscreen size caps the picture, as it always has.
+    # The model's declared offscreen size caps the picture.
     height = min(size, int(model.vis.global_.offheight))
     width = min(size, int(model.vis.global_.offwidth))
     eye = np.eye(3, dtype=np.float64).reshape(-1)
