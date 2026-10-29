@@ -771,6 +771,16 @@ def _vopt(geomgroup) -> mujoco.MjvOption:
     return vopt
 
 
+#: The names of the GL error codes ``glGetError`` returns.
+_GL_ERROR_NAMES = {
+    0x0500: "GL_INVALID_ENUM",
+    0x0501: "GL_INVALID_VALUE",
+    0x0502: "GL_INVALID_OPERATION",
+    0x0505: "GL_OUT_OF_MEMORY",
+    0x0506: "GL_INVALID_FRAMEBUFFER_OPERATION",
+}
+
+
 class _Atlas:
     """One single-sampled colour framebuffer every view's colour image is copied into, read back once.
 
@@ -791,18 +801,36 @@ class _Atlas:
         self.width = 0
         self.height = 0
         self.max_size = int(GL.glGetIntegerv(GL.GL_MAX_RENDERBUFFER_SIZE))
+        #: Whether a GL error MuJoCo left behind has been logged (the first one per renderer is).
+        self._reported = False
 
     def _clear_errors(self) -> None:
-        """Drop GL errors MuJoCo's own calls left behind, which it does not check.
+        """Take the GL errors MuJoCo's own calls left behind, which it does not check.
 
         PyOpenGL checks ``glGetError`` after every call it makes, so an error MuJoCo raised and
         ignored -- a light past the eight it draws is a ``GL_INVALID_ENUM`` in every frame -- would
-        be reported as this atlas's.
+        be reported as this atlas's. The first such error of a renderer is logged, the rest are
+        not, and an out-of-memory error is raised: what was drawn under it cannot be trusted.
         """
         GL = self.GL
+        errors = []
         for _ in range(64):
-            if GL.glGetError() == GL.GL_NO_ERROR:
-                return
+            code = int(GL.glGetError())
+            if code == GL.GL_NO_ERROR:
+                break
+            errors.append(code)
+        if not errors:
+            return
+        names = [_GL_ERROR_NAMES.get(code, hex(code)) for code in errors]
+        if int(GL.GL_OUT_OF_MEMORY) in errors:
+            raise RenderError(f"the GPU ran out of memory drawing this batch (GL errors {names})")
+        if not self._reported:
+            self._reported = True
+            _logger.warning(
+                "MuJoCo's drawing left GL error(s) %s, which it does not check; the pictures are "
+                "drawn on, and later ones are not logged",
+                ", ".join(names),
+            )
 
     def pack(self, sizes: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
         """Tile origins for *sizes*, in order; grows the buffer to hold them."""
@@ -875,8 +903,13 @@ class _Atlas:
         out = np.empty((height, width, 3), dtype=np.uint8)
         GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, self.fbo)
         GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT0)
+        alignment = int(GL.glGetIntegerv(GL.GL_PACK_ALIGNMENT))
         GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)
-        GL.glReadPixels(0, 0, width, height, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, out)
+        try:
+            GL.glReadPixels(0, 0, width, height, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, out)
+        finally:
+            # MuJoCo's own read-backs run in this context after it.
+            GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, alignment)
         mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, con)
         return out
 
@@ -1205,6 +1238,8 @@ class RenderView:
         self.wants = wants
         #: Which instance of its renderer draws it (:attr:`RenderService.workers`).
         self.shard = 0
+        #: The views dealt together (:meth:`RenderService.view`): one camera's passes.
+        self.group = spec.id
         self._frame: Frame | None = None
         self._fresh = False
 
@@ -1288,7 +1323,11 @@ class _Worker:
             target=self._run, name=f"roqsim-render-{name}-{shard}", daemon=True
         )
         self.thread.start()
-        self.opened.wait()
+        if not self.opened.wait(service.timeout_s):
+            raise RenderError(
+                f"renderer {name!r} (worker {shard}) did not open within {service.timeout_s:g} s "
+                "(sim.render.timeout_s)"
+            )
         if self.error is not None:
             raise RenderError(f"renderer {name!r} failed to open: {self.error}") from self.error
 
@@ -1390,6 +1429,7 @@ class RenderService:
         renderers: Mapping[str, Mapping] | None = None,
         mode: str = "sync",
         workers: int = 1,
+        timeout_s: float = 60.0,
         base_dir=None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -1400,6 +1440,9 @@ class RenderService:
         #: How many instances of each renderer share its cameras (``sim.render.workers``): one
         #: context each, and in ``async`` mode one thread each. Cameras are dealt to them in turn.
         self.workers = int(workers)
+        #: How long a caller waits for a worker to open or to draw a batch it waits for
+        #: (``sim.render.timeout_s``); past it, the renderer is named as hung.
+        self.timeout_s = float(timeout_s)
         self.model = model
         self.default_renderer = renderer
         self.settings = {str(k): dict(v or {}) for k, v in (renderers or {}).items()}
@@ -1429,6 +1472,7 @@ class RenderService:
             renderers=config.renderers,
             mode=config.render["mode"],
             workers=config.render["workers"],
+            timeout_s=config.render["timeout_s"],
             base_dir=getattr(config, "base_dir", None),
             logger=logger,
         )
@@ -1448,6 +1492,7 @@ class RenderService:
                 renderers=sim.get("renderers") or {},
                 mode=(sim.get("render") or {}).get("mode", "sync"),
                 workers=(sim.get("render") or {}).get("workers", 1),
+                timeout_s=(sim.get("render") or {}).get("timeout_s", 60.0),
                 logger=ctx.logger,
             )
         return ctx.render
@@ -1469,8 +1514,14 @@ class RenderService:
         geomgroup: Sequence[int] | None = None,
         decorated: bool = False,
         max_geom: int | None = None,
+        group: str | None = None,
     ) -> RenderView:
-        """Register a camera; nothing renders until it is due (``wants``) or asked (:meth:`render_now`)."""
+        """Register a camera; nothing renders until it is due (``wants``) or asked (:meth:`render_now`).
+
+        Views of one *group* (one camera's passes: its colour, and a depth camera of its own) are
+        dealt to the same instance of their renderer, so they are drawn in one batch from one
+        snapshot and arrive together; a view names no group but its own by default.
+        """
         camera = resolve_camera(self.model, camera)
         unknown = sorted(set(images) - set(IMAGES))
         if unknown:
@@ -1490,9 +1541,16 @@ class RenderService:
             max_geom=max_geom,
         )
         view = RenderView(self, spec, renderer or self.default_renderer, wants)
-        # Dealt to the renderer's instances in turn: the shard is the service's choice, never a
-        # camera's, so a second context, GPU or process changes no camera plugin.
-        view.shard = sum(1 for v in self.views if v.renderer == view.renderer) % self.workers
+        view.group = id if group is None else str(group)
+        # Groups are dealt to the renderer's instances in turn: the shard is the service's choice,
+        # never a camera's, so a second context, GPU or process changes no camera plugin.
+        groups: list[str] = []
+        for v in self.views:
+            if v.renderer == view.renderer and v.group not in groups:
+                groups.append(v.group)
+        if view.group not in groups:
+            groups.append(view.group)
+        view.shard = groups.index(view.group) % self.workers
         if any(name == view.renderer for name, _ in [*self._renderers, *self._workers]):
             raise RenderError(
                 f"view {id!r} registered after renderer {view.renderer!r} opened; register every "
@@ -1720,8 +1778,12 @@ class RenderService:
         if not wait:
             return []
         frames = []
-        for job in jobs:
-            job.done.wait()
+        for (name, shard), job in zip(by_renderer, jobs, strict=True):
+            if not job.done.wait(self.timeout_s):
+                raise RenderError(
+                    f"renderer {name!r} (worker {shard}) drew no frames within {self.timeout_s:g} s "
+                    "(sim.render.timeout_s); it is hung or far slower than that"
+                )
             if job.error is not None:
                 raise RenderError(f"renderer failed: {job.error}") from job.error
             if job.frames is None:
@@ -1784,6 +1846,20 @@ class RenderService:
                 f"renderer {name!r} returned a frame for camera {view.id!r} that is not the one "
                 f"asked for: {'; '.join(problems)}"
             )
+
+    def take(self, views: Sequence[RenderView]) -> list[Frame | None]:
+        """Each of *views*' newest frame since its last take, all read at once.
+
+        One read under the lock a worker delivers under, so a camera's passes come from one batch
+        even while the next is being delivered.
+        """
+        self.raise_worker_error()
+        with self._lock:
+            out = []
+            for view in views:
+                out.append(view._frame if view._fresh else None)
+                view._fresh = False
+            return out
 
     def clear(self) -> None:
         """Forget every view's frames (an engine reset); a batch still being drawn is not delivered."""

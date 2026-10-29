@@ -100,7 +100,7 @@ def test_the_render_mode_is_one_of_two():
 def test_defaults_when_a_world_says_nothing():
     cfg = load_config_from_dict(_world({}))
     assert cfg.renderer == "mujoco"
-    assert cfg.render == {"mode": "sync", "workers": 1}
+    assert cfg.render == {"mode": "sync", "workers": 1, "timeout_s": 60.0}
     assert cfg.renderers == {}
 
 

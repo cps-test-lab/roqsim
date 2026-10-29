@@ -1370,9 +1370,10 @@ def _validate_pacing(pacing) -> None:
         raise PluginError(f"sim.pacing: {exc}") from None
 
 
-#: ``sim.render`` -- the render service's settings -- and their defaults: the mode, and how many
-#: instances of each renderer its cameras are dealt to (one context each; one thread each in async).
-RENDER_DEFAULTS = {"mode": "sync", "workers": 1}
+#: ``sim.render`` -- the render service's settings -- and their defaults: the mode, how many
+#: instances of each renderer its cameras are dealt to (one context each; one thread each in async),
+#: and how long a caller waits for a worker to open or to draw a batch before naming it hung.
+RENDER_DEFAULTS = {"mode": "sync", "workers": 1, "timeout_s": 60.0}
 
 
 def validate_render(sim: dict, base_dir: Path | None) -> None:
@@ -1398,6 +1399,9 @@ def validate_render(sim: dict, base_dir: Path | None) -> None:
         workers = render.get("workers", 1)
         if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
             raise PluginError(f"sim.render.workers: a whole number >= 1, got {workers!r}")
+        timeout = render.get("timeout_s", 60.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise PluginError(f"sim.render.timeout_s: a number of seconds > 0, got {timeout!r}")
         if render.get("mode") == "async" and ((sim.get("sync") or {}).get("enabled")):
             raise PluginError(
                 "sim.render.mode: async cannot run with sim.sync.enabled: a lockstep tick waits "

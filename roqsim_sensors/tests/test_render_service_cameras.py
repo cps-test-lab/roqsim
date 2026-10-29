@@ -306,3 +306,30 @@ def test_two_mujoco_workers_hold_two_contexts_and_draw_the_same_frames():
     assert one.keys() == two.keys()
     for key in one:
         np.testing.assert_array_equal(one[key], two[key], err_msg=key)
+
+
+def test_a_cameras_views_share_one_worker_and_arrive_together_in_async_mode():
+    """A camera with two views (colour, and depth through its own optics) is dealt to one worker as
+    a whole, so its frames of one snapshot arrive together, stepped as fast as physics goes."""
+    engine = _engine(
+        [*_props(), _spot_station(), *_ring(3)], sim={"render": {"mode": "async", "workers": 2}}
+    )
+    from roqsim_sensors.plugins.spot_body_camera import SpotBodyCameraPlugin
+
+    plugin = next(p for p in engine.plugins if isinstance(p, SpotBodyCameraPlugin))
+    eps = {ep.name: ep for ep in engine.ctx.interface.all() if ep.producer.startswith("station")}
+    for name in ("image", "depth", "registered_depth"):
+        eps[name].claim()
+    try:
+        assert {v.shard for v in plugin._views.values()} == {plugin._views["color"].shard}
+        assert len({v.shard for v in engine.ctx.render.views}) == 2  # the rest is dealt on
+        stamps = set()
+        for _ in range(400):  # no pause: the worker falls behind and frames arrive mid-tick
+            engine.step()
+            if plugin._frames:
+                assert plugin._frames.keys() == {"color", "depth"}
+                assert plugin._frames["depth"].frame.sim_time == plugin._stamp
+                stamps.add(plugin._stamp)
+        assert len(stamps) > 1
+    finally:
+        engine.shutdown()

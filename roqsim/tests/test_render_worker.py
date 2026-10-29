@@ -86,6 +86,26 @@ class FailsOpen(Slow):
         FailsOpen.closed = True
 
 
+class Hangs(Slow):
+    """Never finishes a batch until released."""
+
+    delay = 0.0
+    release = threading.Event()
+
+    def render(self, snapshot, requests):
+        Hangs.release.wait(30)
+        return super().render(snapshot, requests)
+
+
+class OpenHangs(Slow):
+    """Never finishes opening until released."""
+
+    release = threading.Event()
+
+    def open(self, scene):
+        OpenHangs.release.wait(30)
+
+
 class Cam(Plugin):
     """One model camera, due every tick, as a camera plugin registers its view."""
 
@@ -105,14 +125,14 @@ def _settle(service, ticks: int, timeout: float = 30.0) -> None:
         time.sleep(0.01)
 
 
-def _engine(renderer: str, mode: str) -> Engine:
+def _engine(renderer: str, mode: str, **render) -> Engine:
     SEEN.clear()
     cfg = load_config_from_dict(
         {
             "sim": {
                 "timestep": 0.002,
                 "renderer": f"{__name__}:{renderer}",
-                "render": {"mode": mode},
+                "render": {"mode": mode, **render},
             },
             "components": [{f"{__name__}:Cam": {}}],
         }
@@ -238,6 +258,30 @@ def test_a_renderer_whose_open_failed_on_its_worker_is_closed():
     finally:
         engine.shutdown()
     assert FailsOpen.closed
+
+
+def test_a_hung_worker_fails_the_wait_naming_its_renderer():
+    Hangs.release.clear()
+    engine = _engine("Hangs", "async", timeout_s=0.3)
+    view = engine.plugins[0].view
+    try:
+        engine.step()  # the worker takes this batch and hangs in it
+        with pytest.raises(RenderError, match=r"Hangs' \(worker 0\) drew no frames within 0.3 s"):
+            engine.ctx.render.render_now([(view, ("rgb",))], engine.ctx.data)
+    finally:
+        Hangs.release.set()
+        engine.shutdown()
+
+
+def test_a_worker_that_never_opens_fails_the_tick_naming_its_renderer():
+    OpenHangs.release.clear()
+    engine = _engine("OpenHangs", "async", timeout_s=0.3)
+    try:
+        with pytest.raises(RenderError, match=r"OpenHangs' \(worker 0\) did not open within"):
+            engine.step()
+    finally:
+        OpenHangs.release.set()
+        engine.shutdown()
 
 
 def test_lockstep_cannot_render_async():

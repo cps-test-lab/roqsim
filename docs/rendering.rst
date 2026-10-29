@@ -17,7 +17,9 @@ The lines a world writes
      render:                 # the render service's own settings
        mode: sync            # sync (default): the tick waits for its due frames, deterministic
                              # async: frames come from a render thread, stamped with their own sim time
-       workers: 1            # instances of each renderer its cameras are dealt to (a context each)
+       workers: 1            # instances of each renderer its cameras are dealt to (a context each);
+                             # one camera's views (colour, its own depth optics) go to one instance
+       timeout_s: 60         # how long a worker may take to open or to draw a batch waited for
      renderers:              # one settings block per renderer, validated by that renderer
        mujoco: {atlas: true} # `roqsim renderers describe mujoco` lists its keys
 

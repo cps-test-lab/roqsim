@@ -727,9 +727,11 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    ``dropped``), so nothing queues, and a frame is stamped with its snapshot's time, a tick or more
    before the one that publishes it; its noise is drawn at that time (``ctx.rng_for(..., at=)``), so
    an async frame is the sync frame of its stamp. A worker whose renderer failed raises on the
-   physics thread at the next tick. ``sim.render.workers`` deals each renderer's cameras to that many
-   instances (a context each; a thread each in ``async``) -- the seam a second GPU or process goes
-   behind, which no camera plugin sees.
+   physics thread at the next tick, and a worker that does not open or draw a batch a caller waits
+   for within ``sim.render.timeout_s`` is named as hung. ``sim.render.workers`` deals each
+   renderer's cameras to that many instances (a context each; a thread each in ``async``), one
+   camera's views together (a view's ``group``), so its passes of one snapshot arrive as one -- the
+   seam a second GPU or process goes behind, which no camera plugin sees.
 -  **MuJoCo's renderer** holds one ``MjrContext`` and one upload per instance, whatever the camera
    count, and sizes its offscreen framebuffer to its largest camera in its own context, never in the
    shared model. Per batch it builds the scene once (``mjv_updateScene``); each camera then sets only

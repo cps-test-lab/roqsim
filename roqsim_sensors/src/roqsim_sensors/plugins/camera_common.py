@@ -501,6 +501,7 @@ class CameraPlugin(Plugin):
                 images=sorted(declared.get(key, ())),
                 renderer=self.renderer,
                 wants=self._wants(ctx, key),
+                group=self.address,
             )
 
     def _wants(self, ctx: SimContext, key: str):
@@ -645,16 +646,21 @@ class CameraPlugin(Plugin):
 
     def _take(self) -> dict[str, Frame] | None:
         """This camera's frames delivered since the last take, every pass of one snapshot."""
-        colour = self._views["color"].take() if self._views else None
+        if not self._views:
+            return None
+        keys = list(self._views)
+        # At once: the passes of one snapshot are delivered together, and read together.
+        taken = dict(
+            zip(keys, self._views["color"].service.take(list(self._views.values())), strict=True)
+        )
+        colour = taken["color"]
         if colour is None:
             return None
-        frames = {"color": colour}
-        for key, view in self._views.items():
-            if key != "color":
-                frame = view.take()
-                if frame is not None and frame.sim_time == colour.sim_time:
-                    frames[key] = frame
-        return frames
+        return {
+            key: frame
+            for key, frame in taken.items()
+            if frame is not None and frame.sim_time == colour.sim_time
+        }
 
     def capture(self, ctx: SimContext) -> None:
         """Render every pass of this camera for the state ``ctx.data`` holds, now."""
