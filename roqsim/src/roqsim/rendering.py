@@ -1263,6 +1263,8 @@ class _Worker:
         self.cv = threading.Condition()
         self.pending: _Job | None = None
         self.stopping = False
+        #: Set once the thread has ended; a batch posted after it would never be drawn.
+        self.ended = False
         self.error: BaseException | None = None
         self.renderer: Renderer | None = None
         self.opened = threading.Event()
@@ -1283,6 +1285,12 @@ class _Worker:
 
     def post(self, job: _Job) -> None:
         with self.cv:
+            if self.ended:
+                self.free.append(job.buffer)
+                raise RenderError(
+                    f"the render worker {self.shard} of {self.name!r} has ended"
+                    + (f": {self.error}" if self.error is not None else "")
+                ) from self.error
             dropped, self.pending = self.pending, job
             if dropped is not None:
                 self.free.append(dropped.buffer)
@@ -1296,6 +1304,13 @@ class _Worker:
             self.renderer.open(self.scene)
         except BaseException as err:  # noqa: BLE001 -- handed to the physics thread
             self.error = err
+            # What it took before it failed -- a context, a server process -- goes with it.
+            renderer, self.renderer = self.renderer, None
+            if renderer is not None:
+                with contextlib.suppress(Exception):
+                    renderer.close()
+            with self.cv:
+                self.ended = True
             self.opened.set()
             return
         self.opened.set()
@@ -1317,6 +1332,14 @@ class _Worker:
                         self.free.append(job.buffer)
                     job.done.set()
         finally:
+            with self.cv:
+                # A batch posted while the last one failed is answered, not left waiting.
+                self.ended = True
+                pending, self.pending = self.pending, None
+                if pending is not None:
+                    pending.error = self.error
+                    self.free.append(pending.buffer)
+                    pending.done.set()
             renderer, self.renderer = self.renderer, None
             with contextlib.suppress(Exception):
                 renderer.close()

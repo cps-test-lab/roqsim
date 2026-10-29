@@ -61,6 +61,31 @@ class Boom(Slow):
         return super().render(snapshot, requests)
 
 
+class Stalls(Slow):
+    """Holds its first batch until released, then fails it."""
+
+    delay = 0.0
+    drawing = threading.Event()
+    release = threading.Event()
+
+    def render(self, snapshot, requests):
+        Stalls.drawing.set()
+        Stalls.release.wait(30)
+        raise RuntimeError("the GPU went away")
+
+
+class FailsOpen(Slow):
+    """Takes something in open, then fails it; records whether it was closed."""
+
+    closed = False
+
+    def open(self, scene):
+        raise RuntimeError("no context here")
+
+    def close(self):
+        FailsOpen.closed = True
+
+
 class Cam(Plugin):
     """One model camera, due every tick, as a camera plugin registers its view."""
 
@@ -171,6 +196,48 @@ def test_a_worker_that_died_fails_the_next_tick_loudly():
                 time.sleep(0.005)
     finally:
         engine.shutdown()
+
+
+def test_a_batch_posted_while_the_worker_fails_is_answered_not_left_waiting():
+    Stalls.drawing.clear()
+    Stalls.release.clear()
+    engine = _engine("Stalls", "async")
+    service, view = engine.ctx.render, engine.plugins[0].view
+    outcome = {}
+
+    def ask():
+        try:
+            service.render_now([(view, ("rgb",))], engine.ctx.data)
+        except RenderError as err:
+            outcome["error"] = err
+
+    try:
+        engine.step()  # the worker takes this batch and stalls in it
+        assert Stalls.drawing.wait(30)
+        asker = threading.Thread(target=ask, daemon=True)
+        asker.start()
+        deadline = time.monotonic() + 30
+        while all(w.pending is None for w in service._workers.values()):
+            assert time.monotonic() < deadline, "the second batch was never posted"
+            time.sleep(0.01)
+        Stalls.release.set()  # the stalled batch fails, with the second one waiting behind it
+        asker.join(30)
+        assert not asker.is_alive(), "a batch posted behind a failing one was left waiting"
+        assert "the GPU went away" in str(outcome["error"])
+    finally:
+        Stalls.release.set()
+        engine.shutdown()
+
+
+def test_a_renderer_whose_open_failed_on_its_worker_is_closed():
+    FailsOpen.closed = False
+    engine = _engine("FailsOpen", "async")
+    try:
+        with pytest.raises(RenderError, match="no context here"):
+            engine.step()
+    finally:
+        engine.shutdown()
+    assert FailsOpen.closed
 
 
 def test_lockstep_cannot_render_async():
