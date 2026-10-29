@@ -27,8 +27,8 @@ The lines a world writes
        components:
          - realsense_d435: {renderer: mujoco}   # this camera only: overrides sim.renderer
 
-A world that says nothing draws through MuJoCo's renderer, synchronously, as it always has. From the
-command line the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
+A world that says nothing draws through MuJoCo's renderer, synchronously. From the command line
+the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
 
    roqsim sim world.yaml --renderer mujoco
    roqsim render world.yaml --out shot.png --renderer mujoco

@@ -30,7 +30,8 @@ Arrays travel as their bytes, never through JSON::
     -> open    {scene: {cameras, body_names, moving, settings}}  + blob scene.glb (optional)
                                                           <- opened
     -> render  {sim_time, step, requests: [{id, width, height, model, fovy, near, far, images,
-                pos, quat}]}  + blobs xpos, xquat          <- frames {frames: [{id, sim_time, step}]}
+                pos, quat}]}  + blobs xpos, xquat,         <- frames {frames: [{id, sim_time, step}]}
+                model/geom_rgba, model/geom_group
                                                               + blobs <id>/<image> per image
     -> close                                              <- closed
     any reply may instead be  error {message}
@@ -38,7 +39,10 @@ Arrays travel as their bytes, never through JSON::
 A request's ``pos``/``quat`` are the camera's world pose (``quat`` ``w, x, y, z``; MuJoCo's camera
 frame, looking down its -z with +y up). The scene, sent once, is the world as glTF 2.0 written by
 ``roqsim export gltf``'s writer (:mod:`roqsim.export_gltf`), so there is one walk of the scene, and
-the body table names the bodies the per-tick ``xpos``/``xquat`` rows belong to.
+the body table names the bodies the per-tick ``xpos``/``xquat`` rows belong to. The per-tick
+``model/<field>`` blobs are the model values that change at run time
+(:data:`roqsim.rendering.RUNTIME_MODEL_FIELDS`): an absent entity's geoms are in
+:data:`~roqsim.presence.ABSENT_GEOM_GROUP` with zero alpha, and a server draws none of them.
 
 **Failing loudly.** A server that cannot be reached within ``connect_timeout_s``, one that does not
 answer a tick within ``timeout_s``, one that closes the connection or answers ``error``, raises
@@ -350,11 +354,9 @@ class SocketRenderer(Renderer):
                 for r in requests
             ],
         }
-        reply = self._call(
-            header,
-            (("xpos", np.asarray(snapshot.xpos)), ("xquat", np.asarray(snapshot.xquat))),
-            "frames",
-        )
+        blobs = [("xpos", np.asarray(snapshot.xpos)), ("xquat", np.asarray(snapshot.xquat))]
+        blobs += [(f"model/{k}", np.asarray(v)) for k, v in snapshot.model_values.items()]
+        reply = self._call(header, blobs, "frames")
         frames = []
         answered = {f["id"]: f for f in reply.get("frames", [])}
         for r in requests:

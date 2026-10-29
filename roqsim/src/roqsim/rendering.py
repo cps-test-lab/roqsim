@@ -701,8 +701,9 @@ def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene) -> None:
 
 #: The model arrays that change at run time and that drawing reads: :mod:`roqsim.presence` hides an
 #: absent entity by moving its geoms to :data:`~roqsim.presence.ABSENT_GEOM_GROUP` and zeroing their
-#: alpha. A snapshot carries them, so a renderer off the physics thread draws the presence of the
-#: tick it renders and never reads the shared model while the physics thread writes it.
+#: alpha. A snapshot carries them, so a renderer off the physics thread or in another process draws
+#: the presence of the tick it renders and never reads the shared model while the physics thread
+#: writes it.
 RUNTIME_MODEL_FIELDS = ("geom_rgba", "geom_group")
 
 #: The geoms a scene holds unless a camera asks for more (``mujoco.Renderer``'s default).
@@ -1510,7 +1511,13 @@ class RenderService:
         renderer = self._renderers.get((name, shard))
         if renderer is None:
             renderer = self._construct(name)
-            renderer.open(self.describe(name, shard=shard))
+            try:
+                renderer.open(self.describe(name, shard=shard))
+            except BaseException:
+                # What it took before it failed -- a context, a server process -- goes with it.
+                with contextlib.suppress(Exception):
+                    renderer.close()
+                raise
             self._renderers[(name, shard)] = renderer
         return renderer
 
