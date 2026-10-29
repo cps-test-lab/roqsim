@@ -324,12 +324,15 @@ def test_a_cameras_views_share_one_worker_and_arrive_together_in_async_mode():
         assert {v.shard for v in plugin._views.values()} == {plugin._views["color"].shard}
         assert len({v.shard for v in engine.ctx.render.views}) == 2  # the rest is dealt on
         stamps = set()
-        for _ in range(400):  # no pause: the worker falls behind and frames arrive mid-tick
+        # No pause: the worker falls behind and frames arrive mid-tick. Stepped until frames of a
+        # few snapshots were consumed, however slow this machine's GL is.
+        deadline = time.monotonic() + 120
+        while len(stamps) < 5:
+            assert time.monotonic() < deadline, f"only {len(stamps)} frames in 120 s"
             engine.step()
             if plugin._frames:
                 assert plugin._frames.keys() == {"color", "depth"}
                 assert plugin._frames["depth"].frame.sim_time == plugin._stamp
                 stamps.add(plugin._stamp)
-        assert len(stamps) > 1
     finally:
         engine.shutdown()
