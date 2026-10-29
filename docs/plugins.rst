@@ -423,9 +423,9 @@ declares the observation layout, the joints the policy commands, the joints it m
 control gains, and the envelope it was trained for -- so adding a policy is dropping in a directory, not
 editing Python. Omit the key and the controller uses its bundled default, unchanged.
 
-Note the envelope is recorded, not enforced: outside it a policy does not fail, it balances worse. Check
-it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than trusting a
-port log to be read.
+Note the envelope is recorded, not enforced: outside it a policy does not fail, it balances worse.
+Check it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than
+trusting prose to be read.
 
 Navigation: a mover the simulator drives itself
 -----------------------------------------------
@@ -2586,6 +2586,14 @@ into a plugin's config, so a mesh or a CSV named there is invisible to every cal
 not exist are dropped, and the hook must never raise (callers treat it as best-effort). It is
 the same rule as ``transport_only``: a capability is declared by the plugin, never listed in
 the core.
+
+**If your plugin renders an image, implement ``scene_cameras``.** It returns a
+``roqsim.scene_content.SensorCamera`` per image -- the plugin's address, the MuJoCo camera it renders
+through, ``rgb`` or ``depth``, and the published size and focal lengths -- and the scene exporters
+place each as a camera on the body that camera is mounted on, so a viewer of the exported scene can
+look through the sensor. ``CameraPlugin`` implements it for every camera in ``roqsim_sensors``. As
+with ``sources``, the plugin declares it; the exporters never guess a sensor from the model's
+``<camera>`` list.
 
 **And resolve it against ``self.base_dir``, not the CWD.** That attribute is the directory of the
 world document the entry was declared in, so a path written beside the world resolves the same

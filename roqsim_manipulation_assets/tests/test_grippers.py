@@ -47,14 +47,30 @@ GRIPPERS = [
         (-0.0301, 0.001),
         0.0301,
         0.005,
-        61.2,  # PILZ's URDF stroke, NOT the PG+70 datasheet's 70 mm -- see the port log
+        61.2,  # PILZ's URDF stroke, NOT the PG+70 datasheet's 70 mm
         id="schunk_pg70",
+    ),
+    pytest.param(
+        "robotiq_hande",
+        ("hande_left_pad", "hande_right_pad"),
+        0.003,
+        ("hande_left_finger_joint", "hande_right_finger_joint"),
+        "fingers_actuator",
+        (0.0, 255.0),
+        0.0,
+        0.01025,
+        50.0,  # Robotiq's Hand-E manual, 5.2.1: stroke 50 mm
+        id="robotiq_hande",
     ),
 ]
 
-# A parcel narrow enough for the tighter of the two grippers, so one payload serves both tests.
+# A parcel narrow enough for the tightest gripper, so one payload serves every test: its 45 mm side
+# goes between the jaws.
 PARCEL_HALF = (0.03, 0.0225, 0.01875)
 PARCEL_MASS = 0.211
+# Grippers whose jaws close along their own x rather than y, where the parcel's long side would lie
+# between them. The parcel is turned for these, not the gripper: its mounting yaw is the model's.
+CLOSES_ALONG_X = {"robotiq_hande"}
 
 _TEST_WORLD = """<mujoco model="grasp_test">
   <option timestep="0.002" integrator="implicitfast" cone="elliptic" impratio="10"
@@ -117,7 +133,7 @@ def test_gripper_open_command_opens(
 ):
     """The ctrl value called open widens the jaws, not narrows them.
 
-    Both grippers reach their open end at the LOW end of ctrlrange, which for the Schunk means
+    Every gripper reaches its open end at the LOW end of ctrlrange, which for the Schunk means
     negative tendon coefficients.
     """
     m = _gripper_spec(model).compile()
@@ -144,18 +160,19 @@ def test_gripper_holds_parcel_under_gravity(
     """Closed on a parcel, the grasp does not creep once gravity is switched on.
 
     The parcel is gripped near its TOP edge rather than through its centre. That is not a convenience:
-    both grippers have short jaws set close to the palm face (the PG+70's are 10 mm blocks 2.5 mm off
+    the grippers have short jaws set close to the palm face (the PG+70's are 10 mm blocks 2.5 mm off
     it), so a parcel centred on the jaw plane intersects the palm's own collision geometry and is
     ejected on the first step. Gripping the upper band is what a short-jaw gripper physically does.
     """
     palm_z = 0.5
-    jaw_plane = {"robotiq_2f85": 0.1488, "schunk_pg70": 0.0789}[model]
+    jaw_plane = {"robotiq_2f85": 0.1488, "schunk_pg70": 0.0789, "robotiq_hande": 0.14675}[model]
     parcel_z = palm_z - (jaw_plane + PARCEL_HALF[2] - jaw_half_z)
+    hx, hy = PARCEL_HALF[:2]
+    if model in CLOSES_ALONG_X:
+        hx, hy = hy, hx
 
     world = mujoco.MjSpec.from_string(
-        _TEST_WORLD.format(
-            pz=parcel_z, hx=PARCEL_HALF[0], hy=PARCEL_HALF[1], hz=PARCEL_HALF[2], mass=PARCEL_MASS
-        )
+        _TEST_WORLD.format(pz=parcel_z, hx=hx, hy=hy, hz=PARCEL_HALF[2], mass=PARCEL_MASS)
     )
     frame = world.worldbody.add_frame()
     frame.pos = [0.0, 0.0, palm_z]

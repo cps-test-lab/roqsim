@@ -37,7 +37,7 @@ JOINT_RANGES = {
 }
 #: UFACTORY publishes a 700 mm working radius; the flange reaches 770 mm because `attachment_site`
 #: sits at the tool flange, past the wrist the datasheet measures to. Upstream reaches exactly the
-#: same distance, so this is inherited, not introduced -- see the port log.
+#: same distance, so this is inherited, not introduced.
 FLANGE_RADIUS = 0.770
 
 

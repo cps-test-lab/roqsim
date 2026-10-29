@@ -1,0 +1,53 @@
+# FANUC M-20iD/25 (FANUC's URDF name m20_25_18d; R-50iA name M-20/25-18D), an industrial arm:
+# 25 kg payload, 1831 mm reach, 250 kg (FANUC Europe MDS-03437-EN "M-20iD/25 (Hollow wrist)").
+# Generated from FANUC's own description: external/convert/build_fanuc_mjcf.py.
+#
+# Over ROS 2 the arm answers as FANUC's driver does (fanuc_driver_interface; roqsim's
+# docs/interfaces.rst has the table of every name): joints J1..J6 under the driver's prefix
+# (spawn_arm's `prefix`, arm_controller's `joint_prefix` and fanuc_driver_interface's `prefix`).
+components:
+  - arm_controller:
+      # FANUC's driver names (fanuc_hardware_interface/config/ros2_controllers.yaml): the scaled
+      # trajectory controller, the broadcaster, the forward position controller it defines but does
+      # not spawn, and the constraints it grades a goal by.
+      controller_name: joint_trajectory_controller
+      controller_type: fanuc_controllers/ScaledJointTrajectoryController
+      joint_state_broadcaster_name: joint_state_broadcaster
+      forward_command_controller: forward_position_controller
+      stream_commands: true
+      goal_tolerance: 0.05
+      path_tolerance: 0.25
+      goal_time_tolerance: 0.0       # 0: no limit, upstream's convention
+      allow_partial_joints_goal: false
+      allow_nonzero_velocity_at_trajectory_end: false
+      # The hardware exports position and velocity, no effort (*_ros2_control_macro.xacro); the
+      # broadcaster publishes every control period (update_rate 500 Hz, the physics step), the
+      # trajectory controller's state at state_publish_rate.
+      state_interfaces: [position, velocity]
+      joint_state_rate: 0.0
+      controller_state_rate: 100.0
+      dynamic_joint_states: true
+      # A servo handed only positions trails a trajectory by kv*qd/kp; FANUC's own controller
+      # does not. Both command paths are fed forward.
+      trajectory_feedforward: velocity
+      command_feedforward: velocity
+      # FANUC's maximum speeds (datasheet and description agree), rad/s: 210, 210, 265, 420, 420,
+      # 720 deg/s.
+      max_velocity:
+        J1: 3.66519
+        J2: 3.66519
+        J3: 4.62512
+        J4: 7.33038
+        J5: 7.33038
+        J6: 12.5664
+  - fanuc_driver_interface:
+      collaborative: false
+      # FANUC's example_gpio_config_small.yaml (fanuc_hardware_interface/config, Apache-2.0), the
+      # gpio map fanuc_physical_control.launch.py and the template MoveIt launch load by default.
+      gpio_topic_config:
+        io_state: [{type: F, start: 1, length: 8}]
+        io_cmd: [{type: F, start: 1, length: 8}]
+        num_reg_state: [{start: 1, length: 3}]
+        num_reg_cmd: [{start: 3, length: 3}]
+end_effector:
+  site: tool_site

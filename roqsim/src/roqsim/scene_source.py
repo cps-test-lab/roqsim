@@ -1,14 +1,18 @@
 """Where a scene export gets its model: a world YAML through the real build pipeline, or a bare MJCF.
 
-Every exporter of a whole scene (``roqsim export web``, ``roqsim export gltf``) takes the same source
-options, through :func:`add_source_options`, and compiles through :func:`compile_source`, so an export
-is the scene the simulator builds and two exports of one world are exports of the same model.
+Every exporter of a whole scene (``roqsim export gltf``) takes the same source options, through
+:func:`add_source_options`, and compiles through :func:`compile_source`, so an export is the scene
+the simulator builds.
+
+:func:`compile_from_world` and :func:`compile_world` are public: a script that needs the model a
+world builds, rather than a file, compiles it with them.
 
 * ``--world``: the world YAML, compiled with its plugins, reset, and optionally stepped
-  (:func:`compile_from_world`);
+  (:func:`compile_from_world`); its plugins' :meth:`~roqsim.plugin.Plugin.scene_cameras` say which
+  sensors a viewer can look through;
 * ``--mjcf``: a bare MJCF, compiled directly with no plugins and no reset
-  (:func:`compile_from_mjcf`). The options that act on a world are refused with it
-  (:func:`refuse_options_for_mjcf`) rather than ignored.
+  (:func:`compile_from_mjcf`), so it has no sensors. The options that act on a world are refused
+  with it (:func:`refuse_options_for_mjcf`) rather than ignored.
 """
 
 from __future__ import annotations
@@ -18,12 +22,24 @@ import errno
 import json
 import logging
 from pathlib import Path
+from typing import NamedTuple
 
 import mujoco
 
 from .config import drop_transport_plugins, load_config, world_sources
 from .engine import Engine
 from .override_options import add_override_options, overrides_from_options, refuse_world_options
+from .scene_content import SensorCamera
+
+
+class CompiledSource(NamedTuple):
+    """What :func:`compile_source` compiled: the model, the state to export, the world's authored
+    free-camera framing and the sensor cameras its plugins declare."""
+
+    model: mujoco.MjModel
+    data: mujoco.MjData
+    view: dict
+    cameras: list[SensorCamera]
 
 
 def add_source_options(parser: argparse.ArgumentParser) -> None:
@@ -97,6 +113,21 @@ def compile_from_world(
     logger: logging.Logger,
     settle_steps: int = 0,
 ) -> tuple[mujoco.MjModel, mujoco.MjData, dict]:
+    """Compile a world YAML through the real build pipeline: ``(model, data, view)``.
+
+    :func:`compile_world`, for a caller that needs no sensor cameras.
+    """
+    model, data, view, _cameras = compile_world(world, skip, overrides, logger, settle_steps)
+    return model, data, view
+
+
+def compile_world(
+    world: str | Path,
+    skip: set[str],
+    overrides: dict,
+    logger: logging.Logger,
+    settle_steps: int = 0,
+) -> CompiledSource:
     """Compile a world YAML through the real build pipeline, so the export == the simulated scene.
 
     Transport plugins are dropped first -- a geometry export needs no bridge, and one may not even be
@@ -113,7 +144,8 @@ def compile_from_world(
     forward runs *before* the walker re-poses). ``settle_steps`` optionally steps physics a little
     further (e.g. to let a dropped free body settle) before the state is captured.
 
-    Returns ``(model, data, view)``, ``view`` being the world's authored free-camera framing.
+    The sensor cameras are asked of the plugins while they are configured, so a camera's id and
+    its intrinsics are the ones the run renders with.
     """
     cfg = load_config(world, overrides or None)
     transport, unavailable = drop_transport_plugins(cfg)
@@ -139,7 +171,12 @@ def compile_from_world(
         mujoco.mj_forward(engine.ctx.model, engine.ctx.data)  # re-posed mocap into data.xpos
         for _ in range(max(0, settle_steps)):
             engine.step()
-        return engine.ctx.model, engine.ctx.data, cfg.view
+        return CompiledSource(engine.ctx.model, engine.ctx.data, cfg.view, declared_cameras(engine))
+
+
+def declared_cameras(engine: Engine) -> list[SensorCamera]:
+    """The sensor cameras the configured plugins of *engine* declare, in plugin order."""
+    return [c for p in engine.plugins for c in p.scene_cameras(engine.ctx)]
 
 
 def skip_set(args: argparse.Namespace) -> set[str]:
@@ -147,15 +184,13 @@ def skip_set(args: argparse.Namespace) -> set[str]:
     return {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
 
 
-def compile_source(
-    args: argparse.Namespace, logger: logging.Logger
-) -> tuple[mujoco.MjModel, mujoco.MjData, dict]:
-    """Compile the source the parsed :func:`add_source_options` name: ``(model, data, view)``."""
+def compile_source(args: argparse.Namespace, logger: logging.Logger) -> CompiledSource:
+    """Compile the source the parsed :func:`add_source_options` name."""
     if args.mjcf:
-        return compile_from_mjcf(Path(args.mjcf))
+        return CompiledSource(*compile_from_mjcf(Path(args.mjcf)), [])
     # Resolved by the same function as `roqsim sim`'s, because an export that resolved overrides
     # differently from the run would compile geometry the run never had.
-    return compile_from_world(
+    return compile_world(
         args.world,
         skip_set(args),
         overrides_from_options(args),

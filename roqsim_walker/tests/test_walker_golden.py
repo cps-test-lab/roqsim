@@ -38,13 +38,13 @@ nothing.
 from __future__ import annotations
 
 import math
-import os
 from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
 
+from roqsim import env
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim_walker.humanoid import JOINT_NAMES
@@ -158,7 +158,7 @@ def test_walk_matches_the_recorded_reference(case):
     reference = DATA / f"walker_golden_{case}.npz"
     recorded = _record(world, waypoints)
 
-    if os.environ.get("ROQSIM_REGEN_GOLDEN"):
+    if env.get("ROQSIM_REGEN_GOLDEN"):
         DATA.mkdir(parents=True, exist_ok=True)
         if reference.exists():
             before = np.load(reference)["frames"]

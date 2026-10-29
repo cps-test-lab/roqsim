@@ -26,6 +26,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points
 
 import pytest
+from installed_requirements import not_installed_with_its_requirements
 
 from roqsim.introspection import _config_keys_read, undeclared_config_reads
 from roqsim.plugin import Plugin
@@ -63,23 +64,29 @@ SELF_WRITTEN = {
 }
 
 
-def _plugins() -> tuple[list[tuple[str, type]], dict[str, str]]:
-    """Every installed plugin entry, loaded, and the ones that would not load with their errors.
+def _plugins() -> tuple[list[tuple[str, type]], dict[str, str], dict[str, str]]:
+    """Every installed plugin entry, loaded; the ones that would not load, with their errors; and
+    the ones whose package was installed without a requirement it declares, with which.
 
     A failure is recorded rather than raised: raised here, at collection, one plugin whose
-    dependencies are missing would abort every test in this package. It still fails the guard,
-    loudly and by name, in :func:`test_every_plugin_entry_loads`.
+    dependencies are missing would abort every test in this package. A plugin that does not load
+    for any other reason fails the guard, loudly and by name, in
+    :func:`test_every_plugin_entry_loads`; an incompletely installed one is skipped, named
+    (:mod:`installed_requirements`).
     """
-    loaded, failed = [], {}
+    loaded, failed, incomplete = [], {}, {}
     for ep in entry_points(group=ENTRY_POINT_GROUP):
         try:
             loaded.append((ep.name, ep.load()))
         except Exception as err:  # noqa: BLE001 - reported per plugin by the test below
-            failed[ep.name] = f"{ep.value}: {type(err).__name__}: {err}"
-    return sorted(loaded, key=lambda item: item[0]), failed
+            if reason := not_installed_with_its_requirements(ep):
+                incomplete[ep.name] = reason
+            else:
+                failed[ep.name] = f"{ep.value}: {type(err).__name__}: {err}"
+    return sorted(loaded, key=lambda item: item[0]), failed, incomplete
 
 
-PLUGINS, UNLOADABLE = _plugins()
+PLUGINS, UNLOADABLE, INCOMPLETE = _plugins()
 
 
 def _exempt(name: str) -> set[str]:
@@ -99,6 +106,15 @@ def test_every_plugin_entry_loads():
     assert not UNLOADABLE, "plugin entries that do not load, so the guard cannot check them:\n" + (
         "\n".join(f"  {name}: {why}" for name, why in sorted(UNLOADABLE.items()))
     )
+
+
+def test_no_plugin_package_is_installed_without_its_requirements():
+    """Said rather than failed: a package installed with --no-deps is the installation's doing."""
+    if INCOMPLETE:
+        pytest.skip(
+            "not checked, installed without what they declare: "
+            + "; ".join(f"{name}: {why}" for name, why in sorted(INCOMPLETE.items()))
+        )
 
 
 @pytest.mark.parametrize(
@@ -153,6 +169,8 @@ def test_a_plugin_with_a_schema_writes_no_config_block_of_its_own(name, cls):
 @pytest.mark.parametrize(("name", "key"), sorted(REFUSED))
 def test_a_key_read_to_be_refused_is_refused(name, key):
     """An exemption that outlives its refusal would hide a key read as a setting."""
+    if name in INCOMPLETE:
+        pytest.skip(INCOMPLETE[name])
     cls = dict(PLUGINS)[name]
     errors = cls({}).config_errors({key: 1})
     assert any(f"'{key}'" in e for e in errors), (name, key, errors)
@@ -160,11 +178,17 @@ def test_a_key_read_to_be_refused_is_refused(name, key):
 
 def test_every_exemption_names_an_installed_plugin_and_a_key_it_reads():
     plugins = dict(PLUGINS)
+    unchecked = []
     for name, key in (*REFUSED, *SELF_WRITTEN):
+        if name in INCOMPLETE:
+            unchecked.append(f"{name}: {INCOMPLETE[name]}")
+            continue
         assert name in plugins, f"exemption for {name!r}, which is not an installed plugin"
         assert key in _config_keys_read(plugins[name]), (
             f"{name} no longer reads {key!r}; drop its exemption"
         )
+    if unchecked:
+        pytest.skip("the rest hold; not checked: " + "; ".join(sorted(set(unchecked))))
 
 
 # -- the reader itself ------------------------------------------------------------------------------

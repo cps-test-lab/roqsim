@@ -8,18 +8,23 @@ ship with that experiment, so what is here is what any user of the substrate can
 
 | kind | models |
 |---|---|
-| arms | `ur10e`, `ur5e`, `panda`, `gen3` (7-DOF + integrated Robotiq 2F-85), `xarm7`, `lbr_iiwa7`, `lbr_iiwa14` (KUKA LBR iiwa 7 R800 / 14 R820, with lbr_fri_ros2_stack's ROS 2 interface), `m1013`, `vx300s`, `wx250s`, `open_manipulator_x` |
-| grippers | `robotiq_2f85` (85 mm), `schunk_pg70` (61 mm) — standalone and attachable to any flange |
+| arms | `ur10e`, `ur5e`, `ur30` (UR's kinematics, masses and torque limits; the ur10e's meshes reshaped to it), `panda`, `gen3` (7-DOF + integrated Robotiq 2F-85), `xarm7`, `lbr_iiwa7`, `lbr_iiwa14` (KUKA LBR iiwa 7 R800 / 14 R820, with lbr_fri_ros2_stack's ROS 2 interface), `m1013`, `m20id25` (FANUC M-20iD/25) and `crx25ia` (FANUC CRX-25iA, built from FANUC's `crx30ia`, the CRX-30iA's description, which FANUC names the official one for it), both from FANUC's own description and answering ROS 2 as FANUC's driver does, `vx300s`, `wx250s`, `open_manipulator_x` |
+| grippers | `robotiq_2f85` (85 mm), `robotiq_hande` (50 mm), `schunk_pg70` (61 mm) — standalone and attachable to any flange |
 
 ```sh
 roqsim sim roqsim_manipulation_assets:ur10e_demo
+roqsim sim roqsim_manipulation_assets:ur30_demo
 roqsim sim roqsim_manipulation_assets:gen3_demo
 roqsim sim roqsim_manipulation_assets:open_manipulator_x_demo
 roqsim sim roqsim_manipulation_assets:lbr_iiwa14_demo
+roqsim sim roqsim_manipulation_assets:m20id25_demo
+roqsim sim roqsim_manipulation_assets:crx25ia_demo
+roqsim sim roqsim_manipulation_assets:ur5e_robotiq_hande_demo
 python -m pytest roqsim_manipulation_assets/tests
 ```
 
-Each demo shows an arm holding its home pose. For a worked *contact* cell — peg, FT sensor, bored
+Each demo shows an arm holding its home pose; `ur5e_robotiq_hande_demo` also states where the Hand-E's
+TCP sits on the UR5e. For a worked *contact* cell — peg, FT sensor, bored
 block, and a choice of position or admittance control — see a downstream insertion experiment: the
 reusable halves (`ur5e`, `force_torque`, `cartesian_admittance`) are here and in
 `roqsim_sensors`/`roqsim_manipulation`, while the bored block and the world that assembles them ship with
@@ -35,7 +40,7 @@ src/roqsim_manipulation_assets/models/
     UR10e_LICENSE          # provenance for the vendored geometry
     ur10e.thumb.png        # make thumbnails, in roqsim/
     meshes/*.obj           # this model's meshes only
-  ur5e/ …  panda/ …  gen3/ …  robotiq_2f85/ …  schunk_pg70/ …  open_manipulator_x/ …
+  ur5e/ …  panda/ …  gen3/ …  robotiq_2f85/ …  robotiq_hande/ …  schunk_pg70/ …  open_manipulator_x/ …
 ```
 
 Same shape `roqsim_assets` uses for props, and `resolve_model` accepts it directly. A flat
@@ -53,7 +58,7 @@ apart anyway. Two consequences worth knowing:
 Every robot family with an actuated limb needs `arm_controller` — `roqsim_humanoid` for the G1's arms,
 `roqsim_mobile_manipulation` for Frankie's and TIAGo Pro's. Almost none of them needs these *models*.
 While plugins and geometry shared one package, wanting the shared limb controller meant installing
-**115 MB** of arms and grippers you never load.
+**about 160 MB** of arms and grippers you never load.
 
 The dependency runs `roqsim_manipulation_assets` → `roqsim_manipulation`, never the reverse: a model's
 manifest names the plugins intrinsic to it, while the plugins know nothing about any particular model.
@@ -72,6 +77,9 @@ experiments without being a special case.
 declares (`end_effector: {site: ...}`): the flange's `attachment_site`, or on the `ur5e` the
 `tool_site` past its force/torque stack, so a sensor at its `fts_site` reads the tool. The
 gripper's own manifest supplies the gripper half of `arm_controller`'s config — so swapping hands is
-one line of world YAML. See the model's MJCF for the measurements behind the PG+70's
-constants, and note both grippers are driven through a **tendon**: a non-joint transmission is what
-makes `arm_controller` expose a `GripperCommand` action instead of two more arm joints.
+one line of world YAML. See each model's MJCF for the measurements behind its constants (the Hand-E's
+are Robotiq's manual: 50 mm stroke, 185 N per jaw, 150 mm/s, 1.07 kg), and note every gripper here is
+driven through a **tendon**: a non-joint transmission is what makes `arm_controller` expose a
+`GripperCommand` action instead of two more arm joints. A `GripperCommand` position is the gripper
+joint's own value, so it differs by gripper (2F-85 knuckle radians, Hand-E and PG+70 finger metres);
+the `open`/`closed` states `roqsim export moveit` writes are what a MoveIt client swaps them by.

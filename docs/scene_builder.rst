@@ -264,11 +264,11 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
 
 * **target** — the same shapes as above (world / MJCF / model ref), plus a raw mesh. Optional when
   ``state`` is given, because a recording names the world it came from.
-* **state** / **at** — render a moment from a run recorded with ``roqsim sim --record``, at ``at``
-  *simulated* seconds or at a named moment (``"onset"``, where the run first moves, or
-  ``"onset+2.5"``). It snaps to the nearest recorded sample and reports which one it used, so a
-  caller sees it landed a few milliseconds off rather than assuming it did not. Omit ``at`` for the
-  last sample.
+* **state** / **at** — render a moment from a run recorded with ``roqsim sim --record`` (an
+  ``.mcap`` file), at ``at`` *simulated* seconds or at a named moment (``"onset"``, where the run
+  first moves, or ``"onset+2.5"``). It snaps to the nearest recorded sample and reports which one
+  it used, so a caller sees it landed a few milliseconds off rather than assuming it did not. Omit
+  ``at`` for the last sample.
 * **view** / **focus** / **camera** — ``KEY=VALUE`` overrides in the world's own ``sim.view``
   vocabulary (a vector value is comma- or space-separated: ``["lookat=-3.2 -1.3 1.9"]``); an entity to
   frame on, searching for a clear line of sight (what you want indoors); or a fixed MJCF ``<camera>``

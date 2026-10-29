@@ -1,7 +1,7 @@
 """Bundled wheeled-base MJCF models and meshes, one folder per model.
 
 Layout is ``models/<name>/<name>.xml`` with that model's meshes in its own ``meshes/`` subdir --
-referenced bare via ``<compiler meshdir="meshes">`` -- and its manifest, licence, port log and
+referenced bare via ``<compiler meshdir="meshes">`` -- and its manifest, licence and
 thumbnail beside it. The same shape ``roqsim_manipulation_assets`` and ``roqsim_assets`` use, and a form
 :func:`roqsim.models.resolve_model` accepts directly. A folder puts a model's files under one glob
 prefix, keeps two robots' same-named link meshes apart, and makes the grouping the filesystem's job,

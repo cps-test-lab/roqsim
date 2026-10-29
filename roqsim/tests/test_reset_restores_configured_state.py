@@ -45,6 +45,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from installed_requirements import not_installed_with_its_requirements
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
@@ -52,6 +53,7 @@ from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegist
 from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.rendering import RenderService
 from roqsim.types import JointState
 
 #: Physics steps a trial runs for, split around the setter calls.
@@ -203,7 +205,7 @@ def _trajectory_world(tmp_path: Path) -> dict:
 
 
 def _plugins(engine: Engine, name: str) -> list[Plugin]:
-    cls = _entry_point_classes()[name]
+    cls = _entry_point(name).load()
     return [p for p in engine.plugins if type(p) is cls]
 
 
@@ -250,7 +252,55 @@ PAYLOADS: dict[str, Any] = {
     "tare": None,
     "zero_ftsensor": None,
     "set_speed_slider": 0.5,
+    **{
+        f"{name}/target_frame": ([0.3, 0.2, 0.4], [1.0, 0.0, 0.0, 0.0])
+        for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
+    **{
+        f"{name}/target_wrench": ([0.0, 0.0, -5.0], [0.0, 0.0, 0.0])
+        for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
     "override": True,
+    "forward_commands": ([0.1, 0.1, 0.1, 0.0, -1.4, 0.1],),
+    # fanuc_driver_interface: its inputs and its services' requests, as the driver's messages are.
+    "speed_scaling_factor": 40,
+    "fanuc_gpio_controller.io_cmd": [{"io_type": {"type": "DO"}, "index": 101, "value": True}],
+    "fanuc_gpio_controller.analog_io_cmd": [],
+    "fanuc_gpio_controller.num_reg_cmd": [{"index": 3, "value": 2.0}],
+    **{
+        f"fanuc_gpio_controller.{name}": request
+        for name, request in {
+            "get_bool_io": {"io_type": {"type": "DO"}, "index": 101},
+            "set_bool_io": {"io_type": {"type": "DO"}, "index": 120, "value": True},
+            "get_analog_io": {"io_type": {"type": "AO"}, "index": 1},
+            "set_analog_io": {"io_type": {"type": "AO"}, "index": 1, "value": 2.0},
+            "get_group_io": {"io_type": {"type": "GO"}, "index": 1},
+            "set_group_io": {"io_type": {"type": "GO"}, "index": 1, "value": 3},
+            "get_num_reg": {"index": 1},
+            "set_num_reg": {"index": 1, "value": 4.0},
+            "get_pos_reg": {"index": 1},
+            "set_pos_reg": {"index": 1, "representation": "Joint", "j1": 5.0},
+            "set_gen_override": {"value": 50},
+            "set_payload_id": {"payload_schedule_id": 2},
+            "get_payload_id": {},
+            "set_payload_value": {"payload_schedule_id": 1, "mass": 2.0},
+            "get_payload_value": {"payload_schedule_id": 1},
+            "set_payload_comp": {"payload_schedule_id": 1, "mass": 2.0},
+            "get_payload_comp": {"payload_schedule_id": 1},
+            "read_error": {"count": 1},
+            "get_uframe_utool": {"group": 0},
+            "set_uframe_utool": {"uframe_number": 1, "utool_number": 1, "group": 0},
+            "get_uframe_data": {"uframe_number": 1, "group": 0},
+            "set_uframe_data": {"uframe_number": 1, "frame": {"x": 10.0}, "group": 0},
+            "get_utool_data": {"utool_number": 1, "group": 0},
+            "set_utool_data": {"utool_number": 1, "frame": {"z": 50.0}, "group": 0},
+            "get_cartesian_position": {"group": 0},
+            "get_tcp_speed": {"group": 0},
+            "switch_control_state": {"status": 0},
+            "reset": {},
+        }.items()
+    },
+    "fanuc_force_sensor_broadcaster.cfg_force_sensor": {"do_reset": 1, "fs_type": 2},
 }
 
 
@@ -312,6 +362,29 @@ class Case:
     unavailable: Callable[[], str | None] = field(default=lambda: None)
     #: The open defect this case fails on, until the fix removes it.
     defect: str | None = None
+
+
+def _run_rtde_program(engine: Engine) -> None:
+    """A program that sets a TCP, tares and moves, still running when the trial resets."""
+
+    def program(c, r):
+        c.setTcp([0.0, 0.0, 0.05, 0.0, 0.0, 0.0])
+        c.zeroFtSensor()
+        while True:
+            t0 = c.initPeriod()
+            c.speedL([0.0, 0.0, -0.01, 0.0, 0.0, 0.0], 0.5)
+            c.waitPeriod(t0)
+
+    engine.ctx.blackboard.get("ur_rtde:ur5e").run(program)
+
+
+def _use_fanuc_driver(engine: Engine) -> None:
+    """What a trial does to a FANUC controller: scale, stop, override, write a register."""
+    eps = {e.name: e for e in engine.ctx.interface.all() if e.owner == "crx"}
+    eps["speed_scaling_factor"].write(10)
+    eps["fanuc_gpio_controller.set_num_reg"].write({"index": 1, "value": 3.0})
+    eps["fanuc_gpio_controller.set_gen_override"].write({"value": 30})
+    eps["fanuc_gpio_controller.switch_control_state"].write({"status": 0})
 
 
 def _needs_file(path_of: Callable[[], Path], what: str) -> Callable[[], str | None]:
@@ -397,6 +470,28 @@ CASES: dict[str, Case] = {
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
     "ur_driver_interface": Case(lambda _: _arm({"ur_driver_interface": {"ft": "ft"}})),
+    # The CRX's manifest carries the interface.
+    "fanuc_driver_interface": Case(
+        lambda _: _world(
+            {"spawn_arm": {"model": "crx25ia", "namespace": "crx"}, "name": "crx"}, timestep=0.002
+        ),
+        use=(_use_fanuc_driver,),
+    ),
+    "ur_rtde": Case(lambda _: _arm({"ur_rtde": {"ft": "ft"}}), use=(_run_rtde_program,)),
+    "fzi_cartesian_controllers": Case(
+        lambda _: _arm(
+            {
+                "fzi_cartesian_controllers": {
+                    "ft": "ft",
+                    "controllers": {
+                        "cartesian_motion_controller": {"type": "motion"},
+                        "cartesian_compliance_controller": {"type": "compliance"},
+                    },
+                }
+            }
+        ),
+        use=(_switch_every_controller,),
+    ),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller,),
@@ -418,6 +513,7 @@ CASES: dict[str, Case] = {
     "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
+    "spot_body_camera": Case(lambda _: _sensor("spot_body_camera")),
     "fiducial_marker": _static(
         {
             "fiducial_marker": {
@@ -555,7 +651,6 @@ _RAY_SENSORS = ("lidar", "range_sensor", "livox_mid360", "seyond_robin_w1g")
 _CAMERAS = ("realsense_d415", "segmentation_camera")
 _DEPTH_CAMERAS = ("oakd_camera", "realsense_d435", "realsense_d455", "zivid")
 _CAST_BUFFERS = "the cast's output buffers, rewritten by every cast before anything reads them"
-_RENDERER = "the renderer, made at the first capture and kept for the run"
 _DEPTH_MASK = (
     "the last depth frame's invalid pixels, read only with that frame, which the reset clears"
 )
@@ -575,6 +670,10 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "keeps its link, arming and last controls across the episode boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
+    "fzi_cartesian_controllers": {
+        f"_registered['{c}'].transitions": _TRANSITIONS
+        for c in ("cartesian_motion_controller", "cartesian_compliance_controller")
+    },
     **{
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
@@ -584,8 +683,12 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "_caution._radius": _MEASURED_ONCE,
     },
     **{name: {"_hits": _CAST_BUFFERS} for name in _RAY_SENSORS},
-    **{name: {"_frames": _RENDERER} for name in _CAMERAS},
-    **{name: {"_frames": _RENDERER, "_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
+    **{name: {"_invalid": _DEPTH_MASK} for name in _DEPTH_CAMERAS},
+    # A device with its own depth optics: registered depth's mask as well.
+    "spot_body_camera": {
+        "_invalid": _DEPTH_MASK,
+        "_registered_invalid": _DEPTH_MASK,
+    },
 }
 
 #: Plugins with no world here to configure them in.
@@ -609,6 +712,8 @@ SKIPPED: dict[str, str] = {
 _SHARED = (
     SimContext,
     Engine,
+    # The world's render service, which every camera's view belongs to and the engine resets.
+    RenderService,
     Plugin,
     Blackboard,
     EntityRegistry,
@@ -743,8 +848,9 @@ def _show(value) -> str:
 
 
 @functools.cache
-def _entry_point_classes() -> dict[str, type]:
-    return {ep.name: ep.load() for ep in entry_points(group="roqsim.plugins")}
+def _entry_point(name: str):
+    """The ``roqsim.plugins`` entry *name*, not loaded: one plugin's import is that plugin's test's."""
+    return next(ep for ep in entry_points(group="roqsim.plugins") if ep.name == name)
 
 
 @functools.cache
@@ -774,6 +880,8 @@ def _params():
 @pytest.mark.parametrize("name", list(_params()))
 def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
     case = CASES[name]
+    if reason := not_installed_with_its_requirements(_entry_point(name)):
+        pytest.skip(reason)
     if reason := case.unavailable():
         pytest.skip(reason)
     engine = Engine(load_config_from_dict(case.world(tmp_path), base_dir=tmp_path))

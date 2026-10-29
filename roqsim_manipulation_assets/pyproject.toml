@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_manipulation_assets"
 version = "0.1.0"
-description = "Manipulator ASSETS for roqsim: arm and gripper models plus their meshes (UR10e, UR5e, Franka Panda, Kinova Gen3, UFACTORY xArm 7, KUKA LBR iiwa 7 R800 / 14 R820, Doosan M1013, Interbotix ViperX 300 / WidowX 250, OpenManipulator-X, Robotiq 2F-85, Schunk PG+70). Real robots only -- workpieces ship with the experiments that define them."
+description = "Manipulator ASSETS for roqsim: arm and gripper models plus their meshes (UR10e, UR5e, Franka Panda, Kinova Gen3, UFACTORY xArm 7, KUKA LBR iiwa 7 R800 / 14 R820, Doosan M1013, FANUC M-20iD/25 and CRX-25iA (FANUC's CRX-30iA description), Interbotix ViperX 300 / WidowX 250, OpenManipulator-X, Robotiq 2F-85, Robotiq Hand-E, Schunk PG+70). Real robots only -- workpieces ship with the experiments that define them."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 # The ASSET half of the manipulation family. `roqsim_manipulation` holds the plugins (spawn_arm,
-# arm_controller, ...) and this package holds the geometry -- 115 MB of meshes.
+# arm_controller, ...) and this package holds the geometry -- about 160 MB of meshes.
 #
 # Why the split: every family package with an actuated limb needs `arm_controller` (a humanoid's arms,
 # a mobile manipulator's arm, a gantry). Almost none needs the arm MODELS. In one package, wanting
@@ -67,6 +67,8 @@ roqsim_manipulation_assets = [
     # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
     # licence is not redistributable.
     "models/*/*LICENSE*",
+    # Attribution beside the asset it credits (THIRD_PARTY.md summarises them).
+    "models/*/CREDITS.txt",
     # `roqsim catalog` reports the `<model>.thumb.png` beside each MJCF (`make thumbnails`).
     "models/*/*.thumb.png",
     "worlds/*.yaml",

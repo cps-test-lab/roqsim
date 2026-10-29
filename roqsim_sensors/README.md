@@ -12,11 +12,12 @@ package rather than `roqsim_mobile`/`roqsim_manipulation`. ROS-free; ROS couplin
 | `lidar` | 2D lidar via `raycast.cast` (no GL). Declares a `scan` (`LaserScan`) output endpoint. |
 | `livox_mid360` | Livox Mid-360 3D lidar via `raycast.cast` (no GL). Casts a spherical ray grid over the device's 360°×59° (−7°..+52°) FoV and declares a `cloud` (`PointCloud2`) output endpoint. Sibling of `lidar` (point cloud, not planar scan). Bundled with the standalone `mid360` mount below. Uniform-grid sampling approximates the device's non-repetitive scan pattern — a documented substrate limit. |
 | `seyond_robin_w1g` | Seyond Robin W1G forward-facing solid-state 3D lidar via `raycast.cast` (no GL). A thin subclass of `livox_mid360` for a **bounded** FoV: azimuth is a −60°..+60° band with inclusive endpoints (not a wrapping 360° sweep, `AZIMUTH_WRAPS = False`), elevation −35°..+35°, boresight +x; declares a `cloud` (`PointCloud2`) endpoint on `seyond/points`. Defaults follow the datasheet (120°×70° FoV, 0.1–70 m range, 10 Hz). Uniform-grid sampling approximates the device's proprietary scan pattern/point rate — a documented substrate limit. Bundled with the standalone `robin_w1g` mount below. |
-| `oakd_camera` | OAK-D Pro RGB-D camera rendered via `mujoco.Renderer` (GL). Declares `image`, `depth`, and a `camera_info` for each stream; depth in `32FC1` metres or `16UC1` millimetres (`depth_encoding`). Bundled with the `oakd_pro` device model below, which `roqsim_mobile`'s `turtlebot4.manifest.yaml` mounts. |
+| `oakd_camera` | OAK-D Pro RGB-D camera, drawn through the render service (MuJoCo's renderer unless the world names another). Declares `image`, `depth`, and a `camera_info` for each stream; depth in `32FC1` metres or `16UC1` millimetres (`depth_encoding`). Bundled with the `oakd_pro` device model below, which `roqsim_mobile`'s `turtlebot4.manifest.yaml` mounts. |
 | `realsense_d435` | Intel RealSense D435(i) colour stream, plus an **opt-in** depth image (`depth: true`) and `PointCloud2` (`points: true`, implies depth). Declares `image`/`camera_info` and, when enabled, `depth`/`points` output endpoints, topic/frame naming following `realsense-ros` (`camera/depth/image_rect_raw`, `camera/depth/color/points`). The cloud is reprojected into the ROS optical frame; it is opt-in because a 640×480 frame is up to 307k points. Depth is `32FC1` metres unless `depth_encoding: 16UC1` asks for the driver's own millimetres. Bundled with the `realsense_d435` model below, or attach one to your own robot's MJCF (the `open_manipulator_x` arm ships an eye-in-hand one). |
 | `realsense_d415` | Intel RealSense D415 colour stream (RGB only). Same renderer as `realsense_d435`; a separate plugin/model so a robot carrying a real D415 is faithful. Bundled with the `realsense_d415` model below. |
 | `realsense_d455` | Intel RealSense D455 colour stream, plus the same **opt-in** depth/`PointCloud2` path as `realsense_d435` (which it subclasses, with the D455's own 0.6–6 m clip range). A separate plugin/model so a robot carrying a real D455 is faithful — the D455 is the wide-FOV, longer-range member (87°×62° colour, 95 mm stereo baseline, 0.6–6 m range). Bundled with the `realsense_d455` model below. |
-| `zivid` | Zivid 3 XL250 industrial structured-light 3D camera, rendered via `mujoco.Renderer` (GL). RGB-D (a `depth_camera` sibling of `oakd_camera`): declares `image`, `depth`, and a `camera_info` per stream, standing in for the sensor's coloured point cloud. Datasheet defaults: 39° square FOV, ~5 Hz (250–1500 ms typical 3D capture), depth clipped to the 1.3–5 m working range; topic/frame naming approximates `zivid-ros`. Bundled with the standalone `zivid` mount below. |
+| `zivid` | Zivid 3 XL250 industrial structured-light 3D camera, drawn through the render service. RGB-D (a `depth_camera` sibling of `oakd_camera`): declares `image`, `depth`, and a `camera_info` per stream, standing in for the sensor's coloured point cloud. Datasheet defaults: 39° square FOV, ~5 Hz (250–1500 ms typical 3D capture), depth clipped to the 1.3–5 m working range; topic/frame naming approximates `zivid-ros`. Bundled with the standalone `zivid` mount below. |
+| `spot_body_camera` | One body camera station of a Boston Dynamics Spot (a projected-IR stereo pair with a fisheye imager), on the topics, frames and QoS the `spot_ros2` driver publishes: `camera/<station>/image` (`mono8`, or `bgr8` for colour bodies) and `camera_info` stamped `<station>_fisheye`, `depth/<station>/image` (`16UC1` millimetres) stamped `<station>`, and `depth_registered/<station>/image` in the fisheye image, each with its `camera_info`, reliable + transient_local, 15 Hz. Rendered as a pinhole with `D = 0`, which is what the driver's `camera_info` states of the real images. Bundled with the `spot_body_camera` device model below, which `roqsim_quadruped`'s `spot.manifest.yaml` mounts five times. |
 | `spawn_sensor` | Attach a standalone sensor MJCF (mesh + camera/site) at a fixed mount pose — the robot-free analogue of `spawn_robot`/`spawn_arm` for a sensor that isn't carried by anything (an overhead camera, a mast lidar). Pulls in the model's default capture plugin from its `<model>.manifest.yaml` manifest, e.g. `{model: realsense_d435}` brings in the `realsense_d435` plugin. |
 | `fiducial_marker` | Add an ArUco/AprilTag fiducial to the scene as a flat, non-colliding geom so cameras render it and a detector can decode it. The marker image is generated at build time with OpenCV (`cv2.aruco`, one dep covers both families) and injected as raw texture data. Fixed placement at `pose`: free-standing, or welded to a robot body (`attach_to` + `prefix`) with `pose` in its frame. Needs the optional `markers` extra: `pip install 'roqsim_sensors[markers]'`. |
 | `force_torque` | Six-axis force/torque sensor at a site — the one sensor here that reports **contact force** rather than geometry, which is the whole measurement for a contact-rich manipulation task (insertion, polishing, compliant assembly). Adds MuJoCo's `<force>`/`<torque>` pair on a site (yielding to a vendor MJCF that already ships one), reports the wrench in the `sensor`, `base` or `world` frame, and publishes both a `wrench` (`WrenchStamped`) endpoint and a `WrenchReader` on the blackboard under `ft:<label>` (the entry's `name:`, else `force_torque`) for in-process controllers. **Where the sensor cuts matters**: a site sensor measures the wrench transmitted *through* that site from its children, so the tool must hang below it — a tool attached above the site reads identically zero. |
@@ -94,9 +95,9 @@ tests in `tests/test_spawn_sensor.py` and `tests/test_realsense_devices.py`:
   rendered from the frame they are stamped in. The OAK-D Pro renders depth through its RGB camera:
   depthai-ros aligns stereo depth to the RGB image by default (`i_align_depth`) and stamps it in
   `<name>_rgb_camera_optical_frame`.
-- **Resolution.** A camera plugin renders through `roqsim.rendering.FrameRenderer`, which grows the
-  compiled world's offscreen framebuffer to the frame it renders, so a camera may declare a `<camera
-  resolution>` above MuJoCo's default 640×480 (the RealSense depth cameras render 848×480). A sensor
+- **Resolution.** A camera plugin draws through the render service (`ctx.render`), whose MuJoCo
+  renderer sizes its offscreen framebuffer to the largest camera it draws, so a camera may declare a
+  `<camera resolution>` above MuJoCo's default 640×480 (the RealSense depth cameras render 848×480). A sensor
   model's own `<visual><global offwidth/offheight>` has no effect: `MjSpec.attach` drops the child's
   visual-global settings.
 
@@ -133,9 +134,10 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 | `omron_os32c` | Omron OS32C safety laser scanner: a **primitive** housing (133.0 × 142.7 mm body, 100 mm sensor head, 104.5 mm overall, 1.3 kg) + a `scan` site 67 mm above its base, all from Omron's data sheet Z298-E2-05-X. Its manifest attaches `lidar` with the data sheet's 270° at 0.4°, 15 m warning zone and a derived 25 Hz, laid out as the ROS 1 `omron_os32c_driver` publishes it (677 rays over ±135.2°, header 0.002–50 m, no return 50.0, no noise figure in the data sheet), excluding only its own `mount`, stamped in `laser`. Mounted by `roqsim_mobile_manipulation`'s `frankie`, which overrides the field to the LD platform's 240°. **No mesh on purpose**: Omron's CAD is for personal reference only and the community model has no licence — see `models/omron_os32c/omron_os32c_LICENSE`. |
 | `hokuyo_ust` | Hokuyo UST-10LX 2D lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` as `urg_node` publishes it (1081 rays over 270° with the last on +135°, header 0.06–10 m, returns measured 0.021–30 m, the device's error codes 0.004 m for too close and 65.533 m for no return, 40 Hz), excluding only its own `mount`, stamped in `lidar2d_0_laser` 47.4 mm above the bracket base. Mounted by `roqsim_mobile`'s `ridgeback`, `husky_a200` and `warthog` (two, each limited to ±90°). Mesh and link frames from Clearpath `clearpath_sensors_description` — see `models/hokuyo_ust/hokuyo_ust_LICENSE`. |
 | `sick_lms1xx` | SICK LMS111 2D lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` as Clearpath's `LMS1xx` driver publishes it (541 rays over 270° with the last on +135°, header 0.01–20 m, returns measured 0.5–20 m, 50 Hz), excluding only its own `mount`, stamped in `lidar2d_0_laser`. Clearpath's `sick_lms1xx` accessory. Mesh and link frames from Clearpath `clearpath_sensors_description` — see `models/sick_lms1xx/sick_lms1xx_LICENSE`. |
+| `spot_body_camera` | One Boston Dynamics Spot body camera station: a `mount` at the station's depth frame (Spot's camera frames are optical frames), a `spot_depth` camera there (424×240) and a `spot_fisheye` camera 1 cm along −x (640×480), each carrying its lens as `sensorsize`/`focalpixel` so MuJoCo renders the published K. Its manifest auto-attaches `spot_body_camera` and publishes `<station>` → `<station>_fisheye`; `device_name` is the station. **No geometry**: the housings are part of the Spot body mesh. Boston Dynamics publishes no camera intrinsics or sizes (the robot reports them at runtime), so the values are the DARPA SubT Spot model's (`osrf/subt` @ 083c6a8), estimated there from real-robot data — see the MJCF header and `models/spot_body_camera/spot_body_camera_LICENSE`. |
 | `velodyne_vlp16` | Velodyne VLP-16 (Puck) lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` casting one plane of its 16 as the driver's `velodyne_laserscan` publishes it (898 rays of 0.007 rad from −π, header 0–200 m, returns measured 0.9–100 m, too close and no return `+inf`, 10 Hz), excluding only its own `mount`, stamped in `velodyne` 37.7 mm above the housing base. Mounted by `roqsim_mobile`'s `clearpath_jackal`. Meshes and link frames from Dataspeed `velodyne_description` — see `models/velodyne_vlp16/velodyne_vlp16_LICENSE`. |
 
-The twelve scanners, the three RealSense cameras and the OAK-D Pro are device models a robot
+The twelve scanners, the three RealSense cameras, the OAK-D Pro and the Spot body camera are device models a robot
 mounts from its manifest: a `spawn_sensor` whose `parent_frame` is the vendor's parent link (a body of the robot or
 an entry of its `frames:`) and whose `pose` is the origin the robot description gives the vendor macro, overriding a
 value only where its vendor configuration differs. The RealSense MJCFs
@@ -189,10 +191,33 @@ roqsim sensors coverage estimate \             # evaluate a placement set
     --world <mjcf-or-world-yaml> --placements p.json --target k=1,frac=0.95 --render both --out run/
 roqsim sensors coverage greedy \               # deterministic max-coverage baseline
     --world <w> --target k=1,frac=0.9 --types livox_mid360,oakd_camera --mount-z 3.0 --out run/
+roqsim sensors coverage swept \                # what a moving sensor covered over a recorded run
+    --recording run.mcap --frame robot/oakd/oakd_rgb --type oakd_camera --out swept/
 ```
 
 To refine a layout: evaluate, read the gaps in `report.json`, adjust the placements, repeat
 (`docs/coverage.rst`).
+
+### A moving sensor: `swept`
+
+A robot carrying a sensor asks a *trajectory* question rather than a layout one: how much did it
+observe on the way. `swept` answers it from a run's recording (`roqsim sim world.yaml --record
+run.mcap`): each recorded sample restores the full MuJoCo state -- the carrier and every moving
+occluder where they were -- places the field of view at the frame's pose, runs the same
+range -> FOV -> line-of-sight gate as `estimate` over the shared sample set, and ORs the result into
+a union. The sensor, its frame and its range are chosen after the run.
+
+- **The mount is `--frame`**, a frame path: an entity's root, body, site, camera or declared frame
+  (`robot/oakd/oakd_rgb`), or a body, site or camera of the world's own MJCF by its MuJoCo name
+  (`gantry_cam`). `--pose` offsets it in the frame's coordinates. A camera frame brings its own
+  intrinsics and MuJoCo camera axes; `--config` overrides them and sets the range. On any other frame
+  the catalog entry for `--type` and `--config` state the field of view, looking along the frame's +x.
+- **`--from`/`--to`** bound the window, and **`--rate`** thins it, never above the recording's rate.
+- **The report** has the static estimate's shape -- fraction, `per_object`, `per_region`,
+  `uncovered_regions` -- plus a `swept` block with the covered and sampled areas (per xy column of
+  the volume grid, `-1.0` without one), the evaluations and the visit distribution.
+- **It is a lower bound, sampled at the recording's rate**: the field of view is never interpolated
+  between samples, because an interpolated one has no line-of-sight test behind it.
 
 ## Test
 

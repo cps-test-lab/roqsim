@@ -7,7 +7,7 @@ person watching a replay sits through, so ``roqsim render --from onset`` clips i
     from roqsim.motion import motion_onset
     from roqsim.recording import open_recording
 
-    rec = open_recording("run.npz")
+    rec = open_recording("run.mcap")
     onset = motion_onset(rec)
     if onset.moved:
         print(onset.time)          # sim seconds -- where a clip should start

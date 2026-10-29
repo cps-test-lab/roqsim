@@ -108,7 +108,7 @@ def test_the_visual_never_collides_and_is_actually_drawn(tmp_path):
 
     v = ids["floor_visual"]
     assert m.geom_contype[v] == 0 and m.geom_conaffinity[v] == 0
-    assert m.geom_group[v] < 3, "group 3 is the never-drawn convention, and export_web skips it"
+    assert m.geom_group[v] < 3, "group 3 is the never-drawn convention, and a scene export skips it"
     assert m.geom_matid[v] >= 0, "a material, or there is nothing to see"
 
 

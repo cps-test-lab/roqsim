@@ -99,8 +99,9 @@ from typing import Any
 import yaml
 
 from .document import check_version, refuse_unknown_keys
-from .plugin import Plugin, PluginError
+from .plugin import VALIDATOR_RAISED, Plugin, PluginError
 from .registry import resolve_plugin
+from .render_api import DEFAULT_RENDERER, RENDER_MODES
 from .world import resolve_world_yaml_ref
 
 _logger = logging.getLogger("roqsim.config")
@@ -468,6 +469,21 @@ class SimConfig:
     @property
     def sync(self) -> dict:
         return dict(self.sim.get("sync", {}) or {})
+
+    @property
+    def renderer(self) -> str:
+        """The renderer every camera draws through unless it names its own (``sim.renderer``)."""
+        return str(self.sim.get("renderer") or DEFAULT_RENDERER)
+
+    @property
+    def render(self) -> dict:
+        """The render service's own settings (``sim.render``), defaults filled in."""
+        return {**RENDER_DEFAULTS, **(self.sim.get("render") or {})}
+
+    @property
+    def renderers(self) -> dict:
+        """Each renderer's settings block (``sim.renderers.<name>``)."""
+        return {str(k): dict(v or {}) for k, v in (self.sim.get("renderers") or {}).items()}
 
     @property
     def view(self) -> dict:
@@ -1222,6 +1238,9 @@ SIM_KEYS = frozenset(
         "integrator",
         "name",
         "pacing",
+        "render",
+        "renderer",
+        "renderers",
         "seed",
         "sync",
         "timestep",
@@ -1351,6 +1370,60 @@ def _validate_pacing(pacing) -> None:
         raise PluginError(f"sim.pacing: {exc}") from None
 
 
+#: ``sim.render`` -- the render service's settings -- and their defaults: the mode, how many
+#: instances of each renderer its cameras are dealt to (one context each; one thread each in async),
+#: and how long a caller waits for a worker to open or to draw a batch before naming it hung.
+RENDER_DEFAULTS = {"mode": "sync", "workers": 1, "timeout_s": 60.0}
+
+
+def validate_render(sim: dict, base_dir: Path | None) -> None:
+    """Refuse a ``sim.renderer`` / ``sim.render`` / ``sim.renderers`` a run could not use, at load.
+
+    Every renderer the world names is resolved (an unknown one lists those installed), and each one
+    given a settings block validates it with its own ``validate_config``, so a mistyped key names
+    the key, the block and the valid ones.
+    """
+    from .registry import resolve_renderer  # noqa: PLC0415 -- only worlds that name one pay
+
+    renderer = sim.get("renderer")
+    if renderer is not None and (not isinstance(renderer, str) or not renderer):
+        raise PluginError(f"sim.renderer: a renderer name, got {renderer!r}")
+    render = sim.get("render")
+    if render is not None:
+        if not isinstance(render, dict):
+            raise PluginError(
+                f"sim.render: a mapping of the render service's settings, got {render!r}"
+            )
+        refuse_unknown_keys(render, frozenset(RENDER_DEFAULTS), "sim.render", error=PluginError)
+        _validate_choice("render.mode", render.get("mode"), RENDER_MODES)
+        workers = render.get("workers", 1)
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise PluginError(f"sim.render.workers: a whole number >= 1, got {workers!r}")
+        timeout = render.get("timeout_s", 60.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise PluginError(f"sim.render.timeout_s: a number of seconds > 0, got {timeout!r}")
+        if render.get("mode") == "async" and ((sim.get("sync") or {}).get("enabled")):
+            raise PluginError(
+                "sim.render.mode: async cannot run with sim.sync.enabled: a lockstep tick waits "
+                "for the frames due in it, which is sync mode"
+            )
+    blocks = sim.get("renderers")
+    if blocks is not None and not isinstance(blocks, dict):
+        raise PluginError(
+            f"sim.renderers: a mapping of renderer name to its settings, got {blocks!r}"
+        )
+    named = dict(blocks or {})
+    if renderer is not None:
+        named.setdefault(renderer, None)
+    for name, settings in named.items():
+        if name == DEFAULT_RENDERER and settings is None:
+            continue
+        cls = resolve_renderer(str(name), base_dir)
+        errors = cls.validate_config(settings or {})
+        if errors:
+            raise PluginError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
+
+
 def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
     """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
 
@@ -1435,6 +1508,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = 
     if "pacing" in (raw.get("sim") or {}):
         _validate_pacing(raw["sim"]["pacing"])
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
+    validate_render(raw.get("sim") or {}, base_dir)
 
     component_assignments = [a for a in assignments if _is_component(a)]
     plugins = flatten_specs(
@@ -2113,7 +2187,9 @@ def _unresolved_message(unresolved: list[tuple[str, str]]) -> str:
 def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
     """Resolve and construct every plugin in order, then run aggregated config validation.
 
-    Raises :class:`PluginError` listing *all* validation errors if any plugin rejects its config.
+    Raises :class:`PluginError` listing *all* validation errors if any plugin rejects its config, or
+    if a plugin's constructor raises: a constructor reads its config before ``validate_config`` has
+    looked at it, so a value of the wrong type fails there first.
     """
     if cfg.unresolved:
         raise PluginError(_unresolved_message(cfg.unresolved))
@@ -2124,10 +2200,20 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
         for spec in cfg.plugins
         if spec.enabled
     ]
-    instances: list[Plugin] = [
-        cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
-        for spec, cls in resolved
-    ]
+    instances: list[Plugin] = []
+    #: What a constructor raised, by position in ``instances``.
+    failed: dict[int, Exception] = {}
+    for spec, cls in resolved:
+        kwargs = {"name": spec.name, "entity": spec.entity, "label": spec.label}
+        try:
+            inst = cls(spec.config, **kwargs)
+        except Exception as exc:
+            # Validate the config anyway, on an instance with only the base attributes, so the
+            # report names the key a constructor tripped over.
+            failed[len(instances)] = exc
+            inst = cls.__new__(cls)
+            Plugin.__init__(inst, spec.config, **kwargs)
+        instances.append(inst)
     # Where this document lives, so a plugin resolving a FILE its config names does it relative to
     # the world rather than to whatever CWD happened to load it. Set here, before the validation
     # below, because `validate_config` is the first thing that resolves such a path.
@@ -2135,15 +2221,28 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
         inst.base_dir = cfg.base_dir
 
     errors: list[str] = []
-    for inst, (spec, _cls) in zip(instances, resolved, strict=True):
+    for i, (inst, (spec, _cls)) in enumerate(zip(instances, resolved, strict=True)):
         # `config_errors`, not `validate_config`: a declared CONFIG_SCHEMA is checked because it is
         # declared. Leaving that call to each plugin made the schema exactly as reliable as the
         # docstring it replaces -- a plugin could publish a contract through `roqsim plugins
         # describe` and check none of it, with nothing to say so.
-        errors.extend(
-            f"[{inst.name} ({spec.ref})] {msg}" for msg in inst.config_errors(inst.config)
-        )
+        messages = inst.config_errors(inst.config)
+        if i in failed:
+            # A validator that reads what the constructor would have set raises on this instance;
+            # that says nothing of the config, and the constructor's exception is reported below.
+            messages = [m for m in messages if not m.startswith(VALIDATOR_RAISED)]
+        errors.extend(f"[{inst.name} ({spec.ref})] {msg}" for msg in messages)
+        if i in failed:
+            exc = failed[i]
+            errors.append(
+                f"[{inst.name} ({spec.ref})] could not be constructed: {type(exc).__name__}: {exc}"
+            )
 
     if errors:
-        raise PluginError("plugin config validation failed:\n  - " + "\n  - ".join(errors))
+        # Chained to the first constructor that raised, so its traceback is not lost: a constructor
+        # can fail on a bug of its own, not only on a value of the wrong type.
+        cause = next(iter(failed.values()), None)
+        raise PluginError(
+            "plugin config validation failed:\n  - " + "\n  - ".join(errors)
+        ) from cause
     return instances

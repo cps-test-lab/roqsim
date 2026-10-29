@@ -12,8 +12,8 @@ untextured. This finalizer fixes both, non-destructively re-usable on any prop f
 
 Usage::
 
-    roqsim assets finalize-mujoco path/to/models/fire_extinguisher            # infer <name> from the .obj
-    roqsim assets finalize-mujoco path/to/models/fire_extinguisher --scale 0.25   # bake a display scale
+    roqsim assets finalize-mujoco path/to/models/office_table            # infer <name> from the .obj
+    roqsim assets finalize-mujoco path/to/models/office_table --scale 0.25   # bake a display scale
 
 ``--scale`` writes a ``scale`` on the ``<mesh>`` (leaves the OBJ untouched) -- handy to correct a prop
 imported at the wrong size without re-running the whole pipeline. The pipeline itself bakes scale into

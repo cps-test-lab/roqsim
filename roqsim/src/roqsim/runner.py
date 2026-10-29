@@ -7,7 +7,7 @@
     roqsim sim world.yaml --right-ui        # open MuJoCo's control panel
     roqsim sim world.yaml --manual-control  # ... and drive the robot with its sliders
     roqsim sim world.yaml --set components.floorplan.size=4.0   # override world values
-    roqsim sim world.yaml --record run.npz                  # record state for later rendering
+    roqsim sim world.yaml --record run.mcap                 # record state for later rendering
     roqsim sim world.yaml --video run.webm                  # ... and render it when the run ends
     roqsim sim world.yaml --control tcp://:5555              # serve the control socket on TCP
 
@@ -18,7 +18,7 @@ name, or a path) shown on its own in an empty room.
 This is one of two drivers (the other is :mod:`roqsim.scenario_adapter`); both wrap the same
 :class:`Engine`.
 
-Recording is the driver's own: ``--record`` samples MuJoCo state into a ``.npz`` (see
+Recording is the driver's own: ``--record`` samples MuJoCo state into one ``.mcap`` file (see
 :class:`roqsim.capture.StateRecorder`), and every image is rendered *afterwards* from that file by
 ``roqsim render``. Capture is a session concern, not an experiment one — the same footing as the panel
 switches below — so it is a run-level flag and deliberately not world-YAML config. A render costs 41
@@ -37,15 +37,16 @@ import time
 from pathlib import Path
 
 from . import control as ctl
-from . import exit_status, ipc, logging_setup
+from . import env, exit_status, ipc, logging_setup
 from .capture import (
     DEFAULT_FPS,
+    RECORD_EXCLUDE_VAR,
+    RECORD_TRACKS_VAR,
     CaptureError,
     RecordingError,
     RecordToggle,
     StateRecorder,
     TakeRecorder,
-    env_flag,
     parse_fps,
     snap_fps,
 )
@@ -59,8 +60,9 @@ from .config import (
 )
 from .engine import Engine
 from .gl import select_offscreen_gl
+from .mcap_format import RECORDING_SUFFIX, recording_path
 from .models import ModelError
-from .override_options import add_override_options, overrides_from_options
+from .override_options import add_override_options, add_renderer_option, overrides_from_options
 from .plugin import PluginError
 from .rendering import GLBackendError
 from .replay import is_recording
@@ -93,9 +95,9 @@ _MESH_EXT = (".obj", ".stl", ".glb", ".gltf", ".fbx", ".dae", ".ply")
 _RENDER_HZ = 60.0
 
 #: Where ``--record`` writes when given no path.
-_DEFAULT_RECORD = "run.npz"
+_DEFAULT_RECORD = "run.mcap"
 
-#: Where ``--video`` writes when given no path. Its recording lands beside it as ``run.npz``.
+#: Where ``--video`` writes when given no path. Its recording lands beside it as ``run.mcap``.
 _DEFAULT_VIDEO = "run.webm"
 
 #: Environment anchors for a relative session output path, most specific first. A campaign runner sets
@@ -136,14 +138,14 @@ def _graceful_stop(control: ctl.RunControl, logger: logging.Logger):
 
     SIGTERM is handled alongside SIGINT because that is how a *supervised* run ends: a container
     teardown, ``docker stop``, a scheduler eviction and a supervisor's timeout all send TERM, whose
-    default action kills the process outright — no ``finally``, so the recording and the capture
-    are both lost. Under a campaign that is the common exit, not the exceptional one; only SIGKILL
+    default action kills the process outright — no ``finally``, so the recording's open chunk and
+    its summary are lost. Under a campaign that is the common exit, not the exceptional one; only SIGKILL
     can still take the artifacts with it.
 
     Escalation is counted **per signal**, which matters as soon as TERM is handled: a supervisor
     routinely delivers INT *and* TERM for one stop (ros2 launch forwards both), and on a shared counter
-    the second of the pair reads as "the user is insisting" and raises ``KeyboardInterrupt`` — observed
-    landing inside the capture export, whose ``except Exception`` cannot catch a ``BaseException``. Two
+    the second of the pair reads as "the user is insisting" and raises ``KeyboardInterrupt`` in the
+    middle of the teardown, where no ``except Exception`` can catch a ``BaseException``. Two
     different signals are one request; only a repeat of the *same* one is somebody insisting.
     """
     prev: dict[int, object] = {}
@@ -197,10 +199,10 @@ def _deaf_to_stop_signals(logger: logging.Logger):
     simulator receives the same signal twice and the second one is, by every available measure,
     somebody insisting.
 
-    Observed cost: the resulting ``KeyboardInterrupt`` landed in ``mujoco.mj_forward`` inside the
-    capture export, which is guarded by ``except Exception`` and so cannot catch a ``BaseException``.
-    It unwound the whole teardown -- taking not just the viewer artifact but ``engine.shutdown()``,
-    and with it the CSV a scoring plugin writes there. The run reported success and left no verdict.
+    The cost: a ``KeyboardInterrupt`` raised in the teardown is a ``BaseException``, which no
+    ``except Exception`` there catches. It unwinds the whole teardown -- taking the recording's
+    summary and ``engine.shutdown()``, and with it the CSV a scoring plugin writes there. The run
+    reports success and leaves no verdict.
 
     So the teardown is deaf rather than merely defensive: it is short, bounded, and the last thing
     that happens before the process exits, and everything a run is judged by is written inside it.
@@ -608,6 +610,8 @@ def run(
     overrides: dict | None = None,
     record: str | None = None,
     capture_fps=DEFAULT_FPS,
+    record_tracks: str | None = None,
+    record_exclude: str | None = None,
     video: str | None = None,
     video_size: str = "960x540",
     seed: int | None = None,
@@ -632,6 +636,10 @@ def run(
     same footing as those switches: a session concern, not part of the experiment. Render it afterwards
     with ``roqsim render --state``.
 
+    ``record_tracks`` and ``record_exclude`` narrow which bodies and joints the recording's decoded
+    ``poses`` and ``joints`` channels carry (comma-separated ``<entity>/<name>`` patterns, see
+    :func:`roqsim.capture.select_tracks`); the state itself is always whole.
+
     ``video`` implies ``record`` and renders that recording **after the loop has finished**, so the
     video exists when the process exits without a single frame having been drawn while physics was
     stepping. There is deliberately no fps or speed argument here: the file is encoded at
@@ -650,6 +658,32 @@ def run(
     ``no_transport`` does not remove it -- the control socket is how this process is reached, not a
     middleware the experiment publishes on.
     """
+    if video and not record:
+        # A recording is how a video is made, so --video needs one; put it beside the video by default
+        # rather than inventing a second convention for where it lives.
+        record = str(Path(video).with_suffix(RECORDING_SUFFIX))
+
+    # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
+    # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
+    # to add --record to without editing a launch file that two backends share. Recording is a session
+    # concern -- the same footing as `--headless`, which a world YAML has no key for -- so the
+    # environment is the right channel, and it is the one the scenario adapter already uses.
+    # An explicit flag always wins.
+    if record is None:
+        record = env.get("ROQSIM_RECORD") or None
+        if record:
+            record = str(_session_path(record))
+    if record:
+        # Before the world compiles: a target that cannot be a recording is a wrong input.
+        record = str(recording_path(record))
+    if capture_fps == DEFAULT_FPS and env.get("ROQSIM_CAPTURE_FPS"):
+        capture_fps = parse_fps(env.get("ROQSIM_CAPTURE_FPS"))
+    # Which bodies and joints the decoded channels carry: the flag, else the environment, else all.
+    if record_tracks is None:
+        record_tracks = env.get(RECORD_TRACKS_VAR) or None
+    if record_exclude is None:
+        record_exclude = env.get(RECORD_EXCLUDE_VAR) or None
+
     # Parse the world before any GL: a bad target (missing YAML, unknown model ref, a schema error) is
     # a millisecond away and must fail as a plain message, not behind a window that then has to be torn
     # down again. The splash exists to cover the *world compile*, which is what follows.
@@ -715,24 +749,6 @@ def run(
                     steps_from_seconds if max_steps is None else min(max_steps, steps_from_seconds)
                 )
 
-            if video and not record:
-                # A recording is how a video is made, so --video needs one; put it beside the video by default
-                # rather than inventing a second convention for where it lives.
-                record = str(Path(video).with_suffix(".npz"))
-
-            # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
-            # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
-            # to add --record to without editing a launch file that two backends share. Recording is a session
-            # concern -- the same footing as `--headless`, which a world YAML has no key for -- so the
-            # environment is the right channel, and it is the one the scenario adapter already uses.
-            # An explicit flag always wins.
-            if record is None:
-                record = os.environ.get("ROQSIM_RECORD") or None
-                if record:
-                    record = str(_session_path(record))
-            if capture_fps == DEFAULT_FPS and os.environ.get("ROQSIM_CAPTURE_FPS"):
-                capture_fps = parse_fps(os.environ["ROQSIM_CAPTURE_FPS"])
-
             # The rate is checked against the *compiled* timestep, which is the only authority: a world can
             # inherit it from a baked MJCF rather than declaring it in `sim:`.
             rate = snap_fps(capture_fps, dt)
@@ -753,7 +769,8 @@ def run(
                         overrides=overrides,
                         config=engine.config,
                         camera=False,
-                        sim_poses=env_flag("ROQSIM_SIM_POSES"),
+                        tracks=record_tracks,
+                        exclude=record_exclude,
                         logger=engine.logger or log,
                     )
             else:
@@ -767,6 +784,8 @@ def run(
                     overrides=overrides,
                     config=engine.config,
                     camera=True,
+                    tracks=record_tracks,
+                    exclude=record_exclude,
                     logger=engine.logger or log,
                 )
                 if record:
@@ -803,15 +822,14 @@ def run(
             finally:
                 # Every stop that matters reaches here: a closed window ends the loop normally, and Ctrl+C or
                 # a supervisor's SIGTERM is turned into QUITTING by _graceful_stop rather than raising through
-                # the render thread. The recording is written *first* -- it is the primary artifact, and the
-                # capture is derived from the same samples, so nothing about the export can be allowed to cost
-                # it. Both still run before engine.shutdown(), because the export reads the live model: it
-                # needs no world rebuild and no GL backend.
+                # the render thread. The recording is finished *first* -- it is the primary artifact --
+                # and before engine.shutdown().
                 #
                 # All of it runs deaf to further stop signals. Two supervisors mean two of the same
                 # signal, which the escalation counter reads as insisting -- and an interrupt raised in
-                # here does not end a run early, it ends it *without its results*: the capture, and the
-                # CSV a scoring plugin writes in shutdown(), are both produced below this line.
+                # here does not end a run early, it ends it *without its results*: the recording's
+                # summary, and the CSV a scoring plugin writes in shutdown(), are both produced below
+                # this line.
                 #
                 # The shutdown is a `finally` of its own, so a recording that cannot be written still
                 # leaves the plugins shut down and their shutdown output written; and it is called
@@ -819,9 +837,6 @@ def run(
                 with _deaf_to_stop_signals(engine.logger or log):
                     try:
                         written = recorder.close() if recorder is not None else None
-                        _export_capture_at_exit(
-                            engine, recorder, target, overrides, engine.logger or log
-                        )
                         # Once, here, because every stop that matters reaches this block and because the
                         # fact is about the whole run. Silent unless the run genuinely failed its rate:
                         # the line's presence is the signal, so it must not appear on healthy runs.
@@ -842,49 +857,6 @@ def run(
             out = video if len(takes) == 1 else _numbered(video, index)
             _render_at_exit(take, out, video_size, engine.logger or log)
     return engine
-
-
-def _export_capture_at_exit(engine, recorder, target, overrides, logger: logging.Logger) -> None:
-    """Derive a browser run capture from what was just recorded, when asked.
-
-    Opt-in via ``ROQSIM_CAPTURE_EXPORT_DIR``, alongside ``ROQSIM_RECORD``. Reported and never
-    fatal: a run whose results are otherwise good must not fail because a viewer artifact could not be
-    written. Deriving here rather than from the file afterwards is what avoids a second world build --
-    the model is still live and the samples are still in memory.
-
-    A ``TakeRecorder`` (a windowed run) may hold several numbered takes; only a single-take recording
-    maps onto one capture directory, so anything else is skipped with a reason rather than silently
-    exporting whichever take happened to be last.
-    """
-    out = os.environ.get("ROQSIM_CAPTURE_EXPORT_DIR")
-    if not out or recorder is None:
-        return
-    if not hasattr(recorder, "replay"):
-        # A windowed run's F9 takes are numbered, and a capture directory holds one run's motion; say so
-        # rather than exporting whichever take happened to be last.
-        logger.info(
-            "run capture: skipped -- a windowed run records numbered takes, which do not map onto one "
-            "capture. Export one afterwards with `roqsim export capture --state <take>.npz`."
-        )
-        return
-    if not recorder.frames:
-        return
-    try:
-        # Imported here, inside the guard: an ImportError is as non-fatal as an export failure, and
-        # outside it would propagate out of the driver's `finally` and skip the rest of the teardown.
-        from .export_capture import write_capture
-
-        write_capture(
-            engine.ctx.model,
-            recorder.replay(engine.ctx),
-            _session_path(out),
-            world=target,
-            overrides=overrides or {},
-            seed=getattr(engine.ctx, "seed", None),
-            logger=logger,
-        )
-    except Exception as err:  # noqa: BLE001 — a viewer artifact must not fail the run
-        logger.warning("run capture export failed (%s); the recording itself is unaffected", err)
 
 
 def _numbered(path: str, index: int) -> str:
@@ -954,6 +926,8 @@ def _replay(args, parser) -> int:
         "--record": "record",
         "--video": "video",
         "--capture-fps": "capture_fps",
+        "--record-tracks": "record_tracks",
+        "--record-exclude": "record_exclude",
         "--steps": "steps",
         "--seconds": "seconds",
         "--pacing": "pacing",
@@ -1011,7 +985,7 @@ def _control_uri(value: str | None) -> str | None:
     import importlib.util
 
     uri = ipc.bind_uri(value, log)
-    asked = value is not None or bool(os.environ.get(ipc.ENV))
+    asked = value is not None or bool(env.get(ipc.ENV))
     if uri is not None and not asked and importlib.util.find_spec("zmq") is None:
         log.warning(
             "control: not served -- pyzmq is not installed, so this run has no control socket "
@@ -1066,7 +1040,7 @@ def main(argv: list | None = None) -> int:
     )
     replaying = parser.add_argument_group(
         "replaying a recording",
-        "for a run.npz target: the run is played back rather than simulated, and moments of it are "
+        "for a run.mcap target: the run is played back rather than simulated, and moments of it are "
         "written to a shots file that `roqsim render` draws later",
     )
     replaying.add_argument(
@@ -1175,7 +1149,7 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--record",
         metavar="PATH",
-        help="record MuJoCo state to this file, for later rendering with `roqsim render --state`. "
+        help="record MuJoCo state to this .mcap file, for later rendering with `roqsim render --state`. "
         "A path is required rather than defaulted: a recording is an artifact you will name again "
         "later, and a default would quietly overwrite the previous run's.",
     )
@@ -1206,15 +1180,38 @@ def main(argv: list | None = None) -> int:
         help=f"samples per SIMULATED second (default: {DEFAULT_FPS}); accepts a fraction like 500/17. "
         "Snapped onto the world's physics step grid.",
     )
+    parser.add_argument(
+        "--record-tracks",
+        default=None,
+        metavar="PATTERNS",
+        help="narrow the recording's poses and joints channels to these bodies and joints: "
+        "comma-separated <entity>/<body-or-joint> patterns (** for everything of an entity, * for "
+        "one name segment) or bare names (default: every named body and joint; "
+        f"${RECORD_TRACKS_VAR} when unset)",
+    )
+    parser.add_argument(
+        "--record-exclude",
+        default=None,
+        metavar="PATTERNS",
+        help="remove these bodies and joints from the poses and joints channels, same grammar as "
+        f"--record-tracks; an exclude wins over an include (${RECORD_EXCLUDE_VAR} when unset)",
+    )
     add_override_options(parser)
+    add_renderer_option(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+
+    # A ROQSIM_* variable nothing reads would be ignored, and the run would look configured.
+    try:
+        env.check()
+    except env.UnknownEnvironmentError as err:
+        return exit_status.fail("roqsim sim", err)
 
     logging_setup.configure(verbose=args.verbose)
 
     # A recording is replayed, not simulated. The target's extension selects that, the way it already
     # selects a mesh here and a still or a video for `roqsim render`: nothing else hands `roqsim sim`
-    # an .npz, and one that is not a roqsim recording is refused by name when it is opened.
+    # an .mcap, and one that is not a roqsim recording is refused by name when it is opened.
     if is_recording(args.target):
         return _replay(args, parser)
 
@@ -1268,6 +1265,8 @@ def main(argv: list | None = None) -> int:
             overrides=overrides_from_options(args),
             record=args.record,
             capture_fps=args.capture_fps,
+            record_tracks=args.record_tracks,
+            record_exclude=args.record_exclude,
             video=args.video,
             video_size=args.video_size,
             seed=args.seed,
@@ -1275,7 +1274,15 @@ def main(argv: list | None = None) -> int:
             no_transport=args.no_communication,
             control=control,
         )
-    except (DisplayError, GLBackendError, ViewError, PluginError, ModelError, CaptureError) as err:
+    except (
+        DisplayError,
+        GLBackendError,
+        ViewError,
+        PluginError,
+        ModelError,
+        CaptureError,
+        RecordingError,
+    ) as err:
         return exit_status.fail("roqsim sim", err)
     return exit_status.OK
 

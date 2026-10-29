@@ -9,7 +9,7 @@
 
     Collision is FITTED primitives, not the vendor's meshes: dsr_description2's *_collision files are
     byte-for-byte copies of its full-detail visual CAD (~7 MB), which is the porting playbook's first
-    anti-pattern. See external/convert/collision_fit.py and the port log.
+    anti-pattern. See external/convert/collision_fit.py.
 
     Visual meshes are Collada converted through pycollada (MuJoCo cannot load .dae, and stock Linux
     Blender has no OpenCOLLADA), split per material and decimated. They are authored in MILLIMETRES;

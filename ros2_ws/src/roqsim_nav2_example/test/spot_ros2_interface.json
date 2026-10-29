@@ -1,0 +1,68 @@
+{
+  "source": "github.com/bdaiinstitute/spot_ros2 @ 949feb7b0d702d1923e5b5dd5c0a4a7728ddc88f, launched with spot_name empty (spot_driver/launch/spot_driver.launch.py:277), so every topic is global and no frame is prefixed",
+  "stations": ["frontleft", "frontright", "left", "right", "back"],
+  "camera": {
+    "image": {
+      "topic": "camera/{station}/image",
+      "type": "sensor_msgs/msg/Image",
+      "encoding": "mono8",
+      "frame_id": "{station}_fisheye",
+      "source": "spot_driver/src/api/spot_image_sources.cpp:76-87; src/images/images_middleware_handle.cpp:34-46; src/conversions/decompress_images.cpp:72-78 (greyscale bodies, rgb_cameras: false); frame from src/api/default_image_client.cpp:60,100 and the frame names of src/object_sync/object_synchronizer.cpp:80-94"
+    },
+    "camera_info": {
+      "topic": "camera/{station}/camera_info",
+      "type": "sensor_msgs/msg/CameraInfo",
+      "distortion_model": "plumb_bob",
+      "d": [0.0, 0.0, 0.0, 0.0, 0.0],
+      "frame_id": "{station}_fisheye",
+      "source": "spot_driver/src/api/default_image_client.cpp:53-95"
+    },
+    "depth": {
+      "topic": "depth/{station}/image",
+      "type": "sensor_msgs/msg/Image",
+      "encoding": "16UC1",
+      "unit": "millimetres, 0 = no return",
+      "frame_id": "{station}",
+      "source": "spot_driver/src/conversions/decompress_images.cpp:87-93; unit: spot-sdk protos/bosdyn/api/image.proto:49-50 @ 04537ddafe0641d1751af3eb9e76cb785fc18594"
+    },
+    "depth_camera_info": {
+      "topic": "depth/{station}/camera_info",
+      "type": "sensor_msgs/msg/CameraInfo",
+      "frame_id": "{station}",
+      "source": "spot_driver/src/images/images_middleware_handle.cpp:34-46"
+    },
+    "qos": {
+      "reliability": "reliable",
+      "durability": "transient_local",
+      "depth": 10,
+      "source": "spot_driver/include/spot_driver/api/middleware_handle_base.hpp:14-20; src/images/images_middleware_handle.cpp:12"
+    },
+    "tf_root_of_cameras": "body",
+    "tf_source": "spot_driver/src/images/spot_image_publisher.cpp:138 (the image transforms snapshot on /tf_static); spot_driver/README.md:85"
+  },
+  "state": {
+    "odometry": {
+      "topic": "odometry",
+      "type": "nav_msgs/msg/Odometry",
+      "frame_id": "odom",
+      "child_frame_id": "body",
+      "source": "spot_driver/src/robot_state/state_middleware_handle.cpp:20-35; src/conversions/robot_state.cpp:211-244"
+    },
+    "joint_states": {
+      "topic": "joint_states",
+      "type": "sensor_msgs/msg/JointState",
+      "names": [
+        "front_left_hip_x", "front_left_hip_y", "front_left_knee",
+        "front_right_hip_x", "front_right_hip_y", "front_right_knee",
+        "rear_left_hip_x", "rear_left_hip_y", "rear_left_knee",
+        "rear_right_hip_x", "rear_right_hip_y", "rear_right_knee"
+      ],
+      "source": "spot_driver/include/spot_driver/conversions/robot_state.hpp:34-42"
+    },
+    "cmd_vel": {
+      "topic": "cmd_vel",
+      "type": "geometry_msgs/msg/Twist",
+      "source": "spot_driver/spot_driver/spot_ros2.py:626"
+    }
+  }
+}

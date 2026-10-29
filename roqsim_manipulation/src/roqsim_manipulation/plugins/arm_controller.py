@@ -47,10 +47,11 @@ sits rather than a config key::
                                  #   name that overrides the namespace (see Plugin.topic_override)
       controller_name: arm_controller   # action at <controller_name>/follow_joint_trajectory
       controller_type: joint_trajectory_controller/JointTrajectoryController
-                                 # the type list_controllers reports: this, or
-                                 #   ur_controllers/ScaledJointTrajectoryController, the UR driver's
-                                 #   trajectory controller, whose trajectory time runs at the speed
-                                 #   scaling (see "Speed scaling" below)
+                                 # the type list_controllers reports: this, or a scaled one --
+                                 #   ur_controllers/ScaledJointTrajectoryController (the UR driver's)
+                                 #   or fanuc_controllers/ScaledJointTrajectoryController (FANUC's) --
+                                 #   whose trajectory time runs at the speed scaling (see "Speed
+                                 #   scaling" below)
       initial_state: active      # active | inactive -- `inactive` is ros2_control's
                                  #   `spawner --inactive`: registered, but not holding the arm
       joint_state_broadcaster_name: joint_state_broadcaster  # the robot's one broadcaster; a
@@ -61,7 +62,35 @@ sits rather than a config key::
                                  #   0 disables the check. Loose on purpose -- it exists to catch an
                                  #   arm that never arrived (blocked, saturated, planned through the
                                  #   furniture), not to grade a servo's steady-state error.
-      goal_time_tolerance: 1.0   # s the joints get, after the last waypoint, to reach that
+      goal_time_tolerance: 1.0   # s the joints get, after the last waypoint, to reach that; 0 is
+                                 #   no limit, ros2_control's convention (the goal waits until the
+                                 #   joints are inside its tolerance, or it is cancelled or replaced)
+      path_tolerance: 0.25       # optional: rad a joint may trail the trajectory while it runs before
+                                 #   the action aborts with PATH_TOLERANCE_VIOLATED, ros2_control's
+                                 #   `constraints.<joint>.trajectory`. Scalar or {joint: rad}; 0 or
+                                 #   absent is no check.
+      allow_partial_joints_goal: true   # false: a goal naming fewer than all of this controller's
+                                 #   joints is rejected, as ros2_control's parameter of that name does
+      allow_nonzero_velocity_at_trajectory_end: true   # false: a goal whose last point has a
+                                 #   velocity is rejected, as ros2_control's parameter of that name does
+      state_interfaces: [position, velocity, effort]   # which `joint_states` fields carry values; a
+                                 #   robot whose hardware has no effort interface reports none
+      joint_state_rate: 50.0     # Hz of `joint_states` (0: every step)
+      controller_state_rate: 50.0   # Hz of `<controller_name>/controller_state` (0: every step)
+      command_feedforward: none  # none | velocity: add the servo's velocity lag (d * qd / p) to a
+                                 #   STREAMED position command, qd estimated from successive commands
+                                 #   (a follow_joint_trajectory goal is fed as such a stream). Needs
+                                 #   affine position servos. A real drive's own controller does not
+                                 #   trail its setpoint; this servo does unless told how fast it moves.
+      forward_command_controller: forward_position_controller   # optional: also declare ros2_control's
+                                 #   forward_command_controller/ForwardCommandController under this
+                                 #   name, claiming the same joints and listed only once
+                                 #   `load_controller` names it (a robot that defines it but does not
+                                 #   spawn it). Active, it takes `<name>/commands`, a
+                                 #   std_msgs/Float64MultiArray of one position per joint.
+      dynamic_joint_states: false   # also publish control_msgs/DynamicJointState on
+                                 #   `dynamic_joint_states`: every joint's state interfaces, and those
+                                 #   a driver interface adds (see "The motion gate" below)
       stream_commands: false     # also expose <controller_name>/joint_trajectory as a high-rate topic
                                  #   input (mirrors ros2_control's JointTrajectoryController): the path
                                  #   moveit_servo streams position targets to. Off by default.
@@ -177,7 +206,17 @@ interface. The scaling applies to both trajectory paths: the in-process playback
 bridge's ``follow_joint_trajectory`` handler, which reads it through
 ``ArmHandle.trajectory_time_scale``. The plain ``JointTrajectoryController`` type always runs at 1.0.
 A change of factor during a trajectory takes effect from the step it is seen in; the time already
-travelled is kept.
+travelled is kept. ``fanuc_controllers/ScaledJointTrajectoryController`` reads it the same way, from
+``fanuc_driver_interface``.
+
+**The motion gate.** A driver interface may close the arm to motion -- a robot controller that has
+stopped streaming, a contact stop, a STOP request -- by publishing ``motion_gate:<entity>`` on the
+blackboard: a ``() -> str | None`` giving the reason while closed. On the step it closes, the arm
+holds where it is, the in-process trajectory ends, and every command is ignored until it opens,
+as a real robot controller ignores setpoints while motion is not possible; on opening, the arm
+holds where it then is. ``ArmHandle.motion_blocked`` gives the reason, so the bridge aborts a
+trajectory goal with it. The same interface may add state interfaces to ``dynamic_joint_states``
+under ``state_interfaces:<entity>``: a ``() -> list[(name, {interface: value})]``.
 
 **The ``rest`` stance.** ``spawn_arm`` supplies a per-model ``home`` that this plugin seeds its targets from. ``spawn_robot``
 does **not**: a robot spawn sets the base pose only, so an arm carried by a mobile base falls back to
@@ -223,7 +262,7 @@ from numpy.typing import NDArray
 
 from roqsim import endpoint
 from roqsim.actuators import joint_effort
-from roqsim.context import SimContext
+from roqsim.context import Endpoint, SimContext
 from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
 from roqsim.types import JointPositions, JointState
@@ -293,8 +332,27 @@ def ctrl_direction_on_joint(model, actuator_id: int, joint_id: int) -> int:
 _TRAJECTORY_TYPES = (
     "joint_trajectory_controller/JointTrajectoryController",
     "ur_controllers/ScaledJointTrajectoryController",
+    "fanuc_controllers/ScaledJointTrajectoryController",
 )
 SCALED_TRAJECTORY_TYPE = _TRAJECTORY_TYPES[1]
+#: The scaled ones: trajectory time advances at the arm's speed scaling.
+SCALED_TRAJECTORY_TYPES = _TRAJECTORY_TYPES[1:]
+#: ros2_control's forward position controller, which ``forward_command_controller`` declares.
+FORWARD_COMMAND_TYPE = "forward_command_controller/ForwardCommandController"
+#: The joint state interfaces ``state_interfaces`` chooses from.
+STATE_INTERFACES = ("position", "velocity", "effort")
+#: How long a streamed command's velocity estimate survives without a new command, s.
+COMMAND_FEEDFORWARD_HOLD_S = 0.02
+
+
+def motion_gate_key(entity: str) -> str:
+    """Blackboard key of an arm's motion gate (see "The motion gate" in the module docstring)."""
+    return f"motion_gate:{entity}"
+
+
+def state_interfaces_key(entity: str) -> str:
+    """Blackboard key of the state interfaces a driver adds to ``dynamic_joint_states``."""
+    return f"state_interfaces:{entity}"
 
 
 def speed_scaling_key(entity: str) -> str:
@@ -405,6 +463,8 @@ class ArmHandle:
     #: controller type, 1.0 for the plain one. An executor outside this plugin advances its own
     #: trajectory clock by it (see "Speed scaling" in the module docstring).
     trajectory_time_scale: Callable[[], float] | None = None
+    #: Why the arm may not move now (see "The motion gate"), or ``None`` while it may.
+    motion_blocked: Callable[[], str | None] | None = None
 
 
 class ArmControllerPlugin(Plugin):
@@ -432,6 +492,37 @@ class ArmControllerPlugin(Plugin):
             )
         errors += self._validate_tolerances(config)
         errors += self._validate_limits(config)
+        ifaces = config.get("state_interfaces", list(STATE_INTERFACES))
+        if (
+            not isinstance(ifaces, list)
+            or not ifaces
+            or any(i not in STATE_INTERFACES for i in ifaces)
+        ):
+            errors.append(
+                f"arm_controller: `state_interfaces` is a non-empty list of {list(STATE_INTERFACES)}, "
+                f"got {ifaces!r}"
+            )
+        elif "position" not in ifaces:
+            errors.append("arm_controller: `state_interfaces` must include position")
+        for key in ("joint_state_rate", "controller_state_rate"):
+            rate = config.get(key, 50.0)
+            if isinstance(rate, bool) or not isinstance(rate, int | float) or rate < 0:
+                errors.append(f"arm_controller: `{key}` must be a number >= 0 (Hz), got {rate!r}")
+        for key in (
+            "allow_partial_joints_goal",
+            "allow_nonzero_velocity_at_trajectory_end",
+            "dynamic_joint_states",
+        ):
+            if key in config and not isinstance(config[key], bool):
+                errors.append(f"arm_controller: `{key}` must be true or false")
+        if config.get("command_feedforward", "none") not in ("none", "velocity"):
+            errors.append(
+                "arm_controller: `command_feedforward` must be none or velocity, got "
+                f"{config.get('command_feedforward')!r}"
+            )
+        fwd = config.get("forward_command_controller")
+        if fwd is not None and (not isinstance(fwd, str) or not fwd):
+            errors.append("arm_controller: `forward_command_controller` is a controller name")
         ff = config.get("trajectory_feedforward", "none")
         if ff not in FEEDFORWARD:
             errors.append(
@@ -481,7 +572,7 @@ class ArmControllerPlugin(Plugin):
         -- without one the plugin claims joints by prefix scan, which needs the compiled model.
         """
         errors: list[str] = []
-        for key in ("goal_tolerance", "goal_time_tolerance"):
+        for key in ("goal_tolerance", "goal_time_tolerance", "path_tolerance"):
             value = config.get(key)
             if value is None or isinstance(value, dict):
                 continue
@@ -489,12 +580,14 @@ class ArmControllerPlugin(Plugin):
                 errors.append(
                     f"arm_controller: `{key}` must be a non-negative number, got {value!r}"
                 )
-        tol = config.get("goal_tolerance")
-        if isinstance(tol, dict):
+        for key in ("goal_tolerance", "path_tolerance"):
+            tol = config.get(key)
+            if not isinstance(tol, dict):
+                continue
             for joint, value in tol.items():
                 if not isinstance(value, int | float) or value < 0.0:
                     errors.append(
-                        f"arm_controller: `goal_tolerance[{joint}]` must be a non-negative number, "
+                        f"arm_controller: `{key}[{joint}]` must be a non-negative number, "
                         f"got {value!r}"
                     )
             owned = config.get("joints")
@@ -502,7 +595,7 @@ class ArmControllerPlugin(Plugin):
                 unknown = [j for j in tol if j not in owned]
                 if unknown:
                     errors.append(
-                        f"arm_controller: `goal_tolerance` names {unknown}, which `joints` does not "
+                        f"arm_controller: `{key}` names {unknown}, which `joints` does not "
                         "list -- it would be dropped rather than applied"
                     )
         return errors
@@ -542,9 +635,26 @@ class ArmControllerPlugin(Plugin):
         self._traj_t0 = 0.0
         self._traj_base = 0.0
         self._traj_scale = 1.0
-        self._scaled = self.config.get("controller_type", _TRAJECTORY_TYPES[0]) == (
-            SCALED_TRAJECTORY_TYPE
+        self._scaled = (
+            self.config.get("controller_type", _TRAJECTORY_TYPES[0]) in SCALED_TRAJECTORY_TYPES
         )
+        self.state_interfaces = list(self.config.get("state_interfaces", list(STATE_INTERFACES)))
+        self.joint_state_rate = float(self.config.get("joint_state_rate", 50.0))
+        self.controller_state_rate = float(self.config.get("controller_state_rate", 50.0))
+        self.command_feedforward = str(self.config.get("command_feedforward", "none"))
+        # Streamed commands' velocity estimate: per joint, the last command, when it came, and the
+        # speed it implies (see `command_feedforward`).
+        self._cmd_last: dict[str, tuple[float, float]] = {}
+        self._cmd_vel: dict[str, float] = {}
+        self._cmd_stamp = -1.0
+        self._forward_name = self.config.get("forward_command_controller")
+        #: Declared with `forward_command_controller`, so the forward commands endpoint exists.
+        self.has_forward = bool(self._forward_name)
+        self._forward_active = False
+        self._forward_registered = None
+        self.publish_dynamic_joint_states = bool(self.config.get("dynamic_joint_states", False))
+        # The motion gate's reason on the last step, None while the arm may move.
+        self._blocked: str | None = None
         self._ff_gains: dict[str, tuple[float, float]] = {}
         self._ff_scratch = None
         self._jnt_range: dict[
@@ -725,6 +835,21 @@ class ArmControllerPlugin(Plugin):
                 apply=self.set_active,
             )
         )
+        if self._forward_name:
+            # Declared, claiming the same joints, and unlisted until `load_controller`: a robot whose
+            # parameter file defines it but whose launch does not spawn it.
+            self._forward_registered = registry.register(
+                Controller(
+                    name=str(self._forward_name),
+                    type=FORWARD_COMMAND_TYPE,
+                    claims=tuple(f"{j}/position" for j in self._ctrl_names),
+                    state=INACTIVE,
+                    namespace=ns,
+                    owner=self.arm,
+                    apply=self._set_forward_active,
+                    listed=False,
+                )
+            )
         # A robot has ONE joint_state_broadcaster reading every joint, however many arms it has, so
         # a second arm on the same entity extends the broadcaster the first one registered.
         broadcaster = self.config.get("joint_state_broadcaster_name", "joint_state_broadcaster")
@@ -768,15 +893,17 @@ class ArmControllerPlugin(Plugin):
                 follow_trajectory=self.follow_trajectory,
                 trajectory_active=lambda: self._traj is not None,
                 trajectory_time_scale=self.trajectory_time_scale,
+                motion_blocked=lambda: self._blocked,
             ),
         )
-        if self.trajectory_feedforward != "none":
+        if self.trajectory_feedforward != "none" or self.command_feedforward != "none":
             for name, (aid, _) in zip(self._ctrl_names, self._joint_acts, strict=True):
                 gains = affine_servo_gains(m, aid)
                 if gains is None:
                     raise RuntimeError(
-                        f"arm_controller[{self.name}]: trajectory_feedforward "
-                        f"{self.trajectory_feedforward!r} needs an affine position servo on a unit-gear "
+                        f"arm_controller[{self.name}]: a feed-forward "
+                        f"({self.trajectory_feedforward!r} / {self.command_feedforward!r}) needs an "
+                        "affine position servo on a unit-gear "
                         f"joint transmission; actuator {m.actuator(aid).name!r} of joint {name!r} is not one"
                     )
                 self._ff_gains[name] = gains
@@ -831,17 +958,59 @@ class ArmControllerPlugin(Plugin):
             )
             self.has_gripper = True
 
+        if self.publish_dynamic_joint_states:
+            # Hand-built: a DynamicJointState is a list of nested messages, which no by-name mapping
+            # fills; the converter is roqsim_manipulation.ros2_types' (a bridge extension).
+            ctx.interface.add(
+                Endpoint(
+                    name="dynamic_joint_states",
+                    direction="out",
+                    owner=self.arm,
+                    namespace=ns,
+                    read=self.dynamic_joint_states,
+                    rate_hz=self.joint_state_rate,
+                    backend={
+                        "ros2": {
+                            "type": "control_msgs.msg.DynamicJointState",
+                            "topic": "dynamic_joint_states",
+                        }
+                    },
+                )
+            )
+
+    def dynamic_joint_states(self) -> list[tuple[str, dict[str, float]]]:
+        """Every joint's state interfaces, then those the driver interface adds, as
+        ``[(name, {interface: value})]`` -- what ros2_control's joint_state_broadcaster publishes."""
+        names, pos, vel, eff = self.read_state()
+        rows = []
+        for i, n in enumerate(names):
+            values = {"position": float(pos[i])}
+            if "velocity" in self.state_interfaces:
+                values["velocity"] = float(vel[i])
+            if "effort" in self.state_interfaces:
+                values["effort"] = float(eff[i])
+            rows.append((n, values))
+        extra = self._ctx.blackboard.get(state_interfaces_key(self.arm)) if self._ctx else None
+        return rows + (list(extra()) if extra is not None else [])
+
     # -- endpoints ----------------------------------------------------------------------------
     # Each takes a waypoint's names and positions, the fields of a JointPositions. Joints this
     # controller does not own are ignored, so a message may name a subset. The inputs are commands,
     # not streams: every message is applied, in order, because each merges into the held target and
     # a later one in the same step must not replace an earlier one that named other joints.
 
-    @endpoint.out(rate=50.0)
+    @endpoint.out(rate="joint_state_rate")
     def joint_states(self) -> JointState:
-        """Positions, velocities and efforts of the joints this controller reports."""
+        """Positions, velocities and efforts of the joints this controller reports (the fields
+        ``state_interfaces`` names; the others are empty)."""
         names, pos, vel, eff = self.read_state()
-        return JointState(names, np.array(pos), np.array(vel), np.array(eff))
+        empty = np.array([], dtype=np.float64)
+        return JointState(
+            names,
+            np.array(pos),
+            np.array(vel) if "velocity" in self.state_interfaces else empty,
+            np.array(eff) if "effort" in self.state_interfaces else empty,
+        )
 
     # Trajectory execution as an action: a bridge with a handler for the type (see
     # roqsim_ros_bridge.actions) runs the goal and feeds each waypoint through this command.
@@ -859,6 +1028,13 @@ class ArmControllerPlugin(Plugin):
             # a heavier or softer arm loosens them here.
             "goal_tolerance": self.config.get("goal_tolerance", 0.5),
             "goal_time_tolerance": float(self.config.get("goal_time_tolerance", 1.0)),
+            # ros2_control's other constraints, when the robot states them (see the config keys).
+            "path_tolerance": self.config.get("path_tolerance", 0.0),
+            "allow_partial_joints_goal": bool(self.config.get("allow_partial_joints_goal", True)),
+            "allow_nonzero_velocity_at_trajectory_end": bool(
+                self.config.get("allow_nonzero_velocity_at_trajectory_end", True)
+            ),
+            "joint_names": list(self._ctrl_names),
         },
     )
     def follow_joint_trajectory(self, names: list[str], positions: NDArray[np.float64]) -> None:
@@ -874,7 +1050,7 @@ class ArmControllerPlugin(Plugin):
     # alongside the action and the command topic (rqt_joint_trajectory_controller and most
     # diagnostics read it).
     @endpoint.out(
-        rate=50.0,
+        rate="controller_state_rate",
         ros2=lambda self: {
             "type": "control_msgs.msg.JointTrajectoryControllerState",
             "topic": f"{self._controller}/controller_state",
@@ -930,6 +1106,36 @@ class ArmControllerPlugin(Plugin):
             velocities: one per name, rad/s or m/s
         """
         self.set_velocities(names, velocities)
+
+    # ros2_control's forward_command_controller: one position per joint, in joint order, applied
+    # while that controller is active and refused (logged, as upstream logs it) otherwise.
+    @endpoint.stream(
+        when="has_forward",
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Float64MultiArray",
+            "topic": f"{self._forward_name}/commands",
+        },
+    )
+    def forward_commands(self, data: list[float]) -> None:
+        """Joint positions for the forward position controller.
+
+        Args:
+            data: one position per joint, in the controller's joint order
+        """
+        if not self._forward_active:
+            return
+        if len(data) != len(self._ctrl_names):
+            self._ctx.logger.warning(
+                "%s: command size (%d) does not match number of interfaces (%d)",
+                self._forward_name,
+                len(data),
+                len(self._ctrl_names),
+            )
+            return
+        self.set_targets(self._ctrl_names, data)
+
+    def _set_forward_active(self, active: bool) -> None:
+        self._forward_active = bool(active)
 
     @endpoint.command(
         when="has_gripper",
@@ -1093,13 +1299,34 @@ class ArmControllerPlugin(Plugin):
             self._traj = None
 
     def set_targets(self, names, positions) -> None:
+        if self._blocked is not None:
+            return  # the robot controller ignores setpoints while motion is not possible
         self._traj = None  # a position command supersedes a trajectory being executed
+        now = float(self._ctx.data.time) if self._ctx is not None else 0.0
         for n, p in zip(names, positions, strict=False):  # tolerate external/partial input
             if n in self._target:
                 self._command(n, float(p))
+                if self.command_feedforward != "none":
+                    self._estimate_command_velocity(n, float(p), now)
         # A position command supersedes any in-flight velocity command; otherwise the integrator would
         # keep walking away from the pose the caller just asked for.
         self._vel_cmd.clear()
+
+    def _estimate_command_velocity(self, name: str, position: float, now: float) -> None:
+        """The streamed setpoint's speed, from this command and the last one at an earlier time."""
+        last = self._cmd_last.get(name)
+        if last is not None and now > last[1]:
+            self._cmd_vel[name] = (position - last[0]) / (now - last[1])
+        if last is None or now > last[1]:
+            self._cmd_last[name] = (position, now)
+        self._cmd_stamp = now
+
+    def _command_offset(self, name: str, now: float) -> float:
+        """The servo's lag at the streamed setpoint's speed, ``d * qd / p``; 0 once the stream stops."""
+        if self._cmd_stamp < 0.0 or now - self._cmd_stamp > COMMAND_FEEDFORWARD_HOLD_S:
+            return 0.0
+        p, d = self._ff_gains[name]
+        return d * self._cmd_vel.get(name, 0.0) / p
 
     def set_velocities(self, names, velocities) -> None:
         """Command joint velocities (rad/s), integrated into the held target each tick.
@@ -1199,8 +1426,11 @@ class ArmControllerPlugin(Plugin):
         return (float(d.qpos[self._grip_qposadr]), float(d.qvel[self._grip_dofadr]))
 
     def _write_ctrl(self, d) -> None:
+        streamed = self.command_feedforward != "none" and self._traj is None
+        now = float(d.time)
         for name, (aid, _) in zip(self._ctrl_names, self._joint_acts, strict=True):
-            d.ctrl[aid] = self._target[name]
+            offset = self._command_offset(name, now) if streamed else 0.0
+            d.ctrl[aid] = self._target[name] + offset
         for aid in self._aux_acts:
             d.ctrl[aid] = self._gripper_ctrl_target
 
@@ -1221,6 +1451,13 @@ class ArmControllerPlugin(Plugin):
         self._apply_rest(ctx)
         self._vel_cmd.clear()  # a stale velocity command must not survive a reset
         self._traj = None  # nor a trajectory
+        self._cmd_last.clear()  # nor a streamed command's speed
+        self._cmd_vel.clear()
+        self._cmd_stamp = -1.0
+        self._blocked = None
+        if self._forward_registered is not None:
+            registry_for(ctx).restore(self._forward_registered, INACTIVE, ctx.sim_time)
+            self._forward_active = False
         self._gripper_ctrl_target = self.gripper_ctrl
         if self._grip_forcerange is not None:
             # A trial's grip force is that trial's: the next one starts from the model's own.
@@ -1292,8 +1529,26 @@ class ArmControllerPlugin(Plugin):
         if not self._active:
             self._traj = None  # deactivation aborts the trajectory, as it aborts a goal
 
+    def _apply_motion_gate(self, ctx: SimContext) -> None:
+        """Close or open the arm to motion as its driver's gate says (see "The motion gate")."""
+        gate = ctx.blackboard.get(motion_gate_key(self.arm))
+        reason = gate() if gate is not None else None
+        if (reason is None) == (self._blocked is None):
+            self._blocked = reason
+            return
+        # Either way the arm holds where it is now: stopping, and resuming from where it stopped.
+        m, d = ctx.model, ctx.data
+        for name, (_, jid) in zip(self._ctrl_names, self._joint_acts, strict=True):
+            self._target[name] = float(d.qpos[m.jnt_qposadr[jid]])
+        self._hold_where_targeted()
+        self._traj = None
+        self._vel_cmd.clear()
+        self._cmd_stamp = -1.0
+        self._blocked = reason
+
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:
+            self._apply_motion_gate(ctx)
             # The command source is a controller in its own right and gates itself, so the pull is
             # not conditioned on the trajectory role. Velocity integration IS that role's, and
             # stops with it.

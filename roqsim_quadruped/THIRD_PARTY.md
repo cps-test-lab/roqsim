@@ -13,8 +13,21 @@ pretrained locomotion policy from **NVIDIA Isaac**.
 
 | Vendored file | Upstream path (in mujoco_menagerie) |
 | --- | --- |
-| `models/spot.xml` | `boston_dynamics_spot/spot.xml` — **adapted** for roqsim: base body `body`→`base_link` and freejoint `freejoint`→`base_free`; added a `lidar` site; dropped the tracking/spot `<light>`s, `<option>`, `<visual>` and the `keyframe` (the roqsim world provides ground, lighting, timestep); base `pos` z set to the standing rest height at the policy's default pose. **Position actuator gains changed from Menagerie's untuned `kp=500 kv=40` to `kp=60 kv=1.5`** to match the policy's training PD (Isaac stiffness=60, damping=1.5). **Masses + inertias scaled ~0.65× to ~32.5 kg total** (real Spot): Menagerie's 50.34 kg is ~1.5× too heavy for the soft PD, which sagged the default stance. **Foot contact retuned** (friction 0.8→2.0, `solimp` stiffened) for the policy's near-no-slip assumption. Bodies, joints, geoms and joint ordering are otherwise verbatim. |
+| `models/spot.xml` | `boston_dynamics_spot/spot.xml` — **adapted** for roqsim: base body `body`→`base_link` and freejoint `freejoint`→`base_free`; added a `lidar` site; dropped the tracking/spot `<light>`s, `<option>`, `<visual>` and the `keyframe` (the roqsim world provides ground, lighting, timestep); base `pos` z set to the standing rest height at the policy's default pose. **Position actuator gains changed from Menagerie's untuned `kp=500 kv=40` to `kp=60 kv=1.5`** to match the policy's training PD (Isaac stiffness=60, damping=1.5). **Masses + inertias scaled ~0.65× to ~32.5 kg total** (real Spot): Menagerie's 50.34 kg is ~1.5× too heavy for the soft PD, which sagged the default stance. **Foot contact retuned** (friction 0.8→2.0, `solimp` stiffened) for the policy's near-no-slip assumption. **Leg geometry and joint ranges set to spot_description's** (rai-opensource/spot_description @ `156d1802bfb117f219dbfce7597d283d5fabc968`, the submodule `bdaiinstitute/spot_ros2` pins; `urdf/spot_macro.xacro`): upper legs 0.110945 m (Menagerie 0.1108) out from the hips, knees 0.3205 m (0.32) below them, `fr_hy` up to 2.29511 rad (2.24363) and the four knees' upper bounds; its joint velocity limits, which MJCF cannot express, go to `spot_locomotion` from the manifest. Bodies, joints, geoms and joint ordering are otherwise verbatim. |
 | `models/meshes/*.obj` | `boston_dynamics_spot/assets/*.obj` — the 23 meshes referenced by the leg-only model, with the 18 heavy **visual** meshes **decimated** (Blender Collapse, 2000-tri cap) for viewer/render performance; the 5 already-tiny **collision** meshes are verbatim. Shape is preserved; see "Decimated meshes" in `README.md`. |
+
+## Body camera poses and lenses — public sources (facts only, nothing copied)
+
+Boston Dynamics publishes the five stations, their frame names and the camera frame convention, but
+no camera extrinsics, sizes or intrinsics: the robot reports them at runtime (Spot SDK
+`docs/concepts/robot_services.md`). Each value in `spot.manifest.yaml` and in
+`roqsim_sensors`' `spot_body_camera` device names one of:
+
+| source | pin | what it gives |
+| --- | --- | --- |
+| Spot SDK, github.com/boston-dynamics/spot-sdk | `04537ddafe0641d1751af3eb9e76cb785fc18594` (5.2.0) | the stations and frames (`docs/concepts/geometry_and_frames.md`, `docs/concepts/about_spot.md`), depth in millimetres (`protos/bosdyn/api/image.proto`), the image rotation that levels each station (`python/examples/get_image/get_image.py` `ROTATION_ANGLE`), the 4 m operating range |
+| spot_ros2, github.com/bdaiinstitute/spot_ros2 | `949feb7b0d702d1923e5b5dd5c0a4a7728ddc88f` | topics, encodings, `camera_info` (plumb_bob, D = 0), QoS, the 15 Hz image rate, frame names; its `spot_description` submodule @ `156d1802bfb117f219dbfce7597d283d5fabc968` for `base_link` at `body` |
+| DARPA SubT Spot model, github.com/osrf/subt `submitted_models/bosdyn_spot` | `083c6a8acb0c25aa1a35e34517e628cd3b52ae77` | each station's position and direction of view, image sizes and intrinsics, the fisheye-to-depth offset -- estimated there from real-robot data, and secondary to the two above: where it disagrees with the SDK's `ROTATION_ANGLE` (the roll of `frontright` and `right`), the SDK wins |
 
 ## Locomotion policy — NVIDIA Isaac (NOT committed, fetched locally)
 

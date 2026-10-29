@@ -31,6 +31,13 @@ configuration -- can also declare a ``world`` parameter and select the world its
 makes that one scenario instead of N. Ordinary scenarios declare neither and stay
 simulator-agnostic: the world then comes from ``ROQSIM_WORLD``, set by whoever deployed the run.
 
+A runner that executes several scenarios in one process hands ``reset()`` each scenario's own
+output directory (scenario-execution's ``output_dir`` reset argument). The recording and the scene
+export then roll with it: the scenario before is finished and the next one records and exports its
+scene into its own directory, so a parameter file of many scenarios leaves one complete recording
+per scenario rather than one file for all of them. The engine is not rebuilt for it; a reset is
+what separates two scenarios.
+
 Because the world is *compiled* when the engine is built (not on ``reset``), the engine is built
 lazily -- on the first of ``reset()``/``dt``/``step()`` -- so it is constructed with the world and
 overrides in place. A later ``reset()`` naming a different world, or different overrides, rebuilds.
@@ -66,6 +73,7 @@ import logging
 import os
 from pathlib import Path
 
+from . import env
 from .config import load_config, overrides_from_files
 from .context import SimContext
 from .engine import Engine
@@ -73,6 +81,9 @@ from .seed import SEED_ENV, resolve_seed
 from .viewer import DisplayError, PassiveViewer, has_display
 
 _UNBUILT = object()  # sentinel: no engine built yet (distinct from "built with no overrides")
+
+#: The file the scene export writes into ``ROQSIM_SCENE_EXPORT_DIR``: the world as binary glTF.
+SCENE_FILE = "scene.glb"
 
 
 def _as_headless(headless) -> bool:
@@ -206,7 +217,15 @@ class MujocoSim(_Base):
         world_overrides: dict | None = None,
         seed: int | None = None,
     ):
-        self._default_world = world or os.environ.get("ROQSIM_WORLD")
+        # Before anything is read: a ROQSIM_* variable nothing reads would be ignored, and a
+        # recording target that cannot be one would fail only once the world had been built.
+        env.check()
+        record = env.get("ROQSIM_RECORD")
+        if record:
+            from .mcap_format import recording_path
+
+            recording_path(record)
+        self._default_world = world or env.get("ROQSIM_WORLD")
         if not self._default_world:
             raise ValueError(
                 "no world specified: pass world=... or set ROQSIM_WORLD to a world YAML path"
@@ -219,10 +238,10 @@ class MujocoSim(_Base):
         self._transport = (
             {
                 "ros": True,
-                "tf_namespace": os.environ.get("ROQSIM_TF_NAMESPACE") or None,
-                "control": _as_bool(os.environ.get("ROQSIM_SIM_CONTROL")),
+                "tf_namespace": env.get("ROQSIM_TF_NAMESPACE") or None,
+                "control": _as_bool(env.get("ROQSIM_SIM_CONTROL")),
             }
-            if _as_bool(os.environ.get("ROQSIM_ROS"))
+            if _as_bool(env.get("ROQSIM_ROS"))
             else None
         )
         # A deployment's overrides, for the shape that has no command line. `roqsim sim` takes
@@ -232,14 +251,14 @@ class MujocoSim(_Base):
         # `world_overrides` itself still wins: that is the experiment speaking, and it is
         # more specific than the deployment.
         if world_overrides is None:
-            overrides_file = os.environ.get("ROQSIM_WORLD_OVERRIDES")
+            overrides_file = env.get("ROQSIM_WORLD_OVERRIDES")
             world_overrides = overrides_from_files([overrides_file]) if overrides_file else None
         self._default_overrides = world_overrides
         # The run's noise seed, same story as the two above: the deployment states it in the
         # environment (there is no command line here), and a scenario passing it wins. `None` means
         # "the world's `sim.seed`, or draw one" -- resolved at build time, where the config is known.
         if seed is None:
-            env_seed = os.environ.get(SEED_ENV)
+            env_seed = env.get(SEED_ENV)
             seed = int(env_seed) if env_seed not in (None, "") else None
         self._explicit_seed = seed
         #: A drawn seed, kept so a rebuild does not redraw. `_build` runs again for a different world
@@ -252,6 +271,8 @@ class MujocoSim(_Base):
         self._viewer: PassiveViewer | None = None
         self._scene_export_pending = False
         self._output_dir: str | None = None
+        #: The directory of the scenario being run, when the runner names one per scenario.
+        self._run_dir: str | None = None
         self._recorder = None
 
     # -- build ------------------------------------------------------------------------------------
@@ -278,7 +299,7 @@ class MujocoSim(_Base):
         self._engine = engine
         self._world = world
         self._built_overrides = overrides
-        # A (re)built world means the browser scene descriptor (if requested) is stale; the export
+        # A (re)built world means the exported scene (if requested) is stale; the export
         # itself runs after reset(), when mocap bodies are at their true initial pose.
         self._scene_export_pending = True
 
@@ -328,76 +349,86 @@ class MujocoSim(_Base):
         return self._engine
 
     def _export_scene(self) -> None:
-        """Write the browser scene descriptor of the just-built world, when requested.
+        """Write the just-built world as a binary glTF file, when requested.
 
         Opt-in via the ``ROQSIM_SCENE_EXPORT_DIR`` environment variable: when set, the compiled
-        world is exported as ``scene.json``/``scene.bin`` (+ textures) into that directory -- a
-        relative path is resolved by :meth:`_resolve_out`, like the recording, so the exact simulated
-        scene, world_overrides included, ships as a run artifact for browser viewers. Called after
-        ``engine.reset()`` so mocap-driven bodies (walkers) and re-seated robot bases are captured
-        at their true initial pose; the forward pass propagates the re-posed mocap into
-        ``data.xpos`` first (mirrors ``scene_source.compile_from_world``).
+        world is exported as :data:`SCENE_FILE` into that directory -- a relative path is resolved
+        by :meth:`_resolve_out`, like the recording, so the exact simulated scene, world_overrides
+        included, ships as a run artifact for viewers. Called after ``engine.reset()`` so
+        mocap-driven bodies (walkers) and re-seated robot bases are captured at their true initial
+        pose; the forward pass propagates the re-posed mocap into ``data.xpos`` first (mirrors
+        ``scene_source.compile_world``).
         """
         self._scene_export_pending = False
-        out = os.environ.get("ROQSIM_SCENE_EXPORT_DIR")
+        out = env.get("ROQSIM_SCENE_EXPORT_DIR")
         if not out:
             return
         import mujoco
 
-        from .export_web import export_scene
+        from .export_gltf import export_gltf
+        from .scene_source import declared_cameras
 
-        out_dir = self._resolve_out(out)
         mujoco.mj_forward(self._engine.ctx.model, self._engine.ctx.data)
         # NOT self._logger: the runner may hand us a non-stdlib logger (e.g. scenario-execution's
-        # RosLogger), whose info() lacks %-style lazy formatting that export_scene uses.
-        export_scene(
+        # RosLogger), whose info() lacks %-style lazy formatting that the export uses.
+        export_gltf(
             self._engine.ctx.model,
             self._engine.ctx.data,
-            out_dir,
-            logging.getLogger(__name__),
+            self._resolve_out(out) / SCENE_FILE,
             view=self._engine.config.view,
+            cameras=declared_cameras(self._engine),
+            log=logging.getLogger(__name__),
         )
 
     def _resolve_out(self, value: str) -> Path:
         """Resolve a relative output path against THIS RUN's directory.
 
-        ``RUN_OUTPUT_DIR`` first, because the scenario's own ``output_dir`` is the campaign root
-        (scenario-execution is started with ``-o /out``) while a run's results are collected from
-        ``/out/<config>/<run>``. Anchored at the root, every run of a sweep writes the same
-        ``run.npz`` and the same ``capture/``, each overwriting the last -- which looks like a working
-        capture until you notice every configuration replays identically, and leaves the run
-        directories with no capture at all.
-
-        A campaign runner that packs several runs into one job sets no ``RUN_OUTPUT_DIR`` (one
-        variable cannot serve them all), and there the scenario's ``output_dir`` is still the best
-        answer available -- so it stays the fallback rather than an error.
+        The scenario's own directory first, when the runner named one on ``reset()``: it is the
+        one place that is this scenario's and no other's. Then ``RUN_OUTPUT_DIR``, which a
+        campaign runner sets for a job of one run. Last the ``output_dir`` of ``setup()``, which is
+        the runner's root (scenario-execution is started with ``-o /out``) while a run's results
+        are collected from ``/out/<config>/<run>``: anchored there, every run of a sweep writes the
+        same ``run.mcap``, each overwriting the last -- which looks like a working recording until
+        you notice every configuration replays identically, and leaves the run directories with no
+        recording at all. It stays the fallback rather than an error because a single scenario run
+        by hand has nothing more specific.
         """
         path = Path(value)
         if path.is_absolute():
             return path
-        base = os.environ.get("RUN_OUTPUT_DIR") or self._output_dir
+        base = self._run_dir or os.environ.get("RUN_OUTPUT_DIR") or self._output_dir
         return Path(base) / path if base else path
 
     def _start_recording(self) -> None:
         """Begin sampling MuJoCo state, when the run asked for it.
 
-        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path; a relative one is resolved by
-        :meth:`_resolve_out`), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
-        concern rather than an experiment one -- the same footing as ``--headless``, which a world
-        YAML has no key for -- so it is driven by the environment here and never by the world.
+        Opt-in via ``ROQSIM_RECORD`` (the ``.mcap`` path; a relative one is resolved by
+        :meth:`_resolve_out`), with ``ROQSIM_CAPTURE_FPS`` for the rate and ``ROQSIM_RECORD_TRACKS``
+        / ``ROQSIM_RECORD_EXCLUDE`` to narrow the bodies and joints the decoded channels carry.
+        Recording is a *session* concern rather than an experiment one -- the same footing as
+        ``--headless``, which a world YAML has no key for -- so it is driven by the environment here
+        and never by the world.
 
         The recorder is rebuilt with the world: it holds the model whose state it packs, so a world
         rebuilt with different ``world_overrides`` needs a new one.
         """
-        target = os.environ.get("ROQSIM_RECORD")
+        target = env.get("ROQSIM_RECORD")
         if not target:
             return
-        from .capture import DEFAULT_FPS, CaptureError, StateRecorder, env_flag, parse_fps, snap_fps
+        from .capture import (
+            DEFAULT_FPS,
+            RECORD_EXCLUDE_VAR,
+            RECORD_TRACKS_VAR,
+            CaptureError,
+            StateRecorder,
+            parse_fps,
+            snap_fps,
+        )
 
         lg = logging.getLogger(__name__)
         try:
             rate = snap_fps(
-                parse_fps(os.environ.get("ROQSIM_CAPTURE_FPS") or DEFAULT_FPS),
+                parse_fps(env.get("ROQSIM_CAPTURE_FPS") or DEFAULT_FPS),
                 self._engine.dt,
             )
         except CaptureError as err:
@@ -411,48 +442,22 @@ class MujocoSim(_Base):
             rate,
             world=self._world,
             overrides=self._built_overrides if isinstance(self._built_overrides, dict) else None,
-            sim_poses=env_flag("ROQSIM_SIM_POSES"),
+            tracks=env.get(RECORD_TRACKS_VAR),
+            exclude=env.get(RECORD_EXCLUDE_VAR),
             logger=lg,
         )
 
     def _finish_recording(self) -> None:
-        """Write the recording and, when asked, the browser run capture derived from it.
+        """Finish the recording: the summary section that marks a file as ended on purpose.
 
-        Called before the engine is torn down, because the capture is derived against the **live**
-        model: no world rebuild, and no GL backend, since nothing is rendered. Both artifacts land only
-        on a clean stop -- an ``.npz`` writes its zip index at close, so a hard kill (SIGKILL, a
-        campaign's per-run timeout) leaves neither. What such a run *does* leave in its output
-        directory is the recorder's ``run.npz.part``: the samples were streamed there as they were
-        taken, and close is what packs them. Nothing reads it, and the archive's absence stays the
-        signal that the run did not end on purpose.
-
-        The capture is reported-never-fatal: a run whose results are otherwise good must not fail
-        because a viewer artifact could not be written.
+        Called before the engine is torn down. The samples are already on disk, chunk by chunk, as
+        the run went; what a clean stop adds is the summary. A hard kill (SIGKILL, a campaign's
+        per-run timeout) leaves the file without one, still readable up to its last closed chunk,
+        and the missing summary stays the signal that the run did not end on purpose.
         """
         recorder, self._recorder = self._recorder, None
         if recorder is None:
             return
-        lg = logging.getLogger(__name__)
-        out = os.environ.get("ROQSIM_CAPTURE_EXPORT_DIR")
-        if out and self._engine is not None and recorder.frames:
-            from .export_capture import write_capture
-
-            try:
-                write_capture(
-                    self._engine.ctx.model,
-                    recorder.replay(self._engine.ctx),
-                    self._resolve_out(out),
-                    world=self._world,
-                    overrides=self._built_overrides
-                    if isinstance(self._built_overrides, dict)
-                    else {},
-                    seed=getattr(self._engine.ctx, "seed", None),
-                    logger=lg,
-                )
-            except Exception as err:  # pylint: disable=broad-except
-                lg.warning(
-                    "run capture export failed (%s); the recording itself is unaffected", err
-                )
         recorder.close()
 
     # -- SimulationInterface ----------------------------------------------------------------------
@@ -492,11 +497,19 @@ class MujocoSim(_Base):
         self._logger = kwargs.get("logger")
         self._output_dir = kwargs.get("output_dir")
 
-    def reset(self, world=None, world_overrides=None, headless=None, **kwargs) -> None:
+    def reset(
+        self, world=None, world_overrides=None, headless=None, output_dir=None, **kwargs
+    ) -> None:
         self._build(
             world or self._default_world,
             world_overrides if world_overrides is not None else self._default_overrides,
         )
+        if output_dir is not None and output_dir != self._run_dir:
+            # A scenario with a directory of its own: the one before it is finished, with its
+            # summary, and this one's recording and scene export start afresh in its directory.
+            self._finish_recording()
+            self._run_dir = output_dir
+            self._scene_export_pending = True
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
         self._engine.reset(**kwargs)
         if self._scene_export_pending:
