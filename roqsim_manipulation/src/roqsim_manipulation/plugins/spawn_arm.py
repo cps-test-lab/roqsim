@@ -319,6 +319,12 @@ def _numbers(value, length: int) -> bool:
     )
 
 
+def _riser_model(mount):
+    """``mount.riser.model`` as stated, or None where the config has no such key."""
+    riser = mount.get("riser") if isinstance(mount, dict) else None
+    return riser.get("model") if isinstance(riser, dict) else None
+
+
 class SpawnArmPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -449,7 +455,9 @@ class SpawnArmPlugin(Plugin):
         mount = self._stated("mount")
         self.mount_robot = mount.robot if mount else None
         self.mount_body = mount.body if mount else None
-        riser = (self.config.get("mount") or {}).get("riser") or {}
+        mount_cfg = self.config.get("mount")
+        riser = mount_cfg.get("riser") if isinstance(mount_cfg, dict) else None
+        riser = riser if isinstance(riser, dict) else {}
         self.riser_model = riser.get("model")
         self.riser_pos, self.riser_quat = config_pose(riser)
         # End effector welded at the arm's tool site; with no `site:` the arm model's manifest
@@ -492,6 +500,7 @@ class SpawnArmPlugin(Plugin):
             ("model", config.get("model")),
             ("mount.robot", mount.get("robot") if isinstance(mount, dict) else None),
             ("end_effector.model", ee.get("model") if isinstance(ee, dict) else None),
+            ("mount.riser.model", _riser_model(mount)),
         ):
             if value == "":
                 errors.append(f"'{path}' is empty; it names what to spawn or weld to")

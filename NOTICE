@@ -20,6 +20,7 @@ The authoritative, per-asset records are:
         roqsim_assets/THIRD_PARTY.md
         roqsim_humanoid/THIRD_PARTY.md
         roqsim_manipulation_assets/THIRD_PARTY.md
+        roqsim_mobile_manipulation/THIRD_PARTY.md
         roqsim_quadruped/THIRD_PARTY.md
         roqsim_scenes/THIRD_PARTY.md
         roqsim_walker/THIRD_PARTY.md

@@ -156,3 +156,15 @@ def test_a_riser_with_joints_is_refused(tmp_path):
 def test_an_unknown_riser_is_refused(tmp_path):
     with pytest.raises(Exception, match="mount.riser"):
         Engine(_world(tmp_path, riser={"model": "no_such_riser"}))
+
+
+def test_an_empty_riser_model_is_refused(tmp_path):
+    """A riser that names nothing would leave the arm floating where the riser should be."""
+    with pytest.raises(Exception, match="'mount.riser.model' is empty"):
+        Engine(_world(tmp_path, riser={"model": ""}))
+
+
+def test_a_riser_stated_as_a_name_is_refused_once_by_the_schema(tmp_path):
+    with pytest.raises(Exception, match="riser") as exc:
+        Engine(_world(tmp_path, riser="mpo_cabinet"))
+    assert "could not be constructed" not in str(exc.value)
