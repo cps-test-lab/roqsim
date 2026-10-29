@@ -10,6 +10,7 @@ once and each tick's batch, and fails the tick loudly once it is gone.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -102,6 +103,8 @@ def test_a_world_draws_through_a_renderer_in_another_process(tmp_path):
     assert report["cameras"] == ["stub/front", "stub/top"]
     assert report["bodies"] == engine.ctx.model.nbody
     assert report["glb_magic"] == "glTF" and report["glb_bytes"] > 0  # the scene, once, as GLB
+    # Each tick carries the poses and the presence the server draws.
+    assert report["render_blobs"] == ["model/geom_group", "model/geom_rgba", "xpos", "xquat"]
 
 
 def test_a_renderer_process_that_died_fails_the_next_tick(tmp_path):
@@ -134,6 +137,27 @@ def test_a_server_nobody_listens_at_is_said(tmp_path):
             engine.step()
     finally:
         engine.shutdown()
+
+
+def test_a_server_that_never_listens_is_stopped_with_the_failed_open(tmp_path):
+    pid_file = tmp_path / "server.pid"
+    never_listens = (
+        f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+    )
+    engine = _engine(
+        tmp_path,
+        settings={"command": [sys.executable, "-c", never_listens], "connect_timeout_s": 2},
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        with pytest.raises(RenderError, match="no renderer accepted a connection"):
+            engine.step()
+    finally:
+        engine.shutdown()
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):  # terminated and reaped, not left running
+        os.kill(pid, 0)
 
 
 def test_its_settings_are_validated_at_load():

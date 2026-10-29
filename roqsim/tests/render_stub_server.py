@@ -41,6 +41,12 @@ class Stub:
                 )
 
     def render(self, header, blobs):
+        if self.report:
+            with open(self.report, encoding="utf-8") as f:
+                report = json.load(f)
+            report["render_blobs"] = sorted(blobs)
+            with open(self.report, "w", encoding="utf-8") as f:
+                json.dump(report, f)
         frames, out = [], []
         for r in header["requests"]:
             h, w = r["height"], r["width"]

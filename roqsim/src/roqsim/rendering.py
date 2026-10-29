@@ -1171,7 +1171,13 @@ class RenderService:
         renderer = self._renderers.get(name)
         if renderer is None:
             renderer = self._construct(name)
-            renderer.open(self.describe(name))
+            try:
+                renderer.open(self.describe(name))
+            except BaseException:
+                # What it took before it failed -- a context, a server process -- goes with it.
+                with contextlib.suppress(Exception):
+                    renderer.close()
+                raise
             self._renderers[name] = renderer
         return renderer
 
