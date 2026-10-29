@@ -74,7 +74,8 @@ def describe_renderer(name: str) -> dict:
         "package": _package(name),
         "class": f"{cls.__module__}:{cls.__qualname__}",
         "summary": _summary(cls),
-        "capabilities": cls.capabilities.as_dict(),
+        # What it gives with its default settings; a settings block may change that (socket).
+        "capabilities": cls.capabilities_for({}).as_dict(),
         "settings": {
             key: {"default": s.default, "meaning": s.meaning} for key, s in cls.SETTINGS.items()
         },

@@ -43,7 +43,7 @@ What is installed, and what each takes
 
 A renderer **declares** what it can give: which images (``rgb``, ``depth``, ``segmentation``),
 which camera models (``pinhole``, ``orthographic``, ``free``), whether it is deterministic, whether
-it runs in roqsim's process. When the world loads, every camera is checked against its renderer; a
+it runs in roqsim's process, whether it draws only the geom groups a camera names. When the world loads, every camera is checked against its renderer; a
 camera asking for what its renderer cannot give fails the load, naming the camera, the renderer,
 what was asked and what it gives. Nothing is drawn by MuJoCo's renderer instead behind your back.
 An unknown renderer names the installed ones and the package that would add it, and a mistyped

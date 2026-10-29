@@ -63,7 +63,14 @@ from .exit_status import NO_GL
 from .models import ModelError
 from .override_options import add_override_options, add_renderer_option, overrides_from_options
 from .recording import RecordingError
-from .rendering import FrameRenderer, GLBackendError, check_gl_backend, focus_camera
+from .rendering import (
+    DEFAULT_RENDERER,
+    FrameRenderer,
+    GLBackendError,
+    check_gl_backend,
+    draws_with_gl,
+    focus_camera,
+)
 from .viewer import GL_HELP, DisplayError, ViewError
 
 log = logging.getLogger(__name__)
@@ -756,6 +763,22 @@ def renderer_choice(ctx) -> dict:
     return {"renderer": name, "settings": service.settings.get(name, {})}
 
 
+def open_frame_renderer(model, width: int, height: int, **kwargs) -> FrameRenderer:
+    """A :class:`FrameRenderer`, its failure to open told in its renderer's terms.
+
+    MuJoCo's renderer failing to open is a GL failure (no context, a wrong backend), and gets the
+    guidance for that; any other renderer's failure -- a socket server that never answered -- is
+    its own, and says so.
+    """
+    name = kwargs.get("renderer") or DEFAULT_RENDERER
+    try:
+        return FrameRenderer(model, width, height, **kwargs)
+    except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
+        if draws_with_gl(name):
+            raise RenderGLError(GL_HELP.format(err=err)) from err
+        raise RenderError(f"renderer {name!r} could not open: {err}") from err
+
+
 def _render_one(
     model,
     data,
@@ -769,12 +792,9 @@ def _render_one(
     sim_time: float = 0.0,
     choice: dict | None = None,
 ) -> None:
-    try:
-        frame = FrameRenderer(
-            model, width, height, camera=cam, geomgroup=geomgroup, **(choice or {})
-        )
-    except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
-        raise RenderGLError(GL_HELP.format(err=err)) from err
+    frame = open_frame_renderer(
+        model, width, height, camera=cam, geomgroup=geomgroup, **(choice or {})
+    )
     try:
         from PIL import Image
 
@@ -1090,17 +1110,9 @@ def _render_video(
         for sample in rec.range(start, stop):
             cam = cameras.for_sample(sample)
             if renderer is None:
-                try:
-                    renderer = FrameRenderer(
-                        model,
-                        width,
-                        height,
-                        camera=cam,
-                        geomgroup=geomgroup,
-                        **renderer_choice(ctx),
-                    )
-                except Exception as err:  # noqa: BLE001
-                    raise RenderGLError(GL_HELP.format(err=err)) from err
+                renderer = open_frame_renderer(
+                    model, width, height, camera=cam, geomgroup=geomgroup, **renderer_choice(ctx)
+                )
             else:
                 renderer.camera = cam
             count += 1

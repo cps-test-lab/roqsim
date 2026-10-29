@@ -56,6 +56,24 @@ import numpy as np
 #: int32 object id and ``mjtObj`` type, ``(-1, -1)`` for background.
 IMAGES = ("rgb", "depth", "segmentation")
 
+#: Each image's channels after ``(H, W)`` and its dtype, as :data:`IMAGES` states them.
+IMAGE_FORMATS = {
+    "rgb": ((3,), np.dtype(np.uint8)),
+    "depth": ((), np.dtype(np.float32)),
+    "segmentation": ((2,), np.dtype(np.int32)),
+}
+
+
+def image_mismatch(kind: str, image: np.ndarray, width: int, height: int) -> str | None:
+    """How *image* differs from the ``kind`` image of a ``width x height`` camera, or ``None``."""
+    channels, dtype = IMAGE_FORMATS[kind]
+    want = (int(height), int(width), *channels)
+    got = tuple(np.shape(image))
+    if got != want or np.asarray(image).dtype != dtype:
+        return f"{kind} {got} {np.asarray(image).dtype}, expected {want} {dtype}"
+    return None
+
+
 #: How a camera projects. ``pinhole`` and ``orthographic`` are a model camera's; ``free`` is a
 #: viewer-style orbit camera (``lookat``/``distance``/``azimuth``/``elevation``), what ``roqsim
 #: render`` and the scene review draw through.
@@ -102,16 +120,24 @@ class RendererCapabilities:
     in_process: bool = True
     #: Whether it draws a caller's MuJoCo ``mjvGeom`` decorations (:attr:`CameraRequest.decorate`).
     decorations: bool = False
+    #: Whether it draws only the geom groups a camera names (:attr:`CameraSpec.geomgroup`).
+    geom_groups: bool = False
 
     def missing(
-        self, images: Sequence[str] = (), model: str | None = None, decorate: bool = False
+        self,
+        images: Sequence[str] = (),
+        model: str | None = None,
+        decorate: bool = False,
+        geomgroup: bool = False,
     ) -> list[str]:
-        """What of *images*, *model* and decorations this renderer does not give, in words."""
+        """What of *images*, *model*, decorations and geom groups this renderer does not give."""
         out = [f"image {i!r}" for i in images if i not in self.images]
         if model is not None and model not in self.camera_models:
             out.append(f"camera model {model!r}")
         if decorate and not self.decorations:
             out.append("decorations")
+        if geomgroup and not self.geom_groups:
+            out.append("only some geom groups")
         return out
 
     def as_dict(self) -> dict:
@@ -124,6 +150,7 @@ class RendererCapabilities:
             "deterministic": self.deterministic,
             "in_process": self.in_process,
             "decorations": self.decorations,
+            "geom_groups": self.geom_groups,
         }
 
 

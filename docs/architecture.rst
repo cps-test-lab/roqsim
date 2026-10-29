@@ -698,9 +698,11 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    time; ``close()``. Nothing in it assumes a GL context or the renderer's process. What a renderer
    can give is declared on its class (``RendererCapabilities``: images, camera models, whether it
    composes moving bodies, draws the static world, renders a batch at once, is deterministic, runs
-   in-process, draws decorations), and :meth:`RenderService.check` holds every camera to it when the
-   world loads: a camera a renderer cannot serve fails the load naming both, and nothing falls back
-   to MuJoCo's renderer.
+   in-process, draws decorations, draws only the geom groups a camera names), and
+   :meth:`RenderService.check` holds every camera to it when the world loads: a camera a renderer
+   cannot serve fails the load naming both, and nothing falls back to MuJoCo's renderer. Every frame
+   a renderer returns is held to its request: its camera, its snapshot's sim time and step, and each
+   image's size and type (``render_api.IMAGE_FORMATS``); any other fails the tick naming both.
 -  **Per tick.** The engine builds one service at setup, before ``configure``, where each camera
    registers a ``RenderView`` per pass (colour, plus the depth camera of a device whose depth has
    optics of its own) with its own gate as the view's ``wants``. Between ``mj_step`` and

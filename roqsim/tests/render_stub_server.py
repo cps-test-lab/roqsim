@@ -16,6 +16,7 @@ import sys
 
 import numpy as np
 
+from roqsim.presence import ABSENT_GEOM_GROUP
 from roqsim.render_socket import serve_forever
 
 
@@ -45,6 +46,12 @@ class Stub:
             with open(self.report, encoding="utf-8") as f:
                 report = json.load(f)
             report["render_blobs"] = sorted(blobs)
+            # What it draws: a flex in the absent group or at zero alpha is not drawn.
+            hidden = (blobs["model/flex_group"] == ABSENT_GEOM_GROUP) | (
+                blobs["model/flex_rgba"][:, 3] == 0.0
+            )
+            report.setdefault("flexes_drawn", []).append(int((~hidden).sum()))
+            report["geomgroups"] = [r["geomgroup"] for r in header["requests"]]
             with open(self.report, "w", encoding="utf-8") as f:
                 json.dump(report, f)
         frames, out = [], []

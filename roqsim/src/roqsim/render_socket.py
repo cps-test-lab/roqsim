@@ -30,18 +30,23 @@ Arrays travel as their bytes, never through JSON::
     -> open    {scene: {cameras, body_names, moving, settings}}  + blob scene.glb (optional)
                                                           <- opened
     -> render  {sim_time, step, requests: [{id, width, height, model, fovy, near, far, images,
-                pos, quat}]}  + blobs xpos, xquat,         <- frames {frames: [{id, sim_time, step}]}
-                model/geom_rgba, model/geom_group
-                                                              + blobs <id>/<image> per image
+                pos, quat, geomgroup}]}
+               + blobs xpos, xquat, model/geom_rgba, model/geom_group, model/flex_rgba,
+                 model/flex_group
+                                                          <- frames {frames: [{id, sim_time, step}]}
+                                                             + blobs <id>/<image> per image
     -> close                                              <- closed
     any reply may instead be  error {message}
 
 A request's ``pos``/``quat`` are the camera's world pose (``quat`` ``w, x, y, z``; MuJoCo's camera
-frame, looking down its -z with +y up). The scene, sent once, is the world as glTF 2.0 written by
-``roqsim export gltf``'s writer (:mod:`roqsim.export_gltf`), so there is one walk of the scene, and
+frame, looking down its -z with +y up); ``geomgroup`` is ``null`` (every group) or the groups the
+camera draws, for a server that declares ``geom_groups``. A frame answers with the request's
+``sim_time`` and ``step`` and images of the request's size in the formats
+:data:`roqsim.render_api.IMAGE_FORMATS` states; the service refuses any other. The scene, sent
+once, is the world as glTF 2.0 written by ``roqsim export gltf``'s writer (:mod:`roqsim.export_gltf`), so there is one walk of the scene, and
 the body table names the bodies the per-tick ``xpos``/``xquat`` rows belong to. The per-tick
 ``model/<field>`` blobs are the model values that change at run time
-(:data:`roqsim.rendering.RUNTIME_MODEL_FIELDS`): an absent entity's geoms are in
+(:data:`roqsim.rendering.RUNTIME_MODEL_FIELDS`): an absent entity's geoms and flexes are in
 :data:`~roqsim.presence.ABSENT_GEOM_GROUP` with zero alpha, and a server draws none of them.
 
 **Failing loudly.** A server that cannot be reached within ``connect_timeout_s``, one that does not
@@ -93,7 +98,8 @@ def send_message(sock: socket.socket, header: dict, blobs: Sequence[tuple[str, n
     body = json.dumps(header).encode("utf-8")
     sock.sendall(_HEADER.pack(len(body)) + body)
     for _, a in arrays:
-        sock.sendall(memoryview(a).cast("B"))
+        if a.nbytes:  # an empty array (a model with no flex) has no bytes, and no view to cast
+            sock.sendall(memoryview(a).cast("B"))
 
 
 def _recv_exactly(sock: socket.socket, n: int) -> bytes:
@@ -166,6 +172,11 @@ class SocketRenderer(Renderer):
         "images": Setting(["rgb"], "the images the server renders (rgb, depth, segmentation)"),
         "camera_models": Setting(["pinhole"], "the camera models it renders (pinhole, ...)"),
         "deterministic": Setting(False, "whether its frame is a function of the state alone"),
+        "geom_groups": Setting(
+            False,
+            "whether it draws only the geom groups a request names (`geomgroup`); a camera that "
+            "names some is refused at load otherwise",
+        ),
     }
 
     @classmethod
@@ -182,6 +193,7 @@ class SocketRenderer(Renderer):
             deterministic=bool(merged["deterministic"]),
             in_process=False,
             decorations=False,
+            geom_groups=bool(merged["geom_groups"]),
         )
 
     @classmethod
@@ -208,6 +220,9 @@ class SocketRenderer(Renderer):
             value = settings.get(key, [])
             if not isinstance(value, list) or set(value) - set(allowed):
                 errors.append(f"'{key}' is a list of {', '.join(allowed)}, got {value!r}")
+        for key in ("deterministic", "geom_groups"):
+            if not isinstance(settings.get(key, False), bool):
+                errors.append(f"'{key}' must be true or false, got {settings[key]!r}")
         for key in ("connect_timeout_s", "timeout_s"):
             value = settings.get(key, 1.0)
             if not isinstance(value, (int, float)) or value <= 0:
@@ -350,6 +365,9 @@ class SocketRenderer(Renderer):
                     "images": sorted(r.images),
                     "pos": [float(v) for v in r.pos],
                     "quat": [float(v) for v in r.quat],
+                    "geomgroup": None
+                    if r.camera.geomgroup is None
+                    else [int(g) for g in r.camera.geomgroup],
                 }
                 for r in requests
             ],

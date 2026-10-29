@@ -21,6 +21,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin, PluginError
+from roqsim.presence import set_present
 from roqsim.render_api import RenderError
 
 STUB = Path(__file__).with_name("render_stub_server.py")
@@ -45,12 +46,13 @@ class Cams(Plugin):
                 height=h,
                 images=images,
                 wants=lambda i=images: i,
+                geomgroup=self.config.get("geomgroup"),
             )
             for name, (w, h) in (("front", (32, 24)), ("top", (16, 16)))
         ]
 
 
-def _engine(tmp_path, images=("rgb", "depth"), settings=None) -> Engine:
+def _engine(tmp_path, images=("rgb", "depth"), settings=None, geomgroup=None) -> Engine:
     address = f"unix:{tmp_path / 'render.sock'}"
     socket_settings = {
         "address": address,
@@ -67,7 +69,7 @@ def _engine(tmp_path, images=("rgb", "depth"), settings=None) -> Engine:
                 "renderer": "socket",
                 "renderers": {"socket": socket_settings},
             },
-            "components": [{f"{__name__}:Cams": {"images": list(images)}}],
+            "components": [{f"{__name__}:Cams": {"images": list(images), "geomgroup": geomgroup}}],
         }
     )
     engine = Engine(cfg)
@@ -104,7 +106,14 @@ def test_a_world_draws_through_a_renderer_in_another_process(tmp_path):
     assert report["bodies"] == engine.ctx.model.nbody
     assert report["glb_magic"] == "glTF" and report["glb_bytes"] > 0  # the scene, once, as GLB
     # Each tick carries the poses and the presence the server draws.
-    assert report["render_blobs"] == ["model/geom_group", "model/geom_rgba", "xpos", "xquat"]
+    assert report["render_blobs"] == [
+        "model/flex_group",
+        "model/flex_rgba",
+        "model/geom_group",
+        "model/geom_rgba",
+        "xpos",
+        "xquat",
+    ]
 
 
 def test_a_renderer_process_that_died_fails_the_next_tick(tmp_path):
@@ -158,6 +167,75 @@ def test_a_server_that_never_listens_is_stopped_with_the_failed_open(tmp_path):
     pid = int(pid_file.read_text())
     with pytest.raises(ProcessLookupError):  # terminated and reaped, not left running
         os.kill(pid, 0)
+
+
+#: A soft block, spawned as the entity ``prop``.
+SOFT_BLOCK = """<mujoco><worldbody><body name="soft_block">
+  <flexcomp name="soft" type="grid" count="3 3 3" spacing=".02 .02 .02" dim="3" radius=".002"
+            mass="0.1" rgba="1 0 0 1"><edge equality="false"/>
+    <elasticity young="5e4" poisson="0.3" damping="0.002"/></flexcomp>
+</body></worldbody></mujoco>"""
+
+
+def test_an_absent_flex_is_not_drawn_by_a_renderer_in_another_process(tmp_path):
+    block = tmp_path / "soft_block.xml"
+    block.write_text(SOFT_BLOCK, encoding="utf-8")
+    address = f"unix:{tmp_path / 'render.sock'}"
+    cfg = load_config_from_dict(
+        {
+            "sim": {
+                "timestep": 0.002,
+                "renderer": "socket",
+                "renderers": {
+                    "socket": {
+                        "address": address,
+                        "command": [
+                            sys.executable,
+                            str(STUB),
+                            "{address}",
+                            str(tmp_path / "r.json"),
+                        ],
+                        "images": ["rgb", "depth"],
+                    }
+                },
+            },
+            "components": [
+                {"spawn_model": {"model": str(block), "prefix": "p_"}, "name": "prop"},
+                {f"{__name__}:Cams": {}},
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    engine = Engine(cfg)
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+        set_present(engine.ctx, engine.ctx.entities.get("prop"), False)
+        engine.step()
+    finally:
+        engine.shutdown()
+    report = json.loads((tmp_path / "r.json").read_text())
+    assert report["flexes_drawn"] == [1, 0]
+
+
+def test_a_camera_drawing_some_geom_groups_is_refused_by_a_server_that_draws_every_group(tmp_path):
+    engine = _engine(tmp_path, settings={}, geomgroup=[2])
+    with pytest.raises(PluginError, match="only some geom groups"):
+        engine.setup()
+
+
+def test_a_server_that_declares_geom_groups_is_sent_the_cameras_groups(tmp_path):
+    engine = _engine(tmp_path, settings={"geom_groups": True}, geomgroup=[2])
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+    finally:
+        engine.shutdown()
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["geomgroups"] == [[2], [2]]
 
 
 def test_its_settings_are_validated_at_load():
