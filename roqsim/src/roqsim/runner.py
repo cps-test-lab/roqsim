@@ -224,7 +224,7 @@ def _deaf_to_stop_signals(logger: logging.Logger):
             logger.debug("teardown complete; stop signals handled normally again")
 
 
-def _tick(engine: Engine, pacer: Pacer, recorder=None) -> bool:
+def _tick(engine: Engine, pacer: Pacer, recorder: StateRecorder | None = None) -> bool:
     """Honor run-control; return True if a physics step was taken this iteration.
 
     A reset restarts the recorder's sample schedule with the pacer's. The recorder gates on sim
