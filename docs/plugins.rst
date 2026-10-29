@@ -1201,9 +1201,10 @@ flex in ``contact.flex``. ``contact_monitor``, ``contact_impulse`` and ``contact
 side as the flex and attribute it to the entity that owns it (see *Navigation: detecting a
 collision*); ``roqsim check``'s interpenetration findings name it as ``flex '<name>'``.
 ``contact_pair_override`` refuses a flex side, because a ``<pair>`` names two geoms and MuJoCo has
-none for a flex: a flex's contact is set on the flex (below). ``force_torque`` adds the contacts
-of a flex below its site to its reading (:class:`roqsim.flex.FlexContactWrench`), so a sensor at
-``fts_site`` on the arm above reads what the pad touches as well as the pad's weight.
+none for a flex: a flex's contact is set on the flex (below). ``force_torque`` adds every flex contact
+with one side inside the subtree it senses to its reading (:class:`roqsim.flex.FlexContactWrench`),
+so a sensor at ``fts_site`` on the arm above reads what the pad touches as well as the pad's
+weight.
 
 **roqsim check explains each flex**, from the compiled model and before any step. On the world
 above, its flex lines::
@@ -1327,7 +1328,7 @@ step, and either alone leaves 16 to 17 mm. A world that holds a flex under a sus
 state both. ``noslip_iterations``, the solver's own slip removal, is refused with such a flex under
 ``discrete``.
 
-**A site force sensor sees a flex's weight but none of its contacts.** A contact with a flex acts
+**MuJoCo's site force sensor sees a flex's weight but none of its contacts.** A contact with a flex acts
 on its vertices and is not among the external forces MuJoCo's site force/torque sensor accounts
 for. Measured: a rigid probe pressed into a block reads its weight minus the contact force against
 a rigid block, and its weight alone against a flex block that pushes back with 4.8 N. Everything
