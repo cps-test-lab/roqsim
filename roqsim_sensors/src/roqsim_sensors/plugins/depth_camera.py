@@ -79,7 +79,6 @@ import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import SimContext
-from roqsim.rendering import FrameRenderer
 from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
 
@@ -129,8 +128,6 @@ class DepthCameraPlugin(CameraPlugin):
         self._depth_height_cfg = self.config.get("depth_height")
         self._depth_cam_id = -1
         self._depth_intr: Intrinsics | None = None
-        #: The depth camera's own renderer, when it is not the colour camera.
-        self._depth_frames: FrameRenderer | None = None
         self.clip_near = float(self.config.get("clip_near", self.DEFAULT_CLIP_NEAR))
         self.clip_far = float(self.config.get("clip_far", self.DEFAULT_CLIP_FAR))
         self.depth_encoding = str(self.config.get("depth_encoding", self.DEFAULT_DEPTH_ENCODING))
@@ -393,21 +390,33 @@ class DepthCameraPlugin(CameraPlugin):
         # rewrite a buffer a consumer still held (the colour path copies for the same reason).
         return mm.astype(np.uint16)
 
-    def _capture_extra(self, ctx: SimContext, frames: FrameRenderer) -> None:
+    def _view_cameras(self):
+        """A device with its own depth optics draws depth through a second view, of that camera."""
+        views = super()._view_cameras()
+        if self._depth_cam_id != self._cam_id:
+            views["depth"] = (self._depth_cam_id, self._depth_intr)
+        return views
+
+    def _passes(self, ctx: SimContext | None) -> dict[str, set[str]]:
+        """Depth through the depth view (or the colour one, when they are one camera), and
+        registered depth through the colour view while something asks for it."""
+        passes = super()._passes(ctx)
+        if self._depth_cam_id != self._cam_id:
+            passes["depth"] = {"depth"}
+        else:
+            passes["color"].add("depth")
+        if ctx is None:
+            asked = self.registered_depth
+        else:
+            asked = self._registered_ep is not None and self._asked_for(self._registered_ep)
+        if asked:
+            passes["color"].add("depth")
+        return passes
+
+    def _capture_extra(self, ctx: SimContext, frames) -> None:
         colour = frames
         if self._depth_cam_id != self._cam_id:
-            if self._depth_frames is None:
-                intr = self._depth_intr
-                near, far = self._planes
-                self._depth_frames = FrameRenderer(
-                    ctx.model,
-                    intr.width,
-                    intr.height,
-                    camera=self._depth_cam_id,
-                    near=near,
-                    far=far,
-                )
-            frames = self._depth_frames
+            frames = self._frames["depth"]
         depth = frames.render_depth(ctx.data)
         self._depth, self._invalid = self._clipped(depth)
         self._depth_wire = None  # a new frame invalidates the encoded copy of the last one
@@ -443,9 +452,3 @@ class DepthCameraPlugin(CameraPlugin):
         self._depth_wire = None
         self._registered = None
         self._registered_wire = None
-
-    def shutdown(self, ctx: SimContext) -> None:
-        if self._depth_frames is not None:
-            self._depth_frames.close()
-            self._depth_frames = None
-        super().shutdown(ctx)

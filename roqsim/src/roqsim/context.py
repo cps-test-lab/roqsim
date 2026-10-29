@@ -526,7 +526,9 @@ class SimContext:
         self.interface = InterfaceRegistry()
         #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
         self.entity_poses: set[str] = set()
-        self.render = None  # lazily set to a RenderService when first needed
+        #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
+        #: set by the engine at setup, or made on first use (:meth:`RenderService.of`).
+        self.render = None
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of
         #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``

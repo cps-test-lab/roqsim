@@ -1,4 +1,4 @@
-"""Sensor plugin: Intel RealSense D435(i) colour + depth + point cloud, via ``mujoco.Renderer``.
+"""Sensor plugin: Intel RealSense D435(i) colour + depth + point cloud, drawn through the render service.
 
 Topic/frame naming follows ``realsense-ros``'s conventions, so a world can point an unmodified
 RealSense-based stack at it:
@@ -72,7 +72,7 @@ from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.types import PointCloud
 
-from .camera_common import join_topic
+from .camera_common import CameraPlugin, join_topic
 from .depth_camera import DepthCameraPlugin
 
 #: realsense-ros publishes depth and the coloured cloud under `depth/`, and colour under `color/`,
@@ -135,6 +135,16 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         """The depth frame reprojected to points in the depth optical frame."""
         return self._cloud
 
+    def _view_cameras(self):
+        if not self.depth:
+            return CameraPlugin._view_cameras(self)
+        return super()._view_cameras()
+
+    def _passes(self, ctx):
+        if not self.depth:
+            return CameraPlugin._passes(self, ctx)
+        return super()._passes(ctx)
+
     def _capture_extra(self, ctx: SimContext, frames) -> None:
         if not self.depth:
             return
@@ -149,7 +159,7 @@ class RealsenseD435Plugin(DepthCameraPlugin):
     def _reproject(self, depth: np.ndarray) -> np.ndarray:
         """Depth image -> (N, 3) float32 XYZ in the ROS optical frame (x right, y down, z forward).
 
-        ``mujoco.Renderer``'s depth pass gives the distance along the view direction (a z-buffer in
+        The depth pass gives the distance along the view direction (a z-buffer in
         metres, not a radial range), which is exactly the ``z`` a pinhole reprojection wants. Rows go
         DOWN the image while the MuJoCo camera's ``+y`` points up, so image ``v`` already runs along
         the optical frame's ``+y`` -- no sign flip beyond the intrinsics' principal point.

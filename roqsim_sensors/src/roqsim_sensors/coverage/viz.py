@@ -1,9 +1,9 @@
 """Human-facing visualisations of a coverage result.
 
 * :func:`render_coverage_3d` -- an offscreen MuJoCo render of the world with the sample points drawn as
-  spheres coloured by how many sensors see them (red = 0 -> green = many). Reuses the ``mujoco.Renderer``
-  idiom from ``roqsim_assets``' ``render-thumbnails``; needs only mujoco + numpy, and works headless
-  on whatever backend ``import roqsim`` selected for the machine.
+  spheres coloured by how many sensors see them (red = 0 -> green = many). Drawn through roqsim's
+  render service (:class:`roqsim.rendering.FrameRenderer`) as ``roqsim render`` and the thumbnails
+  are, the spheres as decorations; works headless on whatever backend ``import roqsim`` selected.
 * :func:`render_heatmap_2d` -- a top-down coverage-count heatmap over the floor (matplotlib). Needs the
   optional ``coverage`` extra (``matplotlib``); it raises a clear error if matplotlib is unavailable.
 
@@ -101,6 +101,8 @@ def render_coverage_3d(
     (light 0 -> dark many, so overlapping-sensor regions read darker)."""
     import mujoco
 
+    from roqsim.rendering import FrameRenderer
+
     ramp = _resolve_palette(palette)
 
     points = result.points
@@ -111,15 +113,12 @@ def render_coverage_3d(
         sel = np.linspace(0, len(points) - 1, max_markers).astype(int)
         points, counts = points[sel], counts[sel]
 
-    # The offscreen framebuffer is fixed at compile time (default 640x480); asking for more raises.
+    # The model's declared offscreen size caps the picture.
     height = min(size, int(model.vis.global_.offheight))
     width = min(size, int(model.vis.global_.offwidth))
-    max_geom = len(points) + 2000
-    renderer = mujoco.Renderer(model, height=height, width=width, max_geom=max_geom)
-    try:
-        renderer.update_scene(data, camera=cam if cam is not None else _framed_camera(model, data))
-        scene = renderer.scene
-        eye = np.eye(3, dtype=np.float64).reshape(-1)
+    eye = np.eye(3, dtype=np.float64).reshape(-1)
+
+    def markers(scene):
         for p, c in zip(points, counts, strict=False):
             if scene.ngeom >= scene.maxgeom:
                 break
@@ -133,7 +132,16 @@ def render_coverage_3d(
                 _count_color(c, ramp).astype(np.float32),
             )
             scene.ngeom += 1
-        rgb = renderer.render()
+
+    renderer = FrameRenderer(
+        model,
+        width,
+        height,
+        camera=cam if cam is not None else _framed_camera(model, data),
+        max_geom=len(points) + 2000,
+    )
+    try:
+        rgb = renderer.render(data, decorate=markers)
     finally:
         renderer.close()
 
