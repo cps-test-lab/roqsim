@@ -12,7 +12,7 @@ from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin
 from roqsim_manipulation.plugins.ur_driver_interface import URDriverInterfacePlugin
 
 from roqsim.config import load_config_from_dict
-from roqsim.controllers import ACTIVE, INACTIVE, registry_for
+from roqsim.controllers import ACTIVE, BEST_EFFORT, INACTIVE, STRICT, registry_for
 from roqsim.engine import Engine
 
 SCALED = "ur_controllers/ScaledJointTrajectoryController"
@@ -83,10 +83,26 @@ def test_the_controller_manager_lists_the_drivers_names_and_types():
 
 def test_activating_the_unscaled_controller_is_refused_naming_the_scaled_one():
     engine = _engine()
-    with pytest.raises(RuntimeError, match="use scaled_joint_trajectory_controller"):
-        registry_for(engine.ctx).switch(
-            activate=["joint_trajectory_controller"], deactivate=[], strictness=1
-        )
+    registry = registry_for(engine.ctx)
+    ok, message = registry.switch(
+        activate=["joint_trajectory_controller"],
+        deactivate=["scaled_joint_trajectory_controller"],
+        strictness=STRICT,
+    )
+    assert not ok
+    assert "use scaled_joint_trajectory_controller" in message
+    # Refused before anything changed: the hand-over did not half-happen.
+    assert registry.get("joint_trajectory_controller").state == INACTIVE
+    assert registry.get("scaled_joint_trajectory_controller").state == ACTIVE
+    assert registry.get("joint_trajectory_controller").transitions == []
+
+
+def test_a_best_effort_refusal_still_names_the_reason_and_changes_nothing():
+    engine = _engine()
+    registry = registry_for(engine.ctx)
+    _, message = registry.switch(activate=["joint_trajectory_controller"], strictness=BEST_EFFORT)
+    assert "use scaled_joint_trajectory_controller" in message
+    assert registry.get("joint_trajectory_controller").state == INACTIVE
 
 
 def _steps(engine, seconds: float) -> None:

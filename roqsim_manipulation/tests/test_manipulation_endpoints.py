@@ -66,6 +66,8 @@ def test_arm_kinds_follow_what_each_input_must_keep():
         "controller_state": "out",
         "joint_command": "command",
         "joint_velocity": "command",
+        # ros2_control's forward controller keeps the newest command (a realtime buffer).
+        "forward_commands": "stream",
         "gripper_cmd": "command",
     }
     kinds = {spec.name: spec.kind for spec in declared(CartesianAdmittancePlugin)}
