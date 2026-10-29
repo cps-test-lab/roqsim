@@ -1201,14 +1201,12 @@ flex in ``contact.flex``. ``contact_monitor``, ``contact_impulse`` and ``contact
 side as the flex and attribute it to the entity that owns it (see *Navigation: detecting a
 collision*); ``roqsim check``'s interpenetration findings name it as ``flex '<name>'``.
 ``contact_pair_override`` refuses a flex side, because a ``<pair>`` names two geoms and MuJoCo has
-none for a flex: a flex's contact is set on the flex (below). ``force_torque`` refuses a sensor a
-flex contact could reach unseen, unless the world states ``flex_reaction: excluded``: adding one at
-``fts_site`` to the arm above fails ``roqsim check`` with ``flex 'ur5e_pad' hangs below it, so
-every contact that flex makes would be missing`` (the pad is mounted below that site, so the
-sensor sees its weight; it would not see its contacts).
+none for a flex: a flex's contact is set on the flex (below). ``force_torque`` adds the contacts
+of a flex below its site to its reading (:class:`roqsim.flex.FlexContactWrench`), so a sensor at
+``fts_site`` on the arm above reads what the pad touches as well as the pad's weight.
 
 **roqsim check explains each flex**, from the compiled model and before any step. On the world
-above::
+above, its flex lines::
 
    WARN  [flex-timestep] flex 'ur5e_pad': mode 1 (135 Hz) is under-resolved by the timestep (omega * timestep = 0.85, above 0.3), and so are modes 2 and 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
          hint: set sim.timestep <= 0.000325 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
@@ -1334,8 +1332,8 @@ on its vertices and is not among the external forces MuJoCo's site force/torque 
 for. Measured: a rigid probe pressed into a block reads its weight minus the contact force against
 a rigid block, and its weight alone against a flex block that pushes back with 4.8 N. Everything
 else a flex does reaches the sensor -- its weight, its elastic reaction at rest and in motion, a
-force applied to a vertex. That is the measurement behind ``force_torque``'s refusal
-(:mod:`roqsim_sensors.plugins.force_torque`, "A flex the sensor cannot see").
+force applied to a vertex. That is the measurement behind ``force_torque``'s correction
+(:mod:`roqsim_sensors.plugins.force_torque`, "A flex's contacts are added to the reading").
 
 **Where a flex touches.** A contact names the flex's side by ``contact.flex`` and then either a
 vertex (``contact.vert``) or an element (``contact.elem``), never both. Measured on the block:
