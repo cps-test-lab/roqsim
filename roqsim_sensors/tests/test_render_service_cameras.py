@@ -3,7 +3,7 @@
 """A world's cameras draw through one render service: what that costs, and that it changes no frame.
 
 What scales is tested here with the cameras themselves: one GL context for any number of cameras,
-nothing drawn for a camera nobody reads, every frame stamped with the
+one scene build per tick, nothing drawn for a camera nobody reads, every frame stamped with the
 sim time of the state it was drawn from, and a Spot body camera's three streams as they were drawn
 before the service, pixel for pixel.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import math
+import time
 
 import mujoco
 import numpy as np
@@ -113,7 +114,7 @@ def _gl_contexts() -> int:
     return sum(1 for o in gc.get_objects() if cls is not None and isinstance(o, cls))
 
 
-def test_one_gl_context_for_eight_cameras():
+def test_one_gl_context_and_one_scene_build_per_tick_for_eight_cameras():
     before = _gl_contexts()
     engine = _engine([*_props(), *_ring(8)])
     for ep in _images(engine):
@@ -126,7 +127,8 @@ def test_one_gl_context_for_eight_cameras():
     assert _gl_contexts() - before == 1
     ticks = renderer.stats["batches"]
     assert ticks == 5  # 50 Hz over 0.1 s of 2 ms steps
-    assert renderer.stats["draws"] == 8 * ticks  # every due camera, in one context
+    assert renderer.stats["scene_builds"] == ticks  # one build for all eight cameras
+    assert renderer.stats["readbacks"] == ticks  # and one read-back, of the atlas
     engine.shutdown()
     assert _gl_contexts() - before == 0
 
@@ -246,18 +248,25 @@ class _Before:
         self.fr.close()
 
 
-def _run(ticks: int = 60) -> dict[float, bytes]:
+def _run(mode: str, ticks: int = 60) -> dict[float, bytes]:
     """Every published colour frame of two noisy cameras, by its stamp, over *ticks* steps."""
     ring = _ring(2)
     for entry in ring:
         entry["components"][0]["realsense_d415"]["noise"] = {"gaussian_sigma": 4.0}
-    engine = _engine([*_props(), *ring])
+    engine = _engine([*_props(), *ring], sim={"render": {"mode": mode}})
     for ep in _images(engine):
         ep.claim()
     out: dict[float, bytes] = {}
+    # Paced in async mode, and for as long as it takes the first frames drawn off the physics
+    # thread to arrive (the worker opens its context first), bounded.
+    deadline = time.monotonic() + 30.0
     try:
-        for _ in range(ticks):
+        for i in range(ticks * 50):
+            if i >= ticks and (mode == "sync" or len(out) >= 4 or time.monotonic() > deadline):
+                break
             engine.step()
+            if mode == "async":
+                time.sleep(0.004)
             for ep in _images(engine):
                 image = ep.read()
                 if image is not None:
@@ -267,7 +276,63 @@ def _run(ticks: int = 60) -> dict[float, bytes]:
     return out
 
 
-def test_a_run_is_reproduced_byte_for_byte():
-    """A picture is a function of the state and the seed: two runs agree, noise included."""
-    first, second = _run(), _run()
+def test_sync_is_deterministic_and_an_async_frame_is_the_sync_frame_of_its_stamp():
+    """A picture is a function of the state and the seed: two sync runs agree byte for byte, and
+    every frame async mode publishes is the one sync mode drew for the same stamp, noise included."""
+    first, second = _run("sync"), _run("sync")
     assert first and first == second
+    late = _run("async")
+    assert late
+    assert all(first[key] == pixels for key, pixels in late.items() if key in first)
+    assert set(late) <= set(first)
+
+
+def test_two_mujoco_workers_hold_two_contexts_and_draw_the_same_frames():
+    def frames(workers: int):
+        before = _gl_contexts()
+        engine = _engine([*_props(), *_ring(4)], sim={"render": {"workers": workers}})
+        for ep in _images(engine):
+            ep.claim()
+        for _ in range(30):
+            engine.step()
+        contexts = _gl_contexts() - before
+        out = {ep.producer: ep.read().data.copy() for ep in _images(engine)}
+        engine.shutdown()
+        return contexts, out
+
+    one_contexts, one = frames(1)
+    two_contexts, two = frames(2)
+    assert (one_contexts, two_contexts) == (1, 2)
+    assert one.keys() == two.keys()
+    for key in one:
+        np.testing.assert_array_equal(one[key], two[key], err_msg=key)
+
+
+def test_a_cameras_views_share_one_worker_and_arrive_together_in_async_mode():
+    """A camera with two views (colour, and depth through its own optics) is dealt to one worker as
+    a whole, so its frames of one snapshot arrive together, stepped as fast as physics goes."""
+    engine = _engine(
+        [*_props(), _spot_station(), *_ring(3)], sim={"render": {"mode": "async", "workers": 2}}
+    )
+    from roqsim_sensors.plugins.spot_body_camera import SpotBodyCameraPlugin
+
+    plugin = next(p for p in engine.plugins if isinstance(p, SpotBodyCameraPlugin))
+    eps = {ep.name: ep for ep in engine.ctx.interface.all() if ep.producer.startswith("station")}
+    for name in ("image", "depth", "registered_depth"):
+        eps[name].claim()
+    try:
+        assert {v.shard for v in plugin._views.values()} == {plugin._views["color"].shard}
+        assert len({v.shard for v in engine.ctx.render.views}) == 2  # the rest is dealt on
+        stamps = set()
+        # No pause: the worker falls behind and frames arrive mid-tick. Stepped until frames of a
+        # few snapshots were consumed, however slow this machine's GL is.
+        deadline = time.monotonic() + 120
+        while len(stamps) < 5:
+            assert time.monotonic() < deadline, f"only {len(stamps)} frames in 120 s"
+            engine.step()
+            if plugin._frames:
+                assert plugin._frames.keys() == {"color", "depth"}
+                assert plugin._frames["depth"].frame.sim_time == plugin._stamp
+                stamps.add(plugin._stamp)
+    finally:
+        engine.shutdown()

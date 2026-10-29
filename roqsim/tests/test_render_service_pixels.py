@@ -183,7 +183,7 @@ def test_a_frame_renderer_draws_what_a_renderer_drew_before(world, camera):
 
 
 def test_a_batch_of_cameras_draws_what_each_drew_alone(world):
-    """Three cameras of different sizes in one context, each as a renderer of its own drew it."""
+    """One scene build for three cameras of different sizes, colour through the atlas."""
     model, data = world
     service = RenderService(model)
     sizes = {"persp": (200, 150), "side": (96, 64), "ortho": (128, 128)}
@@ -194,7 +194,7 @@ def test_a_batch_of_cameras_draws_what_each_drew_alone(world):
     for _ in range(2):
         frames = service.render_now([(v, ("rgb", "depth")) for v in views.values()], data)
     renderer = service.renderer()
-    assert renderer.stats["scene_builds"] == 6  # each camera its own, in two batches of three
+    assert renderer.stats["scene_builds"] == 2  # one per batch, for all three cameras
     # The framebuffer the service draws in: the largest camera, or the model's declared size.
     fb = (max(320, 200), max(240, 150))
     try:
@@ -205,6 +205,73 @@ def test_a_batch_of_cameras_draws_what_each_drew_alone(world):
             old.close()
     finally:
         service.close()
+
+
+def test_the_atlas_and_one_readback_per_camera_give_the_same_pixels(world):
+    model, data = world
+    out = {}
+    for atlas in (True, False):
+        service = RenderService(model, renderers={"mujoco": {"atlas": atlas}})
+        views = [
+            service.view(n, camera=n, width=120, height=90) for n in ("persp", "side", "ortho")
+        ]
+        for _ in range(2):
+            frames = service.render_now([(v, ("rgb",)) for v in views], data)
+        out[atlas] = [f.rgb for f in frames]
+        assert service.renderer().stats["readbacks"] == (2 if atlas else 6)
+        service.close()
+    for a, b in zip(out[True], out[False], strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_the_atlas_read_leaves_the_pack_alignment_as_it_found_it(world):
+    from OpenGL import GL
+
+    model, data = world
+    service = RenderService(model)
+    views = [service.view(n, camera=n, width=121, height=90) for n in ("persp", "side")]
+    try:
+        renderer = service._renderer("mujoco")
+        renderer._gl.make_current()
+        GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 4)  # whatever the context holds; MuJoCo sets 1
+        service.render_now([(v, ("rgb",)) for v in views], data)
+        renderer._gl.make_current()
+        assert renderer.stats["readbacks"] == 1  # through the atlas
+        assert int(GL.glGetIntegerv(GL.GL_PACK_ALIGNMENT)) == 4
+    finally:
+        service.close()
+
+
+class _FakeGL:
+    """The two names :class:`roqsim.rendering._Atlas` reads errors through, with errors queued."""
+
+    GL_NO_ERROR = 0
+    GL_OUT_OF_MEMORY = 0x0505
+
+    def __init__(self, *errors):
+        self.errors = list(errors)
+
+    def glGetError(self):  # noqa: N802 -- GL's own name
+        return self.errors.pop(0) if self.errors else 0
+
+
+def test_a_gl_error_mujoco_left_is_logged_once_and_out_of_memory_raised(caplog):
+    from roqsim.render_api import RenderError
+    from roqsim.rendering import _Atlas
+
+    atlas = _Atlas.__new__(_Atlas)
+    atlas._reported = False
+    atlas.GL = _FakeGL(0x0500, 0x0502)
+    with caplog.at_level("WARNING", logger="roqsim.rendering"):
+        atlas._clear_errors()
+        atlas.GL = _FakeGL(0x0500)
+        atlas._clear_errors()
+    warnings = [r.getMessage() for r in caplog.records]
+    assert len(warnings) == 1
+    assert "GL_INVALID_ENUM, GL_INVALID_OPERATION" in warnings[0]
+    atlas.GL = _FakeGL(0x0505)
+    with pytest.raises(RenderError, match="out of memory"):
+        atlas._clear_errors()
 
 
 def test_the_renderer_never_writes_the_shared_model(world):

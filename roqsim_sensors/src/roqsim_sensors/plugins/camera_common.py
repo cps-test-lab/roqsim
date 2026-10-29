@@ -17,7 +17,8 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
 A camera renders nothing itself. Each tick the engine asks every view whether it is due -- this
 camera's rate gate and lazy check -- and draws the due ones as one batch per renderer, between the
 physics step and ``post_step``; the camera's ``post_step`` then turns its frame into its streams. A
-frame is stamped with the sim time of the state it was drawn from.
+frame is stamped with the sim time of the state it was drawn from, which in the render service's
+``async`` mode is a tick or more before the one that publishes it.
 
 The colour frame goes out in the encoding the camera's driver publishes (``color_encoding``): ``rgb8``
 by default, ``bgr8`` for a driver that decodes through OpenCV, ``mono8`` for a greyscale imager.
@@ -500,6 +501,7 @@ class CameraPlugin(Plugin):
                 images=sorted(declared.get(key, ())),
                 renderer=self.renderer,
                 wants=self._wants(ctx, key),
+                group=self.address,
             )
 
     def _wants(self, ctx: SimContext, key: str):
@@ -644,16 +646,21 @@ class CameraPlugin(Plugin):
 
     def _take(self) -> dict[str, Frame] | None:
         """This camera's frames delivered since the last take, every pass of one snapshot."""
-        colour = self._views["color"].take() if self._views else None
+        if not self._views:
+            return None
+        keys = list(self._views)
+        # At once: the passes of one snapshot are delivered together, and read together.
+        taken = dict(
+            zip(keys, self._views["color"].service.take(list(self._views.values())), strict=True)
+        )
+        colour = taken["color"]
         if colour is None:
             return None
-        frames = {"color": colour}
-        for key, view in self._views.items():
-            if key != "color":
-                frame = view.take()
-                if frame is not None and frame.sim_time == colour.sim_time:
-                    frames[key] = frame
-        return frames
+        return {
+            key: frame
+            for key, frame in taken.items()
+            if frame is not None and frame.sim_time == colour.sim_time
+        }
 
     def capture(self, ctx: SimContext) -> None:
         """Render every pass of this camera for the state ``ctx.data`` holds, now."""
@@ -705,7 +712,8 @@ class CameraPlugin(Plugin):
         if self._blur_sigma > 0:
             out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
         if self._noise_sigma > 0:
-            rng = ctx.rng_for(self.draw_key("noise"))
+            # Keyed on the frame's own stamp, the snapshot it was drawn from.
+            rng = ctx.rng_for(self.draw_key("noise"), at=self._stamp)
             out = np.clip(
                 out.astype(np.float32) + rng.normal(0.0, self._noise_sigma, out.shape), 0, 255
             ).astype(np.uint8)
@@ -765,7 +773,7 @@ class Passes:
                 f"{self.frame.id}: no {kind} image was drawn for this tick; the camera's _passes "
                 f"must ask for it"
             )
-        # A C-contiguous copy of its own, which the camera's processing may modify.
+        # A C-contiguous copy of its own: a frame's colour may be a view of the batch's atlas.
         return np.array(image, order="C")
 
     def render(self, data=None, decorate=None) -> np.ndarray:

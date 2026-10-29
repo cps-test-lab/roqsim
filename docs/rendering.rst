@@ -14,8 +14,14 @@ The lines a world writes
    sim:
      renderer: mujoco        # which renderer draws every camera; MuJoCo's when omitted.
                              # Any name `roqsim renderers list` shows, or module:Class / file.py:Class.
+     render:                 # the render service's own settings
+       mode: sync            # sync (default): the tick waits for its due frames, deterministic
+                             # async: frames come from a render thread, stamped with their own sim time
+       workers: 1            # instances of each renderer its cameras are dealt to (a context each);
+                             # one camera's views (colour, its own depth optics) go to one instance
+       timeout_s: 60         # how long a worker may take to open or to draw a batch waited for
      renderers:              # one settings block per renderer, validated by that renderer
-       mujoco: {}            # `roqsim renderers describe mujoco` lists its keys
+       mujoco: {atlas: true} # `roqsim renderers describe mujoco` lists its keys
 
    components:
      - spawn_sensor:
@@ -23,8 +29,8 @@ The lines a world writes
        components:
          - realsense_d435: {renderer: mujoco}   # this camera only: overrides sim.renderer
 
-A world that says nothing draws through MuJoCo's renderer. From the command line the same choice
-is one flag, which is ``--set sim.renderer=NAME`` applied last::
+A world that says nothing draws through MuJoCo's renderer, synchronously. From the command line
+the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
 
    roqsim sim world.yaml --renderer mujoco
    roqsim render world.yaml --out shot.png --renderer mujoco
@@ -45,11 +51,19 @@ what was asked and what it gives. Nothing is drawn by MuJoCo's renderer instead 
 An unknown renderer names the installed ones and the package that would add it, and a mistyped
 settings key names the key, the block and the valid keys.
 
-Frames and reproducibility
---------------------------
+The two modes
+-------------
 
-The cameras due in a tick are drawn before the plugins read them, and the tick waits: every frame
-is the frame of the state it is published with, and a run is reproducible frame for frame.
+``sync`` draws the cameras due in a tick before the plugins read them, and the tick waits: every
+frame is the frame of the state it is published with, and a run is reproducible frame for frame.
+It is what lockstep needs, so ``sim.sync.enabled`` refuses ``async``.
+
+``async`` draws on a thread of its own from a copy of the state, while physics steps on. A frame
+then shows a state a tick or more before the one it is published in, and carries that state's sim
+time as its stamp, so tf and a perception stack stay consistent; a renderer slower than the ticks
+skips stale states rather than falling behind. Use it when the real-time factor matters more than
+having a frame for every tick. Every frame ``async`` publishes is the frame ``sync`` draws for the
+same stamp, noise included.
 
 On some GPUs MuJoCo's default 4x MSAA is not bit-reproducible from run to run (a handful of values,
 one level); a world that needs identical bytes sets ``<visual><quality offsamples="0"/></visual>``
