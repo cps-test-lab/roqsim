@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Hooks for running every package's tests in one process, as ``make test`` does.
+"""Hooks for running every package's tests in one process, as ``make test`` does. A run whose rootdir
+is one package (``make test-<pkg>``) does not load this file.
 
 A built world is a reference cycle: the ``SimContext`` holds the plugins' endpoints and blackboard
 entries, and those hold the plugins, which hold the context. So a finished test's ``MjModel``,
@@ -8,9 +9,10 @@ is allocated in C, invisible to the collector's thresholds, which count Python o
 Python 3.14 on the collector reaches old cycles so late that a test process grows by gigabytes of
 dead worlds. So each test is followed by a full collection.
 
-A full collection walks every tracked object, and most of them are the modules the first tests
-imported (mujoco, torch, scipy), which live as long as the process. They are frozen out of the
-collector once, after the first test, so a collection costs what the tests themselves left behind.
+A full collection walks every tracked object, and most of them are the modules imported by the time
+the first test ends, which live as long as the process. They are frozen out of the collector once,
+after the first test, so a collection costs what the tests left behind; what is alive then is never
+collected (a module imported later, a world a fixture of the first file still holds).
 """
 
 from __future__ import annotations
