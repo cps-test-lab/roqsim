@@ -767,7 +767,8 @@ class FanucDriverInterfacePlugin(Plugin):
         self._collab = float(value)
 
     def set_input(self, io_type: str, index: int, value: bool) -> None:
-        """Drive an input (DI, RI, UI) from the simulation: what the cell's wiring does on the robot.
+        """Drive an input (DI, RI, UI, WI, SI) from the simulation: what the cell's wiring does on
+        the robot.
 
         A roqsim-side input, not a driver name."""
         if io_type not in ("DI", "RI", "UI", "WI", "SI"):

@@ -54,6 +54,7 @@ from .trajectory_policy import (
     SUCCEEDED,
     path_tolerances,
     rejection,
+    worst_violation,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,22 +186,6 @@ def _goal_tolerances(request, hints: dict, names: list[str]) -> dict[str, float]
     return {n: v for n, v in tol.items() if v > 0.0}
 
 
-def _worst_violation(names, commanded, actual, tol: dict[str, float]):
-    """``(joint, error, allowed)`` for the joint furthest outside its tolerance, or ``None``.
-
-    Pure, so the policy can be tested without an action server or a running simulation.
-    """
-    worst = None
-    for name, want, got in zip(names, commanded, actual, strict=False):
-        allowed = tol.get(name)
-        if allowed is None:
-            continue
-        err = abs(got - want)
-        if err > allowed and (worst is None or err - allowed > worst[1] - worst[2]):
-            worst = (name, err, allowed)
-    return worst
-
-
 def _dur_to_sec(d: DurationMsg) -> float:
     return float(d.sec) + float(d.nanosec) * 1e-9
 
@@ -324,10 +309,12 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
         )
         return result
 
-    if getattr(handle, "motion_blocked", None) is not None and handle.motion_blocked() is not None:
+    gate = getattr(handle, "motion_blocked", None)
+    blocked_reason = gate() if gate is not None else None
+    if blocked_reason is not None:
         goal_handle.abort()
         result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
-        result.error_string = handle.motion_blocked()
+        result.error_string = blocked_reason
         return result
 
     refusal = (
@@ -357,7 +344,6 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
     tol = _goal_tolerances(goal_handle.request, hints, names)
     final = list(traj.points[-1].positions) if traj.points else []
     path_tol = path_tolerances(getattr(goal_handle.request, "path_tolerance", ()), hints, names)
-    blocked = getattr(handle, "motion_blocked", None)
 
     def ended(code: int, message: str):
         """Abort with *code* and *message*, the arm left as the caller of this finds it."""
@@ -372,7 +358,7 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
         if not CURRENT_GOALS.is_current(key, token):
             # Replaced: the new goal commands the arm, so nothing is held here.
             return ended(FollowJointTrajectory.Result.INVALID_GOAL, PREEMPTED)
-        reason = blocked() if blocked is not None else None
+        reason = gate() if gate is not None else None
         if reason is not None:
             hold_at_measured(commanded)
             return ended(FollowJointTrajectory.Result.INVALID_GOAL, reason)
@@ -411,7 +397,7 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
         """
         here = hold_at_measured(commanded)
         goal_handle.canceled()
-        violation = _worst_violation(names, final, here, tol) if tol and final else None
+        violation = worst_violation(names, final, here, tol) if tol and final else None
         if violation is None:
             result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
             result.error_string = "goal cancelled; the arm holds inside the goal tolerance"
@@ -449,6 +435,7 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
         span = target_t - prev_t
         last_fed = None
         fed = prev_pos
+        fed_this_segment = False
         # Feed the trajectory as it comes due, honouring cancellation.
         while (now := clock()) < target_t:
             if goal_handle.is_cancel_requested:
@@ -461,14 +448,15 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
                 last_fed = ctx.sim_time
                 # Graded before the next setpoint: where the joints are against where the
                 # trajectory put them, as the controller's state tolerance check does.
-                if path_tol and last_fed is not None and fed is not prev_pos:
-                    if _worst_violation(names, fed, measured(fed), path_tol) is not None:
+                if path_tol and fed_this_segment:
+                    if worst_violation(names, fed, measured(fed), path_tol) is not None:
                         hold_at_measured(fed)
                         return ended(
                             FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED, PATH_VIOLATED
                         )
                 fed = _sample(prev_pos, prev_vel, positions, vels, (now - prev_t) / span, span)
                 _send(on_payload, endpoint, names=names, positions=fed)
+                fed_this_segment = True
             time.sleep(0.002)
         _send(on_payload, endpoint, names=names, positions=positions)
         prev_t, prev_pos = target_t, positions
@@ -494,7 +482,7 @@ def _follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint, key, token)
         # 0 is upstream's "no limit": wait for the joints, however long they take.
         deadline = ctx.sim_time + grace if grace > 0.0 else float("inf")
         while True:
-            violation = _worst_violation(names, final, measured(final), tol)
+            violation = worst_violation(names, final, measured(final), tol)
             if violation is None or ctx.sim_time >= deadline:
                 break
             if goal_handle.is_cancel_requested:
