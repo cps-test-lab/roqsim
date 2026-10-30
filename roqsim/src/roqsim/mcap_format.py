@@ -51,12 +51,15 @@ FORMAT_VERSION = 3
 #: is completed with.
 RECORDING_SUFFIX = ".mcap"
 
-#: Channel topics. ``state`` is the MuJoCo state vector, the primary artifact; the three JSON channels
-#: are decoded observables a reader without the model can use.
+#: Channel topics. ``state`` is the MuJoCo state vector, the primary artifact; the JSON channels are
+#: decoded observables a reader without the model can use, and the events plugins reported.
 CHANNEL_STATE = "state"
 CHANNEL_POSES = "poses"
 CHANNEL_JOINTS = "joints"
 CHANNEL_CLOCK = "clock"
+#: What plugins reported as it happened (:mod:`roqsim.events`), one message per event, its log time
+#: the event's simulated time.
+CHANNEL_EVENTS = "events"
 
 #: Message encoding of the ``state`` channel: little-endian ``f64 t, f64 w, f32[state_size]`` and,
 #: when the recording carries a camera track, ``f32[9]``. The sizes are in the recording metadata.
@@ -135,11 +138,27 @@ CLOCK_SCHEMA = {
     "required": ["wall_ts", "sim_ts"],
 }
 
+#: JSON schema of an ``events`` message: one event a plugin emitted (:mod:`roqsim.events`).
+EVENTS_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "roqsim.event",
+    "type": "object",
+    "properties": {
+        "t": {**_NUMBER, "description": "simulated seconds"},
+        "episode": {"type": "integer", "description": "the trial within the process, from 0"},
+        "source": {"type": "string", "description": "who emitted it, usually a plugin's address"},
+        "event": {"type": "string", "description": "what happened"},
+    },
+    "required": ["t", "episode", "source", "event"],
+    "additionalProperties": True,
+}
+
 #: Topic -> (schema name, schema document) for the JSON channels, in registration order.
 JSON_CHANNELS = (
     (CHANNEL_POSES, "roqsim.poses", POSES_SCHEMA),
     (CHANNEL_JOINTS, "roqsim.joints", JOINTS_SCHEMA),
     (CHANNEL_CLOCK, "roqsim.clock", CLOCK_SCHEMA),
+    (CHANNEL_EVENTS, "roqsim.event", EVENTS_SCHEMA),
 )
 
 _RECORD_HEADER = struct.Struct("<BQ")
@@ -255,7 +274,7 @@ class ChunkedWriter(Writer):
 
 
 def register_channels(writer: Writer) -> dict[str, int]:
-    """Register the four channels on ``writer``, in a fixed order, and return topic -> channel id."""
+    """Register the channels on ``writer``, in a fixed order, and return topic -> channel id."""
     channels = {CHANNEL_STATE: writer.register_channel(CHANNEL_STATE, STATE_ENCODING, 0)}
     for topic, schema_name, schema in JSON_CHANNELS:
         schema_id = writer.register_schema(schema_name, "jsonschema", json_bytes(schema))

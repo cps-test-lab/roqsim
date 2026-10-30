@@ -38,6 +38,7 @@ from roqsim.capture import (
 from roqsim.context import Entity, EntityRegistry
 from roqsim.mcap_format import (
     CHANNEL_CLOCK,
+    CHANNEL_EVENTS,
     CHANNEL_JOINTS,
     CHANNEL_POSES,
     CHANNEL_STATE,
@@ -182,7 +183,7 @@ def _a_camera():
 def test_a_recording_is_a_standard_mcap_file(tmp_path, moving):
     """Readable by the mcap library, with no roqsim at all -- the reason the container is mcap.
 
-    The four channels and the two metadata records are the file's contract; the library's own
+    The channels and the two metadata records are the file's contract; the library's own
     reader is the witness that the file is what the format says it is.
     """
     from mcap.reader import make_reader
@@ -198,17 +199,24 @@ def test_a_recording_is_a_standard_mcap_file(tmp_path, moving):
             CHANNEL_POSES,
             CHANNEL_JOINTS,
             CHANNEL_CLOCK,
+            CHANNEL_EVENTS,
         }
         assert {s.name for s in summary.schemas.values()} == {
             "roqsim.poses",
             "roqsim.joints",
             "roqsim.clock",
+            "roqsim.event",
         }
         assert [m.name for m in summary.metadata_indexes] == [META_RECORDING, META_ENTITIES][:1] + [
             META_RECORDING
         ], "the provenance is written at the start and again at close; no roster without a registry"
         counts = summary.statistics.channel_message_counts
-        assert len(set(counts.values())) == 1, "one message per channel per sample"
+        topics = {i: c.topic for i, c in summary.channels.items()}
+        per_sample = {n for i, n in counts.items() if topics[i] != CHANNEL_EVENTS}
+        assert len(per_sample) == 1, "one message per sample channel per sample"
+        assert counts.get(next(i for i, t in topics.items() if t == CHANNEL_EVENTS), 0) == 0, (
+            "nothing in this run emits an event"
+        )
         assert all(i.compression == "zstd" for i in summary.chunk_indexes)
 
 
