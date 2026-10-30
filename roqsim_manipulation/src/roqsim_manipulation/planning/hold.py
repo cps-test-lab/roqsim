@@ -11,8 +11,10 @@ physics says:
 
 - :func:`pads_touch` -- each of the gripper's pads is in contact with the part now.
 - :class:`HoldMonitor` -- from the moment of the grip, where the part is relative to the gripper's
-  site: its drift (m, and rad of rotation) since the grip, and every step on which a pad lost
-  contact. A part held by friction alone, carried through a move, should drift by a fraction of a
+  site: the slip of the part's material point that was at the site when it was gripped (m), the
+  part's turn against the gripper since (rad), and every step on which a pad lost contact. The slip
+  is measured where the fingers hold, not at the part's origin, where a small turn of a long part
+  would read as a slip it is not. A part held by friction alone, carried through a move, should drift by a fraction of a
   millimetre and never lose a pad.
 """
 
@@ -54,9 +56,11 @@ class HoldMonitor:
         self.lost = 0
 
     def _relative(self, data):
+        """The site's position in the part's frame, and the part's rotation in the site's frame."""
         sp, sr = data.site_xpos[self.site], data.site_xmat[self.site].reshape(3, 3)
-        rel_pos = sr.T @ (data.xpos[self.part] - sp)
-        rel_rot = sr.T @ data.xmat[self.part].reshape(3, 3)
+        pr = data.xmat[self.part].reshape(3, 3)
+        rel_pos = pr.T @ (sp - data.xpos[self.part])
+        rel_rot = sr.T @ pr
         return rel_pos, rel_rot
 
     def grip(self, data) -> None:
@@ -74,6 +78,7 @@ class HoldMonitor:
         if self._rel_pos is None:
             return
         pos, rot = self._relative(data)
+        # The material point that was at the site, against where the site is now, in metres.
         self.max_drift = max(self.max_drift, float(np.linalg.norm(pos - self._rel_pos)))
         self.max_turn = max(
             self.max_turn, float(np.linalg.norm(rotation_error(self._rel_rot, rot)))
