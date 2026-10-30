@@ -292,3 +292,22 @@ def test_roqsim_arm_margins_reads_a_recording(tmp_path, capsys):
     assert all(0.0 < r < 1.0 for r in report["peak_torque_ratio"][1:3])
     assert report["torque_limit"] == [150.0, 150.0, 150.0, 28.0, 28.0, 28.0]
     assert main([str(out), "--arm", "nope", "--site", "ur5e_pinch"]) == 2
+
+
+def test_a_hold_counts_its_longest_stretch_without_both_pads(monkeypatch):
+    import roqsim_manipulation.planning.hold as hold
+
+    m = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><site name="s"/><body name="part"><freejoint/><geom size="0.01"/></body>'
+        "</worldbody></mujoco>")
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    touching = iter([True, False, False, True, False, False, False, True, False])
+    monkeypatch.setattr(hold, "pads_touch", lambda *a: next(touching))
+    monitor = hold.HoldMonitor(m, m.site("s").id, [0], m.body("part").id)
+    monitor.grip(d)
+    for _ in range(9):
+        monitor.update(d)
+    out = monitor.release()
+    assert out["steps_without_both_pads"] == 6
+    assert out["longest_without_both_pads"] == 3

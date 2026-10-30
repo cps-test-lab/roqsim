@@ -41,7 +41,9 @@ def pads_touch(model, data, pads, part_body: int) -> bool:
 
 
 class HoldMonitor:
-    """The drift of a part relative to a site since it was gripped, and lost pad contacts."""
+    """The drift of a part relative to a site since it was gripped, and lost pad contacts: in all,
+    and the longest unbroken stretch -- a soft contact can flicker for a few steps while a part is
+    levered against something, where a grip that is failing loses a pad for longer."""
 
     def __init__(self, model, site: int, pads, part_body: int) -> None:
         self.model = model
@@ -54,6 +56,8 @@ class HoldMonitor:
         self.max_turn = 0.0
         self.steps = 0
         self.lost = 0
+        self.longest_lost = 0
+        self._run = 0
 
     def _relative(self, data):
         """The site's position in the part's frame, and the part's rotation in the site's frame."""
@@ -67,7 +71,7 @@ class HoldMonitor:
         """Note where the part is relative to the site: the grip every later step is compared with."""
         self._rel_pos, self._rel_rot = self._relative(data)
         self.max_drift = self.max_turn = 0.0
-        self.steps = self.lost = 0
+        self.steps = self.lost = self.longest_lost = self._run = 0
 
     @property
     def gripping(self) -> bool:
@@ -86,6 +90,10 @@ class HoldMonitor:
         self.steps += 1
         if not pads_touch(self.model, data, self.pads, self.part):
             self.lost += 1
+            self._run += 1
+            self.longest_lost = max(self.longest_lost, self._run)
+        else:
+            self._run = 0
 
     def release(self) -> dict:
         """End the hold; what it measured."""
@@ -94,6 +102,7 @@ class HoldMonitor:
             "max_turn_rad": self.max_turn,
             "steps": self.steps,
             "steps_without_both_pads": self.lost,
+            "longest_without_both_pads": self.longest_lost,
         }
         self._rel_pos = self._rel_rot = None
         return out
