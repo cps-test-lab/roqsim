@@ -90,6 +90,22 @@ waypoint (or stands, if it had no patrol). `status()` latches `finished` under t
 sequence number, so a caller can distinguish *its* completion from a stale or preempted one — this is
 exactly what the `NavigateThroughPoses` action handler polls.
 
+### Hands on something
+
+A walker can hold its hands on two world points -- a box by its handles, a part on a bench:
+
+```python
+handle.hold([left_point, right_point])   # re-set it every step as the points move
+left, right = handle.hands()              # where the wrists are now
+handle.hold(None)                         # let go
+```
+
+The arms reach the points by two-bone IK on the walker's own bone lengths, the body bending forward
+(most of it at the hips, the legs kept standing) only as far as the points need; the pose eases in
+and out over the gait, which goes on underneath. Whatever is held is the caller's to move: a
+controller that carries a box drives the box and holds the hands on its handles
+(`roqsim_walker.reach`). Call `hold` on the physics thread.
+
 ## Assets
 
 `models/people/<Walker>/` is a **blueprint**: a textured OBJ, a `*.walker.json` sidecar (materials +

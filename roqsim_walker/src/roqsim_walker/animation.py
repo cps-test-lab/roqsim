@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
+from roqsim.pose import yaw_to_quat
 from roqsim_walker.humanoid import (
     JOINT_NAMES,
     forward_kinematics,
@@ -30,6 +31,7 @@ from roqsim_walker.motion import (
     procedural_walk,
     smoothstep,
 )
+from roqsim_walker.reach import reach_pose
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,8 @@ _TURN_STRIDE = math.radians(60.0)  # body heading change per turn-clip cycle (se
 _STRAFE_FWD = math.radians(25.0)
 _STRAFE_SIDE = math.radians(90.0)
 _STRAFE_BACK = math.radians(150.0)
+# A hold (the hands on two points, :mod:`roqsim_walker.reach`) eases in and out over this (s).
+_HOLD_TAU = 0.2
 
 
 def _rest_foot_z(skel):
@@ -171,6 +175,7 @@ def animate(data, st, new_pos, dt):
     q = blend_quats(q, qr, w_run)
     root_z = (1 - w_run) * root_z + w_run * zr
     q = _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
+    _hold(st, q, new_pos, root_z, dt)
     joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
     poses = forward_kinematics(
         [new_pos[0], new_pos[1], st.skeleton.root_height + root_z],
@@ -180,6 +185,23 @@ def animate(data, st, new_pos, dt):
     )
     write_pose(data, st, _foot_ground(poses, st))
     st.pos = new_pos
+
+
+def _hold(st, q, new_pos, root_z, dt) -> None:
+    """Blend the hold's pose (the hands on ``st.hold_targets``) over the gait's, in place."""
+    if st.hold_targets is not None:
+        st.hold_last = st.hold_targets
+    aim = 1.0 if st.hold_targets is not None else 0.0
+    if dt > 0.0:
+        st.hold_w += (1.0 - math.exp(-dt / _HOLD_TAU)) * (aim - st.hold_w)
+    if st.hold_w < 1e-3 or st.hold_last is None:
+        return
+    root = [new_pos[0], new_pos[1], st.skeleton.root_height + root_z]
+    local = {name: q[JOINT_NAMES.index(name)] for name in ("pelvis", "spine", "hip_l", "hip_r")}
+    pose = reach_pose(st.skeleton, root, yaw_to_quat(st.yaw), local, st.hold_last)
+    for name, rot in pose.items():
+        j = JOINT_NAMES.index(name)
+        q[j] = blend_quats(q[j:j + 1], np.asarray(rot)[None, :], st.hold_w)[0]
 
 
 def _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist):
@@ -254,6 +276,11 @@ class AnimState:
     t_idle: float = 0.0  # idle-clip clock (s, advanced by time)
     disp_speed: float = 0.0  # low-passed body speed (drives gait + blend)
     pref_vel: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    #: where the hands are held (left, right world points), None when they are not; the pose's
+    #: weight over the gait's eases toward 1 while held and back to 0 after
+    hold_targets: tuple | None = None
+    hold_w: float = 0.0
+    hold_last: tuple | None = None
 
 
 def make_anim_state(model, spec) -> AnimState:

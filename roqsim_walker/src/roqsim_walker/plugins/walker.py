@@ -100,6 +100,12 @@ class WalkerHandle:
     cancel_route: Callable[[], int]  # -> route sequence number
     #: (seq, finished, goals_left, dist_left, error); ``error`` is ``""`` for an arrival
     status: Callable[[], tuple[int, bool, int, float, str]]
+    #: ``hold([left, right])`` puts the hands on two world points (re-set it as they move), the
+    #: spine bending as far as they need; ``hold(None)`` lets go. The arms ease into the hold and
+    #: out of it over the gait (:mod:`roqsim_walker.reach`). Call it on the physics thread.
+    hold: Callable[[list | None], None] | None = None
+    #: the wrists' world positions now: ``(left, right)``
+    hands: Callable[[], tuple] | None = None
 
 
 class WalkerPlugin(Plugin):
@@ -249,6 +255,8 @@ class WalkerPlugin(Plugin):
                 send_route=self.send_route,
                 cancel_route=self.cancel_route,
                 status=self.status,
+                hold=self.hold,
+                hands=self.hands,
             ),
         )
 
@@ -296,6 +304,8 @@ class WalkerPlugin(Plugin):
         st.yaw = float(st.start[2])
         st.phase = st.phase_run = st.phase_short = st.phase_turn = 0.0
         st.t_idle = 0.0
+        st.hold_targets = st.hold_last = None
+        st.hold_w = 0.0
         st.disp_speed = 0.0
         st.pref_vel = np.zeros(2)
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
@@ -329,6 +339,14 @@ class WalkerPlugin(Plugin):
     def cancel_route(self) -> int:
         handle = self._nav()
         return handle.cancel() if handle is not None else self._next_seq()
+
+    def hold(self, targets) -> None:
+        """The hands on ``targets`` (left, right world points), or let go with ``None``."""
+        self._anim.hold_targets = None if targets is None else tuple(np.asarray(t, float) for t in targets)
+
+    def hands(self) -> tuple:
+        d = self._ctx.data
+        return tuple(d.mocap_pos[self._anim.mocap[f"wrist_{s}"]].copy() for s in ("l", "r"))
 
     def status(self) -> tuple[int, bool, int, float, str]:
         """``(route_seq, finished, goals_remaining, distance_remaining, error)``; safe to poll
