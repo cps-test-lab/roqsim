@@ -440,3 +440,20 @@ def test_a_goal_driven_walker_starts_at_its_pose_heading_every_episode():
             _run(engine, 1.0)
     finally:
         engine.shutdown()
+
+
+@pytest.mark.parametrize("height", [1.0, 0.7])
+def test_a_held_walker_puts_its_wrists_on_the_points(height):
+    engine = Engine(_world(pose={"position": {"x": 1.0, "y": 1.0}}, navigator=None))
+    engine.setup()
+    engine.reset()
+    try:
+        handle = engine.ctx.blackboard.get("walker:pedestrian")
+        points = [np.array([1.5, 1.3, height]), np.array([1.5, 0.7, height])]
+        handle.hold(points)
+        _run(engine, 3.0)
+        # On them, not as far under them as the body is shifted down onto its feet.
+        for wrist, point in zip(handle.hands(), points, strict=True):
+            assert np.linalg.norm(wrist - point) < 0.005, (wrist, point)
+    finally:
+        engine.shutdown()

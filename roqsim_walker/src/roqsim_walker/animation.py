@@ -282,7 +282,10 @@ def _hold(st, q, new_pos, root_z, dt) -> None:
         )
     if st.hold_w < 1e-3 or st.hold_last is None:
         return
-    root = [new_pos[0], new_pos[1], st.skeleton.root_height + root_z]
+    # The body is shifted down onto its feet after this (_foot_ground); solved with the last
+    # tick's shift, the wrists land on the points rather than that far under them.
+    shift = st.ground if st.ground is not None else 0.0
+    root = [new_pos[0], new_pos[1], st.skeleton.root_height + root_z - shift]
     local = {name: q[JOINT_NAMES.index(name)] for name in ("pelvis", "spine", "hip_l", "hip_r")}
     heading = yaw_to_quat(st.yaw)
     # The bend eases toward what the points need, at a bounded rate: a box coming up or going down
