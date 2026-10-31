@@ -457,3 +457,29 @@ def test_a_held_walker_puts_its_wrists_on_the_points(height):
             assert np.linalg.norm(wrist - point) < 0.005, (wrist, point)
     finally:
         engine.shutdown()
+
+
+def test_a_walker_straightens_as_the_points_in_its_hands_come_up():
+    engine = Engine(_world(pose={"position": {"x": 1.0, "y": 1.0}}, navigator=None))
+    engine.setup()
+    engine.reset()
+    model, data = engine.ctx.model, engine.ctx.data
+    head = model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pedestrian/head")]
+
+    def points(z):
+        return [np.array([1.5, 1.3, z]), np.array([1.5, 0.7, z])]
+
+    try:
+        handle = engine.ctx.blackboard.get("walker:pedestrian")
+        handle.hold(points(0.7))
+        _run(engine, 3.0)
+        # A box lifted 30 cm in a quarter of a second: the body comes up with it, not after it.
+        steps = int(0.25 / engine.ctx.dt)
+        for k in range(1, steps + 1):
+            handle.hold(points(0.7 + 0.3 * k / steps))
+            engine.step()
+        lifted = data.mocap_pos[head][2]
+        _run(engine, 3.0)
+        assert lifted > data.mocap_pos[head][2] - 0.02, (lifted, data.mocap_pos[head][2])
+    finally:
+        engine.shutdown()

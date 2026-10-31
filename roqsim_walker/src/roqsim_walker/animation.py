@@ -288,17 +288,19 @@ def _hold(st, q, new_pos, root_z, dt) -> None:
     root = [new_pos[0], new_pos[1], st.skeleton.root_height + root_z - shift]
     local = {name: q[JOINT_NAMES.index(name)] for name in ("pelvis", "spine", "hip_l", "hip_r")}
     heading = yaw_to_quat(st.yaw)
-    # The bend eases toward what the points need, at a bounded rate: a box coming up or going down
-    # in the hands does not jerk the body.
+    # The bend eases toward what the points need, at a bounded rate: the body bends down to them and
+    # straightens up after letting go without a jerk. Points coming up in the hands it follows as
+    # they come, never staying bent over them, so a box lifted does not rise into the body.
     need = (
         needed_bend(st.skeleton, root, heading, local, st.hold_last)
         if st.hold_targets is not None
         else 0.0
     )
     if dt > 0.0:
-        st.hold_bend, st.hold_bend_rate = _slew(
-            st.hold_bend, st.hold_bend_rate, need, _BEND_RATE, _BEND_ACCEL, dt
-        )
+        bend, rate = _slew(st.hold_bend, st.hold_bend_rate, need, _BEND_RATE, _BEND_ACCEL, dt)
+        if st.hold_targets is not None and need < bend and need < st.hold_bend:
+            bend, rate = need, (need - st.hold_bend) / dt
+        st.hold_bend, st.hold_bend_rate = bend, rate
     pose = reach_pose(st.skeleton, root, heading, local, st.hold_last, bend=st.hold_bend)
     for name, rot in pose.items():
         j = JOINT_NAMES.index(name)
