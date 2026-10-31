@@ -38,6 +38,7 @@ components:
         position: {x: -2.0, y: -2.0}  # a world pose with no z (a walker stands on the floor)
         orientation: {yaw: 0.0}       # and a heading only; `pos` is refused
       motion: {walk: /abs/walk.npz}   # override a resolved locomotion clip
+      body_lag: 0.0            # s; > 0 draws the body smoothly behind its nav root (see below)
     name: pedestrian           # entity name (a sibling of the plugin ref, not config)
     components:
       - navigator:             # where it goes: roqsim_nav's navigator, as for any mover
@@ -54,6 +55,12 @@ Navigation is stated on the nested `navigator` only; a walker's own block refuse
 `waypoints`, `loop`, `dwell`, `avoidance`, `action_name`, `orca` and the rest by name, saying where
 each lives on the navigator. A walker with no nested `navigator` gets one that is goal-driven only:
 `output: walker`, `speed: 1.0`, `radius: 0.26` and `avoidance: {stop: false}`.
+
+The nav root starts, stops and turns at once. With `body_lag` set (0.15 s is a person's pace), the
+body is drawn on a point following it as a critically damped spring of that time constant, turns
+speed up and slow down over twice it, and the foot grounding eases too, so a walker seen close up,
+or bent over something in its hands, does not jolt; it comes to rest where the nav root is. The
+default, 0, draws the body on the root.
 
 ### Navigation layers
 
@@ -102,7 +109,8 @@ handle.hold(None)                         # let go
 
 The arms reach the points by two-bone IK on the walker's own bone lengths, the body bending forward
 (most of it at the hips, the legs kept standing) only as far as the points need; the pose eases in
-and out over the gait, which goes on underneath. Whatever is held is the caller's to move: a
+and out over the gait, which goes on underneath, and the bend speeds up and slows down as the points
+rise or fall. Whatever is held is the caller's to move: a
 controller that carries a box drives the box and holds the hands on its handles
 (`roqsim_walker.reach`). Call `hold` on the physics thread.
 

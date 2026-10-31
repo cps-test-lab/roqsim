@@ -57,3 +57,16 @@ def test_a_point_out_of_reach_is_reached_for():
     poses, rest, _ = _pose(0.0, far)
     # Arms out toward it, as far as they go.
     assert poses["wrist_l"][0][0] > rest["wrist_l"][0][0] + 0.4
+
+
+def test_the_bend_follows_a_point_coming_up_smoothly():
+    from roqsim_walker.reach import needed_bend
+
+    local = {name: IDENTITY for name in ("pelvis", "spine", "hip_l", "hip_r")}
+    bends = []
+    for z in np.linspace(0.70, 1.15, 46):  # a box lifted 45 cm, a centimetre at a time
+        targets = [np.array([*_ahead(0.0, 0.55, s, z)[0], z]) for s in (0.3, -0.3)]
+        bends.append(needed_bend(DEFAULT_SKELETON, ROOT, yaw_to_quat(0.0), local, targets))
+    steps = np.abs(np.diff(bends))
+    assert bends[0] > bends[-1]
+    assert steps.max() < math.radians(2.0), math.degrees(steps.max())

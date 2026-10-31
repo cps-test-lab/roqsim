@@ -31,7 +31,7 @@ from roqsim_walker.motion import (
     procedural_walk,
     smoothstep,
 )
-from roqsim_walker.reach import reach_pose
+from roqsim_walker.reach import needed_bend, reach_pose
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +55,15 @@ _TURN_STRIDE = math.radians(60.0)  # body heading change per turn-clip cycle (se
 _STRAFE_FWD = math.radians(25.0)
 _STRAFE_SIDE = math.radians(90.0)
 _STRAFE_BACK = math.radians(150.0)
-# A hold (the hands on two points, :mod:`roqsim_walker.reach`) eases in and out over this (s).
-_HOLD_TAU = 0.2
+# A hold (the hands on two points, :mod:`roqsim_walker.reach`) eases in and out at most _HOLD_RATE
+# (1/s), and the body's bend follows what the points need at most _BEND_RATE (rad/s); each speeds up
+# and slows down at its _ACCEL, so neither jerks the body.
+# With a body lag the foot grounding's shift eases over this (s) (:func:`_foot_ground`).
+_GROUND_TAU = 0.03
+_HOLD_RATE = 2.5
+_HOLD_ACCEL = 8.0
+_BEND_RATE = 1.2
+_BEND_ACCEL = 4.0
 
 
 def _rest_foot_z(skel):
@@ -101,10 +108,28 @@ def _foot_rest(skel):
     return rest
 
 
-def _foot_ground(poses, st):
+def _foot_ground(poses, st, dt=0.0):
     """Vertical-only foot grounding: shift the whole body so the **lowest shoe-sole point** -- the
     measured heel/toe of either foot -- sits exactly on the floor. Tracking the real sole (not the
-    ankle/toe joint, which is several cm above it) removes the residual hover."""
+    ankle/toe joint, which is several cm above it) removes the residual hover.
+
+    With ``st.body_lag`` set the shift follows that as a spring of ``_GROUND_TAU`` over ``dt``: the
+    lowest point changes from one foot to the other as a toe lifts, and the body would drop the
+    difference in one tick."""
+    c = _lowest_sole(poses, st)
+    if st.body_lag > 0.0 and dt > 0.0 and st.ground is not None:
+        st.ground, st.ground_vel = _ease(st.ground, st.ground_vel, c, _GROUND_TAU, dt)
+        c = st.ground
+    else:
+        st.ground, st.ground_vel = c, 0.0
+    if abs(c) > 1e-6:
+        for nm, (p, q) in poses.items():
+            poses[nm] = (p - np.array([0.0, 0.0, c]), q)
+    return poses
+
+
+def _lowest_sole(poses, st) -> float:
+    """Height of the lowest shoe-sole point of ``poses`` above the floor."""
     tip = np.array(st.skeleton.foot_tip)
     lows = []
     for s in ("l", "r"):
@@ -118,11 +143,7 @@ def _foot_ground(poses, st):
             toetip = float((tp + quat_rotate(tq, tip))[2])
             ra, rt = st.foot_rest[s]
             lows.append(min(ap[2] - ra, toetip - rt))
-    c = min(lows)
-    if abs(c) > 1e-6:
-        for nm, (p, q) in poses.items():
-            poses[nm] = (p - np.array([0.0, 0.0, c]), q)
-    return poses
+    return min(lows)
 
 
 def _approach_angle(cur, target, max_step) -> float:
@@ -136,9 +157,19 @@ def _approach_angle(cur, target, max_step) -> float:
 def animate(data, st, new_pos, dt):
     """Ease the body toward the new nav position along CARLA's 2D blendspace: a speed axis
     (idle->short->walk->run) and a direction axis (turn-in-place when stopped / lean when moving,
-    plus strafe) -- then FK + write the pose."""
-    delta = new_pos - st.pos
+    plus strafe) -- then FK + write the pose.
+
+    With ``st.body_lag`` set, the body is drawn on a point that follows the nav root as a critically
+    damped spring of that time constant: it starts, turns and stops over a fraction of a second where
+    the nav root changes velocity at once, and comes to rest where the root is. The gait is phased
+    by the body's own travel, so the feet stay planted; its turns (:func:`_turn`) and its foot
+    grounding (:func:`_foot_ground`) ease too.
+    """
+    body = _follow(st, new_pos, dt)
+    # How far the drawn body moved: with a lag that is the spring's point, not the nav root.
+    delta = body - st.body_pos if st.body_lag > 0.0 else new_pos - st.pos
     dist = float(np.linalg.norm(delta))
+    st.body_pos = body
     raw_speed = dist / max(dt, 1e-9)
     st.disp_speed += (1.0 - math.exp(-dt / _SPEED_TAU)) * (raw_speed - st.disp_speed)
     # Face where the walker *wants* to go (nav preferred velocity), not the instantaneous
@@ -152,7 +183,7 @@ def animate(data, st, new_pos, dt):
         target = math.atan2(float(delta[1]), float(delta[0]))
     else:
         target = st.yaw
-    new_yaw = _approach_angle(st.yaw, target, _MAX_TURN_RATE * dt)
+    new_yaw = _turn(st, target, dt)
     d_yaw = math.atan2(math.sin(new_yaw - st.yaw), math.cos(new_yaw - st.yaw))
     yaw_rate = d_yaw / max(dt, 1e-9)
     st.yaw = new_yaw
@@ -175,16 +206,69 @@ def animate(data, st, new_pos, dt):
     q = blend_quats(q, qr, w_run)
     root_z = (1 - w_run) * root_z + w_run * zr
     q = _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
-    _hold(st, q, new_pos, root_z, dt)
+    _hold(st, q, body, root_z, dt)
     joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
     poses = forward_kinematics(
-        [new_pos[0], new_pos[1], st.skeleton.root_height + root_z],
+        [body[0], body[1], st.skeleton.root_height + root_z],
         st.yaw,
         joint_rot,
         skeleton=st.skeleton,
     )
-    write_pose(data, st, _foot_ground(poses, st))
+    write_pose(data, st, _foot_ground(poses, st, dt))
     st.pos = new_pos
+
+
+def _turn(st, target, dt) -> float:
+    """The heading after ``dt`` turning toward ``target`` at up to ``_MAX_TURN_RATE``: at once, or
+    with ``st.body_lag`` set, speeding up and slowing down over twice the lag, so a body bent over
+    something in its hands does not swing round from one frame to the next."""
+    if st.body_lag <= 0.0 or dt <= 0.0:
+        return _approach_angle(st.yaw, target, _MAX_TURN_RATE * dt)
+    err = math.atan2(math.sin(target - st.yaw), math.cos(target - st.yaw))
+    yaw, st.yaw_rate = _slew(
+        st.yaw, st.yaw_rate, st.yaw + err, _MAX_TURN_RATE, _MAX_TURN_RATE / (2.0 * st.body_lag), dt
+    )
+    return yaw
+
+
+def _slew(x, v, target, vmax, accel, dt):
+    """``(x, v)`` after ``dt`` moving ``x`` (at rate ``v``) to ``target`` as fast as a rate of at most
+    ``vmax``, changed by at most ``accel`` a second, allows: it speeds up, cruises and slows down to
+    stop on the target."""
+    err = target - x
+    # The fastest rate that can still stop on the target in steps of dt, slowing by accel * dt a
+    # step (k steps cover accel * dt^2 * k (k + 1) / 2).
+    unit = accel * dt
+    k = (math.sqrt(1.0 + 8.0 * abs(err) / (unit * dt)) - 1.0) / 2.0
+    want = math.copysign(min(vmax, k * unit), err)
+    v += max(-unit, min(unit, want - v))
+    step = v * dt
+    if abs(err) < 1e-9 or (step * err > 0.0 and abs(step) >= abs(err)):
+        return target, 0.0
+    return x + step, v
+
+
+def _follow(st, target, dt) -> np.ndarray:
+    """Where the body is drawn: the nav root itself, or with ``st.body_lag`` a critically damped
+    spring's point following it."""
+    target = np.asarray(target, float)
+    if st.body_lag <= 0.0 or st.body_pos is None:
+        st.body_vel = np.zeros(2)
+        return target.copy()
+    if dt <= 0.0:
+        return st.body_pos.copy()
+    pos, st.body_vel = _ease(st.body_pos, st.body_vel, target, st.body_lag, dt)
+    return pos
+
+
+def _ease(x, v, target, tau, dt):
+    """``(x, v)`` after ``dt`` of a critically damped spring of time constant ``tau`` pulling ``x``
+    (moving at ``v``) to ``target``; exact over the step, so a coarse tick cannot overshoot."""
+    w = 1.0 / tau
+    e = x - target
+    decay = math.exp(-w * dt)
+    c = v + w * e
+    return target + (e + c * dt) * decay, (v - c * w * dt) * decay
 
 
 def _hold(st, q, new_pos, root_z, dt) -> None:
@@ -193,15 +277,29 @@ def _hold(st, q, new_pos, root_z, dt) -> None:
         st.hold_last = st.hold_targets
     aim = 1.0 if st.hold_targets is not None else 0.0
     if dt > 0.0:
-        st.hold_w += (1.0 - math.exp(-dt / _HOLD_TAU)) * (aim - st.hold_w)
+        st.hold_w, st.hold_w_rate = _slew(
+            st.hold_w, st.hold_w_rate, aim, _HOLD_RATE, _HOLD_ACCEL, dt
+        )
     if st.hold_w < 1e-3 or st.hold_last is None:
         return
     root = [new_pos[0], new_pos[1], st.skeleton.root_height + root_z]
     local = {name: q[JOINT_NAMES.index(name)] for name in ("pelvis", "spine", "hip_l", "hip_r")}
-    pose = reach_pose(st.skeleton, root, yaw_to_quat(st.yaw), local, st.hold_last)
+    heading = yaw_to_quat(st.yaw)
+    # The bend eases toward what the points need, at a bounded rate: a box coming up or going down
+    # in the hands does not jerk the body.
+    need = (
+        needed_bend(st.skeleton, root, heading, local, st.hold_last)
+        if st.hold_targets is not None
+        else 0.0
+    )
+    if dt > 0.0:
+        st.hold_bend, st.hold_bend_rate = _slew(
+            st.hold_bend, st.hold_bend_rate, need, _BEND_RATE, _BEND_ACCEL, dt
+        )
+    pose = reach_pose(st.skeleton, root, heading, local, st.hold_last, bend=st.hold_bend)
     for name, rot in pose.items():
         j = JOINT_NAMES.index(name)
-        q[j] = blend_quats(q[j:j + 1], np.asarray(rot)[None, :], st.hold_w)[0]
+        q[j] = blend_quats(q[j : j + 1], np.asarray(rot)[None, :], st.hold_w)[0]
 
 
 def _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist):
@@ -281,6 +379,17 @@ class AnimState:
     hold_targets: tuple | None = None
     hold_w: float = 0.0
     hold_last: tuple | None = None
+    hold_bend: float = 0.0
+    hold_w_rate: float = 0.0
+    hold_bend_rate: float = 0.0
+    #: the body's lag behind the nav root (s; 0: drawn on it), and where it is drawn and how fast it
+    #: moves (:func:`_follow`)
+    body_lag: float = 0.0
+    body_pos: np.ndarray | None = None
+    body_vel: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    ground: float | None = None  # the foot grounding's shift (m) and how fast it changes
+    ground_vel: float = 0.0
+    yaw_rate: float = 0.0  # rad/s the heading turns at, eased with a body lag (:func:`_turn`)
 
 
 def make_anim_state(model, spec) -> AnimState:
@@ -302,8 +411,10 @@ def make_anim_state(model, spec) -> AnimState:
         foot_rest=_foot_rest(skel),
         sole=spec.get("sole"),
         start=start,
+        body_lag=float(spec.get("body_lag", 0.0)),
     )
     st.pos = start[:2].copy()
+    st.body_pos = start[:2].copy()
     st.yaw = float(start[2])
     return st
 

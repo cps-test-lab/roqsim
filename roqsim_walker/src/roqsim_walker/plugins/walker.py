@@ -17,6 +17,9 @@ Config::
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
         orientation: {yaw: 0.0}     #   walker stands on the floor -- and a heading only
       motion: {walk: /abs/walk.npz}  # override a resolved locomotion clip
+      body_lag: 0.0            # s: the body follows its nav root as a damped spring of this time
+                               # constant and its turns speed up and slow down over twice it, so
+                               # it starts, turns and stops smoothly (0: on the root, turning at once)
 
 A walker with no nested ``navigator`` gets one that is goal-driven only: ``output: walker``,
 ``speed: 1.0``, its 0.26 m disc as ``radius``, and ``avoidance: {stop: false}``, since a walker does
@@ -191,6 +194,11 @@ class WalkerPlugin(Plugin):
             start_of(config)
         except PoseError as exc:
             errors.append(f"walker: {exc}")
+        lag = config.get("body_lag", 0.0)
+        if not isinstance(lag, (int, float)) or isinstance(lag, bool) or lag < 0:
+            errors.append(
+                f"walker: 'body_lag' is a time constant in seconds, 0 or more, not {lag!r}"
+            )
         return errors
 
     # -- lifecycle -----------------------------------------------------------------------------
@@ -224,6 +232,7 @@ class WalkerPlugin(Plugin):
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
+            "body_lag": float(cfg.get("body_lag", 0.0)),
         }
 
     def configure(self, ctx: SimContext) -> None:
@@ -304,8 +313,12 @@ class WalkerPlugin(Plugin):
         st.yaw = float(st.start[2])
         st.phase = st.phase_run = st.phase_short = st.phase_turn = 0.0
         st.t_idle = 0.0
+        st.body_pos = st.start[:2].copy()
+        st.body_vel = np.zeros(2)
+        st.yaw_rate = 0.0
+        st.ground, st.ground_vel = None, 0.0
         st.hold_targets = st.hold_last = None
-        st.hold_w = 0.0
+        st.hold_w = st.hold_bend = st.hold_w_rate = st.hold_bend_rate = 0.0
         st.disp_speed = 0.0
         st.pref_vel = np.zeros(2)
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
@@ -342,7 +355,9 @@ class WalkerPlugin(Plugin):
 
     def hold(self, targets) -> None:
         """The hands on ``targets`` (left, right world points), or let go with ``None``."""
-        self._anim.hold_targets = None if targets is None else tuple(np.asarray(t, float) for t in targets)
+        self._anim.hold_targets = (
+            None if targets is None else tuple(np.asarray(t, float) for t in targets)
+        )
 
     def hands(self) -> tuple:
         d = self._ctx.data

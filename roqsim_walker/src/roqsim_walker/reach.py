@@ -21,10 +21,10 @@ import numpy as np
 
 from roqsim_walker.humanoid import quat_mul, quat_rotate
 
-#: How far the body bends forward at most (rad), the steps the bend is searched in, and the share
-#: of it at the hips (the rest along the spine).
+#: How far the body bends forward at most (rad), how finely the bend a reach needs is found (rad),
+#: and the share of it at the hips (the rest along the spine).
 MAX_BEND = math.radians(90.0)
-BEND_STEPS = 18
+BEND_TOLERANCE = math.radians(0.2)
 AT_HIPS = 0.7
 #: The share of the arm's length a reach may use, so the elbow keeps a bend.
 REACH = 0.97
@@ -60,35 +60,77 @@ def _between(a, b):
     return q / np.linalg.norm(q)
 
 
-def reach_pose(skeleton, root_xyz, heading_q, local: dict, targets) -> dict:
-    """Local rotations of ``pelvis``, ``hip_*``, ``spine``, ``shoulder_*``, ``elbow_*`` and ``wrist_*``
-    that put the wrists on ``targets`` (left, right; world points), for a walker whose pelvis is at
-    ``root_xyz``, heading ``heading_q`` (world), its clip's local rotations ``local`` (by joint)."""
+def _lengths(skeleton) -> dict:
+    return {
+        s: (
+            np.linalg.norm(skeleton.offset(f"elbow_{s}")),
+            np.linalg.norm(skeleton.offset(f"wrist_{s}")),
+        )
+        for s, _ in ARMS
+    }
+
+
+def _trunk(skeleton, root, heading_q, local: dict, bend: float):
+    """The pelvis and spine bent forward by ``bend``: their local rotations, the hips' turn, and the
+    spine's world position and rotation."""
+    hips = _axis_angle((0.0, 1.0, 0.0), AT_HIPS * bend)
+    pelvis_new = quat_mul(local["pelvis"], hips)
+    pelvis_world = quat_mul(heading_q, pelvis_new)
+    spine_pos = root + quat_rotate(pelvis_world, np.array(skeleton.offset("spine")))
+    spine_new = quat_mul(local["spine"], _axis_angle((0.0, 1.0, 0.0), (1.0 - AT_HIPS) * bend))
+    return pelvis_new, hips, spine_new, spine_pos, quat_mul(pelvis_world, spine_new)
+
+
+def needed_bend(skeleton, root_xyz, heading_q, local: dict, targets) -> float:
+    """The least forward bend (rad) that brings both ``targets`` within the arms' reach: found to
+    ``BEND_TOLERANCE``, and ``MAX_BEND`` when none does."""
     root = np.asarray(root_xyz, float)
     targets = [np.asarray(t, float) for t in targets]
-    lengths = {s: (np.linalg.norm(skeleton.offset(f"elbow_{s}")), np.linalg.norm(skeleton.offset(f"wrist_{s}")))
-               for s, _ in ARMS}
-    # The least forward bend that brings both points within reach.
-    for k in range(BEND_STEPS + 1):
-        bend = MAX_BEND * k / BEND_STEPS
-        hips = _axis_angle((0.0, 1.0, 0.0), AT_HIPS * bend)
-        pelvis_new = quat_mul(local["pelvis"], hips)
-        pelvis_world = quat_mul(heading_q, pelvis_new)
-        spine_pos = root + quat_rotate(pelvis_world, np.array(skeleton.offset("spine")))
-        spine_new = quat_mul(local["spine"], _axis_angle((0.0, 1.0, 0.0), (1.0 - AT_HIPS) * bend))
-        spine_world = quat_mul(pelvis_world, spine_new)
-        ok = True
+    lengths = _lengths(skeleton)
+
+    def reached(bend: float) -> bool:
+        *_, spine_pos, spine_world = _trunk(skeleton, root, heading_q, local, bend)
         for (side, _), target in zip(ARMS, targets, strict=True):
-            shoulder = spine_pos + quat_rotate(spine_world, np.array(skeleton.offset(f"shoulder_{side}")))
-            a, b = lengths[side]
-            if np.linalg.norm(target - shoulder) > REACH * (a + b):
-                ok = False
-                break
-        if ok:
-            break
+            shoulder = spine_pos + quat_rotate(
+                spine_world, np.array(skeleton.offset(f"shoulder_{side}"))
+            )
+            if np.linalg.norm(target - shoulder) > REACH * sum(lengths[side]):
+                return False
+        return True
+
+    if reached(0.0):
+        return 0.0
+    if not reached(MAX_BEND):
+        return MAX_BEND
+    lo, hi = 0.0, MAX_BEND
+    while hi - lo > BEND_TOLERANCE:
+        mid = (lo + hi) / 2
+        lo, hi = (lo, mid) if reached(mid) else (mid, hi)
+    return hi
+
+
+def reach_pose(
+    skeleton, root_xyz, heading_q, local: dict, targets, bend: float | None = None
+) -> dict:
+    """Local rotations of ``pelvis``, ``hip_*``, ``spine``, ``shoulder_*``, ``elbow_*`` and ``wrist_*``
+    that put the wrists on ``targets`` (left, right; world points), for a walker whose pelvis is at
+    ``root_xyz``, heading ``heading_q`` (world), its clip's local rotations ``local`` (by joint);
+    bent forward by ``bend`` (default: :func:`needed_bend`)."""
+    root = np.asarray(root_xyz, float)
+    targets = [np.asarray(t, float) for t in targets]
+    lengths = _lengths(skeleton)
+    if bend is None:
+        bend = needed_bend(skeleton, root, heading_q, local, targets)
+    pelvis_new, hips, spine_new, spine_pos, spine_world = _trunk(
+        skeleton, root, heading_q, local, bend
+    )
     # The legs stand as they did: each hip turned back by the pelvis's bend.
-    out = {"pelvis": pelvis_new, "spine": spine_new,
-           "hip_l": quat_mul(_qinv(hips), local["hip_l"]), "hip_r": quat_mul(_qinv(hips), local["hip_r"])}
+    out = {
+        "pelvis": pelvis_new,
+        "spine": spine_new,
+        "hip_l": quat_mul(_qinv(hips), local["hip_l"]),
+        "hip_r": quat_mul(_qinv(hips), local["hip_r"]),
+    }
     for (side, sign), target in zip(ARMS, targets, strict=True):
         shoulder_off = np.array(skeleton.offset(f"shoulder_{side}"))
         elbow_off = np.array(skeleton.offset(f"elbow_{side}"))
@@ -101,9 +143,15 @@ def reach_pose(skeleton, root_xyz, heading_q, local: dict, targets) -> dict:
         reach = min(max(dist, abs(a - b) + 1e-6), (a + b) * (1.0 - 1e-6))
         # The angle at the shoulder between the reach and the upper arm (law of cosines).
         alpha = math.acos(max(-1.0, min(1.0, (a * a + reach * reach - b * b) / (2 * a * reach))))
-        pole = quat_rotate(spine_world, np.array([ELBOW_POLE[0], sign * ELBOW_POLE[1], ELBOW_POLE[2]]))
+        pole = quat_rotate(
+            spine_world, np.array([ELBOW_POLE[0], sign * ELBOW_POLE[1], ELBOW_POLE[2]])
+        )
         pole = pole - np.dot(pole, dhat) * dhat
-        pole = pole / np.linalg.norm(pole) if np.linalg.norm(pole) > 1e-9 else np.array([0.0, 0.0, -1.0])
+        pole = (
+            pole / np.linalg.norm(pole)
+            if np.linalg.norm(pole) > 1e-9
+            else np.array([0.0, 0.0, -1.0])
+        )
         upper = math.cos(alpha) * dhat + math.sin(alpha) * pole
         elbow = shoulder + a * upper
         fore = shoulder + reach * dhat - elbow
