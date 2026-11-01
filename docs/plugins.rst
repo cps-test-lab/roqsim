@@ -2484,7 +2484,31 @@ stepped run. A position servo handed only the positions
 trails them at speed by ``d·qd/p``; ``trajectory_feedforward: velocity`` cancels that, and ``dynamics``
 also adds the inverse dynamics, so a joint swept at a real arm's speed limit tracks to a hundredth of
 a degree. Where tracking is part of what a trial measures, still report the gains and the feed-forward
-with the setup.
+with the setup. The same handle commands a gripper in process, as a GripperCommand would:
+``ArmHandle.set_gripper(position)`` and ``set_gripper_max_effort(newtons)``.
+
+**Planning in process, without ROS** (``roqsim_manipulation.planning``). For a fixed arm in a cell,
+the planning can run on the world itself rather than on a planning scene described a second time:
+
+- ``ArmKinematics`` -- forward kinematics, the Jacobian and damped-least-squares IK of a site,
+  seeded and staying on the branch nearest the seed; an unreachable target raises ``IKError``.
+- ``CollisionChecker`` -- a copy of the model and data as they stand now (doors where they are, parts
+  where they lie), the arm and the parts it holds (``hold(body, data)``; ``release(body, data)`` leaves
+  a part where the world has it) checked against everything within a clearance, with allowed pairs for
+  a grip or a support. IK's restarts draw from the ``rng`` a call passes.
+- ``plan_path`` -- RRT-Connect then shortcutting, every segment checked; ``cartesian_path`` -- a
+  straight line of the site, for an approach into a fixture.
+- ``time_parameterize`` -- time-optimal timing along the path under per-joint velocity and
+  acceleration limits (reachability analysis, as TOPP-RA), retimed slower when the torques it needs,
+  by inverse dynamics with the payload (``ArmDynamics``), exceed a fraction of the drives' limits.
+  Its knots go straight to ``follow_trajectory``.
+- ``pose_margins`` -- a pose's distance to each joint limit, its singularity measures (the wrist, elbow
+  and shoulder by name for an arm of the UR kind) and its static
+  torques against the limits; ``roqsim arm margins RECORDING --arm … --site … --at …`` reports them
+  for a recorded run with the peak torques over it. ``HoldMonitor`` -- whether a part is held, by its
+  pads' contacts and its drift relative to the site.
+
+Everything random draws from the generator it is given, so a seeded run plans the same paths.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

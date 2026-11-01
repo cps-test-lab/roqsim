@@ -467,6 +467,12 @@ class ArmHandle:
     trajectory_time_scale: Callable[[], float] | None = None
     #: Why the arm may not move now (see "The motion gate"), or ``None`` while it may.
     motion_blocked: Callable[[], str | None] | None = None
+    #: Command the gripper to a ``gripper_joint`` position, as a GripperCommand's ``position`` does;
+    #: present when the arm has a gripper, ``None`` otherwise.
+    set_gripper: Callable[[float], None] | None = None
+    #: Clamp the gripper joint's effort, as a GripperCommand's ``max_effort`` does (``<= 0``: the
+    #: model's own force range); present when the arm has a gripper.
+    set_gripper_max_effort: Callable[[float], None] | None = None
 
 
 class ArmControllerPlugin(Plugin):
@@ -896,6 +902,8 @@ class ArmControllerPlugin(Plugin):
                 trajectory_active=lambda: self._traj is not None,
                 trajectory_time_scale=self.trajectory_time_scale,
                 motion_blocked=lambda: self._blocked,
+                set_gripper=self.set_gripper if self._aux_acts else None,
+                set_gripper_max_effort=self.set_gripper_max_effort if self._aux_acts else None,
             ),
         )
         if self.trajectory_feedforward != "none" or self.command_feedforward != "none":
