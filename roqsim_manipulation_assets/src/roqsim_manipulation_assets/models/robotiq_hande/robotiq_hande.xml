@@ -68,9 +68,11 @@
            finger meshes), so the contact is face to face with several points per jaw. priority
            makes the pad own the pair, so solimp/solref are set with it. Friction 1.0 stands for the
            flat NBR overmoulded fingers the Hand-E ships with (manual 5.1.3).
-           solref is as stiff as the world's step allows: MuJoCo raises a time constant below two
-           steps to two steps (roqsim.solref), so 0.002 runs as 0.004 at the usual 2 ms step and as
-           itself at 1 ms. A friction contact is a soft velocity constraint with that time constant:
+           solref is as stiff as the world's step allows: with the euler, rk4 and implicit
+           integrators MuJoCo raises a time constant below two steps to two steps (roqsim.solref), so
+           0.002 runs as 0.004 at the usual 2 ms step and as itself at 1 ms; with the discrete
+           integrator (`integrator: auto` picks it for a world with an elastic or passive-contact
+           flex) the floor is lower, and 0.002 is about itself at 2 ms too. A friction contact is a soft velocity constraint with that time constant:
            a part held while the arm changes speed lags the pads by about the change of speed times
            it, and keeps the lag -- a few millimetres over a fast move at 2 ms, less than half that at
            1 ms with this time constant. A world that carries parts on fast moves runs at 1 ms. -->
