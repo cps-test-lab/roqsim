@@ -110,7 +110,7 @@ class PoseMargins:
     limit_fraction: list[float]
     sigma_min: float
     manipulability: float
-    #: UR-style singularity measures, or None for an arm that is not six joints
+    #: The singularity measures by name, or None for an arm that is not of the UR kind
     wrist: float | None
     elbow: float | None
     shoulder_m: float | None
