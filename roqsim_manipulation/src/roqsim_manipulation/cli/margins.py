@@ -115,6 +115,11 @@ def margins_report(recording, arm: str, site: str, at=(), payload=None) -> dict:
         }
 
 
+def _num(value, fmt: str) -> str:
+    """A measure as text, or ``n/a`` where the arm has none (not of the UR kind)."""
+    return "n/a" if value is None else format(value, fmt)
+
+
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -130,7 +135,8 @@ def main(argv=None) -> int:
         lim = ", ".join(f"{np.degrees(r):.0f}" for r in pose["limit_rad"])
         print(
             f"t={pose['t']:.2f} s  limit margin [deg] {lim}  sigma_min {pose['sigma_min']:.3f}  "
-            f"wrist {pose['wrist']:.2f}  elbow {pose['elbow']:.2f}  shoulder {pose['shoulder_m']:.3f} m  "
+            f"wrist {_num(pose['wrist'], '.2f')}  elbow {_num(pose['elbow'], '.2f')}  "
+            f"shoulder {_num(pose['shoulder_m'], '.3f')} m  "
             f"torque/limit {max(pose['torque_ratio']):.0%}"
         )
     peak = ", ".join(f"{r:.0%}" for r in report["peak_torque_ratio"])

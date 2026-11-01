@@ -161,8 +161,11 @@ class ArmKinematics:
         q = self._solve(pos, rot, seed, **kw)
         if q is not None and (accept is None or accept(q)):
             return q
-        if rng is None:
-            rng = np.random.default_rng(0)
+        if restarts and rng is None:
+            raise ValueError(
+                "ik: the seed did not give a solution, and the restarts draw from a generator: "
+                "pass rng= (or restarts=0)"
+            )
         for _ in range(restarts):
             start = seed + rng.uniform(-spread, spread, size=self.n)
             q = self._solve(pos, rot, start, **kw)
