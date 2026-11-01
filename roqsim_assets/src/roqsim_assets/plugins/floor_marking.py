@@ -242,7 +242,7 @@ class FloorMarkingPlugin(Plugin):
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
         pattern = config.get("pattern", "solid")
-        if pattern not in PATTERN_KEYS:
+        if not isinstance(pattern, str) or pattern not in PATTERN_KEYS:
             errors.append(
                 f"floor_marking: 'pattern' is one of {', '.join(PATTERN_KEYS)}, not {pattern!r}"
             )

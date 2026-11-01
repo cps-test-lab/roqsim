@@ -282,3 +282,9 @@ def test_a_key_of_another_pattern_fails_the_world(tmp_path):
 )
 def test_a_config_of_one_pattern_is_accepted(config):
     assert FloorMarkingPlugin(config).validate_config(config) == []
+
+
+@pytest.mark.parametrize("pattern", ["Hazard", None, ["hazard"]])
+def test_a_pattern_that_is_none_of_the_three_is_refused_naming_them(pattern):
+    errors = FloorMarkingPlugin({"pattern": pattern}).validate_config({"pattern": pattern})
+    assert any("'pattern' is one of solid, dashed, hazard" in e for e in errors), errors
