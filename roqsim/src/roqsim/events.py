@@ -58,6 +58,20 @@ class EventLog:
     def __len__(self) -> int:
         return len(self._events)
 
+    def start_of_now(self) -> int:
+        """The index of the first event of the current episode emitted at or after the current time:
+        what a recording starting now owns, its episode's reset events included when it starts at the
+        reset, and nothing an earlier take or episode emitted."""
+        now, episode = float(self._clock()), int(self._episode())
+        index = len(self._events)
+        while (
+            index
+            and self._events[index - 1]["episode"] == episode
+            and self._events[index - 1]["t"] >= now
+        ):
+            index -= 1
+        return index
+
     def since(self, index: int) -> list[dict]:
         """The events emitted after the first ``index``."""
         return self._events[index:]

@@ -328,7 +328,12 @@ class Recording:
         Each is ``{"t", "episode", "source", "event", ...}`` with the fields its source added. A
         recording made before the channel existed has none.
         """
-        return [json.loads(m.data) for m in self._channels.get(CHANNEL_EVENTS) or []]
+        return [json.loads(m.data) for m in self.event_messages]
+
+    @property
+    def event_messages(self) -> list:
+        """The ``events`` channel's messages as stored, for a copy that keeps them as they are."""
+        return list(self._channels.get(CHANNEL_EVENTS) or [])
 
     def describe(self) -> dict:
         """A JSON-safe summary -- what ``--check`` reports, and what an MCP caller can read cheaply."""

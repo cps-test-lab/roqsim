@@ -79,3 +79,33 @@ def test_an_event_field_must_be_json_and_not_shadow_the_events_own():
         log.emit("a", "b", x=object())
     with pytest.raises(ValueError, match="'t'"):
         log.emit("a", "b", t=3.0)
+
+
+def test_a_decimated_copy_keeps_every_event(tmp_path):
+    from roqsim.capture import decimated
+
+    out = _record(tmp_path, 2.0)
+    with open_recording(out) as rec:
+        events = rec.events
+        half = decimated(rec, 2, tmp_path / "half.mcap")
+    with open_recording(half) as copy:
+        assert len(copy) < len(events)
+        assert copy.events == events
+
+
+def test_a_recording_starting_now_owns_only_the_events_from_now_on():
+    clock = {"t": 0.0, "episode": 0}
+    log = EventLog(lambda: clock["t"], lambda: clock["episode"])
+    log.emit("a", "reset")
+    # a recording that starts at the reset owns the reset's events
+    assert log.start_of_now() == 0
+    clock["t"] = 0.5
+    log.emit("a", "early")
+    clock["t"] = 1.0
+    # a later take starts after them
+    assert log.start_of_now() == 2
+    log.emit("a", "now")
+    assert log.since(log.start_of_now()) == [log.all()[-1]]
+    # an earlier episode's events are not the new episode's, whatever their time
+    clock["episode"], clock["t"] = 1, 0.0
+    assert log.start_of_now() == 3

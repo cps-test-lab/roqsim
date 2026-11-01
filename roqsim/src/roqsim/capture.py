@@ -517,7 +517,8 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
     That invariant is preserved here rather than traded away: the samples that remain are untouched
     messages, so every frame drawn from the result is still a state the simulation had. What changes
     is only how many of them there are, and the declared rate that says so. The ``poses``, ``joints``
-    and ``clock`` messages of the kept samples travel with them.
+    and ``clock`` messages of the kept samples travel with them, and every event (``events``) is
+    kept: an event is no sample, and dropping one would change what happened.
 
     The rate stays exact because ``capture_fps`` is a ``[numerator, denominator]`` pair: 250 Hz
     decimated by 8 is ``[250, 8]``, i.e. 31.25 fps, not a rounded 31.
@@ -559,6 +560,10 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
                     writer.add_message(
                         channels[topic], message.log_time, message.data, message.publish_time
                     )
+        for message in rec.event_messages:
+            writer.add_message(
+                channels[CHANNEL_EVENTS], message.log_time, message.data, message.publish_time
+            )
         writer.finish()
     except BaseException:
         writer.abandon()
@@ -645,8 +650,10 @@ class StateRecorder:
         self._presence: list[dict] = []
         self._absent: tuple | None = None
         self._ctx = ctx
-        #: How many of ``ctx.events`` are on the ``events`` channel already.
-        self._events_written = 0
+        #: How many of ``ctx.events`` are on the ``events`` channel already, or were emitted before
+        #: this recording began (an earlier take's, an earlier episode's): those are not its own.
+        events = getattr(ctx, "events", None)
+        self._events_written = events.start_of_now() if events is not None else 0
         self._writer: ChunkedWriter | None = None
         self._channels: dict[str, int] = {}
         self._count = 0

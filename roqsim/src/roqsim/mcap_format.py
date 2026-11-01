@@ -153,12 +153,12 @@ EVENTS_SCHEMA = {
     "additionalProperties": True,
 }
 
-#: Topic -> (schema name, schema document) for the JSON channels, in registration order.
+#: Topic -> (schema name, schema document) for the JSON channels with one message per sample, in
+#: registration order.
 JSON_CHANNELS = (
     (CHANNEL_POSES, "roqsim.poses", POSES_SCHEMA),
     (CHANNEL_JOINTS, "roqsim.joints", JOINTS_SCHEMA),
     (CHANNEL_CLOCK, "roqsim.clock", CLOCK_SCHEMA),
-    (CHANNEL_EVENTS, "roqsim.event", EVENTS_SCHEMA),
 )
 
 _RECORD_HEADER = struct.Struct("<BQ")
@@ -276,7 +276,10 @@ class ChunkedWriter(Writer):
 def register_channels(writer: Writer) -> dict[str, int]:
     """Register the channels on ``writer``, in a fixed order, and return topic -> channel id."""
     channels = {CHANNEL_STATE: writer.register_channel(CHANNEL_STATE, STATE_ENCODING, 0)}
-    for topic, schema_name, schema in JSON_CHANNELS:
+    for topic, schema_name, schema in (
+        *JSON_CHANNELS,
+        (CHANNEL_EVENTS, "roqsim.event", EVENTS_SCHEMA),
+    ):
         schema_id = writer.register_schema(schema_name, "jsonschema", json_bytes(schema))
         channels[topic] = writer.register_channel(topic, "json", schema_id)
     return channels
