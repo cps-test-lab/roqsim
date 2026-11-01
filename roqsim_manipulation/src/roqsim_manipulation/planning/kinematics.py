@@ -145,7 +145,8 @@ class ArmKinematics:
 
         From ``seed`` first; then, if that fails or ``accept`` (a predicate on q) refuses it, from
         the seed perturbed by up to ``spread`` rad per joint, ``restarts`` times, keeping the
-        solution nearest the seed. Raises :class:`IKError` when none is found.
+        solution nearest the seed. The restarts draw from ``rng``, which a call that may need them
+        passes (``ValueError`` without one). Raises :class:`IKError` when none is found.
         """
         pos = np.asarray(pos, float)
         rot = None if rot is None else np.asarray(rot, float).reshape(3, 3)
@@ -163,7 +164,7 @@ class ArmKinematics:
             return q
         if restarts and rng is None:
             raise ValueError(
-                "ik: the seed did not give a solution, and the restarts draw from a generator: "
+                "ik: the seed gave no accepted solution, and the restarts draw from a generator: "
                 "pass rng= (or restarts=0)"
             )
         for _ in range(restarts):

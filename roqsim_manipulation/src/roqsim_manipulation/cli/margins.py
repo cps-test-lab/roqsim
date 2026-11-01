@@ -136,7 +136,7 @@ def main(argv=None) -> int:
         print(
             f"t={pose['t']:.2f} s  limit margin [deg] {lim}  sigma_min {pose['sigma_min']:.3f}  "
             f"wrist {_num(pose['wrist'], '.2f')}  elbow {_num(pose['elbow'], '.2f')}  "
-            f"shoulder {_num(pose['shoulder_m'], '.3f')} m  "
+            f"shoulder {_num(pose['shoulder_m'], '.3f')}{' m' if pose['shoulder_m'] is not None else ''}  "
             f"torque/limit {max(pose['torque_ratio']):.0%}"
         )
     peak = ", ".join(f"{r:.0%}" for r in report["peak_torque_ratio"])
