@@ -567,6 +567,12 @@ class SimContext:
         #: the same noise when their seeds match (common random numbers).
         self.episode: int = 0
 
+        #: What happened when, on simulated time (:mod:`roqsim.events`): any plugin emits, a
+        #: recording carries every event on its ``events`` channel.
+        from .events import EventLog
+
+        self.events = EventLog(lambda: self.sim_time, lambda: self.episode)
+
         # Run-control (play/pause/step/reset); consulted by the standalone driver.
         from .control import RunControl
 

@@ -639,9 +639,10 @@ otherwise be ignored, and the run would look configured.
 What the recording holds
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Beside the ``state`` channel the file carries three JSON channels a reader **without the model** can
-use -- ``roqsim health`` is one, a campaign's ingest is another -- each with one message per sample,
-stamped ``log_time`` = simulated time and ``publish_time`` = wall clock (epoch), and its schema in the
+Beside the ``state`` channel the file carries JSON channels a reader **without the model** can
+use -- ``roqsim health`` is one, a campaign's ingest is another -- ``poses``, ``joints`` and ``clock``
+with one message per sample and ``events`` with one per event, each stamped ``log_time`` = simulated
+time and ``publish_time`` = wall clock (epoch), and its schema in the
 file:
 
 ``poses``
@@ -657,6 +658,11 @@ file:
    ``{"t", "w", "q": {joint: value}}`` -- every recorded hinge and slide joint, in radians or metres.
 ``clock``
    ``{"wall_ts", "sim_ts"}`` -- the pair a reader outside the process relates its own stamps to.
+``events``
+   ``{"t", "episode", "source", "event", ...}`` -- not one per sample but one per **event** a plugin
+   emitted (``ctx.events.emit(source, event, **fields)``, :mod:`roqsim.events`): a machine starting a
+   stroke, a controller beginning a move. Its ``log_time`` is the event's own simulated time, so an
+   event between two samples keeps its exact time; ``Recording.events`` reads them back in order.
 
 And two metadata records, each a JSON document under the key ``json``: ``roqsim.recording``, the
 provenance (world, overrides, the resolved component tree, actuator gains, endpoint rates, package

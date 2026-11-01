@@ -13,6 +13,9 @@ dependencies = [
     "roqsim",
     "mujoco>=3.14,<3.15",
     "numpy>=1.24",
+    # planning/timing.py draws a waypoint path as a cubic spline (scipy.interpolate.CubicSpline);
+    # 1.11 for the same reason as roqsim_scenes': the ROS base image's Debian-packaged scipy.
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +37,10 @@ dependencies = [
 test = ["pytest>=7.0", "roqsim_manipulation_assets", "roqsim_sensors"]
 
 # Manipulator plugins, registered into the shared roqsim.plugins group.
+# `roqsim arm`: what a recorded arm did (src/roqsim_manipulation/cli).
+[project.entry-points."roqsim.commands"]
+arm = "roqsim_manipulation.cli:arm"
+
 [project.entry-points."roqsim.plugins"]
 spawn_arm = "roqsim_manipulation.plugins.spawn_arm:SpawnArmPlugin"
 arm_controller = "roqsim_manipulation.plugins.arm_controller:ArmControllerPlugin"
