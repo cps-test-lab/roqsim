@@ -7,7 +7,7 @@ driven toward 0. A fidelity test on a *static* world passes the whole time that 
 world here has a mocap body and a
 nonzero ``ctrl``, and the assertion is field by field.
 
-The second group pins the file: one mcap with four channels and two metadata records, chunked so
+The second group pins the file: one mcap with five channels and two metadata records, chunked so
 that a killed run keeps every chunk closed before the kill, and a chunk closed at least once per
 wall second so that "before the kill" is at most a second ago.
 """

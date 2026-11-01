@@ -639,9 +639,9 @@ otherwise be ignored, and the run would look configured.
 What the recording holds
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Beside the ``state`` channel the file carries three JSON channels a reader **without the model** can
-use -- ``roqsim health`` is one, a campaign's ingest is another -- each with one message per sample,
-stamped ``log_time`` = simulated time and ``publish_time`` = wall clock (epoch), and its schema in the
+Beside the ``state`` channel the file carries JSON channels a reader **without the model** can
+use -- ``roqsim health`` is one, a campaign's ingest is another -- ``poses``, ``joints`` and ``clock``
+with one message per sample and ``events`` with one per event, each stamped ``log_time`` = simulated time and ``publish_time`` = wall clock (epoch), and its schema in the
 file:
 
 ``poses``
