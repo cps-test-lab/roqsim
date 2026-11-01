@@ -13,10 +13,14 @@ revision 2022/01/10, cited by section.
 
 from __future__ import annotations
 
+import math
+
 import mujoco
 import numpy as np
 import pytest
 
+from roqsim.config import load_config_from_dict
+from roqsim.engine import Engine
 from roqsim.models import apply_assets, resolve_model
 
 LEFT, RIGHT = "hande_left_finger_joint", "hande_right_finger_joint"
@@ -376,5 +380,67 @@ def test_the_ur5e_picks_a_box_and_holds_it():
             assert touching == pads, "the box is no longer between both pads"
         creep = (held[0] - held[-1]) / (2000 * engine.ctx.dt)
         assert abs(creep) < 0.001, f"the box crept {creep * 1000:.2f} mm/s out of the jaws"
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize("timestep, most_mm", [(0.002, 4.5), (0.001, 1.5)])
+def test_a_part_carried_on_a_fast_lift_stays_where_it_was_gripped(timestep, most_mm):
+    """A friction contact is a soft velocity constraint: a held part lags the pads by about the
+    change of the arm's speed times the pads' time constant, and keeps the lag. The pads are as stiff
+    as the step allows, so a world that carries parts on fast moves runs at 1 ms and the part stays
+    within a millimetre or so of where it was gripped; at 2 ms it is a few. A 2 mm plate, gripped
+    across its thickness and lifted 11 cm in 0.39 s from rest to rest."""
+    from roqsim_manipulation.planning import ArmKinematics, cartesian_path, time_parameterize
+
+    world = {"sim": {"timestep": timestep, "cone": "elliptic", "impratio": 10, "noslip_iterations": 10},
+             "components": [
+                 {"spawn_arm": {"model": "ur5e", "prefix": "ur5e_", "end_effector": {"model": "robotiq_hande"},
+                                "pose": {"position": {"x": 0, "y": 0, "z": 0.75}}, "pedestal": True,
+                                "home": [-1.5708, -1.9, 1.9, -1.571, -1.571, 0.0]},
+                  "components": [{"arm_controller": {"trajectory_feedforward": "dynamics"}}], "name": "ur5e"},
+                 {"box": {"prefix": "s_", "pose": {"position": {"x": -0.12, "y": -0.51, "z": 0.75}},
+                          "size": [0.002, 0.3, 0.04], "friction": 0.4, "mass": 0.19}, "name": "plate"}]}
+    engine = Engine(load_config_from_dict(world))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        arm = engine.ctx.blackboard.get("arm:ur5e")
+        joints = [m.joint("ur5e_" + n).id for n in ("shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                                                     "wrist_1_joint", "wrist_2_joint", "wrist_3_joint")]
+        qadr = [m.jnt_qposadr[j] for j in joints]
+        site = m.site("ur5e_pinch").id
+        kin = ArmKinematics(m, joints, site, d)
+        down = np.array([[1.0, 0, 0], [0, -1.0, 0], [0, 0, -1.0]])
+        q = kin.ik([-0.12, -0.51, 0.75], down, d.qpos[qadr], rng=np.random.default_rng(0))
+        d.qpos[qadr] = q
+        arm.set_targets(arm.joint_names, list(q))
+        mujoco.mj_forward(m, d)
+        plate = m.body("s_box").id
+        gravity = m.opt.gravity.copy()
+        m.opt.gravity[:] = 0
+        arm.set_gripper(0.025)
+        for _ in range(int(0.6 / timestep)):
+            engine.step()
+        m.opt.gravity[:] = gravity
+        for _ in range(int(0.4 / timestep)):
+            engine.step()
+
+        def held():
+            r = d.xmat[plate].reshape(3, 3)
+            return r.T @ (d.site_xpos[site] - d.xpos[plate])
+
+        start = held()
+        p0, r0 = kin.fk(d.qpos[qadr])
+        path = cartesian_path(None, kin, d.qpos[qadr].copy(), p0 + [0, 0, 0.11], r0, step=0.004, check=False)
+        timed = time_parameterize(path, [math.pi] * 6, [8.0] * 6)
+        arm.follow_trajectory(arm.joint_names, timed.times, timed.positions, timed.velocities, timed.accelerations)
+        worst = 0.0
+        for _ in range(int((timed.duration + 0.2) / timestep)):
+            engine.step()
+            worst = max(worst, float(np.linalg.norm(held() - start)))
+        assert worst * 1000 < most_mm
     finally:
         engine.shutdown()
