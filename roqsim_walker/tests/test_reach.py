@@ -1,5 +1,5 @@
-"""A walker's hands on two points: the reach pose puts the wrists there, bends only as far as it
-must, keeps the legs where they stood, and a walker eases into a hold and out of it."""
+"""A walker's hands on points: the reach pose puts the wrists there, one hand or both, bends only
+as far as the reaching hands must, and keeps the legs where they stood."""
 
 from __future__ import annotations
 
@@ -17,10 +17,13 @@ ROOT = np.array([1.0, 2.0, DEFAULT_SKELETON.root_height])
 
 
 def _pose(yaw, targets):
+    """The reach pose for ``targets`` (left, right; either may be None) over the rest pose."""
     rest = {name: IDENTITY for name in JOINT_NAMES}
     local = {name: rest[name] for name in ("pelvis", "spine", "hip_l", "hip_r")}
-    over = reach_pose(DEFAULT_SKELETON, ROOT, yaw_to_quat(yaw), local, targets)
-    return forward_kinematics(ROOT, yaw, {**rest, **over}), forward_kinematics(ROOT, yaw, rest), over
+    left, right = targets
+    over = reach_pose(DEFAULT_SKELETON, ROOT, yaw_to_quat(yaw), local, {"l": left, "r": right})
+    posed = forward_kinematics(ROOT, yaw, {**rest, **over})
+    return posed, forward_kinematics(ROOT, yaw, rest), over
 
 
 def _ahead(yaw, x, y, z):
@@ -65,8 +68,39 @@ def test_the_bend_follows_a_point_coming_up_smoothly():
     local = {name: IDENTITY for name in ("pelvis", "spine", "hip_l", "hip_r")}
     bends = []
     for z in np.linspace(0.70, 1.15, 46):  # a box lifted 45 cm, a centimetre at a time
-        targets = [np.array([*_ahead(0.0, 0.55, s, z)[0], z]) for s in (0.3, -0.3)]
+        left, right = (np.array([*_ahead(0.0, 0.55, s, z)[0], z]) for s in (0.3, -0.3))
+        targets = {"l": left, "r": right}
         bends.append(needed_bend(DEFAULT_SKELETON, ROOT, yaw_to_quat(0.0), local, targets))
     steps = np.abs(np.diff(bends))
     assert bends[0] > bends[-1]
     assert steps.max() < math.radians(2.0), math.degrees(steps.max())
+
+
+def test_one_hand_reaches_and_the_other_arm_is_left_to_the_gait():
+    point = np.array([*_ahead(0.0, 0.5, -0.3, 0.8)[0], 0.8])
+    poses, _, over = _pose(0.0, (None, point))
+    assert np.linalg.norm(poses["wrist_r"][0] - point) < 0.005
+    assert not {"shoulder_l", "elbow_l", "wrist_l"} & set(over)
+    assert not np.allclose(over["pelvis"], IDENTITY)
+
+
+def test_only_the_reaching_hands_bend_the_body():
+    from roqsim_walker.reach import needed_bend
+
+    local = {name: IDENTITY for name in ("pelvis", "spine", "hip_l", "hip_r")}
+    low = np.array([*_ahead(0.0, 0.5, 0.3, 0.7)[0], 0.7])
+    near = np.array([*_ahead(0.0, 0.35, -0.3, 1.15)[0], 1.15])
+    heading = yaw_to_quat(0.0)
+
+    def bend(targets):
+        return needed_bend(DEFAULT_SKELETON, ROOT, heading, local, targets)
+
+    assert bend({"r": near}) == 0.0
+    assert bend({"l": None, "r": None}) == 0.0
+    assert bend({"l": low, "r": near}) == bend({"l": low}) > 0.0
+
+
+def test_an_arm_it_does_not_have_is_refused():
+    local = {name: IDENTITY for name in ("pelvis", "spine", "hip_l", "hip_r")}
+    with pytest.raises(ValueError, match="no arm"):
+        reach_pose(DEFAULT_SKELETON, ROOT, yaw_to_quat(0.0), local, {"x": np.zeros(3)})

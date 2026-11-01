@@ -31,7 +31,7 @@ from roqsim_walker.motion import (
     procedural_walk,
     smoothstep,
 )
-from roqsim_walker.reach import needed_bend, reach_pose
+from roqsim_walker.reach import SIDES, needed_bend, reach_pose
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +55,18 @@ _TURN_STRIDE = math.radians(60.0)  # body heading change per turn-clip cycle (se
 _STRAFE_FWD = math.radians(25.0)
 _STRAFE_SIDE = math.radians(90.0)
 _STRAFE_BACK = math.radians(150.0)
-# A hold (the hands on two points, :mod:`roqsim_walker.reach`) eases in and out at most _HOLD_RATE
-# (1/s), and the body's bend follows what the points need at most _BEND_RATE (rad/s); each speeds up
-# and slows down at its _ACCEL, so neither jerks the body.
+# A hand's reach (the hand on a point, :mod:`roqsim_walker.reach`) eases in and out at most
+# _REACH_RATE (1/s), and the body's bend follows what the points need at most _BEND_RATE (rad/s);
+# each speeds up and slows down at its _ACCEL, so neither jerks the body.
 # With a body lag the foot grounding's shift eases over this (s) (:func:`_foot_ground`).
 _GROUND_TAU = 0.03
-_HOLD_RATE = 2.5
-_HOLD_ACCEL = 8.0
+_REACH_RATE = 2.5
+_REACH_ACCEL = 8.0
 _BEND_RATE = 1.2
 _BEND_ACCEL = 4.0
+# The joints a reach bends the trunk with, and each arm's (suffixed by its side).
+_TRUNK = ("pelvis", "spine", "hip_l", "hip_r")
+_ARM = ("shoulder", "elbow", "wrist")
 
 
 def _rest_foot_z(skel):
@@ -206,7 +209,7 @@ def animate(data, st, new_pos, dt):
     q = blend_quats(q, qr, w_run)
     root_z = (1 - w_run) * root_z + w_run * zr
     q = _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
-    _hold(st, q, body, root_z, dt)
+    _reach(st, q, body, root_z, dt)
     joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
     poses = forward_kinematics(
         [body[0], body[1], st.skeleton.root_height + root_z],
@@ -271,40 +274,59 @@ def _ease(x, v, target, tau, dt):
     return target + (e + c * dt) * decay, (v - c * w * dt) * decay
 
 
-def _hold(st, q, new_pos, root_z, dt) -> None:
-    """Blend the hold's pose (the hands on ``st.hold_targets``) over the gait's, in place."""
-    if st.hold_targets is not None:
-        st.hold_last = st.hold_targets
-    aim = 1.0 if st.hold_targets is not None else 0.0
-    if dt > 0.0:
-        st.hold_w, st.hold_w_rate = _slew(
-            st.hold_w, st.hold_w_rate, aim, _HOLD_RATE, _HOLD_ACCEL, dt
-        )
-    if st.hold_w < 1e-3 or st.hold_last is None:
+def _reach(st, q, new_pos, root_z, dt) -> None:
+    """Blend each hand's reach (its wrist on ``st.reach[side].target``) over the gait's, in place.
+
+    Each hand eases in and out at its own weight and moves only its own arm's joints; a hand that
+    is not reaching keeps the gait's arm. The trunk -- pelvis, spine, hips -- is blended by the
+    stronger hand's weight, and bends only as far as the hands that are reaching need. A hand let go
+    fades from the arm pose it last had, in the body's frame, to the gait's: it does not reach back
+    to its point."""
+    for hand in st.reach.values():
+        if dt > 0.0:
+            aim = 1.0 if hand.target is not None else 0.0
+            hand.w, hand.w_rate = _slew(hand.w, hand.w_rate, aim, _REACH_RATE, _REACH_ACCEL, dt)
+        if hand.target is None and hand.w < 1e-3:
+            hand.pose = None
+    weight = max(hand.w for hand in st.reach.values())
+    if weight < 1e-3:
+        # Nothing in either hand: the next reach bends down from upright.
+        st.reach_bend = st.reach_bend_rate = 0.0
+        st.reach_need = (frozenset(), 0.0)
         return
     # The body is shifted down onto its feet after this (_foot_ground); solved with the last
     # tick's shift, the wrists land on the points rather than that far under them.
     shift = st.ground if st.ground is not None else 0.0
     root = [new_pos[0], new_pos[1], st.skeleton.root_height + root_z - shift]
-    local = {name: q[JOINT_NAMES.index(name)] for name in ("pelvis", "spine", "hip_l", "hip_r")}
+    local = {name: q[JOINT_NAMES.index(name)] for name in _TRUNK}
     heading = yaw_to_quat(st.yaw)
-    # The bend eases toward what the points need, at a bounded rate: the body bends down to them and
-    # straightens up after letting go without a jerk. Points coming up in the hands it follows as
-    # they come, never staying bent over them, so a box lifted does not rise into the body.
-    need = (
-        needed_bend(st.skeleton, root, heading, local, st.hold_last)
-        if st.hold_targets is not None
-        else 0.0
-    )
+    targets = {side: hand.target for side, hand in st.reach.items()}
+    reaching = frozenset(side for side, t in targets.items() if t is not None)
+    # The bend eases toward what the reaching hands' points need, at a bounded rate: the body bends
+    # down to them, and straightens after letting go, without a jerk. As far as the points come up
+    # in the hands it follows them at once, never staying bent over them, so a box lifted does not
+    # rise into the body; a hand let go is not a point coming up, so straightening from it eases.
+    need = needed_bend(st.skeleton, root, heading, local, targets)
     if dt > 0.0:
-        bend, rate = _slew(st.hold_bend, st.hold_bend_rate, need, _BEND_RATE, _BEND_ACCEL, dt)
-        if st.hold_targets is not None and need < bend and need < st.hold_bend:
-            bend, rate = need, (need - st.hold_bend) / dt
-        st.hold_bend, st.hold_bend_rate = bend, rate
-    pose = reach_pose(st.skeleton, root, heading, local, st.hold_last, bend=st.hold_bend)
-    for name, rot in pose.items():
+        bend, rate = _slew(st.reach_bend, st.reach_bend_rate, need, _BEND_RATE, _BEND_ACCEL, dt)
+        last_hands, last_need = st.reach_need
+        if reaching and reaching == last_hands and need < last_need:
+            lifted = max(need, st.reach_bend - (last_need - need))
+            if lifted < bend:
+                bend, rate = lifted, (lifted - st.reach_bend) / dt
+        st.reach_bend, st.reach_bend_rate = bend, rate
+    st.reach_need = (reaching, need)
+    pose = reach_pose(st.skeleton, root, heading, local, targets, bend=st.reach_bend)
+    for side, hand in st.reach.items():
+        if hand.target is not None:
+            hand.pose = {f"{j}_{side}": pose[f"{j}_{side}"] for j in _ARM}
+    over = [(name, pose[name], weight) for name in _TRUNK]
+    for hand in st.reach.values():
+        if hand.pose is not None:
+            over += [(name, rot, hand.w) for name, rot in hand.pose.items()]
+    for name, rot, w in over:
         j = JOINT_NAMES.index(name)
-        q[j] = blend_quats(q[j : j + 1], np.asarray(rot)[None, :], st.hold_w)[0]
+        q[j] = blend_quats(q[j : j + 1], np.asarray(rot)[None, :], w)[0]
 
 
 def _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist):
@@ -351,6 +373,22 @@ def write_pose(data, st, poses):
 
 
 @dataclass
+class HandReach:
+    """One hand's reach: the world point it is on (``None``: back to the gait), its pose's weight
+    over the gait's and how fast that changes, and the arm's local rotations it was last posed with,
+    which a hand let go fades out from."""
+
+    target: np.ndarray | None = None
+    w: float = 0.0
+    w_rate: float = 0.0
+    pose: dict | None = None
+
+
+def _hands() -> dict:
+    return {side: HandReach() for side in SIDES}
+
+
+@dataclass
 class AnimState:
     """One walker's skeleton, clips and blendspace state; the nav root is ``pos`` and ``yaw``."""
 
@@ -379,14 +417,12 @@ class AnimState:
     t_idle: float = 0.0  # idle-clip clock (s, advanced by time)
     disp_speed: float = 0.0  # low-passed body speed (drives gait + blend)
     pref_vel: np.ndarray = field(default_factory=lambda: np.zeros(2))
-    #: where the hands are held (left, right world points), None when they are not; the pose's
-    #: weight over the gait's eases toward 1 while held and back to 0 after
-    hold_targets: tuple | None = None
-    hold_w: float = 0.0
-    hold_last: tuple | None = None
-    hold_bend: float = 0.0
-    hold_w_rate: float = 0.0
-    hold_bend_rate: float = 0.0
+    #: each hand's reach, by arm (``"l"``, ``"r"``; :class:`HandReach`), and the body's forward bend
+    #: for them (rad), how fast it changes, and which hands' points needed how much bend last tick
+    reach: dict = field(default_factory=_hands)
+    reach_bend: float = 0.0
+    reach_bend_rate: float = 0.0
+    reach_need: tuple = (frozenset(), 0.0)
     #: the body's lag behind the nav root (s; 0: drawn on it), and where it is drawn and how fast it
     #: moves (:func:`_follow`)
     body_lag: float = 0.0

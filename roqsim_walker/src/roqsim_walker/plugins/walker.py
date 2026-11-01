@@ -41,6 +41,8 @@ nested under it::
 from __future__ import annotations
 
 import itertools
+import math
+import numbers
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -54,10 +56,10 @@ from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose, pose_spelling, rpy_to_quat, yaw_of
 from roqsim.types import Transform, Transforms
+from roqsim_walker.animation import HandReach, make_anim_state, write_pose
 from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.animation import make_anim_state, write_pose
 from roqsim_walker.blueprint import BlueprintError, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
@@ -87,6 +89,28 @@ def start_of(config: dict) -> tuple[float, float, float] | None:
     return pos[0], pos[1], yaw
 
 
+def _point(hand: str, point) -> np.ndarray | None:
+    """``point`` as a world point for the ``hand`` hand: ``None``, or 3 finite numbers."""
+    if point is None:
+        return None
+    try:
+        values = list(point)
+    except TypeError:
+        values = None
+    if (
+        isinstance(point, (str, bytes))
+        or values is None
+        or len(values) != 3
+        or not all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in values)
+        or not all(math.isfinite(v) for v in values)
+    ):
+        raise ValueError(
+            f"reach: the {hand} hand's point is a world point of 3 finite numbers, or None to "
+            f"let it go back to the walk -- not {point!r}"
+        )
+    return np.array(values, dtype=float)
+
+
 @dataclass
 class WalkerHandle:
     """Published by :class:`WalkerPlugin` under ``walker:<name>``; consumed by goal-driven
@@ -103,10 +127,12 @@ class WalkerHandle:
     cancel_route: Callable[[], int]  # -> route sequence number
     #: (seq, finished, goals_left, dist_left, error); ``error`` is ``""`` for an arrival
     status: Callable[[], tuple[int, bool, int, float, str]]
-    #: ``hold([left, right])`` puts the hands on two world points (re-set it as they move), the
-    #: spine bending as far as they need; ``hold(None)`` lets go. The arms ease into the hold and
-    #: out of it over the gait (:mod:`roqsim_walker.reach`). Call it on the physics thread.
-    hold: Callable[[list | None], None] | None = None
+    #: ``reach(left=None, right=None)`` puts each hand given a world point (3 floats) on it -- re-set
+    #: it as the points move -- the spine bending as far as they need; a hand given ``None`` goes
+    #: back to the walk, so ``reach()`` lets go with both. Each arm eases onto its point and back
+    #: over the gait on its own (:mod:`roqsim_walker.reach`). A point that is not 3 finite numbers
+    #: raises :class:`ValueError`. Call it on the physics thread.
+    reach: Callable[..., None] | None = None
     #: the wrists' world positions now: ``(left, right)``
     hands: Callable[[], tuple] | None = None
 
@@ -264,7 +290,7 @@ class WalkerPlugin(Plugin):
                 send_route=self.send_route,
                 cancel_route=self.cancel_route,
                 status=self.status,
-                hold=self.hold,
+                reach=self.reach,
                 hands=self.hands,
             ),
         )
@@ -317,8 +343,9 @@ class WalkerPlugin(Plugin):
         st.body_vel = np.zeros(2)
         st.yaw_rate = 0.0
         st.ground, st.ground_vel = None, 0.0
-        st.hold_targets = st.hold_last = None
-        st.hold_w = st.hold_bend = st.hold_w_rate = st.hold_bend_rate = 0.0
+        st.reach = {side: HandReach() for side in st.reach}
+        st.reach_bend = st.reach_bend_rate = 0.0
+        st.reach_need = (frozenset(), 0.0)
         st.disp_speed = 0.0
         st.pref_vel = np.zeros(2)
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
@@ -353,11 +380,14 @@ class WalkerPlugin(Plugin):
         handle = self._nav()
         return handle.cancel() if handle is not None else self._next_seq()
 
-    def hold(self, targets) -> None:
-        """The hands on ``targets`` (left, right world points), or let go with ``None``."""
-        self._anim.hold_targets = (
-            None if targets is None else tuple(np.asarray(t, float) for t in targets)
-        )
+    def reach(self, left=None, right=None) -> None:
+        """The left and right hand each on a world point, or back to the walk with ``None``.
+
+        Raises :class:`ValueError` for a point that is not 3 finite numbers, before either hand
+        changes."""
+        targets = {"l": _point("left", left), "r": _point("right", right)}
+        for side, target in targets.items():
+            self._anim.reach[side].target = target
 
     def hands(self) -> tuple:
         d = self._ctx.data
