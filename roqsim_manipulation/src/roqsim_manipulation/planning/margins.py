@@ -12,7 +12,7 @@ these for one configuration, so a place the cell only just reaches shows as such
   of half the range.
 - **Singularity:** the Jacobian of the site (6 x n, translation in m, rotation in rad) -- its smallest
   singular value and Yoshikawa's manipulability ``sqrt(det(J Jᵀ))`` -- and, for a six-joint arm
-  with a spherical-offset wrist of the UR kind, the three singularities by name: the **wrist**
+  of the UR kind (its second, third and fourth axes parallel), the three singularities by name: the **wrist**
   (``|sin|`` of the angle between the first and the last wrist axes; 0 when they line up), the
   **elbow** (``|sin|`` of the elbow joint; 0 when the arm is stretched out or folded back) and the
   **shoulder** (the wrist centre's distance from the base axis, m; 0 when it is on it).
@@ -134,10 +134,14 @@ def pose_margins(kin: ArmKinematics, q, dynamics: ArmDynamics | None = None) -> 
     sigma_min = float(sv[-1]) if len(sv) else 0.0
     manip = float(np.sqrt(max(np.linalg.det(jac @ jac.T), 0.0)))
     wrist = elbow = shoulder = None
-    if kin.n == 6:
-        d = kin.scratch
-        axes = [d.xaxis[j] for j in kin.joints]
-        anchors = [d.xanchor[j] for j in kin.joints]
+    d = kin.scratch
+    axes = [d.xaxis[j] for j in kin.joints]
+    anchors = [d.xanchor[j] for j in kin.joints]
+    # The named measures read a UR-kind arm's joints by position; another arm has others there.
+    ur_kind = kin.n == 6 and all(
+        np.linalg.norm(np.cross(axes[i], axes[i + 1])) < 1e-6 for i in (1, 2)
+    )
+    if ur_kind:
         wrist = float(np.linalg.norm(np.cross(axes[3], axes[5])))
         elbow = float(abs(np.sin(q[2])))
         # The wrist centre: where the second wrist axis meets the first, its anchor point.

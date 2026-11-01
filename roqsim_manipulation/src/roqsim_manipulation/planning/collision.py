@@ -73,7 +73,10 @@ class CollisionChecker:
         #: held part body -> (its free joint's qpos address, pose in the site frame: pos, 3x3)
         self._held: dict[int, tuple[int, np.ndarray, np.ndarray]] = {}
         self._held_geoms: set[int] = set()
+        #: The pairs that touch where the arm is mounted, allowed for good (:meth:`_allow_mount`).
+        self._mount: set[frozenset[int]] = set()
         self._allowed: set[frozenset[int]] = set()
+        self._margin0 = self.model.geom_margin.copy()
         self._set_margins()
         self._allow_mount(base)
 
@@ -90,7 +93,8 @@ class CollisionChecker:
             g1, g2 = int(c.geom1), int(c.geom2)
             for a, b in ((g1, g2), (g2, g1)):
                 if a in near_geoms and b not in self.arm_geoms:
-                    self._allowed.add(frozenset((a, b)))
+                    self._mount.add(frozenset((a, b)))
+        self._allowed |= self._mount
 
     def _set_margins(self) -> None:
         for g in self.arm_geoms | self._held_geoms:
@@ -119,8 +123,18 @@ class CollisionChecker:
                 self._allowed.add(frozenset((g, a)))
         self._set_margins()
 
-    def release(self, body: int) -> None:
-        self._held.pop(body, None)
+    def release(self, body: int, data: mujoco.MjData) -> None:
+        """Stop carrying ``body``: it stays where ``data`` has it now, its contacts with the arm
+        count again, and it keeps no clearance of its own."""
+        if body not in self._held:
+            raise ValueError(f"body {self.model.body(body).name!r} is not held")
+        adr = self._held.pop(body)[0]
+        self.data.qpos[adr : adr + 7] = data.qpos[adr : adr + 7]
+        geoms = body_geoms(self.model, subtree_bodies(self.model, body))
+        self._held_geoms -= geoms
+        self._allowed = {p for p in self._allowed if not (p & geoms and p & self.arm_geoms)}
+        for g in geoms:
+            self.model.geom_margin[g] = self._margin0[g]
 
     def allow(self, geoms_a: Iterable[int], geoms_b: Iterable[int]) -> None:
         """Let every geom of ``geoms_a`` touch every geom of ``geoms_b``."""
@@ -129,9 +143,9 @@ class CollisionChecker:
                 self._allowed.add(frozenset((int(a), int(b))))
 
     def disallow_all_extra(self) -> None:
-        """Forget every pair :meth:`allow` added, keeping the grips."""
+        """Forget every pair :meth:`allow` added, keeping the mount and the grips."""
         held = self._held_geoms
-        self._allowed = {p for p in self._allowed if p & held and p & self.arm_geoms}
+        self._allowed = self._mount | {p for p in self._allowed if p & held and p & self.arm_geoms}
 
     # -- queries ----------------------------------------------------------------------------------
     def pose(self, q) -> None:

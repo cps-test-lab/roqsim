@@ -28,6 +28,7 @@ from roqsim_manipulation.planning import (
     pose_margins,
     time_parameterize,
 )
+from roqsim_manipulation.planning.kinematics import ArmKinematics
 from roqsim_manipulation.planning.margins import ArmDynamics, joint_torque_limits
 
 from roqsim.config import load_config_from_dict
@@ -311,3 +312,69 @@ def test_a_hold_counts_its_longest_stretch_without_both_pads(monkeypatch):
     out = monitor.release()
     assert out["steps_without_both_pads"] == 6
     assert out["longest_without_both_pads"] == 3
+
+
+HOME = np.array([0.0, -1.57, 1.57, -1.57, -1.57, 0.0])
+
+
+def test_forgetting_the_extra_pairs_keeps_the_arm_on_its_mount(cell):
+    engine, checker = cell
+    assert checker.free(HOME)
+    checker.disallow_all_extra()
+    assert checker.free(HOME), "the mount's contacts are the arm standing, not a collision"
+
+
+def test_a_released_part_stays_where_it_is_and_counts_against_the_arm_again():
+    engine = Engine(load_config_from_dict(_gripper_world(True)))
+    engine.setup()
+    engine.reset()
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        joints = [m.joint("ur5e_" + n).id for n in JOINTS]
+        site = m.site("ur5e_pinch").id
+        checker = CollisionChecker(m, d, joints, site, m.body("ur5e_base").id)
+        part = m.body("part_box").id
+        adr = m.jnt_qposadr[m.body_jntadr[part]]
+        checker.hold(part, d)
+        checker.pose(HOME + [0.8, 0, 0, 0, 0, 0])
+        assert not np.allclose(checker.data.qpos[adr : adr + 3], d.qpos[adr : adr + 3])
+        checker.release(part, d)
+        # where the world has it, not where the last query carried it
+        np.testing.assert_allclose(checker.data.qpos[adr : adr + 7], d.qpos[adr : adr + 7])
+        part_geoms = {g for g in range(m.ngeom) if m.geom_bodyid[g] == part}
+        assert not any(p & part_geoms for p in checker._allowed)
+        with pytest.raises(ValueError, match="not held"):
+            checker.release(part, d)
+    finally:
+        engine.shutdown()
+
+
+def test_ik_draws_its_restarts_only_from_a_generator_it_is_given(cell):
+    _, checker = cell
+    with pytest.raises(ValueError, match="rng="):
+        checker.kin.ik([1.2, 0.0, 0.3], DOWN, HOME)
+
+
+def test_margins_name_the_singularities_only_of_an_arm_of_the_ur_kind():
+    world = {"sim": {"timestep": 0.002}, "components": [
+        {"spawn_arm": {"model": "m1013", "prefix": "m1013_"}, "name": "m1013"}]}
+    engine = Engine(load_config_from_dict(world))
+    engine.setup()
+    engine.reset()
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        arm = engine.ctx.blackboard.get("arm:m1013")
+        joints = [m.joint("m1013_" + n).id for n in arm.joint_names]
+        last = m.jnt_bodyid[joints[-1]]
+        site = next(s for s in range(m.nsite) if m.site_bodyid[s] == last)
+        kin = ArmKinematics(m, joints, site, d)
+        margins = pose_margins(kin, np.zeros(6) + 0.3)
+        assert (margins.wrist, margins.elbow, margins.shoulder_m) == (None, None, None)
+    finally:
+        engine.shutdown()
+
+
+def test_roqsim_arm_margins_says_n_a_for_a_measure_the_arm_has_none_of():
+    from roqsim_manipulation.cli.margins import _num
+
+    assert (_num(None, ".2f"), _num(0.123, ".2f")) == ("n/a", "0.12")
