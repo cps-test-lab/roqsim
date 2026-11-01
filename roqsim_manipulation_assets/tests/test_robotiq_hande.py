@@ -414,7 +414,7 @@ def test_a_part_carried_on_a_fast_lift_stays_where_it_was_gripped(timestep, most
         site = m.site("ur5e_pinch").id
         kin = ArmKinematics(m, joints, site, d)
         down = np.array([[1.0, 0, 0], [0, -1.0, 0], [0, 0, -1.0]])
-        q = kin.ik([-0.12, -0.51, 0.75], down, d.qpos[qadr])
+        q = kin.ik([-0.12, -0.51, 0.75], down, d.qpos[qadr], rng=np.random.default_rng(0))
         d.qpos[qadr] = q
         arm.set_targets(arm.joint_names, list(q))
         mujoco.mj_forward(m, d)
