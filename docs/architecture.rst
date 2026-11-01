@@ -114,6 +114,7 @@ Passed to every hook. Key members:
 -  ``blackboard: Blackboard`` — ``set/get/require/__contains__``; typed cross-plugin store.
 -  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present)`` (``names``/``all`` take ``present_only``); backs ``simulation_interfaces`` discovery.
 -  ``render`` — the ``RenderService`` every image comes through (set at setup; see §8).
+-  ``events: EventLog`` — ``emit(source, event, **fields)`` on the physics thread records what a plugin decided, stamped with ``sim_time`` and ``episode`` (``roqsim.events``); a recording carries each one on its ``events`` channel from the moment it starts, and ``Recording.events`` reads them back.
 -  ``post(cmd)`` / ``drain_commands()`` — the thread-safe command queue (§7).
 -  ``publish_snapshot(d)`` / ``read_snapshot()`` — immutable snapshot for cross-thread readers.
 -  ``register_gate(name, role)`` / ``gates()`` — step-gate API for synchronous mode (§10); the engine does not wait on gates.
