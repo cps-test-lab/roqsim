@@ -176,7 +176,9 @@ times, positions and optionally velocities and accelerations, the fields of a
 (:class:`roqsim_manipulation.trajectory.JointTrajectory`: quintic between knots that carry
 accelerations, cubic with velocities only, linear otherwise, as ros2_control's controller does) and
 commands the sample through the drive's limiter like any other command. That is deterministic in a
-stepped run, where the bridge's action handler, which feeds waypoints on wall-clock time, is not.
+stepped run, where the bridge's action handler is not: it samples on simulated time too, but from a
+ROS thread whose setpoints reach the physics thread through a queue, so which step one lands on
+depends on scheduling.
 
 - **Held after the end:** when the last knot is reached, the arm holds it. A new trajectory, a
   ``set_targets``, a velocity command or a command source taking the arm ends the current one.
