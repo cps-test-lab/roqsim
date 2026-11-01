@@ -221,7 +221,12 @@ class WalkerPlugin(Plugin):
         except PoseError as exc:
             errors.append(f"walker: {exc}")
         lag = config.get("body_lag", 0.0)
-        if not isinstance(lag, (int, float)) or isinstance(lag, bool) or lag < 0:
+        if (
+            not isinstance(lag, (int, float))
+            or isinstance(lag, bool)
+            or not math.isfinite(lag)
+            or lag < 0
+        ):
             errors.append(
                 f"walker: 'body_lag' is a time constant in seconds, 0 or more, not {lag!r}"
             )

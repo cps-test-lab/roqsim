@@ -31,7 +31,7 @@ from roqsim_walker.motion import (
     procedural_walk,
     smoothstep,
 )
-from roqsim_walker.reach import SIDES, needed_bend, reach_pose
+from roqsim_walker.reach import MAX_BEND, SIDES, needed_bend, reach_pose
 
 logger = logging.getLogger(__name__)
 
@@ -313,8 +313,10 @@ def _reach(st, q, new_pos, root_z, dt) -> None:
         if reaching and reaching == last_hands and need < last_need:
             lifted = max(need, st.reach_bend - (last_need - need))
             if lifted < bend:
-                bend, rate = lifted, (lifted - st.reach_bend) / dt
-        st.reach_bend, st.reach_bend_rate = bend, rate
+                # Followed at once, the bend starts from rest: a rate of the lift's size would
+                # carry it on past the need, and below upright, if the points then came down.
+                bend, rate = lifted, 0.0
+        st.reach_bend, st.reach_bend_rate = min(max(bend, 0.0), MAX_BEND), rate
     st.reach_need = (reaching, need)
     pose = reach_pose(st.skeleton, root, heading, local, targets, bend=st.reach_bend)
     for side, hand in st.reach.items():

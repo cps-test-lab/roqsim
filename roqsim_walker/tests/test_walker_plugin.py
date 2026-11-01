@@ -499,6 +499,25 @@ def test_a_walker_straightens_as_the_points_in_its_hands_come_up(standing):
     assert lifted > _head(standing)[2] - 0.02, (lifted, _head(standing)[2])
 
 
+def test_a_quick_lift_lowered_at_once_never_bends_the_body_back(standing):
+    from roqsim_walker.reach import MAX_BEND
+
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    handle.reach(*_pair(0.7))
+    _run(standing, 3.0)
+    steps = int(0.1 / standing.ctx.dt)
+    bends = []
+    for heights in (
+        [0.7 + 0.3 * k / steps for k in range(1, steps + 1)],
+        [1.0 - 0.3 * k / steps for k in range(1, steps + 1)],
+    ):
+        for z in heights:
+            handle.reach(*_pair(z))
+            standing.step()
+            bends.append(_anim(standing).reach_bend)
+    assert 0.0 <= min(bends) and max(bends) <= MAX_BEND, (min(bends), max(bends))
+
+
 def test_one_hand_reaches_and_the_other_keeps_the_gait(standing):
     from roqsim_walker.animation import _reach
     from roqsim_walker.humanoid import JOINT_NAMES
@@ -579,3 +598,12 @@ def test_a_point_that_is_not_three_finite_numbers_is_refused_at_the_call(standin
     st = _anim(standing)
     assert np.array_equal(st.reach["l"].target, left)
     assert np.array_equal(st.reach["r"].target, right)
+
+
+@pytest.mark.parametrize("lag", [-0.1, float("nan"), float("inf"), "0.1", True])
+def test_a_body_lag_that_is_no_finite_time_constant_is_refused(lag):
+    from roqsim_walker.plugins.walker import WalkerPlugin
+
+    config = {"body_lag": lag}
+    errors = WalkerPlugin(config).validate_config(config)
+    assert any("'body_lag' is a time constant" in e for e in errors), errors
