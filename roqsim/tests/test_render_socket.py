@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
+import time
 from pathlib import Path
 
 import mujoco
@@ -29,11 +31,17 @@ STUB = Path(__file__).with_name("render_stub_server.py")
 
 class Cams(Plugin):
     """Two model cameras over a box, each registered with the render service as a view due every
-    tick, the way a camera plugin registers one."""
+    tick, the way a camera plugin registers one. With ``lens: true`` the front camera is a real
+    lens: a ``sensorsize`` with its principal point off the image centre."""
 
     def build(self, spec, ctx):
         spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.2])
-        spec.worldbody.add_camera(name="front", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+        front = spec.worldbody.add_camera(name="front", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+        if self.config.get("lens"):
+            front.sensor_size = [0.0064, 0.0048]
+            front.focal_length = [0.004, 0.006 if self.config["lens"] == "anisotropic" else 0.004]
+            front.principal_length = [0.0004, -0.0002]
+            front.resolution = [32, 24]
         spec.worldbody.add_camera(name="top", pos=[0, 0, 2])
 
     def configure(self, ctx):
@@ -52,8 +60,10 @@ class Cams(Plugin):
         ]
 
 
-def _engine(tmp_path, images=("rgb", "depth"), settings=None, geomgroup=None) -> Engine:
-    address = f"unix:{tmp_path / 'render.sock'}"
+def _engine(
+    tmp_path, images=("rgb", "depth"), settings=None, geomgroup=None, lens=False, address=None
+) -> Engine:
+    address = address or f"unix:{tmp_path / 'render.sock'}"
     socket_settings = {
         "address": address,
         "command": [sys.executable, str(STUB), "{address}", str(tmp_path / "report.json")],
@@ -69,7 +79,9 @@ def _engine(tmp_path, images=("rgb", "depth"), settings=None, geomgroup=None) ->
                 "renderer": "socket",
                 "renderers": {"socket": socket_settings},
             },
-            "components": [{f"{__name__}:Cams": {"images": list(images), "geomgroup": geomgroup}}],
+            "components": [
+                {f"{__name__}:Cams": {"images": list(images), "geomgroup": geomgroup, "lens": lens}}
+            ],
         }
     )
     engine = Engine(cfg)
@@ -243,3 +255,110 @@ def test_its_settings_are_validated_at_load():
         load_config_from_dict(
             {"sim": {"renderer": "socket", "renderers": {"socket": {}}}, "components": []}
         )
+
+
+def test_a_camera_s_intrinsics_reach_the_server(tmp_path):
+    engine = _engine(tmp_path, settings={"principal_point": True}, lens=True)
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+    finally:
+        engine.shutdown()
+    report = json.loads((tmp_path / "report.json").read_text())
+    # 32x24 on a 6.4x4.8 mm sensor: 5 px/mm. The principal point is 0.4 mm right of and 0.2 mm
+    # below the sensor's centre, so the axis is 2 px left of and 1 px below the image centre.
+    fx, fy, cx, cy = report["intrinsics"]["stub/front"]
+    assert (fx, fy) == pytest.approx((20.0, 20.0))
+    assert (cx, cy) == pytest.approx((15.5 - 2.0, 11.5 + 1.0))
+    top = report["intrinsics"]["stub/top"]  # a fovy camera: the symmetric pinhole
+    assert top[2:] == pytest.approx([7.5, 7.5]) and top[0] == pytest.approx(top[1])
+    assert report["request_intrinsics"] == report["intrinsics"]
+
+
+def test_a_lens_camera_is_refused_by_a_server_that_draws_only_a_symmetric_pinhole(tmp_path):
+    engine = _engine(tmp_path, lens=True)
+    with pytest.raises(PluginError, match="off-centre principal point"):
+        engine.setup()
+
+
+def test_non_square_pixels_are_refused_by_a_server_that_draws_only_square_ones(tmp_path):
+    engine = _engine(tmp_path, settings={"principal_point": True}, lens="anisotropic")
+    with pytest.raises(PluginError, match=r"non-square pixels \(fx != fy\)"):
+        engine.setup()
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_a_tick_over_tcp_does_not_wait_for_a_delayed_acknowledgement(tmp_path):
+    """A message is several writes; with Nagle's algorithm on, each tick waited about 40 ms."""
+    port = _free_port()
+    engine = _engine(tmp_path, address=f"127.0.0.1:{port}")
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()  # opens the server
+        times = []
+        for _ in range(20):
+            t = time.perf_counter()
+            engine.step()
+            times.append(time.perf_counter() - t)
+    finally:
+        engine.shutdown()
+    assert sorted(times)[len(times) // 2] < 0.02
+
+
+def test_a_server_restarted_on_the_port_of_one_that_just_ended_binds(tmp_path):
+    port = _free_port()
+    for run in range(2):
+        engine = _engine(tmp_path / str(run), address=f"127.0.0.1:{port}")
+        (tmp_path / str(run)).mkdir()
+        engine.setup()
+        engine.reset()
+        try:
+            engine.step()
+        finally:
+            engine.shutdown()
+
+
+def test_an_async_worker_waits_for_the_renderer_s_own_open_timeout(tmp_path):
+    engine = _engine(tmp_path, settings={"connect_timeout_s": 300, "timeout_s": 30})
+    engine.setup()
+    try:
+        service = engine.ctx.render
+        assert service.timeout_s == 60.0
+        assert service.open_timeout_s("socket") == 330.0
+        assert service.open_timeout_s("mujoco") == 60.0
+    finally:
+        engine.shutdown()
+
+
+def test_a_server_slow_to_open_is_waited_for_open_timeout_s_not_a_tick_s(tmp_path):
+    def slow(path, open_timeout_s):
+        path.mkdir()
+        command = [sys.executable, str(STUB), "{address}", str(path / "report.json"), "1.5"]
+        return _engine(
+            path,
+            settings={"command": command, "timeout_s": 0.5, "open_timeout_s": open_timeout_s},
+        )
+
+    engine = slow(tmp_path / "waited", 10)
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+        assert engine.plugins[0].views[0].frame is not None
+    finally:
+        engine.shutdown()
+    engine = slow(tmp_path / "not_waited", None)
+    engine.setup()
+    engine.reset()
+    try:
+        with pytest.raises(RenderError, match="failed during 'open'"):
+            engine.step()
+    finally:
+        engine.shutdown()

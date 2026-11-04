@@ -23,7 +23,10 @@ state to export, and returns a :class:`SceneContent`:
 * every body's **world pose** at the exported state (:func:`exported_state`), for a format that
   places bodies rather than joints;
 * **cameras**: the imaging sensors the world's plugins declare (:class:`SensorCamera`), each on the
-  body it is mounted on with the projection it renders with (:func:`sensor_cameras`).
+  body it is mounted on with the projection it renders with (:func:`sensor_cameras`);
+* **lights**: every ``<light>`` fixed to its body, with its type, pose, colours and cone
+  (:func:`lights`), and the model's **headlight**, which follows whichever camera draws and so is
+  not a light of the scene.
 
 A geom, skin or flex in the collision group (:data:`COLLISION_GROUP`) is not drawn. That is the
 whole drawn-or-not rule, and :func:`drawn_group` is the only place it is spelled.
@@ -200,6 +203,45 @@ class Camera:
 
 
 @dataclass
+class Light:
+    """A ``<light>`` on its body: MuJoCo's own values, for a format to spell.
+
+    ``pos`` and ``dir`` are in the body's frame; ``dir`` is the direction the light shines (a
+    spotlight's axis, a directional light's rays). ``type`` is ``"spot"``, ``"directional"`` or
+    ``"point"``. ``cutoff`` (degrees) and ``exponent`` shape a spotlight's cone; ``intensity`` is
+    MuJoCo's ``light_intensity``, which only a physically based renderer reads (0 when unset), and
+    ``range`` its distance of influence.
+    """
+
+    id: int
+    name: str
+    body: int
+    type: str
+    pos: list
+    dir: list
+    diffuse: list
+    ambient: list
+    specular: list
+    castshadow: bool
+    active: bool
+    cutoff: float
+    exponent: float
+    attenuation: list
+    intensity: float
+    range: float
+
+
+@dataclass
+class Headlight:
+    """The light MuJoCo puts at every camera it draws through (``visual/headlight``)."""
+
+    active: bool
+    ambient: list
+    diffuse: list
+    specular: list
+
+
+@dataclass
 class SceneContent:
     bodies: list[Body] = field(default_factory=list)
     joints: list[Joint] = field(default_factory=list)
@@ -212,6 +254,8 @@ class SceneContent:
     #: Every body's world (pos, wxyz quat) at :func:`exported_state`.
     world_poses: list[tuple[list, list]] = field(default_factory=list)
     cameras: list[Camera] = field(default_factory=list)
+    lights: list[Light] = field(default_factory=list)
+    headlight: Headlight | None = None
 
     @property
     def flex_count(self) -> int:
@@ -613,6 +657,72 @@ def _flexes(model: mujoco.MjModel, bind: mujoco.MjData, logger: logging.Logger) 
 # -- the walk --------------------------------------------------------------------------------------
 
 
+# -- lights ----------------------------------------------------------------------------------------
+
+#: MuJoCo light types (mjtLightType) a scene places -> their name. An image-based light is not one.
+LIGHT_TYPE = {
+    int(mujoco.mjtLightType.mjLIGHT_SPOT): "spot",
+    int(mujoco.mjtLightType.mjLIGHT_DIRECTIONAL): "directional",
+    int(mujoco.mjtLightType.mjLIGHT_POINT): "point",
+}
+
+
+def lights(model: mujoco.MjModel, logger: logging.Logger) -> list[Light]:
+    """Every light fixed to its body, in MuJoCo's order.
+
+    A light that tracks or targets a body is placed by the simulator each step, so, as a tracking
+    camera, it has no mount pose and is left out, and so is an image-based light; each is said.
+    """
+    fixed = int(mujoco.mjtCamLight.mjCAMLIGHT_FIXED)
+    out = []
+    for i in range(model.nlight):
+        name = model.light(i).name or f"light {i}"
+        kind = LIGHT_TYPE.get(int(model.light_type[i]))
+        if kind is None:
+            logger.warning("%s is an image-based light; left out", name)
+            continue
+        if int(model.light_mode[i]) != fixed:
+            logger.warning(
+                "%s is not fixed to its body (mode %d), so it has no mount pose to export; left out",
+                name,
+                int(model.light_mode[i]),
+            )
+            continue
+        out.append(
+            Light(
+                id=i,
+                name=model.light(i).name,
+                body=int(model.light_bodyid[i]),
+                type=kind,
+                # light_pos/light_dir are in the body's frame for a fixed light.
+                pos=model.light_pos[i].tolist(),
+                dir=model.light_dir[i].tolist(),
+                diffuse=model.light_diffuse[i].tolist(),
+                ambient=model.light_ambient[i].tolist(),
+                specular=model.light_specular[i].tolist(),
+                castshadow=bool(model.light_castshadow[i]),
+                active=bool(model.light_active[i]),
+                cutoff=float(model.light_cutoff[i]),
+                exponent=float(model.light_exponent[i]),
+                attenuation=model.light_attenuation[i].tolist(),
+                intensity=float(model.light_intensity[i]),
+                range=float(model.light_range[i]),
+            )
+        )
+    return out
+
+
+def headlight(model: mujoco.MjModel) -> Headlight:
+    """The model's headlight (``visual/headlight``)."""
+    h = model.vis.headlight
+    return Headlight(
+        bool(h.active),
+        [float(v) for v in h.ambient],
+        [float(v) for v in h.diffuse],
+        [float(v) for v in h.specular],
+    )
+
+
 # -- cameras ---------------------------------------------------------------------------------------
 
 
@@ -735,4 +845,6 @@ def walk(
         (state.xpos[i].tolist(), state.xquat[i].tolist()) for i in range(model.nbody)
     ]
     scene.cameras = sensor_cameras(model, sensors, logger)
+    scene.lights = lights(model, logger)
+    scene.headlight = headlight(model)
     return scene

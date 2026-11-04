@@ -27,10 +27,10 @@ raw bytes of every array the header lists under ``blobs`` (``name``, ``dtype``, 
 Arrays travel as their bytes, never through JSON::
 
     -> hello   {version}                                  <- hello  {capabilities?}
-    -> open    {scene: {cameras, body_names, moving, settings}}  + blob scene.glb (optional)
+    -> open    {scene: {cameras, body_names, moving, settings}}  + the scene's blobs (scene.glb)
                                                           <- opened
-    -> render  {sim_time, step, requests: [{id, width, height, model, fovy, near, far, images,
-                pos, quat, geomgroup}]}
+    -> render  {sim_time, step, requests: [{id, width, height, model, fovy, intrinsics, near, far,
+                images, pos, quat, geomgroup}]}
                + blobs xpos, xquat, model/geom_rgba, model/geom_group, model/flex_rgba,
                  model/flex_group
                                                           <- frames {frames: [{id, sim_time, step}]}
@@ -39,7 +39,10 @@ Arrays travel as their bytes, never through JSON::
     any reply may instead be  error {message}
 
 A request's ``pos``/``quat`` are the camera's world pose (``quat`` ``w, x, y, z``; MuJoCo's camera
-frame, looking down its -z with +y up); ``geomgroup`` is ``null`` (every group) or the groups the
+frame, looking down its -z with +y up); ``intrinsics`` is ``[fx, fy, cx, cy]`` in pixels, the
+projection MuJoCo draws the camera with (:attr:`roqsim.render_api.CameraSpec.intrinsics`), and a
+camera whose principal point is off centre, or whose pixels are not square, is refused at load
+unless the renderer declares ``principal_point``, or ``non_square_pixels``; ``geomgroup`` is ``null`` (every group) or the groups the
 camera draws, for a server that declares ``geom_groups``. A frame answers with the request's
 ``sim_time`` and ``step`` and images of the request's size in the formats
 :data:`roqsim.render_api.IMAGE_FORMATS` states; the service refuses any other. The scene, sent
@@ -102,28 +105,35 @@ def send_message(sock: socket.socket, header: dict, blobs: Sequence[tuple[str, n
             sock.sendall(memoryview(a).cast("B"))
 
 
-def _recv_exactly(sock: socket.socket, n: int) -> bytes:
-    buf = bytearray(n)
-    view = memoryview(buf)
-    got = 0
+def _recv_into(sock: socket.socket, view: memoryview) -> None:
+    got, n = 0, len(view)
     while got < n:
         k = sock.recv_into(view[got:], n - got)
         if k == 0:
             raise ConnectionError("the peer closed the connection")
         got += k
-    return bytes(buf)
+
+
+def _recv_exactly(sock: socket.socket, n: int) -> bytearray:
+    buf = bytearray(n)
+    _recv_into(sock, memoryview(buf))
+    return buf
 
 
 def recv_message(sock: socket.socket) -> tuple[dict, dict[str, np.ndarray]]:
-    """Receive one message: its header and its arrays by name."""
+    """Receive one message: its header and its arrays by name.
+
+    Each array is received straight into memory of its own, so it is writable and owned by the
+    caller, with no copy after the socket's.
+    """
     (length,) = _HEADER.unpack(_recv_exactly(sock, _HEADER.size))
     header = json.loads(_recv_exactly(sock, length).decode("utf-8"))
     blobs = {}
     for spec in header.get("blobs", []):
-        dtype = np.dtype(spec["dtype"])
-        shape = tuple(spec["shape"])
-        nbytes = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
-        blobs[spec["name"]] = np.frombuffer(_recv_exactly(sock, nbytes), dtype=dtype).reshape(shape)
+        array = np.empty(tuple(spec["shape"]), dtype=np.dtype(spec["dtype"]))
+        if array.nbytes:
+            _recv_into(sock, memoryview(array.reshape(-1)).cast("B"))
+        blobs[spec["name"]] = array
     return header, blobs
 
 
@@ -135,6 +145,78 @@ def parse_address(address: str) -> tuple[int, object]:
     if not sep or not port.isdigit():
         raise ValueError(f"address {address!r}: 'unix:/path/to/socket' or 'host:port'")
     return socket.AF_INET, (host or "127.0.0.1", int(port))
+
+
+def no_delay(sock: socket.socket) -> socket.socket:
+    """*sock* with Nagle's algorithm off, if it is a TCP socket; returns it."""
+    if sock.family in (socket.AF_INET, socket.AF_INET6):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    return sock
+
+
+def listen(address: str) -> socket.socket:
+    """A socket bound and listening at *address*, for one connection.
+
+    A unix socket's stale file is removed first. A TCP socket is bound with ``SO_REUSEADDR``, so a
+    server restarted on the port of one that just ended binds rather than waiting out TIME_WAIT.
+    """
+    family, where = parse_address(address)
+    server = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if family == socket.AF_UNIX:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(where)
+        else:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(where)
+        server.listen(1)
+    except BaseException:
+        server.close()
+        raise
+    return server
+
+
+def serve_forever(address: str, handler, *, ready=None) -> None:
+    """Serve the protocol at *address* with *handler*, one connection at a time, until it closes.
+
+    *handler* is an object with ``hello() -> dict``, ``open(scene, blobs)``, ``render(header,
+    blobs) -> (frames, blobs)`` and ``close()``. *ready*, if given, is called once the socket
+    listens. An exception the handler raises is answered as ``error`` with its message, and the
+    client raises it.
+    """
+    with listen(address) as server:
+        if ready is not None:
+            ready()
+        conn, _ = server.accept()
+        with no_delay(conn):
+            serve_connection(conn, handler)
+
+
+def serve_connection(conn: socket.socket, handler) -> None:
+    """Answer the messages of one connection with *handler* until it says ``close`` or hangs up."""
+    while True:
+        try:
+            header, blobs = recv_message(conn)
+        except ConnectionError:
+            return
+        op = header.get("op")
+        try:
+            if op == "hello":
+                send_message(conn, {"op": "hello", "version": PROTOCOL_VERSION, **handler.hello()})
+            elif op == "open":
+                handler.open(header["scene"], blobs)
+                send_message(conn, {"op": "opened"})
+            elif op == "render":
+                frames, out = handler.render(header, blobs)
+                send_message(conn, {"op": "frames", "frames": frames}, out)
+            elif op == "close":
+                handler.close()
+                send_message(conn, {"op": "closed"})
+                return
+            else:
+                send_message(conn, {"op": "error", "message": f"unknown op {op!r}"})
+        except Exception as err:  # noqa: BLE001 -- a server reports, the client raises
+            send_message(conn, {"op": "error", "message": f"{type(err).__name__}: {err}"})
 
 
 class SocketRenderer(Renderer):
@@ -165,6 +247,11 @@ class SocketRenderer(Renderer):
             "already running",
         ),
         "connect_timeout_s": Setting(30.0, "how long to wait for the server to accept, in s"),
+        "open_timeout_s": Setting(
+            None,
+            "how long the server may take to answer 'open' (load the scene, start what it draws "
+            "with), in s; null: timeout_s",
+        ),
         "timeout_s": Setting(30.0, "how long one tick may take to answer, in s"),
         "scene": Setting(
             "gltf", "what the server is sent once: 'gltf' (the world as GLB) | 'none'"
@@ -176,6 +263,16 @@ class SocketRenderer(Renderer):
             False,
             "whether it draws only the geom groups a request names (`geomgroup`); a camera that "
             "names some is refused at load otherwise",
+        ),
+        "principal_point": Setting(
+            False,
+            "whether it projects a request's `intrinsics` principal point off the image centre; a "
+            "camera that has one is refused at load otherwise",
+        ),
+        "non_square_pixels": Setting(
+            False,
+            "whether it projects non-square pixels (fx != fy); a camera that has them is refused "
+            "at load otherwise",
         ),
     }
 
@@ -194,7 +291,20 @@ class SocketRenderer(Renderer):
             in_process=False,
             decorations=False,
             geom_groups=bool(merged["geom_groups"]),
+            principal_point=bool(merged["principal_point"]),
+            non_square_pixels=bool(merged["non_square_pixels"]),
         )
+
+    @classmethod
+    def open_timeout_s(cls, settings: Mapping) -> float | None:
+        """Reaching the server and its answer to ``open``: ``connect_timeout_s`` + its open timeout."""
+        merged = {k: s.default for k, s in cls.SETTINGS.items()} | dict(settings or {})
+        return float(merged["connect_timeout_s"]) + cls._open_reply_s(merged)
+
+    @staticmethod
+    def _open_reply_s(settings: Mapping) -> float:
+        value = settings.get("open_timeout_s")
+        return float(settings["timeout_s"] if value is None else value)
 
     @classmethod
     def validate_config(cls, settings) -> list[str]:
@@ -220,12 +330,14 @@ class SocketRenderer(Renderer):
             value = settings.get(key, [])
             if not isinstance(value, list) or set(value) - set(allowed):
                 errors.append(f"'{key}' is a list of {', '.join(allowed)}, got {value!r}")
-        for key in ("deterministic", "geom_groups"):
+        for key in ("deterministic", "geom_groups", "principal_point", "non_square_pixels"):
             if not isinstance(settings.get(key, False), bool):
                 errors.append(f"'{key}' must be true or false, got {settings[key]!r}")
-        for key in ("connect_timeout_s", "timeout_s"):
+        for key in ("connect_timeout_s", "timeout_s", "open_timeout_s"):
             value = settings.get(key, 1.0)
-            if not isinstance(value, (int, float)) or value <= 0:
+            if key == "open_timeout_s" and value is None:
+                continue
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
                 errors.append(f"'{key}' must be a number of seconds > 0, got {value!r}")
         return errors
 
@@ -241,9 +353,9 @@ class SocketRenderer(Renderer):
         address = str(self.settings["address"])
         command = self.settings.get("command")
         if command:
-            self._proc = subprocess.Popen([c.replace("{address}", address) for c in command])
+            self._proc = self.start_server([c.replace("{address}", address) for c in command])
         self._sock = self._connect(address, float(self.settings["connect_timeout_s"]))
-        self._sock.settimeout(float(self.settings["timeout_s"]))
+        self._sock.settimeout(self._open_reply_s(self.settings))
         hello = self._call({"op": "hello", "version": PROTOCOL_VERSION}, (), "hello")
         if int(hello.get("version", PROTOCOL_VERSION)) != PROTOCOL_VERSION:
             raise RenderError(
@@ -251,9 +363,7 @@ class SocketRenderer(Renderer):
                 f"this client {PROTOCOL_VERSION}"
             )
         self.server_capabilities = hello.get("capabilities") or {}
-        blobs = []
-        if self.settings.get("scene", "gltf") == "gltf":
-            blobs.append(("scene.glb", np.frombuffer(self._scene_glb(scene), dtype=np.uint8)))
+        blobs = self.scene_blobs(scene)
         description = {
             "cameras": [
                 {
@@ -262,6 +372,9 @@ class SocketRenderer(Renderer):
                     "height": c.height,
                     "model": c.model,
                     "fovy": c.fovy,
+                    "intrinsics": None
+                    if c.intrinsics is None
+                    else [float(v) for v in c.intrinsics],
                     "near": c.near,
                     "far": c.far,
                     "images": sorted(c.images),
@@ -273,6 +386,16 @@ class SocketRenderer(Renderer):
             "settings": {k: v for k, v in scene.settings.items() if k != "command"},
         }
         self._call({"op": "open", "scene": description}, blobs, "opened")
+        self._sock.settimeout(float(self.settings["timeout_s"]))
+
+    def start_server(self, argv: list[str]) -> subprocess.Popen:
+        """Start the server ``command`` names; a package for one server overrides it to give the
+        process its environment or to keep its output (:meth:`server_output`)."""
+        return subprocess.Popen(argv)
+
+    def server_output(self) -> str:
+        """What the server process said before it failed, for an error message; empty if not kept."""
+        return ""
 
     def _connect(self, address: str, timeout: float) -> socket.socket:
         family, where = parse_address(address)
@@ -280,14 +403,15 @@ class SocketRenderer(Renderer):
         last: Exception | None = None
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
+                said = self.server_output()
                 raise RenderError(
                     f"the renderer process exited with status {self._proc.returncode} before it "
-                    f"accepted a connection at {address}"
+                    f"accepted a connection at {address}" + (f":\n{said}" if said else "")
                 )
             sock = socket.socket(family, socket.SOCK_STREAM)
             try:
                 sock.connect(where)
-                return sock
+                return no_delay(sock)
             except OSError as err:
                 sock.close()
                 last = err
@@ -295,6 +419,17 @@ class SocketRenderer(Renderer):
         raise RenderError(
             f"no renderer accepted a connection at {address} within {timeout:g} s: {last}"
         )
+
+    def scene_blobs(self, scene: SceneDescription) -> list[tuple[str, np.ndarray]]:
+        """What ``open`` sends the server as the scene, as named arrays.
+
+        The generic client sends ``scene.glb`` (``scene: gltf``) or nothing (``scene: none``); a
+        package for one server overrides this to send the scene in the form its server reads,
+        written from the same walk.
+        """
+        if self.settings.get("scene", "gltf") == "gltf":
+            return [("scene.glb", np.frombuffer(self._scene_glb(scene), dtype=np.uint8))]
+        return []
 
     @staticmethod
     def _scene_glb(scene: SceneDescription) -> bytes:
@@ -336,8 +471,10 @@ class SocketRenderer(Renderer):
             send_message(self._sock, header, blobs)
             reply, self._reply_blobs = recv_message(self._sock)
         except (OSError, ConnectionError, ValueError) as err:
+            said = self.server_output()
             raise RenderError(
                 f"the renderer at {self.settings['address']} failed during {header['op']!r}: {err}"
+                + (f"\n{said}" if said else "")
             ) from err
         if reply.get("op") == "error":
             raise RenderError(f"the renderer at {self.settings['address']}: {reply.get('message')}")
@@ -360,6 +497,9 @@ class SocketRenderer(Renderer):
                     "height": r.camera.height,
                     "model": r.camera.model,
                     "fovy": r.fovy,
+                    "intrinsics": None
+                    if r.camera.intrinsics is None
+                    else [float(v) for v in r.camera.intrinsics],
                     "near": r.camera.near,
                     "far": r.camera.far,
                     "images": sorted(r.images),
@@ -385,52 +525,6 @@ class SocketRenderer(Renderer):
             for kind in r.images:
                 image = self._reply_blobs.get(f"{r.id}/{kind}")
                 if image is not None:
-                    setattr(frame, kind, np.array(image))
+                    setattr(frame, kind, image)
             frames.append(frame)
         return frames
-
-
-def serve_forever(address: str, handler, *, ready=None) -> None:
-    """Serve the protocol at *address* with *handler*, one connection at a time, until it closes.
-
-    *handler* is an object with ``hello() -> dict``, ``open(scene, blobs)``, ``render(header,
-    blobs) -> (frames, blobs)`` and ``close()``. A server written in another environment needs
-    only this module's framing (``send_message``/``recv_message``), which uses the standard library
-    and numpy alone.
-    """
-    family, where = parse_address(address)
-    with socket.socket(family, socket.SOCK_STREAM) as server:
-        if family == socket.AF_UNIX:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(where)
-        server.bind(where)
-        server.listen(1)
-        if ready is not None:
-            ready()
-        conn, _ = server.accept()
-        with conn:
-            while True:
-                try:
-                    header, blobs = recv_message(conn)
-                except ConnectionError:
-                    return
-                op = header.get("op")
-                try:
-                    if op == "hello":
-                        send_message(
-                            conn, {"op": "hello", "version": PROTOCOL_VERSION, **handler.hello()}
-                        )
-                    elif op == "open":
-                        handler.open(header["scene"], blobs)
-                        send_message(conn, {"op": "opened"})
-                    elif op == "render":
-                        frames, out = handler.render(header, blobs)
-                        send_message(conn, {"op": "frames", "frames": frames}, out)
-                    elif op == "close":
-                        handler.close()
-                        send_message(conn, {"op": "closed"})
-                        return
-                    else:
-                        send_message(conn, {"op": "error", "message": f"unknown op {op!r}"})
-                except Exception as err:  # noqa: BLE001 -- a server reports, the client raises
-                    send_message(conn, {"op": "error", "message": f"{type(err).__name__}: {err}"})

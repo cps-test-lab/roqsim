@@ -641,17 +641,19 @@ def render_target(
                 "--camera-path cannot move it. Use --view or --focus for the base camera."
             )
     if state and overrides:
-        # A recording's model is the one its provenance names, so only the camera can be changed
-        # over it (see _render_recording). Anything else would be accepted and do nothing.
+        # A recording's model is the one its provenance names, so only how it is drawn can be
+        # changed over it -- the camera, and the renderer and its settings (see
+        # _render_recording). Anything else would be accepted and do nothing.
         ignored = sorted(
             ".".join(a.path)
             for a in assignments_from_mapping(overrides)
-            if a.path[:2] != ("sim", "view")
+            if a.path[:2] not in DRAWING_OVERRIDES
         )
         if ignored:
             raise RenderError(
                 f"--state rebuilds the recorded world from its provenance, so an override other "
-                f"than sim.view cannot change it: {', '.join(ignored)}."
+                f"than how it is drawn ({', '.join('.'.join(p) for p in DRAWING_OVERRIDES)}) "
+                f"cannot change it: {', '.join(ignored)}."
             )
     # Built before any world compiles: a misspelt overlay fails in milliseconds, not after the build.
     try:
@@ -750,17 +752,25 @@ def _base_record(out: Path, width: int, height: int, model, cam) -> dict:
     }
 
 
-def renderer_choice(ctx) -> dict:
+#: The ``sim`` keys an override may set over a recording: how it is drawn, never what it holds.
+DRAWING_OVERRIDES = (("sim", "view"), ("sim", "renderer"), ("sim", "renderers"))
+
+
+def renderer_choice(ctx, overrides: dict | None = None) -> dict:
     """The renderer the world chose (``sim.renderer`` and its block), as FrameRenderer takes it.
 
     A render draws through the world's renderer, as its cameras do; a bare mesh or model, which has
-    no world, through MuJoCo's.
+    no world, through MuJoCo's. *overrides* (``--renderer``, ``--set sim.renderers...``) are laid
+    over the world's choice: a recording is rebuilt from its own world, which never saw them.
     """
+    sim = (overrides or {}).get("sim") or {}
     service = getattr(ctx, "render", None)
-    if service is None:
+    if service is None and not sim:
         return {}
-    name = service.default_renderer
-    return {"renderer": name, "settings": service.settings.get(name, {})}
+    name = sim.get("renderer") or (service.default_renderer if service else DEFAULT_RENDERER)
+    settings = dict(service.settings.get(name, {})) if service else {}
+    settings.update((sim.get("renderers") or {}).get(name) or {})
+    return {"renderer": name, "settings": settings}
 
 
 def open_frame_renderer(model, width: int, height: int, **kwargs) -> FrameRenderer:
@@ -930,6 +940,7 @@ def _render_recording(
             camera_path=camera_path,
             overlays=overlays,
             scene=not framed,
+            choice=renderer_choice(ctx, merged),
         )
         if onset is not None:
             record["onset"] = onset.as_record()
@@ -970,7 +981,7 @@ def _render_recording(
         geomgroup,
         overlays=overlays,
         sim_time=sample.sim_time,
-        choice=renderer_choice(ctx),
+        choice=renderer_choice(ctx, merged),
     )
     record["rendered"] = True
     if onset is not None:
@@ -1077,6 +1088,7 @@ def _render_video(
     camera_path=None,
     overlays=None,
     scene=False,
+    choice=None,
 ):
     """Render every sample in range and pipe it to ffmpeg. One sample is always exactly one frame.
 
@@ -1111,7 +1123,12 @@ def _render_video(
             cam = cameras.for_sample(sample)
             if renderer is None:
                 renderer = open_frame_renderer(
-                    model, width, height, camera=cam, geomgroup=geomgroup, **renderer_choice(ctx)
+                    model,
+                    width,
+                    height,
+                    camera=cam,
+                    geomgroup=geomgroup,
+                    **(choice if choice is not None else renderer_choice(ctx)),
                 )
             else:
                 renderer.camera = cam

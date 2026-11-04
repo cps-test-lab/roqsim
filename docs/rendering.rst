@@ -79,7 +79,20 @@ register it in your package::
    myrenderer = "my_package.renderer:MyRenderer"
 
 It is given the scene once (``open``), then per tick a snapshot of the state and a batch of camera
-requests (``render``), and returns one frame per request. A renderer in another process stands
-behind the ``socket`` renderer (:mod:`roqsim.render_socket`): its server speaks a small framed
-protocol over a stream socket, needing only the standard library and numpy, and ``command`` in the
-renderer's settings starts it with the run.
+requests (``render``), and returns one frame per request. Each camera comes with its pose and its
+intrinsics, ``(fx, fy, cx, cy)`` in pixels as MuJoCo projects it (a model camera's ``sensorsize``
+and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``); a renderer declares whether it
+projects an off-centre principal point (``principal_point``) and non-square pixels
+(``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
+load rather than drawn wrong.
+
+A renderer in another process stands behind the ``socket`` renderer (:mod:`roqsim.render_socket`):
+its server speaks a small framed protocol over a stream socket, needing only the standard library
+and numpy, and ``command`` in the renderer's settings starts it with the run.
+
+A package for one server subclasses :class:`~roqsim.render_socket.SocketRenderer`: it declares the
+server's capabilities, overrides ``scene_blobs`` to send the scene in the form its server reads
+(written from the same walk ``roqsim export gltf`` uses), and states with ``open_timeout_s`` how long
+its server may take to start -- the service waits for that, where it is longer than
+``sim.render.timeout_s``, before it names the renderer as hung.
+
