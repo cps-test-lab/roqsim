@@ -102,3 +102,17 @@ class FakeWalker(Plugin):
     def post_step(self, ctx):
         if self.until is not None and ctx.sim_time >= self.until:
             self.finished, self.until = True, None
+
+
+class Watch(ScenarioPlugin):
+    """Scenario: wait for something in the gate, for it to dwell, then for the gate to empty."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        who = yield from self.entered(self.gate, "box_*")
+        self.event("saw", who=who)
+        yield from self.dwelled(self.gate)
+        self.event("dwelt")
+        yield from self.left(self.gate)
+        self.event("empty")

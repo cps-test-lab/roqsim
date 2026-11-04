@@ -688,6 +688,11 @@ own lamp on -- each look with its own inertia where the model names one, through
 (``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
 that handle: the part's state is the part's, and the machine only asks for it to change.
 
+**Presence is reported, never acted on.** ``zone_trigger`` is a box in the world or riding on a
+body that reports the entities entering, dwelling for a time and leaving, filtered by name pattern:
+as events, on a handle (``zone:<name>``) and as an ``occupied`` endpoint. It decides nothing; a
+door that opens for whoever comes near is a scenario reading the zone and starting the door.
+
 **A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
 generator on simulated time, one ``yield`` per physics step, advanced in ``post_step``. It names the
 handles it drives in ``NEEDS`` (``{"press": "machine:press_1"}``), resolved at every reset and refused

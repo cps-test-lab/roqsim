@@ -37,6 +37,7 @@ raises :class:`ScenarioError` in the program that waited for it, unless it asked
 
 from __future__ import annotations
 
+import fnmatch
 from collections.abc import Callable, Iterator
 
 from . import endpoint
@@ -259,6 +260,29 @@ class ScenarioPlugin(Plugin):
         """Yield for ``seconds`` of simulated time."""
         end = self._ctx.sim_time + float(seconds)
         while self._ctx.sim_time < end - 1e-9:
+            yield
+
+    def entered(self, zone, pattern: str = "*"):
+        """Wait until an entity matching ``pattern`` is inside ``zone`` (a ``zone_trigger``'s handle)
+        and return its name -- at once when one already is."""
+        while True:
+            for name in zone.inside():
+                if fnmatch.fnmatchcase(name, pattern):
+                    return name
+            yield
+
+    def left(self, zone, pattern: str = "*"):
+        """Wait until no entity matching ``pattern`` is inside ``zone``."""
+        while any(fnmatch.fnmatchcase(name, pattern) for name in zone.inside()):
+            yield
+
+    def dwelled(self, zone, pattern: str = "*"):
+        """Wait until an entity matching ``pattern`` has been inside ``zone`` for its ``dwell``, and
+        return its name."""
+        while True:
+            for name in zone.dwelling():
+                if fnmatch.fnmatchcase(name, pattern):
+                    return name
             yield
 
     def place(self, entity: str, pose: dict):
