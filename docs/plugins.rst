@@ -2677,6 +2677,37 @@ Each machine takes ``home:`` and ``on_error:`` in its config besides its own key
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
 
+Writing a scenario
+~~~~~~~~~~~~~~~~~~
+
+The scene around the machines -- who acts when, who waits for whom, what a presence leads to -- is a
+scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
+:class:`roqsim.scenario.ScenarioPlugin`::
+
+   from roqsim.scenario import ScenarioPlugin
+
+   class PressDemo(ScenarioPlugin):
+       """Scenario: place a strip in the press and punch it."""
+
+       NEEDS = {"press": "machine:press_1"}
+
+       def program(self):
+           yield from self.place("strip_1", {"position": {"x": 0.0, "z": 0.8}})
+           yield from self.run(self.press, "stroke", show="hole", hide="plain")
+           self.event("punched", part="strip_1")
+
+and is placed after the machines it drives::
+
+   components:
+     - press: {...}
+       name: press_1
+     - "my_cell.scenes:PressDemo": {stop_at_end: true}
+       name: demo
+
+The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
+``place``, ``event`` (:mod:`roqsim.scenario`). Every scenario takes ``needs:`` (rename a handle) and
+``stop_at_end:``; its ``done`` endpoint says when its program returned.
+
 Writing your own
 ----------------
 

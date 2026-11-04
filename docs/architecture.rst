@@ -682,6 +682,23 @@ name::
 ``spawn_model`` does not read a model's manifest, so the controller is written in the world (or in
 a world the cell ``extends``), not in the model's manifest.
 
+**A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
+generator on simulated time, one ``yield`` per physics step, advanced in ``post_step``. It names the
+handles it drives in ``NEEDS`` (``{"press": "machine:press_1"}``), resolved at every reset and refused
+by name when missing; a world may rename them (``needs:``), so one scenario serves two cells. It owns
+no model and writes no actuator. Its helper: ``yield from self.run(handle, program, **args)`` starts
+a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
+``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them;
+``self.route(walker, poses)`` sends a walker or a navigator and waits on its route's number;
+``until``, ``wait``, ``place`` and ``event`` do what they say. Tasks advance in the order they were
+created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
+the machines it drives; a start it makes is applied at the next step whatever the order.
+
+When ``program`` returns the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
+which an OpenSCENARIO ``entity_monitor`` can wait on; ``stop_at_end: true`` also ends a standalone
+``roqsim sim`` run (``ctx.request_stop``). It never ends a scenario-execution run (§4, *Who ends a
+run*).
+
 .. _6-porting-playbook:
 
 6. Porting playbook

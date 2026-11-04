@@ -1,0 +1,104 @@
+# Copyright (C) 2026 Frederik Pasch
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Scenarios the scenario tests run, against the machines of :mod:`machine_fixtures`."""
+
+from __future__ import annotations
+
+from roqsim.plugin import Plugin
+from roqsim.scenario import ScenarioPlugin
+
+
+class TwoStrokes(ScenarioPlugin):
+    """Scenario: stroke the press twice, a pause between.
+
+    Config::
+
+        pause: 0.2   # seconds between the strokes
+    """
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        first = yield from self.run(self.press, "stroke")
+        self.event("first", seq=first.seq)
+        yield from self.wait(float(self.config.get("pause", 0.2)))
+        yield from self.run(self.press, "stroke")
+        self.event("second")
+
+
+class Jammed(ScenarioPlugin):
+    """Scenario: run a program that fails; ``check: false`` reads the status instead.
+
+    Config::
+
+        check: true   # whether the failure raises
+    """
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        status = yield from self.run(self.press, "jam", check=bool(self.config.get("check", True)))
+        self.event("after", error=status.error)
+
+
+class Concurrent(ScenarioPlugin):
+    """Scenario: two tasks beside each other, joined, then a race the shorter wins."""
+
+    NEEDS = {"press": "machine:press", "spin": "machine:spin"}
+
+    def program(self):
+        stroke = self.start(self.press, "dwell", seconds=0.3)
+        spin = self.start(self.spin, "run", speed=0.4)
+        yield from self.join(stroke, spin)
+        self.event("joined")
+        short = self.spawn(self._ticks("short", 0.1), name="short")
+        long = self.spawn(self._ticks("long", 1.0), name="long")
+        winner = yield from self.first(short, long)
+        self.event("won", by=winner.name, long_cancelled=long.cancelled)
+
+    def _ticks(self, name, seconds):
+        yield from self.wait(seconds)
+        self.event(f"{name}_done")
+
+
+class Walk(ScenarioPlugin):
+    """Scenario: send a walker along two points and wait for it."""
+
+    NEEDS = {"walker": "walker:worker"}
+
+    def program(self):
+        status = yield from self.route(self.walker, [(1.0, 0.0), (1.0, 1.0)], check=False)
+        self.event("arrived", error=status[-1])
+
+
+class FakeWalker(Plugin):
+    """A stand-in for a walker's handle: a route takes ``route_s`` and ends with ``error``.
+
+    Config::
+
+        route_s: 0.5   # how long a route takes
+        error: ""      # what it ends with
+    """
+
+    def configure(self, ctx):
+        self._ctx = ctx
+        self.seq, self.finished, self.until = 0, False, None
+        ctx.blackboard.set("walker:worker", self)
+        self.name = "worker"
+
+    def send_route(self, poses):
+        self.seq += 1
+        self.finished = False
+        self.until = self._ctx.sim_time + float(self.config.get("route_s", 0.5))
+        self.poses = poses
+        return self.seq
+
+    def status(self):
+        error = self.config.get("error", "") if self.finished else ""
+        return (self.seq, self.finished, 0, 0.0, error)
+
+    def post_step(self, ctx):
+        if self.until is not None and ctx.sim_time >= self.until:
+            self.finished, self.until = True, None

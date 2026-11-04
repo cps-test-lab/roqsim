@@ -7,8 +7,8 @@
 A machine is what one entity can do by itself -- move its actuators, run its programs, be in its
 states. It acts only on itself and on what it physically works on (the part in its tool, through
 that part's handle), and it decides nothing about other entities: who acts when, and what a presence
-leads to, is a scenario's. The line is drawn in ``docs/architecture.rst``, "Machines and
-scenarios".
+leads to, is a scenario's (:mod:`roqsim.scenario`). The line is drawn in ``docs/architecture.rst``,
+"Machines and scenarios".
 
 A machine package's plugin subclasses :class:`MachinePlugin` and writes its programs as generator
 methods marked :func:`program`; each ``yield`` is one physics step on simulated time::
