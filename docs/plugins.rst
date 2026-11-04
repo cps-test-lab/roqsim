@@ -2510,6 +2510,76 @@ the planning can run on the world itself rather than on a planning scene describ
 
 Everything random draws from the generator it is given, so a seeded run plans the same paths.
 
+Machines: one interface for what does something
+-----------------------------------------------
+
+A machine is one entity's own procedures -- a press's stroke, a door's opening, a belt's run -- and
+every machine looks the same from outside, so a cell, a scenario, ROS or an agent drives any of them
+the same way: through the handle under ``machine:<name>``. What a machine is, and where the line to a
+scenario runs, is :ref:`machines-and-scenarios` in the architecture.
+
+.. code-block:: python
+
+   press = ctx.blackboard.require("machine:press_1")
+   seq = press.start("stroke", show="hole")      # refused at once while busy
+   ...                                            # one step later it runs
+   status = press.status()                        # MachineStatus(seq, program, finished, error)
+   if status.seq == seq and status.finished:
+       assert status.error == ""                  # "" done; else the failure or "cancelled"
+
+``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
+``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
+press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket. Every
+program run is an event timeline on the run's events (``program_start``, the program's steps,
+``program_end``).
+
+Writing a machine
+~~~~~~~~~~~~~~~~~
+
+Subclass :class:`roqsim.machine.MachinePlugin`, declare what it drives, and write each program as a
+generator method marked ``@program``. Each ``yield`` is one physics step::
+
+   from roqsim.machine import MachinePlugin, program
+
+   class GatePlugin(MachinePlugin):
+       """Machine: a gate on a slide that opens and closes."""
+
+       ACTUATORS = ("leaf",)           # position actuators, after the machine's prefix
+       HOME = {"leaf": 0.0}            # a world's `home:` overrides
+
+       def build(self, spec, ctx): ... # the model, from the config
+       def configure(self, ctx):
+           self.register_entity(ctx, body=self.config.get("prefix", "") + "gate")
+           super().configure(ctx)      # resolves ACTUATORS and home, publishes the handle
+
+       @program
+       def open(self, speed: float = 0.3):
+           """Slide the leaf open."""
+           yield from self.move("leaf", 1.2, speed=speed, event="opening")
+           yield from self.until_stopped("leaf")
+
+What a program has:
+
+- ``self.set(name, value)`` and ``self.ramp(name, value, speed)`` -- at once, or at ``speed`` in the
+  joint's unit per second; ``yield from self.move(name, value, speed=None, event=None)`` does either
+  and waits until reached;
+- ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names)``,
+  ``self.until_stopped(*names)`` (reached and at rest: what an interlock waits for),
+  ``self.wait(seconds)``;
+- ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
+  failure, reported in ``status()``;
+- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+
+``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
+``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and
+is waited on like an actuator. ``NEEDS = {"looks": "part_state"}`` names a handle the machine
+requires; it is resolved at every reset and refused naming the key when nothing published it.
+``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
+
+Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
+endpoint of the machine's own whose command means "this is the target now" calls
+``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
