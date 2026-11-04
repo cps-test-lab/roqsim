@@ -682,6 +682,12 @@ name::
 ``spawn_model`` does not read a model's manifest, so the controller is written in the world (or in
 a world the cell ``extends``), not in the model's manifest.
 
+**What a machine works on has states of its own.** ``part_state`` shows and hides an entity's
+``look_<name>`` bodies through :mod:`roqsim.presence` -- a strip punched, bent, labelled; a machine's
+own lamp on -- each look with its own inertia where the model names one, through one handle
+(``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
+that handle: the part's state is the part's, and the machine only asks for it to change.
+
 **A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
 generator on simulated time, one ``yield`` per physics step, advanced in ``post_step``. It names the
 handles it drives in ``NEEDS`` (``{"press": "machine:press_1"}``), resolved at every reset and refused
