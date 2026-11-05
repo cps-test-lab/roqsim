@@ -43,11 +43,13 @@ The base gives every machine the same outside:
   :attr:`~MachinePlugin.SETPOINTS` (a belt's speed) ramp the same way and are applied by the plugin.
 
 Fail loudly: an actuator the model lacks or one that is no plain position servo, a ``home`` the
-machine does not drive or outside its range, a handle in :attr:`~MachinePlugin.NEEDS` that nothing published, an unknown program or
-argument -- each is said naming the machine. A program ends with :meth:`MachinePlugin.fail` when its
-own outcome is a failure (a door stalled): the error is in ``status()`` and the run goes on. A
-program that raises anything else is a defect: with ``on_error: raise`` (the default) the run stops
-naming the machine and the program; with ``on_error: report`` the error goes into ``status()``.
+machine does not drive or outside its range, a handle in :attr:`~MachinePlugin.NEEDS` that nothing
+published, an unknown program or argument -- each is said naming the machine. A program fails, with
+the error in ``status()`` and the run going on, when it calls :meth:`MachinePlugin.fail` (a door
+stalled) and when it sends an actuator outside its range. A program that raises anything else is a
+defect: with ``on_error: raise`` (the default) the run stops naming the machine and the program;
+with ``on_error: report`` the error goes into ``status()``. A program that ended in an error, as a
+cancelled one, leaves the machine holding where it is.
 """
 
 from __future__ import annotations
@@ -736,9 +738,9 @@ class MachinePlugin(Plugin):
             if self._cancelling == run.seq:
                 self._cancelling = 0
             self._status = MachineStatus(run.seq, run.program, True, error)
-        if error == "cancelled":
+        if error:
+            # Cancelled or failed, the machine holds where it is: a ramp's target stops moving.
             run.gen.close()
-            # The machine holds where it is: a ramp's target stops moving.
             self._ramps.clear()
         self._ctx.events.emit(
             self.machine_entity, "program_end", program=run.program, seq=run.seq, error=error

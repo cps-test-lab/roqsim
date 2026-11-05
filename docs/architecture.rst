@@ -657,12 +657,13 @@ control socket reaches them under ``<machine>/start`` and the same names.
 
 **Fail loudly.** A program ends with ``self.fail(reason)`` when its own outcome is a failure (a door
 stalled on an obstruction): the error is in ``status()`` and the run goes on, for the caller to
-decide. So does a program that sends an actuator outside its range. A program that raises anything else is a defect: by default (``on_error: raise``) the run
-stops naming the machine and the program; ``on_error: report`` puts it into ``status()`` instead.
-A handle a machine needs (``NEEDS``) that nothing published is refused at reset, naming the key.
-An actuator a machine drives is a plain position servo -- fixed gain, an affine bias whose stiffness
-matches it, a unit gear -- so its control is the joint's target; a motor, a velocity servo or a
-geared servo is refused at configure.
+decide. So does a program that sends an actuator outside its range. A program that raises anything
+else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
+``on_error: report`` puts it into ``status()`` instead. A program that ended in an error leaves the
+machine holding where it is, as a cancel does. A handle a machine needs (``NEEDS``) that nothing
+published is refused at reset, naming the key. An actuator a machine drives is a plain position
+servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear -- so its control is the
+joint's target; a motor, a velocity servo or a geared servo is refused at configure.
 
 **How a package provides its machine.** A machine that builds its model from its config is a plugin
 registered under ``roqsim.plugins``, and a world places it by name. A machine with an MJCF model of

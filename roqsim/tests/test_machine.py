@@ -488,3 +488,29 @@ def test_a_target_outside_the_actuators_range_fails_the_program_and_moves_nothin
         assert not [e for e in _events(engine, "axis") if e["event"] == "go"], "no step began"
     finally:
         engine.shutdown()
+
+
+# -- failure holds, and a move does not hang ----------------------------------------------------
+@pytest.mark.parametrize(
+    ("program", "config", "error"),
+    [
+        ("go_then_fail", {}, "guard open"),
+        ("go_then_raise", {"on_error": "report"}, "ValueError: broken"),
+    ],
+)
+def test_a_program_that_fails_mid_ramp_leaves_the_machine_holding_as_a_cancel_does(
+    program, config, error
+):
+    engine = _axis(**config)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start(program, x=0.8, speed=0.2, after=0.5))
+        assert status.error == error
+        held = axis.value("x")
+        assert held == pytest.approx(0.1, abs=0.002), "the ramp stopped where the program ended"
+        for _ in range(1000):
+            engine.step()
+        assert axis.value("x") == held
+        assert _joint(engine, "x_joint") == pytest.approx(held, abs=0.003)
+    finally:
+        engine.shutdown()

@@ -2653,7 +2653,8 @@ What a program has:
   ``self.until_stopped(*names)`` (reached and at rest: what an interlock waits for),
   ``self.wait(seconds)``;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
-  failure, reported in ``status()``;
+  failure, reported in ``status()``. A failed program, as a cancelled one, leaves the machine holding
+  where it is;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
