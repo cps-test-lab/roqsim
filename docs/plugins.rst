@@ -2647,11 +2647,13 @@ What a program has:
 
 - ``self.set(name, value)`` and ``self.ramp(name, value, speed)`` -- at once, or at ``speed`` in the
   joint's unit per second; a target outside the actuator's range fails the program, naming the
-  machine, the actuator and the range; ``yield from self.move(name, value, speed=None,
-  event=None)`` does either and waits until reached;
-- ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names)``,
-  ``self.until_stopped(*names)`` (reached and at rest: what an interlock waits for),
-  ``self.wait(seconds)``;
+  machine, the actuator and the range; ``yield from self.move(name, value, speed=None, event=None,
+  timeout=None)`` does either and waits until reached;
+- ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names, timeout=None)``,
+  ``self.until_stopped(*names, timeout=None)`` (reached and at rest: what an interlock waits for),
+  ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
+  by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
+  naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed program, as a cancelled one, leaves the machine holding
   where it is;

@@ -657,7 +657,9 @@ control socket reaches them under ``<machine>/start`` and the same names.
 
 **Fail loudly.** A program ends with ``self.fail(reason)`` when its own outcome is a failure (a door
 stalled on an obstruction): the error is in ``status()`` and the run goes on, for the caller to
-decide. So does a program that sends an actuator outside its range. A program that raises anything
+decide. So does a program that sends an actuator outside its range, and one whose joint has not
+arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``, ``until_reached``
+and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
 else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
 ``on_error: report`` puts it into ``status()`` instead. A program that ended in an error leaves the
 machine holding where it is, as a cancel does. A handle a machine needs (``NEEDS``) that nothing

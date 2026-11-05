@@ -46,7 +46,8 @@ Fail loudly: an actuator the model lacks or one that is no plain position servo,
 machine does not drive or outside its range, a handle in :attr:`~MachinePlugin.NEEDS` that nothing
 published, an unknown program or argument -- each is said naming the machine. A program fails, with
 the error in ``status()`` and the run going on, when it calls :meth:`MachinePlugin.fail` (a door
-stalled) and when it sends an actuator outside its range. A program that raises anything else is a
+stalled), when it sends an actuator outside its range, and when a joint has not arrived
+:attr:`~MachinePlugin.MOVE_TIMEOUT` seconds after its target did (an obstruction). A program that raises anything else is a
 defect: with ``on_error: raise`` (the default) the run stops naming the machine and the program;
 with ``on_error: report`` the error goes into ``status()``. A program that ended in an error, as a
 cancelled one, leaves the machine holding where it is.
@@ -69,6 +70,8 @@ from .plugin import Plugin
 REACHED = 0.002
 #: How slowly a joint that has reached its target may still move to count as stopped (unit/s).
 STOPPED_SPEED = 0.01
+#: Seconds a joint may take to arrive after its target has (the end of any ramp) before a move fails.
+MOVE_TIMEOUT = 5.0
 ON_ERROR = ("raise", "report")
 
 _PROGRAM_MARK = "__roqsim_program__"
@@ -212,6 +215,9 @@ class MachinePlugin(Plugin):
     #: How near and how still a joint is when it has reached and stopped on its target.
     REACHED: float = REACHED
     STOPPED_SPEED: float = STOPPED_SPEED
+    #: Seconds a joint may take to arrive after its target has, before ``move``, ``until_reached``
+    #: and ``until_stopped`` fail the program; each also takes its own ``timeout``.
+    MOVE_TIMEOUT: float = MOVE_TIMEOUT
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -501,33 +507,64 @@ class MachinePlugin(Plugin):
         value: float,
         speed: float | None = None,
         event: str | None = None,
+        timeout: float | None = None,
         **fields,
     ):
-        """``set`` or ``ramp``, then wait until ``name`` has reached ``value``. With ``event``, emit
-        that step's event as the move begins."""
+        """``set`` or ``ramp``, then wait until ``name`` has reached ``value`` (``until_reached``,
+        with its ``timeout``). With ``event``, emit that step's event as the move begins."""
         if speed is None:
             self.set(name, value)
         else:
             self.ramp(name, value, speed)
         if event:
             self.step(event, **fields)
-        yield from self.until_reached(name)
+        yield from self.until_reached(name, timeout=timeout)
 
     def until(self, cond: Callable[[], bool], timeout: float | None = None, what: str = ""):
         """Yield until ``cond()`` holds; past ``timeout`` seconds the program fails."""
         start = self._ctx.sim_time
         while not cond():
             if timeout is not None and self._ctx.sim_time - start > timeout:
-                self.fail(f"{what or 'the condition'} not true after {timeout:g} s")
+                self.fail(
+                    f"machine {self.address}: {what or 'the condition'} not true after {timeout:g} s"
+                )
             yield
 
-    def until_reached(self, *names: str):
-        """Yield until each of ``names`` is at the end of its ramp (a joint within :attr:`REACHED`)."""
-        yield from self.until(lambda: all(self.reached(n) for n in names))
+    def until_reached(self, *names: str, timeout: float | None = None):
+        """Yield until each of ``names`` is at the end of its ramp (a joint within :attr:`REACHED`).
 
-    def until_stopped(self, *names: str):
-        """Yield until each of ``names`` has reached its target and is at rest there."""
-        yield from self.until(lambda: all(self.reached(n, still=True) for n in names))
+        A joint that has not arrived ``timeout`` seconds (default :attr:`MOVE_TIMEOUT`) after its
+        target did -- an obstruction -- fails the program, naming the machine and the actuator."""
+        yield from self._until_arrived(names, False, timeout)
+
+    def until_stopped(self, *names: str, timeout: float | None = None):
+        """Yield until each of ``names`` has reached its target and is at rest there; ``timeout`` as
+        :meth:`until_reached`."""
+        yield from self._until_arrived(names, True, timeout)
+
+    def _until_arrived(self, names, still: bool, timeout: float | None):
+        limit = self.MOVE_TIMEOUT if timeout is None else float(timeout)
+        arrived_target: dict[str, float] = {}  # name -> when its target arrived (its ramp ended)
+        while True:
+            now = self._ctx.sim_time
+            waiting = [n for n in names if not self.reached(n, still=still)]
+            if not waiting:
+                return
+            for name in waiting:
+                if name in self._ramps:
+                    arrived_target.pop(name, None)
+                    continue
+                since = arrived_target.setdefault(name, now)
+                if now - since > limit:
+                    where = (
+                        f" (it is at {self.position(name):g})" if name in self._actuators else ""
+                    )
+                    self.fail(
+                        f"machine {self.address}: {name!r} did not "
+                        f"{'stop on' if still else 'reach'} {self._cmd[name]:g} within {limit:g} s "
+                        f"of its target{where}"
+                    )
+            yield
 
     def wait(self, seconds: float):
         """Yield for ``seconds`` of simulated time."""

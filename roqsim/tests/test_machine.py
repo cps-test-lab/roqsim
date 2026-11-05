@@ -514,3 +514,32 @@ def test_a_program_that_fails_mid_ramp_leaves_the_machine_holding_as_a_cancel_do
         assert _joint(engine, "x_joint") == pytest.approx(held, abs=0.003)
     finally:
         engine.shutdown()
+
+
+@pytest.mark.parametrize(("config", "limit"), [({"timeout": 1.0}, 1.0), ({}, 5.0)])
+def test_an_obstructed_joint_fails_its_move_after_the_timeout_naming_machine_and_actuator(
+    config, limit
+):
+    engine = _axis(obstacle=True, **config)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        t0 = engine.ctx.sim_time
+        status = _run_until_done(engine, axis, axis.start("go", x=0.8))
+        assert status.error.startswith(
+            f"machine axis: 'x' did not reach 0.8 within {limit:g} s of its target (it is at 0.3"
+        )
+        assert engine.ctx.sim_time - t0 == pytest.approx(limit, abs=0.01)
+    finally:
+        engine.shutdown()
+
+
+def test_until_with_a_timeout_fails_the_program_when_it_runs_out():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        t0 = engine.ctx.sim_time
+        status = _run_until_done(engine, axis, axis.start("wait_for", seconds=0.3))
+        assert status.error == "machine axis: the feeder not true after 0.3 s"
+        assert engine.ctx.sim_time - t0 == pytest.approx(0.3, abs=0.01)
+    finally:
+        engine.shutdown()
