@@ -136,7 +136,9 @@ def _write_credit(out_dir: str, meta: dict) -> None:
     lic = meta.get("license") or {}
     user = meta.get("user") or {}
     if not lic.get("url"):
-        sys.exit(f"{meta.get('name')}: the model's licence has no link, which its credits must give")
+        sys.exit(
+            f"{meta.get('name')}: the model's licence has no link, which its credits must give"
+        )
     with open(os.path.join(out_dir, "CREDITS.txt"), "w") as fh:
         fh.write(
             f'"{meta.get("name")}" by {user.get("username")} ({user.get("profileUrl")})\n'
