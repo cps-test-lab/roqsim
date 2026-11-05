@@ -31,10 +31,19 @@ second is refused before anything changes.
 
 **Shown and hidden through** :mod:`roqsim.presence`. Each state is registered as an entity of its
 own, named after its owner (``s1.look_hole``, kind ``look``), and made absent or present as presence
-makes any entity so: its geoms leave the picture, the raycasts and the contacts together. A recording
-notes every change of the absent set and a replay re-applies it, so ``roqsim render --state`` shows a
-strip punched from the step it was punched, with no state of this plugin's to restore. Every change
-is also an event (``shown``/``hidden``, with ``entity`` and ``look``), so a run's timeline says when.
+makes any entity so: its geoms leave the picture, the raycasts and the contacts together. It is not
+*listed* (``Entity.listed``): the control plane does not list a state, give it a pose endpoint, or
+spawn or delete one -- only this plugin changes a state. A recording notes every change of the
+absent set and a replay re-applies it, so ``roqsim render --state`` shows a strip punched from the
+step it was punched. What a replay does not restore is the inertia a shown state names: a replay
+draws the recorded poses and needs no mass, so the picture is the same. Every change is also an
+event (``shown``/``hidden``, with ``entity`` and ``look``), so a run's timeline says when.
+
+**Limits.** An entity with states that starts absent (``present: false``) is refused when the world
+loads: :mod:`roqsim.presence` restores an activated entity's whole body tree, hidden states included,
+and tells no plugin, so it would come back showing every state. A state body nested inside another
+state body is refused. Of an exclusive group at most one state is shown: ``show`` of a member
+while another is shown is refused (``set`` swaps them), and so is a ``shown:`` naming two.
 
 Config::
 
@@ -82,7 +91,7 @@ class LookInertia:
     """An entity whose states move its mass: its root body, the root's own inertia, and each state's."""
 
     root: int
-    #: (ipos, iquat, inertia) the root body compiled with
+    #: (ipos, iquat, inertia, sameframe) the root body compiled with
     own: tuple
     #: state name -> (ipos, iquat, inertia) with that state shown
     looks: dict[str, tuple] = field(default_factory=dict)
@@ -118,7 +127,14 @@ class PartStates:
         return self._look(entity, look).present
 
     def show(self, entity: str, look: str) -> bool:
-        """Show ``look`` on ``entity``; whether it was hidden before."""
+        """Show ``look`` on ``entity``; whether it was hidden before. A state of an exclusive
+        group is refused while another of the group is shown: :meth:`set` swaps them."""
+        others = [o for o in self._group_of(entity, look) if o != look and self.is_shown(entity, o)]
+        if others and not self.is_shown(entity, look):
+            raise PartStateError(
+                f"part_state: {entity!r} shows {others}, of the exclusive group of {look!r}; "
+                f"set({entity!r}, {look!r}) shows it and hides the rest"
+            )
         return self._change(entity, look, True)
 
     def hide(self, entity: str, look: str) -> bool:
@@ -129,14 +145,20 @@ class PartStates:
         """Show ``look`` and hide the other states of its exclusive group, as one change; whether
         anything changed. A state in no group is shown alone."""
         self._look(entity, look)
+        hiding = [o for o in self._group_of(entity, look) if o != look]
+        self._check_inertia(entity, look, hiding=hiding)  # refused before anything changes
         changed = False
-        for group in self.groups.get(entity, []):
-            if look in group:
-                for other in group:
-                    if other != look:
-                        changed |= self._change(entity, other, False, place=False)
+        for other in hiding:
+            changed |= self._change(entity, other, False, place=False)
         changed |= self._change(entity, look, True)
         return changed
+
+    def _group_of(self, entity: str, look: str) -> list[str]:
+        """The exclusive group ``look`` belongs to on ``entity``, or ``[]``."""
+        for group in self.groups.get(entity, []):
+            if look in group:
+                return group
+        return []
 
     def _change(self, entity: str, look: str, present: bool, place: bool = True) -> bool:
         if present:
@@ -150,12 +172,17 @@ class PartStates:
             )
         return changed
 
-    def _check_inertia(self, entity: str, look: str) -> None:
-        """Refuse showing ``look`` while another shown state of ``entity`` names an inertia too."""
+    def _check_inertia(self, entity: str, look: str, hiding: list[str] = ()) -> None:
+        """Refuse showing ``look`` while another shown state of ``entity`` names an inertia too --
+        one the same change does not hide."""
         record = self.inertia.get(entity)
         if record is None or look not in record.looks:
             return
-        others = [name for name in self.shown(entity) if name in record.looks and name != look]
+        others = [
+            name
+            for name in self.shown(entity)
+            if name in record.looks and name != look and name not in hiding
+        ]
         if others:
             raise PartStateError(
                 f"part_state: {entity!r} shows {others}, which names an inertia, and {look!r} names "
@@ -172,11 +199,18 @@ class PartStates:
             raise PartStateError(
                 f"part_state: {entity!r} shows {shown}, which each name an inertia; it has one"
             )
-        ipos, iquat, inertia = record.looks[shown[0]] if shown else record.own
         model = self.ctx.model
+        if shown:
+            ipos, iquat, inertia = record.looks[shown[0]]
+            # The compiled root may have its inertial frame at its body frame (sameframe), which
+            # makes MuJoCo skip ipos and iquat; a state's inertia sits elsewhere, so it is not.
+            sameframe = int(mujoco.mjtSameFrame.mjSAMEFRAME_NONE)
+        else:
+            ipos, iquat, inertia, sameframe = record.own
         model.body_ipos[record.root] = ipos
         model.body_iquat[record.root] = iquat
         model.body_inertia[record.root] = inertia
+        model.body_sameframe[record.root] = sameframe
 
     def _entity(self, entity: str) -> dict[str, Entity]:
         if entity not in self.looks:
@@ -204,6 +238,7 @@ def find_looks(model: mujoco.MjModel, entity: Entity) -> dict[str, str]:
         return {}
     prefix = entity.meta.get("prefix", "") if isinstance(entity.meta, dict) else ""
     out = {}
+    ids = {}
     for bid in subtree_body_ids(model, root):
         if bid == root:
             continue
@@ -211,9 +246,22 @@ def find_looks(model: mujoco.MjModel, entity: Entity) -> dict[str, str]:
         local = name[len(prefix) :] if prefix and name.startswith(prefix) else name
         if local.startswith(LOOK_PREFIX):
             out[local[len(LOOK_PREFIX) :]] = name
+            ids[bid] = name
         elif f"_{LOOK_PREFIX}" in local:
             # A state another plugin added to the entity, named after the entity's body.
             out[local.rsplit(f"_{LOOK_PREFIX}", 1)[1]] = name
+            ids[bid] = name
+    # A state inside another would be shown and hidden with it as well as on its own.
+    for bid, name in ids.items():
+        parent = int(model.body_parentid[bid])
+        while parent != root and parent > 0:
+            if parent in ids:
+                raise PartStateError(
+                    f"part_state: state body {name!r} of {entity.name!r} is inside the state body "
+                    f"{ids[parent]!r}; a state is a body of its own under the entity, not one "
+                    "nested in another"
+                )
+            parent = int(model.body_parentid[parent])
     return out
 
 
@@ -278,14 +326,29 @@ class PartStatePlugin(Plugin):
             found = find_looks(ctx.model, entity)
             if not found:
                 continue
+            if entity.name not in self.handle.looks and not entity.present:
+                # roqsim.presence restores an activated entity's whole body tree, its hidden
+                # states included, and tells no plugin -- so a pooled entity with states would come
+                # back showing them all while this plugin reported them hidden.
+                raise PartStateError(
+                    f"part_state: {entity.name!r} has states and starts absent (present: false); "
+                    "activating it would show every hidden state, so an entity with states is "
+                    "not pooled"
+                )
             looks = {}
             for look, body in found.items():
                 _refuse_mass(ctx.model, entity.name, body)
                 name = f"{entity.name}.{LOOK_PREFIX}{look}"
                 look_entity = ctx.entities.get(name)
                 if look_entity is None:
+                    # Registered, so a recording carries and replays its presence, but not listed:
+                    # the control plane neither lists a state nor spawns or deletes one.
                     look_entity = Entity(
-                        name=name, kind="look", body=body, meta={"part": entity.name, "look": look}
+                        name=name,
+                        kind="look",
+                        body=body,
+                        meta={"part": entity.name, "look": look, "owner": self.address},
+                        listed=False,
                     )
                     ctx.entities.add(look_entity)
                 looks[look] = look_entity
@@ -316,6 +379,14 @@ class PartStatePlugin(Plugin):
                     for look in group:
                         self.handle._look(entity, look)
                     self.handle.groups.setdefault(entity, []).append(list(group))
+        for entity, looks in shown.items():
+            for group in self.handle.groups.get(entity, []):
+                both = sorted(set(group) & looks)
+                if len(both) > 1:
+                    raise PartStateError(
+                        f"part_state: 'shown' shows {both} on {entity!r}, of one exclusive group; "
+                        "at most one of a group is shown"
+                    )
         return shown
 
     def _collect_inertia(self, ctx: SimContext, entity: Entity, found: dict[str, str]) -> None:
@@ -344,6 +415,7 @@ class PartStatePlugin(Plugin):
             model.body_ipos[root].copy(),
             model.body_iquat[root].copy(),
             model.body_inertia[root].copy(),
+            int(model.body_sameframe[root]),
         )
         self.handle.inertia[entity.name] = LookInertia(root=root, own=own, looks=looks)
 
