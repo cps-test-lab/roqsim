@@ -15,3 +15,4 @@ def splat() -> None:
 
 
 splat.add_command(tool("roqsim_render_splat.frame", "frame"))
+splat.add_command(tool("roqsim_render_splat.collision", "collision"))

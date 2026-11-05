@@ -18,6 +18,9 @@ dependencies = [
     # gsplat draws on CUDA; a CUDA build of torch is what makes the renderer open. The CPU wheel
     # installs, and the renderer then refuses to open, naming the missing GPU.
     "torch>=2.1",
+    "pyyaml>=6.0",
+    # `roqsim splat collision` labels the furniture patches it fits boxes to.
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
