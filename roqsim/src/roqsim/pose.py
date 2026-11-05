@@ -71,6 +71,10 @@ class PoseError(ValueError):
 def _number(value, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise PoseError(f"{where} must be a number, got {value!r}")
+    # NaN and infinity are numbers to Python and no place to MuJoCo: a NaN position makes it reset
+    # the run's state.
+    if not math.isfinite(value):
+        raise PoseError(f"{where} must be a finite number, got {value!r}")
     return float(value)
 
 

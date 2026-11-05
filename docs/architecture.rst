@@ -638,7 +638,8 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
 
 -  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
    machine that is busy, raises naming the machine -- stamped with the next sequence number, and
-   applied on the physics thread at the next step. Safe from any thread.
+   applied on the physics thread at the next step. Safe from any thread: starts and cancels reach
+   the physics thread in the order they were made, and a status never goes back to an older start.
 -  ``status() -> MachineStatus(seq, program, finished, error)``: the last start. A caller knows its
    own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
    else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
@@ -662,11 +663,14 @@ arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``,
 and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
 else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
 ``on_error: report`` puts it into ``status()`` instead. A program that ended in an error, or was
-cancelled, stops the machine where it is: each actuator's target becomes where its joint stands, so
-an obstructed joint does not move on by itself once the obstacle is gone. A handle a machine needs (``NEEDS``) that nothing
-published is refused at reset, naming the key. An actuator a machine drives is a plain position
-servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear -- so its control is the
-joint's target; a motor, a velocity servo or a geared servo is refused at configure.
+cancelled, stops the machine where it is: each actuator is held where its joint stands, with the
+servo's standing offset under its load kept, so an obstructed joint does not move on by itself once
+the obstacle is gone and a loaded one does not sink at each hold. A handle a machine needs
+(``NEEDS``) that nothing published is refused at reset, naming the key, and a ``NEEDS`` name the
+machine already has is refused when the world loads. An actuator a machine drives is a plain
+position servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear, no dynamics
+that integrate its control -- so its control is the joint's target; a motor, a velocity servo, an
+``<intvelocity>`` or a geared servo is refused at configure.
 
 **How a package provides its machine.** A machine that builds its model from its config is a plugin
 registered under ``roqsim.plugins``, and a world places it by name. A machine with an MJCF model of
@@ -695,13 +699,16 @@ handles it drives in ``NEEDS`` (``{"press": "machine:press_1"}``), resolved at e
 by name when missing; a world may rename them (``needs:``), so one scenario serves two cells. It owns
 no model and writes no actuator. Its helper: ``yield from self.run(handle, program, **args)`` starts
 a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
-``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them;
+``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
+start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
+joins stops the run when the program returns);
 ``self.route(walker, poses)`` sends a walker or a navigator and waits on its route's number;
 ``until``, ``wait`` and ``event`` do what they say, and ``place`` puts an entity at a pose as a
 world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
 in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
 the machines it drives; a start it makes is applied at the next step whatever the order.
 
+A program that raises stops the run with its own exception, and the scene never reports done.
 When ``program`` returns the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
 which an OpenSCENARIO ``entity_monitor`` can wait on; ``stop_at_end: true`` also ends a standalone
 ``roqsim sim`` run (``ctx.request_stop``). It never ends a scenario-execution run (§4, *Who ends a

@@ -2656,7 +2656,8 @@ What a program has:
   naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
-  each actuator's target becomes where its joint stands, and each setpoint keeps its value;
+  each actuator is held where its joint stands (its servo's standing offset under load kept), and
+  each setpoint keeps its value;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
@@ -2666,7 +2667,9 @@ machine requires; it is resolved at every reset and refused naming the key when 
 ``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
 
 An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
-servo or a geared servo is refused at configure, naming the machine and the actuator.
+servo, an ``<intvelocity>`` or a geared servo is refused at configure, naming the machine and the
+actuator. A program's arguments are checked against its annotations, whether they are strings
+(``from __future__ import annotations``) or types, unions with ``None`` included.
 
 A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
 nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
@@ -2708,8 +2711,12 @@ The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``unt
 ``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
 ``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
-``roqsim.pose.PoseError`` naming what is wrong. A program's own exception stops the run with its
-own type, the scenario named in a note. Every scenario takes ``needs:`` (rename a handle) and
+``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
+reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
+it as around ``run``; one nobody joins stops the run when the program returns. ``route(check=False)``,
+like ``run(check=False)``, returns the status where another route overtook its own. A program's own
+exception stops the run with its own type, the scenario named in a note, and the scene never
+reports done. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when its program returned.
 
 An entity's states: ``part_state``
