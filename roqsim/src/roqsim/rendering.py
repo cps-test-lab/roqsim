@@ -1950,7 +1950,8 @@ class FrameRenderer:
     :meth:`render` returns a fresh ``(height, width, 3)`` uint8 array each call; :meth:`render_depth`
     and :meth:`render_segmentation` are the other passes. ``renderer`` names the renderer it draws
     through (MuJoCo's by default) and ``settings`` its settings block, as a world's ``sim.renderer``
-    and ``sim.renderers.<name>`` do. ``max_geom`` raises the geoms its scene holds, for a caller that
+    and ``sim.renderers.<name>`` do, and ``base_dir`` the world's directory a file named in them is
+    resolved against. ``max_geom`` raises the geoms its scene holds, for a caller that
     decorates it with many markers.
 
     For interactive navigation of a free camera, :meth:`move_camera` forwards mouse deltas to
@@ -1976,6 +1977,7 @@ class FrameRenderer:
         renderer: str = DEFAULT_RENDERER,
         settings: Mapping | None = None,
         max_geom: int | None = None,
+        base_dir=None,
     ) -> None:
         self.model = model
         self.width = int(width)
@@ -1986,7 +1988,7 @@ class FrameRenderer:
         self._geomgroup = geomgroup
         self._max_geom = max_geom
         self._service = RenderService(
-            model, renderer=renderer, renderers={renderer: dict(settings or {})}
+            model, renderer=renderer, renderers={renderer: dict(settings or {})}, base_dir=base_dir
         )
         self._view: RenderView | None = None
         self._pick_scene: mujoco.MjvScene | None = None

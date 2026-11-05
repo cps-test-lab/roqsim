@@ -192,3 +192,17 @@ def test_a_key_in_a_nested_block_is_named_with_its_block():
         "did you mean 'position'?"
     ]
     assert unknown_keys({"position": 1}, ("position",), "splat.pose") == []
+
+
+def test_a_tool_s_renderer_resolves_files_against_the_world_s_directory(tmp_path):
+    """``roqsim render`` draws through the world's renderer, whose settings name files beside it."""
+    import mujoco
+
+    from roqsim.rendering import FrameRenderer
+
+    (tmp_path / "room.ply").write_bytes(b"ply\n")
+    model = mujoco.MjModel.from_xml_string("<mujoco><worldbody/></mujoco>")
+    ref = f"{__name__}:NeedsAFile"
+    with pytest.raises(Exception, match="file 'room.ply' not found at None"):
+        FrameRenderer(model, 8, 8, renderer=ref, settings={"file": "room.ply"})
+    FrameRenderer(model, 8, 8, renderer=ref, settings={"file": "room.ply"}, base_dir=tmp_path)
