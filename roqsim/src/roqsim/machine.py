@@ -7,8 +7,8 @@
 A machine is what one entity can do by itself -- move its actuators, run its programs, be in its
 states. It acts only on itself and on what it physically works on (the part in its tool, through
 that part's handle), and it decides nothing about other entities: who acts when, and what a presence
-leads to, is a scenario's (:mod:`roqsim.scenario`). The line is drawn in ``docs/architecture.rst``,
-"Machines and scenarios".
+leads to, is a scenario's. The line is drawn in ``docs/architecture.rst``, "Machines and
+scenarios".
 
 A machine package's plugin subclasses :class:`MachinePlugin` and writes its programs as generator
 methods marked :func:`program`; each ``yield`` is one physics step on simulated time::
@@ -35,7 +35,7 @@ The base gives every machine the same outside:
 * an event on ``ctx.events`` (:mod:`roqsim.events`) for each step a program names, between a
   ``program_start`` and a ``program_end``, so a recording carries the machine's timeline;
 * the endpoints ``start``, ``status`` and ``cancel`` on the machine's entity, for the control socket
-  and any bridge;
+  (they are kept off ROS);
 * actuators ramped at a stated speed, in the joint's unit per second, as a cylinder or a servo axis
   moves: a ramp moves the position actuator's target and the physics moves the joint. Plugin-owned
   :attr:`~MachinePlugin.SETPOINTS` (a belt's speed) ramp the same way and are applied by the plugin.
@@ -65,8 +65,6 @@ from .plugin import Plugin
 REACHED = 0.002
 #: How slowly a joint that has reached its target may still move to count as stopped (unit/s).
 STOPPED_SPEED = 0.01
-#: The keys every machine takes in its config.
-MACHINE_KEYS = ("home", "on_error")
 ON_ERROR = ("raise", "report")
 
 _PROGRAM_MARK = "__roqsim_program__"
@@ -213,7 +211,7 @@ class MachinePlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        #: False for an instance that is no machine (a leafless door): no handle, no endpoints.
+        #: False for an instance whose config makes it no machine: no handle, no endpoints.
         self.is_machine = True
         self.home: dict[str, float] = {}
         self.on_error = str(self.config.get("on_error", "raise"))

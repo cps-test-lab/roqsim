@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Machines the machine, scenario and zone tests run: generated models, no file from outside.
+"""Machines the machine tests run: generated models, no file from outside.
 
 A module rather than a conftest, so a world addresses them as ``machine_fixtures:<Class>`` -- the
 same reason :mod:`recording_plugin` is one.
@@ -132,3 +132,98 @@ class Spinner(MachinePlugin):
         else:
             self.set("speed", speed)
         yield from self.until_reached("speed")
+
+
+#: One slide joint, x in [-1, 1], and a wall a block on it meets at x = 0.3 when ``obstacle`` is set.
+AXIS = """<mujoco model="axis">
+  <worldbody>
+    <body name="axis">
+      <body name="slider">
+        <joint name="x_joint" type="slide" axis="1 0 0" range="-1 1"/>
+        <geom name="block" type="box" size="0.05 0.05 0.05" mass="1"/>
+      </body>
+    </body>
+    {obstacle}
+  </worldbody>
+  <actuator>
+    {actuator}
+  </actuator>
+</mujoco>"""
+WALL = '<body name="wall"><geom type="box" size="0.1 0.2 0.2" pos="0.45 0 0"/></body>'
+SERVO = (
+    '<position name="x" joint="x_joint" kp="2000" kv="100" ctrlrange="-1 1" forcerange="-50 50"/>'
+)
+
+
+class Axis(MachinePlugin):
+    """Machine: one slide axis whose actuator the world states, for the base's refusals and waits.
+
+    Config::
+
+        actuator: ""       # the MJCF <actuator> child driving x_joint, named x (default a servo)
+        obstacle: false    # a wall stops the block at x = 0.3
+        timeout: 0.0       # MOVE_TIMEOUT for this instance (s); 0 keeps the class's
+    """
+
+    ACTUATORS = ("x",)
+
+    def __init__(self, config=None, **kw):
+        super().__init__(config, **kw)
+        if float(self.config.get("timeout", 0.0)):
+            self.MOVE_TIMEOUT = float(self.config["timeout"])
+
+    def build(self, spec, ctx) -> None:
+        xml = AXIS.format(
+            actuator=self.config.get("actuator") or SERVO,
+            obstacle=WALL if self.config.get("obstacle") else "",
+        )
+        frame = spec.worldbody.add_frame()
+        frame.pos = [0, 0, 0.5]
+        spec.attach(mujoco.MjSpec.from_string(xml), prefix="", frame=frame)
+
+    def configure(self, ctx) -> None:
+        self.register_entity(ctx, body="axis")
+        super().configure(ctx)
+
+    @program
+    def go(self, x: float, speed: float = 0.0):
+        """Move to x, at once or ramped."""
+        yield from self.move("x", x, speed=speed or None, event="go")
+
+    @program
+    def go_then_fail(self, x: float, speed: float, after: float):
+        """Ramp toward x and fail after a while, mid-ramp."""
+        self.ramp("x", x, speed)
+        yield from self.wait(after)
+        self.fail("guard open")
+
+    @program
+    def go_then_raise(self, x: float, speed: float, after: float):
+        """Ramp toward x and raise after a while, mid-ramp (a defect)."""
+        self.ramp("x", x, speed)
+        yield from self.wait(after)
+        raise ValueError("broken")
+
+    @program
+    def wait_for(self, seconds: float):
+        """Wait on a condition that never holds, for at most ``seconds``."""
+        yield from self.until(lambda: False, timeout=seconds, what="the feeder")
+
+
+class PressController(MachinePlugin):
+    """Machine: the press's controller with no model of its own, nested under the ``spawn_model``
+    that placed the press's MJCF; it drives that entity's actuators and speaks for it."""
+
+    ACTUATORS = ("door", "ram")
+    registers_entity = False
+
+    @program
+    def close(self):
+        """Close the guard."""
+        yield from self.move("door", DOOR_CLOSED, speed=DOOR_SPEED)
+
+
+class FedPress(Press):
+    """Machine: the press, needing a feeder machine's handle."""
+
+    NEEDS = {"feeder": "machine:feeder"}

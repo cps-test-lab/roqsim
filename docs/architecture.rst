@@ -594,7 +594,7 @@ either as OpenSCENARIO run by scenario-execution, or in Python.
    :header-rows: 1
    :widths: 60 20 20
 
-   * - 
+   * -
      - machine
      - scenario
    * - a press strokes with its guard door interlocked
@@ -662,11 +662,19 @@ stops naming the machine and the program; ``on_error: report`` puts it into ``st
 A handle a machine needs (``NEEDS``) that nothing published is refused at reset, naming the key.
 
 **How a package provides its machine.** A machine that builds its model from its config is a plugin
-registered under ``roqsim.plugins``, as ``door`` and ``conveyor`` are. A machine with an MJCF model
-is placed by ``spawn_model``, and the model's manifest names the controller -- a ``MachinePlugin``
-with no ``build`` of its own, whose ``ACTUATORS`` resolve under the spawned entity's prefix
-(``registers_entity = False``) and whose handle is published under the spawned entity's name. That is
-the manifest rule unchanged: a model names its plugins, and a plugin knows no model.
+registered under ``roqsim.plugins``, and a world places it by name. A machine with an MJCF model of
+its own is placed by ``spawn_model``, with its controller nested under that entry -- a
+``MachinePlugin`` with no ``build`` that sets ``registers_entity = False``, so its ``ACTUATORS``
+resolve under the spawned entity's prefix and its handle is published under the spawned entity's
+name::
+
+   - spawn_model: {model: my_press, prefix: press_1_}
+     name: press_1
+     components:
+       - my_press_controller: {}
+
+``spawn_model`` does not read a model's manifest, so the controller is written in the world (or in
+a world the cell ``extends``), not in the model's manifest.
 
 .. _6-porting-playbook:
 

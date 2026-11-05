@@ -4,15 +4,16 @@
 
 """The machine base: programs on simulated time, ramps, waits, events and the one handle.
 
-The press is the one the station tests drove through YAML steps (a guard door and a ram, each a
-position servo); here its stroke is a program, and the tests check what the YAML version checked --
-the ram moves only behind the closed door, each phase at its speed, every step an event -- and the
-handle's contract: a sequence number per start, a refused start while busy, a status per start.
+The press here has a guard door and a ram, each a position servo, and its stroke is a program: the
+ram moves only behind the closed door, each phase at its speed, every step an event. The handle's
+contract is checked beside it: a sequence number per start, a refused start while busy, a status per
+start. The one-axis machine checks the base's refusals and waits on an actuator the world states.
 """
 
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 
 import pytest
 from machine_fixtures import APPROACH, BOTTOM, CONTACT, DOOR_CLOSED, DOOR_SPEED, POWER
@@ -368,3 +369,85 @@ def test_describe_publishes_the_programs_with_their_parameters():
     ]
     assert programs["dwell"]["parameters"] == [{"name": "seconds", "type": "float"}]
     assert undeclared_config_reads(__import__("machine_fixtures").Press) == []
+
+
+# -- handles a machine needs, and preemption -----------------------------------------------------
+def test_a_handle_the_machine_needs_is_refused_by_name_when_nothing_published_it():
+    with pytest.raises(MachineError, match="machine press: needs 'machine:feeder', which no entry"):
+        _engine([{"machine_fixtures:FedPress": {"prefix": "p1_"}, "name": "press"}], gravity=False)
+    engine = _engine(
+        [
+            {"machine_fixtures:Press": {"prefix": "f_"}, "name": "feeder"},
+            {"machine_fixtures:FedPress": {"prefix": "p1_"}, "name": "press"},
+        ],
+        gravity=False,
+    )
+    try:
+        press = engine.ctx.blackboard.require("machine:press")._machine
+        assert press.feeder is engine.ctx.blackboard.require("machine:feeder")
+    finally:
+        engine.shutdown()
+
+
+def test_preempt_cancels_what_runs_and_starts_the_new_program_in_the_same_step():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        first = press.start("dwell", seconds=1.0)
+        for _ in range(10):
+            engine.step()
+        t = engine.ctx.sim_time
+        second = press._machine.preempt("dwell", seconds=0.1)
+        assert second == first + 1
+        assert press.status() == MachineStatus(second, "dwell", False, "")
+        events = [(e["event"], e["seq"], e.get("error")) for e in _events(engine)][-2:]
+        assert events == [("program_end", first, "cancelled"), ("program_start", second, None)]
+        assert all(e["t"] == t for e in _events(engine)[-2:])
+        assert _run_until_done(engine, press, second).error == ""
+        with pytest.raises(MachineError, match="no program 'bend'"):
+            press._machine.preempt("bend")
+    finally:
+        engine.shutdown()
+
+
+# -- a controller with no model of its own, under the spawn that placed the model -----------------
+def test_a_controller_nested_under_spawn_model_drives_that_entity_and_speaks_for_it(tmp_path):
+    from machine_fixtures import PRESS
+
+    (tmp_path / "press.xml").write_text(PRESS)
+    spawn = {
+        "spawn_model": {
+            "model": str(tmp_path / "press.xml"),
+            "prefix": "p1_",
+            "motion": "static",
+            "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}},
+        },
+        "name": "press_1",
+        "components": [{"machine_fixtures:PressController": {}}],
+    }
+    engine = _engine([spawn], gravity=False)
+    try:
+        handle = engine.ctx.blackboard.require("machine:press_1")
+        assert engine.ctx.blackboard.get("machine:press_1.PressController") is None
+        assert engine.ctx.interface.find("press_1", "start") is not None
+        assert _run_until_done(engine, handle, handle.start("close")).error == ""
+        assert _joint(engine, "p1_door_joint") == pytest.approx(DOOR_CLOSED, abs=0.003)
+        assert [e["source"] for e in engine.ctx.events.all() if e["event"] == "program_end"] == [
+            "press_1"
+        ]
+    finally:
+        engine.shutdown()
+
+
+def test_plugins_describe_publishes_a_machines_programs(monkeypatch):
+    import machine_fixtures
+
+    from roqsim import introspection
+
+    fake = SimpleNamespace(
+        name="test_press", value="machine_fixtures:Press", load=lambda: machine_fixtures.Press
+    )
+    monkeypatch.setattr(introspection, "entry_points", lambda group: [fake])
+    details = introspection.get_plugin_details("test_press")
+    assert {p["name"] for p in details["programs"]} == {"stroke", "jam", "dwell", "early"}
+    assert {"start", "status", "cancel"} <= {row["name"] for row in details["endpoints"]}
