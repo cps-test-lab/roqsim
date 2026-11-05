@@ -428,6 +428,25 @@ def test_a_tool_s_view_carries_the_intrinsics_of_the_camera_it_moved_to():
         renderer.close()
 
 
+def test_a_tool_s_view_gives_a_camera_without_a_lens_no_intrinsics():
+    """As the service's own view does: an orthographic camera and a fovy of 0 project through fovy."""
+    spec = mujoco.MjSpec()
+    spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.2])
+    spec.worldbody.add_camera(name="plain", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+    ortho = spec.worldbody.add_camera(name="ortho", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+    ortho.proj = mujoco.mjtProjection.mjPROJ_ORTHOGRAPHIC
+    ortho.fovy = 1.0
+    zero = spec.worldbody.add_camera(name="zero", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+    zero.fovy = 0.0
+    renderer = FrameRenderer(spec.compile(), 32, 24, camera="plain")
+    try:
+        assert renderer._view_for("plain").spec.intrinsics is not None
+        assert renderer._view_for("ortho").spec.intrinsics is None
+        assert renderer._view_for("zero").spec.intrinsics is None
+    finally:
+        renderer.close()
+
+
 def test_a_received_array_is_writable_memory_of_its_own():
     left, right = socket.socketpair()
     with left, right:

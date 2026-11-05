@@ -13,10 +13,11 @@ BLOCK = "import sys; sys.modules['requests'] = None; "
 
 
 @pytest.mark.parametrize("module", ["fuel_fetch", "sdf_to_scene"])
-def test_it_imports_without_requests(module):
-    code = f"{BLOCK}import roqsim_scenes.cli.{module}"
+def test_it_answers_help_without_requests(module):
+    code = f"{BLOCK}from roqsim_scenes.cli.{module} import main; main(['--help'])"
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+    assert "usage" in done.stdout
 
 
 def test_fetching_without_requests_names_what_is_missing():

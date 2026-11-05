@@ -206,7 +206,7 @@ class CameraSpec:
     #: ``(fx, fy, cx, cy)`` in pixels, the projection MuJoCo draws this camera with at this size:
     #: from the camera's ``sensorsize`` and ``focal``/``principal`` where the model states them,
     #: else the symmetric pinhole of ``fovy``. ``cx, cy`` count pixel centres from the top-left
-    #: pixel's, as a ``sensor_msgs/CameraInfo`` does. ``None`` (orthographic): use ``fovy``.
+    #: pixel's, as a ``sensor_msgs/CameraInfo`` does. ``None`` (orthographic, or a ``fovy`` of 0): use ``fovy``.
     intrinsics: tuple[float, float, float, float] | None = None
 
     @property

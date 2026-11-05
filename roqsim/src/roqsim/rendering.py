@@ -1563,9 +1563,7 @@ class RenderService:
             height=int(height),
             model=model,
             fovy=self._fovy(camera),
-            intrinsics=None
-            if model == "orthographic"
-            else camera_intrinsics(self.model, camera, int(width), int(height), self._fovy(camera)),
+            intrinsics=self._intrinsics(camera, int(width), int(height)),
             near=near,
             far=far,
             images=frozenset(images),
@@ -1601,6 +1599,13 @@ class RenderService:
         if camera < 0:
             return float(self.model.vis.global_.fovy)
         return float(self.model.cam_fovy[camera])
+
+    def _intrinsics(self, camera, width: int, height: int) -> tuple | None:
+        """What :attr:`CameraSpec.intrinsics` holds for *camera* at this size."""
+        fovy = self._fovy(camera)
+        if camera_model_of(self.model, camera) == "orthographic" or fovy <= 0:
+            return None
+        return camera_intrinsics(self.model, camera, width, height, fovy)
 
     # -- the renderers ---------------------------------------------------------------------------
 
@@ -2032,9 +2037,7 @@ class FrameRenderer:
         spec.mujoco_camera = resolved
         spec.model = camera_model_of(self.model, resolved)
         spec.fovy = self._service._fovy(resolved)
-        spec.intrinsics = camera_intrinsics(
-            self.model, resolved, self.width, self.height, spec.fovy
-        )
+        spec.intrinsics = self._service._intrinsics(resolved, self.width, self.height)
         spec.near, spec.far = self._near, self._far
         return self._view
 

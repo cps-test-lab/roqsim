@@ -84,7 +84,7 @@ intrinsics, ``(fx, fy, cx, cy)`` in pixels as MuJoCo projects it (a model camera
 and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``); a renderer declares whether it
 projects an off-centre principal point (``principal_point``) and non-square pixels
 (``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
-load rather than drawn wrong.
+load, or when a tool draws through it, rather than drawn wrong.
 
 A renderer in another process stands behind the ``socket`` renderer (:mod:`roqsim.render_socket`):
 its server speaks a small framed protocol over a stream socket, needing only the standard library
