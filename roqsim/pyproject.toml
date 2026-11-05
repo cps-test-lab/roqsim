@@ -90,9 +90,8 @@ energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 # WHERE a physics step's time goes: MuJoCo's own stage timers (collision, solver, integrator), which
 # it fills only while a time callback is installed. A measurement mode, carried switched off.
 step_timers = "roqsim.plugins.step_timers:StepTimersPlugin"
-# An entity's discrete states (look_<name> bodies) and presence in a region: what machines and
-# scenarios change and watch, with no geometry of their own (docs/architecture.rst, "Machines and
-# scenarios").
+# An entity's discrete states (look_<name> bodies): what machines and scenarios change, with no
+# geometry of its own (docs/architecture.rst, "Machines and scenarios").
 part_state = "roqsim.plugins.part_state:PartStatePlugin"
 
 # Ground that is not flat. Without it everything this substrate can stand a robot on is a plane, while

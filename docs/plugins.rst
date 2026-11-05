@@ -2712,6 +2712,36 @@ one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything el
 own type, the scenario named in a note. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when its program returned.
 
+An entity's states: ``part_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+What a machine does to a part shows on the part: a strip punched, bent or labelled; a machine's own
+lamp on. Each such state is a ``look_<name>`` body under the entity's root body, compiled in and
+shown or hidden at run time through :mod:`roqsim.presence`, so a recording replays it::
+
+   <body name="strip">
+     <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_hole">
+       <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+   </body>
+
+One ``part_state`` entry serves the world. Its handle, ``part_state``, shows and hides a state by
+entity and name (``show``, ``hide``, ``set`` for one of an ``exclusive`` group), and each change is a
+``shown``/``hidden`` event::
+
+   - part_state:
+       shown: {strip_*: [plain]}            # at the start of every episode, by name or pattern
+       exclusive: {strip_*: [[plain, hole]]}
+
+A state's bodies are **massless**: one with mass is refused, naming the body, because showing a state
+must change how the part looks and collides, never what it weighs. A state that moves the centre of
+mass -- a strip bent into an L -- names the root body's inertia while it is shown, as a custom
+numeric ``look_<name>_inertia`` of ten values (``pos``, ``quat``, ``diaginertia``); two shown states
+that both name one are refused before anything changes. A pattern that matches no entity with states,
+an unknown entity or an unknown state is refused by name. The plugin decides nothing: when a part
+changes is the machine's or the scenario's.
+
 Writing your own
 ----------------
 

@@ -320,3 +320,56 @@ def test_a_bad_config_is_refused_when_the_world_loads(part_file):
     with pytest.raises(Exception, match="'shown' maps an entity name pattern") as exc:
         _engine(world)
     assert "two or more state names" in str(exc.value)
+
+
+#: A part whose label state carries mass, as a model that forgot mass="0" on it has.
+HEAVY_LABEL = """<mujoco model="carton">
+  <worldbody>
+    <body name="carton">
+      <geom type="box" size="0.1 0.1 0.05" mass="0.2"/>
+      <body name="look_label">
+        <geom type="box" size="0.04 0.03 0.0005" pos="0 0 0.0505" contype="0" conaffinity="0"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+def test_a_state_body_with_mass_is_refused_naming_it(tmp_path):
+    path = tmp_path / "heavy.xml"
+    path.write_text(HEAVY_LABEL)
+    with pytest.raises(PartStateError, match=r"state body 'c1_look_label' of 'c1' has mass .* kg"):
+        _engine(_world(path))
+
+
+def test_showing_a_second_state_that_names_an_inertia_is_refused_before_anything_changes(tmp_path):
+    two = STRIP.replace(
+        '<numeric name="look_bent_inertia"',
+        '<numeric name="look_flat_inertia" data="0 0 0  1 0 0 0  0.0001 0.0014 0.0015"/>\n'
+        '    <numeric name="look_bent_inertia"',
+    )
+    (tmp_path / "strip.xml").write_text(two)
+    world = {
+        "sim": {"gravity": [0, 0, 0]},
+        "components": [
+            {
+                "spawn_model": {
+                    "model": str(tmp_path / "strip.xml"),
+                    "prefix": "s1_",
+                    "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
+                },
+                "name": "s1",
+            },
+            {"part_state": {"shown": {"s1": ["flat"]}}},
+        ],
+    }
+    engine = _engine(world)
+    try:
+        looks = engine.ctx.blackboard.get("part_state")
+        events = len(engine.ctx.events.all())
+        with pytest.raises(PartStateError, match="'s1' shows \\['flat'\\], which names an inertia"):
+            looks.show("s1", "bent")
+        assert looks.shown("s1") == ["flat"], "nothing changed"
+        assert len(engine.ctx.events.all()) == events
+    finally:
+        engine.shutdown()
