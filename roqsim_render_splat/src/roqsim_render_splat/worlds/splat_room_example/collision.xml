@@ -1,0 +1,12 @@
+<mujoco model="splat_room_example">
+  <!-- What the robot collides with. The splat renderer does not draw it; MuJoCo's does. -->
+  <worldbody>
+    <light pos="0 0 2.3" dir="0 0 -1" diffuse=".7 .7 .7"/>
+    <geom name="floor" type="plane" size="0 0 0.05" rgba=".55 .55 .52 1"/>
+    <geom name="wall_north" type="box" pos="0 1.55 1.2" size="2 0.05 1.2" rgba="0.8 0.78 0.7 1"/>
+    <geom name="wall_south" type="box" pos="0 -1.55 1.2" size="2 0.05 1.2" rgba="0.8 0.78 0.7 1"/>
+    <geom name="wall_east" type="box" pos="2.05 0 1.2" size="0.05 1.5 1.2" rgba="0.45 0.62 0.75 1"/>
+    <geom name="wall_west" type="box" pos="-2.05 0 1.2" size="0.05 1.5 1.2" rgba="0.85 0.45 0.3 1"/>
+    <geom name="table" type="box" pos="0.9 0.5 0.375" size="0.45 0.3 0.375" rgba="0.35 0.22 0.12 1"/>
+  </worldbody>
+</mujoco>

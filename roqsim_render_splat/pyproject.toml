@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_render_splat"
+version = "0.1.0"
+description = "A Gaussian-splat renderer for roqsim: a captured room as every camera sees it, the robots drawn into it by depth."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "numpy>=1.24",
+    # The rasteriser: gsplat is Apache-2.0. The reference 3DGS rasteriser (Inria) is licensed for
+    # non-commercial research only, so it is never a dependency and never imported.
+    "gsplat>=1.5,<2",
+    # gsplat draws on CUDA; a CUDA build of torch is what makes the renderer open. The CPU wheel
+    # installs, and the renderer then refuses to open, naming the missing GPU.
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "roqsim_mobile"]
+
+[project.entry-points."roqsim.renderers"]
+splat = "roqsim_render_splat.renderer:SplatRenderer"
+
+[project.entry-points."roqsim.worlds"]
+roqsim_render_splat = "roqsim_render_splat"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_render_splat = [
+    "worlds/*.yaml",
+    "worlds/*/*.ply",
+    "worlds/*/*.xml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

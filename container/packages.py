@@ -27,14 +27,17 @@ PATTERNS = ("roqsim*/pyproject.toml", "scenario_execution_*/pyproject.toml")
 
 TORCH = "requires torch; the lean image adds it only with INCLUDE_TORCH_PKGS=1"
 GUI = "its tools are tkinter windows a person answers in; the images are headless"
+CUDA = "draws on a CUDA GPU through a CUDA build of torch and gsplat; these images carry CPU torch"
 
 EXCLUDE: dict[str, dict[str, str]] = {
     "lean": {
         "roqsim_humanoid": TORCH,
         "roqsim_quadruped": TORCH,
+        "roqsim_render_splat": CUDA,
         "roqsim_scene_builder": GUI,
     },
     "ros": {
+        "roqsim_render_splat": CUDA,
         "roqsim_scene_builder": GUI,
     },
 }
