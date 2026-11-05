@@ -120,6 +120,7 @@ def test_a_registered_but_unimportable_plugin_is_dropped_too(monkeypatch):
 
     class _EP:
         name = "explodes"
+        value = "unimportable.plugin:Explodes"
 
         def load(self):
             raise ModuleNotFoundError("No module named 'rclpy'")
@@ -173,6 +174,7 @@ def test_a_missing_dependency_is_still_loud_for_a_simulation(monkeypatch):
 
     class _EP:
         name = "explodes"
+        value = "unimportable.plugin:Explodes"
 
         def load(self):
             raise ModuleNotFoundError("No module named 'rclpy'")
