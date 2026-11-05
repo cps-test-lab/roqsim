@@ -2655,8 +2655,8 @@ What a program has:
   by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
   naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
-  failure, reported in ``status()``. A failed program, as a cancelled one, leaves the machine holding
-  where it is;
+  failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
+  each actuator's target becomes where its joint stands, and each setpoint keeps its value;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
@@ -2692,7 +2692,7 @@ scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
        NEEDS = {"press": "machine:press_1"}
 
        def program(self):
-           yield from self.place("strip_1", {"position": {"x": 0.0, "z": 0.8}})
+           yield from self.place("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
            yield from self.run(self.press, "stroke", show="hole", hide="plain")
            self.event("punched", part="strip_1")
 
@@ -2705,7 +2705,11 @@ and is placed after the machines it drives::
        name: demo
 
 The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
-``place``, ``event`` (:mod:`roqsim.scenario`). Every scenario takes ``needs:`` (rename a handle) and
+``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
+``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
+one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
+``roqsim.pose.PoseError`` naming what is wrong. A program's own exception stops the run with its
+own type, the scenario named in a note. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when its program returned.
 
 Writing your own

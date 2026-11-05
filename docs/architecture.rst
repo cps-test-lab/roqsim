@@ -643,7 +643,7 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
    own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
    else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
 -  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
-   precondition), ``cancel()`` (the machine holds where it is), ``value(name)`` (an actuator's or
+   precondition), ``cancel()`` (the machine stops where it is), ``value(name)`` (an actuator's or
    setpoint's current target).
 
 It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
@@ -661,8 +661,9 @@ decide. So does a program that sends an actuator outside its range, and one whos
 arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``, ``until_reached``
 and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
 else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
-``on_error: report`` puts it into ``status()`` instead. A program that ended in an error leaves the
-machine holding where it is, as a cancel does. A handle a machine needs (``NEEDS``) that nothing
+``on_error: report`` puts it into ``status()`` instead. A program that ended in an error, or was
+cancelled, stops the machine where it is: each actuator's target becomes where its joint stands, so
+an obstructed joint does not move on by itself once the obstacle is gone. A handle a machine needs (``NEEDS``) that nothing
 published is refused at reset, naming the key. An actuator a machine drives is a plain position
 servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear -- so its control is the
 joint's target; a motor, a velocity servo or a geared servo is refused at configure.
@@ -696,8 +697,9 @@ no model and writes no actuator. Its helper: ``yield from self.run(handle, progr
 a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
 ``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them;
 ``self.route(walker, poses)`` sends a walker or a navigator and waits on its route's number;
-``until``, ``wait``, ``place`` and ``event`` do what they say. Tasks advance in the order they were
-created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
+``until``, ``wait`` and ``event`` do what they say, and ``place`` puts an entity at a pose as a
+world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
+in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
 the machines it drives; a start it makes is applied at the next step whatever the order.
 
 When ``program`` returns the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,

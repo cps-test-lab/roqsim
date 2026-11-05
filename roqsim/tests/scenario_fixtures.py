@@ -102,3 +102,40 @@ class FakeWalker(Plugin):
     def post_step(self, ctx):
         if self.until is not None and ctx.sim_time >= self.until:
             self.finished, self.until = True, None
+
+
+class Place(ScenarioPlugin):
+    """Scenario: place the block at the pose its config gives.
+
+    Config::
+
+        pose: {}   # the pose place() is given
+    """
+
+    def program(self):
+        yield from self.place("block", self.config.get("pose"))
+        self.event("placed")
+
+
+class Impatient(ScenarioPlugin):
+    """Scenario: wait for a condition that never holds, for a moment."""
+
+    def program(self):
+        yield from self.until(lambda: False, timeout=0.2, what="the feeder")
+
+
+class Broken(ScenarioPlugin):
+    """Scenario: a program with a defect."""
+
+    def program(self):
+        yield
+        raise KeyError("no such part")
+
+
+class Clashing(ScenarioPlugin):
+    """Scenario: a handle named like the scenario's own config."""
+
+    NEEDS = {"config": "machine:press"}
+
+    def program(self):
+        yield
