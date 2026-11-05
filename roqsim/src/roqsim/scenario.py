@@ -325,27 +325,53 @@ class ScenarioPlugin(Plugin):
         while self._ctx.sim_time < end - 1e-9:
             yield
 
-    def entered(self, zone, pattern: str = "*"):
+    def entered(self, zone, pattern: str = "*", timeout: float | None = None):
         """Wait until an entity matching ``pattern`` is inside ``zone`` (a ``zone_trigger``'s handle)
-        and return its name -- at once when one already is."""
-        while True:
-            for name in zone.inside():
-                if fnmatch.fnmatchcase(name, pattern):
-                    return name
-            yield
+        and return its name -- at once when one already is. Past ``timeout`` seconds raise
+        :class:`ScenarioError`, as :meth:`until` does."""
+        return (
+            yield from self._first_of(
+                zone.inside, pattern, timeout, f"an entity matching {pattern!r} in zone {zone.name}"
+            )
+        )
 
-    def left(self, zone, pattern: str = "*"):
-        """Wait until no entity matching ``pattern`` is inside ``zone``."""
-        while any(fnmatch.fnmatchcase(name, pattern) for name in zone.inside()):
-            yield
+    def left(self, zone, pattern: str = "*", timeout: float | None = None):
+        """Wait until no entity matching ``pattern`` is inside ``zone``; ``timeout`` as
+        :meth:`entered`."""
+        yield from self.until(
+            lambda: not any(fnmatch.fnmatchcase(n, pattern) for n in zone.inside()),
+            timeout,
+            f"zone {zone.name} empty of {pattern!r}",
+        )
 
-    def dwelled(self, zone, pattern: str = "*"):
+    def dwelled(self, zone, pattern: str = "*", timeout: float | None = None):
         """Wait until an entity matching ``pattern`` has been inside ``zone`` for its ``dwell``, and
-        return its name."""
+        return its name; ``timeout`` as :meth:`entered`. A zone whose ``dwell`` is 0 reports no
+        dwelling at all, so waiting on one is refused rather than left to hang."""
+        if not zone.dwell > 0:
+            raise ScenarioError(
+                f"zone {zone.name} has dwell 0, which reports no dwelling; give it a dwell to "
+                "wait on one"
+            )
+        return (
+            yield from self._first_of(
+                zone.dwelling,
+                pattern,
+                timeout,
+                f"an entity matching {pattern!r} dwelling in zone {zone.name}",
+            )
+        )
+
+    def _first_of(self, names: Callable[[], list[str]], pattern: str, timeout, what: str):
+        """Yield until one of ``names()`` matches ``pattern``, and return it; past ``timeout``
+        seconds raise :class:`ScenarioError` saying ``what`` was waited for."""
+        start = self._ctx.sim_time
         while True:
-            for name in zone.dwelling():
+            for name in names():
                 if fnmatch.fnmatchcase(name, pattern):
                     return name
+            if timeout is not None and self._ctx.sim_time - start > timeout:
+                raise ScenarioError(f"{what} not true after {timeout:g} s")
             yield
 
     def place(self, entity: str, pose: dict):

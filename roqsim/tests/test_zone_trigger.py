@@ -157,3 +157,96 @@ def test_a_scenario_waits_on_a_zone_for_an_entry_and_for_it_to_empty():
         assert scene["empty"]["t"] == pytest.approx(1.2, abs=0.01)
     finally:
         engine.shutdown()
+
+
+# -- waits that would hang ---------------------------------------------------------------------
+def test_waiting_for_a_dwell_on_a_zone_that_reports_none_is_refused():
+    from roqsim.scenario import ScenarioError
+
+    engine = _engine(
+        _mover("box_1", [-1.0, 0.0, 0.5], [1.0, 0.0, 0.0]),
+        _zone(),
+        {"scenario_fixtures:WaitDwell": {}, "name": "scene"},
+    )
+    try:
+        with pytest.raises(ScenarioError, match="zone gate has dwell 0, which reports no dwelling"):
+            for _ in range(10):
+                engine.step()
+    finally:
+        engine.shutdown()
+
+
+def test_waiting_for_an_entry_times_out():
+    from roqsim.scenario import ScenarioError
+
+    engine = _engine(_zone(), {"scenario_fixtures:WaitEntry": {"timeout": 0.3}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="in zone gate not true after 0.3 s"):
+            for _ in range(1000):
+                engine.step()
+        assert engine.ctx.sim_time == pytest.approx(0.3, abs=0.01)
+    finally:
+        engine.shutdown()
+
+
+# -- the centre of mass a state moves --------------------------------------------------------------
+#: A plate whose `shifted` state puts its centre of mass 0.3 m along x.
+PLATE = """<mujoco model="plate">
+  <custom>
+    <numeric name="look_shifted_inertia" data="0.3 0 0  1 0 0 0  0.01 0.01 0.01"/>
+  </custom>
+  <worldbody>
+    <body name="plate">
+      <inertial pos="0 0 0" mass="1" diaginertia="0.01 0.01 0.01"/>
+      <geom type="box" size="0.4 0.1 0.01" contype="0" conaffinity="0" mass="0"/>
+      <body name="look_shifted"><geom type="box" size="0.05 0.05 0.02" pos="0.3 0 0" contype="0" conaffinity="0" mass="0"/></body>
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+def test_point_com_follows_a_centre_of_mass_a_state_moves(tmp_path):
+    (tmp_path / "plate.xml").write_text(PLATE)
+    plate = {
+        "spawn_model": {
+            "model": str(tmp_path / "plate.xml"),
+            "prefix": "p_",
+            "motion": "static",
+            "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
+        },
+        "name": "plate",
+    }
+    zone = _zone(pose={"position": {"x": 0.3, "y": 0.0, "z": 0.5}}, size=[0.05, 0.1, 0.1])
+    engine = _engine(plate, {"part_state": {}}, zone)
+    try:
+        gate = engine.ctx.blackboard.require("zone:gate")
+        _run(engine, 0.1)
+        assert gate.inside() == []
+        engine.ctx.blackboard.require("part_state").show("plate", "shifted")
+        _run(engine, 0.1)
+        assert gate.inside() == ["plate"]
+    finally:
+        engine.shutdown()
+
+
+# -- the body a zone rides -----------------------------------------------------------------------------
+def test_a_zone_counts_the_entity_whose_body_it_rides_unless_nested_under_it():
+    carrier = _mover("carrier", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0])
+    engine = _engine(
+        carrier, _zone(body="carrier", pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}})
+    )
+    try:
+        _run(engine, 0.1)
+        assert engine.ctx.blackboard.require("zone:gate").inside() == ["carrier"]
+    finally:
+        engine.shutdown()
+    nested = {
+        **_mover("carrier", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        "components": [_zone(body="carrier", pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}})],
+    }
+    engine = _engine(nested)
+    try:
+        _run(engine, 0.1)
+        assert engine.ctx.blackboard.require("zone:carrier.gate").inside() == []
+    finally:
+        engine.shutdown()

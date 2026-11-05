@@ -86,8 +86,10 @@ class ZoneHandle:
     """Published by ``zone_trigger`` under ``zone:<name>``. Latched in ``post_step``; safe to read
     from any thread."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, dwell: float = 0.0):
         self.name = name
+        #: Seconds inside before an entity counts as dwelling; 0 means never.
+        self.dwell = float(dwell)
         self._inside: dict[str, float] = {}
         self._dwelt: list[str] = []
         self._counts = ZoneCounts()
@@ -124,7 +126,7 @@ class ZoneTriggerPlugin(Plugin):
         self.patterns = list(self.config.get("entities") or [])
         self.point = str(self.config.get("point", "com"))
         self.dwell = float(self.config.get("dwell", 0.0) or 0.0)
-        self.handle = ZoneHandle(self.address)
+        self.handle = ZoneHandle(self.address, dwell=self.dwell)
         self._ctx: SimContext | None = None
         self._bid = -1
         self._warned = False

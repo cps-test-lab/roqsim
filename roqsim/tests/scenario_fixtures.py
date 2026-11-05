@@ -193,3 +193,26 @@ class Overtaken(ScenarioPlugin):
         self.walker.send_route([(2.0, 0.0)])  # seq 2 overtakes it
         yield from self.join(route)
         self.event("overtaken", seq=route.result[0])
+
+
+class WaitDwell(ScenarioPlugin):
+    """Scenario: wait for someone to dwell in the gate."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.dwelled(self.gate)
+
+
+class WaitEntry(ScenarioPlugin):
+    """Scenario: wait a while for someone to enter the gate.
+
+    Config::
+
+        timeout: 0.3   # seconds
+    """
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.entered(self.gate, timeout=float(self.config.get("timeout", 0.3)))

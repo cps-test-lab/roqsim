@@ -2708,7 +2708,9 @@ and is placed after the machines it drives::
        name: demo
 
 The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
-``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
+``entered``, ``left``, ``dwelled``, ``place``, ``event`` (:mod:`roqsim.scenario`). ``entered``,
+``left`` and ``dwelled`` wait on a ``zone_trigger``'s handle and take a ``timeout`` as ``until``
+does; ``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``place`` takes a pose as a world file writes one:
 ``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
 ``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
@@ -2760,6 +2762,29 @@ draws the shown states; it does not restore the inertia one names, which the pic
 loads: ``roqsim.presence`` restores an activated entity's whole body tree, hidden states included,
 and tells no plugin, so it would come back showing every state. A state body nested in another state
 body is refused.
+
+Presence in a region: ``zone_trigger``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A light barrier at a belt's end, the space before an automatic door, the die of a press: a box in
+which a scene needs to know who is there. ``zone_trigger`` reports it and decides nothing -- what a
+presence leads to is a scenario's::
+
+   - zone_trigger:
+       pose: {position: {x: -0.9, y: 0.6, z: 1.0}}   # the box's centre, world or `body` frame
+       size: [0.12, 0.2, 0.08]                        # half-extents (m)
+       entities: [package]                            # name patterns that count; default all
+       point: com                                     # com (default) | origin
+       dwell: 1.0                                     # s inside before `dwelled`; 0 never
+     name: belt_end
+
+It emits ``entered``, ``dwelled`` and ``left`` events, keeps a handle under ``zone:<name>``
+(``inside()``, ``entered_at()``, ``dwelling()``, ``occupied``, ``counts``, ``dwell``) and publishes
+``occupied`` (a ``bool``, ``std_msgs/Bool`` on ROS) and ``occupancy``. With ``body:`` the box rides
+on that body; nested under an entity, ``body`` is named after the entity's prefix, and the entity
+it is nested under is never counted -- a zone that only rides another entity's body still counts
+that entity. ``point: com`` reads the root body's centre of mass, which a ``part_state`` state that
+names an inertia moves; ``point: origin`` reads its frame, for a mocap body.
 
 Writing your own
 ----------------
