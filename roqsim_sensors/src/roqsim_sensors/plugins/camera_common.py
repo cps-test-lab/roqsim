@@ -47,7 +47,7 @@ from roqsim import endpoint
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin, PluginError
 from roqsim.render_api import Frame, RenderError
-from roqsim.rendering import RenderService, RenderView
+from roqsim.rendering import RenderService, RenderView, camera_intrinsics
 from roqsim.scene_content import SensorCamera
 from roqsim.types import CameraInfo, Image
 
@@ -168,23 +168,13 @@ def intrinsics_from_model(
     width = int(width) if width else default_width
     height = int(height) if height else default_height
 
-    sw, sh = (float(v) for v in model.cam_sensorsize[cam_id])
-    if fovy is None and sw > 0 and sh > 0:
-        # cam_intrinsic is [focal_x_m, focal_y_m, principal_x_m, principal_y_m]; dividing by the
-        # sensor size gives the fraction of the frame, so scaling by the pixel count converts to
-        # pixels at whatever resolution this plugin renders -- the MJCF's own `resolution` need not
-        # be the one in use. MuJoCo renders the optical axis at (W/2 - ppx, H/2 - ppy) in edge
-        # coordinates from the frame's top-left corner; ROS's (cx, cy) count pixel centres, half a
-        # pixel less (see SpawnSensorPlugin._apply_intrinsics, which writes the inverse).
-        fpx, fpy, ppx, ppy = (float(v) for v in model.cam_intrinsic[cam_id])
-        m_fx, m_fy = fpx / sw * width, fpy / sh * height
-        m_cx, m_cy = width / 2.0 - 0.5 - ppx / sw * width, height / 2.0 - 0.5 - ppy / sh * height
-    else:
-        fovy_deg = float(fovy) if fovy is not None else float(model.cam_fovy[cam_id])
-        f = height / (2.0 * math.tan(math.radians(fovy_deg) / 2.0))
-        m_fx = m_fy = f
-        # A symmetric frustum's axis is the frame's centre: (W - 1) / 2 in pixel-centre coordinates.
-        m_cx, m_cy = (width - 1) / 2.0, (height - 1) / 2.0
+    # What MuJoCo draws at this plugin's resolution, which need not be the MJCF's own. A stated fovy
+    # describes no lens of the model's, so it is the symmetric pinhole a camera of -1 gives.
+    m_fx, m_fy, m_cx, m_cy = (
+        camera_intrinsics(model, cam_id, width, height, float(model.cam_fovy[cam_id]))
+        if fovy is None
+        else camera_intrinsics(model, -1, width, height, float(fovy))
+    )
 
     return Intrinsics(
         width=width,

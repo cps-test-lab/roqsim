@@ -1226,3 +1226,73 @@ def test_help_states_the_frame(capsys):
         export_gltf.main(["--help"])
     text = " ".join(capsys.readouterr().out.split())
     assert "a point in the frame of node `world` is a point in roqsim world coordinates" in text
+
+
+# -- lights ----------------------------------------------------------------------------------------
+
+_LIGHTS = """
+<mujoco>
+  <visual><headlight active="0" diffuse="0.2 0.2 0.2"/></visual>
+  <worldbody>
+    <light name="sun" directional="true" dir="0 0 -1" diffuse="1 1 1"/>
+    <light name="lamp" type="spot" pos="1 0 2" dir="0 1 -1" cutoff="30" castshadow="false"/>
+    <light name="follow" mode="trackcom" pos="0 0 3"/>
+    <body name="robot" pos="2 0 0.1">
+      <freejoint/>
+      <geom type="box" size="0.1 0.1 0.1"/>
+      <light name="headlamp" type="point" pos="0.1 0 0" diffuse="0.5 0.5 0.5" range="4"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _quat_rotate(xyzw, v):
+    x, y, z, w = xyzw
+    q = np.array([w, x, y, z])
+    out = np.zeros(3)
+    mujoco.mju_rotVecQuat(out, np.asarray(v, float), q)
+    return out
+
+
+def test_a_fixed_light_is_a_punctual_light_on_its_body_shining_along_its_direction(tmp_path):
+    model, data = _compile(_LIGHTS)
+    glb = _export(model, data, tmp_path)
+    assert "KHR_lights_punctual" in glb.json["extensionsUsed"]
+    assert "KHR_lights_punctual" not in glb.json.get("extensionsRequired", [])
+    lights = glb.json["extensions"]["KHR_lights_punctual"]["lights"]
+    nodes = {
+        glb.nodes[n]["extras"]["light"]: n
+        for n in range(len(glb.nodes))
+        if "light" in glb.nodes[n].get("extras", {})
+    }
+    # A light that tracks a body has no mount pose and is left out, as a tracking camera is.
+    assert sorted(nodes) == ["headlamp", "lamp", "sun"]
+    bodies = glb.body_nodes()
+    parent = {c: p for p, node in enumerate(glb.nodes) for c in node.get("children", [])}
+    robot = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    assert parent[nodes["headlamp"]] == bodies[robot]
+    assert parent[nodes["lamp"]] == bodies[0]
+    by_name = {
+        glb.nodes[n]["name"]: lights[glb.nodes[n]["extensions"]["KHR_lights_punctual"]["light"]]
+        for n in nodes.values()
+    }
+    assert by_name["sun"]["type"] == "directional"
+    assert by_name["headlamp"]["type"] == "point" and by_name["headlamp"]["range"] == 4.0
+    lamp = by_name["lamp"]
+    assert lamp["type"] == "spot"
+    assert lamp["spot"]["outerConeAngle"] == pytest.approx(np.radians(30))
+    node = glb.nodes[nodes["lamp"]]
+    np.testing.assert_allclose(node["translation"], [1, 0, 2])
+    np.testing.assert_allclose(
+        _quat_rotate(node["rotation"], [0, 0, -1]), np.array([0, 1, -1]) / np.sqrt(2), atol=1e-9
+    )
+    assert node["extras"]["castshadow"] is False
+    assert glb.json["scenes"][0]["extras"]["headlight"]["active"] is False
+
+
+def test_a_light_shining_straight_up_is_turned_half_round():
+    from roqsim.export_gltf import rotation_onto
+
+    np.testing.assert_allclose(_quat_rotate(rotation_onto([0, 0, 1]), [0, 0, -1]), [0, 0, 1])
+    np.testing.assert_allclose(_quat_rotate(rotation_onto([0, 0, -1]), [0, 0, -1]), [0, 0, -1])
