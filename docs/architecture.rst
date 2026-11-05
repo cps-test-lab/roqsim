@@ -691,8 +691,9 @@ no model and writes no actuator. Its helper: ``yield from self.run(handle, progr
 a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
 ``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them;
 ``self.route(walker, poses)`` sends a walker or a navigator and waits on its route's number;
-``until``, ``wait``, ``place`` and ``event`` do what they say. Tasks advance in the order they were
-created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
+``until``, ``wait`` and ``event`` do what they say, and ``place`` puts an entity at a pose as a
+world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
+in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
 the machines it drives; a start it makes is applied at the next step whatever the order.
 
 When ``program`` returns the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,

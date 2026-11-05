@@ -19,7 +19,7 @@ A scenario is a :class:`ScenarioPlugin` whose :meth:`~ScenarioPlugin.program` is
         NEEDS = {"press": "machine:press_1"}     # resolved at reset, refused when missing
 
         def program(self):
-            yield from self.place("strip_1", {"position": {"x": 0.0, "z": 0.8}})
+            yield from self.place("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
             yield from self.run(self.press, "stroke", show="hole", hide="plain")
             self.event("punched", part="strip_1")
 
@@ -122,6 +122,14 @@ class ScenarioPlugin(Plugin):
                         f"scenario {self.address}: 'needs' names {unknown}, which it does not use "
                         f"(it needs {sorted(self.NEEDS) or 'nothing'})"
                     )
+        # A handle is set as an attribute of that name, so a name the scenario already has would
+        # replace it -- its context, its config, a method of the helper.
+        taken = sorted(n for n in self.NEEDS if hasattr(type(self), n) or n in vars(self))
+        if taken:
+            errors.append(
+                f"scenario {self.address}: NEEDS names {taken}, which the scenario already has; "
+                "name the handle otherwise"
+            )
         return errors
 
     def configure(self, ctx: SimContext) -> None:
@@ -153,7 +161,10 @@ class ScenarioPlugin(Plugin):
             except ScenarioError as exc:
                 raise ScenarioError(f"scenario {self.address}: {exc}") from exc
             except Exception as exc:
-                raise RuntimeError(f"scenario {self.address}: {type(exc).__name__}: {exc}") from exc
+                # The program's own exception, of its own type, with the scenario named beside it.
+                if hasattr(exc, "add_note"):  # Python 3.11+
+                    exc.add_note(f"raised in scenario {self.address}'s program")
+                raise
         self._tasks = [t for t in self._tasks if not t.done]
         if self._main.done and not self._done:
             self._done = True
@@ -250,9 +261,7 @@ class ScenarioPlugin(Plugin):
         start = self._ctx.sim_time
         while not cond():
             if timeout is not None and self._ctx.sim_time - start > timeout:
-                raise ScenarioError(
-                    f"scenario {self.address}: {what or 'the condition'} not true after {timeout:g} s"
-                )
+                raise ScenarioError(f"{what or 'the condition'} not true after {timeout:g} s")
             yield
 
     def wait(self, seconds: float):
@@ -262,13 +271,23 @@ class ScenarioPlugin(Plugin):
             yield
 
     def place(self, entity: str, pose: dict):
-        """Put ``entity`` at ``pose`` (a world pose as a world document writes one), at rest, as
-        ``set_entity_state`` does; refused as there. One step."""
-        from .entity_control import set_state
-        from .pose import config_pose
+        """Put ``entity`` at ``pose``, at rest, as ``set_entity_state`` does; one step.
 
-        pos, quat = config_pose({"pose": pose})
-        set_state(self._ctx, entity, pos, quat)
+        ``pose`` is a world pose as a world file writes one (:func:`roqsim.pose.parse_pose`):
+        ``position`` with ``x`` and ``y`` required and ``z`` optional, ``orientation`` as a
+        quaternion or ``roll``/``pitch``/``yaw`` (identity when absent), bare or under a
+        ``PoseStamped``'s ``header``/``pose`` in the world frame. A missing ``z`` is the resting
+        height the world's ``spawn_model`` gives a pose without one: 0.0, the floor, where a model
+        authored with its origin on the floor stands. Anything else -- not a mapping, a missing
+        ``x`` or ``y``, an unknown key, a frame other than the world's -- raises
+        :class:`roqsim.pose.PoseError` naming what is wrong, and so does an entity that cannot be
+        placed (:mod:`roqsim.entity_control`)."""
+        from .entity_control import set_state
+        from .pose import parse_pose
+
+        position, quat = parse_pose(pose)
+        x, y, z = position
+        set_state(self._ctx, entity, [x, y, 0.0 if z is None else z], quat)
         yield
 
     def event(self, name: str, **fields) -> dict:
