@@ -95,6 +95,10 @@ class Entity:
     #: -- nothing can add a body to one at runtime -- but are excluded from raycasts, from
     #: rendering, from contacts, and from what the control plane lists. See :mod:`roqsim.presence`.
     present: bool = True
+    #: Whether the control plane deals with it: lists it, gives it a pose endpoint, spawns, deletes
+    #: and places it. False for an entity a plugin keeps as part of another and changes itself (a
+    #: ``part_state`` state); it stays registered, so a recording still carries its presence.
+    listed: bool = True
 
 
 class EntityRegistry:
@@ -127,17 +131,22 @@ class EntityRegistry:
     def get(self, name: str) -> Entity | None:
         return self._entities.get(name)
 
-    def names(self, present_only: bool = False) -> list[str]:
-        """Entity names; with *present_only*, just the ones anything can currently perceive.
+    def names(self, present_only: bool = False, listed_only: bool = False) -> list[str]:
+        """Entity names; with *present_only*, just the ones anything can currently perceive; with
+        *listed_only*, just the ones the control plane deals with (:attr:`Entity.listed`).
 
         The control plane lists the present ones, because an absent entity is one this world
         compiled but the trial has not brought in yet -- reporting it would make ``GetEntities``
         disagree with every sensor.
         """
-        return [n for n, e in self._entities.items() if e.present or not present_only]
+        return [e.name for e in self.all(present_only=present_only, listed_only=listed_only)]
 
-    def all(self, present_only: bool = False) -> list[Entity]:
-        return [e for e in self._entities.values() if e.present or not present_only]
+    def all(self, present_only: bool = False, listed_only: bool = False) -> list[Entity]:
+        return [
+            e
+            for e in self._entities.values()
+            if (e.present or not present_only) and (e.listed or not listed_only)
+        ]
 
 
 @dataclass

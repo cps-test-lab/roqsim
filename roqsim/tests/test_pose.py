@@ -162,3 +162,25 @@ def test_a_heading_is_one_convention_whichever_way_it_is_written(yaw):
     assert yaw_of(quat) == pytest.approx(yaw)
     assert quat == pytest.approx(rpy_to_quat(0.0, 0.0, yaw))
     assert math.sqrt(sum(c * c for c in quat)) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("pose", "said"),
+    [
+        ({"position": {"x": float("nan"), "y": 0.0}}, "'pose.position.x' must be a finite number"),
+        ({"position": {"x": 0.0, "y": float("inf")}}, "'pose.position.y' must be a finite number"),
+        ({"position": {"x": 0.0, "y": 0.0, "z": float("-inf")}}, "'pose.position.z'"),
+        (
+            {"position": {"x": 0.0, "y": 0.0}, "orientation": {"w": float("nan")}},
+            "'pose.orientation.w' must be a finite number",
+        ),
+        ({"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": float("inf")}}, "yaw"),
+    ],
+)
+def test_a_number_that_is_not_finite_is_no_pose(pose, said):
+    """A NaN or an infinity is a float to Python and no place to MuJoCo, which resets the run's
+    state on a NaN position -- so a world file or a scenario stating one is refused by name."""
+    with pytest.raises(PoseError, match=said):
+        parse_pose(pose)
+    with pytest.raises(PoseError, match=said):
+        parse_pose(pose["pose"] if "pose" in pose else pose, relative=True)

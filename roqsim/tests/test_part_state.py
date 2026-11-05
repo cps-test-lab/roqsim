@@ -373,3 +373,207 @@ def test_showing_a_second_state_that_names_an_inertia_is_refused_before_anything
         assert len(engine.ctx.events.all()) == events
     finally:
         engine.shutdown()
+
+
+# -- a state's inertia, as the physics sees it -----------------------------------------------------
+#: A 1 kg arm on a hinge about y at its origin, its mass at the hinge -- MuJoCo compiles that as
+#: sameframe -- whose `bent` state puts the mass 0.1 m out along x, where gravity turns it.
+HINGED = """<mujoco model="arm">
+  <custom>
+    <numeric name="look_bent_inertia" data="0.1 0 0  1 0 0 0  0.001 0.001 0.001"/>
+  </custom>
+  <worldbody>
+    <body name="arm" pos="0 0 1">
+      <joint name="hinge" type="hinge" axis="0 1 0"/>
+      <inertial pos="0 0 0" mass="1" diaginertia="0.001 0.001 0.001"/>
+      <body name="look_flat"><geom type="box" size="0.1 0.02 0.001" contype="0" conaffinity="0" mass="0"/></body>
+      <body name="look_bent"><geom type="box" size="0.05 0.02 0.001" contype="0" conaffinity="0" mass="0"/></body>
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+def _hinged(tmp_path, gravity=True):
+    (tmp_path / "arm.xml").write_text(HINGED)
+    world = {
+        "sim": {} if gravity else {"gravity": [0, 0, 0]},
+        "components": [
+            {
+                "spawn_model": {
+                    "model": str(tmp_path / "arm.xml"),
+                    "prefix": "a_",
+                    "motion": "static",
+                    "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}},
+                },
+                "name": "arm",
+            },
+            {"part_state": {"shown": {"arm": ["flat"]}}},
+        ],
+    }
+    return _engine(world)
+
+
+def _hinge(engine):
+    m = engine.ctx.model
+    return float(engine.ctx.data.qpos[m.jnt_qposadr[m.joint("a_hinge").id]])
+
+
+def test_a_state_that_names_an_inertia_moves_the_centre_of_mass_the_physics_uses(tmp_path):
+    engine = _hinged(tmp_path)
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        root = m.body("a_arm").id
+        assert m.body_sameframe[root] != 0, "compiled with its mass at its frame"
+        for _ in range(200):
+            engine.step()
+        assert _hinge(engine) == pytest.approx(0.0, abs=1e-6), (
+            "no torque with the mass at the hinge"
+        )
+        looks = engine.ctx.blackboard.get("part_state")
+        looks.hide("arm", "flat")
+        looks.show("arm", "bent")
+        mujoco.mj_forward(m, d)
+        assert d.xipos[root] - d.xpos[root] == pytest.approx([0.1, 0.0, 0.0], abs=1e-9)
+        for _ in range(200):
+            engine.step()
+        assert abs(_hinge(engine)) > 0.1, "gravity turns the arm about the hinge"
+        looks.hide("arm", "bent")
+        mujoco.mj_forward(m, d)
+        assert d.xipos[root] - d.xpos[root] == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)
+    finally:
+        engine.shutdown()
+
+
+def test_a_states_inertia_turns_the_principal_axes_too(tmp_path):
+    # Its mass off the frame but its axes the body's: MuJoCo compiles that as BODYROT, and would
+    # ignore a state's iquat.
+    rotated = HINGED.replace('<inertial pos="0 0 0"', '<inertial pos="0.01 0 0"').replace(
+        'data="0.1 0 0  1 0 0 0  0.001 0.001 0.001"',
+        'data="0.1 0 0  0.70710678 0 0 0.70710678  0.001 0.002 0.003"',
+    )
+    (tmp_path / "arm.xml").write_text(rotated)
+    engine = _engine(
+        {
+            "sim": {"gravity": [0, 0, 0]},
+            "components": [
+                {
+                    "spawn_model": {
+                        "model": str(tmp_path / "arm.xml"),
+                        "prefix": "a_",
+                        "motion": "static",
+                        "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}},
+                    },
+                    "name": "arm",
+                },
+                {"part_state": {}},
+            ],
+        }
+    )
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        root = m.body("a_arm").id
+        engine.ctx.blackboard.get("part_state").show("arm", "bent")
+        mujoco.mj_forward(m, d)
+        # 90 degrees about z: the inertial x axis lies along the world's y.
+        assert d.ximat[root].reshape(3, 3)[:, 0] == pytest.approx([0.0, 1.0, 0.0], abs=1e-6)
+    finally:
+        engine.shutdown()
+
+
+# -- what part_state refuses -----------------------------------------------------------------------
+def test_an_entity_with_states_that_starts_absent_is_refused_when_the_world_loads(part_file):
+    world = _world(part_file)
+    world["components"][0]["spawn_model"]["present"] = False
+    with pytest.raises(PartStateError, match="'c1' has states and starts absent"):
+        _engine(world)
+
+
+def test_set_is_refused_before_anything_changes(tmp_path):
+    two = STRIP.replace(
+        '<numeric name="look_bent_inertia"',
+        '<numeric name="look_flat_inertia" data="0 0 0  1 0 0 0  0.0001 0.0014 0.0015"/>\n'
+        '    <numeric name="look_bent_inertia"',
+    ).replace(
+        '<body name="look_bent">',
+        '<body name="look_plain"><geom type="box" size="0.15 0.02 0.001" mass="0"/></body>\n'
+        '      <body name="look_bent">',
+    )
+    (tmp_path / "strip.xml").write_text(two)
+    world = {
+        "sim": {"gravity": [0, 0, 0]},
+        "components": [
+            {
+                "spawn_model": {
+                    "model": str(tmp_path / "strip.xml"),
+                    "prefix": "s1_",
+                    "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
+                },
+                "name": "s1",
+            },
+            {
+                "part_state": {
+                    "shown": {"s1": ["flat", "plain"]},
+                    "exclusive": {"s1": [["plain", "bent"]]},
+                }
+            },
+        ],
+    }
+    engine = _engine(world)
+    try:
+        looks = engine.ctx.blackboard.get("part_state")
+        with pytest.raises(PartStateError, match="names an inertia"):
+            looks.set("s1", "bent")
+        assert looks.shown("s1") == ["flat", "plain"], "nothing changed"
+    finally:
+        engine.shutdown()
+
+
+def test_an_exclusive_group_has_at_most_one_state_shown(part_file):
+    world = _world(part_file, present={"c1": ["blank"]})
+    world["components"][1]["part_state"]["exclusive"] = {"c1": [["blank", "folded"]]}
+    engine = _engine(world)
+    try:
+        looks = engine.ctx.blackboard.get("part_state")
+        with pytest.raises(PartStateError, match=r"shows \['blank'\], of the exclusive group"):
+            looks.show("c1", "folded")
+        assert looks.shown("c1") == ["blank"]
+        assert looks.show("c1", "blank") is False, "showing the one shown is no conflict"
+    finally:
+        engine.shutdown()
+    world = _world(part_file, present={"c1": ["blank", "folded"]})
+    world["components"][1]["part_state"]["exclusive"] = {"c1": [["blank", "folded"]]}
+    with pytest.raises(PartStateError, match=r"'shown' shows \['blank', 'folded'\]"):
+        _engine(world)
+
+
+def test_a_state_nested_inside_another_is_refused(tmp_path):
+    nested = PART.replace(
+        '<body name="look_label">',
+        '<body name="look_label">\n        <body name="look_stamp"><geom type="box" size="0.01 0.01 0.001" mass="0"/></body>',
+    )
+    path = tmp_path / "nested.xml"
+    path.write_text(nested)
+    with pytest.raises(
+        PartStateError, match="'c1_look_stamp' of 'c1' is inside the state body 'c1_look_label'"
+    ):
+        _engine(_world(path))
+
+
+# -- a state is not an entity of the control plane -------------------------------------------------
+def test_the_control_plane_neither_lists_nor_changes_a_state(part_file):
+    from roqsim.entity_control import EntityRefused, set_presence, set_state
+
+    engine = _engine(_world(part_file))
+    try:
+        entities = engine.ctx.entities
+        assert "c1.look_label" in entities.names(), "registered, so a recording carries it"
+        assert entities.names(listed_only=True) == ["c1"]
+        assert engine.ctx.interface.find("sim", "entities/c1.look_label/pose") is None
+        assert engine.ctx.interface.find("sim", "entities/c1/pose") is not None
+        with pytest.raises(EntityRefused, match="changed only by the plugin that keeps it"):
+            set_presence(engine.ctx, "c1.look_label", True)
+        with pytest.raises(EntityRefused, match="changed only by the plugin"):
+            set_state(engine.ctx, "c1.look_label", [0, 0, 1], [1, 0, 0, 0])
+        assert engine.ctx.blackboard.get("part_state").shown("c1") == []
+    finally:
+        engine.shutdown()

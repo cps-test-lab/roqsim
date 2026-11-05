@@ -268,3 +268,49 @@ class Mover(Plugin):
         ctx.data.mocap_pos[self._mocap] = [
             s + vi * t for s, vi in zip(self._start(), v, strict=True)
         ]
+
+
+#: A 5 kg carriage on a vertical slide, held by a position servo of kp 5000: under gravity it
+#: stands load/kp = 9.81 mm below its target.
+LIFT = """<mujoco model="lift">
+  <worldbody>
+    <body name="lift" pos="0 0 1">
+      <body name="carriage">
+        <joint name="z_joint" type="slide" axis="0 0 1" range="-0.5 0.5"/>
+        <geom type="box" size="0.05 0.05 0.05" mass="5" contype="0" conaffinity="0"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="z" joint="z_joint" kp="5000" kv="500" ctrlrange="-0.5 0.5"/>
+  </actuator>
+</mujoco>"""
+
+
+class Lift(MachinePlugin):
+    """Machine: a loaded vertical axis, for holding under load."""
+
+    ACTUATORS = ("z",)
+
+    def build(self, spec, ctx) -> None:
+        spec.attach(mujoco.MjSpec.from_string(LIFT), prefix="", frame=spec.worldbody.add_frame())
+
+    def configure(self, ctx) -> None:
+        self.register_entity(ctx, body="lift")
+        super().configure(ctx)
+
+    @program
+    def dwell(self, seconds: float):
+        """Stand for a while."""
+        yield from self.wait(seconds)
+
+    @program
+    def go(self, z: float):
+        """Move to z at once."""
+        yield from self.move("z", z)
+
+
+class HomeClash(Press):
+    """Machine: a handle named like the machine's own ``home``."""
+
+    NEEDS = {"home": "machine:feeder"}

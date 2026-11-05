@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from roqsim.plugin import Plugin
-from roqsim.scenario import ScenarioPlugin
+from roqsim.scenario import ScenarioError, ScenarioPlugin
 
 
 class TwoStrokes(ScenarioPlugin):
@@ -153,3 +153,43 @@ class Clashing(ScenarioPlugin):
 
     def program(self):
         yield
+
+
+class CatchAtJoin(ScenarioPlugin):
+    """Scenario: two starts beside each other, one of which jams; the join catches its error."""
+
+    NEEDS = {"press": "machine:press", "spin": "machine:spin"}
+
+    def program(self):
+        jam = self.start(self.press, "jam")
+        spin = self.start(self.spin, "run", speed=0.4)
+        try:
+            yield from self.join(jam, spin)
+        except ScenarioError as exc:
+            self.event("caught", error=str(exc))
+        yield from self.wait(0.05)
+        self.event("went_on")
+
+
+class Unjoined(ScenarioPlugin):
+    """Scenario: a start that jams, never joined."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        self.start(self.press, "jam")
+        yield from self.wait(0.5)
+
+
+class Overtaken(ScenarioPlugin):
+    """Scenario: send a route that another overtakes, without checking."""
+
+    NEEDS = {"walker": "walker:worker"}
+
+    def program(self):
+        route = self.spawn(self.route(self.walker, [(1.0, 0.0)], check=False), name="route")
+        yield  # the route task sends its route (seq 1) in the next step
+        yield
+        self.walker.send_route([(2.0, 0.0)])  # seq 2 overtakes it
+        yield from self.join(route)
+        self.event("overtaken", seq=route.result[0])

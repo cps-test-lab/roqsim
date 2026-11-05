@@ -2656,7 +2656,8 @@ What a program has:
   naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
-  each actuator's target becomes where its joint stands, and each setpoint keeps its value;
+  each actuator is held where its joint stands (its servo's standing offset under load kept), and
+  each setpoint keeps its value;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
@@ -2666,7 +2667,9 @@ machine requires; it is resolved at every reset and refused naming the key when 
 ``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
 
 An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
-servo or a geared servo is refused at configure, naming the machine and the actuator.
+servo, an ``<intvelocity>`` or a geared servo is refused at configure, naming the machine and the
+actuator. A program's arguments are checked against its annotations, whether they are strings
+(``from __future__ import annotations``) or types, unions with ``None`` included.
 
 A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
 nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
@@ -2708,8 +2711,12 @@ The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``unt
 ``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
 ``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
-``roqsim.pose.PoseError`` naming what is wrong. A program's own exception stops the run with its
-own type, the scenario named in a note. Every scenario takes ``needs:`` (rename a handle) and
+``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
+reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
+it as around ``run``; one nobody joins stops the run when the program returns. ``route(check=False)``,
+like ``run(check=False)``, returns the status where another route overtook its own. A program's own
+exception stops the run with its own type, the scenario named in a note, and the scene never
+reports done. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when its program returned.
 
 An entity's states: ``part_state``
@@ -2738,9 +2745,21 @@ A state's bodies are **massless**: one with mass is refused, naming the body, be
 must change how the part looks and collides, never what it weighs. A state that moves the centre of
 mass -- a strip bent into an L -- names the root body's inertia while it is shown, as a custom
 numeric ``look_<name>_inertia`` of ten values (``pos``, ``quat``, ``diaginertia``); two shown states
-that both name one are refused before anything changes. A pattern that matches no entity with states,
-an unknown entity or an unknown state is refused by name. The plugin decides nothing: when a part
+that both name one are refused before anything changes, by ``show`` and by ``set`` alike. A pattern
+that matches no entity with states, an unknown entity or an unknown state is refused by name. Of an
+exclusive group at most one state is shown: ``show`` of a member while another is shown is refused
+(``set`` swaps them), and so is a ``shown:`` naming two. The plugin decides nothing: when a part
 changes is the machine's or the scenario's.
+
+A state is registered as an entity (kind ``look``), so a recording carries and replays its presence,
+but it is not *listed*: ``GetEntities``, ``GetSpawnables`` and the per-entity pose endpoints leave it
+out, and spawning, deleting or placing it is refused -- only ``part_state`` changes a state. A replay
+draws the shown states; it does not restore the inertia one names, which the picture does not need.
+
+**Limits.** An entity with states that starts absent (``present: false``) is refused when the world
+loads: ``roqsim.presence`` restores an activated entity's whole body tree, hidden states included,
+and tells no plugin, so it would come back showing every state. A state body nested in another state
+body is refused.
 
 Writing your own
 ----------------

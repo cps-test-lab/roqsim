@@ -265,3 +265,69 @@ def test_a_handle_named_like_a_member_of_the_scenario_is_refused():
         Exception, match=r"NEEDS names \['config'\], which the scenario already has"
     ):
         _engine(PRESS, {"scenario_fixtures:Clashing": {}, "name": "scene"})
+
+
+def test_place_refuses_a_position_that_is_not_finite(tmp_path):
+    from roqsim.pose import PoseError
+
+    engine = _placing(tmp_path, {"position": {"x": float("nan"), "y": 0.0}})
+    try:
+        with pytest.raises(PoseError, match="must be a finite number"):
+            engine.step()
+        pos, _quat = _block(engine)
+        assert pos == pytest.approx([2.0, 2.0, 0.5], abs=1e-6), "not moved"
+    finally:
+        engine.shutdown()
+
+
+# -- a start's error reaches whoever joins it ------------------------------------------------------
+def test_a_start_tasks_error_is_raised_in_the_join_where_a_try_catches_it():
+    engine = _engine(
+        PRESS,
+        {"machine_fixtures:Spinner": {"ramp": 0.5}, "name": "spin"},
+        {"scenario_fixtures:CatchAtJoin": {}, "name": "scene"},
+    )
+    try:
+        _until_done(engine)
+        scene = {e["event"]: e for e in _events(engine, "scene")}
+        assert scene["caught"]["error"] == "press.jam (seq 1): jammed"
+        assert "went_on" in scene and "scenario_end" in scene
+    finally:
+        engine.shutdown()
+
+
+def test_a_start_tasks_error_nobody_joins_stops_the_run_when_the_program_returns():
+    engine = _engine(PRESS, {"scenario_fixtures:Unjoined": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="scenario scene: press.jam .seq 1.: jammed"):
+            for _ in range(1000):
+                engine.step()
+        assert engine.ctx.sim_time == pytest.approx(0.5, abs=0.01), "when the program returned"
+    finally:
+        engine.shutdown()
+
+
+def test_a_route_another_overtook_returns_its_status_when_not_checked():
+    engine = _engine(
+        {"scenario_fixtures:FakeWalker": {"route_s": 0.5}, "name": "worker"},
+        {"scenario_fixtures:Overtaken": {}, "name": "scene"},
+    )
+    try:
+        _until_done(engine)
+        assert _events(engine, "scene")[0]["seq"] == 2
+    finally:
+        engine.shutdown()
+
+
+def test_after_a_program_raised_the_scene_never_reports_done():
+    engine = _engine({"scenario_fixtures:Broken": {}, "name": "scene"})
+    try:
+        with pytest.raises(KeyError):
+            for _ in range(5):
+                engine.step()
+        for _ in range(5):
+            engine.step()
+        assert not engine.ctx.interface.find("scene", "done").read()
+        assert "scenario_end" not in [e["event"] for e in _events(engine, "scene")]
+    finally:
+        engine.shutdown()

@@ -420,6 +420,13 @@ def _spawnable(uri, description):
     return s
 
 
+def _listed(entities, name):
+    """The entity called *name* if the control plane deals with it (``Entity.listed``), else None:
+    a state a plugin keeps as part of another entity is not one the services see."""
+    entity = entities.get(name)
+    return entity if entity is not None and getattr(entity, "listed", True) else None
+
+
 def _spawnables(entities):
     """The entities ``SpawnEntity`` can select right now: the declared ones that are ABSENT.
 
@@ -657,7 +664,7 @@ class SimInterfacesPlugin(Plugin):
             return self._refuse_filter(resp, f"'bounds' define no sphere: {exc}")
         # Present ones only: an absent entity is compiled into the model but nothing can see
         # or touch it, so listing it would make this disagree with every sensor.
-        names = self._ctx.entities.names(present_only=True)
+        names = self._ctx.entities.names(present_only=True, listed_only=True)
         if regex is not None:
             names = [name for name in names if regex.search(name)]
         if sphere is not None:
@@ -692,7 +699,7 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _get_spawnables(self, req, resp):
-        resp.spawnables = _spawnables(self._ctx.entities.all())
+        resp.spawnables = _spawnables(self._ctx.entities.all(listed_only=True))
         # The service asks for unrecognised sources to be named without failing the call; this
         # simulator searches none, because everything spawnable was compiled in.
         sources = list(getattr(req, "sources", []))
@@ -721,7 +728,7 @@ class SimInterfacesPlugin(Plugin):
         The pose is stated in the world frame or in a present entity's (:func:`_reference_frame`);
         an entity's frame is read where the pose is written, in the same physics transaction.
         """
-        name, unsupported = _spawn_target(req, self._ctx.entities.names())
+        name, unsupported = _spawn_target(req, self._ctx.entities.names(listed_only=True))
         unsupported = unsupported or _unsupported_spawn_request(req)
         if unsupported:
             code, message = unsupported
@@ -755,7 +762,7 @@ class SimInterfacesPlugin(Plugin):
         return self._set_presence(req.entity, False, resp, verb="delete")
 
     def _set_presence(self, name, present, resp, *, verb, pose=None, frame=None):
-        entity = self._ctx.entities.get(name)
+        entity = _listed(self._ctx.entities, name)
         if entity is None:
             resp.result = Result(
                 result=Result.RESULT_NOT_FOUND,
@@ -843,7 +850,7 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _get_entity_state(self, req, resp):
-        entity = self._ctx.entities.get(req.entity)
+        entity = _listed(self._ctx.entities, req.entity)
         if entity is None or entity.body is None:
             resp.result = Result(
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
@@ -882,7 +889,7 @@ class SimInterfacesPlugin(Plugin):
         ``EntityState`` carries only the first, so the motion stays measured against the world --
         what ``GetEntityState`` reports -- and the header only chooses the axes it is written in.
         """
-        entity = self._ctx.entities.get(req.entity)
+        entity = _listed(self._ctx.entities, req.entity)
         if entity is None:
             resp.result = Result(
                 result=Result.RESULT_NOT_FOUND, error_message=f"no entity {req.entity!r}"
