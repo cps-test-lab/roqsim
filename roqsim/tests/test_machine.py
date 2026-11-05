@@ -467,6 +467,10 @@ def _axis(**config):
             '<position name="x" joint="x_joint" kp="2000" kv="100" gear="2" ctrlrange="-1 1"/>',
             "its gear is 2, not 1",
         ),
+        (
+            '<intvelocity name="x" joint="x_joint" kp="2000" actrange="-1 1" ctrlrange="-1 1"/>',
+            "its dynamics make its control no position",
+        ),
     ],
 )
 def test_an_actuator_that_is_no_plain_position_servo_is_refused_naming_the_machine(actuator, said):
@@ -592,5 +596,133 @@ def test_an_optional_argument_takes_none():
             axis.start("nudge", x=0.1, speed="fast")
         with pytest.raises(MachineError, match="x is float, not None"):
             axis.start("nudge", x=None)
+    finally:
+        engine.shutdown()
+
+
+# -- starts and cancels from any thread, in order ------------------------------------------------
+def test_a_status_never_goes_back_to_an_older_start():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        first = press.start("dwell", seconds=1.0)
+        engine.step()
+        press.cancel()
+        second = press.start("dwell", seconds=1.0)
+        press.cancel()
+        assert press.status() == MachineStatus(second, "dwell", True, "cancelled")
+        seen = []
+        for _ in range(5):
+            engine.step()
+            seen.append(press.status().seq)
+        assert seen == [second] * 5, "the cancel of the first start applied after the second's"
+        ends = [(e["seq"], e["error"]) for e in _events(engine) if e["event"] == "program_end"]
+        assert ends == [(first, "cancelled")]
+    finally:
+        engine.shutdown()
+
+
+def test_a_start_from_another_thread_during_a_cancel_waits_for_the_cancel_to_be_posted():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        first = press.start("dwell", seconds=1.0)
+        engine.step()
+        post = engine.ctx.post
+        other: list = []
+        racer: list = []
+
+        def post_once_raced(command):
+            # The other thread's start is let loose while the cancel is being posted.
+            if not racer:
+                thread = threading.Thread(
+                    target=lambda: other.append(press.start("dwell", seconds=0.1))
+                )
+                racer.append(thread)
+                thread.start()
+                thread.join(0.3)
+            post(command)
+
+        engine.ctx.post = post_once_raced
+        assert press.cancel() == first
+        engine.ctx.post = post
+        racer[0].join()
+        second = other[0]
+        engine.step()
+        events = [(e["event"], e["seq"]) for e in _events(engine)][-2:]
+        assert events == [("program_end", first), ("program_start", second)]
+        assert press.status() == MachineStatus(second, "dwell", False, "")
+    finally:
+        engine.shutdown()
+
+
+def test_busy_is_true_while_a_start_is_being_applied():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        plugin = press._machine
+        press.start("dwell", seconds=1.0)
+        bind = plugin.bind
+        read: list = []
+        readers: list = []
+
+        def bind_and_look(name, args):
+            # Another thread asks `busy` while the start is being applied.
+            thread = threading.Thread(target=lambda: read.append(press.busy))
+            readers.append(thread)
+            thread.start()
+            thread.join(0.3)
+            return bind(name, args)
+
+        plugin.bind = bind_and_look
+        engine.step()
+        plugin.bind = bind
+        readers[0].join()
+        assert read == [True]
+    finally:
+        engine.shutdown()
+
+
+# -- annotations, needs, and holding under load ----------------------------------------------------
+def test_a_real_union_annotation_takes_none_and_refuses_what_fits_no_part():
+    engine = _engine(
+        [{"machine_fixtures_runtime_annotations:TypedPress": {"prefix": "p1_"}, "name": "press"}],
+        gravity=False,
+    )
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        assert _run_until_done(engine, press, press.start("nudge", depth=None)).error == ""
+        assert _run_until_done(engine, press, press.start("nudge", depth=0.1)).error == ""
+        with pytest.raises(MachineError, match="depth is float . None, not 'abc'"):
+            press.start("nudge", depth="abc")
+    finally:
+        engine.shutdown()
+
+
+def test_a_handle_named_like_a_member_of_the_machine_is_refused():
+    with pytest.raises(Exception, match=r"NEEDS names \['home'\], which the machine already has"):
+        _engine([{"machine_fixtures:HomeClash": {"prefix": "p1_"}, "name": "press"}], gravity=False)
+
+
+def test_a_loaded_joint_does_not_sink_at_every_hold():
+    engine = _engine([{"machine_fixtures:Lift": {}, "name": "lift"}])
+    try:
+        lift = engine.ctx.blackboard.require("machine:lift")
+        for _ in range(1000):
+            engine.step()
+        standing = _joint(engine, "z_joint")
+        assert standing == pytest.approx(-9.81 / 1000 * 5 / 5, abs=0.001), "load/kp below home"
+        for _ in range(5):
+            lift.start("dwell", seconds=10.0)
+            engine.step()
+            lift.cancel()
+            for _ in range(300):
+                engine.step()
+        assert _joint(engine, "z_joint") == pytest.approx(standing, abs=0.0005), "five holds"
+        status = _run_until_done(engine, lift, lift.start("go", z=5.0))
+        assert "outside its range" in status.error
+        for _ in range(300):
+            engine.step()
+        assert _joint(engine, "z_joint") == pytest.approx(standing, abs=0.0005), "nothing moved"
     finally:
         engine.shutdown()

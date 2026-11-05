@@ -638,7 +638,8 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
 
 -  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
    machine that is busy, raises naming the machine -- stamped with the next sequence number, and
-   applied on the physics thread at the next step. Safe from any thread.
+   applied on the physics thread at the next step. Safe from any thread: starts and cancels reach
+   the physics thread in the order they were made, and a status never goes back to an older start.
 -  ``status() -> MachineStatus(seq, program, finished, error)``: the last start. A caller knows its
    own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
    else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
@@ -662,11 +663,14 @@ arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``,
 and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
 else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
 ``on_error: report`` puts it into ``status()`` instead. A program that ended in an error, or was
-cancelled, stops the machine where it is: each actuator's target becomes where its joint stands, so
-an obstructed joint does not move on by itself once the obstacle is gone. A handle a machine needs (``NEEDS``) that nothing
-published is refused at reset, naming the key. An actuator a machine drives is a plain position
-servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear -- so its control is the
-joint's target; a motor, a velocity servo or a geared servo is refused at configure.
+cancelled, stops the machine where it is: each actuator is held where its joint stands, with the
+servo's standing offset under its load kept, so an obstructed joint does not move on by itself once
+the obstacle is gone and a loaded one does not sink at each hold. A handle a machine needs
+(``NEEDS``) that nothing published is refused at reset, naming the key, and a ``NEEDS`` name the
+machine already has is refused when the world loads. An actuator a machine drives is a plain
+position servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear, no dynamics
+that integrate its control -- so its control is the joint's target; a motor, a velocity servo, an
+``<intvelocity>`` or a geared servo is refused at configure.
 
 **How a package provides its machine.** A machine that builds its model from its config is a plugin
 registered under ``roqsim.plugins``, and a world places it by name. A machine with an MJCF model of

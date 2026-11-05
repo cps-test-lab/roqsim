@@ -2656,7 +2656,8 @@ What a program has:
   naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
-  each actuator's target becomes where its joint stands, and each setpoint keeps its value;
+  each actuator is held where its joint stands (its servo's standing offset under load kept), and
+  each setpoint keeps its value;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
@@ -2666,7 +2667,9 @@ machine requires; it is resolved at every reset and refused naming the key when 
 ``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
 
 An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
-servo or a geared servo is refused at configure, naming the machine and the actuator.
+servo, an ``<intvelocity>`` or a geared servo is refused at configure, naming the machine and the
+actuator. A program's arguments are checked against its annotations, whether they are strings
+(``from __future__ import annotations``) or types, unions with ``None`` included.
 
 A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
 nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
