@@ -39,7 +39,8 @@ The base gives every machine the same outside:
 * actuators ramped at a stated speed, in the joint's unit per second, as a cylinder or a servo axis
   moves: a ramp moves the position actuator's target and the physics moves the joint. An actuator a
   machine drives is a plain position servo (fixed gain, affine bias whose stiffness matches the gain,
-  unit gear), so its control is the joint's target; any other is refused. Plugin-owned
+  unit gear, no dynamics that integrate its control), so its control is the joint's target; any
+  other is refused. Plugin-owned
   :attr:`~MachinePlugin.SETPOINTS` (a belt's speed) ramp the same way and are applied by the plugin.
 
 Fail loudly: an actuator the model lacks or one that is no plain position servo, a ``home`` the
@@ -47,17 +48,21 @@ machine does not drive or outside its range, a handle in :attr:`~MachinePlugin.N
 published, an unknown program or argument -- each is said naming the machine. A program fails, with
 the error in ``status()`` and the run going on, when it calls :meth:`MachinePlugin.fail` (a door
 stalled), when it sends an actuator outside its range, and when a joint has not arrived
-:attr:`~MachinePlugin.MOVE_TIMEOUT` seconds after its target did (an obstruction). A program that raises anything else is a
-defect: with ``on_error: raise`` (the default) the run stops naming the machine and the program;
-with ``on_error: report`` the error goes into ``status()``. A program that ended in an error, or was
-cancelled, stops the machine where it is: each actuator's target becomes where its joint stands and
-each setpoint keeps its value, so nothing moves on toward a target the program had set.
+:attr:`~MachinePlugin.MOVE_TIMEOUT` seconds after its target did (an obstruction). A program that
+raises anything else is a defect: with ``on_error: raise`` (the default) the run stops naming the
+machine and the program; with ``on_error: report`` the error goes into ``status()``. A program that
+ended in an error, or was cancelled, stops the machine where it is: each actuator is held where its
+joint stands -- the servo's standing offset under the load it carries kept, so a loaded joint does
+not sink at each hold -- and each setpoint keeps its value, so nothing moves on toward a target the
+program had set.
 """
 
 from __future__ import annotations
 
 import inspect
 import threading
+import types
+import typing
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -118,14 +123,16 @@ class MachineStatus:
 class MachineHandle:
     """Published by a :class:`MachinePlugin` under ``machine:<name>``.
 
-    ``start``, ``cancel``, ``status``, ``busy`` and ``ready`` are safe from any thread: a start is
-    checked and stamped at the call and applied on the physics thread at the next step. ``value``
-    reads the physics thread's state and belongs there.
+    ``start``, ``cancel``, ``status`` and ``busy`` are safe from any thread: a start is checked and
+    stamped at the call and applied on the physics thread at the next step, in the order the calls
+    were made. A status never goes back to an older start. ``value`` reads the physics thread's
+    state and belongs there.
     """
 
     def __init__(self, machine: MachinePlugin):
         self._machine = machine
-        #: The machine's entity name.
+        #: The address of the plugin that publishes the handle: the machine's entity name for a
+        #: machine that registers its own entity.
         self.name: str = machine.address
         #: Its programs, by name.
         self.programs: tuple[str, ...] = tuple(sorted(type(machine).programs()))
@@ -165,11 +172,13 @@ class MachineHandle:
 class _Actuator:
     name: str
     aid: int
+    jid: int
     qadr: int
     dadr: int
     lo: float
     hi: float
     limited: bool
+    kp: float
 
 
 @dataclass
@@ -323,6 +332,14 @@ class MachinePlugin(Plugin):
                         errors.append(f"{what}: home {key!r} is a number, not {value!r}")
         if str(config.get("on_error", "raise")) not in ON_ERROR:
             errors.append(f"{what}: 'on_error' is one of {list(ON_ERROR)}")
+        # A handle is set as an attribute of that name, so a name the machine already has would
+        # replace it -- its home, its config, a method of the base.
+        taken = sorted(n for n in self.NEEDS if hasattr(type(self), n) or n in vars(self))
+        if taken:
+            errors.append(
+                f"{what}: NEEDS names {taken}, which the machine already has; name the handle "
+                "otherwise"
+            )
         return errors
 
     # -- configure ----------------------------------------------------------------------------
@@ -393,11 +410,13 @@ class MachinePlugin(Plugin):
             self._actuators[name] = _Actuator(
                 name=name,
                 aid=aid,
+                jid=jid,
                 qadr=int(m.jnt_qposadr[jid]),
                 dadr=int(m.jnt_dofadr[jid]),
                 lo=lo,
                 hi=hi,
                 limited=bool(m.actuator_ctrllimited[aid]),
+                kp=float(m.actuator_gainprm[aid, 0]),
             )
 
     def _resolve_home(self, ctx: SimContext) -> None:
@@ -627,6 +646,20 @@ class MachinePlugin(Plugin):
                 f"{sorted([*self._actuators, *self.SETPOINTS]) or 'nothing'})"
             )
 
+    def _hold_target(self, act: _Actuator) -> float:
+        """The target that holds ``act``'s joint where it stands: its position plus the servo's
+        standing offset under the load it carries (the force the servo supplies, gravity and the
+        bias forces less what passive forces and actuator gravity compensation take, over its
+        stiffness). Holding at the position alone would let a loaded joint sink by load/kp at
+        every hold."""
+        m, d = self._ctx.model, self._ctx.data
+        dof = act.dadr
+        load = float(d.qfrc_bias[dof]) - float(d.qfrc_passive[dof])
+        if m.jnt_actgravcomp[act.jid]:
+            load -= float(d.qfrc_gravcomp[dof])
+        here = float(d.qpos[act.qadr]) + (load / act.kp if act.kp > 0 else 0.0)
+        return min(max(here, act.lo), act.hi) if act.limited else here
+
     def _in_range(self, name: str, value: float) -> float:
         """``value`` as a target of ``name``; outside the actuator's range the program fails."""
         act = self._actuators.get(name)
@@ -640,8 +673,19 @@ class MachinePlugin(Plugin):
     # -- starts, cancels, status --------------------------------------------------------------
     @property
     def busy(self) -> bool:
+        with self._lock:
+            return self._busy()
+
+    def _busy(self) -> bool:
+        """``busy`` with the lock held."""
         run = self._run
         return self._pending is not None or (run is not None and run.seq != self._cancelling)
+
+    def _set_status(self, status: MachineStatus) -> None:
+        """Make ``status`` the status, unless it is about an older start than the one reported: a
+        caller holding its start's number must see that start end. The lock is held."""
+        if status.seq >= self._status.seq:
+            self._status = status
 
     @property
     def status_now(self) -> MachineStatus:
@@ -672,7 +716,7 @@ class MachinePlugin(Plugin):
             if not _fits(annotation, value):
                 raise MachineError(
                     f"machine {self.address}: program {program_name!r}: {name} is "
-                    f"{annotation if isinstance(annotation, str) else annotation.__name__}, "
+                    f"{annotation if isinstance(annotation, str) else _type_name(annotation)}, "
                     f"not {value!r}"
                 )
         return lambda: fn(*bound.args, **bound.kwargs)
@@ -684,7 +728,7 @@ class MachinePlugin(Plugin):
         args = dict(args or {})
         self.bind(program_name, args)
         with self._lock:
-            if self.busy:
+            if self._busy():
                 running = self._pending[1] if self._pending else self._run.program
                 seq = self._pending[0] if self._pending else self._run.seq
                 raise MachineError(
@@ -694,7 +738,9 @@ class MachinePlugin(Plugin):
             self._seq += 1
             seq = self._seq
             self._pending = (seq, program_name, args)
-        self._ctx.post(lambda _ctx, seq=seq: self._apply_start(seq))
+            # Posted under the lock, so starts and cancels reach the physics thread in the order
+            # they were made.
+            self._ctx.post(lambda _ctx, seq=seq: self._apply_start(seq))
         return seq
 
     def request_cancel(self) -> int:
@@ -703,13 +749,13 @@ class MachinePlugin(Plugin):
             if self._pending is not None:
                 seq, name, _args = self._pending
                 self._pending = None
-                self._status = MachineStatus(seq, name, True, "cancelled")
+                self._set_status(MachineStatus(seq, name, True, "cancelled"))
                 return seq
             run = self._run
             if run is None or run.seq == self._cancelling:
                 return 0
             self._cancelling = run.seq
-        self._ctx.post(lambda _ctx, seq=run.seq: self._apply_cancel(seq))
+            self._ctx.post(lambda _ctx, seq=run.seq: self._apply_cancel(seq))
         return run.seq
 
     def preempt(self, program_name: str, **args) -> int:
@@ -721,7 +767,7 @@ class MachinePlugin(Plugin):
         with self._lock:
             pending, self._pending = self._pending, None
             if pending is not None:
-                self._status = MachineStatus(pending[0], pending[1], True, "cancelled")
+                self._set_status(MachineStatus(pending[0], pending[1], True, "cancelled"))
             run = self._run
         if run is not None:
             self._finish(run, "cancelled")
@@ -736,11 +782,21 @@ class MachinePlugin(Plugin):
         with self._lock:
             if self._pending is None or self._pending[0] != seq:
                 return  # cancelled before it ran, or dropped by a reset
+            earlier = self._run
+        if earlier is not None:
+            # A run that has not ended is ended before another takes its place, so it is closed,
+            # holds, and says so -- whatever order the calls that led here came in.
+            self._finish(earlier, "cancelled")
+        with self._lock:
+            if self._pending is None or self._pending[0] != seq:
+                return
             _seq, name, args = self._pending
-            self._pending = None
             run = _Run(seq=seq, program=name, gen=self.bind(name, args)())
+            # The run is set before the pending start is cleared, so `busy` never reads False
+            # between the two.
             self._run = run
-            self._status = MachineStatus(seq, name, False, "")
+            self._pending = None
+            self._set_status(MachineStatus(seq, name, False, ""))
         self._ctx.events.emit(
             self.machine_entity, "program_start", program=name, seq=seq, args=args
         )
@@ -775,16 +831,15 @@ class MachinePlugin(Plugin):
                 self._run = None
             if self._cancelling == run.seq:
                 self._cancelling = 0
-            self._status = MachineStatus(run.seq, run.program, True, error)
+            self._set_status(MachineStatus(run.seq, run.program, True, error))
         if error:
-            # Cancelled or failed, the machine stops where it is: every ramp ends, each actuator's
-            # target becomes where its joint stands (inside its range), and each setpoint keeps the
-            # value it has now -- so nothing carries on toward a target the program had set.
+            # Cancelled or failed, the machine stops where it is: every ramp ends, each actuator is
+            # held where its joint stands, and each setpoint keeps the value it has now -- so
+            # nothing carries on toward a target the program had set.
             run.gen.close()
             self._ramps.clear()
             for name, act in self._actuators.items():
-                here = float(self._ctx.data.qpos[act.qadr])
-                self._cmd[name] = min(max(here, act.lo), act.hi) if act.limited else here
+                self._cmd[name] = self._hold_target(act)
         self._ctx.events.emit(
             self.machine_entity, "program_end", program=run.program, seq=run.seq, error=error
         )
@@ -816,7 +871,17 @@ def _not_a_position_servo(m: mujoco.MjModel, aid: int) -> str:
 
     A plain servo has a fixed gain, an affine bias whose position term is the gain's negative (so the
     joint settles where the control says) and a unit gear; a motor, a velocity servo or a geared
-    servo would let a program read its control as a position it is not."""
+    servo -- or one whose dynamics integrate its control, an ``<intvelocity>`` -- would let a
+    program read its control as a position it is not."""
+    dyn = int(m.actuator_dyntype[aid])
+    if dyn not in (
+        int(mujoco.mjtDyn.mjDYN_NONE),
+        int(mujoco.mjtDyn.mjDYN_FILTER),
+        int(mujoco.mjtDyn.mjDYN_FILTEREXACT),
+    ):
+        # An integrator (an <intvelocity>) makes the control a velocity of the target, a muscle or
+        # a user law something else again; a filter only lags a position, which stays one.
+        return "its dynamics make its control no position: an integrator, a muscle or a user law"
     if int(m.actuator_gaintype[aid]) != int(mujoco.mjtGain.mjGAIN_FIXED):
         return "its gain is not fixed"
     if int(m.actuator_biastype[aid]) != int(mujoco.mjtBias.mjBIAS_AFFINE):
@@ -832,23 +897,41 @@ def _not_a_position_servo(m: mujoco.MjModel, aid: int) -> str:
     return ""
 
 
+def _type_name(annotation) -> str:
+    """An annotation as a reader writes it: ``float``, ``float | None``."""
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        return " | ".join(_type_name(a) for a in typing.get_args(annotation))
+    if annotation is type(None):
+        return "None"
+    return getattr(annotation, "__name__", str(annotation))
+
+
+def _union_parts(annotation) -> list:
+    """The parts of a parameter's annotation: a string's (``from __future__ import annotations``)
+    split at ``|``, a ``typing.Union``'s or an ``X | Y``'s arguments, else the annotation itself."""
+    if isinstance(annotation, str):
+        return [p.strip() for p in annotation.split("|")]
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        return list(typing.get_args(annotation))
+    return [annotation]
+
+
 def _fits(annotation, value) -> bool:
     """Whether ``value`` passes for a program parameter's annotation (plain types and their unions).
 
-    Annotations are strings here (``from __future__ import annotations``), so ``float | None`` is
-    read as its parts: ``None`` passes where a part is ``None``, any other value where it fits one
-    part. A part that is no plain type passes anything."""
+    The annotation may be a string (``from __future__ import annotations``) or a type, ``float |
+    None`` read as its parts either way: ``None`` passes where a part is ``None``, any other value
+    where it fits one part. A part that is no plain type passes anything."""
     if annotation is inspect.Parameter.empty:
         return True
-    parts = (
-        [p.strip() for p in annotation.split("|")] if isinstance(annotation, str) else [annotation]
-    )
+    nones = ("None", None, type(None))
+    parts = _union_parts(annotation)
     if value is None:
-        return any(p in ("None", None, type(None)) for p in parts)
+        return any(p in nones for p in parts)
     kinds = {"float": float, "int": int, "str": str, "bool": bool}
     for part in parts:
         kind = kinds.get(part, part) if isinstance(part, str) else part
-        if kind in ("None", None, type(None)):
+        if kind in nones:
             continue
         if kind is float:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
