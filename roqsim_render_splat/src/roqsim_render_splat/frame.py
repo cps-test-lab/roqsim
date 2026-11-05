@@ -23,8 +23,9 @@ reports what a world needs:
 - **the floor**: the largest plane with (nearly) every opaque Gaussian on one side of it, found
   by RANSAC and refitted; its normal, pointing to that side, is **up**, reported as the nearest
   axis of the capture and the tilt from it;
-- **the walls**: planes square to the floor; their mean direction (modulo 90 degrees) gives the
-  **yaw** that lays the walls along the world's x and y;
+- **the walls**: the Gaussians in a band above the floor (above furniture, below the ceiling),
+  seen from above; the yaw at which they line up sharpest along two square axes -- the walls --
+  is the **yaw** that lays them along the world's x and y;
 - **the extent**: the footprint along the walls and the height above the floor, in capture units
   (1st to 99th percentile across, 99.9th up), and the ceiling where one was captured;
 - **the pose** that puts the floor at z = 0, the walls along x and y and the footprint's centre at
@@ -111,6 +112,33 @@ def find_planes(points: np.ndarray, threshold: float, count: int = 8, seed: int 
     return planes
 
 
+def wall_yaw(xy: np.ndarray, height: np.ndarray, cell: float) -> tuple[float, float]:
+    """The yaw (rad, -45..45 deg) that lines the walls up with x and y, and how much sharper they
+    line up there than at the worst yaw.
+
+    Walls are where the room's Gaussians pile up seen from above: in a band of heights above the
+    furniture and below the ceiling, rotated to the right yaw, they fall into few columns along x
+    and few rows along y. Sharpness is the sum of the squared counts of a histogram along each axis.
+    """
+    top = float(np.percentile(height, 99))
+    band = (height > 0.35 * top) & (height < 0.8 * top)
+    pts = xy[band] if band.sum() >= 500 else xy
+
+    def sharpness(a: float) -> float:
+        c, s = math.cos(a), math.sin(a)
+        score = 0.0
+        for r in (pts[:, 0] * c + pts[:, 1] * s, -pts[:, 0] * s + pts[:, 1] * c):
+            bins = np.floor((r - r.min()) / cell).astype(np.int64)
+            score += float((np.bincount(bins).astype(np.float64) ** 2).sum())
+        return score
+
+    coarse = {deg: sharpness(math.radians(deg)) for deg in np.arange(-45.0, 45.0, 0.5)}
+    start = max(coarse, key=coarse.get)
+    fine = {deg: sharpness(math.radians(deg)) for deg in np.arange(start - 0.5, start + 0.5, 0.02)}
+    best = max(fine, key=fine.get)
+    return math.radians(best), fine[best] / min(coarse.values())
+
+
 def _axis_name(v: np.ndarray) -> tuple[str, float]:
     """The capture axis nearest *v* (``+x`` .. ``-z``) and the angle between them, in degrees."""
     i = int(np.argmax(np.abs(v)))
@@ -165,22 +193,9 @@ def propose(
     floor = max(floors, key=lambda p: p["inliers"])
     up = floor["normal"]
     to_z = _rotation_to_z(up)
-    # Walls: planes square to the floor; their directions modulo 90 degrees, weighted by size.
-    walls = [p for p in planes if abs(float(p["normal"] @ up)) < math.sin(math.radians(10))]
-    if walls:
-        angles = []
-        weights = []
-        for wall in walls:
-            n = to_z @ wall["normal"]
-            angles.append(4.0 * math.atan2(n[1], n[0]))
-            weights.append(wall["inliers"])
-        mean = math.atan2(
-            float(np.average(np.sin(angles), weights=weights)),
-            float(np.average(np.cos(angles), weights=weights)),
-        )
-        wall_angle = mean / 4.0
-    else:
-        wall_angle = 0.0
+    floor_z = float(floor["offset"])  # up . p = offset on the floor; up maps to +z
+    upright = solid @ to_z.T
+    wall_angle, sharpness = wall_yaw(upright[:, :2], upright[:, 2] - floor_z, threshold)
     yaw_fix = np.array(
         [
             [math.cos(-wall_angle), -math.sin(-wall_angle), 0.0],
@@ -190,17 +205,18 @@ def propose(
     )
     rot = yaw_fix @ to_z  # capture -> world directions
     levelled = solid @ rot.T
-    floor_z = float(floor["offset"])  # up . p = offset on the floor; up maps to +z
     height = levelled[:, 2] - floor_z
     lo = np.percentile(levelled[:, :2], 1, axis=0)
     hi = np.percentile(levelled[:, :2], 99, axis=0)
     centre = (lo + hi) / 2.0
     top = float(np.percentile(height, 99.9))
+    # A ceiling has (nearly) the whole room below it, as the floor has it above.
     ceilings = [
         p
         for p in planes
         if float(p["normal"] @ up) < -math.cos(math.radians(10))
         and p["inliers"] > 0.05 * len(solid)
+        and p["above"] >= ONE_SIDED * (p["above"] + p["below"])
     ]
     ceiling = None
     if ceilings:
@@ -222,7 +238,7 @@ def propose(
         },
         "floor_offset_units": round(floor_z, 4),
         "wall_yaw_deg": round(math.degrees(wall_angle), 2),
-        "walls_found": len(walls),
+        "wall_sharpness": round(sharpness, 2),
         "footprint_units": [round(float(v), 3) for v in hi - lo],
         "height_units": round(top, 3),
         "ceiling_units": None if ceiling is None else round(ceiling, 3),
@@ -312,7 +328,8 @@ def main(argv=None) -> int:
     print(
         f"{result['gaussians']:,} Gaussians; up is the capture's {up['capture_axis']} "
         f"(tilted {up['tilt_deg']} deg), floor at {result['floor_offset_units']} units along it; "
-        f"{result['walls_found']} wall plane(s), {result['wall_yaw_deg']} deg off the capture's axes"
+        f"walls {result['wall_yaw_deg']} deg off the capture's axes "
+        f"(lined up {result['wall_sharpness']}x sharper there than at the worst yaw)"
     )
     print(
         f"footprint {result['footprint_units'][0]} x {result['footprint_units'][1]} units, "
