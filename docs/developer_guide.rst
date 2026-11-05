@@ -20,6 +20,12 @@ Each package is a sibling directory with its own ``pyproject.toml``, which state
 on; ``ros2_ws/src/`` holds the colcon packages. :doc:`installation` says what each one holds.
 ``scenario_execution_roqsim`` is the only package that imports ``scenario_execution``.
 
+Every pip-installed package builds with the same backend, ``_build/roqsim_build_backend.py``:
+``setuptools.build_meta`` with the setuptools its ``pyproject.toml`` requires (64 or later), which
+it fetches itself where an installer without build isolation offers an older one. A new package
+copies ``_build/`` and its ``MANIFEST.in`` from a sibling and names the backend as they do;
+``roqsim/tests/test_build_backend.py`` holds the copies identical.
+
 Golden rules
 ------------
 

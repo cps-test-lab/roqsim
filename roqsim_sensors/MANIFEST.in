@@ -1,0 +1,2 @@
+# The build backend pyproject.toml names, so a package built from its sdist builds as from the tree.
+include _build/roqsim_build_backend.py

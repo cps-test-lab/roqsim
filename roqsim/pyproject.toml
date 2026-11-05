@@ -1,6 +1,9 @@
 [build-system]
 requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
+# setuptools.build_meta, with the setuptools `requires` states even where an installer without
+# build isolation offers an older one (_build/roqsim_build_backend.py).
+build-backend = "roqsim_build_backend"
+backend-path = ["_build"]
 
 [project]
 name = "roqsim"
