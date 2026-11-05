@@ -37,6 +37,7 @@ from .exit_status import NO_GL
 from .plugin import PluginError
 from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, subtree_body_ids
 from .render_api import (
+    BODIES,
     CAMERA_MODELS,
     DEFAULT_RENDERER,
     IMAGES,
@@ -973,6 +974,7 @@ class MujocoRenderer(Renderer):
         geom_groups=True,
         principal_point=True,
         non_square_pixels=True,
+        moving_only=True,
     )
     SETTINGS = {
         "atlas": Setting(
@@ -1099,10 +1101,11 @@ class MujocoRenderer(Renderer):
     def _scene_key(request: CameraRequest):
         spec = request.camera
         decorate = None if request.decorate is None else id(request)
-        return (spec.geomgroup, decorate)
+        return (spec.geomgroup, spec.bodies, decorate)
 
     def _groups(self, requests: Sequence[CameraRequest]) -> list[list[int]]:
-        """Requests that share one scene build: the same geom groups and no decorations of their own."""
+        """Requests that share one scene build: the same geom groups and bodies, and no decorations
+        of their own."""
         groups: dict = {}
         for i, r in enumerate(requests):
             groups.setdefault(self._scene_key(r), []).append(i)
@@ -1124,15 +1127,21 @@ class MujocoRenderer(Renderer):
         return _fixed_camera(int(cam))
 
     def _build(self, model, data, first: CameraRequest) -> None:
-        """Populate the scene from *data*: every geom, once, for all the requests that share it."""
+        """Populate the scene from *data*: every geom, once, for all the requests that share it.
+
+        The moving bodies alone are MuJoCo's dynamic category: a body that is not welded to the
+        world, or a mocap body -- what :func:`moving_bodies` marks -- and no static geom, no floor and
+        no decoration.
+        """
         scene = self._scene
+        moving = first.camera.bodies == "moving"
         mujoco.mjv_updateScene(
             model,
             data,
             self._vopt_for(first.camera.geomgroup),
             None,
             self._mjv_camera(first),
-            mujoco.mjtCatBit.mjCAT_ALL.value,
+            (mujoco.mjtCatBit.mjCAT_DYNAMIC if moving else mujoco.mjtCatBit.mjCAT_ALL).value,
             scene,
         )
         self.stats["scene_builds"] += 1
@@ -1545,6 +1554,7 @@ class RenderService:
         decorated: bool = False,
         max_geom: int | None = None,
         group: str | None = None,
+        bodies: str = "all",
     ) -> RenderView:
         """Register a camera; nothing renders until it is due (``wants``) or asked (:meth:`render_now`).
 
@@ -1556,6 +1566,8 @@ class RenderService:
         unknown = sorted(set(images) - set(IMAGES))
         if unknown:
             raise ValueError(f"view {id!r}: unknown image(s) {unknown}; one of {', '.join(IMAGES)}")
+        if bodies not in BODIES:
+            raise ValueError(f"view {id!r}: bodies {bodies!r}; one of {', '.join(BODIES)}")
         model = camera_model_of(self.model, camera)
         spec = CameraSpec(
             id=id,
@@ -1571,6 +1583,7 @@ class RenderService:
             geomgroup=None if geomgroup is None else tuple(int(g) for g in geomgroup),
             decorated=decorated,
             max_geom=max_geom,
+            bodies=bodies,
         )
         view = RenderView(self, spec, renderer or self.default_renderer, wants)
         view.group = id if group is None else str(group)
@@ -1626,14 +1639,7 @@ class RenderService:
         for view in self.views:
             cls = self.renderer_class(view.renderer)
             caps = cls.capabilities_for(self.settings.get(view.renderer, {}))
-            missing = caps.missing(
-                sorted(view.spec.images),
-                view.spec.model,
-                view.spec.decorated,
-                view.spec.geomgroup is not None,
-                view.spec.off_centre,
-                view.spec.non_square,
-            )
+            missing = view.spec.missing_from(caps)
             if missing:
                 problems.append(
                     f"camera {view.id!r} asks renderer {view.renderer!r} for {', '.join(missing)}; "
@@ -2048,14 +2054,7 @@ class FrameRenderer:
         caps = self._service.renderer_class(view.renderer).capabilities_for(
             self._service.settings.get(view.renderer, {})
         )
-        missing = caps.missing(
-            [image],
-            view.spec.model,
-            decorate is not None,
-            view.spec.geomgroup is not None,
-            view.spec.off_centre,
-            view.spec.non_square,
-        )
+        missing = view.spec.missing_from(caps, [image], decorate is not None)
         if missing:
             raise RenderError(
                 f"renderer {view.renderer!r} cannot give {', '.join(missing)} for this view"

@@ -45,7 +45,9 @@ What is installed, and what each takes
 
 A renderer **declares** what it can give: which images (``rgb``, ``depth``, ``segmentation``),
 which camera models (``pinhole``, ``orthographic``, ``free``), whether it is deterministic, whether
-it runs in roqsim's process, whether it draws only the geom groups a camera names. When the world loads, every camera is checked against its renderer; a
+it runs in roqsim's process, whether it draws only the geom groups a camera names, whether it can
+draw the moving bodies alone (robots and moved props, with nothing static: what a renderer that
+brings its own static world, such as a captured splat, composites into it). When the world loads, every camera is checked against its renderer; a
 camera asking for what its renderer cannot give fails the load, naming the camera, the renderer,
 what was asked and what it gives. Nothing is drawn by MuJoCo's renderer instead behind your back.
 An unknown renderer names the installed ones and the package that would add it, and a mistyped
@@ -86,6 +88,12 @@ project through ``fovy``); a renderer declares whether it
 projects an off-centre principal point (``principal_point``) and non-square pixels
 (``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
 load, or when a tool draws through it, rather than drawn wrong.
+
+A renderer that brings its own static world (a captured splat) and leaves the static geometry out
+(``draws_static=False``) can still give the robots MuJoCo's own pictures: it opens a
+:class:`~roqsim.rendering.MujocoRenderer` of its own with the same scene, its cameras copied with
+``bodies="moving"``, and composites what that draws -- colour, and depth that is ``inf`` wherever no
+moving body is -- by depth. Any renderer may honour ``bodies`` and declares so with ``moving_only``.
 
 A renderer in another process stands behind the ``socket`` renderer (:mod:`roqsim.render_socket`):
 its server speaks a small framed protocol over a stream socket, needing only the standard library

@@ -30,7 +30,7 @@ Arrays travel as their bytes, never through JSON::
     -> open    {scene: {cameras, body_names, moving, settings}}  + the scene's blobs (scene.glb)
                                                           <- opened
     -> render  {sim_time, step, requests: [{id, width, height, model, fovy, intrinsics, near, far,
-                images, pos, quat, geomgroup}]}
+                images, pos, quat, geomgroup, bodies}]}
                + blobs xpos, xquat, model/geom_rgba, model/geom_group, model/flex_rgba,
                  model/flex_group
                                                           <- frames {frames: [{id, sim_time, step}]}
@@ -44,7 +44,8 @@ projection MuJoCo draws the camera with, or ``null`` for an orthographic camera 
 which project through ``fovy`` (:attr:`roqsim.render_api.CameraSpec.intrinsics`), and a
 camera whose principal point is off centre, or whose pixels are not square, is refused at load, or when a tool draws it,
 unless the renderer declares ``principal_point``, or ``non_square_pixels``; ``geomgroup`` is ``null`` (every group) or the groups the
-camera draws, for a server that declares ``geom_groups``. A frame answers with the request's
+camera draws, for a server that declares ``geom_groups``; ``bodies`` is ``all``, or ``moving`` for
+the moving bodies alone, for a server that declares ``moving_only``. A frame answers with the request's
 ``sim_time`` and ``step`` and images of the request's size in the formats
 :data:`roqsim.render_api.IMAGE_FORMATS` states; the service refuses any other. The scene, sent
 once, is the world as glTF 2.0 written by ``roqsim export gltf``'s writer (:mod:`roqsim.export_gltf`), so there is one walk of the scene, and
@@ -278,6 +279,11 @@ class SocketRenderer(Renderer):
             "whether it projects non-square pixels (fx != fy); a camera that has them is refused "
             "at load otherwise",
         ),
+        "moving_only": Setting(
+            False,
+            "whether it draws the moving bodies alone for a request that asks (`bodies: moving`); "
+            "a camera that asks is refused at load otherwise",
+        ),
     }
 
     @classmethod
@@ -297,6 +303,7 @@ class SocketRenderer(Renderer):
             geom_groups=bool(merged["geom_groups"]),
             principal_point=bool(merged["principal_point"]),
             non_square_pixels=bool(merged["non_square_pixels"]),
+            moving_only=bool(merged["moving_only"]),
         )
 
     @classmethod
@@ -512,6 +519,7 @@ class SocketRenderer(Renderer):
                     "geomgroup": None
                     if r.camera.geomgroup is None
                     else [int(g) for g in r.camera.geomgroup],
+                    "bodies": r.camera.bodies,
                 }
                 for r in requests
             ],
