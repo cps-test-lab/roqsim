@@ -25,6 +25,8 @@ from roqsim.engine import Engine
 from roqsim.plugin import Plugin, PluginError
 from roqsim.presence import set_present
 from roqsim.render_api import RenderError
+from roqsim.render_socket import recv_message, send_message
+from roqsim.rendering import FrameRenderer, camera_intrinsics
 
 STUB = Path(__file__).with_name("render_stub_server.py")
 
@@ -295,7 +297,7 @@ def _free_port() -> int:
 
 
 def test_a_tick_over_tcp_does_not_wait_for_a_delayed_acknowledgement(tmp_path):
-    """A message is several writes; with Nagle's algorithm on, each tick waited about 40 ms."""
+    """A message is several writes; Nagle's algorithm would hold the last for an acknowledgement."""
     port = _free_port()
     engine = _engine(tmp_path, address=f"127.0.0.1:{port}")
     engine.setup()
@@ -362,3 +364,85 @@ def test_a_server_slow_to_open_is_waited_for_open_timeout_s_not_a_tick_s(tmp_pat
             engine.step()
     finally:
         engine.shutdown()
+
+
+def _lens_model(anisotropic: bool = False) -> mujoco.MjModel:
+    spec = mujoco.MjSpec()
+    spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.2])
+    spec.worldbody.add_camera(name="plain", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+    lens = spec.worldbody.add_camera(name="lens", pos=[1, 0, 0.3], xyaxes=[0, 1, 0, 0, 0, 1])
+    lens.sensor_size = [0.0064, 0.0048]
+    lens.focal_length = [0.004, 0.006 if anisotropic else 0.004]
+    lens.principal_length = [0.0004, -0.0002]
+    lens.resolution = [32, 24]
+    return spec.compile()
+
+
+@pytest.mark.parametrize(
+    ("anisotropic", "settings", "refused"),
+    [
+        (False, {}, "off-centre principal point"),
+        (True, {"principal_point": True}, r"non-square pixels \(fx != fy\)"),
+    ],
+)
+def test_a_tool_s_frame_is_refused_what_the_server_does_not_draw(
+    tmp_path, anisotropic, settings, refused
+):
+    """A tool's one view (`roqsim render`) never goes through the service's check at load."""
+    model = _lens_model(anisotropic)
+    renderer = FrameRenderer(
+        model,
+        32,
+        24,
+        camera="lens",
+        renderer="socket",
+        settings={
+            "address": f"unix:{tmp_path / 'render.sock'}",
+            "command": [sys.executable, str(STUB), "{address}"],
+            "connect_timeout_s": 60,
+            **settings,
+        },
+    )
+    try:
+        with pytest.raises(RenderError, match=refused):
+            renderer.render(mujoco.MjData(model))
+    finally:
+        renderer.close()
+
+
+def test_a_tool_s_view_carries_the_intrinsics_of_the_camera_it_moved_to():
+    model = _lens_model()
+    renderer = FrameRenderer(model, 32, 24, camera="plain")
+    try:
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+        renderer.render(data)
+        assert not renderer._view.spec.off_centre
+        renderer.camera = "lens"
+        renderer.render(data)
+        spec = renderer._view.spec
+        assert spec.off_centre
+        lens = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lens")
+        assert spec.intrinsics == camera_intrinsics(model, lens, 32, 24, spec.fovy)
+    finally:
+        renderer.close()
+
+
+def test_a_received_array_is_writable_memory_of_its_own():
+    left, right = socket.socketpair()
+    with left, right:
+        send_message(left, {"op": "x"}, [("a", np.arange(6, dtype=np.uint8).reshape(2, 3))])
+        _, blobs = recv_message(right)
+    assert blobs["a"].flags.writeable and blobs["a"].flags.owndata
+    assert blobs["a"].tolist() == [[0, 1, 2], [3, 4, 5]]
+
+
+@pytest.mark.parametrize("dtype", ["|O", "O,i4"])
+def test_a_blob_of_objects_is_refused_since_its_bytes_would_be_pointers(dtype):
+    """A peer's bytes received into an object array are pointers it chose."""
+    left, right = socket.socketpair()
+    with left, right:
+        body = json.dumps({"blobs": [{"name": "a", "dtype": dtype, "shape": [1]}]}).encode()
+        left.sendall(len(body).to_bytes(4, "big") + body + b"A" * 8)
+        with pytest.raises(ValueError, match="holds objects"):
+            recv_message(right)

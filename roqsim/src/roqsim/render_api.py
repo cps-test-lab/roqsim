@@ -337,7 +337,7 @@ class Renderer:
     def open_timeout_s(cls, settings: Mapping) -> float | None:
         """How long :meth:`open` may take with *settings*, in s, where that is longer than a tick.
 
-        A renderer that starts a process of its own (a simulator, a GPU server) states it; the
+        A renderer that starts a process of its own and is slow to get ready states it; the
         service then waits for the longer of this and ``sim.render.timeout_s`` before it names the
         renderer as hung. ``None``: ``sim.render.timeout_s`` alone.
         """

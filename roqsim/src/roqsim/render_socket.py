@@ -130,7 +130,10 @@ def recv_message(sock: socket.socket) -> tuple[dict, dict[str, np.ndarray]]:
     header = json.loads(_recv_exactly(sock, length).decode("utf-8"))
     blobs = {}
     for spec in header.get("blobs", []):
-        array = np.empty(tuple(spec["shape"]), dtype=np.dtype(spec["dtype"]))
+        dtype = np.dtype(spec["dtype"])
+        if dtype.hasobject:  # its bytes would be read as pointers
+            raise ValueError(f"blob {spec['name']!r}: dtype {spec['dtype']!r} holds objects")
+        array = np.empty(tuple(spec["shape"]), dtype=dtype)
         if array.nbytes:
             _recv_into(sock, memoryview(array.reshape(-1)).cast("B"))
         blobs[spec["name"]] = array

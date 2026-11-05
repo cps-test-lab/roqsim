@@ -95,4 +95,3 @@ server's capabilities, overrides ``scene_blobs`` to send the scene in the form i
 (written from the same walk ``roqsim export gltf`` uses), and states with ``open_timeout_s`` how long
 its server may take to start -- the service waits for that, where it is longer than
 ``sim.render.timeout_s``, before it names the renderer as hung.
-

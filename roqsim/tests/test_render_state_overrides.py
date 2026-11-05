@@ -37,7 +37,7 @@ def test_the_command_exits_2_naming_the_ignored_key(tmp_path, capsys):
 
 
 def test_a_view_override_with_state_is_not_refused(monkeypatch, tmp_path):
-    """sim.view is the one key a recording's render applies; it goes on to the recording."""
+    """sim.view is a key a recording's render applies; it goes on to the recording."""
     seen = {}
 
     def fake(state, target, out, size, merged, *rest, **kwargs):

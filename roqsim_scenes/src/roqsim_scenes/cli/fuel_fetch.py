@@ -69,8 +69,8 @@ class Asset:
 
 
 def _requests():
-    """``requests``, imported only to fetch: ``--help``, a lock file and a cached asset need none,
-    and an installation without it (``pip install --no-deps``) still answers them."""
+    """``requests``, imported only to talk to Fuel: an installation without it (``pip install
+    --no-deps``) still answers ``--help`` and says a missing input."""
     try:
         import requests  # noqa: PLC0415
     except ImportError as err:

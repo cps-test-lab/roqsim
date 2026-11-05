@@ -2032,6 +2032,9 @@ class FrameRenderer:
         spec.mujoco_camera = resolved
         spec.model = camera_model_of(self.model, resolved)
         spec.fovy = self._service._fovy(resolved)
+        spec.intrinsics = camera_intrinsics(
+            self.model, resolved, self.width, self.height, spec.fovy
+        )
         spec.near, spec.far = self._near, self._far
         return self._view
 
@@ -2043,7 +2046,12 @@ class FrameRenderer:
             self._service.settings.get(view.renderer, {})
         )
         missing = caps.missing(
-            [image], view.spec.model, decorate is not None, view.spec.geomgroup is not None
+            [image],
+            view.spec.model,
+            decorate is not None,
+            view.spec.geomgroup is not None,
+            view.spec.off_centre,
+            view.spec.non_square,
         )
         if missing:
             raise RenderError(
