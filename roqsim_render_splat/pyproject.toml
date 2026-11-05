@@ -26,6 +26,9 @@ test = ["pytest>=7.0", "roqsim_mobile"]
 [project.entry-points."roqsim.renderers"]
 splat = "roqsim_render_splat.renderer:SplatRenderer"
 
+[project.entry-points."roqsim.commands"]
+splat = "roqsim_render_splat.cli:splat"
+
 [project.entry-points."roqsim.worlds"]
 roqsim_render_splat = "roqsim_render_splat"
 
