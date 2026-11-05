@@ -170,3 +170,25 @@ def test_an_override_that_takes_no_directory_is_still_called():
     assert OldSignature.seen == [{"x": 2}]
     with pytest.raises(PluginError, match="unknown key 'y'; valid keys: x"):
         load_config_from_dict(_with_block(ref, {"y": 2}))
+
+
+def test_a_mistyped_key_names_the_nearest_valid_one():
+    ref = f"{__name__}:Flat"
+    with pytest.raises(
+        PluginError,
+        match=rf"sim.renderers.{ref}: unknown key 'colur'; valid keys: colour; did you mean 'colour'\?",
+    ):
+        load_config_from_dict(_with_block(ref, {"colur": [1, 2, 3]}))
+
+
+def test_a_key_in_a_nested_block_is_named_with_its_block():
+    from roqsim.render_api import unknown_keys
+
+    assert unknown_keys(
+        {"position": {}, "rotation": {}}, ("position", "orientation"), "splat.pose"
+    ) == ["unknown key 'rotation' in splat.pose; valid keys: orientation, position"]
+    assert unknown_keys({"positon": {}}, ("position", "orientation"), "splat.pose") == [
+        "unknown key 'positon' in splat.pose; valid keys: orientation, position; "
+        "did you mean 'position'?"
+    ]
+    assert unknown_keys({"position": 1}, ("position",), "splat.pose") == []

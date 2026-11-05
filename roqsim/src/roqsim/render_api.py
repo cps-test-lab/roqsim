@@ -46,7 +46,7 @@ thread), and a frame is a function of the snapshot and the seed when it declares
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -340,6 +340,29 @@ class Frame:
         return getattr(self, kind)
 
 
+def unknown_keys(block: Mapping, valid: Collection[str], where: str = "") -> list[str]:
+    """An error per key of *block* outside *valid*, naming the valid keys and the nearest one.
+
+    *where* is the dotted path of a block nested in a renderer's settings (``splat.pose``), so a
+    mistyped key deep in it is named with the block it sits in; the service prefixes every error
+    with ``sim.renderers.<name>``.
+    """
+    from difflib import get_close_matches  # noqa: PLC0415 -- only a mistake pays
+
+    names = sorted(str(k) for k in valid)
+    errors = []
+    for key in block:
+        if key in valid:
+            continue
+        near = get_close_matches(str(key), names, n=1, cutoff=0.8)
+        errors.append(
+            f"unknown key {key!r}{f' in {where}' if where else ''}; "
+            f"valid keys: {', '.join(names) if names else '(none)'}"
+            + (f"; did you mean {near[0]!r}?" if near else "")
+        )
+    return errors
+
+
 def validate_renderer_config(cls, settings: Mapping, base_dir=None) -> list[str]:
     """``cls.validate_config(settings, base_dir)``, or ``(settings)`` for an override that takes no
     *base_dir* -- one written before renderers were given it."""
@@ -396,12 +419,7 @@ class Renderer:
         """
         if not isinstance(settings, Mapping):
             return [f"settings must be a mapping, got {type(settings).__name__}"]
-        valid = sorted(cls.SETTINGS)
-        return [
-            f"unknown key {key!r}; valid keys: {', '.join(valid) if valid else '(none)'}"
-            for key in settings
-            if key not in cls.SETTINGS
-        ]
+        return unknown_keys(settings, cls.SETTINGS)
 
     def open(self, scene: SceneDescription) -> None:
         """Take the scene: upload what is static, remember what moves. Called once."""
