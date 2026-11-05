@@ -2711,8 +2711,12 @@ The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``unt
 ``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
 ``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
-``roqsim.pose.PoseError`` naming what is wrong. A program's own exception stops the run with its
-own type, the scenario named in a note. Every scenario takes ``needs:`` (rename a handle) and
+``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
+reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
+it as around ``run``; one nobody joins stops the run when the program returns. ``route(check=False)``,
+like ``run(check=False)``, returns the status where another route overtook its own. A program's own
+exception stops the run with its own type, the scenario named in a note, and the scene never
+reports done. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when its program returned.
 
 Writing your own
