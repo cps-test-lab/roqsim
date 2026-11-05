@@ -9,6 +9,8 @@ Three forms are supported (mirroring scenario-execution's own simulation loader)
 3. **Filesystem ``path/to/file.py:Class``** -> loaded from a file (relative to ``base_dir``).
    e.g. ``./plugins/custom_ctrl.py:CustomController``
 
+A short name two installed packages register differently is refused, naming both.
+
 Resolution order: an entry-point name wins; otherwise, if the string contains ``:`` the left side
 is treated as a file path when it exists on disk, else as a module path. Failures raise
 :class:`PluginError` naming the form attempted and why it failed.
@@ -33,26 +35,40 @@ RENDERER_GROUP = "roqsim.renderers"
 
 def _load_from_entry_point(name: str, group: str = ENTRY_POINT_GROUP, check=None) -> type | None:
     check = check or _check_is_plugin
-    for ep in _entry_points(group):
-        if ep.name == name:
-            try:
-                obj = ep.load()
-            except ImportError as err:
-                # Registered but not importable — its distribution is installed while one of *its*
-                # dependencies is not. The ROS bridge is the standing example: a wheel puts the entry
-                # point on the path, and importing it needs rclpy, which a ROS-free process has not
-                # sourced. That must be a PluginError like every other resolution failure, because
-                # callers distinguish "cannot resolve" from "resolved to something wrong" by this type
-                # alone: `drop_transport_plugins` drops an unresolvable ref (a geometry-only export
-                # needs no transport), and a raw ImportError sailed past it and killed the export.
-                kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
-                raise PluginError(
-                    f"{kind} {name!r} is registered by an installed package but could not be "
-                    f"imported: {err}"
-                ) from err
-            check(obj, f"entry-point {name!r}")
-            return obj
+    named = {ep.value: ep for ep in _entry_points(group) if ep.name == name}
+    if len(named) > 1:
+        # Which one the metadata lists first depends on the install, so taking it would let a world
+        # load another plugin than its author's without a word.
+        kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
+        by = "; ".join(f"{v} ({_distribution(ep)})" for v, ep in sorted(named.items()))
+        raise PluginError(
+            f"{kind} {name!r} is registered by more than one installed package: {by}. Uninstall "
+            f"one, or name the one meant as 'module.path:Class'."
+        )
+    for ep in named.values():
+        try:
+            obj = ep.load()
+        except ImportError as err:
+            # Registered but not importable — its distribution is installed while one of *its*
+            # dependencies is not. The ROS bridge is the standing example: a wheel puts the entry
+            # point on the path, and importing it needs rclpy, which a ROS-free process has not
+            # sourced. That must be a PluginError like every other resolution failure, because
+            # callers distinguish "cannot resolve" from "resolved to something wrong" by this type
+            # alone: `drop_transport_plugins` drops an unresolvable ref (a geometry-only export
+            # needs no transport), and a raw ImportError sailed past it and killed the export.
+            kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
+            raise PluginError(
+                f"{kind} {name!r} is registered by an installed package but could not be "
+                f"imported: {err}"
+            ) from err
+        check(obj, f"entry-point {name!r}")
+        return obj
     return None
+
+
+def _distribution(ep) -> str:
+    dist = getattr(ep, "dist", None)
+    return getattr(dist, "name", None) or "an unnamed distribution"
 
 
 def _split_ref(ref: str) -> tuple[str, str]:
