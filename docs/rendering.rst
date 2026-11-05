@@ -29,6 +29,9 @@ The lines a world writes
        components:
          - realsense_d435: {renderer: mujoco}   # this camera only: overrides sim.renderer
 
+A renderer another package adds is chosen the same way: ``sim.renderer: splat`` draws every
+camera's view of a room captured as a Gaussian splat (:doc:`splat_rendering`).
+
 A world that says nothing draws through MuJoCo's renderer, synchronously. From the command line
 the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
 
