@@ -451,3 +451,26 @@ def test_plugins_describe_publishes_a_machines_programs(monkeypatch):
     details = introspection.get_plugin_details("test_press")
     assert {p["name"] for p in details["programs"]} == {"stroke", "jam", "dwell", "early"}
     assert {"start", "status", "cancel"} <= {row["name"] for row in details["endpoints"]}
+
+
+# -- the actuator a machine drives ---------------------------------------------------------------
+def _axis(**config):
+    return _engine([{"machine_fixtures:Axis": config, "name": "axis"}], gravity=False)
+
+
+@pytest.mark.parametrize(
+    ("actuator", "said"),
+    [
+        ('<motor name="x" joint="x_joint" ctrlrange="-1 1"/>', "no affine bias"),
+        ('<velocity name="x" joint="x_joint" kv="100" ctrlrange="-1 1"/>', "bias stiffness"),
+        (
+            '<position name="x" joint="x_joint" kp="2000" kv="100" gear="2" ctrlrange="-1 1"/>',
+            "its gear is 2, not 1",
+        ),
+    ],
+)
+def test_an_actuator_that_is_no_plain_position_servo_is_refused_naming_the_machine(actuator, said):
+    with pytest.raises(
+        MachineError, match=f"machine axis: actuator 'x' is no plain position servo.*{said}"
+    ):
+        _axis(actuator=actuator)

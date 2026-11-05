@@ -2661,6 +2661,9 @@ is waited on like an actuator. ``NEEDS = {"feeder": "machine:feeder_1"}`` names 
 machine requires; it is resolved at every reset and refused naming the key when nothing published it.
 ``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
 
+An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
+servo or a geared servo is refused at configure, naming the machine and the actuator.
+
 A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
 nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
 it drives the spawned model's actuators under the spawn's prefix and publishes its handle as

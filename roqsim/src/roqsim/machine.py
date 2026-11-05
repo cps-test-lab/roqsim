@@ -37,11 +37,13 @@ The base gives every machine the same outside:
 * the endpoints ``start``, ``status`` and ``cancel`` on the machine's entity, for the control socket
   (they are kept off ROS);
 * actuators ramped at a stated speed, in the joint's unit per second, as a cylinder or a servo axis
-  moves: a ramp moves the position actuator's target and the physics moves the joint. Plugin-owned
+  moves: a ramp moves the position actuator's target and the physics moves the joint. An actuator a
+  machine drives is a plain position servo (fixed gain, affine bias whose stiffness matches the gain,
+  unit gear), so its control is the joint's target; any other is refused. Plugin-owned
   :attr:`~MachinePlugin.SETPOINTS` (a belt's speed) ramp the same way and are applied by the plugin.
 
-Fail loudly: an actuator the model lacks, a ``home`` the machine does not drive or outside its
-range, a handle in :attr:`~MachinePlugin.NEEDS` that nothing published, an unknown program or
+Fail loudly: an actuator the model lacks or one that is no plain position servo, a ``home`` the
+machine does not drive or outside its range, a handle in :attr:`~MachinePlugin.NEEDS` that nothing published, an unknown program or
 argument -- each is said naming the machine. A program ends with :meth:`MachinePlugin.fail` when its
 own outcome is a failure (a door stalled): the error is in ``status()`` and the run goes on. A
 program that raises anything else is a defect: with ``on_error: raise`` (the default) the run stops
@@ -371,6 +373,12 @@ class MachinePlugin(Plugin):
                 raise MachineError(
                     f"machine {self.address}: actuator {prefix + name!r} drives a joint that is "
                     "neither a slide nor a hinge"
+                )
+            servo = _not_a_position_servo(m, aid)
+            if servo:
+                raise MachineError(
+                    f"machine {self.address}: actuator {prefix + name!r} is no plain position "
+                    f"servo ({servo}), so its control is not the joint's target"
                 )
             lo, hi = (float(v) for v in m.actuator_ctrlrange[aid])
             self._actuators[name] = _Actuator(
@@ -751,6 +759,27 @@ class MachinePlugin(Plugin):
     def cancel(self) -> int:
         """End the running program where it is; its sequence number, 0 if none."""
         return self.request_cancel()
+
+
+def _not_a_position_servo(m: mujoco.MjModel, aid: int) -> str:
+    """Why actuator ``aid`` is no plain position servo -- its control the joint's target -- or ``""``.
+
+    A plain servo has a fixed gain, an affine bias whose position term is the gain's negative (so the
+    joint settles where the control says) and a unit gear; a motor, a velocity servo or a geared
+    servo would let a program read its control as a position it is not."""
+    if int(m.actuator_gaintype[aid]) != int(mujoco.mjtGain.mjGAIN_FIXED):
+        return "its gain is not fixed"
+    if int(m.actuator_biastype[aid]) != int(mujoco.mjtBias.mjBIAS_AFFINE):
+        return "it has no affine bias: a motor or a velocity servo"
+    kp = float(m.actuator_gainprm[aid, 0])
+    if kp <= 0 or abs(float(m.actuator_biasprm[aid, 1]) + kp) > 1e-9 * max(1.0, kp):
+        return "its bias stiffness does not match its gain: a velocity servo or a custom law"
+    if abs(float(m.actuator_biasprm[aid, 0])) > 1e-12:
+        return "its bias has an offset"
+    gear = [float(g) for g in m.actuator_gear[aid]]
+    if gear[0] != 1.0 or any(gear[1:]):
+        return f"its gear is {gear[0]:g}, not 1"
+    return ""
 
 
 def _fits(annotation, value) -> bool:
