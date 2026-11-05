@@ -657,7 +657,7 @@ control socket reaches them under ``<machine>/start`` and the same names.
 
 **Fail loudly.** A program ends with ``self.fail(reason)`` when its own outcome is a failure (a door
 stalled on an obstruction): the error is in ``status()`` and the run goes on, for the caller to
-decide. A program that raises anything else is a defect: by default (``on_error: raise``) the run
+decide. So does a program that sends an actuator outside its range. A program that raises anything else is a defect: by default (``on_error: raise``) the run
 stops naming the machine and the program; ``on_error: report`` puts it into ``status()`` instead.
 A handle a machine needs (``NEEDS``) that nothing published is refused at reset, naming the key.
 An actuator a machine drives is a plain position servo -- fixed gain, an affine bias whose stiffness

@@ -474,3 +474,17 @@ def test_an_actuator_that_is_no_plain_position_servo_is_refused_naming_the_machi
         MachineError, match=f"machine axis: actuator 'x' is no plain position servo.*{said}"
     ):
         _axis(actuator=actuator)
+
+
+def test_a_target_outside_the_actuators_range_fails_the_program_and_moves_nothing():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        for speed in (0.0, 0.5):
+            status = _run_until_done(engine, axis, axis.start("go", x=5.0, speed=speed))
+            assert status.error == "machine axis: target 5 for 'x' is outside its range [-1, 1]"
+        assert axis.value("x") == 0.0
+        assert _joint(engine, "x_joint") == pytest.approx(0.0, abs=1e-6)
+        assert not [e for e in _events(engine, "axis") if e["event"] == "go"], "no step began"
+    finally:
+        engine.shutdown()

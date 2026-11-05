@@ -2646,8 +2646,9 @@ generator method marked ``@program``. Each ``yield`` is one physics step::
 What a program has:
 
 - ``self.set(name, value)`` and ``self.ramp(name, value, speed)`` -- at once, or at ``speed`` in the
-  joint's unit per second; ``yield from self.move(name, value, speed=None, event=None)`` does either
-  and waits until reached;
+  joint's unit per second; a target outside the actuator's range fails the program, naming the
+  machine, the actuator and the range; ``yield from self.move(name, value, speed=None,
+  event=None)`` does either and waits until reached;
 - ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names)``,
   ``self.until_stopped(*names)`` (reached and at rest: what an interlock waits for),
   ``self.wait(seconds)``;

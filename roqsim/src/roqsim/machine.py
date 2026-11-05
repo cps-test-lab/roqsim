@@ -478,15 +478,16 @@ class MachinePlugin(Plugin):
     def set(self, name: str, value: float) -> None:
         """Set ``name``'s target to ``value`` at once; any ramp on it ends."""
         self._check_driven(name)
+        value = self._in_range(name, float(value))
         self._ramps.pop(name, None)
-        self._cmd[name] = self._clamp(name, float(value))
+        self._cmd[name] = value
 
     def ramp(self, name: str, value: float, speed: float) -> None:
         """Move ``name``'s target toward ``value`` at ``speed`` (its unit per second)."""
         self._check_driven(name)
         if not speed > 0:
             raise ValueError(f"machine {self.address}: a ramp's speed is positive, not {speed!r}")
-        goal = self._clamp(name, float(value))
+        goal = self._in_range(name, float(value))
         if goal == self._cmd[name]:
             self._ramps.pop(name, None)
         else:
@@ -502,12 +503,12 @@ class MachinePlugin(Plugin):
     ):
         """``set`` or ``ramp``, then wait until ``name`` has reached ``value``. With ``event``, emit
         that step's event as the move begins."""
-        if event:
-            self.step(event, **fields)
         if speed is None:
             self.set(name, value)
         else:
             self.ramp(name, value, speed)
+        if event:
+            self.step(event, **fields)
         yield from self.until_reached(name)
 
     def until(self, cond: Callable[[], bool], timeout: float | None = None, what: str = ""):
@@ -586,11 +587,15 @@ class MachinePlugin(Plugin):
                 f"{sorted([*self._actuators, *self.SETPOINTS]) or 'nothing'})"
             )
 
-    def _clamp(self, name: str, value: float) -> float:
+    def _in_range(self, name: str, value: float) -> float:
+        """``value`` as a target of ``name``; outside the actuator's range the program fails."""
         act = self._actuators.get(name)
-        if act is None or not act.limited:
-            return value
-        return min(max(value, act.lo), act.hi)
+        if act is not None and act.limited and not act.lo <= value <= act.hi:
+            self.fail(
+                f"machine {self.address}: target {value:g} for {name!r} is outside its range "
+                f"[{act.lo:g}, {act.hi:g}]"
+            )
+        return value
 
     # -- starts, cancels, status --------------------------------------------------------------
     @property
