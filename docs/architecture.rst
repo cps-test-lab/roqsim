@@ -823,19 +823,24 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    :func:`roqsim.registry.resolve_renderer`); the core names none. MuJoCo's own,
    :class:`~roqsim.rendering.MujocoRenderer`, registers there as ``mujoco`` and is the default;
    :class:`~roqsim.render_socket.SocketRenderer` (``socket``) is the client of a renderer in another
-   process. A world chooses with ``sim.renderer``, a camera may name its own with ``renderer:``,
-   ``--renderer`` is ``--set sim.renderer=`` as a flag, and a renderer's settings are its block
-   ``sim.renderers.<name>``, validated by its ``validate_config`` at load.
+   process, with ``TCP_NODELAY`` on both ends of a TCP connection, since a message is several writes.
+   A package for one server subclasses it: it starts that server, sends the scene in the form the
+   server reads (``scene_blobs``), and declares what it draws. A world chooses with ``sim.renderer``, a
+   camera may name its own with ``renderer:``, ``--renderer`` is ``--set sim.renderer=`` as a
+   flag, and a renderer's settings are its block ``sim.renderers.<name>``, validated by its
+   ``validate_config`` at load.
 -  **The contract** (:class:`~roqsim.render_api.Renderer`): ``open(scene)`` once with a
    ``SceneDescription`` -- the compiled model (read-only), which bodies move, the cameras it will be
    asked for, its settings; then ``render(snapshot, requests)`` per tick with a ``StateSnapshot``
    (sim time, every body's pose, the model values presence changes at run time, and for an in-process
    renderer a copy of ``MjData``) and a **batch** of ``CameraRequest`` (camera, images asked for,
-   world pose, field of view), answered with one ``Frame`` per request stamped with the snapshot's sim
+   world pose, field of view; the camera carries the intrinsics MuJoCo projects it with,
+   :func:`roqsim.rendering.camera_intrinsics`), answered with one ``Frame`` per request stamped with the snapshot's sim
    time; ``close()``. Nothing in it assumes a GL context or the renderer's process. What a renderer
    can give is declared on its class (``RendererCapabilities``: images, camera models, whether it
    composes moving bodies, draws the static world, renders a batch at once, is deterministic, runs
-   in-process, draws decorations, draws only the geom groups a camera names), and
+   in-process, draws decorations, draws only the geom groups a camera names, projects an off-centre
+   principal point, projects non-square pixels), and
    :meth:`RenderService.check` holds every camera to it when the world loads: a camera a renderer
    cannot serve fails the load naming both, and nothing falls back to MuJoCo's renderer. Every frame
    a renderer returns is held to its request: its camera, its snapshot's sim time and step, and each
@@ -865,7 +870,8 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    before the one that publishes it; its noise is drawn at that time (``ctx.rng_for(..., at=)``), so
    an async frame is the sync frame of its stamp. A worker whose renderer failed raises on the
    physics thread at the next tick, and a worker that does not open or draw a batch a caller waits
-   for within ``sim.render.timeout_s`` is named as hung. ``sim.render.workers`` deals each
+   for within ``sim.render.timeout_s`` is named as hung (opening waits for the renderer's own
+   ``open_timeout_s`` where that is longer: a renderer slow to start). ``sim.render.workers`` deals each
    renderer's cameras to that many instances (a context each; a thread each in ``async``), one
    camera's views together (a view's ``group``), so its passes of one snapshot arrive as one -- the
    seam a second GPU or process goes behind, which no camera plugin sees.

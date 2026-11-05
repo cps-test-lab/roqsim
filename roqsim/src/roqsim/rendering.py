@@ -747,6 +747,33 @@ def camera_model_of(model: mujoco.MjModel, camera) -> str:
     return "orthographic" if ortho else "pinhole"
 
 
+def camera_intrinsics(
+    model: mujoco.MjModel, camera, width: int, height: int, fovy: float
+) -> tuple[float, float, float, float]:
+    """``(fx, fy, cx, cy)`` in pixels: the projection MuJoCo draws *camera* with at this size.
+
+    A model camera with a ``sensorsize`` renders through its ``focal``/``principal``
+    (``cam_intrinsic``, in metres on the sensor), scaled to the image; MuJoCo puts the optical axis
+    at ``(W/2 - ppx, H/2 - ppy)`` in edge coordinates, and ``cx, cy`` count pixel centres, half a
+    pixel less. Any other camera, a free one included, is the symmetric pinhole of *fovy*.
+    """
+    if isinstance(camera, mujoco.MjvCamera):
+        fixed = camera.type == mujoco.mjtCamera.mjCAMERA_FIXED and camera.fixedcamid >= 0
+        camera = int(camera.fixedcamid) if fixed else -1
+    if camera >= 0:
+        sw, sh = (float(v) for v in model.cam_sensorsize[camera])
+        if sw > 0 and sh > 0:
+            fpx, fpy, ppx, ppy = (float(v) for v in model.cam_intrinsic[camera])
+            return (
+                fpx / sw * width,
+                fpy / sh * height,
+                width / 2.0 - 0.5 - ppx / sw * width,
+                height / 2.0 - 0.5 - ppy / sh * height,
+            )
+    f = height / (2.0 * math.tan(math.radians(fovy) / 2.0))
+    return (f, f, (width - 1) / 2.0, (height - 1) / 2.0)
+
+
 def moving_bodies(model: mujoco.MjModel) -> np.ndarray:
     """Per body, whether it moves: it is not welded to the world, or it is a mocap body."""
     return (np.asarray(model.body_weldid) != 0) | (np.asarray(model.body_mocapid) >= 0)
@@ -944,6 +971,8 @@ class MujocoRenderer(Renderer):
         in_process=True,
         decorations=True,
         geom_groups=True,
+        principal_point=True,
+        non_square_pixels=True,
     )
     SETTINGS = {
         "atlas": Setting(
@@ -1323,10 +1352,11 @@ class _Worker:
             target=self._run, name=f"roqsim-render-{name}-{shard}", daemon=True
         )
         self.thread.start()
-        if not self.opened.wait(service.timeout_s):
+        wait = service.open_timeout_s(name)
+        if not self.opened.wait(wait):
             raise RenderError(
-                f"renderer {name!r} (worker {shard}) did not open within {service.timeout_s:g} s "
-                "(sim.render.timeout_s)"
+                f"renderer {name!r} (worker {shard}) did not open within {wait:g} s "
+                "(sim.render.timeout_s, or the renderer's own open timeout where longer)"
             )
         if self.error is not None:
             raise RenderError(f"renderer {name!r} failed to open: {self.error}") from self.error
@@ -1526,12 +1556,14 @@ class RenderService:
         unknown = sorted(set(images) - set(IMAGES))
         if unknown:
             raise ValueError(f"view {id!r}: unknown image(s) {unknown}; one of {', '.join(IMAGES)}")
+        model = camera_model_of(self.model, camera)
         spec = CameraSpec(
             id=id,
             width=int(width),
             height=int(height),
-            model=camera_model_of(self.model, camera),
+            model=model,
             fovy=self._fovy(camera),
+            intrinsics=self._intrinsics(camera, int(width), int(height)),
             near=near,
             far=far,
             images=frozenset(images),
@@ -1568,6 +1600,13 @@ class RenderService:
             return float(self.model.vis.global_.fovy)
         return float(self.model.cam_fovy[camera])
 
+    def _intrinsics(self, camera, width: int, height: int) -> tuple | None:
+        """What :attr:`CameraSpec.intrinsics` holds for *camera* at this size."""
+        fovy = self._fovy(camera)
+        if camera_model_of(self.model, camera) == "orthographic" or fovy <= 0:
+            return None
+        return camera_intrinsics(self.model, camera, width, height, fovy)
+
     # -- the renderers ---------------------------------------------------------------------------
 
     def renderer_class(self, name: str) -> type:
@@ -1592,6 +1631,8 @@ class RenderService:
                 view.spec.model,
                 view.spec.decorated,
                 view.spec.geomgroup is not None,
+                view.spec.off_centre,
+                view.spec.non_square,
             )
             if missing:
                 problems.append(
@@ -1603,6 +1644,11 @@ class RenderService:
                 )
         if problems:
             raise PluginError("; ".join(problems))
+
+    def open_timeout_s(self, name: str) -> float:
+        """How long renderer *name* may take to open: ``sim.render.timeout_s``, or its own where longer."""
+        own = self.renderer_class(name).open_timeout_s(self.settings.get(name, {}))
+        return max(self.timeout_s, float(own)) if own is not None else self.timeout_s
 
     def _renderer(self, name: str, shard: int = 0) -> Renderer:
         """The opened instance *shard* of renderer *name*, constructed and opened on first use."""
@@ -1991,6 +2037,7 @@ class FrameRenderer:
         spec.mujoco_camera = resolved
         spec.model = camera_model_of(self.model, resolved)
         spec.fovy = self._service._fovy(resolved)
+        spec.intrinsics = self._service._intrinsics(resolved, self.width, self.height)
         spec.near, spec.far = self._near, self._far
         return self._view
 
@@ -2002,7 +2049,12 @@ class FrameRenderer:
             self._service.settings.get(view.renderer, {})
         )
         missing = caps.missing(
-            [image], view.spec.model, decorate is not None, view.spec.geomgroup is not None
+            [image],
+            view.spec.model,
+            decorate is not None,
+            view.spec.geomgroup is not None,
+            view.spec.off_centre,
+            view.spec.non_square,
         )
         if missing:
             raise RenderError(
