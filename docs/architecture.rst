@@ -643,7 +643,7 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
    own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
    else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
 -  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
-   precondition), ``cancel()`` (the machine holds where it is), ``value(name)`` (an actuator's or
+   precondition), ``cancel()`` (the machine stops where it is), ``value(name)`` (an actuator's or
    setpoint's current target).
 
 It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
@@ -661,8 +661,9 @@ decide. So does a program that sends an actuator outside its range, and one whos
 arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``, ``until_reached``
 and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
 else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
-``on_error: report`` puts it into ``status()`` instead. A program that ended in an error leaves the
-machine holding where it is, as a cancel does. A handle a machine needs (``NEEDS``) that nothing
+``on_error: report`` puts it into ``status()`` instead. A program that ended in an error, or was
+cancelled, stops the machine where it is: each actuator's target becomes where its joint stands, so
+an obstructed joint does not move on by itself once the obstacle is gone. A handle a machine needs (``NEEDS``) that nothing
 published is refused at reset, naming the key. An actuator a machine drives is a plain position
 servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear -- so its control is the
 joint's target; a motor, a velocity servo or a geared servo is refused at configure.

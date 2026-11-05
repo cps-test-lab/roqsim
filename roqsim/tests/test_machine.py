@@ -507,7 +507,9 @@ def test_a_program_that_fails_mid_ramp_leaves_the_machine_holding_as_a_cancel_do
         status = _run_until_done(engine, axis, axis.start(program, x=0.8, speed=0.2, after=0.5))
         assert status.error == error
         held = axis.value("x")
-        assert held == pytest.approx(0.1, abs=0.002), "the ramp stopped where the program ended"
+        # The ramp's target was at 0.1 when the program ended; the machine stops where the joint
+        # stood, a little behind it.
+        assert held == pytest.approx(0.1, abs=0.015), "it stopped where the program ended"
         for _ in range(1000):
             engine.step()
         assert axis.value("x") == held
@@ -541,5 +543,54 @@ def test_until_with_a_timeout_fails_the_program_when_it_runs_out():
         status = _run_until_done(engine, axis, axis.start("wait_for", seconds=0.3))
         assert status.error == "machine axis: the feeder not true after 0.3 s"
         assert engine.ctx.sim_time - t0 == pytest.approx(0.3, abs=0.01)
+    finally:
+        engine.shutdown()
+
+
+# -- a cancelled or failed program stops the machine where it is -------------------------------
+def test_a_cancel_during_an_unramped_move_stops_the_joint_where_it_is():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        axis.start("go", x=0.8)
+        for _ in range(25):
+            engine.step()
+        axis.cancel()
+        engine.step()
+        stopped = axis.value("x")
+        assert 0.0 < stopped < 0.5, "cancelled on its way"
+        for _ in range(1000):
+            engine.step()
+        assert axis.value("x") == stopped
+        assert _joint(engine, "x_joint") == pytest.approx(stopped, abs=0.02)
+    finally:
+        engine.shutdown()
+
+
+def test_an_obstructed_move_that_timed_out_stays_when_the_obstacle_is_taken_away():
+    engine = _axis(obstacle=True, timeout=1.0)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("go", x=0.8))
+        assert status.error.startswith("machine axis: 'x' did not reach 0.8")
+        m = engine.ctx.model
+        engine.ctx.data.mocap_pos[m.body_mocapid[m.body("wall").id]] = [5.0, 0.0, 0.5]
+        for _ in range(1000):
+            engine.step()
+        assert _joint(engine, "x_joint") == pytest.approx(0.3, abs=0.01), "it did not move on"
+    finally:
+        engine.shutdown()
+
+
+def test_an_optional_argument_takes_none():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        assert _run_until_done(engine, axis, axis.start("nudge", x=0.2, speed=None)).error == ""
+        assert _run_until_done(engine, axis, axis.start("nudge", x=0.1, speed=0.5)).error == ""
+        with pytest.raises(MachineError, match="speed is float . None, not 'fast'"):
+            axis.start("nudge", x=0.1, speed="fast")
+        with pytest.raises(MachineError, match="x is float, not None"):
+            axis.start("nudge", x=None)
     finally:
         engine.shutdown()
