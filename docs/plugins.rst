@@ -2655,8 +2655,8 @@ What a program has:
   by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
   naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
-  failure, reported in ``status()``. A failed program, as a cancelled one, leaves the machine holding
-  where it is;
+  failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
+  each actuator's target becomes where its joint stands, and each setpoint keeps its value;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read

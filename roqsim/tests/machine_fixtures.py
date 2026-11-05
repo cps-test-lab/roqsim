@@ -149,7 +149,8 @@ AXIS = """<mujoco model="axis">
     {actuator}
   </actuator>
 </mujoco>"""
-WALL = '<body name="wall"><geom type="box" size="0.1 0.2 0.2" pos="0.45 0 0"/></body>'
+#: A mocap body, so a test can take it away.
+WALL = '<body name="wall" mocap="true" pos="0.45 0 0"><geom type="box" size="0.1 0.2 0.2"/></body>'
 SERVO = (
     '<position name="x" joint="x_joint" kp="2000" kv="100" ctrlrange="-1 1" forcerange="-50 50"/>'
 )
@@ -189,6 +190,11 @@ class Axis(MachinePlugin):
     def go(self, x: float, speed: float = 0.0):
         """Move to x, at once or ramped."""
         yield from self.move("x", x, speed=speed or None, event="go")
+
+    @program
+    def nudge(self, x: float, speed: float | None = None):
+        """Move to x, ramped when a speed is given."""
+        yield from self.move("x", x, speed=speed)
 
     @program
     def go_then_fail(self, x: float, speed: float, after: float):
