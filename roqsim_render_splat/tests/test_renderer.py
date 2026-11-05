@@ -240,3 +240,41 @@ def test_roqsim_render_draws_the_example_world_as_installed(gpu, tmp_path):
     assert pixels.shape == (540, 960, 3)
     # The room (its checkered floor, its walls) fills the picture: nothing is background black.
     assert (pixels.sum(axis=2) == 0).mean() < 0.01
+
+
+def test_a_batch_split_into_passes_draws_the_same_frames(gpu, tmp_path):
+    """``max_pass_mib`` bounds the GPU memory of a pass; the pictures do not change."""
+    pts, colours = _wall(3.0, [0.3, 0.7, 0.4])
+    file = _write(tmp_path, pts, colours, sigma_m=0.04)
+    one, views, model, data = _service(tmp_path, file, cameras=("cam", "lens"))
+    many, views2, _, _ = _service(tmp_path, file, cameras=("cam", "lens"), max_pass_mib=1e-6)
+    try:
+        a = _draw(one, views, data)
+        b = _draw(many, views2, data)
+        assert many.renderer("splat").stats["passes"] == 2  # one camera a pass
+        assert one.renderer("splat").stats["passes"] == 1
+    finally:
+        one.close()
+        many.close()
+    for x, y in zip(a, b, strict=True):
+        np.testing.assert_array_equal(x.rgb, y.rgb)
+        np.testing.assert_array_equal(x.depth, y.depth)
+
+
+def test_faint_gaussians_are_dropped_at_load_when_asked(gpu, tmp_path):
+    pts, colours = _wall(3.0, [0.3, 0.7, 0.4])
+    file = _write(tmp_path, pts, colours, sigma_m=0.04)  # every one 0.9997 opaque
+    service, views, _, data = _service(tmp_path, file, min_opacity=0.5)
+    try:
+        _draw(service, views, data)
+        assert service.renderer("splat").stats["gaussians"] == len(pts)
+    finally:
+        service.close()
+    service, views, _, data = _service(tmp_path, file, min_opacity=0.9999)
+    try:
+        with pytest.raises(
+            RenderError, match=r"min_opacity 0.9999 drops every one of the capture's"
+        ):
+            _draw(service, views, data)
+    finally:
+        service.close()

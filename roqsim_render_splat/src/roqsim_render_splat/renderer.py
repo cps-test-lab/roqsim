@@ -337,6 +337,11 @@ class SplatRenderer(Renderer):
                 f"sim.renderers.splat.sh_degree is {degree}, and the capture holds spherical "
                 f"harmonics of degree {splat.sh_degree} only"
             )
+        if not keep.any():
+            raise RenderError(
+                f"sim.renderers.splat.min_opacity {self.settings['min_opacity']} drops every one of "
+                f"the capture's {len(keep):,} Gaussians (the most opaque is {opacity.max():.4f})"
+            )
         k = (degree + 1) ** 2
         dev = self._device
         try:
