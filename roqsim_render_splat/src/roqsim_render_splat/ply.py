@@ -165,27 +165,49 @@ class Splat:
         return len(self.means)
 
 
-def _columns(records: np.ndarray, names) -> np.ndarray:
-    return np.stack([np.asarray(records[n], dtype=np.float32) for n in names], axis=1)
-
-
 def read_splat(path: str | Path) -> Splat:
-    """Every Gaussian of the splat at *path*."""
+    """Every Gaussian of the splat at *path*.
+
+    Where every property is float32 -- every splat exporter writes it so -- the records are read
+    once as one float matrix and a property is a column of it; otherwise property by property.
+    """
     header = read_header(path)
-    records = np.memmap(
-        header.path, dtype=header.dtype, mode="r", offset=header.header_bytes, shape=(header.count,)
-    )
+    names = [name for name, _ in header.properties]
+    if all(_PLY_TYPES[kind] == "<f4" for _, kind in header.properties):
+        matrix = np.fromfile(
+            header.path, dtype="<f4", offset=header.header_bytes, count=header.count * len(names)
+        ).reshape(header.count, len(names))
+
+        def columns(want) -> np.ndarray:
+            index = [names.index(n) for n in want]
+            if index == list(
+                range(index[0], index[0] + len(index))
+            ):  # a run: a slice, not a gather
+                return np.ascontiguousarray(matrix[:, index[0] : index[0] + len(index)])
+            return np.ascontiguousarray(matrix[:, index])
+    else:
+        records = np.memmap(
+            header.path,
+            dtype=header.dtype,
+            mode="r",
+            offset=header.header_bytes,
+            shape=(header.count,),
+        )
+
+        def columns(want) -> np.ndarray:
+            return np.stack([np.asarray(records[n], dtype=np.float32) for n in want], axis=1)
+
     rest = 3 * ((header.sh_degree + 1) ** 2 - 1)
     sh = np.empty((header.count, (header.sh_degree + 1) ** 2, 3), dtype=np.float32)
-    sh[:, 0, :] = _columns(records, ("f_dc_0", "f_dc_1", "f_dc_2"))
+    sh[:, 0, :] = columns(("f_dc_0", "f_dc_1", "f_dc_2"))
     if rest:
-        flat = _columns(records, [f"f_rest_{i}" for i in range(rest)])
+        flat = columns([f"f_rest_{i}" for i in range(rest)])
         sh[:, 1:, :] = flat.reshape(header.count, 3, rest // 3).transpose(0, 2, 1)
     return Splat(
-        means=_columns(records, ("x", "y", "z")),
-        quats=_columns(records, ("rot_0", "rot_1", "rot_2", "rot_3")),
-        log_scales=_columns(records, ("scale_0", "scale_1", "scale_2")),
-        opacity_logits=np.asarray(records["opacity"], dtype=np.float32).copy(),
+        means=columns(("x", "y", "z")),
+        quats=columns(("rot_0", "rot_1", "rot_2", "rot_3")),
+        log_scales=columns(("scale_0", "scale_1", "scale_2")),
+        opacity_logits=columns(("opacity",))[:, 0].copy(),
         sh=sh,
         sh_degree=header.sh_degree,
     )

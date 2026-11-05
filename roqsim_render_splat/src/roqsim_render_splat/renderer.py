@@ -382,13 +382,17 @@ class SplatRenderer(Renderer):
         by_size: dict[tuple[int, int], list[int]] = {}
         for i, r in enumerate(requests):
             by_size.setdefault((r.camera.width, r.camera.height), []).append(i)
+        bodies = self._draw_bodies(snapshot, requests) if self._moving else None
         for (width, height), indices in by_size.items():
             for chunk in self._passes(indices, width, height):
-                rgb, depth = self._rasterise([requests[i] for i in chunk], width, height)
+                rgb, depth = self._rasterise(
+                    [requests[i] for i in chunk],
+                    width,
+                    height,
+                    None if bodies is None else [bodies[i] for i in chunk],
+                )
                 for j, i in enumerate(chunk):
                     frames[i].rgb, depths[i] = rgb[j], depth[j]
-        if self._moving:
-            self._compose(snapshot, requests, frames, depths)
         for frame, request, depth in zip(frames, requests, depths, strict=True):
             frame.depth = depth if "depth" in request.images else None
             if "rgb" not in request.images:
@@ -405,7 +409,10 @@ class SplatRenderer(Renderer):
         size = max(1, int(budget // max(per_camera, 1)))
         return [indices[i : i + size] for i in range(0, len(indices), size)]
 
-    def _rasterise(self, requests: Sequence[CameraRequest], width: int, height: int):
+    def _rasterise(self, requests: Sequence[CameraRequest], width: int, height: int, bodies=None):
+        """The pass's colour and depth, as arrays: the capture rasterised on the GPU and, where
+        *bodies* (MuJoCo's frames of the moving bodies) are given, composited with them there by
+        depth, so each frame crosses to the CPU once."""
         torch, g = self._torch, self._gaussians
         dev = self._device
         scale = self._placement[2]
@@ -443,6 +450,8 @@ class SplatRenderer(Renderer):
                 depth = torch.where(
                     alpha[..., 0] >= float(self.settings["min_alpha"]), depth, torch.inf
                 )
+                if bodies is not None:
+                    rgb, depth = self._compose(rgb, depth, bodies)
                 rgb_np = rgb.cpu().numpy()
                 depth_np = depth.to(torch.float32).cpu().numpy()
         except torch.cuda.OutOfMemoryError as err:
@@ -454,17 +463,27 @@ class SplatRenderer(Renderer):
             ) from err
         return rgb_np, depth_np
 
-    def _compose(self, snapshot, requests, frames, depths) -> None:
-        """Draw the moving bodies through MuJoCo's renderer and put them in by depth, the nearer
-        winning per pixel; *frames* and the room's *depths* are updated in place."""
+    def _draw_bodies(self, snapshot, requests) -> list[Frame]:
+        """The moving bodies alone, drawn by MuJoCo's renderer from the same snapshot: colour, and
+        depth that is ``inf`` wherever no moving body is."""
         moving = [
             replace(
                 r, camera=replace(r.camera, bodies="moving"), images=frozenset({"rgb", "depth"})
             )
             for r in requests
         ]
-        drawn = self._mujoco.render(snapshot, moving)
-        for i, (frame, body) in enumerate(zip(frames, drawn, strict=True)):
-            nearer = body.depth < depths[i]
-            frame.rgb = np.where(nearer[..., None], body.rgb, frame.rgb)
-            depths[i] = np.where(nearer, body.depth, depths[i]).astype(np.float32)
+        return self._mujoco.render(snapshot, moving)
+
+    def _compose(self, rgb, depth, bodies):
+        """*rgb*/*depth* (the capture, on the GPU) with *bodies* put in by depth, the nearer winning
+        per pixel."""
+        torch, dev = self._torch, self._device
+        body_rgb = torch.from_numpy(np.ascontiguousarray(np.stack([b.rgb for b in bodies]))).to(dev)
+        body_depth = torch.from_numpy(np.ascontiguousarray(np.stack([b.depth for b in bodies]))).to(
+            dev
+        )
+        nearer = body_depth < depth
+        return (
+            torch.where(nearer[..., None], body_rgb, rgb),
+            torch.where(nearer, body_depth, depth),
+        )
