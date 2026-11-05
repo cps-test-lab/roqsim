@@ -153,3 +153,115 @@ def test_two_runs_of_a_scene_give_the_same_timeline():
             engine.shutdown()
 
     assert run() == run()
+
+
+# -- place(), with a pose as a world file writes one ---------------------------------------------
+BLOCK = """<mujoco model="block">
+  <worldbody>
+    <body name="block"><geom type="box" size="0.05 0.05 0.05" mass="1"/></body>
+  </worldbody>
+</mujoco>"""
+
+
+def _placing(tmp_path, pose):
+    (tmp_path / "block.xml").write_text(BLOCK)
+    spawn = {
+        "spawn_model": {
+            "model": str(tmp_path / "block.xml"),
+            "pose": {"position": {"x": 2.0, "y": 2.0, "z": 0.5}},
+        },
+        "name": "block",
+    }
+    return _engine(spawn, {"scenario_fixtures:Place": {"pose": pose}, "name": "scene"})
+
+
+def _block(engine):
+    d, bid = engine.ctx.data, engine.ctx.model.body("block").id
+    return [float(v) for v in d.xpos[bid]], [float(v) for v in d.xquat[bid]]
+
+
+@pytest.mark.parametrize(
+    ("pose", "where"),
+    [
+        ({"position": {"x": 0.5, "y": -0.5, "z": 0.3}}, [0.5, -0.5, 0.3]),
+        ({"position": {"x": 0.5, "y": -0.5}}, [0.5, -0.5, 0.0]),
+        (
+            {"header": {"frame_id": "world"}, "pose": {"position": {"x": 1.0, "y": 0.0, "z": 0.2}}},
+            [1.0, 0.0, 0.2],
+        ),
+    ],
+)
+def test_place_puts_the_entity_at_a_world_pose_a_missing_z_being_the_floor(tmp_path, pose, where):
+    engine = _placing(tmp_path, pose)
+    try:
+        engine.step()
+        pos, _quat = _block(engine)
+        assert pos == pytest.approx(where, abs=1e-6)
+        engine.step()
+        assert [e["event"] for e in _events(engine, "scene")] == ["placed", "scenario_end"]
+    finally:
+        engine.shutdown()
+
+
+def test_place_turns_an_orientation_as_a_world_file_states_it(tmp_path):
+    engine = _placing(
+        tmp_path, {"position": {"x": 0.0, "y": 0.0, "z": 0.3}, "orientation": {"yaw": 1.0}}
+    )
+    try:
+        engine.step()
+        _pos, quat = _block(engine)
+        assert quat == pytest.approx([0.8775826, 0.0, 0.0, 0.4794255], abs=1e-6)
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("pose", "said"),
+    [
+        ({"position": {"x": 0.5}}, "'pose.position.y'"),
+        ("0.5, 0.5", "must be a mapping"),
+        ({"position": {"x": 0.5, "y": 0.5}, "rotation": {}}, "no key"),
+        ({"header": {"frame_id": "map"}, "pose": {"position": {"x": 0.0, "y": 0.0}}}, "'map'"),
+    ],
+)
+def test_place_refuses_what_is_no_world_pose_naming_what_is_wrong(tmp_path, pose, said):
+    from roqsim.pose import PoseError
+
+    engine = _placing(tmp_path, pose)
+    try:
+        with pytest.raises(PoseError, match=said) as exc:
+            engine.step()
+        assert "raised in scenario scene's program" in "".join(getattr(exc.value, "__notes__", []))
+        pos, _quat = _block(engine)
+        assert pos == pytest.approx([2.0, 2.0, 0.5], abs=1e-6), "not moved"
+    finally:
+        engine.shutdown()
+
+
+# -- what a scenario's failures say ----------------------------------------------------------------
+def test_an_until_that_times_out_names_the_scenario_once():
+    engine = _engine({"scenario_fixtures:Impatient": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError) as exc:
+            for _ in range(1000):
+                engine.step()
+        assert str(exc.value) == "scenario scene: the feeder not true after 0.2 s"
+    finally:
+        engine.shutdown()
+
+
+def test_a_program_that_raises_stops_the_run_with_its_own_exception():
+    engine = _engine({"scenario_fixtures:Broken": {}, "name": "scene"})
+    try:
+        with pytest.raises(KeyError, match="no such part"):
+            for _ in range(5):
+                engine.step()
+    finally:
+        engine.shutdown()
+
+
+def test_a_handle_named_like_a_member_of_the_scenario_is_refused():
+    with pytest.raises(
+        Exception, match=r"NEEDS names \['config'\], which the scenario already has"
+    ):
+        _engine(PRESS, {"scenario_fixtures:Clashing": {}, "name": "scene"})

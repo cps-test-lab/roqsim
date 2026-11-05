@@ -15,17 +15,19 @@ changes is the machine's (the stroke's bottom) or the scenario's (see ``docs/arc
 
 **A state is a child body named** ``look_<name>`` **anywhere under an entity's root body**, after the
 entity's prefix (``s1_look_hole`` on an entity spawned with ``prefix: s1_``), or ``<body>_look_<name>``
-for one a plugin added to the entity at build. Its geoms are usually visual only and massless, so
-showing it changes nothing physical; a state that changes the shape -- a flat strip against the bent
-one -- carries its own collision geoms, and they come and go with it. The mass is the root body's and
-does not change.
+for one a plugin added to the entity at build. A state's bodies are massless -- one with mass is
+refused when the states are collected, naming the body -- so showing or hiding a state never changes
+what the entity weighs. Its geoms are usually visual only; a state that changes the shape -- a flat
+strip against the bent one -- carries its own collision geoms, and they come and go with it. The mass
+is the root body's and does not change.
 
 **A state that changes the shape can change where the mass is.** A strip bent into an L has its
 centre of mass elsewhere than the flat strip it was. Such a state names its inertia in the model as
 a custom numeric ``look_<name>_inertia`` of ten values, the root body's ``<inertial>`` with the
 state shown: ``pos`` (3), ``quat`` (4, w x y z) and ``diaginertia`` (3), in the root body's frame.
 While the state is shown the root body has that inertia; hidden, the root's own comes back. Two
-shown states that both name an inertia are an error, since the entity cannot have both.
+shown states that both name an inertia are an error, since the entity cannot have both: showing the
+second is refused before anything changes.
 
 **Shown and hidden through** :mod:`roqsim.presence`. Each state is registered as an entity of its
 own, named after its owner (``s1.look_hole``, kind ``look``), and made absent or present as presence
@@ -137,6 +139,8 @@ class PartStates:
         return changed
 
     def _change(self, entity: str, look: str, present: bool, place: bool = True) -> bool:
+        if present:
+            self._check_inertia(entity, look)  # before anything changes
         changed = set_present(self.ctx, self._look(entity, look), present)
         if place:
             self.place_mass(entity)
@@ -145,6 +149,18 @@ class PartStates:
                 self.source, "shown" if present else "hidden", entity=entity, look=look
             )
         return changed
+
+    def _check_inertia(self, entity: str, look: str) -> None:
+        """Refuse showing ``look`` while another shown state of ``entity`` names an inertia too."""
+        record = self.inertia.get(entity)
+        if record is None or look not in record.looks:
+            return
+        others = [name for name in self.shown(entity) if name in record.looks and name != look]
+        if others:
+            raise PartStateError(
+                f"part_state: {entity!r} shows {others}, which names an inertia, and {look!r} names "
+                "one too; a part has one -- hide the other first"
+            )
 
     def place_mass(self, entity: str) -> None:
         """Give ``entity``'s root body the inertia of its shown state that names one, else its own."""
@@ -201,6 +217,19 @@ def find_looks(model: mujoco.MjModel, entity: Entity) -> dict[str, str]:
     return out
 
 
+def _refuse_mass(model: mujoco.MjModel, entity: str, body: str) -> None:
+    """Refuse a state whose bodies carry mass: showing or hiding it must not change the part's weight
+    (and an absent body's gravity is compensated, so its weight would come and go with it)."""
+    root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)
+    mass = sum(float(model.body_mass[b]) for b in subtree_body_ids(model, root))
+    if mass > 0.0:
+        raise PartStateError(
+            f"part_state: state body {body!r} of {entity!r} has mass {mass:g} kg; a state's bodies "
+            'are massless (mass="0" on their geoms), so that a state changes how the part looks and '
+            "collides, never what it weighs -- a state that moves the mass names an inertia instead"
+        )
+
+
 def _names_list(value) -> bool:
     return isinstance(value, list) and all(isinstance(x, str) for x in value)
 
@@ -251,6 +280,7 @@ class PartStatePlugin(Plugin):
                 continue
             looks = {}
             for look, body in found.items():
+                _refuse_mass(ctx.model, entity.name, body)
                 name = f"{entity.name}.{LOOK_PREFIX}{look}"
                 look_entity = ctx.entities.get(name)
                 if look_entity is None:

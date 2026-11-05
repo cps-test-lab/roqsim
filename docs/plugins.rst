@@ -2655,8 +2655,8 @@ What a program has:
   by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
   naming the machine and the actuator, so an obstructed joint never hangs a program silently;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
-  failure, reported in ``status()``. A failed program, as a cancelled one, leaves the machine holding
-  where it is;
+  failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
+  each actuator's target becomes where its joint stands, and each setpoint keeps its value;
 - ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
@@ -2692,7 +2692,7 @@ scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
        NEEDS = {"press": "machine:press_1"}
 
        def program(self):
-           yield from self.place("strip_1", {"position": {"x": 0.0, "z": 0.8}})
+           yield from self.place("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
            yield from self.run(self.press, "stroke", show="hole", hide="plain")
            self.event("punched", part="strip_1")
 
@@ -2705,8 +2705,42 @@ and is placed after the machines it drives::
        name: demo
 
 The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
-``place``, ``event`` (:mod:`roqsim.scenario`). Every scenario takes ``needs:`` (rename a handle) and
+``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
+``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
+one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
+``roqsim.pose.PoseError`` naming what is wrong. A program's own exception stops the run with its
+own type, the scenario named in a note. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when its program returned.
+
+An entity's states: ``part_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+What a machine does to a part shows on the part: a strip punched, bent or labelled; a machine's own
+lamp on. Each such state is a ``look_<name>`` body under the entity's root body, compiled in and
+shown or hidden at run time through :mod:`roqsim.presence`, so a recording replays it::
+
+   <body name="strip">
+     <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_hole">
+       <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+   </body>
+
+One ``part_state`` entry serves the world. Its handle, ``part_state``, shows and hides a state by
+entity and name (``show``, ``hide``, ``set`` for one of an ``exclusive`` group), and each change is a
+``shown``/``hidden`` event::
+
+   - part_state:
+       shown: {strip_*: [plain]}            # at the start of every episode, by name or pattern
+       exclusive: {strip_*: [[plain, hole]]}
+
+A state's bodies are **massless**: one with mass is refused, naming the body, because showing a state
+must change how the part looks and collides, never what it weighs. A state that moves the centre of
+mass -- a strip bent into an L -- names the root body's inertia while it is shown, as a custom
+numeric ``look_<name>_inertia`` of ten values (``pos``, ``quat``, ``diaginertia``); two shown states
+that both name one are refused before anything changes. A pattern that matches no entity with states,
+an unknown entity or an unknown state is refused by name. The plugin decides nothing: when a part
+changes is the machine's or the scenario's.
 
 Writing your own
 ----------------

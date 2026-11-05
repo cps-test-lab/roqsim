@@ -49,8 +49,9 @@ the error in ``status()`` and the run going on, when it calls :meth:`MachinePlug
 stalled), when it sends an actuator outside its range, and when a joint has not arrived
 :attr:`~MachinePlugin.MOVE_TIMEOUT` seconds after its target did (an obstruction). A program that raises anything else is a
 defect: with ``on_error: raise`` (the default) the run stops naming the machine and the program;
-with ``on_error: report`` the error goes into ``status()``. A program that ended in an error, as a
-cancelled one, leaves the machine holding where it is.
+with ``on_error: report`` the error goes into ``status()``. A program that ended in an error, or was
+cancelled, stops the machine where it is: each actuator's target becomes where its joint stands and
+each setpoint keeps its value, so nothing moves on toward a target the program had set.
 """
 
 from __future__ import annotations
@@ -776,9 +777,14 @@ class MachinePlugin(Plugin):
                 self._cancelling = 0
             self._status = MachineStatus(run.seq, run.program, True, error)
         if error:
-            # Cancelled or failed, the machine holds where it is: a ramp's target stops moving.
+            # Cancelled or failed, the machine stops where it is: every ramp ends, each actuator's
+            # target becomes where its joint stands (inside its range), and each setpoint keeps the
+            # value it has now -- so nothing carries on toward a target the program had set.
             run.gen.close()
             self._ramps.clear()
+            for name, act in self._actuators.items():
+                here = float(self._ctx.data.qpos[act.qadr])
+                self._cmd[name] = min(max(here, act.lo), act.hi) if act.limited else here
         self._ctx.events.emit(
             self.machine_entity, "program_end", program=run.program, seq=run.seq, error=error
         )
@@ -827,18 +833,32 @@ def _not_a_position_servo(m: mujoco.MjModel, aid: int) -> str:
 
 
 def _fits(annotation, value) -> bool:
-    """Whether ``value`` passes for a program parameter's annotation (plain types only)."""
+    """Whether ``value`` passes for a program parameter's annotation (plain types and their unions).
+
+    Annotations are strings here (``from __future__ import annotations``), so ``float | None`` is
+    read as its parts: ``None`` passes where a part is ``None``, any other value where it fits one
+    part. A part that is no plain type passes anything."""
     if annotation is inspect.Parameter.empty:
         return True
+    parts = (
+        [p.strip() for p in annotation.split("|")] if isinstance(annotation, str) else [annotation]
+    )
+    if value is None:
+        return any(p in ("None", None, type(None)) for p in parts)
     kinds = {"float": float, "int": int, "str": str, "bool": bool}
-    if isinstance(annotation, str):
-        annotation = kinds.get(annotation.split("|")[0].strip())
-        if annotation is None:
-            return True
-    if annotation is float:
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if annotation is int:
-        return isinstance(value, int) and not isinstance(value, bool)
-    if annotation in (str, bool):
-        return isinstance(value, annotation)
-    return True
+    for part in parts:
+        kind = kinds.get(part, part) if isinstance(part, str) else part
+        if kind in ("None", None, type(None)):
+            continue
+        if kind is float:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return True
+        elif kind is int:
+            if isinstance(value, int) and not isinstance(value, bool):
+                return True
+        elif kind in (str, bool):
+            if isinstance(value, kind):
+                return True
+        else:
+            return True  # not a plain type: not ours to check
+    return False

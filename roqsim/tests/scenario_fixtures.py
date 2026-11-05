@@ -116,3 +116,40 @@ class Watch(ScenarioPlugin):
         self.event("dwelt")
         yield from self.left(self.gate)
         self.event("empty")
+
+
+class Place(ScenarioPlugin):
+    """Scenario: place the block at the pose its config gives.
+
+    Config::
+
+        pose: {}   # the pose place() is given
+    """
+
+    def program(self):
+        yield from self.place("block", self.config.get("pose"))
+        self.event("placed")
+
+
+class Impatient(ScenarioPlugin):
+    """Scenario: wait for a condition that never holds, for a moment."""
+
+    def program(self):
+        yield from self.until(lambda: False, timeout=0.2, what="the feeder")
+
+
+class Broken(ScenarioPlugin):
+    """Scenario: a program with a defect."""
+
+    def program(self):
+        yield
+        raise KeyError("no such part")
+
+
+class Clashing(ScenarioPlugin):
+    """Scenario: a handle named like the scenario's own config."""
+
+    NEEDS = {"config": "machine:press"}
+
+    def program(self):
+        yield
