@@ -28,7 +28,8 @@ caller need not repeat what the file already knows. Where the camera is comes fr
 
 ``--set`` and ``--override`` are ``roqsim sim``'s own options (:mod:`roqsim.override_options`), so a
 world is rendered as the run with those overrides would build it. With ``--state`` they may set only
-``sim.view``: the recorded world is rebuilt from its provenance, and any other key is refused.
+``sim.view``, ``sim.renderer`` and ``sim.renderers``: the recorded world is rebuilt from its provenance,
+and any other key is refused.
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.

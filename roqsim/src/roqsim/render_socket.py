@@ -40,7 +40,8 @@ Arrays travel as their bytes, never through JSON::
 
 A request's ``pos``/``quat`` are the camera's world pose (``quat`` ``w, x, y, z``; MuJoCo's camera
 frame, looking down its -z with +y up); ``intrinsics`` is ``[fx, fy, cx, cy]`` in pixels, the
-projection MuJoCo draws the camera with (:attr:`roqsim.render_api.CameraSpec.intrinsics`), and a
+projection MuJoCo draws the camera with, or ``null`` for an orthographic camera or a ``fovy`` of 0,
+which project through ``fovy`` (:attr:`roqsim.render_api.CameraSpec.intrinsics`), and a
 camera whose principal point is off centre, or whose pixels are not square, is refused at load, or when a tool draws it,
 unless the renderer declares ``principal_point``, or ``non_square_pixels``; ``geomgroup`` is ``null`` (every group) or the groups the
 camera draws, for a server that declares ``geom_groups``. A frame answers with the request's

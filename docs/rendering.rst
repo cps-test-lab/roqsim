@@ -81,7 +81,8 @@ register it in your package::
 It is given the scene once (``open``), then per tick a snapshot of the state and a batch of camera
 requests (``render``), and returns one frame per request. Each camera comes with its pose and its
 intrinsics, ``(fx, fy, cx, cy)`` in pixels as MuJoCo projects it (a model camera's ``sensorsize``
-and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``); a renderer declares whether it
+and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``; none for an orthographic camera or a ``fovy`` of 0, which
+project through ``fovy``); a renderer declares whether it
 projects an off-centre principal point (``principal_point``) and non-square pixels
 (``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
 load, or when a tool draws through it, rather than drawn wrong.
