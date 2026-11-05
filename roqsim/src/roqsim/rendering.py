@@ -52,6 +52,7 @@ from .render_api import (
     Setting,
     StateSnapshot,
     image_mismatch,
+    validate_renderer_config,
 )
 
 _logger = logging.getLogger(__name__)
@@ -985,8 +986,8 @@ class MujocoRenderer(Renderer):
     }
 
     @classmethod
-    def validate_config(cls, settings) -> list[str]:
-        errors = super().validate_config(settings)
+    def validate_config(cls, settings, base_dir=None) -> list[str]:
+        errors = super().validate_config(settings, base_dir)
         if isinstance(settings, Mapping) and not isinstance(settings.get("atlas", True), bool):
             errors.append(f"'atlas' must be true or false, got {settings['atlas']!r}")
         return errors
@@ -1676,7 +1677,7 @@ class RenderService:
     def _construct(self, name: str) -> Renderer:
         cls = self.renderer_class(name)
         settings = self.settings.get(name, {})
-        errors = cls.validate_config(settings)
+        errors = validate_renderer_config(cls, settings, self.base_dir)
         if errors:
             raise RenderError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
         return cls(settings)

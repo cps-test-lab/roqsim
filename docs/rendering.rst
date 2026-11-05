@@ -74,7 +74,9 @@ in its model.
 A renderer of your own
 ----------------------
 
-Subclass :class:`roqsim.render_api.Renderer`, declare its ``capabilities`` and ``SETTINGS``, and
+Subclass :class:`roqsim.render_api.Renderer`, declare its ``capabilities`` and ``SETTINGS``, check
+its block in ``validate_config(settings, base_dir)`` -- ``base_dir`` is the world's directory, so a
+file the settings name can be found missing, or of the wrong kind, when the world loads -- and
 register it in your package::
 
    [project.entry-points."roqsim.renderers"]

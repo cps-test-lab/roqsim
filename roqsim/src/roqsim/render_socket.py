@@ -318,8 +318,8 @@ class SocketRenderer(Renderer):
         return float(settings["timeout_s"] if value is None else value)
 
     @classmethod
-    def validate_config(cls, settings) -> list[str]:
-        errors = super().validate_config(settings)
+    def validate_config(cls, settings, base_dir=None) -> list[str]:
+        errors = super().validate_config(settings, base_dir)
         if not isinstance(settings, Mapping):
             return errors
         address = settings.get("address")

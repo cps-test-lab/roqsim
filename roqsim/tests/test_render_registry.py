@@ -123,3 +123,50 @@ def test_describe_lists_capabilities_and_settings(capsys):
         renderers.main(["describe", "nope_xyz"])
     assert code.value.code == 2
     assert "unknown renderer" in json.loads(capsys.readouterr().out)["error"]
+
+
+class NeedsAFile(Renderer):
+    """Names a missing file at load: what ``base_dir`` is for."""
+
+    SETTINGS = {"file": Setting(None, "a file beside the world")}
+
+    @classmethod
+    def validate_config(cls, settings, base_dir=None):
+        errors = super().validate_config(settings, base_dir)
+        path = (base_dir / settings["file"]) if base_dir is not None else None
+        if path is None or not path.is_file():
+            errors.append(f"file {settings['file']!r} not found at {path}")
+        return errors
+
+
+class OldSignature(Renderer):
+    """An override written before renderers were given the world's directory."""
+
+    SETTINGS = {"x": Setting(1, "a number")}
+    seen: list = []
+
+    @classmethod
+    def validate_config(cls, settings):
+        cls.seen.append(dict(settings))
+        return super().validate_config(settings)
+
+
+def _with_block(renderer: str, block: dict) -> dict:
+    return {"sim": {"renderer": renderer, "renderers": {renderer: block}}, "components": []}
+
+
+def test_a_renderer_is_given_the_world_s_directory_to_check_its_files_at_load(tmp_path):
+    ref = f"{__name__}:NeedsAFile"
+    with pytest.raises(PluginError, match=f"sim.renderers.{ref}: file 'room.ply' not found at "):
+        load_config_from_dict(_with_block(ref, {"file": "room.ply"}), base_dir=tmp_path)
+    (tmp_path / "room.ply").write_bytes(b"ply\n")
+    load_config_from_dict(_with_block(ref, {"file": "room.ply"}), base_dir=tmp_path)
+
+
+def test_an_override_that_takes_no_directory_is_still_called():
+    ref = f"{__name__}:OldSignature"
+    OldSignature.seen.clear()
+    load_config_from_dict(_with_block(ref, {"x": 2}))
+    assert OldSignature.seen == [{"x": 2}]
+    with pytest.raises(PluginError, match="unknown key 'y'; valid keys: x"):
+        load_config_from_dict(_with_block(ref, {"y": 2}))

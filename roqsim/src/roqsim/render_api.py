@@ -45,6 +45,7 @@ thread), and a frame is a function of the snapshot and the seed when it declares
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
@@ -339,6 +340,19 @@ class Frame:
         return getattr(self, kind)
 
 
+def validate_renderer_config(cls, settings: Mapping, base_dir=None) -> list[str]:
+    """``cls.validate_config(settings, base_dir)``, or ``(settings)`` for an override that takes no
+    *base_dir* -- one written before renderers were given it."""
+    try:
+        params = inspect.signature(cls.validate_config).parameters
+    except (TypeError, ValueError):
+        params = {}
+    takes = "base_dir" in params or any(p.kind is p.VAR_KEYWORD for p in params.values())
+    return (
+        cls.validate_config(settings, base_dir=base_dir) if takes else cls.validate_config(settings)
+    )
+
+
 class Renderer:
     """Base of every renderer. Subclass it, declare :attr:`capabilities` and :attr:`SETTINGS`, and
     implement :meth:`open`, :meth:`render` and :meth:`close`.
@@ -372,8 +386,14 @@ class Renderer:
         return None
 
     @classmethod
-    def validate_config(cls, settings: Mapping) -> list[str]:
-        """Errors in *settings*, each naming the key; an unknown key names the valid ones."""
+    def validate_config(cls, settings: Mapping, base_dir=None) -> list[str]:
+        """Errors in *settings*, each naming the key; an unknown key names the valid ones.
+
+        *base_dir* is the directory of the world that states them (``None``: none, a tool's own), what
+        a relative path in them resolves against, so a renderer can name a missing or wrong file at
+        load rather than when it opens. An override that takes only *settings* is called so, and is
+        not given it (:func:`validate_renderer_config`).
+        """
         if not isinstance(settings, Mapping):
             return [f"settings must be a mapping, got {type(settings).__name__}"]
         valid = sorted(cls.SETTINGS)
