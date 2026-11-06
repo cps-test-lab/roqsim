@@ -34,7 +34,9 @@ scenario emits
 for an OpenSCENARIO monitor to wait on; with ``stop_at_end: true`` it also ends a standalone run
 (``ctx.request_stop``). A scenario-execution run is ended by its scenario, never by a plugin. A
 program that raises stops the run naming the scenario; a machine's start that ends in an error
-raises :class:`ScenarioError` in the program that waited for it, unless it asked for the status.
+raises :class:`ScenarioError` in the program that waited for it, unless it asked for the status. A
+run that ends before a scene that has taken a step did reports it (``ctx.report_unfinished``), and
+``roqsim sim`` then exits non-zero.
 """
 
 from __future__ import annotations
@@ -146,6 +148,8 @@ class ScenarioPlugin(Plugin):
         self._done = False
         #: Set when a task raised: the run stops, and the scene never reports done.
         self._failed = False
+        #: Whether the program has taken a step in this episode, so the run's end can cut it short.
+        self._started = False
 
     # -- the scene ----------------------------------------------------------------------------
     def program(self) -> Iterator:
@@ -200,6 +204,7 @@ class ScenarioPlugin(Plugin):
         self._done = False
         self._failed = False
         self._closing = False
+        self._started = False
         self._tasks = []
         self._kept = []
         program = self.program()
@@ -214,6 +219,7 @@ class ScenarioPlugin(Plugin):
         """Advance every task by one step, in the order they were created."""
         if self._main is None or self._failed:
             return
+        self._started = True
         for task in list(self._tasks):
             try:
                 task.advance()
@@ -252,11 +258,13 @@ class ScenarioPlugin(Plugin):
 
     def shutdown(self, ctx: SimContext) -> None:
         self._say_unjoined(ctx)
+        if self._started and not self._done and not self._failed:
+            ctx.report_unfinished(f"scenario {self.address}")
 
     def _say_unjoined(self, ctx: SimContext) -> None:
-        """Log a start's error that reached no one, for a trial a reset or the run's end cut short:
-        neither can fail the run (:meth:`roqsim.engine.Engine.shutdown`). ``start_failed`` is in the
-        events already, from the step the start failed in."""
+        """Log a start's error that reached no one, for a trial a reset or the run's end cut short.
+        ``start_failed`` is in the events already, from the step the start failed in; a scene the
+        run's end cut short is reported by :meth:`shutdown`."""
         for task in self._kept:
             error = task.take_error()
             if error is not None:

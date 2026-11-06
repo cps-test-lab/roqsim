@@ -52,6 +52,10 @@ RECORDING = 4
 #: finding, an export whose round trip disagrees with its source.
 FINDING = 5
 
+#: The run ended -- at ``--seconds`` or ``--steps``, on a signal, by the window closing -- before a
+#: scene it was running did, so the scene neither passed nor failed.
+UNFINISHED = 6
+
 #: Interrupted by the person (Ctrl-C): a shell's convention for SIGINT, not a verdict, so it is not
 #: in :data:`MEANINGS` and no epilog lists it.
 INTERRUPTED = 130
@@ -64,6 +68,7 @@ MEANINGS: dict[int, str] = {
     NO_GL: "no GL context (set MUJOCO_GL=egl or osmesa, or give a window a display)",
     RECORDING: "a recording that cannot be read or rebuilt",
     FINDING: "a check or health verdict that failed",
+    UNFINISHED: "a run that ended before its scene did",
 }
 
 

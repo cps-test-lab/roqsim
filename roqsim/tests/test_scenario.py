@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 
+from roqsim import exit_status, runner
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.scenario import ScenarioError
@@ -540,3 +542,39 @@ def test_a_reset_does_not_stop_a_mover_for_the_next_episode():
         assert engine.ctx.blackboard.require("walker:worker").cancels == 0
     finally:
         engine.shutdown()
+
+
+def _sim(tmp_path, monkeypatch, scene, seconds):
+    """``roqsim sim`` on a world of the press and ``scene``, headless, for ``seconds``."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    world = tmp_path / "w.yaml"
+    world.write_text(
+        yaml.safe_dump(
+            {"sim": {"gravity": [0, 0, 0]}, "components": [PRESS, {**scene, "name": "scene"}]}
+        )
+    )
+    argv = ["--headless", "--seconds", str(seconds), "--pacing", "asap", "--control", "none"]
+    return runner.main([str(world), *argv])
+
+
+def test_a_run_its_seconds_end_before_the_scene_is_no_pass(tmp_path, monkeypatch, caplog):
+    scene = {"scenario_fixtures:TwoStrokes": {"pause": 100.0}}
+    with caplog.at_level("ERROR"):
+        assert _sim(tmp_path, monkeypatch, scene, 1) == exit_status.UNFINISHED
+    assert caplog.text.count("the run ended before scenario scene did") == 1
+
+
+def test_a_run_its_scene_ended_is_a_success(tmp_path, monkeypatch):
+    scene = {"scenario_fixtures:TwoStrokes": {"stop_at_end": True}}
+    assert _sim(tmp_path, monkeypatch, scene, 30) == exit_status.OK
+
+
+def test_a_reset_starts_the_scene_again_and_one_that_never_stepped_is_not_cut_short():
+    engine = _engine(PRESS, {"scenario_fixtures:TwoStrokes": {"pause": 100.0}, "name": "scene"})
+    try:
+        for _ in range(10):
+            engine.step()
+        engine.reset()
+    finally:
+        engine.shutdown()
+    assert engine.ctx.unfinished == []

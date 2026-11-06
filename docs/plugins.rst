@@ -3024,7 +3024,10 @@ reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` aroun
 it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
 not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
 itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
-before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
+before the scene does logs a start's error that reached no one. A run that ends before a scene that
+has taken a step did -- at ``--seconds`` or ``--steps``, on a signal, by the window closing -- says
+so as an error, and ``roqsim sim`` exits ``6`` (:ref:`exit-status`); a reset only starts the scene
+again. Cancelling a
 task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
 nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
@@ -3070,7 +3073,8 @@ scenario-execution, in its own loop, with its recording, viewer and control sock
 
 ``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
 the scenario, and ``output_dir`` is where its ``test.xml`` goes. A scenario that fails stops the run
-with a non-zero exit. ``done`` and ``scenario_end`` are as for a Python scenario. It needs
+with a non-zero exit. One the run ends before is written to ``test.xml`` as failed, and ``roqsim sim``
+exits ``6``, as for a Python scenario. ``done`` and ``scenario_end`` are as for a Python scenario. It needs
 ``scenario_execution_roqsim`` and scenario-execution only to run: rendering, replaying or checking the
 world parses nothing. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
 way to let scenario-execution own the loop, for a campaign or for scenario parameters.
