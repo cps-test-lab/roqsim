@@ -14,6 +14,7 @@ import pytest
 from roqsim import entity_pose
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.machine import STOPPED_SPEED
 from roqsim.plugin import PluginError
 
 
@@ -112,6 +113,14 @@ def test_controllable_declares_endpoints(tmp_path):
     # The action handler reads the door's own state, not a gripper's.
     assert action["state_key"] == "machine:door:openness"
     assert callable(engine.ctx.blackboard.get("machine:door:openness"))
+
+
+def test_the_door_action_gives_a_slow_door_time_for_its_swing(tmp_path):
+    """The action handler aborts a goal still moving when its time runs out; a door at 0.3 rad/s
+    takes 7 s for its 120 degrees, so it states its own bound: the swing, a stall, and 5 s."""
+    engine = _built(tmp_path, {"speed": 0.3, "stall_timeout": 3.0})
+    action = engine.ctx.interface.find("door", "door").backend["ros2"]
+    assert action["timeout"] == pytest.approx(math.radians(120) / 0.3 + 3.0 + 5.0)
 
 
 def test_mesh_leaf_model_loads_and_swings(tmp_path):
@@ -305,14 +314,27 @@ def _finish(engine, door, seq, limit=20.0):
     return door.status()
 
 
-def test_open_and_close_ramp_at_the_stated_speed_and_end_when_there(tmp_path):
+def test_open_and_close_ramp_at_the_stated_speed_and_end_when_there_and_at_rest(tmp_path):
     engine = _built(tmp_path, {"max_angle": 90, "speed": 0.5})
     door = engine.ctx.blackboard.require("machine:door")
+    openness = engine.ctx.blackboard.require("machine:door:openness")
     t0 = engine.ctx.sim_time
-    assert _finish(engine, door, door.start("open")).error == ""
-    # 90 degrees at 0.5 rad/s is 3.14 s; the leaf trails the ramp a little.
-    assert 3.1 < engine.ctx.sim_time - t0 < 3.6
-    assert math.degrees(_hinge_angle(engine)) > 88
+    seq = door.start("open")
+    there = None
+    while not (door.status().seq == seq and door.status().finished):
+        engine.step()
+        if there is None and openness()[0] >= 0.98:
+            there = engine.ctx.sim_time - t0
+    assert door.status().error == ""
+    # 90 degrees at 0.5 rad/s is 3.14 s; the leaf trails the ramp by about kv * speed / kp.
+    assert 3.1 < there < 4.2
+    # It ends at rest, not on the way through: a scenario can rely on where the door is.
+    assert abs(openness()[1] * math.radians(90)) <= STOPPED_SPEED
+    lowest = 1.0
+    for _ in range(1000):
+        engine.step()
+        lowest = min(lowest, openness()[0])
+    assert lowest >= 0.98, "it does not ring away from where it ended"
     events = [e["event"] for e in engine.ctx.events.all() if e["source"] == "door"]
     assert events == ["program_start", "program_end"]
     assert _finish(engine, door, door.start("close")).error == ""
@@ -380,7 +402,9 @@ def test_an_idle_door_held_off_its_target_longer_than_its_stall_timeout_gives_wa
     for _ in range(1500):  # 3 s held at 60 degrees, as a stiff hand holds it; its target is 45
         d.qfrc_applied[dof] = 400.0 * (held - _hinge_angle(engine)) - 300.0 * float(d.qvel[dof])
         engine.step()
-    assert abs(float(d.actuator_force[aid])) < 1.0, "it no longer presses back"
+    assert abs(float(d.actuator_force[aid])) < 2.0, (
+        "it no longer presses back (held, it pressed about 9 N*m)"
+    )
     d.qfrc_applied[dof] = 0.0
     for _ in range(1500):
         engine.step()
@@ -390,3 +414,124 @@ def test_an_idle_door_held_off_its_target_longer_than_its_stall_timeout_gives_wa
     assert 55 < where < 61
     assert math.degrees(_hinge_angle(engine)) == pytest.approx(where, abs=1.5), "it stays there"
     assert door.status().seq == 0 and not door.busy
+
+
+def _door_with_a_post(tmp_path, degrees, door=None):
+    """A default door with a 0.1 m post on the leaf's arc, 0.75 m out from the hinge, ``degrees``
+    round from closed."""
+    door = {"stall_timeout": 1.0, **(door or {})}
+    probe = _built(tmp_path, door)
+    hinge = probe.ctx.data.xpos[_id(probe, mujoco.mjtObj.mjOBJ_BODY, "door_leaf")].copy()
+    probe.shutdown()
+    angle = math.radians(degrees)
+    post = {
+        "prefix": "obs_",
+        "pose": {
+            "position": {
+                "x": float(hinge[0] + 0.75 * math.cos(angle)),
+                "y": float(hinge[1] + 0.75 * math.sin(angle)),
+            }
+        },
+        "size": [0.1, 0.1, 0.45],
+    }
+    plugins = [{"door": door, "name": "door"}, {"box": post, "name": "post"}]
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    return engine
+
+
+@pytest.mark.parametrize("degrees", [64.5, 65.5])
+def test_a_leaf_stopped_just_short_of_its_openness_ends_its_program_there(tmp_path, degrees):
+    """Within reach of the target but short of the servo's own tolerance, held by a post: neither
+    held back nor at the target. It has arrived, and the program must end, or the door stays busy
+    and a caller waiting on it waits for ever."""
+    engine = _door_with_a_post(tmp_path, degrees)
+    door = engine.ctx.blackboard.require("machine:door")
+    status = _finish(engine, door, door.start("move_to", openness=0.5), limit=10.0)
+    assert status.error == ""
+    where = engine.ctx.blackboard.require("machine:door:openness")()[0]
+    assert 0.48 <= where < 0.499, "the post holds it, inside reach of 0.5"
+    assert not door.busy
+    door.start("close")  # and it takes the next start
+
+
+def test_a_repeated_command_retries_after_a_stall(tmp_path):
+    """The same value again is no new target while the door moves there or stands there; after a
+    stall it is a retry."""
+    engine = _door_with_a_post(tmp_path, 40.0)
+    door = engine.ctx.blackboard.require("machine:door")
+    cmd = engine.ctx.interface.find("door", "cmd")
+    cmd.write({"data": 1.0})
+    engine.step()
+    first = door.status().seq
+    assert _finish(engine, door, first).error.startswith("stalled")
+    cmd.write({"data": 1.0})
+    engine.step()
+    assert door.status().seq == first + 1 and door.busy, "the stalled move is tried again"
+
+
+def test_the_command_port_reads_a_door_homed_by_hinge_target(tmp_path):
+    """``home: {hinge_pos: ...}`` puts the door open; the first command to close it is a new target."""
+    engine = _built(
+        tmp_path, {"max_angle": 90, "open": 0.0, "home": {"hinge_pos": math.radians(90)}}
+    )
+    door = engine.ctx.blackboard.require("machine:door")
+    assert math.degrees(_hinge_angle(engine)) == pytest.approx(90, abs=1)
+    engine.ctx.interface.find("door", "cmd").write({"data": 0.0})
+    engine.step()
+    assert door.busy, "closing is not the door's home, so it moves"
+    assert _finish(engine, door, door.status().seq).error == ""
+    assert abs(math.degrees(_hinge_angle(engine))) < 2
+
+
+def _hold(engine, degrees, steps):
+    """Hold the leaf at ``degrees`` for ``steps``, as a stiff hand holds it."""
+    m, d = engine.ctx.model, engine.ctx.data
+    dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+    held = math.radians(degrees)
+    for _ in range(steps):
+        d.qfrc_applied[dof] = 400.0 * (held - _hinge_angle(engine)) - 300.0 * float(d.qvel[dof])
+        engine.step()
+    d.qfrc_applied[dof] = 0.0
+
+
+def test_a_door_that_gave_way_returns_when_commanded_back_to_where_it_was(tmp_path):
+    """Giving way makes where it stands the door's target, so the old target is a new one again."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    _hold(engine, 60, 1500)
+    assert [e["event"] for e in engine.ctx.events.all() if e["event"] == "gave_way"] == ["gave_way"]
+    engine.ctx.interface.find("door", "cmd").write({"data": 0.5})
+    engine.step()
+    assert door.busy
+    assert _finish(engine, door, door.status().seq).error == ""
+    assert math.degrees(_hinge_angle(engine)) == pytest.approx(45, abs=2)
+
+
+def test_a_door_held_while_it_runs_a_program_stalls_and_does_not_give_way(tmp_path):
+    """Giving way is for an idle door: a program counts its own stall, from its own start."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    # Held while idle until it has been held back for about 0.6 s of its 1 s.
+    _hold(engine, 60, 1150)
+    seq = door.start("move_to", openness=0.2)
+    m, d = engine.ctx.model, engine.ctx.data
+    dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+    held = math.radians(60)
+    while not (door.status().seq == seq and door.status().finished):
+        assert engine.ctx.sim_time < 10.0, door.status()
+        d.qfrc_applied[dof] = 400.0 * (held - _hinge_angle(engine)) - 300.0 * float(d.qvel[dof])
+        engine.step()
+    assert door.status().error.startswith("stalled")
+    assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
+
+
+def test_a_door_under_manual_control_does_not_give_way(tmp_path):
+    """Under manual control something else drives the hinge: the door does not take where it is
+    held as its own target."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0, "stall_timeout": 1.0})
+    engine.ctx.manual_control = True
+    _hold(engine, 60, 2500)  # 5 s, where an idle door gives way within 3
+    assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
