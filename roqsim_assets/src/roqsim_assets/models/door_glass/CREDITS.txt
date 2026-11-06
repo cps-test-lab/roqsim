@@ -2,3 +2,8 @@
 licensed under CC Attribution (by) -- Author must be credited. Commercial use is allowed.
 source: https://sketchfab.com/3d-models/white-and-black-wooden-door-low-poly-f7e91629cc574a42a60e6c78e6b05e6a
 licence text: https://creativecommons.org/licenses/by/4.0/
+
+Modified for roqsim (its licence asks for changes to be indicated): only the handle is the source's
+door's, the one door uses (copied and mirrored onto this leaf's other face, converted to an OBJ mesh
+and coloured chrome); the glass pane and the hinge rail are geometry of roqsim's own, a box each. The
+pane and the rail collide; the handle does not.
