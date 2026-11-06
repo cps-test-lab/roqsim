@@ -92,6 +92,9 @@ def test_passive_door_holds_open_angle(tmp_path):
         engine.step()
     assert 40 < math.degrees(_hinge_angle(engine)) < 50
     assert {e.name for e in _plugin_endpoints(engine)} == {"start", "status", "cancel"}
+    # The openness reader is there for a passive door too.
+    openness, _rate = engine.ctx.blackboard.require("machine:door:openness")()
+    assert openness == pytest.approx(0.5, abs=0.03)
     # No ROS surface, but a scenario in the same process can still open it.
     door = engine.ctx.blackboard.require("machine:door")
     _finish(engine, door, door.start("open"))
@@ -338,7 +341,7 @@ def test_a_start_while_it_moves_is_refused_and_the_command_port_takes_over(tmp_p
     assert abs(math.degrees(_hinge_angle(engine))) < 2
 
 
-def test_an_idle_door_holds_its_target_against_a_push(tmp_path):
+def test_an_idle_door_returns_from_a_push_shorter_than_its_stall_timeout(tmp_path):
     engine = _built(tmp_path, {"max_angle": 90, "open": 0.5})
     door = engine.ctx.blackboard.require("machine:door")
     m, d = engine.ctx.model, engine.ctx.data
@@ -350,4 +353,40 @@ def test_an_idle_door_holds_its_target_against_a_push(tmp_path):
     for _ in range(1500):
         engine.step()
     assert 40 < math.degrees(_hinge_angle(engine)) < 50, "an idle door returns to its target"
+    assert door.status().seq == 0 and not door.busy
+
+
+def test_a_slow_unobstructed_door_opens_without_counting_its_ramp_as_a_stall(tmp_path):
+    # 0.04 rad/s over the default 120 degrees is 0.019 openness/s, below stall_speed (0.02) all the
+    # way, for 52 s: the leaf keeps up with its target, so it is not held back.
+    engine = _built(tmp_path, {"speed": 0.04})
+    door = engine.ctx.blackboard.require("machine:door")
+    status = _finish(engine, door, door.start("open"), limit=70.0)
+    assert status.error == ""
+    assert math.degrees(_hinge_angle(engine)) > 118
+    assert not [e for e in engine.ctx.events.all() if e["event"] == "stalled"]
+
+
+def test_an_idle_door_held_off_its_target_longer_than_its_stall_timeout_gives_way(tmp_path):
+    """A robot holding an automatic door open past its target: after stall_timeout the door takes
+    where it stands as its target and stops pressing back, rather than pushing at max_torque for as
+    long as it is held. Held back for less, it returns (the test above)."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    m, d = engine.ctx.model, engine.ctx.data
+    jid = _id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")
+    dof, aid = m.jnt_dofadr[jid], _id(engine, mujoco.mjtObj.mjOBJ_ACTUATOR, "hinge_pos")
+    held = math.radians(60)
+    for _ in range(1500):  # 3 s held at 60 degrees, as a stiff hand holds it; its target is 45
+        d.qfrc_applied[dof] = 400.0 * (held - _hinge_angle(engine)) - 300.0 * float(d.qvel[dof])
+        engine.step()
+    assert abs(float(d.actuator_force[aid])) < 1.0, "it no longer presses back"
+    d.qfrc_applied[dof] = 0.0
+    for _ in range(1500):
+        engine.step()
+    gave = [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
+    assert len(gave) == 1, "it gave way once, where the hand held it"
+    where = math.degrees(gave[0]["openness"] * math.radians(90))
+    assert 55 < where < 61
+    assert math.degrees(_hinge_angle(engine)) == pytest.approx(where, abs=1.5), "it stays there"
     assert door.status().seq == 0 and not door.busy
