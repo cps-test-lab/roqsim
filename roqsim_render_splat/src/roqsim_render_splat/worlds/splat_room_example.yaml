@@ -12,8 +12,8 @@
 # shows what the robot collides with). The robot itself is drawn by MuJoCo's renderer and put into
 # the room by depth: a table in front of it hides it.
 #
-# The room shipped here is synthetic (a few thousand Gaussians, made by the package's tests' own
-# generator) so that the example runs as installed; a real capture has millions.
+# The room shipped here is synthetic (a few thousand Gaussians, made by
+# roqsim_render_splat.synthetic) so that the example runs as installed; a real capture has millions.
 
 sim:
   name: splat_room_example
