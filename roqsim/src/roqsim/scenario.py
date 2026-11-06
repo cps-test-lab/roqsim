@@ -404,10 +404,13 @@ class ScenarioPlugin(Plugin):
     ):
         """Wait until an entity matching ``pattern`` is inside ``zone`` (a ``zone_trigger``'s handle)
         and return its name -- at once when one already is. With ``since`` (s, sim time), an entity
-        that entered at or after it counts even if it has left again, so a scene that was busy
+        that entered at or after it counts too, even if it has left again, so a scene that was busy
         cannot miss one passing through. Past ``timeout`` seconds raise :class:`ScenarioError`, as
         :meth:`until` does."""
-        names = zone.inside if since is None else lambda: zone.entered_since(since)
+        self._check_since(since)
+        names = (
+            zone.inside if since is None else lambda: [*zone.inside(), *zone.entered_since(since)]
+        )
         return (
             yield from self._first_of(
                 names, pattern, timeout, f"an entity matching {pattern!r} in zone {zone.name}"
@@ -430,6 +433,7 @@ class ScenarioPlugin(Plugin):
         """Wait until an entity matching ``pattern`` has been inside ``zone`` for its ``dwell``, and
         return its name; ``timeout`` and ``since`` as :meth:`entered`. A zone whose ``dwell`` is 0
         reports no dwelling at all, so waiting on one is refused rather than left to hang."""
+        self._check_since(since)
         if not zone.dwell > 0:
             raise ScenarioError(
                 f"zone {zone.name} has dwell 0, which reports no dwelling; give it a dwell to "
@@ -437,12 +441,19 @@ class ScenarioPlugin(Plugin):
             )
         return (
             yield from self._first_of(
-                zone.dwelling if since is None else lambda: zone.dwelled_since(since),
+                zone.dwelling
+                if since is None
+                else lambda: [*zone.dwelling(), *zone.dwelled_since(since)],
                 pattern,
                 timeout,
                 f"an entity matching {pattern!r} dwelling in zone {zone.name}",
             )
         )
+
+    @staticmethod
+    def _check_since(since: float | None) -> None:
+        if since is not None and not math.isfinite(since):
+            raise ScenarioError(f"since is a sim time, not {since!r}")
 
     def _first_of(self, names: Callable[[], list[str]], pattern: str, timeout, what: str):
         """Yield until one of ``names()`` matches ``pattern``, and return it; past ``timeout``

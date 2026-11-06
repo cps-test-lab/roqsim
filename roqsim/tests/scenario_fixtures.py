@@ -117,6 +117,20 @@ class LookedLate(ScenarioPlugin):
         self.event("dwelt", who=dwelt)
 
 
+class LookedNow(ScenarioPlugin):
+    """Scenario: asks who entered since now, of a zone with someone already in it."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.wait(0.1)
+        since = float(self.config.get("since", self._ctx.sim_time))
+        who = yield from self.entered(self.gate, since=since)
+        self.event("saw", who=who)
+        dwelt = yield from self.dwelled(self.gate, since=since)
+        self.event("dwelt", who=dwelt)
+
+
 class Watch(ScenarioPlugin):
     """Scenario: wait for something in the gate, for it to dwell, then for the gate to empty."""
 

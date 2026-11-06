@@ -11,8 +11,11 @@ import logging
 import pytest
 
 from roqsim.config import load_config_from_dict
+from roqsim.endpoint import topic_of
 from roqsim.engine import Engine
+from roqsim.plugins.zone_trigger import ZoneHandle
 from roqsim.presence import set_present
+from roqsim.scenario import ScenarioError
 
 
 def _engine(*components):
@@ -315,3 +318,106 @@ def test_who_is_inside_is_on_the_occupancy_endpoint():
 def test_a_body_that_is_no_name_is_refused():
     with pytest.raises(Exception, match="'body' is a body's name"):
         _engine(_zone(body=5))
+
+
+def test_since_adds_to_who_is_inside_now():
+    engine = _engine(
+        _mover("box", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        _zone(dwell=0.05),
+        {"scenario_fixtures:LookedNow": {}, "name": "scene"},
+    )
+    try:
+        _run(engine, 0.3)
+        seen = {e["event"]: e["who"] for e in _events(engine, "scene") if "who" in e}
+        assert seen == {"saw": "box", "dwelt": "box"}
+    finally:
+        engine.shutdown()
+
+
+def test_since_that_is_no_time_is_refused():
+    engine = _engine(
+        _zone(dwell=0.05), {"scenario_fixtures:LookedNow": {"since": float("nan")}, "name": "scene"}
+    )
+    try:
+        with pytest.raises(ScenarioError, match="since is a sim time"):
+            _run(engine, 0.3)
+    finally:
+        engine.shutdown()
+
+
+def test_an_entity_that_comes_back_is_named_once():
+    zone = ZoneHandle("gate")
+    zone._entries = [(0.1, "box"), (0.2, "box"), (0.3, "other")]
+    assert zone.entered_since(0.0) == ["box", "other"]
+
+
+def test_two_zones_have_topics_of_their_own():
+    engine = _engine(
+        _mover("box", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        _zone("one"),
+        _zone("two", pose={"position": {"x": 9.0, "y": 0.0, "z": 0.5}}),
+    )
+    try:
+        _run(engine, 0.05)
+        interface = engine.ctx.interface
+        one, two = interface.find("one", "occupied"), interface.find("two", "occupied")
+        assert one.read() is True and two.read() is False
+        assert topic_of(one, "ros2") == "one/occupied"
+        assert topic_of(two, "ros2") == "two/occupied"
+    finally:
+        engine.shutdown()
+
+
+def test_two_zones_under_one_entity_are_each_found():
+    nested = {
+        **_mover("carrier", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        "components": [_zone("one"), _zone("two")],
+    }
+    engine = _engine(nested)
+    try:
+        one = engine.ctx.interface.find("carrier.one", "occupied")
+        assert topic_of(one, "ros2") == "carrier/one/occupied", "a ROS name takes no dot"
+        assert engine.ctx.interface.find("carrier.two", "occupied")
+    finally:
+        engine.shutdown()
+
+
+def test_a_zone_is_silent_while_any_entity_around_it_is_absent():
+    arm = {
+        **_mover("arm", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        "components": [_zone(entities=["box"])],
+    }
+    robot = {**_mover("robot", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]), "components": [arm]}
+    engine = _engine(robot, _mover("box", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]))
+    try:
+        ctx = engine.ctx
+        zone = ctx.blackboard.require("zone:robot.arm.gate")
+        _run(engine, 0.05)
+        assert zone.inside() == ["box"]
+        set_present(ctx, ctx.entities.get("robot.arm"), False)
+        _run(engine, 0.05)
+        assert zone.inside() == []
+    finally:
+        engine.shutdown()
+
+
+def test_a_rotated_zone_is_a_rotated_box():
+    quat = {"x": 0.0, "y": 0.0, "z": 0.7071068, "w": 0.7071068}
+    engine = _engine(
+        _mover("along", [0.0, 0.25, 0.5], [0.0, 0.0, 0.0]),
+        _mover("across", [0.25, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        _zone(
+            pose={"position": {"x": 0.0, "y": 0.0, "z": 0.5}, "orientation": quat},
+            size=[0.3, 0.1, 0.2],
+        ),
+    )
+    try:
+        _run(engine, 0.05)
+        assert engine.ctx.blackboard.require("zone:gate").inside() == ["along"]
+    finally:
+        engine.shutdown()
+
+
+def test_an_empty_entities_list_is_refused():
+    with pytest.raises(Exception, match="'entities' is a list"):
+        _engine(_zone(entities=[]))

@@ -2788,11 +2788,14 @@ presence leads to is a scenario's::
      name: belt_end
 
 It emits ``entered``, ``dwelled`` (with ``after``, its seconds inside) and ``left`` (with
-``inside_s``) events, keeps a handle under ``zone:<name>`` (``inside()``, ``entered_at()``,
-``dwelling()``, ``entered_since()``, ``dwelled_since()``, ``occupied``, ``counts``, ``dwell``) and publishes
-``occupied`` (a ``bool``, ``std_msgs/Bool`` on ROS) and ``occupancy``. With ``body:`` the box rides
+``inside_s``) events, keeps a handle under ``zone:<address>`` (``zone:<name>``, or ``zone:<entity>.<name>`` when nested;
+``inside()``, ``entered_at()``,
+``dwelling()``, ``entered_since()``, ``dwelled_since()``, ``occupied``, ``counts``, ``dwell``) and
+publishes ``occupied`` (a ``bool``, ``std_msgs/Bool`` on ROS, under ``<zone>/occupied``) and
+``occupancy``, both the zone's own endpoints, so an entity may carry several zones. With ``body:`` the box rides
 on that body; nested under an entity, ``body`` is named after the entity's prefix, the entity it is
-nested under is never counted, and while that entity is absent the zone reports no one -- a zone that only rides another entity's body still counts
+nested under is never counted, and while that entity or the ridden body is absent the zone reports
+no one -- a zone that only rides another entity's body still counts
 that entity. ``point: com`` reads the root body's centre of mass, which a ``part_state`` state that
 names an inertia moves; ``point: origin`` reads its frame, for a mocap body.
 

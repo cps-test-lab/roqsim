@@ -18,9 +18,10 @@ root body's frame, for a body whose mass is not where it stands (a walker's moca
 
 **Who counts.** ``entities`` filters by name pattern (fnmatch, ``["box_*", "walker_*"]``); without it
 every present entity with a body counts, except the states of :mod:`part_state`. The entity the
-zone is nested under never counts, whatever ``entities`` says, and while it is absent the zone
-reports no one. A pattern that matches no entity at the first reset is logged once as a
-warning, not refused: a spare may still appear through ``spawn_entity``.
+zone is nested under never counts, whatever ``entities`` says. An entity counts only while its root
+body is present (:func:`roqsim.presence.body_present`), so one inside an absent entity does not. While
+the body a zone rides is absent, or the entity it is nested under is, the zone reports no one. A
+pattern that matches no entity at the first reset is logged once as a warning, not refused.
 
 **What it reports.** Each step, on the physics thread: an ``entered`` event with the entity, a
 ``dwelled`` event once it has been inside for ``dwell`` seconds, and a ``left`` event with how long
@@ -56,6 +57,7 @@ from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
 from roqsim.pose import config_pose, config_pose_errors
+from roqsim.presence import body_present
 
 _log = logging.getLogger(__name__)
 
@@ -111,12 +113,14 @@ class ZoneHandle:
         return list(self._dwelt)
 
     def entered_since(self, when: float) -> list[str]:
-        """The entities that entered at or after ``when`` (s, sim time), inside or gone since."""
-        return [name for t, name in self._entries if t >= when]
+        """The entities that entered at or after ``when`` (s, sim time), inside or gone since, each
+        once, in the order they first did."""
+        return list(dict.fromkeys(name for t, name in self._entries if t >= when))
 
     def dwelled_since(self, when: float) -> list[str]:
-        """The entities that reached the zone's ``dwell`` at or after ``when``, inside or gone since."""
-        return [name for t, name in self._dwells if t >= when]
+        """The entities that reached the zone's ``dwell`` at or after ``when``, inside or gone since,
+        each once, in the order they first did."""
+        return list(dict.fromkeys(name for t, name in self._dwells if t >= when))
 
     @property
     def occupied(self) -> bool:
@@ -168,9 +172,9 @@ class ZoneTriggerPlugin(Plugin):
             errors.append("zone_trigger: 'body' is a body's name")
         entities = config.get("entities")
         if entities is not None and not (
-            isinstance(entities, list) and all(isinstance(p, str) for p in entities)
+            isinstance(entities, list) and entities and all(isinstance(p, str) for p in entities)
         ):
-            errors.append("zone_trigger: 'entities' is a list of entity name patterns")
+            errors.append("zone_trigger: 'entities' is a list of entity name patterns, not empty")
         dwell = config.get("dwell", 0.0)
         if (
             isinstance(dwell, bool)
@@ -235,15 +239,27 @@ class ZoneTriggerPlugin(Plugin):
                 continue
             yield e
 
+    def _reporting(self, ctx: SimContext) -> bool:
+        """Whether the zone is there to report: the body it rides and the entity it is nested under
+        are both present, through every entity around them."""
+        if self._bid >= 0 and not body_present(ctx, self._bid):
+            return False
+        owner = ctx.entities.get(self.entity) if self.entity else None
+        if owner is None:
+            return True
+        if not owner.present:
+            return False
+        bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, owner.body or "")
+        return bid < 0 or body_present(ctx, bid)
+
     def post_step(self, ctx: SimContext) -> None:
         centre, rot = self._frame(ctx)
         now = ctx.sim_time
         h = self.handle
         inside_now = []
-        owner = ctx.entities.get(self.entity) if self.entity else None
-        for e in () if owner is not None and not owner.present else self._candidates(ctx):
+        for e in self._candidates(ctx) if self._reporting(ctx) else ():
             bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, e.body)
-            if bid < 0:
+            if bid < 0 or not body_present(ctx, bid):
                 continue
             point = ctx.data.xipos[bid] if self.point == "com" else ctx.data.xpos[bid]
             if np.all(np.abs(rot.T @ (point - centre)) <= self.half):
@@ -273,7 +289,18 @@ class ZoneTriggerPlugin(Plugin):
             c = h._counts
             h._counts = ZoneCounts(c.entered + entered, c.left + left)
 
-    @endpoint.out(rate=10.0)
+    @property
+    def endpoint_owner(self) -> str:
+        """The endpoints belong to this zone: an entity may carry several."""
+        return self.address
+
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """The namespace of the entity the zone is nested under, the zone's own being no entity."""
+        return super().endpoint_namespace(ctx, self.entity or owner)
+
+    @endpoint.out(
+        rate=10.0, ros2=lambda self: {"topic": self.address.replace(".", "/") + "/occupied"}
+    )
     def occupied(self) -> bool:
         """Whether an entity that counts is inside the zone."""
         return self.handle.occupied
