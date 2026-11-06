@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from roqsim.plugin import Plugin
 from roqsim_sensors.coverage import cli
+
+from roqsim.plugin import Plugin
 
 
 class Transport(Plugin):
