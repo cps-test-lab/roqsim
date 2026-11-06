@@ -2790,12 +2790,38 @@ the limits arrives late and is graded by ``goal_time_tolerance``. The module doc
 strike, a replayed demonstration -- hands it to ``ArmHandle.follow_trajectory(names, times, positions,
 velocities, accelerations)``. The controller samples it on simulated time every step (quintic between
 knots carrying accelerations, as ros2_control's controller does), holds the last knot, and gives way
-to any other command. Unlike the bridge's ``follow_joint_trajectory`` handler, which feeds waypoints
-on wall-clock time, this is deterministic in a stepped run. A position servo handed only the positions
+to any other command. Unlike the bridge's ``follow_joint_trajectory`` handler, which samples the
+trajectory on simulated time but from a ROS thread whose setpoints reach the physics thread through a
+queue, so that which step a setpoint lands on depends on scheduling, this is deterministic in a
+stepped run. A position servo handed only the positions
 trails them at speed by ``d·qd/p``; ``trajectory_feedforward: velocity`` cancels that, and ``dynamics``
 also adds the inverse dynamics, so a joint swept at a real arm's speed limit tracks to a hundredth of
 a degree. Where tracking is part of what a trial measures, still report the gains and the feed-forward
-with the setup.
+with the setup. The same handle commands a gripper in process, as a GripperCommand would:
+``ArmHandle.set_gripper(position)`` and ``set_gripper_max_effort(newtons)``.
+
+**Planning in process, without ROS** (``roqsim_manipulation.planning``). For a fixed arm in a cell,
+the planning can run on the world itself rather than on a planning scene described a second time:
+
+- ``ArmKinematics`` -- forward kinematics, the Jacobian and damped-least-squares IK of a site,
+  seeded and staying on the branch nearest the seed; an unreachable target raises ``IKError``.
+- ``CollisionChecker`` -- a copy of the model and data as they stand now (doors where they are, parts
+  where they lie), the arm and the parts it holds (``hold(body, data)``; ``release(body, data)`` leaves
+  a part where the world has it) checked against everything within a clearance, with allowed pairs for
+  a grip or a support. IK's restarts draw from the ``rng`` a call passes.
+- ``plan_path`` -- RRT-Connect then shortcutting, every segment checked; ``cartesian_path`` -- a
+  straight line of the site, for an approach into a fixture.
+- ``time_parameterize`` -- time-optimal timing along the path under per-joint velocity and
+  acceleration limits (reachability analysis, as TOPP-RA), retimed slower when the torques it needs,
+  by inverse dynamics with the payload (``ArmDynamics``), exceed a fraction of the drives' limits.
+  Its knots go straight to ``follow_trajectory``.
+- ``pose_margins`` -- a pose's distance to each joint limit, its singularity measures (the wrist, elbow
+  and shoulder by name for an arm of the UR kind) and its static
+  torques against the limits; ``roqsim arm margins RECORDING --arm … --site … --at …`` reports them
+  for a recorded run with the peak torques over it. ``HoldMonitor`` -- whether a part is held, by its
+  pads' contacts and its drift relative to the site.
+
+Everything random draws from the generator it is given, so a seeded run plans the same paths.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2853,6 +2879,269 @@ special mechanism for that — it uses the two doors any downstream package uses
 What the substrate owes such a cell is the arm, the sensing, the control law and the trial
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
+
+Machines: one interface for what does something
+-----------------------------------------------
+
+A machine is one entity's own procedures -- a press's stroke, a door's opening, a belt's run -- and
+every machine looks the same from outside, so a cell, a scenario, the control socket or a client
+drives any of them the same way: through the handle under ``machine:<name>``. What a machine is, and
+where the line to a scenario runs, is :ref:`machines-and-scenarios` in the architecture.
+
+.. code-block:: python
+
+   press = ctx.blackboard.require("machine:press_1")
+   seq = press.start("stroke", show="hole")      # refused at once while busy
+   ...                                            # one step later it runs
+   status = press.status()                        # MachineStatus(seq, program, finished, error)
+   if status.seq == seq and status.finished:
+       assert status.error == ""                  # "" done; else the failure or "cancelled"
+   elif status.seq > seq:
+       ...                                        # another start followed this one
+
+``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
+``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
+press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket. Every
+program run is an event timeline on the run's events (``program_start``, the program's steps,
+``program_end``).
+
+Writing a machine
+~~~~~~~~~~~~~~~~~
+
+Subclass :class:`roqsim.machine.MachinePlugin`, declare what it drives, and write each program as a
+generator method marked ``@program``. Each ``yield`` is one physics step::
+
+   from roqsim.machine import MachinePlugin, program
+
+   class GatePlugin(MachinePlugin):
+       """Machine: a gate on a slide that opens and closes."""
+
+       ACTUATORS = ("leaf",)           # position actuators, after the machine's prefix
+       HOME = {"leaf": 0.0}            # a world's `home:` overrides
+
+       def build(self, spec, ctx): ... # the model, from the config
+       def configure(self, ctx):
+           self.register_entity(ctx, body=self.config.get("prefix", "") + "gate")
+           super().configure(ctx)      # resolves ACTUATORS and home, publishes the handle
+
+       @program
+       def open(self, speed: float = 0.3):
+           """Slide the leaf open."""
+           yield from self.move("leaf", 1.2, speed=speed, event="opening")
+           yield from self.until_stopped("leaf")
+
+What a program has:
+
+- ``self.set(name, value)`` and ``self.ramp(name, value, speed)`` -- at once, or at ``speed`` in the
+  joint's unit per second; a target outside the actuator's range fails the program, naming the
+  machine, the actuator and the range; ``yield from self.move(name, value, speed=None, event=None,
+  timeout=None)`` does either and waits until reached;
+- ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names, timeout=None)``,
+  ``self.until_stopped(*names, timeout=None)`` (reached and at rest: what an interlock waits for),
+  ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
+  by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
+  naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
+  loaded joint has arrived when it settles short of its target by its servo's standing offset. That
+  offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
+  such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
+  to allow for it;
+- a program yields nothing and waits on a helper with ``yield from``; a bare ``yield self.move(...)``
+  stops the run, as a defect does;
+- ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
+  failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
+  each actuator is held where its joint stands (its servo's standing offset under load kept), and
+  each setpoint keeps its value;
+- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+
+``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
+``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and
+is waited on like an actuator. ``NEEDS = {"feeder": "machine:feeder_1"}`` names a handle the
+machine requires; it is resolved at every reset and refused naming the key when nothing published it.
+``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
+
+An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
+servo, an ``<intvelocity>`` or a geared servo is refused at configure, naming the machine and the
+actuator. A program's arguments are checked against its annotations, whether they are strings
+(``from __future__ import annotations``) or types, unions with ``None`` included.
+
+A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
+nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
+it drives the spawned model's actuators under the spawn's prefix and publishes its handle as
+``machine:<spawned entity>`` (:ref:`machines-and-scenarios`).
+
+Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
+endpoint of the machine's own whose command means "this is the target now" calls
+``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+
+Writing a scenario
+~~~~~~~~~~~~~~~~~~
+
+The scene around the machines -- who acts when, who waits for whom, what a presence leads to -- is a
+scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
+:class:`roqsim.scenario.ScenarioPlugin`::
+
+   from roqsim.scenario import ScenarioPlugin
+
+   class PressDemo(ScenarioPlugin):
+       """Scenario: place a strip in the press and punch it."""
+
+       NEEDS = {"press": "machine:press_1"}
+
+       def program(self):
+           yield from self.set_entity_state("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
+           yield from self.run(self.press, "stroke", show="hole", hide="plain")
+           self.event("punched", part="strip_1")
+
+and is placed after the machines it drives::
+
+   components:
+     - press: {...}
+       name: press_1
+     - "my_cell.scenes:PressDemo": {stop_at_end: true}
+       name: demo
+
+The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``navigate``, ``until``, ``wait``,
+``entered``, ``left``, ``dwelled``, ``set_entity_state``, ``event`` (:mod:`roqsim.scenario`). ``entered``,
+``left`` and ``dwelled`` wait on a ``zone_trigger``'s handle and take a ``timeout`` as ``until``
+does. They read who is inside now, so a scenario goes after the zones it waits on; ``entered`` and
+``dwelled`` with ``since`` (a sim time) also count an entity that has come and gone since then.
+``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``set_entity_state`` takes a
+pose as a world file writes one:
+``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
+one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
+``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
+reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
+it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
+not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
+itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
+before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
+task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
+nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
+like ``run(check=False)``, returns the status where another route overtook its own. A program's own
+exception stops the run with its own type, the scenario named in a note, and the scene never
+reports done. Every scenario takes ``needs:`` (rename a handle) and
+``stop_at_end:``; its ``done`` endpoint says when the scene ended.
+
+The same scene in OpenSCENARIO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A scene is written in Python or in OpenSCENARIO (``osc.roqsim``), in the same words and with the same
+outcome, so it moves from one to the other line by line:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Python scenario
+     - OpenSCENARIO
+   * - ``yield from self.run(press, "stroke")``
+     - ``machine_run(machine: 'press', program: 'stroke')``
+   * - ``self.start(...)``, ``self.spawn(...)``, ``self.join(...)``
+     - ``parallel:``
+   * - ``self.first(...)``
+     - ``one_of:``
+   * - ``self.wait(1.0)``
+     - ``wait elapsed(1s)``
+   * - ``self.until(cond)``
+     - ``wait <condition>``
+   * - ``self.navigate(mover, poses)``
+     - ``entity_navigate(entity: 'mover', goal_poses: [...])``
+   * - ``self.set_entity_state(entity, pose)``
+     - ``set_entity_state(entity: 'crate', pose: ...)``
+   * - ``self.entered(gate)``, ``self.dwelled(gate)``, ``self.left(gate)``
+     - ``zone_entered(zone: 'gate')``, ``zone_dwelled(zone: 'gate')``, ``zone_left(zone: 'gate')``
+
+An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does.
+
+A world names an OpenSCENARIO file as it names a Python scenario, and ``roqsim sim`` runs it through
+scenario-execution, in its own loop, with its recording, viewer and control socket::
+
+   - scenario: {file: press_cell.osc}    # relative to the world file
+     name: scene
+
+``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
+the scenario, and ``output_dir`` is where its ``test.xml`` goes. A scenario that fails stops the run
+with a non-zero exit. ``done`` and ``scenario_end`` are as for a Python scenario. It needs
+``scenario_execution_roqsim`` and scenario-execution only to run: rendering, replaying or checking the
+world parses nothing. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
+way to let scenario-execution own the loop, for a campaign or for scenario parameters.
+``roqsim/tests`` and ``scenario_execution_roqsim/tests`` hold one scene written both ways, and a test
+holds their timelines equal.
+
+An entity's states: ``part_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+What a machine does to a part shows on the part: a strip punched, bent or labelled; a machine's own
+lamp on. Each such state is a ``look_<name>`` body under the entity's root body, compiled in and
+shown or hidden at run time through :mod:`roqsim.presence`, so a recording replays it::
+
+   <body name="strip">
+     <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_plain">
+       <geom type="box" size="0.15 0.02 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+     <body name="look_hole">
+       <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+   </body>
+
+One ``part_state`` entry serves the world. Its handle, ``part_state``, shows and hides a state by
+entity and name (``show``, ``hide``, ``set`` for one of an ``exclusive`` group), and each change is a
+``shown``/``hidden`` event::
+
+   - part_state:
+       shown: {strip_*: [plain]}            # at the start of every episode, by name or pattern
+       exclusive: {strip_*: [[plain, hole]]}
+
+A state's bodies are **massless**: one with mass is refused, naming the body, because showing a state
+must change how the part looks and collides, never what it weighs. A state that moves the centre of
+mass -- a strip bent into an L -- names the root body's inertia while it is shown, as a custom
+numeric ``look_<name>_inertia`` of ten values (``pos``, ``quat``, ``diaginertia``); two shown states
+that both name one are refused before anything changes, by ``show`` and by ``set`` alike. A pattern
+that matches no entity with states, an unknown entity or an unknown state is refused by name. Of an
+exclusive group at most one state is shown: ``show`` of a member while another is shown is refused
+(``set`` swaps them), and so is a ``shown:`` naming two. The plugin decides nothing: when a part
+changes is the machine's or the scenario's.
+
+A state is registered as an entity (kind ``look``), so a recording carries and replays its presence,
+but it is not *listed*: ``GetEntities``, ``GetSpawnables`` and the per-entity pose endpoints leave it
+out, and spawning, deleting or placing it is refused -- only ``part_state`` changes a state. A replay
+draws the shown states; it does not restore the inertia one names, which the picture does not need.
+
+Presence composes, so a state's own presence and its owner's are independent: while the owner is
+absent a state shows nothing, and a state changed meanwhile is as it was left when the owner returns.
+
+**Limits.** A state body nested in another state body is refused. A shown state's inertia moves the
+physics but not the compiled ``invweight0`` values, so a part held by a weld is slightly softer or
+stiffer while it is shown. A state belongs to the nearest entity around it: list ``part_state`` after
+an entity nested in another whose states it serves.
+
+Presence in a region: ``zone_trigger``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A light barrier at a belt's end, the space before an automatic door, the die of a press: a box in
+which a scene needs to know who is there. ``zone_trigger`` reports it and decides nothing -- what a
+presence leads to is a scenario's::
+
+   - zone_trigger:
+       pose: {position: {x: -0.9, y: 0.6, z: 1.0}}   # the box's centre, world or `body` frame
+       size: [0.12, 0.2, 0.08]                        # half-extents (m)
+       entities: [package]                            # name patterns that count; default all
+       point: com                                     # com (default) | origin
+       dwell: 1.0                                     # s inside before `dwelled`; 0 never
+     name: belt_end
+
+It emits ``entered``, ``dwelled`` (with ``after``, its seconds inside) and ``left`` (with
+``inside_s``) events, keeps a handle under ``zone:<address>`` (``zone:<name>``, or
+``zone:<entity>.<name>`` when nested; ``inside()``, ``entered_at()``, ``dwelling()``,
+``entered_since()``, ``dwelled_since()``, ``occupied``, ``counts``, ``dwell``) and publishes
+``occupied`` (a ``bool``, ``std_msgs/Bool`` on ROS, under ``<zone>/occupied``, in the namespace of
+the entity it is nested under) and ``occupancy``, both the zone's own endpoints, so an entity may
+carry several zones. With ``body:`` the box rides on that body; nested under an entity, ``body`` is
+named after the entity's prefix, the entity it is nested under is never counted, and while that
+entity or the ridden body is absent the zone reports no one -- a zone that only rides another
+entity's body still counts that entity. ``point: com`` reads the root body's centre of mass, which a
+``part_state`` state that names an inertia moves; ``point: origin`` reads its frame, for a mocap
+body.
 
 Writing your own
 ----------------
