@@ -13,6 +13,10 @@ in [`lib_osc/roqsim.osc`](src/scenario_execution_roqsim/lib_osc/roqsim.osc)):
 | `entity_in_region(entity, region, outside)` | succeeds once the entity is **inside** a box or polygon of the floor plan (or, with `outside`, outside it) |
 | `entity_monitor(entity, value, target_variable)` | keeps a scenario variable equal to a value a **plugin publishes** about the entity, every tick; never succeeds on its own |
 | `entity_call(entity, command, value, require_verified)` | sends a command a plugin declares -- a `model_override` fault, a sensor's `fault:` block, a tare -- and succeeds once it has applied **and, where the command names a confirmation, it says the command landed** |
+| `machine_run(machine, program, args, check)` | runs a machine's program and waits until **that start** has ended; an abandoned branch cancels it |
+| `zone_entered(zone, pattern, since)` | succeeds once an entity is **inside** a `zone_trigger`, or with `since` has been |
+| `zone_dwelled(zone, pattern, since)` | ...once one has been inside for the zone's `dwell` |
+| `zone_left(zone, pattern)` | ...once none is inside |
 
 ```
 import osc.roqsim

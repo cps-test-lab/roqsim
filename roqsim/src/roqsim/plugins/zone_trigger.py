@@ -28,7 +28,7 @@ pattern that matches no entity at the first reset is logged once as a warning, n
 it was inside. A :class:`ZoneHandle` under ``zone:<address>`` reads the same: who is inside, in the
 order they entered, since when, who dwelt, the counts since the episode began. ``occupied`` (a
 ``bool``, ``std_msgs/Bool`` on ROS) is the barrier's signal for a stack or an OpenSCENARIO monitor;
-``occupancy`` lists who is inside.
+``occupancy`` lists who is inside and who has been this episode.
 
 Config::
 
@@ -323,7 +323,7 @@ class ZoneTriggerPlugin(Plugin):
 
     @endpoint.out(rate=10.0, ros2=None)
     def occupancy(self) -> ZoneOccupancy:
-        """Who is inside the zone, in the order they entered."""
+        """Who is inside the zone, and who has been this episode."""
         h, inside = self.handle, self.handle.inside()
         return ZoneOccupancy(
             inside=inside,

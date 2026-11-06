@@ -17,10 +17,13 @@ Config::
     stop_at_end: true      # end a standalone run when the scenario ends
     output_dir: ""         # where scenario-execution writes its test.xml; none by default
 
-Each episode parses the file again and builds a new tree, since a tree holds a run's state. The tree
-is ticked once per physics step, after the plugins listed before this entry, in its ``post_step``. The
-file is parsed there too, on the first step: rendering, replaying or checking a world steps nothing,
-so none of them needs scenario-execution.
+One entry serves a world: scenario-execution keeps a scenario's flags by its name and one output
+directory per process, so a second would read the first's. Each episode parses the file again and
+builds a new tree, since a tree holds a run's state. The tree is ticked once per physics step, after
+the plugins listed before this entry, in its ``post_step``. The file is parsed there too, and only in
+a run: a world compiled to look at it (``SimContext.preview``: rendering, replaying, checking, a settled
+export) neither needs scenario-execution nor runs the scenario, though ``roqsim check`` needs this
+package to know the entry.
 
 A scenario that fails stops the run with an error and a non-zero exit. One the run ends before it does
 cannot fail the run, since a shutdown cannot, so it is logged as an error and written to ``test.xml``.
@@ -73,6 +76,9 @@ class ScenarioFilePlugin(Plugin):
             errors.append("scenario: 'file' names the OpenSCENARIO file to run")
         if not isinstance(config.get("stop_at_end", True), bool):
             errors.append("scenario: 'stop_at_end' is true or false")
+        for key in ("scenario", "output_dir"):
+            if not isinstance(config.get(key, ""), str):
+                errors.append(f"scenario: {key!r} is a string")
         return errors
 
     def _path(self, file: str) -> Path:
@@ -83,17 +89,32 @@ class ScenarioFilePlugin(Plugin):
         file = self.config.get("file")
         return [str(self._path(file).resolve())] if file else []
 
+    def configure(self, ctx) -> None:
+        if "scenario_file" in ctx.blackboard:
+            raise ScenarioFileError(
+                f"scenario {self.address}: a second entry; one serves a world, since "
+                "scenario-execution keeps a scenario's flags by its name"
+            )
+        ctx.blackboard.set("scenario_file", self)
+
     def on_reset(self, ctx) -> None:
         self._finish_tree()
         self._started = self._ended = self._done = False
 
     def post_step(self, ctx) -> None:
-        if self._ended:
+        # A world compiled to look at it steps too: a replay's sensors, a settled export.
+        if self._ended or ctx.preview:
             return
         if not self._started:
             self._start(ctx)
         self._clock.advance()
-        self._execution.behaviour_tree.tick()
+        try:
+            self._execution.behaviour_tree.tick()
+        except Exception as exc:
+            self._ended = True
+            self._execution.on_scenario_shutdown(False, f"{type(exc).__name__}: {exc}")
+            self._execution.process_results()
+            raise
         if not self._execution.shutdown_requested:
             return
         self._ended = True
@@ -121,22 +142,32 @@ class ScenarioFilePlugin(Plugin):
                 f"which is not installed ({err})"
             ) from err
         file = str(self._path(self.config["file"]))
+        output_dir = self.config.get("output_dir") or ""
+        if output_dir:
+            output_dir = str(self._path(output_dir))
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
         execution = ScenarioExecution(
             debug=False,
             log_model=False,
             live_tree=False,
             scenario_file=file,
-            output_dir=self.config.get("output_dir") or "",
+            output_dir=output_dir,
             tick_period=ctx.dt,
             register_signal=False,
         )
         if not execution.parse():
+            execution.process_results()
             detail = execution.results[-1].failure_output if execution.results else ""
             raise ScenarioFileError(f"scenario {self.address}: {file} did not parse: {detail}")
         self._clock = SimulationClock(ctx.dt)
         self._clock.reset()
-        tree = self._choose(execution.scenarios_list, file)
-        execution.setup(tree, simulation=_Simulation(ctx), clock=self._clock)
+        try:
+            tree = self._choose(execution.scenarios_list, file)
+            execution.setup(tree, simulation=_Simulation(ctx), clock=self._clock)
+        except Exception as exc:
+            execution.on_scenario_shutdown(False, str(exc))
+            execution.process_results()
+            raise
         self._execution = execution
         self._started = True
 
