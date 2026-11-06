@@ -79,6 +79,25 @@ the entity this spawn registers (default: the plugin ref, i.e. ``spawn_arm``). W
 config block it is silently inert -- the arm is then called ``spawn_arm``, and anything addressing
 it by the name you chose (``arm_controller``'s ``arm:``, a sensor's ``robot:``) resolves to nothing.
 
+**What the arm stands on (``mount.riser``)**
+A mobile manipulator's arm rarely sits on the base's deck: it stands on a cabinet that houses its
+control box (Neobotix's MPO-500 with a UR), a column or an adapter plate. ``mount.riser`` welds that
+structure to the mount body, so the arm stands on a real collider at the height the robot's does
+rather than floating where its ``pose`` puts it::
+
+    mount:
+      robot: base
+      body: base_link
+      riser: {model: mpo_cabinet, pose: {position: {x: 0.025, z: 0.35}}}
+    pose: {position: {x: 0.158, z: 0.766}, orientation: {yaw: 1.5708}}
+
+The riser's ``pose`` and the arm's are both in the **mount body's** frame, which is how a robot's
+description states them, so neither has to be re-expressed relative to the other. The riser must be
+rigid (no joints, no actuators -- refused otherwise); it takes the arm's ``prefix`` with ``riser_``
+after it, and its mass rides the base. The arm is attached as the riser's **child** body: MuJoCo
+excludes contacts between a body and its parent, so the arm's base sitting on the riser's top plate
+does not generate a contact on every step, which it would as two siblings both welded to the base.
+
 **End effectors (``end_effector:``)**
 A gripper is attached **into the arm's own spec before the arm is attached to the world**, so the
 arm's prefix covers it. That is deliberate: ``arm_controller`` discovers a gripper as an actuator with
@@ -134,6 +153,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import mujoco
+import numpy as np
 import yaml
 
 from roqsim.actuators import (
@@ -248,6 +268,16 @@ MOUNT = {
     "body": Field(
         str, default="base_link", doc="that robot's body to weld to, under the robot's prefix"
     ),
+    "riser": Field(
+        dict,
+        schema={
+            "model": Field(str, required=True, doc="a riser model (mpo_cabinet): rigid, no joints"),
+            "pose": Field(
+                dict, doc="where it stands in the mount body's frame, a geometry_msgs/Pose"
+            ),
+        },
+        doc="a cabinet, column or plate between the mount body and the arm, welded to the mount",
+    ),
 }
 
 #: ``end_effector:`` -- the tool welded onto the arm. See the module docstring.
@@ -287,6 +317,12 @@ def _numbers(value, length: int) -> bool:
         and len(value) == length
         and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
     )
+
+
+def _riser_model(mount):
+    """``mount.riser.model`` as stated, or None where the config has no such key."""
+    riser = mount.get("riser") if isinstance(mount, dict) else None
+    return riser.get("model") if isinstance(riser, dict) else None
 
 
 class SpawnArmPlugin(Plugin):
@@ -419,6 +455,11 @@ class SpawnArmPlugin(Plugin):
         mount = self._stated("mount")
         self.mount_robot = mount.robot if mount else None
         self.mount_body = mount.body if mount else None
+        mount_cfg = self.config.get("mount")
+        riser = mount_cfg.get("riser") if isinstance(mount_cfg, dict) else None
+        riser = riser if isinstance(riser, dict) else {}
+        self.riser_model = riser.get("model")
+        self.riser_pos, self.riser_quat = config_pose(riser)
         # End effector welded at the arm's tool site; with no `site:` the arm model's manifest
         # decides, in `build` (the model resolves against `base_dir`, which is set after __init__).
         ee = self.config.get("end_effector") or {}
@@ -459,6 +500,7 @@ class SpawnArmPlugin(Plugin):
             ("model", config.get("model")),
             ("mount.robot", mount.get("robot") if isinstance(mount, dict) else None),
             ("end_effector.model", ee.get("model") if isinstance(ee, dict) else None),
+            ("mount.riser.model", _riser_model(mount)),
         ):
             if value == "":
                 errors.append(f"'{path}' is empty; it names what to spawn or weld to")
@@ -492,6 +534,16 @@ class SpawnArmPlugin(Plugin):
                     "'rail' and 'mount' are mutually exclusive: a rail introduces its own moving "
                     "carriage, while 'mount' welds the arm to a body that already exists"
                 )
+
+        riser = mount.get("riser") if isinstance(mount, dict) else None
+        if isinstance(riser, dict) and isinstance(riser.get("model"), str) and riser["model"]:
+            try:
+                resolve_model(riser["model"], base_dir=self.base_dir)
+            except ModelError as exc:
+                errors.append(f"mount.riser: {exc}")
+            errors += _pose_errors(
+                riser.get("pose"), f"spawn_arm '{self.address}' mount.riser.pose"
+            )
 
         if isinstance(mount, dict) and mount.get("robot") and not config.get("prefix"):
             # An empty prefix makes arm_controller's and _apply_home's prefix scan claim the
@@ -552,9 +604,12 @@ class SpawnArmPlugin(Plugin):
             apply_gravity_compensation(child)
 
         parent = self._mount_parent(spec)
+        pos, quat = self.pos, self.quat
+        if self.riser_model:
+            parent, pos, quat = self._attach_riser(spec, parent)
         frame = parent.add_frame()
-        frame.pos = self.pos
-        frame.quat = self.quat
+        frame.pos = pos
+        frame.quat = quat
         if self.rail:
             # The carriage replaces the mount frame as the arm's parent, so the arm attaches at the
             # carriage origin and `pose` keeps meaning "where the axis sits, how it is oriented".
@@ -655,6 +710,43 @@ class SpawnArmPlugin(Plugin):
         act.set_to_position(self.rail_kp, dampratio=1.0)
 
         return carriage.add_frame()
+
+    def _attach_riser(self, spec: mujoco.MjSpec, parent):
+        """Weld ``mount.riser`` to *parent*; return its root body and the arm's pose relative to it.
+
+        The arm's ``pose`` is stated in the mount body's frame; attached under the riser it has to be
+        expressed in the riser's, which is ``inv(riser_pose) * arm_pose``.
+        """
+        riser = mujoco.MjSpec.from_file(
+            str(resolve_model(self.riser_model, base_dir=self.base_dir).path)
+        )
+        roots = list(riser.worldbody.bodies)
+        if len(roots) != 1:
+            raise RuntimeError(
+                f"spawn_arm[{self.arm_name}]: riser {self.riser_model!r} has "
+                f"{len(roots)} root bodies, not one"
+            )
+        if riser.joints or riser.actuators:
+            raise RuntimeError(
+                f"spawn_arm[{self.arm_name}]: riser {self.riser_model!r} has joints or "
+                f"actuators; a riser is rigid structure welded to the mount"
+            )
+        root = roots[0].name
+        frame = parent.add_frame()
+        frame.pos = self.riser_pos
+        frame.quat = self.riser_quat
+        prefix = f"{self.prefix}riser_"
+        spec.attach(riser, prefix=prefix, frame=frame)
+        body = spec.body(f"{prefix}{root}")
+        inv_pos, inv_quat = np.zeros(3), np.zeros(4)
+        mujoco.mju_negPose(
+            inv_pos, inv_quat, np.asarray(self.riser_pos, float), np.asarray(self.riser_quat, float)
+        )
+        pos, quat = np.zeros(3), np.zeros(4)
+        mujoco.mju_mulPose(
+            pos, quat, inv_pos, inv_quat, np.asarray(self.pos, float), np.asarray(self.quat, float)
+        )
+        return body, pos, quat
 
     def _mount_parent(self, spec: mujoco.MjSpec):
         """The body this arm welds to: a spawned robot's base, or ``worldbody``.

@@ -1,0 +1,12 @@
+mpo_cabinet -- Neobotix's arm cabinet for the MPO-500 (the riser a UR stands on).
+
+Source:   https://github.com/neobotix/mp_utils (mp_components), branch jazzy,
+          commit c4ba0a7601a9682dd794fe06e068685528bfded5
+Files:    mp_components/meshes/cabinet_ac.dae (visual, split per material into meshes/*.obj);
+          mp_components/urdf/arm/mpo_cabinet_macro.xacro (frame, mass, inertia, mesh pose)
+Licence:  Apache-2.0 (mp_components/LICENSE, package.xml), which names no copyright holder; the
+          xacro names its authors -- mpo_cabinet_LICENSE
+Changes:  Collada converted to OBJ (external/convert/dae2obj.py); the visual mesh cut, and the
+          collision box (the mesh's bounds) started, at the MPO-500's top cover, 36 mm above the
+          cabinet's floor; the arm mount site added at the vendor's UR origin.
+Built by: external/convert/build_mpo_cabinet_mjcf.py

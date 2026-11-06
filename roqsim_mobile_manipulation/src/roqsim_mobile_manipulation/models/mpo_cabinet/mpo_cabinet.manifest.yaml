@@ -1,0 +1,4 @@
+# Neobotix's arm cabinet for the MPO-500: a RISER, the rigid structure a UR stands on, welded between
+# the base and the arm by spawn_arm's `mount.riser` (see that plugin's docstring). It has no joints and
+# runs no plugin, so it brings no components.
+components: []
