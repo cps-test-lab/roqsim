@@ -8,13 +8,14 @@ The OpenSCENARIO form of :meth:`roqsim.scenario.ScenarioPlugin.run`, with the sa
     machine_run(machine: 'press', program: 'stroke')
     machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
 
-``args`` is ``name=value`` pairs, each value JSON or a bare word, since OpenSCENARIO reads braces in a
-string as an expression. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
+``args`` is ``name=value`` pairs, each value JSON or a bare word, since an OpenSCENARIO string cannot
+hold the double quotes a JSON mapping needs; a list of numbers is one value. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
 for this one. With ``check`` the machine's error, or another start following this one before it
 ended, fails the trial; without it the action succeeds whatever the program did. A branch abandoned
 while it waits (a ``one_of``, a ``timeout``) cancels this start by its number, so the machine is free
 for the next start and a start another client made is left alone. Abandoned before the start's reply
-came, it cancels the start once the reply names its number (:meth:`WorldAccess.after`).
+came, it cancels the start by the number the reply names
+(:meth:`~scenario_execution_roqsim.access.WorldAccess.cancel_start`).
 
 A machine that does not exist raises, as an authoring error; a refused start (the machine is busy, an
 unknown program or argument) is a FAILURE. See :mod:`scenario_execution_roqsim.base`.
@@ -50,7 +51,7 @@ class MachineRun(SimAction):
                 action=self,
             )
         self._args = {}
-        for pair in filter(None, (part.strip() for part in str(args or "").split(","))):
+        for pair in self._pairs(str(args or "")):
             key, equals, value = pair.partition("=")
             if not equals or not key.strip():
                 raise ActionError(
@@ -62,6 +63,20 @@ class MachineRun(SimAction):
         #: action reached twice in one run starts the program twice.
         self._start = self._status = self._seq = None
         self._ended = False
+
+    def _pairs(self, args: str) -> list[str]:
+        """``args`` split at the commas outside any brackets, so a list is one value."""
+        pairs, current, depth = [], "", 0
+        for char in args:
+            depth += (char in "[{") - (char in "]}")
+            if char == "," and depth == 0:
+                pairs.append(current)
+                current = ""
+            else:
+                current += char
+        if depth != 0:
+            raise ActionError(f"machine_run: `args` {args!r} has unbalanced brackets", action=self)
+        return [pair.strip() for pair in [*pairs, current] if pair.strip()]
 
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():
@@ -104,19 +119,18 @@ class MachineRun(SimAction):
     def request_cancel(self) -> bool:
         """Cancel this start when the branch this sits in is abandoned, or it runs on behind the
         scene and the machine's next start is refused as busy. By its number, so a start another
-        client made is never cancelled: one that ended or was refused has nothing to cancel."""
+        client made is never cancelled: one that ended or was refused has nothing to cancel. It
+        cancels once."""
         if self._start is None or self._ended:
             return True
         self._ended = True
-        if self._seq is not None:
-            self._access.call_endpoint(self._machine, "cancel", {"seq": self._seq})
-            return True
-        machine = self._machine
-
-        def cancel_own(outcome):
+        if self._seq is None:
+            outcome = self._start.poll()
+            if outcome is None:
+                self._access.cancel_start(self._machine, self._start)
+                return True
             if not outcome.ok:
-                return None
-            return self._access.call_endpoint(machine, "cancel", {"seq": int(outcome.result)})
-
-        self._access.after(self._start, cancel_own)
+                return True  # refused: nothing of this action's to cancel
+            self._seq = int(outcome.result)
+        self._access.call_endpoint(self._machine, "cancel", {"seq": self._seq})
         return True

@@ -51,7 +51,6 @@ from __future__ import annotations
 
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -530,17 +529,15 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def after(
-        self, call: CommandCall, then: Callable[[CommandOutcome], CommandCall | None]
-    ) -> None:
-        """Hand over *call*, which its caller will not poll again: once its outcome is known,
-        ``then(outcome)`` runs, without the caller's tick, and a command it returns is seen
-        through to its outcome. Never blocks.
+    def cancel_start(self, machine: str, start: CommandCall) -> None:
+        """Cancel the start of *machine* that *start* (a call of its ``start`` endpoint) made, and no
+        other, though its reply may not have come yet. Never blocks.
 
-        For an action abandoned while a command is in flight that has to act on what the command
-        returned: a machine start, whose number is the only safe way to cancel it. In-process,
-        ``then`` runs on the physics thread right after the command, since commands run in the
-        order they were made; over the socket, on a thread of this access once the reply came.
+        A machine cancels a start by its number, and *start*'s reply names it. In-process the
+        cancel takes the start's place in the order of commands: it runs right after the start,
+        before any command made after this call, so a start made next finds the machine free. Over
+        the socket it is sent once the reply came, from a thread of this access, so a start sent
+        before then can still find the machine busy. A refused start cancels nothing.
         """
 
     @abstractmethod

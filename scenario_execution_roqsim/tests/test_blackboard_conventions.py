@@ -92,9 +92,32 @@ def test_the_refusal_names_what_the_world_can_navigate():
     assert "This world can navigate: cart" in str(caught.value)
 
 
+def test_a_machine_handle_is_reachable_under_the_key_this_package_computes():
+    """``machine:<entity>`` -- a start cancelled in flight is cancelled through the machine's
+    handle, which the machine publishes under its entity's name."""
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    engine = Engine(
+        load_config_from_dict(
+            {"sim": {}, "components": [{"scene_fixtures:Press": {}, "name": "press"}]}
+        )
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        access = InProcessAccess(_Sim(engine.ctx))
+        start = access.call_endpoint("press", "start", {"program": "stroke"})
+        access.cancel_start("press", start)
+        engine.step()
+        assert engine.ctx.blackboard.require("machine:press").status().error == "cancelled"
+    finally:
+        engine.shutdown()
+
+
 #: The prefixes the cases above actually exercise. Compared against what the source reaches for,
 #: so this list cannot quietly fall behind the code.
-COVERED = {"nav"}
+COVERED = {"machine", "nav"}
 
 
 def _consumed_prefixes() -> set:

@@ -10,8 +10,9 @@ it -- ``ROQSIM_CONTROL``, or the only one running -- and until one
 answers, :meth:`IpcAccess.ready` is false, so a simulator that is still starting is waited for.
 
 **Nothing blocks.** Every request is sent and then polled with a zero wait, one in flight per
-call object; the tree's tick never waits on the socket. A call handed over with
-:meth:`IpcAccess.after` is polled on a thread of its own, and the connection is used under a lock.
+call object; the tree's tick never waits on the socket. A start cancelled while still in flight
+(:meth:`IpcAccess.cancel_start`) is followed on a thread of its own, and the connection is used
+under a lock.
 
 The world's endpoints are listed once, when the simulator first answers, and every name a
 scenario uses is resolved against that list with the same functions the in-process backend uses
@@ -232,7 +233,7 @@ class IpcAccess(WorldAccess):
         self._unreachable: str | None = None
         self._asked_at: float | None = None
         self._poses: dict[str, _Request] = {}
-        #: The connection is shared with the threads that see handed-over calls through.
+        #: The connection is shared with the threads that cancel a start once it is numbered.
         self._lock = threading.Lock()
         self._followers: list[threading.Thread] = []
 
@@ -362,19 +363,20 @@ class IpcAccess(WorldAccess):
             value["orientation"] = quat
         return _IpcPlacement(self, self._entity_command(_SET_PRESENCE), value, SpawnOutcome)
 
-    def after(self, call: CommandCall, then) -> None:
+    def cancel_start(self, machine: str, start: CommandCall) -> None:
         thread = threading.Thread(
-            target=self._follow, args=(call, then), name="ipc-access-after", daemon=True
+            target=self._cancel_once_numbered,
+            args=(machine, start),
+            name=f"cancel {machine} start",
+            daemon=True,
         )
         self._followers.append(thread)
         thread.start()
 
-    def _follow(self, call: CommandCall, then) -> None:
-        outcome = self._settle(call)
-        if outcome is not None:
-            last = then(outcome)
-            if last is not None:
-                self._settle(last)
+    def _cancel_once_numbered(self, machine: str, start: CommandCall) -> None:
+        outcome = self._settle(start)
+        if outcome is not None and outcome.ok:
+            self._settle(self.call_endpoint(machine, "cancel", {"seq": int(outcome.result)}))
 
     def _settle(self, call: CommandCall) -> CommandOutcome | None:
         """``call``'s outcome, waited for as long as the simulator has to answer it."""
@@ -385,7 +387,7 @@ class IpcAccess(WorldAccess):
             if outcome is not None:
                 return outcome
             time.sleep(0.005)
-        _log.error("no reply from %s within %g s to a handed-over call", self._client.uri, wait)
+        _log.error("no reply from %s within %g s to a start to cancel", self._client.uri, wait)
         return None
 
     # -- the connection ---------------------------------------------------------------------------
@@ -398,7 +400,7 @@ class IpcAccess(WorldAccess):
             return self._client.poll(rid, 0.0)
 
     def teardown(self) -> None:
-        # A handed-over call is seen through first, so a cancel it sends is not dropped unsent.
+        # A start being cancelled is seen through first, so its cancel is not dropped unsent.
         for thread in self._followers:
             thread.join()
         self._followers.clear()
