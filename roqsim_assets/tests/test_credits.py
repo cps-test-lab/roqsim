@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from roqsim_assets import sketchfab
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIR = PACKAGE_ROOT / "src" / "roqsim_assets"
 
@@ -63,6 +65,33 @@ def test_folder_has_credits_naming_its_licence(folder):
         f"{credits.relative_to(PACKAGE_DIR)} names no licence: expected {OWN_WORK!r} for our own "
         f"work, or CC0 1.0 / CC Attribution / CC-BY for third-party content"
     )
+
+
+@pytest.mark.parametrize("folder", _asset_folders(), ids=lambda d: f"{d.parent.name}/{d.name}")
+def test_credits_under_cc_by_link_the_licence(folder):
+    """CC BY 4.0 section 3(a)(1)(C): attribution includes a link to the licence."""
+    text = (folder / "CREDITS.txt").read_text(encoding="utf-8")
+    if re.search(r"^licensed under .*CC Attribution", text, re.M):
+        assert "creativecommons.org/licenses/by" in text, f"{folder.name}: no link to the licence"
+
+
+def _credits_of(tmp_path, licence: dict) -> str:
+    sketchfab._write_credit(str(tmp_path), {
+        "name": "a model", "user": {"username": "someone", "profileUrl": "https://example.com/someone"},
+        "viewerUrl": "https://example.com/model", "license": licence})
+    return (tmp_path / "CREDITS.txt").read_text(encoding="utf-8")
+
+
+def test_an_import_writes_the_licence_s_link(tmp_path):
+    text = _credits_of(tmp_path, {"label": "CC Attribution", "slug": "by", "requirements": "Credit the author.",
+                                  "url": "http://creativecommons.org/licenses/by/4.0/"})
+    assert "licence text: https://creativecommons.org/licenses/by/4.0/\n" in text
+    assert text.splitlines()[1].startswith("licensed under CC Attribution (by)")
+
+
+def test_an_import_refuses_a_licence_without_a_link(tmp_path):
+    with pytest.raises(SystemExit, match="no link"):
+        _credits_of(tmp_path, {"label": "CC Attribution", "slug": "by", "requirements": "Credit the author."})
 
 
 def test_every_credits_file_ships():
