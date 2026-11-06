@@ -2757,9 +2757,10 @@ but it is not *listed*: ``GetEntities``, ``GetSpawnables`` and the per-entity po
 out, and spawning, deleting or placing it is refused -- only ``part_state`` changes a state. A replay
 draws the shown states; it does not restore the inertia one names, which the picture does not need.
 
-**Limits.** An entity with states that starts absent (``present: false``) is refused when the world
-loads: ``roqsim.presence`` restores an activated entity's whole body tree, hidden states included,
-and tells no plugin, so it would come back showing every state. A state body nested in another state
+Presence composes, so a state's own presence and its owner's are independent: while the owner is
+absent a state shows nothing, and a state changed meanwhile is as it was left when the owner returns.
+
+**Limits.** A state body nested in another state
 body is refused.
 
 Writing your own

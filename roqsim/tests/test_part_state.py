@@ -22,7 +22,7 @@ from roqsim.endpoint import _ATTR
 from roqsim.engine import Engine
 from roqsim.frames import frame_pose, resolve_frame
 from roqsim.plugins.part_state import PartStateError, PartStatePlugin
-from roqsim.presence import ABSENT_GEOM_GROUP
+from roqsim.presence import ABSENT_GEOM_GROUP, set_present
 from roqsim.recording import open_recording
 from roqsim.runner import run
 
@@ -164,6 +164,24 @@ class Labeller(Plugin):
         looks = ctx.blackboard.get("part_state")
         if ctx.data.time >= 0.2 and not looks.is_shown("c1", "label"):
             looks.show("c1", "label")
+"""
+
+
+#: Deletes the part at 0.1 s, hides its shown state at 0.2 s, and brings it back at 0.4 s.
+_DELETER = """
+from roqsim.plugin import Plugin
+from roqsim.presence import set_present
+
+class Deleter(Plugin):
+    def pre_step(self, ctx):
+        t, owner = ctx.data.time, ctx.entities.get("c1")
+        states = ctx.blackboard.get("part_state")
+        if 0.1 <= t < 0.4 and owner.present:
+            set_present(ctx, owner, False)
+        if t >= 0.2 and states.is_shown("c1", "blank"):
+            states.hide("c1", "blank")
+        if t >= 0.4 and not owner.present:
+            set_present(ctx, owner, True)
 """
 
 
@@ -484,11 +502,17 @@ def test_a_states_inertia_turns_the_principal_axes_too(tmp_path):
 
 
 # -- what part_state refuses -----------------------------------------------------------------------
-def test_an_entity_with_states_that_starts_absent_is_refused_when_the_world_loads(part_file):
-    world = _world(part_file)
+def test_an_entity_with_states_that_starts_absent_comes_back_showing_only_what_is_shown(part_file):
+    world = _world(part_file, present={"c1": ["blank"]})
     world["components"][0]["spawn_model"]["present"] = False
-    with pytest.raises(PartStateError, match="'c1' has states and starts absent"):
-        _engine(world)
+    engine = _engine(world)
+    try:
+        assert _hidden(engine.ctx.model, "c1_blank"), "the owner is absent"
+        assert set_present(engine.ctx, engine.ctx.entities.get("c1"), True)
+        assert not _hidden(engine.ctx.model, "c1_blank")
+        assert _hidden(engine.ctx.model, "c1_label")
+    finally:
+        engine.shutdown()
 
 
 def test_set_is_refused_before_anything_changes(tmp_path):
@@ -643,4 +667,80 @@ def test_a_state_inertia_that_is_none_is_refused_naming_it(tmp_path, data):
     path = tmp_path / "strip.xml"
     path.write_text(STRIP.replace("0.03 0 0.02  1 0 0 0  0.002 0.003 0.004", data))
     with pytest.raises(PartStateError, match="look_bent_inertia is no inertia"):
+        _engine(_world(path))
+
+
+def test_a_state_changed_while_its_owner_is_absent_is_as_left_when_it_returns(part_file):
+    engine = _engine(_world(part_file, present={"c1": ["blank"]}))
+    try:
+        ctx, owner = engine.ctx, engine.ctx.entities.get("c1")
+        states = ctx.blackboard.require("part_state")
+        set_present(ctx, owner, False)
+        states.hide("c1", "blank")
+        states.show("c1", "label")
+        assert _hidden(ctx.model, "c1_label"), "no ghost on an absent part"
+        set_present(ctx, owner, True)
+        assert _hidden(ctx.model, "c1_blank") and not _hidden(ctx.model, "c1_label")
+        assert states.shown("c1") == ["label"]
+        # What a state's geom was is not lost, and a reset puts all of it back.
+        set_present(ctx, owner, False)
+        engine.reset()
+        assert not _hidden(ctx.model, "c1_blank") and _hidden(ctx.model, "c1_label")
+        assert ctx.model.geom_contype[ctx.model.geom("c1_blank").id] == 1
+    finally:
+        engine.shutdown()
+
+
+def test_a_reset_is_the_same_with_the_plugin_listed_before_the_model(part_file):
+    world = _world(part_file, present={"c1": ["blank"]})
+    world["components"] = [world["components"][1], world["components"][0]]
+    engine = _engine(world)
+    try:
+        ctx = engine.ctx
+        set_present(ctx, ctx.entities.get("c1"), False)
+        engine.reset()
+        assert not _hidden(ctx.model, "c1_blank") and _hidden(ctx.model, "c1_label")
+        assert ctx.blackboard.require("part_state").shown("c1") == ["blank"]
+    finally:
+        engine.shutdown()
+
+
+def test_a_replay_of_a_part_deleted_and_changed_is_right_in_any_order(part_file, tmp_path):
+    (tmp_path / "deleter.py").write_text(_DELETER)
+    world = _world(
+        part_file,
+        present={"c1": ["blank"]},
+        extra=[{f"{tmp_path / 'deleter.py'}:Deleter": {}, "name": "deleter"}],
+    )
+    (tmp_path / "w.yaml").write_text(yaml.safe_dump(world))
+    out = tmp_path / "run.mcap"
+    run(
+        str(tmp_path / "w.yaml"),
+        headless=True,
+        pacing="asap",
+        seconds=0.5,
+        record=str(out),
+        capture_fps=25,
+        seed=1,
+    )
+    with open_recording(out) as rec:
+        for when, blank in ((0.3, True), (0.05, False), (0.15, True), (0.45, True), (0.05, False)):
+            rec.at(when)
+            model, _ctx = rec.build()
+            assert bool(_hidden(model, "c1_blank")) is blank, when
+
+
+def test_a_second_entry_is_refused():
+    world = {
+        "sim": {},
+        "components": [{"part_state": {}, "name": "a"}, {"part_state": {}, "name": "b"}],
+    }
+    with pytest.raises(PartStateError, match="second entry"):
+        _engine(world)
+
+
+def test_an_inertia_for_a_state_the_model_lacks_is_refused(tmp_path):
+    path = tmp_path / "strip.xml"
+    path.write_text(STRIP.replace('name="look_bent_inertia"', 'name="look_bnet_inertia"'))
+    with pytest.raises(PartStateError, match="look_bnet"):
         _engine(_world(path))
