@@ -45,7 +45,6 @@ from .capture import (
     CaptureError,
     RecordingError,
     RecordToggle,
-    StateRecorder,
     TakeRecorder,
     parse_fps,
     snap_fps,
@@ -224,13 +223,11 @@ def _deaf_to_stop_signals(logger: logging.Logger):
             logger.debug("teardown complete; stop signals handled normally again")
 
 
-def _tick(engine: Engine, pacer: Pacer, recorder: StateRecorder | None = None) -> bool:
+def _tick(engine: Engine, pacer: Pacer, recorder: TakeRecorder | None = None) -> bool:
     """Honor run-control; return True if a physics step was taken this iteration.
 
-    A reset restarts the recorder's sample schedule with the pacer's. The recorder gates on sim
-    time, which ``engine.reset()`` puts back to zero, so a schedule left where the previous episode
-    ended would take no sample until sim time reached it again -- the start of every episode after
-    the first would be missing from the recording, with nothing to say so.
+    A reset starts the recorder's next take: a recording is one episode, so the episode after a reset
+    goes to a file of its own (:meth:`roqsim.capture.TakeRecorder.on_reset`).
     """
     c = engine.ctx.control
     if c.take_reset():
@@ -252,7 +249,7 @@ def _tick(engine: Engine, pacer: Pacer, recorder: StateRecorder | None = None) -
 
 
 def _run_headless(
-    engine: Engine, pacer: Pacer, max_steps: int | None, recorder: StateRecorder | None = None
+    engine: Engine, pacer: Pacer, max_steps: int | None, recorder: TakeRecorder | None = None
 ) -> None:
     step = 0
     while max_steps is None or step < max_steps:
@@ -761,7 +758,7 @@ def run(
             recorder = None
             if headless:
                 if record:
-                    recorder = StateRecorder(
+                    recorder = TakeRecorder(
                         engine.ctx,
                         record,
                         rate,
@@ -773,6 +770,7 @@ def run(
                         exclude=record_exclude,
                         logger=engine.logger or log,
                     )
+                    recorder.start()
             else:
                 # Windowed: always build the take recorder, even without --record, so F9 works in any windowed
                 # run. It costs nothing until a take starts -- recording is a memcpy.

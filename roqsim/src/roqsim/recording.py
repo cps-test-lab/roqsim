@@ -505,6 +505,11 @@ class Recording:
         the simulation never had. Out of range is an error rather than a clamp -- silently returning the
         first or last sample is what makes a wrong answer look like a right one.
         """
+        if np.any(np.diff(self.times) < 0):
+            raise RecordingError(
+                f"{self.path} holds several episodes, its sim time going back at a reset, so a time "
+                "does not name one sample in it. A recording written now holds one episode."
+            )
         t0, t1 = self.span
         period = float(1 / self.fps)
         if when < t0 - period or when > t1 + period:

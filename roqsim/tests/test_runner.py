@@ -268,7 +268,7 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
         def close(self):
             return None
 
-    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
@@ -413,7 +413,7 @@ def test_the_teardown_runs_inside_the_protected_window(monkeypatch, tmp_path):
             closed.append(True)
             return None
 
-    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
@@ -504,14 +504,14 @@ def test_a_recording_that_cannot_be_written_still_shuts_the_engine_down(probe, m
         def close(self):
             raise RecordingError("disk full")
 
-    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     with pytest.raises(RecordingError, match="disk full"):
         runner.run(str(world), headless=True, max_steps=1, record="r.mcap", pacing="asap")
     assert module.LOG == ["shutdown"]
 
 
-# -- a reset restarts the recording ---------------------------------------------------------------
+# -- a recording is one episode -------------------------------------------------------------------
 
 
 def _free_ball_scene(tmp_path):
@@ -525,13 +525,11 @@ def _free_ball_scene(tmp_path):
     return scene
 
 
-def test_a_control_plane_reset_restarts_the_recording(tmp_path):
-    """After a reset the recorder samples from the new episode's first step, not from where the
-    previous one left off: sim time went back to zero, so a schedule that stayed put would wait
-    for it to catch up and record nothing of the episode's start."""
-    from roqsim.capture import StateRecorder, snap_fps
+def test_a_reset_starts_the_next_recording_and_each_file_is_one_episode(tmp_path):
+    from roqsim.capture import TakeRecorder, snap_fps
     from roqsim.clock import Pacer
     from roqsim.engine import Engine
+    from roqsim.recording import open_recording
 
     cfg = runner.config_for_input(str(_free_ball_scene(tmp_path)))
     engine = Engine(cfg)
@@ -539,33 +537,60 @@ def test_a_control_plane_reset_restarts_the_recording(tmp_path):
     engine.setup()
     engine.reset()
     rate = snap_fps(25, engine.dt)
-    recorder = StateRecorder(engine.ctx, tmp_path / "run.mcap", rate, world="w")
+    recorder = TakeRecorder(engine.ctx, tmp_path / "run.mcap", rate, world="w")
+    recorder.start()
     pacer = Pacer.from_config("asap", engine.dt)
     try:
         runner._run_headless(engine, pacer, 1000, recorder)  # 2 s of sim time
-        before = recorder.frames
-        assert before == 50
         engine.ctx.control.request_reset()
-        runner._run_headless(engine, pacer, rate.every, recorder)  # one capture period
-        assert engine.ctx.sim_time < 0.1, "the reset put sim time back"
-        assert recorder.frames == before + 1, "the new episode's first sample was taken"
+        runner._run_headless(engine, pacer, 100, recorder)  # 0.2 s
+        written = recorder.close()
     finally:
-        recorder.close()
         engine.shutdown()
+    assert [path.name for path in written] == ["run.mcap", "run-2.mcap"]
+    with open_recording(written[0]) as first, open_recording(written[1]) as second:
+        assert len(first) == 50 and len(second) == 5
+        assert first.meta["episode"] + 1 == second.meta["episode"]
+        assert second.span[0] < 0.05, "the new episode's start is in it"
+        assert second.index_at(0.1) == 2
+        assert (first.times[1:] > first.times[:-1]).all()
+        assert (second.times[1:] > second.times[:-1]).all()
 
 
-def test_a_take_recorder_forwards_a_reset_to_its_running_take():
-    from roqsim.capture import TakeRecorder
+def test_roqsim_sim_records_each_episode_in_its_own_file(tmp_path, monkeypatch):
+    world = tmp_path / "w.yaml"
+    world.write_text('sim: {}\ncomponents:\n  - "reset_after:Reset": {}\n    name: r\n')
+    (tmp_path / "reset_after.py").write_text(
+        "from roqsim.plugin import Plugin\n"
+        "class Reset(Plugin):\n"
+        "    done = False\n"
+        "    def post_step(self, ctx):\n"
+        "        if ctx.sim_time > 0.1 and not Reset.done:\n"
+        "            Reset.done = True\n"
+        "            ctx.control.request_reset()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    runner.run(str(world), headless=True, max_steps=200, record="r.mcap", pacing="asap")
+    assert (tmp_path / "r.mcap").exists() and (tmp_path / "r-2.mcap").exists()
 
-    class _Take:
-        resets = 0
 
-        def on_reset(self):
-            self.resets += 1
+def test_a_take_with_nothing_in_it_leaves_no_gap_in_the_numbers(tmp_path):
+    from roqsim.capture import TakeRecorder, snap_fps
+    from roqsim.engine import Engine
 
-    rec = TakeRecorder.__new__(TakeRecorder)
-    rec._active = None
-    rec.on_reset()  # nothing recording: nothing to restart
-    rec._active = _Take()
-    rec.on_reset()
-    assert rec._active.resets == 1
+    cfg = runner.config_for_input(str(_free_ball_scene(tmp_path)))
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    recorder = TakeRecorder(engine.ctx, tmp_path / "run.mcap", snap_fps(25, engine.dt), world="w")
+    recorder.start()
+    try:
+        recorder.on_reset()  # before any sample
+        engine.step()
+        recorder.sample(engine.ctx)
+        assert [path.name for path in recorder.close()] == ["run.mcap"]
+    finally:
+        engine.shutdown()

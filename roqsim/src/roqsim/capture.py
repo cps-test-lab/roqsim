@@ -971,14 +971,6 @@ class StateRecorder:
         self._presence.append({"index": self._count, "t": sim, "absent": list(absent)})
         self._writer.add_json_metadata(META_RECORDING, self._provenance)
 
-    def on_reset(self) -> None:
-        """Start the schedule over. A rebuilt or reset world is a new series, not a continuation.
-
-        The wall origin deliberately does **not** move with it: real time did not restart, and a reset
-        that took 4 s of rebuilding is exactly the kind of thing this column exists to show.
-        """
-        self._next_due = 0.0
-
     def replay(self, ctx):
         """Yield ``(sim_time, data)`` for every sample taken, posed on ``ctx``'s **live** model.
 
@@ -1176,7 +1168,8 @@ class RecordToggle:
 
 
 class TakeRecorder:
-    """Numbered recording takes driven by :class:`RecordToggle`, so F9 can be pressed repeatedly.
+    """Numbered recording takes, one per episode, and driven by :class:`RecordToggle`, so F9 can be
+    pressed repeatedly.
 
     Each stop *finalises* a take, which is a write rather than an encode -- so stopping is cheap and
     needs none of the background machinery a live encoder would have required.
@@ -1212,7 +1205,7 @@ class TakeRecorder:
             return
         path = self._next_path()
         self._active = StateRecorder(self._ctx, path, self._rate, logger=self.log, **self._kwargs)
-        self.log.info("recording: take %d started -> %s (F9 to stop)", self._take, path)
+        self.log.info("recording: take %d started -> %s", self._take, path)
 
     def stop(self) -> None:
         if self._active is None:
@@ -1222,6 +1215,8 @@ class TakeRecorder:
         written = active.close()
         if written is not None:
             self.written.append(written)
+        else:
+            self._take -= 1  # nothing was written, so the next take has this one's name
 
     def toggle(self) -> None:
         self.stop() if self.recording else self.start()
@@ -1230,9 +1225,13 @@ class TakeRecorder:
         return self._active.sample(ctx, cam=cam) if self._active is not None else False
 
     def on_reset(self) -> None:
-        """Restart the running take's schedule; nothing to do between takes."""
+        """A reset ends the running take and starts the next: a recording is one episode.
+
+        Its provenance holds one episode, which a replay's noise is keyed on, and its sim time runs
+        one way, which every lookup by time relies on. Nothing to do between takes."""
         if self._active is not None:
-            self._active.on_reset()
+            self.stop()
+            self.start()
 
     def close(self) -> list[Path]:
         """Finalise whatever is running and return every take written. Idempotent."""

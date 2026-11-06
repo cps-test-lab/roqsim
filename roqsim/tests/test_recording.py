@@ -336,20 +336,15 @@ def test_a_pause_shows_up_in_the_wall_clock_but_not_in_sim_time(tmp_path, moving
     assert wall_gaps.max() > 0.04, "the stall is visible in wall time"
 
 
-def test_a_reset_restarts_the_schedule_but_not_the_wall_clock(tmp_path, moving):
-    """Real time did not restart, and a reset's own cost is exactly what somebody would look for."""
+def test_a_time_in_a_recording_of_several_episodes_is_refused(tmp_path, moving, monkeypatch):
+    """Sim time going back means a time names no one sample; a wrong sample would look right."""
     model, data = moving
-    ctx = _Ctx(model, data)
-    rec = StateRecorder(ctx, tmp_path / "run.mcap", snap_fps(25, model.opt.timestep), world="w")
-    for _ in range(200):
-        mujoco.mj_step(model, data)
-        rec.sample(ctx)
-    before = rec._last_w
-    rec.on_reset()
-    for _ in range(200):
-        mujoco.mj_step(model, data)
-        rec.sample(ctx)
-    assert rec._last_w > before, "the wall clock kept running across the reset"
+    _record(tmp_path, model, data, steps=400)
+    with open_recording(tmp_path / "run.mcap") as rec:
+        times = np.concatenate([rec.times, rec.times])
+        monkeypatch.setattr(type(rec), "times", property(lambda _self: times))
+        with pytest.raises(RecordingError, match="several episodes"):
+            rec.index_at(0.05)
 
 
 def test_a_state_survives_the_float32_round_trip(tmp_path, moving):

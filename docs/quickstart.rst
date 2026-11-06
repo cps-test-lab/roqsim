@@ -354,6 +354,10 @@ A recording is rebuilt from the world it ran in, so an override changes only how
 camera (``sim.view``) and the renderer with its settings (``--renderer``, ``sim.renderers.<name>``).
 Any other ``--set`` is refused, naming the key, since it could not change what was recorded.
 
+**A recording is one episode.** A reset ends it and starts the next file, ``run.mcap``, ``run-2.mcap``,
+as F9's takes are numbered, each with its own span and its episode in its provenance, so a time names
+one sample and a sensor replay draws that episode's noise. ``--video`` renders one video per file.
+
 **A recording target is a file path ending in ``.mcap``**, whether it comes from ``--record`` or
 ``ROQSIM_RECORD``. Anything else -- another suffix, no suffix, a directory -- is refused before the
 world compiles, with exit status ``2`` and the target named (``a recording is an .mcap file; got
