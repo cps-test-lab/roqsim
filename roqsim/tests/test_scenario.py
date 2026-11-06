@@ -441,3 +441,12 @@ def test_a_timeout_that_is_no_number_is_refused():
             engine.step()
     finally:
         engine.shutdown()
+
+
+def test_a_bare_yield_of_a_helper_is_refused_rather_than_doing_nothing():
+    engine = _engine(PRESS, {"scenario_fixtures:YieldsAHelper": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="yield from"):
+            engine.step()
+    finally:
+        engine.shutdown()
