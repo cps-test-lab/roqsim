@@ -20,9 +20,10 @@ Config::
 One entry serves a world: scenario-execution keeps a scenario's flags by its name and one output
 directory per process, so a second would read the first's. Each episode parses the file again and
 builds a new tree, since a tree holds a run's state. The tree is ticked once per physics step, after
-the plugins listed before this entry, in its ``post_step``, from the first step after a reset. The file
-is parsed there too, so rendering, replaying or checking a world neither needs scenario-execution nor
-runs the scenario, though ``roqsim check`` needs this package to know the entry.
+the plugins listed before this entry, in its ``post_step``. The file is parsed there too, and only in
+a run: a world compiled to look at it (``SimContext.preview``: rendering, replaying, checking, a settled
+export) neither needs scenario-execution nor runs the scenario, though ``roqsim check`` needs this
+package to know the entry.
 
 A scenario that fails stops the run with an error and a non-zero exit. One the run ends before it does
 cannot fail the run, since a shutdown cannot, so it is logged as an error and written to ``test.xml``.
@@ -58,8 +59,6 @@ class ScenarioFilePlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self._execution = None
         self._clock = None
-        #: Set by a reset: a replay drives ``post_step`` on restored samples without one.
-        self._armed = False
         self._started = False
         self._ended = False
         self._done = False
@@ -101,10 +100,10 @@ class ScenarioFilePlugin(Plugin):
     def on_reset(self, ctx) -> None:
         self._finish_tree()
         self._started = self._ended = self._done = False
-        self._armed = True
 
     def post_step(self, ctx) -> None:
-        if self._ended or not self._armed:
+        # A world compiled to look at it steps too: a replay's sensors, a settled export.
+        if self._ended or ctx.preview:
             return
         if not self._started:
             self._start(ctx)
@@ -194,7 +193,6 @@ class ScenarioFilePlugin(Plugin):
         execution, self._execution = self._execution, None
         if execution is None:
             return
-        self._armed = False
         if not execution.shutdown_requested:
             _log.error(
                 "scenario %s: the run ended before %s did", self.address, self.config.get("file")

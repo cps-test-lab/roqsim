@@ -258,7 +258,7 @@ def test_a_recording_replays_without_running_the_scenario(tmp_path, monkeypatch)
 
 
 def test_a_replay_with_sensors_does_not_run_the_scenario(tmp_path, monkeypatch):
-    """A replay drives post_step on restored samples, with no reset to start anything."""
+    """A replay resets its world and drives post_step on restored samples, as a run does."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     path = _world(tmp_path, GOOD, output_dir="out")
     out = tmp_path / "run.mcap"
@@ -266,16 +266,22 @@ def test_a_replay_with_sensors_does_not_run_the_scenario(tmp_path, monkeypatch):
     assert runner.main([*argv, "--record", str(out)]) == 0
     verdict = (tmp_path / "out" / "test.xml").read_text()
     assert 'failures="0"' in verdict
-    with (
-        open_recording(out) as rec,
-        patch(
-            "scenario_execution_roqsim.scenario_file.ScenarioFilePlugin._start",
-            side_effect=AssertionError("a replay ran the scenario"),
-        ),
-    ):
+    with open_recording(out) as rec:
         rec.enable_sensors()
         rec.at(0.5)
-        assert (tmp_path / "out" / "test.xml").read_text() == verdict
+        assert not rec.replay_failures
+        assert "scenario_end" in {e["event"] for e in rec.events}
+    assert (tmp_path / "out" / "test.xml").read_text() == verdict
+
+
+def test_a_settled_export_does_not_run_the_scenario(tmp_path):
+    path = _world(tmp_path, GOOD, output_dir="out")
+    cfg = load_config_from_dict(yaml.safe_load(path.read_text()), base_dir=tmp_path)
+    with Engine(cfg, preview=True) as engine:
+        engine.reset()
+        for _ in range(5):
+            engine.step()
+    assert not (tmp_path / "out").exists()
 
 
 def test_a_second_entry_is_refused(tmp_path):
