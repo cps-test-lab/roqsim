@@ -42,7 +42,7 @@ class _World:
         )
         self.poses[f"{name}_body"] = (pos, quat)
 
-    def names(self, present_only=False):
+    def names(self, present_only=False, listed_only=False):
         return [n for n, e in self.entities.items() if e.present or not present_only]
 
     def get(self, name):
