@@ -373,6 +373,15 @@ class ProgramClash(Lift):
         yield
 
 
+class TokenClash(Lift):
+    """Machine: a program with an argument named like the start's own ``token``."""
+
+    @program
+    def lift(self, token: str = ""):
+        """Never reached by its argument."""
+        yield
+
+
 class HomeClash(Press):
     """Machine: a handle named like the machine's own ``home``."""
 

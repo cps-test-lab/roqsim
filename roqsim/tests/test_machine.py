@@ -223,6 +223,129 @@ def test_cancel_ends_the_program_where_it_is_and_the_machine_holds():
         engine.shutdown()
 
 
+def test_a_numbered_cancel_of_an_ended_start_leaves_a_later_start_running():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        first = press.start("dwell", seconds=0.01)
+        _run_until_done(engine, press, first)
+        second = press.start("dwell", seconds=1.0)
+        engine.step()
+        assert press.cancel(first) == 0
+        assert press.cancel(second + 1) == 0, "a start the machine never made"
+        engine.step()
+        assert press.busy and press.status() == MachineStatus(second, "dwell", False, "")
+    finally:
+        engine.shutdown()
+
+
+def test_a_numbered_cancel_of_a_pending_start_cancels_it():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        seq = press.start("dwell", seconds=1.0)
+        assert press.cancel(seq) == seq
+        assert not press.busy
+        engine.step()
+        assert press.status() == MachineStatus(seq, "dwell", True, "cancelled")
+        assert not [e for e in _events(engine) if e["event"] == "program_start"]
+    finally:
+        engine.shutdown()
+
+
+def test_a_numbered_cancel_of_a_running_start_cancels_it():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        seq = press.start("dwell", seconds=1.0)
+        engine.step()
+        assert press.cancel(seq) == seq
+        assert press.cancel(seq) == 0, "it is being cancelled already"
+        engine.step()
+        assert press.status() == MachineStatus(seq, "dwell", True, "cancelled")
+        ends = [(e["seq"], e["error"]) for e in _events(engine) if e["event"] == "program_end"]
+        assert ends == [(seq, "cancelled")]
+    finally:
+        engine.shutdown()
+
+
+def test_an_unnumbered_cancel_ends_whatever_is_pending_or_runs():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        pending = press.start("dwell", seconds=1.0)
+        assert press.cancel() == pending
+        running = press.start("dwell", seconds=1.0)
+        engine.step()
+        assert press.cancel() == running
+        engine.step()
+        assert press.cancel() == 0
+        assert press.status() == MachineStatus(running, "dwell", True, "cancelled")
+    finally:
+        engine.shutdown()
+
+
+def test_the_cancel_endpoint_takes_the_start_it_cancels():
+    engine = _press()
+    try:
+        start = engine.ctx.interface.find("press", "start")
+        cancel = engine.ctx.interface.find("press", "cancel")
+        first = start.write({"program": "dwell", "args": {"seconds": 0.01}})
+        for _ in range(20):
+            engine.step()
+        second = start.write({"program": "dwell", "args": {"seconds": 1.0}})
+        engine.step()
+        stale = cancel.write({"seq": first.result(1.0)})
+        engine.step()
+        assert stale.result(1.0) == 0
+        own = cancel.write({"seq": second.result(1.0)})
+        engine.step()
+        assert own.result(1.0) == second.result(1.0)
+    finally:
+        engine.shutdown()
+
+
+def test_a_cancel_by_token_ends_only_the_start_that_carries_it():
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        pending = press.start("dwell", seconds=1.0, token="a")
+        assert press.cancel(token="b") == 0, "no start carries it"
+        assert press.cancel(token="a") == pending
+        engine.step()
+        assert press.status() == MachineStatus(pending, "dwell", True, "cancelled")
+        running = press.start("dwell", seconds=1.0, token="c")
+        engine.step()
+        assert press.cancel(token="a") == 0, "that start has ended"
+        assert press.cancel(token="c") == running
+        assert press.cancel(token="c") == 0, "it is being cancelled already"
+        engine.step()
+        assert press.status() == MachineStatus(running, "dwell", True, "cancelled")
+        other = press.start("dwell", seconds=1.0)
+        engine.step()
+        assert press.cancel(token="c") == 0
+        assert press.busy and press.status() == MachineStatus(other, "dwell", False, "")
+        with pytest.raises(MachineError, match="a seq or a token, not both"):
+            press.cancel(other, token="c")
+    finally:
+        engine.shutdown()
+
+
+def test_a_cancel_sent_behind_its_start_through_the_endpoints_reaches_it():
+    engine = _press()
+    try:
+        start = engine.ctx.interface.find("press", "start")
+        cancel = engine.ctx.interface.find("press", "cancel")
+        started = start.write({"program": "dwell", "args": {"seconds": 1.0}, "token": "t"})
+        cancelled = cancel.write({"token": "t"})
+        engine.step()
+        assert cancelled.result(1.0) == started.result(1.0)
+        press = engine.ctx.blackboard.require("machine:press")
+        assert not press.busy and press.status().error == "cancelled"
+    finally:
+        engine.shutdown()
+
+
 def test_a_reset_drops_the_program_and_puts_the_machine_at_home():
     engine = _press(home={"ram": 0.05})
     try:
@@ -768,6 +891,11 @@ def test_a_loaded_joint_arrives_at_its_target_less_its_standing_offset():
 def test_a_program_named_like_what_every_machine_has_is_refused():
     with pytest.raises(Exception, match=r"program\(s\) \['start'\]"):
         _engine([{"machine_fixtures:ProgramClash": {}, "name": "lift"}])
+
+
+def test_a_program_argument_named_token_is_refused():
+    with pytest.raises(Exception, match=r"program\(s\) \['lift'\] take an argument 'token'"):
+        _engine([{"machine_fixtures:TokenClash": {}, "name": "lift"}])
 
 
 def test_a_target_or_home_that_is_no_number_is_refused():

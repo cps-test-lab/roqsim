@@ -25,6 +25,7 @@ from roqsim.config import load_config_from_dict  # noqa: E402
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
 from roqsim.ipc.bridge import IpcBridge  # noqa: E402
+from roqsim.machine import MachineStatus  # noqa: E402
 from roqsim.plugin import Plugin  # noqa: E402
 from roqsim.plugins.entity_control import EntityControlPlugin  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
@@ -119,9 +120,10 @@ class _Sim:
 class Served:
     """The world as `roqsim sim` runs it: its own thread, its control socket, as fast as it goes."""
 
-    def __init__(self, tmp_path, uri):
+    def __init__(self, tmp_path, uri, *extra):
         self.engine = _engine(
             tmp_path,
+            *extra,
             RunControlPlugin({}, entity="sim", label="run_control"),
             EntityControlPlugin({}, entity="sim", label="entities"),
             IpcBridge({"uri": uri}),
@@ -284,6 +286,105 @@ def test_a_route_is_followed_to_its_end_over_the_socket(routes):
     _local, socket = routes
     outcome = _settle_socket(socket.navigate("cart", [(4.2, 4.0)], wait=True))
     assert outcome.ok and outcome.detail == "arrived"
+
+
+# -- machine_run: an abandoned run cancels its own start and no other ------------------------------
+@pytest.fixture
+def press(tmp_path, monkeypatch):
+    """A served world with a machine; its handle, for the other client that shares it."""
+    from scene_fixtures import Press
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    uri = "ipc://" + str(tmp_path / "c.sock")
+    monkeypatch.setenv("ROQSIM_CONTROL", uri)
+    with Served(tmp_path, uri, Press({}, name="press")) as served:
+        yield served.engine.ctx.blackboard.require("machine:press")
+
+
+def _machine_run(seconds):
+    from scenario_execution_roqsim.actions.machine_run import MachineRun
+
+    action = MachineRun()
+    action.setup(clock=_HostClock())
+    action.execute(machine="press", program="stroke", args=f"seconds={seconds}")
+    deadline = time.monotonic() + 10
+    while action._start is None:
+        assert time.monotonic() < deadline, action.feedback_message
+        assert action.update().name == "RUNNING"
+        time.sleep(0.005)
+    return action
+
+
+def _until(cond, what):
+    deadline = time.monotonic() + 10
+    while not cond():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.005)
+
+
+def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_socket(press):
+    import py_trees
+
+    action = _machine_run(1000.0)
+    assert action._seq is None, "its start is still in flight"
+    action.terminate(py_trees.common.Status.INVALID)
+    _until(lambda: press.status().error == "cancelled", f"its start runs on: {press.status()}")
+    action.shutdown()
+    other = press.start("stroke", seconds=1000.0)
+    _until(lambda: press.status().seq == other, "the other client's start never ran")
+    action = _machine_run(0.1)  # refused: the machine is busy
+    action.terminate(py_trees.common.Status.INVALID)
+    action.shutdown()  # reads its cancel's answer
+    assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
+
+
+def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds_the_machine_free(
+    press,
+):
+    """``serial: one_of(machine_run, <true already>); machine_run(...)`` over the socket: the
+    actions share one connection, and the second start is sent right after the first is
+    abandoned, before the first start's reply has come."""
+    import py_trees
+
+    from scenario_execution_roqsim.actions.machine_run import MachineRun
+
+    for _ in range(10):
+        following = MachineRun()
+        following.setup(clock=_HostClock())
+        following.execute(machine="press", program="stroke", args="seconds=1000.0")
+        abandoned = None
+        try:
+            _until(following._access.ready, "the second action never reached the simulator")
+            abandoned = _machine_run(1000.0)
+            assert abandoned._seq is None, "its start is still in flight"
+            abandoned.terminate(py_trees.common.Status.INVALID)
+            _until(
+                lambda f=following: f.update().name != "RUNNING" or f._seq is not None,
+                "the second start got no reply",
+            )
+            assert following._seq is not None, following.feedback_message
+            _until(lambda f=following: press.status().seq == f._seq, "the second start never ran")
+            following.terminate(py_trees.common.Status.INVALID)
+            _until(lambda: not press.busy, "the second start was not cancelled")
+        finally:
+            following.shutdown()
+            if abandoned is not None:
+                abandoned.shutdown()
+
+
+def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_alone_over_the_socket(
+    press,
+):
+    import py_trees
+
+    action = _machine_run(0.01)
+    _until(lambda: action.update().name != "RUNNING" or action._seq is not None, "no number")
+    _until(lambda: press.status().finished, "its program never ended")
+    other = press.start("stroke", seconds=1000.0)
+    action.terminate(py_trees.common.Status.INVALID)
+    action.shutdown()
+    time.sleep(0.2)
+    assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
 
 
 # -- entity_monitor: a variable kept current, and a scenario that waits on it -----------------------

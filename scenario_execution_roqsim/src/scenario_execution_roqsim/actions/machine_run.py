@@ -8,18 +8,22 @@ The OpenSCENARIO form of :meth:`roqsim.scenario.ScenarioPlugin.run`, with the sa
     machine_run(machine: 'press', program: 'stroke')
     machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
 
-``args`` is ``name=value`` pairs, each value JSON or a bare word, since OpenSCENARIO reads braces in a
-string as an expression. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
+``args`` is ``name=value`` pairs, each value JSON or a bare word, since an OpenSCENARIO string cannot
+hold the double quotes a JSON mapping needs; a list of numbers is one value. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
 for this one. With ``check`` the machine's error, or another start following this one before it
 ended, fails the trial; without it the action succeeds whatever the program did. A branch abandoned
-while it waits (a ``one_of``, a ``timeout``) cancels the program, so the machine is free for the next
-start.
+while it waits (a ``one_of``, a ``timeout``) cancels this start, so the machine is free for the next
+start and a start another client made is left alone: each start carries a token of this action's
+own, and the cancel names it. It goes out at once, behind the start, whether or not the start's
+reply has come, and a start that was refused carries nothing to cancel.
 
 A machine that does not exist raises, as an authoring error; a refused start (the machine is busy, an
 unknown program or argument) is a FAILURE. See :mod:`scenario_execution_roqsim.base`.
 """
 
 from __future__ import annotations
+
+import uuid
 
 import py_trees
 from scenario_execution.actions.base_action import ActionError
@@ -38,6 +42,7 @@ class MachineRun(SimAction):
         self._start = None
         self._status = None
         self._seq = None
+        self._token = ""
         self._ended = False
 
     def execute(self, machine: str, program: str, args: str = "", check: bool = True):
@@ -49,7 +54,7 @@ class MachineRun(SimAction):
                 action=self,
             )
         self._args = {}
-        for pair in filter(None, (part.strip() for part in str(args or "").split(","))):
+        for pair in self._pairs(str(args or "")):
             key, equals, value = pair.partition("=")
             if not equals or not key.strip():
                 raise ActionError(
@@ -60,7 +65,22 @@ class MachineRun(SimAction):
         #: Cleared here, not in __init__: `execute` runs each time the action becomes active, so an
         #: action reached twice in one run starts the program twice.
         self._start = self._status = self._seq = None
+        self._token = uuid.uuid4().hex
         self._ended = False
+
+    def _pairs(self, args: str) -> list[str]:
+        """``args`` split at the commas outside any brackets, so a list is one value."""
+        pairs, current, depth = [], "", 0
+        for char in args:
+            depth += (char in "[{") - (char in "]}")
+            if char == "," and depth == 0:
+                pairs.append(current)
+                current = ""
+            else:
+                current += char
+        if depth != 0:
+            raise ActionError(f"machine_run: `args` {args!r} has unbalanced brackets", action=self)
+        return [pair.strip() for pair in [*pairs, current] if pair.strip()]
 
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():
@@ -69,7 +89,9 @@ class MachineRun(SimAction):
         try:
             if self._start is None:
                 self._start = self._access.call_endpoint(
-                    self._machine, "start", {"program": self._program, "args": self._args}
+                    self._machine,
+                    "start",
+                    {"program": self._program, "args": self._args, "token": self._token},
                 )
             if self._seq is None:
                 outcome = self._start.poll()
@@ -101,8 +123,14 @@ class MachineRun(SimAction):
         return self.satisfied(f"{name} (seq {self._seq}) ended: {status['error'] or 'done'}")
 
     def request_cancel(self) -> bool:
-        """Cancel the program when the branch this sits in is abandoned, or it runs on behind the
-        scene and the machine's next start is refused as busy."""
-        if self._seq is not None and not self._ended:
-            self._access.call_endpoint(self._machine, "cancel")
+        """Cancel this start when the branch this sits in is abandoned, or it runs on behind the
+        scene and the machine's next start is refused as busy. By its token, so a start another
+        client made is never cancelled, and at once, so the cancel follows the start in the order
+        the machine takes them and the next start finds it free. It cancels once."""
+        if self._start is None or self._ended:
+            return True
+        self._ended = True
+        name = f"{self._machine}.{self._program}"
+        cancel = self._access.call_endpoint(self._machine, "cancel", {"token": self._token})
+        self._access.unattended(cancel, f"the cancel of {name} as its branch was abandoned")
         return True

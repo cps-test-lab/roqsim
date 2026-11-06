@@ -771,7 +771,9 @@ def renderer_choice(ctx, overrides: dict | None = None) -> dict:
     name = sim.get("renderer") or (service.default_renderer if service else DEFAULT_RENDERER)
     settings = dict(service.settings.get(name, {})) if service else {}
     settings.update((sim.get("renderers") or {}).get(name) or {})
-    return {"renderer": name, "settings": settings}
+    # The world's directory, which a file its renderer's settings name is resolved against.
+    base_dir = getattr(service, "base_dir", None) if service else None
+    return {"renderer": name, "settings": settings, "base_dir": base_dir}
 
 
 def open_frame_renderer(model, width: int, height: int, **kwargs) -> FrameRenderer:

@@ -259,7 +259,17 @@ first steps by flinging them apart. It names both sides, the entity each belongs
 A run logs the same finding as a WARNING at every reset. An overlap that is meant is excluded from
 collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
-``friction-cone`` is the other warning a plain world can get: it carries an arm or an ``object``
+``config-key`` names the config keys a plugin without a schema does not document (see
+:doc:`plugins`), and ``rate`` an output the physics step publishes more than 1 % away from the rate
+it asks for -- a publish lands on a step, so 30 Hz on a 2 ms step is 29.41 Hz, every 17 steps. Each
+endpoint in the inventory carries ``requested_hz``, ``realised_hz`` and ``every_steps``, the
+transport's ``rates:`` included, so the rate a run publishes at is readable before the run.
+``realised`` lists, per plugin, the values it runs with where they bound a run -- a drive's speed
+caps, which clip any faster command, and a diff drive's odometry with no error drawn -- each with
+whether the world or the plugin's default set it. A plugin declares them in ``REALISED``
+(:meth:`roqsim.plugin.Plugin.realised`).
+
+``friction-cone`` is another warning a plain world can get: it carries an arm or an ``object``
 entity -- something grasped, pushed or carried -- while its friction cone is MuJoCo's pyramidal
 default, which quantises the direction of the tangential contact force to the pyramid's facets.
 ``sim: {cone: elliptic}`` is the cone such a world wants, and saying either silences it.
@@ -1008,6 +1018,7 @@ code   meaning
 ``3``  no GL context (set MUJOCO_GL=egl or osmesa, or give a window a display)
 ``4``  a recording that cannot be read or rebuilt
 ``5``  a check or health verdict that failed
+``6``  a run that ended before its scene did
 =====  ================================================================================
 
 ``2`` is anything the caller can fix by asking differently: a world, model, recording or file that
@@ -1017,7 +1028,11 @@ know) or whose world cannot be rebuilt from its provenance; a recording path tha
 does not end in ``.mcap``, is a ``2``. ``5`` is a verdict:
 ``roqsim check`` finding a problem in a world it resolved, an error-level ``roqsim health`` finding,
 an exporter's ``--check`` finding its output off its source, an asset check (``roqsim assets
-collision``, ``inspect-prop``) failing a prop. ``1`` is never returned on purpose, so it always means
+collision``, ``inspect-prop``) failing a prop. ``6`` is ``roqsim sim`` ending -- at ``--seconds`` or
+``--steps``, on a signal, by its window closing, at a plugin's or a quit's asking -- while a scene of the world (a Python scenario or an
+OpenSCENARIO file) was still running: the scene neither passed nor failed, so the run is no pass. A
+scene that ended exits ``0``, one that failed stops the run with its error, and a world without a
+scene is unaffected. ``1`` is never returned on purpose, so it always means
 the tool itself broke. Every other status comes with its reason: a line on stderr
 naming the command, or the report the tool prints (``check``, ``health``).
 

@@ -9,6 +9,7 @@ that ``manual_control`` actually stops a controller writing ``ctrl`` is the robo
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,7 +23,8 @@ def cli(monkeypatch):
 
     def invoke(*argv):
         captured = {}
-        monkeypatch.setattr(runner, "run", lambda target, **kw: captured.update(kw))
+        done = SimpleNamespace(ctx=SimpleNamespace(unfinished=[]))
+        monkeypatch.setattr(runner, "run", lambda target, **kw: captured.update(kw) or done)
         assert runner.main(["unused.yaml", *argv]) == 0
         return captured
 
@@ -649,3 +651,11 @@ def test_health_watch_follows_a_run_into_the_next_episode(tmp_path, monkeypatch,
     argv = ["--recording", str(tmp_path / "r.mcap"), "--watch", "--poll", "0.01", "--json"]
     assert health.main(argv) == exit_status.OK
     assert "r-2.mcap was finished" in capsys.readouterr().out
+
+
+def test_a_world_without_a_scene_ends_at_its_seconds_with_success(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    world = tmp_path / "w.yaml"
+    world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
+    args = [str(world), "--headless", "--seconds", "0.05", "--pacing", "asap", "--control", "none"]
+    assert runner.main(args) == exit_status.OK

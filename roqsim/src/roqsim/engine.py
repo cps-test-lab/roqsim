@@ -154,6 +154,7 @@ class Engine:
         self.config = config
         self.logger = logger or logging.getLogger("roqsim.engine")
         self.ctx = SimContext(config.raw, logger=self.logger)
+        self.ctx.preview = preview
         if preview:
             # Assigned HERE and not in `setup`, because a driver may read or override it in
             # between -- and because a fixed seed a caller can see is the whole point: two renders
@@ -381,6 +382,7 @@ class Engine:
                 # be set; here rather than inside each plugin so that a plugin registering an entity
                 # gets the world's `present:` honoured by declaring that it registers one.
                 plugin.apply_declared_presence(self.ctx)
+                plugin.check_topic_keys()
             # Every camera has registered: a renderer that cannot give what one asks for fails the
             # load here, naming it, rather than at its first frame.
             self.ctx.render.check()

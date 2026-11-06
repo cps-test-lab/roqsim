@@ -1,0 +1,90 @@
+# Copyright (C) 2026 Frederik Pasch
+# SPDX-License-Identifier: Apache-2.0
+"""``roqsim splat collision`` fits what the robot meets to what the camera sees."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import mujoco
+import numpy as np
+import pytest
+
+import roqsim_render_splat
+from roqsim.pose import rpy_to_quat
+from roqsim_render_splat import collision, synthetic
+from roqsim_render_splat.ply import write_splat
+
+EXAMPLE = Path(roqsim_render_splat.WORLDS_DIR) / "splat_room_example.yaml"
+
+
+def _dense_room(tmp_path) -> Path:
+    """The example room captured as densely as a real capture is (Gaussians 2 cm apart)."""
+    pose = synthetic.EXAMPLE_POSE
+    splat = synthetic.room_splat(
+        synthetic.example_room(), rpy_to_quat(*pose["rpy"]), pose["position"], pose["scale"], 0.02
+    )
+    write_splat(tmp_path / "room.ply", splat)
+    world = tmp_path / "room.yaml"
+    text = EXAMPLE.read_text().replace(
+        "roqsim_render_splat:splat_room_example/room.ply", "room.ply"
+    )
+    world.write_text(text)
+    return world
+
+
+def test_the_example_room_s_walls_and_table_are_found(tmp_path):
+    world = _dense_room(tmp_path)
+    out = tmp_path / "collision.xml"
+    assert collision.main([str(world), "--out", str(out)]) == 0
+    model = mujoco.MjModel.from_xml_path(str(out))  # it compiles: floor, 4 walls, the table
+    assert model.ngeom == 6
+    points, _ = collision.world_points(world)
+    result = collision.fit(points)
+    (lo, hi) = result["footprint"]
+    assert lo == pytest.approx([-2.0, -1.5], abs=0.06) and hi == pytest.approx([2.0, 1.5], abs=0.06)
+    # The table (0.45..1.35 x 0.2..0.8 m) is one box, to within a grid cell or two.
+    (table,) = result["boxes"]
+    x, y, _ = table["centre"]
+    hx, hy, _ = table["half"]
+    assert [x - hx, x + hx, y - hy, y + hy] == pytest.approx([0.45, 1.35, 0.2, 0.8], abs=0.06)
+
+
+def test_a_world_that_inherits_its_splat_is_fitted_as_the_renderer_draws_it(tmp_path):
+    child = tmp_path / "mine" / "room.yaml"
+    child.parent.mkdir()
+    child.write_text("extends: roqsim_render_splat:splat_room_example\n")
+    points, block = collision.world_points(child)
+    example, _ = collision.world_points(EXAMPLE)
+    assert block["file"] == "roqsim_render_splat:splat_room_example/room.ply"
+    np.testing.assert_array_equal(points, example)
+
+
+def test_a_world_named_by_package_resolves_its_splat_beside_it(tmp_path, monkeypatch):
+    """A relative file in a world named ``<package>:<world>`` resolves beside that world, as the
+    renderer resolves it, not in the directory the tool runs in."""
+    package = tmp_path / "site" / "splat_rooms_pkg"
+    (package / "worlds" / "room").mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "from pathlib import Path\nWORLDS_DIR = Path(__file__).parent / 'worlds'\n"
+    )
+    ply = Path(roqsim_render_splat.WORLDS_DIR) / "splat_room_example" / "room.ply"
+    (package / "worlds" / "room" / "room.ply").write_bytes(ply.read_bytes())
+    (package / "worlds" / "room" / "collision.xml").write_bytes(
+        (ply.parent / "collision.xml").read_bytes()
+    )
+    text = EXAMPLE.read_text().replace("roqsim_render_splat:splat_room_example/", "room/")
+    text = text.replace("splat_room_example/collision.xml", "room/collision.xml")
+    (package / "worlds" / "room.yaml").write_text(text)
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    monkeypatch.chdir(tmp_path)
+    points, block = collision.world_points("splat_rooms_pkg:room")
+    assert block["file"] == "room/room.ply"
+    np.testing.assert_array_equal(points, collision.world_points(EXAMPLE)[0])
+
+
+def test_a_world_that_places_no_splat_is_said(tmp_path, capsys):
+    world = tmp_path / "w.yaml"
+    world.write_text("sim: {}\ncomponents: []\n")
+    assert collision.main([str(world), "--out", str(tmp_path / "c.xml")]) == 2
+    assert "places no splat" in capsys.readouterr().err

@@ -7,10 +7,18 @@ import pytest
 pytest.importorskip("scenario_execution", reason="the OpenSCENARIO half of the comparison")
 
 import py_trees  # noqa: E402
+from scenario_execution.actions.base_action import ActionError  # noqa: E402
 from test_osc_library import _build  # noqa: E402
 
 from roqsim.config import load_config_from_dict  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
+from roqsim.machine import MachineStatus  # noqa: E402
+from scenario_execution_roqsim.actions.machine_run import MachineRun  # noqa: E402
+from scenario_execution_roqsim.actions.zone import (  # noqa: E402
+    ZoneDwelled,
+    ZoneEntered,
+    ZoneLeft,
+)
 
 GATE = {
     "zone_trigger": {
@@ -139,6 +147,91 @@ def test_an_abandoned_machine_run_cancels_the_program():
         engine.shutdown()
 
 
+def _machine_run(engine, **args):
+    action = MachineRun()
+    action.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
+    action.execute(machine="press", program="stroke", **args)
+    return action
+
+
+def _abandon(action):
+    action.terminate(py_trees.common.Status.INVALID)
+
+
+def test_a_machine_run_abandoned_in_flight_cancels_its_own_start_and_no_other():
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        # Accepted: its start is cancelled once its number is known.
+        action = _machine_run(engine, args="seconds=10.0")
+        assert action.update() == py_trees.common.Status.RUNNING
+        _abandon(action)
+        engine.step()
+        engine.step()
+        own = press.status()
+        assert own.finished and own.error == "cancelled" and not press.busy
+        # Refused, as another client's program runs: that program is left alone.
+        other = press.start("stroke", seconds=10.0)
+        engine.step()
+        action = _machine_run(engine, args="seconds=0.1")
+        assert action.update() == py_trees.common.Status.RUNNING
+        _abandon(action)
+        for _ in range(5):
+            engine.step()
+        assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
+    finally:
+        engine.shutdown()
+
+
+def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_alone():
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        action = _machine_run(engine, args="seconds=0.01")
+        action.update()
+        engine.step()
+        assert action.update() == py_trees.common.Status.RUNNING, "it knows its number now"
+        while press.busy:
+            engine.step()
+        other = press.start("stroke", seconds=10.0)
+        _abandon(action)
+        for _ in range(5):
+            engine.step()
+        assert press.busy and press.status().seq == other and not press.status().finished
+    finally:
+        engine.shutdown()
+
+
+LAST_TICK = """
+import osc.roqsim
+scenario last_tick:
+    do serial:
+        wait elapsed(1s)
+        one_of:
+            machine_run(machine: 'press', program: 'stroke', args: 'seconds=10.0')
+            zone_entered(zone: 'gate')
+"""
+
+
+def test_a_machine_run_abandoned_on_the_last_tick_logs_no_error(caplog):
+    engine = _engine()
+    try:
+        root = _build(LAST_TICK)
+        tree = py_trees.trees.BehaviourTree(root)
+        tree.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
+        with caplog.at_level("ERROR"):
+            while engine.ctx.sim_time < 3.0:
+                engine.step()
+                tree.tick()
+                if root.status != py_trees.common.Status.RUNNING:
+                    break
+            assert root.status == py_trees.common.Status.SUCCESS
+            tree.shutdown()  # before the step that applies the cancel
+        assert "got no answer" not in caplog.text and "refused" not in caplog.text, caplog.text
+    finally:
+        engine.shutdown()
+
+
 def test_since_finds_who_came_and_went_and_who_is_inside_now():
     engine = _engine()
     try:
@@ -151,5 +244,137 @@ scenario late:
         zone_dwelled(zone: 'gate', since: 0.0)
 """
         assert _run_osc(engine, text, seconds=3.0) == py_trees.common.Status.SUCCESS
+    finally:
+        engine.shutdown()
+
+
+FIRST_TICK = """
+import osc.roqsim
+scenario first_tick:
+    do serial:
+        wait elapsed(1s)
+        one_of:
+            machine_run(machine: 'press', program: 'stroke', args: 'seconds=10.0')
+            zone_entered(zone: 'gate')
+        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.05')
+"""
+
+
+def test_a_machine_run_abandoned_on_its_first_tick_still_cancels_the_program():
+    engine = _engine()
+    try:
+        assert _run_osc(engine, FIRST_TICK) == py_trees.common.Status.SUCCESS
+        ends = [e["error"] for e in engine.ctx.events.all() if e["event"] == "program_end"]
+        assert ends[-1] == ""
+    finally:
+        engine.shutdown()
+
+
+def test_a_second_cancel_of_an_abandoned_run_leaves_a_later_start_alone():
+    engine = _engine()
+    try:
+        action = MachineRun()
+        action.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
+        action.execute("press", "stroke", "seconds=10.0")
+        action.update()
+        assert action.request_cancel()
+        engine.step()
+        later = engine.ctx.blackboard.require("machine:press").start("stroke", seconds=10.0)
+        assert action.request_cancel()
+        engine.step()
+        status = engine.ctx.blackboard.require("machine:press").status()
+        assert status.seq == later and not status.finished
+    finally:
+        engine.shutdown()
+
+
+def test_machine_run_waits_for_the_program_to_end():
+    engine = _engine()
+    try:
+        text = """
+import osc.roqsim
+scenario waits:
+    do serial:
+        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.2')
+"""
+        assert _run_osc(engine, text) == py_trees.common.Status.SUCCESS
+        assert engine.ctx.sim_time == pytest.approx(0.2, abs=3 * engine.ctx.dt)
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ("", {}),
+        ("a=1", {"a": 1}),
+        ("a=1, b=hole", {"a": 1, "b": "hole"}),
+        ("a=[1, 2], b=true", {"a": [1, 2], "b": True}),
+        ("a=x=y", {"a": "x=y"}),
+    ],
+)
+def test_args_are_name_value_pairs(args, expected):
+    action = MachineRun()
+    action.execute("press", "stroke", args)
+    assert action._args == expected
+
+
+@pytest.mark.parametrize("args", ["a", "=1", "a=[1, b=2"])
+def test_args_that_are_no_pairs_are_refused(args):
+    with pytest.raises(ActionError):
+        MachineRun().execute("press", "stroke", args)
+
+
+def _zone_engine(dwell=0.1):
+    gate = {**GATE, "zone_trigger": {**GATE["zone_trigger"], "dwell": dwell}}
+    engine = Engine(
+        load_config_from_dict({"sim": {"gravity": [0, 0, 0]}, "components": [*WORLD[:2], gate]})
+    )
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    return engine
+
+
+def _run_action(engine, action, seconds=3.0):
+    action.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
+    while engine.ctx.sim_time < seconds:
+        engine.step()
+        if action.update() != py_trees.common.Status.RUNNING:
+            return engine.ctx.sim_time
+    return None
+
+
+def test_zone_dwelled_waits_for_the_dwell():
+    engine = _zone_engine(dwell=0.1)
+    try:
+        action = ZoneDwelled()
+        action.execute("gate")
+        # The box enters at 0.8 s and dwells 0.1 s.
+        assert _run_action(engine, action) == pytest.approx(0.9, abs=3 * engine.ctx.dt)
+    finally:
+        engine.shutdown()
+
+
+def test_zone_dwelled_on_a_zone_with_no_dwell_is_refused():
+    engine = _zone_engine(dwell=0.0)
+    try:
+        action = ZoneDwelled()
+        action.execute("gate")
+        with pytest.raises(ActionError, match="has dwell 0"):
+            _run_action(engine, action)
+    finally:
+        engine.shutdown()
+
+
+def test_a_pattern_narrows_who_counts():
+    engine = _zone_engine()
+    try:
+        action = ZoneEntered()
+        action.execute("gate", pattern="other_*")
+        assert _run_action(engine, action, seconds=1.5) is None, "the box is not other_*"
+        action = ZoneLeft()
+        action.execute("gate", pattern="other_*")
+        assert _run_action(engine, action, seconds=1.6) is not None, "and is not held to leave"
     finally:
         engine.shutdown()

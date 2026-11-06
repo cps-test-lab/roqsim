@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from roqsim.plugin import Plugin
+import pytest
+
+from roqsim.plugin import Plugin, PluginError
 
 
 def test_topic_override_returns_mapped_value():
@@ -35,3 +37,21 @@ def test_validate_topics_rejects_malformed_names():
 
     errs = Plugin.validate_topics({"topics": ["not", "a", "map"]})
     assert errs and "mapping" in errs[0]
+
+
+def test_a_name_first_asked_after_the_topics_check_is_refused():
+    """The engine checks ``topics:`` after register_endpoints; a rename asked later would escape it."""
+    p = Plugin({"topics": {"image": "/camera/color/image_raw"}})
+    assert p.topic_override("image") == "/camera/color/image_raw"
+    p.check_topic_keys()
+    # A name asked before the check stays readable, so a repeated lookup keeps working.
+    assert p.topic_override("image") == "/camera/color/image_raw"
+    with pytest.raises(PluginError, match="configure or register_endpoints"):
+        p.topic_override("depth")
+
+
+def test_a_late_name_is_refused_without_a_topics_map_too():
+    p = Plugin({})
+    p.check_topic_keys()
+    with pytest.raises(PluginError, match="topic_override\\('scan'\\)"):
+        p.topic_override("scan")

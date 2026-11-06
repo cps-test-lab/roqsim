@@ -40,7 +40,17 @@ cut the same openings.
 Any endpoint-producing plugin below accepts an optional ``topics:`` map to set an endpoint's ROS
 topic. An absolute name **hardwires** it, overriding the namespace+default — e.g. ``topics: {image:
 /camera/color/image_raw}``; a relative name renames it inside the namespace — e.g. ``topics: {scan:
-scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics.
+scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics. The map is keyed
+on the name the plugin renames by -- the endpoint's own name, not the topic it publishes on by
+default -- and a key the plugin never renames is refused once the plugin has registered its
+endpoints, naming the names it does rename.
+
+A plugin **without** a ``CONFIG_SCHEMA`` accepts any key, so ``roqsim check`` and ``roqsim scenes
+describe`` warn (``config-key``) about each key its ``Config::`` block does not document, and a run
+logs the same warning: a misspelled key otherwise leaves its setting at the default. A warning and
+not a refusal, because such a plugin may read a key it does not document. ``enabled`` written inside
+a config is refused where the plugin neither documents nor names it: it is the sibling of the plugin
+ref, and one level too deep it switches nothing off.
 
 .. The catalog below is generated at build time from the roqsim.plugins entry points (see
    docs/_ext/plugin_docs.py), so it always matches the installed plugins. This note is a source
@@ -2898,12 +2908,17 @@ where the line to a scenario runs, is :ref:`machines-and-scenarios` in the archi
        assert status.error == ""                  # "" done; else the failure or "cancelled"
    elif status.seq > seq:
        ...                                        # another start followed this one
+   press.cancel(seq)                              # this start only; 0 once it has ended
+   press.start("stroke", token="mine")            # a token of the caller's own ...
+   press.cancel(token="mine")                     # ... cancels it before its number is known
 
 ``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
 ``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
-press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket. Every
-program run is an event timeline on the run's events (``program_start``, the program's steps,
-``program_end``).
+press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket, and
+``roqsim call press_1/cancel '{"seq": 3}'`` (or ``'{"token": "mine"}'``) cancels that start and no
+other; with neither, whatever is pending or runs. A program cannot take an argument named
+``token``: that is the start's own. Every program run is an event timeline on the run's events
+(``program_start``, the program's steps, ``program_end``).
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~
@@ -3014,8 +3029,11 @@ reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` aroun
 it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
 not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
 itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
-before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
-task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
+before the scene does logs a start's error that reached no one. A run that ends before a scene that
+has taken a step did -- at ``--seconds`` or ``--steps``, on a signal, by the window closing -- says
+so as an error, and ``roqsim sim`` exits ``6`` (:ref:`exit-status`); a reset only starts the scene
+again. Cancelling a
+task, as ``first()`` does to the loser, cancels the machine start it waits on, by its number, or stops the route. A scene yields
 nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
@@ -3051,6 +3069,9 @@ outcome, so it moves from one to the other line by line:
      - ``zone_entered(zone: 'gate')``, ``zone_dwelled(zone: 'gate')``, ``zone_left(zone: 'gate')``
 
 An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does.
+``machine_run`` gives each start a token of its own and cancels by it, at once and right behind the
+start, so the next ``machine_run`` finds the machine free and a start another client made is left
+alone; a cancel that is refused or gets no answer is logged as an error.
 
 A world names an OpenSCENARIO file as it names a Python scenario, and ``roqsim sim`` runs it through
 scenario-execution, in its own loop, with its recording, viewer and control socket::
@@ -3059,13 +3080,15 @@ scenario-execution, in its own loop, with its recording, viewer and control sock
      name: scene
 
 ``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
-the scenario, and ``output_dir`` is where its ``test.xml`` goes. A scenario that fails stops the run
-with a non-zero exit. ``done`` and ``scenario_end`` are as for a Python scenario. It needs
-``scenario_execution_roqsim`` and scenario-execution only to run: rendering, replaying or checking the
-world parses nothing. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
+the scenario, and ``output_dir``, relative to the world file, is where its ``test.xml`` goes. A scenario
+that fails stops the run with a non-zero exit, and one the run ends before is written to ``test.xml``
+as failed and makes ``roqsim sim`` exit ``6``, as for a Python scenario. ``done`` and ``scenario_end`` are as for a Python
+scenario. One entry serves a world. scenario-execution is needed only to run: rendering, replaying,
+checking or exporting the world runs nothing and parses nothing, though ``roqsim check`` needs
+``scenario_execution_roqsim`` to know the entry. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
 way to let scenario-execution own the loop, for a campaign or for scenario parameters.
-``roqsim/tests`` and ``scenario_execution_roqsim/tests`` hold one scene written both ways, and a test
-holds their timelines equal.
+``scenario_execution_roqsim/tests`` holds one scene written both ways, and a test holds their
+timelines equal.
 
 An entity's states: ``part_state``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3151,6 +3174,14 @@ either register a ``roqsim.plugins`` entry-point or reference the class directly
 YAML. Referenced directly, the ref (``my_pkg.mod:MyPlugin`` or ``./plugins/x.py:Foo``) contains a
 colon and is the plugins-list entry's *key*, so **quote it** — ``- "my_pkg.mod:MyPlugin": {...}`` —
 to keep the colon from splitting the key.
+
+**A world compiled to look at it acts on nothing.** A render, a replay (``Recording.build``,
+``roqsim state --sensor``), ``roqsim check``, a settled export, the scene builder and a map compile
+the world with ``Engine(preview=True)``, and ``ctx.preview`` is then true. Such a world still steps
+and calls every hook, a replay on each restored sample, so a plugin computes its outputs as in a
+run: a replay reads them. What it must not do then is act: write a file a run owns, start or command
+anything (a machine's program, a controller switch), or stop the run
+(``ctx.request_stop``). Ask ``ctx.preview`` in the hook that acts and skip that part only.
 
 **If your config names a file, implement ``sources``.** ``roqsim.config.world_sources`` — what
 ``roqsim scenes inputs`` and the exporters' ``--manifest`` report, and what a run harness

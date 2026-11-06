@@ -75,6 +75,7 @@ def test_a_renderer_override_with_state_is_not_refused(monkeypatch, tmp_path):
 
 class _Service:
     default_renderer = "mujoco"
+    base_dir = "/worlds/lab"
     settings = {"mujoco": {"atlas": False}, "socket": {"address": "unix:/world", "timeout_s": 5}}
 
 
@@ -83,8 +84,13 @@ class _Ctx:
 
 
 def test_the_renderer_a_recording_is_drawn_through_lays_the_overrides_over_its_worlds():
-    assert render.renderer_choice(_Ctx()) == {"renderer": "mujoco", "settings": {"atlas": False}}
+    assert render.renderer_choice(_Ctx()) == {
+        "renderer": "mujoco",
+        "settings": {"atlas": False},
+        "base_dir": "/worlds/lab",  # a file the settings name resolves beside the world
+    }
     chosen = render.renderer_choice(
         _Ctx(), {"sim": {"renderer": "socket", "renderers": {"socket": {"timeout_s": 9}}}}
     )
-    assert chosen == {"renderer": "socket", "settings": {"address": "unix:/world", "timeout_s": 9}}
+    assert chosen["renderer"] == "socket"
+    assert chosen["settings"] == {"address": "unix:/world", "timeout_s": 9}

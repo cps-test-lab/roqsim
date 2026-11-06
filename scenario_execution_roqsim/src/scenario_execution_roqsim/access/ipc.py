@@ -12,6 +12,11 @@ answers, :meth:`IpcAccess.ready` is false, so a simulator that is still starting
 **Nothing blocks.** Every request is sent and then polled with a zero wait, one in flight per
 call object; the tree's tick never waits on the socket.
 
+**One connection per simulator.** Every action of the process that reaches the same simulator shares
+one connection, so the requests the tree sends arrive in the order it sent them, and the simulator
+writes the calls in that order: a cancel an abandoned action sends reaches the machine before the
+start the next action sends.
+
 The world's endpoints are listed once, when the simulator first answers, and every name a
 scenario uses is resolved against that list with the same functions the in-process backend uses
 (:func:`~scenario_execution_roqsim.access.find_endpoint`), so a refusal reads the same on both.
@@ -53,6 +58,38 @@ _SET_STATE = "sim/entities/set_state"
 _SET_PRESENCE = "sim/entities/set_presence"
 #: The exception a producer raises for a name the world does not carry (roqsim.entity_control).
 _UNKNOWN = "UnknownEntity"
+#: The connection to each simulator, by its address, with the number of accesses using it.
+_CONNECTIONS: dict[str, list] = {}
+
+
+def _connect(control: str | None):
+    """The process's connection to the simulator at *control*, opened by its first user."""
+    from roqsim.control_client import Client
+    from roqsim.ipc import ControlError, discover
+
+    try:
+        uri = discover(control)
+    except ValueError as err:
+        raise ControlError(str(err), "bad_request") from None
+    entry = _CONNECTIONS.get(uri)
+    if entry is None:
+        entry = _CONNECTIONS[uri] = [Client(uri), 0]
+    entry[1] += 1
+    return entry[0]
+
+
+def _release(client) -> None:
+    """Closes the connection once its last user is done with it."""
+    entry = _CONNECTIONS.get(client.uri)
+    if entry is None or entry[0] is not client:
+        client.close()
+        return
+    entry[1] -= 1
+    if entry[1] <= 0:
+        del _CONNECTIONS[client.uri]
+        client.close()
+
+
 #: How long the first listing may go unanswered beyond the client's timeout before no simulator
 #: is taken to be at the address (seconds).
 _GRACE_S = 2.0
@@ -238,9 +275,7 @@ class IpcAccess(WorldAccess):
             return False
         if self._client is None:
             try:
-                from roqsim.control_client import Client
-
-                self._client = Client(self._control)
+                self._client = _connect(self._control)
             except ControlError as err:
                 self._unreachable = str(err)
                 return False
@@ -356,5 +391,7 @@ class IpcAccess(WorldAccess):
 
     def teardown(self) -> None:
         if self._client is not None:
-            self._client.close()
+            # A cancel sent as an action was abandoned is answered before the connection goes.
+            self.report_unattended(wait=self._client.timeout + _GRACE_S)
+            _release(self._client)
             self._client = None
