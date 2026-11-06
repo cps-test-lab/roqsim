@@ -133,7 +133,8 @@ class EntityRegistry:
         return self._entities.get(name)
 
     def names(self, present_only: bool = False, listed_only: bool = False) -> list[str]:
-        """Entity names; with *present_only*, just the ones anything can currently perceive; with
+        """Entity names; with *present_only*, just the ones that are not absent themselves (one
+        inside an absent entity is hidden with it: :func:`roqsim.presence.body_present`); with
         *listed_only*, just the ones the control plane deals with (:attr:`Entity.listed`).
 
         The control plane lists the present ones, because an absent entity is one this world
