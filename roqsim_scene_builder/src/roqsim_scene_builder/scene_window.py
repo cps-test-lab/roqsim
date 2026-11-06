@@ -157,44 +157,29 @@ def apply_view(cam: mujoco.MjvCamera, view: dict | None) -> None:
         cam.elevation = float(view["elevation"])
 
 
-def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True):
+def load_engine(target: str, settle_steps: int = 0, skip_unloadable: bool = True):
     """Load ``target`` the way ``roqsim`` does and return ``(engine, view)``.
 
     ``settle_steps`` optionally advances physics so a dropped scene comes to rest before review.
     The engine is returned set up, and the caller shuts it down.
 
-    A review is about geometry, so transport plugins are dropped (``skip_transport``, see
-    :func:`roqsim.config.drop_transport_plugins`) -- which is what lets a ``*_ros`` world be reviewed in
-    an environment without its middleware. Unloadable plugins are named on stderr, since the other way
-    to get one is a misspelt ref.
+    A review is about geometry, so the preview engine leaves out transport plugins and, with
+    ``skip_unloadable``, any ref this environment cannot resolve (:class:`roqsim.engine.Engine`) --
+    which is what lets a ``*_ros`` world be reviewed in an environment without its middleware.
     """
-    import sys
-
-    from roqsim import config_for_input, drop_transport_plugins
+    from roqsim import config_for_input
 
     cfg = config_for_input(target)
-    if skip_transport:
-        transport, unavailable = drop_transport_plugins(cfg)
-        for label, why in [
-            (transport, "not needed for a review"),
-            (unavailable, "cannot be loaded here"),
-        ]:
-            if label:
-                print(
-                    f"roqsim-scene-builder: skipping {', '.join(label)} -- {why}.",
-                    file=sys.stderr,
-                    flush=True,
-                )
-    return _settled(cfg, settle_steps), getattr(cfg, "view", None)
+    return _settled(cfg, settle_steps, skip_unloadable), getattr(cfg, "view", None)
 
 
-def _settled(cfg, settle_steps: int):
+def _settled(cfg, settle_steps: int, skip_unloadable: bool = False):
     """A set-up engine for *cfg*, reset and stepped *settle_steps* times; shut down on failure."""
     from roqsim import Engine
 
     # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
     # one rather than the driver's to resolve.
-    engine = Engine(cfg, preview=True)
+    engine = Engine(cfg, preview=True, skip_unloadable=skip_unloadable)
     with contextlib.ExitStack() as stack:
         stack.enter_context(engine)
         engine.reset()

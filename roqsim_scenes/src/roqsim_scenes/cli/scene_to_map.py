@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections import deque
 from pathlib import Path
 
@@ -128,28 +127,16 @@ def _load_world(
     """
     import mujoco  # local: roqsim_scenes' other tools do not need MuJoCo
 
-    from roqsim.config import drop_transport_plugins
     from roqsim.engine import Engine
     from roqsim.runner import config_for_input
 
     cfg = config_for_input(world)
-    # A map wants the scene, not a running simulation: a transport plugin publishes what the others
-    # built and adds no geometry, so it is dropped here as `roqsim render` and the exporters drop it.
-    # That is also what lets a world declaring the ROS bridge be mapped where the bridge is not
-    # installed -- a pip-only environment, or a container that never sourced the ROS overlay.
-    transport, unavailable = drop_transport_plugins(cfg)
-    if transport:
-        print(f"not needed for a map, skipping: {', '.join(transport)}")
-    if unavailable:
-        print(
-            "skipping plugin(s) this environment cannot load: "
-            + ", ".join(unavailable)
-            + ". The geometry is unaffected (a transport plugin builds none) -- but check the "
-            "spelling if you expected one.",
-            file=sys.stderr,
-        )
+    # A map wants the scene, not a running simulation: the preview engine leaves out the transport
+    # and any ref this environment cannot load, which is what lets a world declaring the ROS bridge
+    # be mapped where the bridge is not installed -- a pip-only environment, or a container that
+    # never sourced the ROS overlay.
     # The model and data outlive the plugins: the slice reads only them.
-    with Engine(cfg, preview=True) as engine:
+    with Engine(cfg, preview=True, skip_unloadable=True) as engine:
         engine.reset()
         model, data = engine.ctx.model, engine.ctx.data
         mujoco.mj_forward(model, data)

@@ -32,6 +32,7 @@ phases — plugin resolution, world load, compile, data creation — are recorde
 from __future__ import annotations
 
 import contextlib
+import copy
 import logging
 import time
 from collections import defaultdict
@@ -51,7 +52,13 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from . import entity_pose
 from .actuators import GravityReaction
 from .assets import deduplicate_assets
-from .config import SIM_OPTION_KEYS, SimConfig, instantiate_plugins
+from .config import (
+    SIM_OPTION_KEYS,
+    SimConfig,
+    drop_transport,
+    drop_transport_plugins,
+    instantiate_plugins,
+)
 from .context import SimContext
 from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
@@ -136,6 +143,7 @@ class Engine:
         logger: logging.Logger | None = None,
         profile: bool = False,
         preview: bool = False,
+        skip_unloadable: bool = False,
     ):
         """Build the engine for *config*.
 
@@ -150,9 +158,30 @@ class Engine:
         run to replay, and the tool refused a world it could perfectly well have drawn, naming a
         seed the caller has no way to supply. `preview` is how a driver says which of the two it
         is, once, at the place where it is obvious.
+
+        A preview also leaves out the world's transport plugins (:func:`roqsim.config.drop_transport`:
+        a class declaring :attr:`roqsim.plugin.Plugin.transport_only`, or a ROS bridge this environment
+        cannot resolve). A transport builds no geometry, and its ``configure`` binds a port or waits
+        for a peer that a preview never starts. :attr:`dropped_transport` names what went, logged
+        once at INFO. The caller's *config* is not changed, so what a world declares stays readable
+        from it. *skip_unloadable* additionally leaves out every other ref this environment cannot
+        resolve (:func:`roqsim.config.drop_transport_plugins`), for a consumer that wants a picture of
+        a world whose third-party plugins are not installed; :attr:`dropped_unloadable` names them,
+        logged at WARNING, since the other way to get one is a misspelt ref. Neither applies to
+        *plugins* given as instances: the caller chose those.
         """
-        self.config = config
+        if skip_unloadable and not preview:
+            raise ValueError(
+                "skip_unloadable is for a preview: a run must load every plugin it declares"
+            )
         self.logger = logger or logging.getLogger("roqsim.engine")
+        #: The transport plugins a preview left out of the build, as ``name (ref)`` or ``ref`` labels.
+        self.dropped_transport: list[str] = []
+        #: The refs a preview with ``skip_unloadable`` left out because they do not resolve here.
+        self.dropped_unloadable: list[str] = []
+        if preview and plugins is None:
+            config = self._without_transport(config, skip_unloadable)
+        self.config = config
         self.ctx = SimContext(config.raw, logger=self.logger)
         self.ctx.preview = preview
         if preview:
@@ -188,6 +217,26 @@ class Engine:
             # Covers entry-point scanning, class resolution, and per-plugin validate_config.
             with self._span("resolve_plugins"):
                 self.plugins = instantiate_plugins(config)
+
+    def _without_transport(self, config: SimConfig, skip_unloadable: bool) -> SimConfig:
+        """A copy of *config* without its transport plugins (and unloadable refs, if asked)."""
+        # The drops reassign `plugins` and `unresolved` rather than mutating them, so a shallow copy
+        # keeps the caller's lists intact while `resolved` stays shared and still reaches its record.
+        config = copy.copy(config)
+        self.dropped_transport = drop_transport(config)
+        if skip_unloadable:
+            _, self.dropped_unloadable = drop_transport_plugins(config)
+        if self.dropped_transport:
+            self.logger.info(
+                "preview: leaving out transport plugin(s) %s", ", ".join(self.dropped_transport)
+            )
+        if self.dropped_unloadable:
+            self.logger.warning(
+                "preview: leaving out plugin(s) this environment cannot load: %s -- check the "
+                "spelling if you expected one",
+                ", ".join(self.dropped_unloadable),
+            )
+        return config
 
     # -- lifecycle ----------------------------------------------------------------------------
     def setup(self) -> None:
