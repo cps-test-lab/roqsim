@@ -2738,6 +2738,9 @@ shown or hidden at run time through :mod:`roqsim.presence`, so a recording repla
 
    <body name="strip">
      <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_plain">
+       <geom type="box" size="0.15 0.02 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
      <body name="look_hole">
        <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
      </body>
@@ -2769,8 +2772,10 @@ draws the shown states; it does not restore the inertia one names, which the pic
 Presence composes, so a state's own presence and its owner's are independent: while the owner is
 absent a state shows nothing, and a state changed meanwhile is as it was left when the owner returns.
 
-**Limits.** A state body nested in another state
-body is refused.
+**Limits.** A state body nested in another state body is refused. A shown state's inertia moves the
+physics but not the compiled ``invweight0`` values, so a part held by a weld is slightly softer or
+stiffer while it is shown. A state belongs to the nearest entity around it: list ``part_state`` after
+an entity nested in another whose states it serves.
 
 Writing your own
 ----------------
