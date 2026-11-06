@@ -26,6 +26,7 @@ If you just want to see it run, start with :doc:`getting_started`.
    textures
    coverage
    rendering
+   splat_rendering
    scene_builder
    nav2_example
    create3_stack
