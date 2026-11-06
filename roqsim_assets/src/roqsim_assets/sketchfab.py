@@ -131,8 +131,19 @@ def _license_verdict(slug: str | None) -> tuple[bool, str]:
     return False, f"{slug}: non-commercial or no-derivatives -- NOT recommended for the repo"
 
 
+#: What a model under CC BY carries once imported: the licence asks a copy to indicate that it was
+#: modified, and every import converts it (`reduce-mesh`, `finalize-mujoco`). Edit it where the import
+#: changed more, and name the script that does.
+MODIFIED = (
+    "Modified for roqsim (CC BY 4.0 asks for changes to be indicated): converted to an OBJ mesh and\n"
+    "a MuJoCo model, which may simplify, scale, move and recolour the mesh, and which collides as its\n"
+    "mesh's hull or shapes of its own.\n"
+)
+
+
 def _write_credit(out_dir: str, meta: dict) -> None:
-    """Write the model's licence + attribution into the asset folder (the per-folder CREDITS.txt)."""
+    """Write the model's licence + attribution into the asset folder (the per-folder CREDITS.txt), and
+    under CC BY what the import changes (`MODIFIED`)."""
     lic = meta.get("license") or {}
     user = meta.get("user") or {}
     if not lic.get("url"):
@@ -145,6 +156,7 @@ def _write_credit(out_dir: str, meta: dict) -> None:
             f"licensed under {lic.get('label')} ({lic.get('slug')}) -- {lic.get('requirements')}\n"
             f"source: {meta.get('viewerUrl')}\n"
             f"licence text: {lic['url'].replace('http://', 'https://', 1)}\n"
+            + (f"\n{MODIFIED}" if lic.get("slug") in ("by", "by-sa") else "")
         )
 
 

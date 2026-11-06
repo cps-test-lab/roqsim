@@ -89,6 +89,25 @@ def test_an_import_writes_the_licence_s_link(tmp_path):
     assert text.splitlines()[1].startswith("licensed under CC Attribution (by)")
 
 
+@pytest.mark.parametrize("slug,stated", [("by", True), ("by-sa", True), ("cc0", False)])
+def test_an_import_under_cc_by_says_the_model_was_changed(tmp_path, slug, stated):
+    text = _credits_of(tmp_path, {"label": "a licence", "slug": slug, "requirements": "",
+                                  "url": "https://creativecommons.org/licenses/by/4.0/"})
+    assert (sketchfab.MODIFIED in text) == stated
+
+
+@pytest.mark.parametrize("written", [True, False])
+def test_inspect_prop_reads_whether_a_cc_by_prop_s_credits_say_it_changed(tmp_path, written):
+    from roqsim_assets.cli import inspect_prop
+    _credits_of(tmp_path, {"label": "CC Attribution", "slug": "by", "requirements": "",
+                           "url": "https://creativecommons.org/licenses/by/4.0/"})
+    if not written:
+        text = (tmp_path / "CREDITS.txt").read_text(encoding="utf-8").replace(sketchfab.MODIFIED, "")
+        (tmp_path / "CREDITS.txt").write_text(text, encoding="utf-8")
+    assert inspect_prop._license_slug(str(tmp_path)) == "by"
+    assert inspect_prop._changes_stated(str(tmp_path)) is written
+
+
 def test_an_import_refuses_a_licence_without_a_link(tmp_path):
     with pytest.raises(SystemExit, match="no link"):
         _credits_of(tmp_path, {"label": "CC Attribution", "slug": "by", "requirements": "Credit the author."})

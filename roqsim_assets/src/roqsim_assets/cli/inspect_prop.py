@@ -154,6 +154,15 @@ def _license_slug(prop_dir: str) -> str | None:
     return None
 
 
+#: How a CREDITS.txt says what an import changed: the importer's `MODIFIED`, or a statement written by hand.
+_CHANGES_STATED = re.compile(r"^(Modified for roqsim|Changed for roqsim|Changes here:)", re.M)
+
+
+def _changes_stated(prop_dir: str) -> bool:
+    with open(os.path.join(prop_dir, "CREDITS.txt")) as fh:
+        return bool(_CHANGES_STATED.search(fh.read()))
+
+
 def _mtl_has_map_kd(prop_dir: str) -> bool:
     """True if any ``.mtl`` in the folder declares a ``map_Kd`` (a colour texture the mesh will show).
 
@@ -339,6 +348,15 @@ def _analyze(prop_dir: str, name: str, obj_path: str) -> tuple[list[Check], dict
                 "license",
                 "FAIL",
                 "no CREDITS.txt / licence slug -- provenance missing, do not commit",
+            )
+        )
+    elif slug in ("by", "by-sa") and not _changes_stated(prop_dir):
+        checks.append(
+            Check(
+                "license",
+                "FAIL",
+                f"licence '{slug}' asks a copy to indicate it was modified, and CREDITS.txt does not say "
+                "what the import changed -- add it, as the importer writes it, do not commit",
             )
         )
     elif slug not in _REDISTRIBUTABLE:
