@@ -18,10 +18,10 @@ the door (``docs/architecture.rst``, "Machines and scenarios").
 
 Actuation. A ``position`` actuator holds the hinge at its target. The programs ``open``, ``close``
 and ``move_to(openness)`` (a fraction in ``[0, 1]``, clamped) move that target -- at once, or ramped at
-``speed`` (rad/s at the hinge) -- and end when the leaf is there and at rest: within 0.02 of the
-openness and still, so a scenario that waits for the program can rely on where the door is. A leaf
-stopped inside that 0.02, against something or not, has arrived; one creeping there slower than
-``stall_speed`` is taken as arrived after ``stall_timeout``. An automatic
+``speed`` (rad/s at the hinge) -- and end when the leaf first arrives: once the target has stopped
+moving, the first time the leaf is within 0.02 of the openness. The leaf may still settle by a few
+hundredths after that, further on a wider, heavier leaf with the same gains. A leaf stopped inside
+that 0.02, against something or not, has arrived. An automatic
 door only pushes *gently*: the actuator force is capped, so an obstacle is nudged, never crushed.
 A leaf that stays blocked -- behind its commanded target by more than 0.02 and barely moving -- for
 ``stall_timeout`` seconds holds where it is and the program ends with the error ``stalled at
@@ -83,8 +83,8 @@ Config::
       controllable: true     # expose the ROS endpoints/action; false = passive, held at 'open'
       namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
       kp: 40.0               # position-actuator stiffness
-      kv: 30.0               # position-actuator damping (velocity gain); about a third of
-                             #   critical for the default leaf, so it settles without ringing on
+      kv: 30.0               # position-actuator damping (velocity gain); with kp 40 it damps the
+                             #   default leaf at zeta 0.54 (0.14 at kv 8, where it rang)
       max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
       stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
       stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
@@ -152,8 +152,6 @@ class DoorPlugin(MachinePlugin):
     _ACTUATOR = "hinge_pos"
     ACTUATORS = (_ACTUATOR,)
     ENTITY_KIND = "door"
-    #: Seconds a leaf stays at rest at its openness before a program counts it arrived.
-    _SETTLE = 0.1
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -510,26 +508,19 @@ class DoorPlugin(MachinePlugin):
             self.ramp(self._ACTUATOR, angle, self.speed)
         else:
             self.set(self._ACTUATOR, angle)
-        dt = self._ctx.dt
-        blocked = resting = slow = 0.0
+        blocked = 0.0
         while True:
             now, rate = self.read_state()
-            # Arrived: the target has stopped moving, the leaf is within reach of it and at rest --
-            # still for _SETTLE, so a leaf ringing about the target, which stops for an instant at
-            # each turn, has not. A leaf held there, short of the servo's own tolerance, is at rest
-            # too; one that creeps slower than stall_speed is taken as there after stall_timeout.
+            # Arrived: once the target has stopped moving, the first time the leaf is within reach
+            # of it -- moving or not, so a leaf held there short of the servo's own tolerance has
+            # arrived too. Outside that reach a leaf barely moving is held back, so every blocked
+            # leaf ends: arrived, or in a stall.
             if (
                 abs(self.value(self._ACTUATOR) - angle) <= 1e-9
                 and abs(now - target) <= self._reach_tol
             ):
-                still = abs(rate * self._span) <= self.STOPPED_SPEED
-                resting = resting + dt if still else 0.0
-                slow = slow + dt if abs(rate) < self.stall_speed else 0.0
-                if resting >= self._SETTLE or slow >= self.stall_timeout:
-                    return
-            else:
-                resting = slow = 0.0
-            blocked = blocked + dt if self._held_back(now, rate) else 0.0
+                return
+            blocked = blocked + self._ctx.dt if self._held_back(now, rate) else 0.0
             if blocked >= self.stall_timeout:
                 # Stop pressing on the obstruction: hold where the leaf is (inside its range).
                 now = min(max(now, 0.0), 1.0)

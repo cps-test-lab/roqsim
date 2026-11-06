@@ -186,8 +186,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 - **`door`** — a hinged swing-door leaf (box or the `door` / `door_glass` mesh model) inside a static
   `door_frame` casing, with a force-limited position actuator, placed by opening centre + `hinge_side`.
   A machine (see [Machines](#machines)) with `open`, `close` and `move_to(openness)`, ramped at
-  `speed` (rad/s) where a world states one; a program ends with the leaf there and at rest, so a
-  scenario can rely on where the door is. Passive (holds its
+  `speed` (rad/s) where a world states one; a program ends when the leaf first comes within 0.02
+  of its openness, and the leaf may still settle by a few hundredths after that. Passive (holds its
   `open` angle) or, when `controllable`, an **automatic door**: `std_msgs/Float64` `cmd`/`state`
   topics + a `control_msgs/GripperCommand` action, and it pushes only gently — stalling on an
   obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
