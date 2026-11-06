@@ -360,18 +360,27 @@ class ScenarioPlugin(Plugin):
         """Send a walker (``send_route``) or a navigator (``send_goals``) along ``poses`` and wait
         until that route ended; a route that did not reach its goals raises :class:`ScenarioError`
         unless ``check=False``. A route another overtook raises the same way, and with ``check=False``
-        returns the status, as :meth:`run` does. Returns the mover's status tuple."""
+        returns the status, as :meth:`run` does. Returns the mover's status tuple. Cancelling the
+        task it runs in stops the mover (a walker's ``cancel_route``, a navigator's ``cancel``)."""
         send = getattr(mover, "send_route", None) or mover.send_goals
         seq = send([tuple(p) for p in poses])
-        while True:
+        try:
+            while True:
+                status = mover.status()
+                if status[0] == seq and status[1]:
+                    break
+                if status[0] > seq:
+                    if check:
+                        raise ScenarioError(
+                            f"{mover.name}: route {seq} was followed by {status[0]}"
+                        )
+                    return status
+                yield
+        except GeneratorExit:
             status = mover.status()
-            if status[0] == seq and status[1]:
-                break
-            if status[0] > seq:
-                if check:
-                    raise ScenarioError(f"{mover.name}: route {seq} was followed by {status[0]}")
-                return status
-            yield
+            if not self._resetting and (status[0] < seq or (status[0] == seq and not status[1])):
+                (getattr(mover, "cancel_route", None) or mover.cancel)()
+            raise
         if status[-1] and check:
             raise ScenarioError(f"{mover.name}: route {seq}: {status[-1]}")
         return status

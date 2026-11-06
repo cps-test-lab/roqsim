@@ -85,6 +85,7 @@ class FakeWalker(Plugin):
     def configure(self, ctx):
         self._ctx = ctx
         self.seq, self.finished, self.until = 0, False, None
+        self.cancels = 0
         ctx.blackboard.set("walker:worker", self)
         self.name = "worker"
 
@@ -93,6 +94,11 @@ class FakeWalker(Plugin):
         self.finished = False
         self.until = self._ctx.sim_time + float(self.config.get("route_s", 0.5))
         self.poses = poses
+        return self.seq
+
+    def cancel_route(self):
+        self.cancels += 1
+        self.finished, self.until = True, None
         return self.seq
 
     def status(self):
@@ -340,6 +346,18 @@ class SharedDeadline(ScenarioPlugin):
         yield from self.wait(0.1)
         yield from self.first(self.start(self.press, "stroke"), deadline)
         yield from self.run(self.press, "stroke")
+
+
+class RouteLosesToATimer(ScenarioPlugin):
+    """Scenario: a timeout race a timer wins over a route."""
+
+    NEEDS = {"walker": "walker:worker"}
+
+    def program(self):
+        timer = self.spawn(self.wait(0.05), name="timer")
+        route = self.spawn(self.route(self.walker, [(1.0, 0.0)]), name="route")
+        yield from self.first(route, timer)
+        self.event("raced", cancels=self.walker.cancels)
 
 
 class UntilNaN(ScenarioPlugin):
