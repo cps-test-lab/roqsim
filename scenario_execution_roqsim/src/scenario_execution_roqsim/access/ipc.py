@@ -45,6 +45,7 @@ from . import (
     pose_reading,
     published_field,
     report_value,
+    report_whole,
 )
 
 #: Where the core serves entity placement and presence.
@@ -175,8 +176,17 @@ class _IpcRoute(NavCall):
 
 
 class _IpcReport(ReportCall):
-    def __init__(self, access: IpcAccess, row: dict, entity: str, report: str, field: str):
+    def __init__(
+        self,
+        access: IpcAccess,
+        row: dict,
+        entity: str,
+        report: str,
+        field: str,
+        whole: bool = False,
+    ):
         self._access = access
+        self._whole = whole
         self._path = row["path"]
         self._name = f"{entity}.{report}"
         self._field = field
@@ -200,6 +210,8 @@ class _IpcReport(ReportCall):
             raise AccessError(str(read.error))
         if read.value is None:  # the producer has nothing to report yet
             return None
+        if self._whole:
+            return report_whole(self._name, read.value, "control socket")
         return report_value(self._name, read.value, self._field, self._published, "control socket")
 
 
@@ -282,14 +294,16 @@ class IpcAccess(WorldAccess):
         return _IpcCommand(self, row["path"], value)
 
     # -- reports --------------------------------------------------------------------------------
-    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+    def entity_report(
+        self, entity: str, report: str, field: str = "", whole: bool = False
+    ) -> ReportCall:
         rows = self._require_rows()
         try:
             row = find_endpoint(rows, entity, report, kind="out")
         except AccessError:
             is_entity = POSE_PATH.format(name=entity) in self._paths()
             raise no_report(rows, entity, report, is_entity=is_entity) from None
-        return _IpcReport(self, row, entity, report, field)
+        return _IpcReport(self, row, entity, report, field, whole)
 
     # -- navigation -----------------------------------------------------------------------------
     def _navigator(self, name: str) -> str:

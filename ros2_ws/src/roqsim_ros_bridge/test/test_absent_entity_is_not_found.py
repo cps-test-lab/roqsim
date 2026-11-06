@@ -28,9 +28,11 @@ def plugin(monkeypatch):
     """A handler over one absent free-jointed entity, recording every physics write."""
     crate = SimpleNamespace(name="crate", kind="object", body="crate", meta={}, present=False)
     entities = SimpleNamespace(
-        names=lambda present_only=False: [e.name for e in [crate] if e.present or not present_only],
+        names=lambda present_only=False, listed_only=False: [
+            e.name for e in [crate] if e.present or not present_only
+        ],
         get=lambda name: crate if name == "crate" else None,
-        all=lambda: [crate],
+        all=lambda listed_only=False: [crate],
     )
     plugin = SimInterfacesPlugin()
     plugin._ctx = SimpleNamespace(entities=entities)
