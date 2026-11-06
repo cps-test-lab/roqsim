@@ -1,7 +1,11 @@
 # roqsim_mcp
 
-A standalone MCP server exposing `roqsim.introspection`'s `list_plugins`/`get_plugin_details`
-(the `roqsim.plugins` registry) as MCP tools, for a client with no other roqsim knowledge.
+A standalone MCP server exposing what this roqsim installation can put in a world, for a client with
+no other roqsim knowledge: `list_plugins` / `get_plugin_details` (the `roqsim.plugins` registry,
+from `roqsim.introspection`) and `list_models` / `get_model_details` / `list_worlds` (the model and
+world catalogs, from `roqsim.catalog`). Its instructions tell a client the loop -- list, then detail,
+then write the `use` line each model and world row carries, then `check_world` -- and that a name a
+tool returns is one that resolves.
 
 It also reaches a simulation that is running: `list_endpoints`, `describe_endpoint`,
 `read_endpoint`, `call_endpoint`, `pause`, `resume` and `step` talk to the control socket
@@ -11,7 +15,8 @@ takes its address as `control`.
 
 The real logic lives in core `roqsim` (`roqsim.introspection`, `roqsim.catalog`,
 `roqsim.control_client`); this package is a thin adapter, registering the same functions as MCP
-tools rather than duplicating anything.
+tools rather than duplicating anything. From a shell the same answers are `roqsim plugins`,
+`roqsim catalog` and the control commands (`roqsim ls`, `roqsim endpoints`, ...).
 
 ## Usage
 
