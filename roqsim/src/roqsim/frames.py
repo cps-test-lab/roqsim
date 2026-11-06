@@ -297,7 +297,7 @@ def _owners(ctx) -> dict[int, list]:
     The world body (id 0) and a body no entity's root is above map to no entity."""
     model = ctx.model
     roots: dict[int, list] = {}
-    for entity in ctx.entities.all():
+    for entity in ctx.entities.all(listed_only=True):
         if not entity.body:
             continue
         bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
@@ -338,7 +338,7 @@ def frame_offers(ctx) -> list:
         return owners[bid] or [None]
 
     out = []
-    for entity in ctx.entities.all():
+    for entity in ctx.entities.all(listed_only=True):
         if not entity.body:
             continue
         bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)

@@ -17,8 +17,11 @@ import pytest
 import yaml
 
 from roqsim.config import load_config_from_dict
+from roqsim.context import Entity
+from roqsim.endpoint import _ATTR
 from roqsim.engine import Engine
-from roqsim.plugins.part_state import PartStateError
+from roqsim.frames import frame_pose, resolve_frame
+from roqsim.plugins.part_state import PartStateError, PartStatePlugin
 from roqsim.presence import ABSENT_GEOM_GROUP
 from roqsim.recording import open_recording
 from roqsim.runner import run
@@ -577,3 +580,67 @@ def test_the_control_plane_neither_lists_nor_changes_a_state(part_file):
         assert engine.ctx.blackboard.get("part_state").shown("c1") == []
     finally:
         engine.shutdown()
+
+
+def test_a_state_is_no_frame_of_its_own_and_its_bodies_stay_frames_of_the_entity(part_file):
+    engine = _engine(_world(part_file, present={"c1": ["blank"]}))
+    try:
+        assert resolve_frame(engine.ctx, "c1/look_blank").path == "c1/look_blank"
+        assert frame_pose(engine.ctx, "c1/look_blank") is not None, "readable while shown"
+        with pytest.raises(Exception, match="c1.look_blank"):
+            resolve_frame(engine.ctx, "c1.look_blank")
+    finally:
+        engine.shutdown()
+
+
+def test_the_commands_are_not_on_ros_where_a_bool_could_not_carry_them():
+    for name in ("show", "hide", "set"):
+        spec = getattr(getattr(PartStatePlugin, name), _ATTR)
+        assert "ros2" in repr(spec) and "'ros2': None" in repr(spec)
+
+
+def test_two_bodies_naming_one_state_are_refused(tmp_path):
+    bodies = ("arm_look_x", "leg_look_x")
+    geoms = "".join(f'<body name="{b}"><geom size="0.01" mass="0"/></body>' for b in bodies)
+    path = tmp_path / "part.xml"
+    path.write_text(
+        f"""<mujoco><worldbody><body name="part"><inertial pos="0 0 0" mass="1"
+        diaginertia="1 1 1"/>{geoms}</body></worldbody></mujoco>"""
+    )
+    with pytest.raises(PartStateError, match="both name the state 'x'"):
+        _engine(_world(path))
+
+
+def test_a_state_body_two_entities_hold_is_refused(part_file):
+    engine = _engine(_world(part_file))
+    try:
+        engine.ctx.entities.add(Entity("c1_again", "object", body="c1_carton"))
+        with pytest.raises(PartStateError, match="under both 'c1' and 'c1_again'"):
+            engine.reset()
+    finally:
+        engine.shutdown()
+
+
+def test_a_state_in_two_exclusive_groups_is_refused(part_file):
+    world = _world(part_file)
+    world["components"][1]["part_state"] = {
+        "exclusive": {"c1": [["blank", "label"], ["blank", "folded"]]}
+    }
+    with pytest.raises(PartStateError, match="in two exclusive groups"):
+        _engine(world)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "0 0 0  0 0 0 0  1 1 1",
+        "0 0 0  1 0 0 0  0 0 0",
+        "0 0 0  1 0 0 0  -1 1 1",
+        "0 0 0  1 0 0 0  1 1 5",
+    ],
+)
+def test_a_state_inertia_that_is_none_is_refused_naming_it(tmp_path, data):
+    path = tmp_path / "strip.xml"
+    path.write_text(STRIP.replace("0.03 0 0.02  1 0 0 0  0.002 0.003 0.004", data))
+    with pytest.raises(PartStateError, match="look_bent_inertia is no inertia"):
+        _engine(_world(path))

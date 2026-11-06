@@ -213,6 +213,15 @@ class Axis(MachinePlugin):
         raise ValueError("broken")
 
     @program
+    def go_then_linger(self, x: float, speed: float):
+        """Ramp toward x, with a cleanup that yields, which a closed generator may not do."""
+        self.ramp("x", x, speed)
+        try:
+            yield from self.wait(100.0)
+        finally:
+            yield
+
+    @program
     def wait_for(self, seconds: float):
         """Wait on a condition that never holds, for at most ``seconds``."""
         yield from self.until(lambda: False, timeout=seconds, what="the feeder")

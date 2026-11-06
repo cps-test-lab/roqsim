@@ -112,7 +112,7 @@ Passed to every hook. Key members:
 -  ``spec`` (build phase), ``model``, ``data``, ``dt``, ``sim_time``.
 -  ``config`` — the full parsed YAML dict.
 -  ``blackboard: Blackboard`` — ``set/get/require/__contains__``; typed cross-plugin store.
--  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present)`` (``names``/``all`` take ``present_only``); backs ``simulation_interfaces`` discovery.
+-  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present, listed)`` (``names``/``all`` take ``present_only`` and ``listed_only``); backs ``simulation_interfaces`` discovery.
 -  ``render`` — the ``RenderService`` every image comes through (set at setup; see §8).
 -  ``events: EventLog`` — ``emit(source, event, **fields)`` on the physics thread records what a plugin decided, stamped with ``sim_time`` and ``episode`` (``roqsim.events``); a recording carries each one on its ``events`` channel from the moment it starts, and ``Recording.events`` reads them back.
 -  ``post(cmd)`` / ``drain_commands()`` — the thread-safe command queue (§7).
