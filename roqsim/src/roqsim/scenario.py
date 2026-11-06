@@ -42,7 +42,7 @@ from __future__ import annotations
 import fnmatch
 import inspect
 import math
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 
 from . import endpoint
 from .context import SimContext
@@ -61,7 +61,7 @@ class Task:
     error is raised to whoever joins the task.
     """
 
-    def __init__(self, gen: Iterator, name: str = "", *, keeps_error: bool = False):
+    def __init__(self, gen: Generator, name: str = "", *, keeps_error: bool = False):
         self._gen = gen
         self.name = name
         self.done = False
@@ -289,7 +289,7 @@ class ScenarioPlugin(Plugin):
 
     def spawn(
         self,
-        gen: Iterator,
+        gen: Generator,
         name: str = "",
         *,
         keeps_error: bool = False,
@@ -317,11 +317,11 @@ class ScenarioPlugin(Plugin):
         run that ends first logs that error. Cancelling the task cancels this start's program, so
         ``first(start(...), timer)`` leaves the machine free, as with a spawned :meth:`run`."""
         seq = handle.start(program, **args)
-        return self.spawn(
-            self._await_start(handle, program, seq, check),
-            name=f"{handle.name}.{program}",
-            keeps_error=True,
-        )
+        waiting = self._await_start(handle, program, seq, check)
+        # Into its try: the program runs from here on, so a cancel before the task's first advance
+        # has to reach it too. Closing a generator that has not started runs nothing of it.
+        next(waiting, None)
+        return self.spawn(waiting, name=f"{handle.name}.{program}", keeps_error=True)
 
     def run(self, handle, program: str, /, *, check: bool = True, **args):
         """Start ``program`` on a machine's handle and wait until this start ended. Raises
@@ -361,18 +361,27 @@ class ScenarioPlugin(Plugin):
         """Send a walker (``send_route``) or a navigator (``send_goals``) along ``poses`` and wait
         until that route ended; a route that did not reach its goals raises :class:`ScenarioError`
         unless ``check=False``. A route another overtook raises the same way, and with ``check=False``
-        returns the status, as :meth:`run` does. Returns the mover's status tuple."""
+        returns the status, as :meth:`run` does. Returns the mover's status tuple. Cancelling the
+        task it runs in stops the mover (a walker's ``cancel_route``, a navigator's ``cancel``)."""
         send = getattr(mover, "send_route", None) or mover.send_goals
         seq = send([tuple(p) for p in poses])
-        while True:
+        try:
+            while True:
+                status = mover.status()
+                if status[0] == seq and status[1]:
+                    break
+                if status[0] > seq:
+                    if check:
+                        raise ScenarioError(
+                            f"{mover.name}: route {seq} was followed by {status[0]}"
+                        )
+                    return status
+                yield
+        except GeneratorExit:
             status = mover.status()
-            if status[0] == seq and status[1]:
-                break
-            if status[0] > seq:
-                if check:
-                    raise ScenarioError(f"{mover.name}: route {seq} was followed by {status[0]}")
-                return status
-            yield
+            if not self._resetting and (status[0] < seq or (status[0] == seq and not status[1])):
+                (getattr(mover, "cancel_route", None) or mover.cancel)()
+            raise
         if status[-1] and check:
             raise ScenarioError(f"{mover.name}: route {seq}: {status[-1]}")
         return status

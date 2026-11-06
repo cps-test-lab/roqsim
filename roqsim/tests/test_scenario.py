@@ -503,3 +503,40 @@ def test_spawn_of_what_is_no_generator_is_refused():
             engine.step()
     finally:
         engine.shutdown()
+
+
+def test_cancelling_a_start_before_its_first_advance_cancels_its_program():
+    engine = _engine(PRESS, {"scenario_fixtures:SharedDeadline": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        ends = [e["error"] for e in _events(engine, "press") if e["event"] == "program_end"]
+        assert ends[-1] == "", "the next start ran to its end"
+    finally:
+        engine.shutdown()
+
+
+def test_a_timer_that_wins_over_a_route_stops_the_mover():
+    engine = _engine(
+        {"scenario_fixtures:FakeWalker": {"route_s": 5.0}, "name": "worker"},
+        {"scenario_fixtures:RouteLosesToATimer": {}, "name": "scene"},
+    )
+    try:
+        _until_done(engine)
+        raced = next(e for e in _events(engine, "scene") if e["event"] == "raced")
+        assert raced["cancels"] == 1
+    finally:
+        engine.shutdown()
+
+
+def test_a_reset_does_not_stop_a_mover_for_the_next_episode():
+    engine = _engine(
+        {"scenario_fixtures:FakeWalker": {"route_s": 5.0}, "name": "worker"},
+        {"scenario_fixtures:RouteLosesToATimer": {}, "name": "scene"},
+    )
+    try:
+        engine.step()
+        engine.step()
+        engine.reset()
+        assert engine.ctx.blackboard.require("walker:worker").cancels == 0
+    finally:
+        engine.shutdown()
