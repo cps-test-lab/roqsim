@@ -33,6 +33,7 @@ class _Ctx:
         self.sim_time = sim_time
         self.stop_requested = False
         self.stop_reason = ""
+        self.preview = False
 
     def request_stop(self, reason=""):
         self.stop_requested, self.stop_reason = True, reason
@@ -204,6 +205,18 @@ def test_tripping_releases_whatever_was_driving_the_arm(tmp_path):
     assert registry.get("arm_controller", "ur5e").state != ACTIVE
     assert registry.get("arm_controller", "ur5e") is not None, "still loaded, only deactivated"
     assert engine.ctx.stop_requested
+
+
+def test_a_world_compiled_to_look_at_it_reports_a_trip_and_stops_nothing(tmp_path):
+    """A replay steps the world too; what it reads is the report, not a stop or a release."""
+    with Engine(_world(tmp_path, {"ft": "ft", "max_force": 0.001}), preview=True) as engine:
+        engine.reset()
+        for _ in range(5):
+            engine.step()
+        report = engine.ctx.blackboard.get("force_limit:ur5e.safety")()
+        assert report.tripped
+        assert not engine.ctx.stop_requested
+        assert registry_for(engine.ctx).get("arm_controller", "ur5e").state == ACTIVE
 
 
 def test_a_sensor_that_is_not_there_is_refused_naming_the_key(tmp_path):

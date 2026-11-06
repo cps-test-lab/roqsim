@@ -24,7 +24,7 @@ download work on a box that has neither.
 
 **Licence matters for redistribution.** Only **CC0 / CC-BY / CC-BY-SA** may be committed to this
 (Apache-2.0) repo -- CC-BY* require crediting the author, captured in the ``CREDITS.txt`` written into
-the asset folder. Everything else (NC / ND / undeclared) is flagged; ``download`` refuses it unless
+the asset folder, and saying that it was changed, which ``import`` adds once it has converted it. Everything else (NC / ND / undeclared) is flagged; ``download`` refuses it unless
 ``--force`` (local-only use). ``download`` also refuses a model the author never enabled for API
 download (``downloadable: false``) -- there is no glTF to fetch and ``--force`` does not bypass it.
 
@@ -131,15 +131,41 @@ def _license_verdict(slug: str | None) -> tuple[bool, str]:
     return False, f"{slug}: non-commercial or no-derivatives -- NOT recommended for the repo"
 
 
+#: What `import` adds to the credits of a model whose licence asks a copy to indicate that it was
+#: modified, once it has converted it (`reduce-mesh`, `finalize-mujoco`). Edit it where the model was
+#: changed more, and name the script that does.
+MODIFIED = (
+    "Modified for roqsim (its licence asks for changes to be indicated): converted to an OBJ mesh and\n"
+    "a MuJoCo model, which may simplify, scale, move and recolour the mesh, and which collides as its\n"
+    "mesh's hull or shapes of its own.\n"
+)
+
+#: The licences that ask for changes to be indicated (`MODIFIED`).
+_ATTRIBUTION = ("by", "by-sa")
+
+
+def state_modified(prop_dir: str, slug: str | None) -> None:
+    """Add `MODIFIED` to the credits in `prop_dir` under a licence of `_ATTRIBUTION`, once its model is converted."""
+    if slug in _ATTRIBUTION:
+        with open(os.path.join(prop_dir, "CREDITS.txt"), "a") as fh:
+            fh.write(f"\n{MODIFIED}")
+
+
 def _write_credit(out_dir: str, meta: dict) -> None:
-    """Write the model's licence + attribution into the asset folder (the per-folder CREDITS.txt)."""
+    """Write the model's licence + attribution into the asset folder (the per-folder CREDITS.txt). What
+    the import changes is added once it has (`state_modified`)."""
     lic = meta.get("license") or {}
     user = meta.get("user") or {}
+    if not lic.get("url"):
+        sys.exit(
+            f"{meta.get('name')}: the model's licence has no link, which its credits must give"
+        )
     with open(os.path.join(out_dir, "CREDITS.txt"), "w") as fh:
         fh.write(
             f'"{meta.get("name")}" by {user.get("username")} ({user.get("profileUrl")})\n'
             f"licensed under {lic.get('label')} ({lic.get('slug')}) -- {lic.get('requirements')}\n"
             f"source: {meta.get('viewerUrl')}\n"
+            f"licence text: {lic['url'].replace('http://', 'https://', 1)}\n"
         )
 
 
@@ -396,6 +422,7 @@ def cmd_import(args: argparse.Namespace) -> None:
     # finalize in the staging dir -- now a complete, loadable prop (<name>.xml + PNG textures)
     _cleanup_intermediate(stage)  # drop the glTF/bin now that the OBJ is accepted
     finalize_mujoco.finalize(stage, name)  # scale is already baked into the geometry by reduce
+    state_modified(stage, (meta.get("license") or {}).get("slug"))
 
     # import decision -- the only step that touches an asset library
     if args.preview:

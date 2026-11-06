@@ -300,6 +300,17 @@ def test_a_ros_world_still_answers_where_the_bridge_does_not_resolve(capsys, ros
     assert "dropped ros2_bridge, sim_interfaces" in out.err
 
 
+def test_a_failed_build_still_names_the_transport_it_left_out(capsys, ros_world):
+    """Half an answer says how it was arrived at too: the build was asked for without the bridge."""
+    ros_world.write_text(ros_world.read_text() + "- boxx:\n    size: 0.3\n")
+    assert world_describe.main([str(ros_world), "--entities"]) == exit_status.BAD_INPUT
+    out = capsys.readouterr()
+    described = json.loads(out.out.splitlines()[-1])
+    assert described["errors"]["build"]
+    assert described["dropped_transport"] == ["ros2_bridge", "sim_interfaces"]
+    assert "dropped ros2_bridge, sim_interfaces" in out.err
+
+
 def test_the_dropped_bridge_is_still_a_reported_plugin(capsys, ros_world):
     """It goes from the BUILD, not from the answer: `plugins.ros2_bridge.*` is a legal override."""
     keys = [p["address"] for p in _describe(capsys, str(ros_world), "--entities")["components"]]
@@ -506,7 +517,9 @@ def test_a_reset_failure_keeps_what_the_build_answered(capsys, tmp_path):
         "        raise RuntimeError('cannot re-home')\n"
     )
     world = tmp_path / "boom.yaml"
-    world.write_text("sim: {}\ncomponents:\n  - dummy: {size: 0.3}\n    name: box_a\n  - boom.py:Boom: {}\n")
+    world.write_text(
+        "sim: {}\ncomponents:\n  - dummy: {size: 0.3}\n    name: box_a\n  - boom.py:Boom: {}\n"
+    )
     assert world_describe.main([str(world), "--entities"]) == exit_status.BAD_INPUT, (
         "a partial answer is not a success"
     )

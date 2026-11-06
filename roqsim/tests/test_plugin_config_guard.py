@@ -28,7 +28,7 @@ from importlib.metadata import entry_points
 import pytest
 from installed_requirements import not_installed_with_its_requirements
 
-from roqsim.introspection import _config_keys_read, undeclared_config_reads
+from roqsim.introspection import _config_keys_read, published_keys, undeclared_config_reads
 from roqsim.plugin import Plugin
 from roqsim.registry import ENTRY_POINT_GROUP
 
@@ -46,7 +46,7 @@ REFUSED = {
     ("px4_sitl", "seed"): "sensor noise draws from the run's seed",
     ("imu", "quat"): "the mount is stated under 'pose'",
     ("strip_light", "yaw"): "the run's direction is the yaw of 'pose'",
-    ("hazard_marking", "yaw"): "the rectangle's direction is the yaw of 'pose'",
+    ("floor_marking", "yaw"): "the rectangle's direction is the yaw of 'pose'",
     ("box", "pos"): "the pose is stated under 'pose'",
     ("box", "yaw"): "the pose is stated under 'pose'",
     ("cylinder", "pos"): "the pose is stated under 'pose'",
@@ -246,3 +246,25 @@ class _Publishes(Plugin):
 
 def test_a_read_key_is_undeclared_unless_published_or_injected():
     assert undeclared_config_reads(_Publishes) == ["b"]
+
+
+class _Nests(Plugin):
+    """A plugin whose ``noise`` is a nested mapping.
+
+    Config::
+
+        rate_hz: 10
+        noise:
+          stddev: 0.01
+    """
+
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config, **kwargs)
+        self.noise = self.config.get("noise")
+
+
+def test_a_nested_mapping_is_published_as_its_own_key():
+    """``noise.stddev`` publishes ``noise``: the guard and a world's key check read the same list."""
+    assert published_keys(_Nests) == {"rate_hz", "noise"}
+    assert undeclared_config_reads(_Nests) == []
+    assert _Nests.undocumented_keys({"noise": {"stddev": 0.1}, "nosie": {}}) == ["nosie"]

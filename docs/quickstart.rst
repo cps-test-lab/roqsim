@@ -259,7 +259,17 @@ first steps by flinging them apart. It names both sides, the entity each belongs
 A run logs the same finding as a WARNING at every reset. An overlap that is meant is excluded from
 collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
-``friction-cone`` is the other warning a plain world can get: it carries an arm or an ``object``
+``config-key`` names the config keys a plugin without a schema does not document (see
+:doc:`plugins`), and ``rate`` an output the physics step publishes more than 1 % away from the rate
+it asks for -- a publish lands on a step, so 30 Hz on a 2 ms step is 29.41 Hz, every 17 steps. Each
+endpoint in the inventory carries ``requested_hz``, ``realised_hz`` and ``every_steps``, the
+transport's ``rates:`` included, so the rate a run publishes at is readable before the run.
+``realised`` lists, per plugin, the values it runs with where they bound a run -- a drive's speed
+caps, which clip any faster command, and a diff drive's odometry with no error drawn -- each with
+whether the world or the plugin's default set it. A plugin declares them in ``REALISED``
+(:meth:`roqsim.plugin.Plugin.realised`).
+
+``friction-cone`` is another warning a plain world can get: it carries an arm or an ``object``
 entity -- something grasped, pushed or carried -- while its friction cone is MuJoCo's pyramidal
 default, which quantises the direction of the tangential contact force to the pyramid's facets.
 ``sim: {cone: elliptic}`` is the cone such a world wants, and saying either silences it.
@@ -303,7 +313,8 @@ raises a stiffer ``solref`` to: two timesteps under every integrator but ``discr
 dampratio)`` at the default ``solimp`` -- about 1.03 steps at a damping ratio of 1. These rules were
 measured on MuJoCo 3.14; the damping and the resolution are stated in
 :func:`roqsim.flex_modes.explain_flex`, the floor in :func:`roqsim.solref.solref_floor`, which
-``sim.contact_override`` is held to as well.
+``sim.contact_override`` is held to as well; :ref:`deformable-bodies` in :doc:`plugins` measures them
+and says where each stops holding.
 
 The same block at a 4 ms step, with the damping raised to match it::
 
@@ -348,6 +359,11 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.mcap --out last.png        # where it ended up
    roqsim render --state run.mcap --at 12.5 --out t.png # one moment
    roqsim render --state run.mcap --out run.webm        # the whole run as video
+   roqsim render --state run.mcap --renderer my_renderer --out run.mp4  # drawn through another renderer
+
+A recording is rebuilt from the world it ran in, so an override changes only how it is drawn: the
+camera (``sim.view``) and the renderer with its settings (``--renderer``, ``sim.renderers.<name>``).
+Any other ``--set`` is refused, naming the key, since it could not change what was recorded.
 
 **A recording target is a file path ending in ``.mcap``**, whether it comes from ``--record`` or
 ``ROQSIM_RECORD``. Anything else -- another suffix, no suffix, a directory -- is refused before the
@@ -639,9 +655,10 @@ otherwise be ignored, and the run would look configured.
 What the recording holds
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Beside the ``state`` channel the file carries three JSON channels a reader **without the model** can
-use -- ``roqsim health`` is one, a campaign's ingest is another -- each with one message per sample,
-stamped ``log_time`` = simulated time and ``publish_time`` = wall clock (epoch), and its schema in the
+Beside the ``state`` channel the file carries JSON channels a reader **without the model** can
+use -- ``roqsim health`` is one, a campaign's ingest is another -- ``poses``, ``joints`` and ``clock``
+with one message per sample and ``events`` with one per event, each stamped ``log_time`` = simulated
+time and ``publish_time`` = wall clock (epoch), and its schema in the
 file:
 
 ``poses``
@@ -657,6 +674,11 @@ file:
    ``{"t", "w", "q": {joint: value}}`` -- every recorded hinge and slide joint, in radians or metres.
 ``clock``
    ``{"wall_ts", "sim_ts"}`` -- the pair a reader outside the process relates its own stamps to.
+``events``
+   ``{"t", "episode", "source", "event", ...}`` -- not one per sample but one per **event** a plugin
+   emitted (``ctx.events.emit(source, event, **fields)``, :mod:`roqsim.events`): a machine starting a
+   stroke, a controller beginning a move. Its ``log_time`` is the event's own simulated time, so an
+   event between two samples keeps its exact time; ``Recording.events`` reads them back in order.
 
 And two metadata records, each a JSON document under the key ``json``: ``roqsim.recording``, the
 provenance (world, overrides, the resolved component tree, actuator gains, endpoint rates, package
@@ -762,9 +784,10 @@ states them in, and textures its compiled pixels, embedded in the file. A textur
 texture coordinates for it, and a mesh without coordinates gets the ones MuJoCo generates, so a
 UV-less wall is tiled as in the simulator; ``texrepeat`` and ``texuniform`` scale them as MuJoCo
 does. A tint above 1 is multiplied into the image, since glTF's colour stops at 1. A cube or skybox
-texture on a drawn geom is refused, naming the material. Lights and the skybox are not exported
-(a viewer brings its own), and a world's ``sim.view`` becomes a camera named in ``extras`` as
-``{"roqsim": "view"}``, outside ``world``.
+texture on a drawn geom is refused, naming the material. Every light fixed to its body is a
+``KHR_lights_punctual`` light on its body's node (used, not required: a viewer without the extension
+brings its own); a light that tracks a body, the headlight and the skybox are not exported. A world's
+``sim.view`` becomes a camera named in ``extras`` as ``{"roqsim": "view"}``, outside ``world``.
 
 **Sensor cameras.** Every camera sensor in the world (an RGB or RGB-D camera plugin) is a glTF
 perspective camera on a node of its own, the child of the node of the body it is mounted on, at its
@@ -991,6 +1014,7 @@ code   meaning
 ``3``  no GL context (set MUJOCO_GL=egl or osmesa, or give a window a display)
 ``4``  a recording that cannot be read or rebuilt
 ``5``  a check or health verdict that failed
+``6``  a run that ended before its scene did
 =====  ================================================================================
 
 ``2`` is anything the caller can fix by asking differently: a world, model, recording or file that
@@ -1000,7 +1024,12 @@ know) or whose world cannot be rebuilt from its provenance; a recording path tha
 does not end in ``.mcap``, is a ``2``. ``5`` is a verdict:
 ``roqsim check`` finding a problem in a world it resolved, an error-level ``roqsim health`` finding,
 an exporter's ``--check`` finding its output off its source, an asset check (``roqsim assets
-collision``, ``inspect-prop``) failing a prop. ``1`` is never returned on purpose, so it always means
+collision``, ``inspect-prop``) failing a prop. ``6`` is ``roqsim sim`` ending -- at ``--seconds`` or
+``--steps``, on a signal, by its window closing, at a plugin's or a quit's asking -- while a scene of the world (a Python scenario or an
+OpenSCENARIO file) was still running: the scene neither passed nor failed, so the run is no pass. A
+scene that ended exits ``0``, one that failed stops the run with its error, and a world without a
+scene is unaffected. ``make smoke`` holds every shipped world with a scene to ending it within its
+run (:doc:`developer_guide`). ``1`` is never returned on purpose, so it always means
 the tool itself broke. Every other status comes with its reason: a line on stderr
 naming the command, or the report the tool prints (``check``, ``health``).
 

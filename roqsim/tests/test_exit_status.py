@@ -21,7 +21,7 @@ from roqsim.viewer import DisplayError, ViewError
 QUICKSTART = Path(__file__).resolve().parents[2] / "docs" / "quickstart.rst"
 
 
-def test_the_table_is_six_distinct_codes():
+def test_the_table_is_seven_distinct_codes():
     codes = [
         exit_status.OK,
         exit_status.CRASH,
@@ -29,8 +29,9 @@ def test_the_table_is_six_distinct_codes():
         exit_status.NO_GL,
         exit_status.RECORDING,
         exit_status.FINDING,
+        exit_status.UNFINISHED,
     ]
-    assert codes == list(range(6))
+    assert codes == list(range(7))
     assert sorted(exit_status.MEANINGS) == codes
 
 

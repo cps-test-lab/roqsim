@@ -29,6 +29,9 @@ The lines a world writes
        components:
          - realsense_d435: {renderer: mujoco}   # this camera only: overrides sim.renderer
 
+A renderer another package adds is chosen the same way: ``sim.renderer: splat`` draws every
+camera's view of a room captured as a Gaussian splat (:doc:`splat_rendering`).
+
 A world that says nothing draws through MuJoCo's renderer, synchronously. From the command line
 the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
 
@@ -45,7 +48,9 @@ What is installed, and what each takes
 
 A renderer **declares** what it can give: which images (``rgb``, ``depth``, ``segmentation``),
 which camera models (``pinhole``, ``orthographic``, ``free``), whether it is deterministic, whether
-it runs in roqsim's process, whether it draws only the geom groups a camera names. When the world loads, every camera is checked against its renderer; a
+it runs in roqsim's process, whether it draws only the geom groups a camera names, whether it can
+draw the moving bodies alone (robots and moved props, with nothing static: what a renderer that
+brings its own static world, such as a captured splat, composites into it). When the world loads, every camera is checked against its renderer; a
 camera asking for what its renderer cannot give fails the load, naming the camera, the renderer,
 what was asked and what it gives. Nothing is drawn by MuJoCo's renderer instead behind your back.
 An unknown renderer names the installed ones and the package that would add it, and a mistyped
@@ -72,14 +77,37 @@ in its model.
 A renderer of your own
 ----------------------
 
-Subclass :class:`roqsim.render_api.Renderer`, declare its ``capabilities`` and ``SETTINGS``, and
-register it in your package::
+Subclass :class:`roqsim.render_api.Renderer`, declare its ``capabilities`` and ``SETTINGS``, check
+its block in ``validate_config(settings, base_dir)`` -- ``base_dir`` is the directory of the world being loaded, so a
+file the settings name can be found missing, or of the wrong kind, when the world loads -- and
+register it in your package. A relative path in renderer settings resolves against the world that
+is loaded, also for settings it inherits through ``extends``; a world meant to be extended names its
+files as ``<package>:<path>``, which resolve wherever the package is installed::
 
    [project.entry-points."roqsim.renderers"]
    myrenderer = "my_package.renderer:MyRenderer"
 
 It is given the scene once (``open``), then per tick a snapshot of the state and a batch of camera
-requests (``render``), and returns one frame per request. A renderer in another process stands
-behind the ``socket`` renderer (:mod:`roqsim.render_socket`): its server speaks a small framed
-protocol over a stream socket, needing only the standard library and numpy, and ``command`` in the
-renderer's settings starts it with the run.
+requests (``render``), and returns one frame per request. Each camera comes with its pose and its
+intrinsics, ``(fx, fy, cx, cy)`` in pixels as MuJoCo projects it (a model camera's ``sensorsize``
+and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``; none for an orthographic camera or a ``fovy`` of 0, which
+project through ``fovy``); a renderer declares whether it
+projects an off-centre principal point (``principal_point``) and non-square pixels
+(``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
+load, or when a tool draws through it, rather than drawn wrong.
+
+A renderer that brings its own static world (a captured splat) and leaves the static geometry out
+(``draws_static=False``) can still give the robots MuJoCo's own pictures: it opens a
+:class:`~roqsim.rendering.MujocoRenderer` of its own with the same scene, its cameras copied with
+``bodies="moving"``, and composites what that draws -- colour, and depth that is ``inf`` wherever no
+moving body is -- by depth. Any renderer may honour ``bodies`` and declares so with ``moving_only``.
+
+A renderer in another process stands behind the ``socket`` renderer (:mod:`roqsim.render_socket`):
+its server speaks a small framed protocol over a stream socket, needing only the standard library
+and numpy, and ``command`` in the renderer's settings starts it with the run.
+
+A package for one server subclasses :class:`~roqsim.render_socket.SocketRenderer`: it declares the
+server's capabilities, overrides ``scene_blobs`` to send the scene in the form its server reads
+(written from the same walk ``roqsim export gltf`` uses), and states with ``open_timeout_s`` how long
+its server may take to start -- the service waits for that, where it is longer than
+``sim.render.timeout_s``, before it names the renderer as hung.

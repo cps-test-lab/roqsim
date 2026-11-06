@@ -17,6 +17,9 @@ Config::
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
         orientation: {yaw: 0.0}     #   walker stands on the floor -- and a heading only
       motion: {walk: /abs/walk.npz}  # override a resolved locomotion clip
+      body_lag: 0.0            # s: the body follows its nav root as a damped spring of this time
+                               # constant and its turns speed up and slow down over twice it, so
+                               # it starts, turns and stops smoothly (0: on the root, turning at once)
 
 A walker with no nested ``navigator`` gets one that is goal-driven only: ``output: walker``,
 ``speed: 1.0``, its 0.26 m disc as ``radius``, and ``avoidance: {stop: false}``, since a walker does
@@ -38,6 +41,8 @@ nested under it::
 from __future__ import annotations
 
 import itertools
+import math
+import numbers
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -51,10 +56,10 @@ from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose, pose_spelling, rpy_to_quat, yaw_of
 from roqsim.types import Transform, Transforms
+from roqsim_walker.animation import HandReach, make_anim_state, write_pose
 from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.animation import make_anim_state, write_pose
 from roqsim_walker.blueprint import BlueprintError, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
@@ -84,6 +89,28 @@ def start_of(config: dict) -> tuple[float, float, float] | None:
     return pos[0], pos[1], yaw
 
 
+def _point(hand: str, point) -> np.ndarray | None:
+    """``point`` as a world point for the ``hand`` hand: ``None``, or 3 finite numbers."""
+    if point is None:
+        return None
+    try:
+        values = list(point)
+    except TypeError:
+        values = None
+    if (
+        isinstance(point, (str, bytes))
+        or values is None
+        or len(values) != 3
+        or not all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in values)
+        or not all(math.isfinite(v) for v in values)
+    ):
+        raise ValueError(
+            f"reach: the {hand} hand's point is a world point of 3 finite numbers, or None to "
+            f"let it go back to the walk -- not {point!r}"
+        )
+    return np.array(values, dtype=float)
+
+
 @dataclass
 class WalkerHandle:
     """Published by :class:`WalkerPlugin` under ``walker:<name>``; consumed by goal-driven
@@ -100,6 +127,14 @@ class WalkerHandle:
     cancel_route: Callable[[], int]  # -> route sequence number
     #: (seq, finished, goals_left, dist_left, error); ``error`` is ``""`` for an arrival
     status: Callable[[], tuple[int, bool, int, float, str]]
+    #: ``reach(left=None, right=None)`` puts each hand given a world point (3 floats) on it -- re-set
+    #: it as the points move -- the spine bending as far as they need; a hand given ``None`` goes
+    #: back to the walk, so ``reach()`` lets go with both. Each arm eases onto its point and back
+    #: over the gait on its own (:mod:`roqsim_walker.reach`). A point that is not 3 finite numbers
+    #: raises :class:`ValueError`. Call it on the physics thread.
+    reach: Callable[..., None] | None = None
+    #: the wrists' world positions now: ``(left, right)``
+    hands: Callable[[], tuple] | None = None
 
 
 class WalkerPlugin(Plugin):
@@ -185,6 +220,16 @@ class WalkerPlugin(Plugin):
             start_of(config)
         except PoseError as exc:
             errors.append(f"walker: {exc}")
+        lag = config.get("body_lag", 0.0)
+        if (
+            not isinstance(lag, (int, float))
+            or isinstance(lag, bool)
+            or not math.isfinite(lag)
+            or lag < 0
+        ):
+            errors.append(
+                f"walker: 'body_lag' is a time constant in seconds, 0 or more, not {lag!r}"
+            )
         return errors
 
     # -- lifecycle -----------------------------------------------------------------------------
@@ -218,6 +263,7 @@ class WalkerPlugin(Plugin):
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
+            "body_lag": float(cfg.get("body_lag", 0.0)),
         }
 
     def configure(self, ctx: SimContext) -> None:
@@ -249,6 +295,8 @@ class WalkerPlugin(Plugin):
                 send_route=self.send_route,
                 cancel_route=self.cancel_route,
                 status=self.status,
+                reach=self.reach,
+                hands=self.hands,
             ),
         )
 
@@ -296,6 +344,13 @@ class WalkerPlugin(Plugin):
         st.yaw = float(st.start[2])
         st.phase = st.phase_run = st.phase_short = st.phase_turn = 0.0
         st.t_idle = 0.0
+        st.body_pos = st.start[:2].copy()
+        st.body_vel = np.zeros(2)
+        st.yaw_rate = 0.0
+        st.ground, st.ground_vel = None, 0.0
+        st.reach = {side: HandReach() for side in st.reach}
+        st.reach_bend = st.reach_bend_rate = 0.0
+        st.reach_need = (frozenset(), 0.0)
         st.disp_speed = 0.0
         st.pref_vel = np.zeros(2)
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
@@ -329,6 +384,19 @@ class WalkerPlugin(Plugin):
     def cancel_route(self) -> int:
         handle = self._nav()
         return handle.cancel() if handle is not None else self._next_seq()
+
+    def reach(self, left=None, right=None) -> None:
+        """The left and right hand each on a world point, or back to the walk with ``None``.
+
+        Raises :class:`ValueError` for a point that is not 3 finite numbers, before either hand
+        changes."""
+        targets = {"l": _point("left", left), "r": _point("right", right)}
+        for side, target in targets.items():
+            self._anim.reach[side].target = target
+
+    def hands(self) -> tuple:
+        d = self._ctx.data
+        return tuple(d.mocap_pos[self._anim.mocap[f"wrist_{s}"]].copy() for s in ("l", "r"))
 
     def status(self) -> tuple[int, bool, int, float, str]:
         """``(route_seq, finished, goals_remaining, distance_remaining, error)``; safe to poll

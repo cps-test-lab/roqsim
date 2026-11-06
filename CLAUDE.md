@@ -102,6 +102,6 @@ is loaded by `module:Class` / `file.py:Class` (Architecture §12).
 make venv            # .venv with --system-site-packages
 make test            # unit tests (+ ros2_ws tests when ROS is sourced); make test-<package> for one
 make lint | format   # ruff
-make smoke           # headless-run every shipped world
+make smoke           # headless-run every shipped world; a scene must end (`# smoke-steps:`)
 make check | doc     # publication hygiene | Sphinx build
 ```

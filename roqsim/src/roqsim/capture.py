@@ -43,6 +43,7 @@ from . import flex_skin, keys
 from .kinematics import body_twist
 from .mcap_format import (
     CHANNEL_CLOCK,
+    CHANNEL_EVENTS,
     CHANNEL_JOINTS,
     CHANNEL_POSES,
     CHANNEL_STATE,
@@ -516,7 +517,8 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
     That invariant is preserved here rather than traded away: the samples that remain are untouched
     messages, so every frame drawn from the result is still a state the simulation had. What changes
     is only how many of them there are, and the declared rate that says so. The ``poses``, ``joints``
-    and ``clock`` messages of the kept samples travel with them.
+    and ``clock`` messages of the kept samples travel with them, and every event (``events``) is
+    kept: an event is no sample, and dropping one would change what happened.
 
     The rate stays exact because ``capture_fps`` is a ``[numerator, denominator]`` pair: 250 Hz
     decimated by 8 is ``[250, 8]``, i.e. 31.25 fps, not a rounded 31.
@@ -558,6 +560,10 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
                     writer.add_message(
                         channels[topic], message.log_time, message.data, message.publish_time
                     )
+        for message in rec.event_messages:
+            writer.add_message(
+                channels[CHANNEL_EVENTS], message.log_time, message.data, message.publish_time
+            )
         writer.finish()
     except BaseException:
         writer.abandon()
@@ -582,11 +588,12 @@ class StateRecorder:
     expensive -- rebuilding the world, rendering, encoding -- happens afterwards, from the file (see
     :mod:`roqsim.recording`).
 
-    **One file, four channels, written as the run goes.** Every sample is one message on each of
-    ``state`` (the MuJoCo state vector, the primary artifact), ``poses`` (every recorded body's world
-    pose and twist), ``joints`` (every recorded scalar joint) and ``clock`` (the wall/sim pair a reader
-    outside the process relates its own stamps to). The provenance and the entity roster are metadata
-    records. The file is chunked and compressed, and a chunk is closed and flushed **at least once per
+    **One file, written as the run goes.** Every sample is one message on each of ``state`` (the MuJoCo
+    state vector, the primary artifact), ``poses`` (every recorded body's world pose and twist),
+    ``joints`` (every recorded scalar joint) and ``clock`` (the wall/sim pair a reader outside the
+    process relates its own stamps to); the events plugins emitted since the last sample go on
+    ``events``, one message each at its own simulated time (:mod:`roqsim.events`). The provenance and
+    the entity roster are metadata records. The file is chunked and compressed, and a chunk is closed and flushed **at least once per
     wall second** (:data:`roqsim.mcap_format.CHUNK_SECONDS`), so the run's memory does not grow with
     its length and a hard kill loses at most the open chunk.
 
@@ -643,6 +650,10 @@ class StateRecorder:
         self._presence: list[dict] = []
         self._absent: tuple | None = None
         self._ctx = ctx
+        #: How many of ``ctx.events`` are on the ``events`` channel already, or were emitted before
+        #: this recording began (an earlier take's, an earlier episode's): those are not its own.
+        events = getattr(ctx, "events", None)
+        self._events_written = events.start_of_now() if events is not None else 0
         self._writer: ChunkedWriter | None = None
         self._channels: dict[str, int] = {}
         self._count = 0
@@ -856,12 +867,25 @@ class StateRecorder:
         )
         self._write_entities()
         self._note_presence(ctx, sim)
+        self._write_events(ctx)
         # Judged against the clock now rather than the sample's stamp: on the first sample the file
         # was opened between the two, and the reference was taken at the open.
         now = time.perf_counter()
         if now - self._last_chunk >= CHUNK_SECONDS:
             writer.close_chunk()
             self._last_chunk = now
+
+    def _write_events(self, ctx) -> None:
+        """The events emitted since the last sample, each a message at its own simulated time."""
+        log = getattr(ctx, "events", None)
+        if log is None or len(log) == self._events_written:
+            return
+        epoch = self._wall_start_epoch + (time.perf_counter() - self._origin)
+        for event in log.since(self._events_written):
+            self._writer.add_message(
+                self._channels[CHANNEL_EVENTS], ns(event["t"]), json_bytes(event), ns(epoch)
+            )
+        self._events_written = len(log)
 
     def _pose_rows(self, ctx) -> dict[str, list[float]]:
         """This sample's world pose and twist, one row per recorded body.
@@ -1012,6 +1036,8 @@ class StateRecorder:
         self._provenance["samples"] = self._count
         self._provenance["span"] = [self._first_t, self._last_t]
         try:
+            # Events after the last sample are still the run's.
+            self._write_events(self._ctx)
             self._writer.add_json_metadata(META_RECORDING, self._provenance)
             self._writer.finish()
         except OSError as err:

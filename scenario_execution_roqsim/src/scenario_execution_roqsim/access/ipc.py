@@ -12,6 +12,11 @@ answers, :meth:`IpcAccess.ready` is false, so a simulator that is still starting
 **Nothing blocks.** Every request is sent and then polled with a zero wait, one in flight per
 call object; the tree's tick never waits on the socket.
 
+**One connection per simulator.** Every action of the process that reaches the same simulator shares
+one connection, so the requests the tree sends arrive in the order it sent them, and the simulator
+writes the calls in that order: a cancel an abandoned action sends reaches the machine before the
+start the next action sends.
+
 The world's endpoints are listed once, when the simulator first answers, and every name a
 scenario uses is resolved against that list with the same functions the in-process backend uses
 (:func:`~scenario_execution_roqsim.access.find_endpoint`), so a refusal reads the same on both.
@@ -45,6 +50,7 @@ from . import (
     pose_reading,
     published_field,
     report_value,
+    report_whole,
 )
 
 #: Where the core serves entity placement and presence.
@@ -52,6 +58,38 @@ _SET_STATE = "sim/entities/set_state"
 _SET_PRESENCE = "sim/entities/set_presence"
 #: The exception a producer raises for a name the world does not carry (roqsim.entity_control).
 _UNKNOWN = "UnknownEntity"
+#: The connection to each simulator, by its address, with the number of accesses using it.
+_CONNECTIONS: dict[str, list] = {}
+
+
+def _connect(control: str | None):
+    """The process's connection to the simulator at *control*, opened by its first user."""
+    from roqsim.control_client import Client
+    from roqsim.ipc import ControlError, discover
+
+    try:
+        uri = discover(control)
+    except ValueError as err:
+        raise ControlError(str(err), "bad_request") from None
+    entry = _CONNECTIONS.get(uri)
+    if entry is None:
+        entry = _CONNECTIONS[uri] = [Client(uri), 0]
+    entry[1] += 1
+    return entry[0]
+
+
+def _release(client) -> None:
+    """Closes the connection once its last user is done with it."""
+    entry = _CONNECTIONS.get(client.uri)
+    if entry is None or entry[0] is not client:
+        client.close()
+        return
+    entry[1] -= 1
+    if entry[1] <= 0:
+        del _CONNECTIONS[client.uri]
+        client.close()
+
+
 #: How long the first listing may go unanswered beyond the client's timeout before no simulator
 #: is taken to be at the address (seconds).
 _GRACE_S = 2.0
@@ -175,8 +213,17 @@ class _IpcRoute(NavCall):
 
 
 class _IpcReport(ReportCall):
-    def __init__(self, access: IpcAccess, row: dict, entity: str, report: str, field: str):
+    def __init__(
+        self,
+        access: IpcAccess,
+        row: dict,
+        entity: str,
+        report: str,
+        field: str,
+        whole: bool = False,
+    ):
         self._access = access
+        self._whole = whole
         self._path = row["path"]
         self._name = f"{entity}.{report}"
         self._field = field
@@ -200,6 +247,8 @@ class _IpcReport(ReportCall):
             raise AccessError(str(read.error))
         if read.value is None:  # the producer has nothing to report yet
             return None
+        if self._whole:
+            return report_whole(self._name, read.value, "control socket")
         return report_value(self._name, read.value, self._field, self._published, "control socket")
 
 
@@ -226,9 +275,7 @@ class IpcAccess(WorldAccess):
             return False
         if self._client is None:
             try:
-                from roqsim.control_client import Client
-
-                self._client = Client(self._control)
+                self._client = _connect(self._control)
             except ControlError as err:
                 self._unreachable = str(err)
                 return False
@@ -282,14 +329,16 @@ class IpcAccess(WorldAccess):
         return _IpcCommand(self, row["path"], value)
 
     # -- reports --------------------------------------------------------------------------------
-    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+    def entity_report(
+        self, entity: str, report: str, field: str = "", whole: bool = False
+    ) -> ReportCall:
         rows = self._require_rows()
         try:
             row = find_endpoint(rows, entity, report, kind="out")
         except AccessError:
             is_entity = POSE_PATH.format(name=entity) in self._paths()
             raise no_report(rows, entity, report, is_entity=is_entity) from None
-        return _IpcReport(self, row, entity, report, field)
+        return _IpcReport(self, row, entity, report, field, whole)
 
     # -- navigation -----------------------------------------------------------------------------
     def _navigator(self, name: str) -> str:
@@ -342,5 +391,7 @@ class IpcAccess(WorldAccess):
 
     def teardown(self) -> None:
         if self._client is not None:
-            self._client.close()
+            # A cancel sent as an action was abandoned is answered before the connection goes.
+            self.report_unattended(wait=self._client.timeout + _GRACE_S)
+            _release(self._client)
             self._client = None

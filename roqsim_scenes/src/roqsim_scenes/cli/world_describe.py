@@ -9,7 +9,7 @@ what a caller holding an override needs to know::
      "components": [{"address": "robot.lidar", "ref": "lidar",
                      "paths": ["components.robot.lidar.rays", ...]}],
      "addresses": ["robot", "robot.lidar", ...],
-     "entities": null, "flexes": null, "warnings": null,
+     "entities": null, "flexes": null, "warnings": null, "endpoints": null, "realised": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
                      "targets": null},
      "dropped_transport": [], "errors": null}
@@ -44,10 +44,21 @@ one row per flex (:func:`roqsim.flex_modes.describe_flexes`), ``null`` without t
 trial, so the answer is about the state a trial starts from: ``warnings`` lists what that state holds
 that will not stop the world from loading but is likely to make a run misbehave, in ``roqsim check``'s
 ``{"check", "message", "hint"}`` shape -- two bodies placed inside one another
-(``interpenetration``, :func:`roqsim.interpenetration.as_warnings`). ``[]`` is a start state with
-nothing to say, ``null`` one that was not reset. A plugin whose ``on_reset`` raises is a world that
-cannot start a trial: the reply carries ``errors.reset`` and exits non-zero, with the build-fed keys
-still filled.
+(``interpenetration``, :func:`roqsim.interpenetration.as_warnings`), a config key a plugin does not
+document (``config-key``, :func:`roqsim.config.undocumented_key_warnings`), and an output published
+far from the rate it asks for (``rate``, :func:`roqsim.endpoint.rate_snap_warnings`). ``[]`` is a
+start state with nothing to say, ``null`` one that was not reset. A plugin whose ``on_reset`` raises
+is a world that cannot start a trial: the reply carries ``errors.reset`` and exits non-zero, with
+the build-fed keys still filled.
+
+**Endpoints** come with them too: every endpoint the world offers, with its topic and type, and for
+an output the rate it asks for and the rate a run publishes it at on this world's physics step
+(:func:`roqsim.endpoint.describe_endpoints`), the transport's ``rates:`` included. A caller can
+check what a campaign records against what the world publishes, and see a rate the step moves.
+
+**Realised** values come with them: per plugin, what it runs with where that bounds a run -- the
+caps a drive clips a command at, odometry with no error drawn -- and whether the world or the
+plugin's default set each (:func:`roqsim.config.realised_values`).
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
 and ``--set PATH=VALUE`` one value over it: the same options, merged by the same function
@@ -82,13 +93,13 @@ subtree is capped in node count, reporting ``truncated`` rather than silently ha
 tree with no indication it was cut.
 
 **The build has no transport in it**, and ``dropped_transport`` names what went. A describe publishes
-nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim render`` and the exporters
--- and since the ROS bridge ships in a colcon package, in a pip-only environment it does not even
-resolve at all, so requiring it would fail a describe over plugins that contribute no geometry. Only *identified*
-transport goes (:func:`roqsim.config.drop_transport`, not the lenient ``drop_transport_plugins``): a
-misspelt geometry plugin must stay the loud failure it is, because dropping it would leave an entity
-missing and let a caller conclude the world does not have it. The ``components`` list above is computed
-before the drop and still reports the bridge, so an override addressing it is still checkable.
+nothing, so it builds a preview engine, which leaves a world's bridge out exactly as it does for
+``roqsim render`` and the exporters -- and since the ROS bridge ships in a colcon package, in a pip-only
+environment it does not even resolve at all, so requiring it would fail a describe over plugins that
+contribute no geometry. Only *identified* transport goes (no ``skip_unloadable``): a misspelt geometry
+plugin must stay the loud failure it is, because dropping it would leave an entity missing and let a
+caller conclude the world does not have it. The ``components`` list above is read from the world as
+declared and still reports the bridge, so an override addressing it is still checkable.
 
 **Half an answer is still an answer, and says so.** When only the build fails -- the branches above,
 not loading the world -- the reply is printed with ``errors.build`` set and the build-fed keys left
@@ -101,6 +112,7 @@ one.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from contextlib import contextmanager
@@ -108,7 +120,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from roqsim import exit_status
-from roqsim.config import drop_transport, load_config, world_sources
+from roqsim.config import drop_transport, load_config, transport_rate_overrides, world_sources
 from roqsim.override_options import add_override_options, overrides_from_options
 from roqsim.plugin import PluginError
 from roqsim.world import resolve_world_yaml_ref
@@ -453,6 +465,12 @@ def main(argv=None) -> int:
         "flexes": None,
         # What the reset the entities come with found in the start state -- see the module docstring.
         "warnings": None,
+        # Every endpoint the world offers and the rate each output is published at -- with the
+        # entities, from the same build: see the module docstring.
+        "endpoints": None,
+        # What each plugin runs with where it bounds a run -- a drive's caps, a reading without
+        # noise -- read after configure, with the endpoints.
+        "realised": None,
         # The allowlist is world-independent, so it costs nothing and is always here. Its
         # world-specific half needs the model, hence the flag -- see the module docstring.
         "overridable": {"fields": _overridable_fields(), "targets": None},
@@ -463,10 +481,13 @@ def main(argv=None) -> int:
         "errors": None,
     }
     if args.entities or args.overridable or args.body_tree:
-        # The scene is what these questions are about, and a describe publishes nothing, so the
-        # transport goes before the build -- see the module docstring for why the strict variant.
-        # `components` is already in `result`, so the bridge stays in the reported list.
-        dropped = drop_transport(config)
+        # The transport's per-endpoint rates, read from the world as declared: they are what a run
+        # publishes each output at, though the preview build below leaves the transport out.
+        rates = transport_rate_overrides(config)
+        # What the preview build leaves out, named before it runs, so a reply whose build fails
+        # still says the scene was asked for without its transport. The same rule the engine
+        # applies, on a copy: `config` keeps what the world declares.
+        dropped = drop_transport(copy.copy(config))
         if dropped:
             result["dropped_transport"] = dropped
             print(
@@ -488,11 +509,19 @@ def main(argv=None) -> int:
                 if args.entities:
                     # Last, so everything above describes the model as compiled: a reset moves the
                     # state to where a trial starts, which is what the warnings are about.
+                    from roqsim.config import realised_values, undocumented_key_warnings
+                    from roqsim.endpoint import describe_endpoints, rate_snap_warnings
                     from roqsim.interpenetration import as_warnings
 
+                    result["endpoints"] = describe_endpoints(ctx, "ros2", rates)
+                    result["realised"] = realised_values(engine.plugins)
                     stage = "reset"
                     engine.reset()
-                    result["warnings"] = as_warnings(engine.interpenetrations)
+                    result["warnings"] = (
+                        as_warnings(engine.interpenetrations)
+                        + undocumented_key_warnings(engine.plugins)
+                        + rate_snap_warnings(result["endpoints"])
+                    )
         except Exception as err:  # noqa: BLE001
             # The half that needed no build (or no reset) is still worth having, so the reply is
             # printed with the reason attached -- and the exit code still says it is not whole.

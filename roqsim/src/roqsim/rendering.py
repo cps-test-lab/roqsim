@@ -37,6 +37,7 @@ from .exit_status import NO_GL
 from .plugin import PluginError
 from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, subtree_body_ids
 from .render_api import (
+    BODIES,
     CAMERA_MODELS,
     DEFAULT_RENDERER,
     IMAGES,
@@ -51,6 +52,7 @@ from .render_api import (
     Setting,
     StateSnapshot,
     image_mismatch,
+    validate_renderer_config,
 )
 
 _logger = logging.getLogger(__name__)
@@ -747,6 +749,33 @@ def camera_model_of(model: mujoco.MjModel, camera) -> str:
     return "orthographic" if ortho else "pinhole"
 
 
+def camera_intrinsics(
+    model: mujoco.MjModel, camera, width: int, height: int, fovy: float
+) -> tuple[float, float, float, float]:
+    """``(fx, fy, cx, cy)`` in pixels: the projection MuJoCo draws *camera* with at this size.
+
+    A model camera with a ``sensorsize`` renders through its ``focal``/``principal``
+    (``cam_intrinsic``, in metres on the sensor), scaled to the image; MuJoCo puts the optical axis
+    at ``(W/2 - ppx, H/2 - ppy)`` in edge coordinates, and ``cx, cy`` count pixel centres, half a
+    pixel less. Any other camera, a free one included, is the symmetric pinhole of *fovy*.
+    """
+    if isinstance(camera, mujoco.MjvCamera):
+        fixed = camera.type == mujoco.mjtCamera.mjCAMERA_FIXED and camera.fixedcamid >= 0
+        camera = int(camera.fixedcamid) if fixed else -1
+    if camera >= 0:
+        sw, sh = (float(v) for v in model.cam_sensorsize[camera])
+        if sw > 0 and sh > 0:
+            fpx, fpy, ppx, ppy = (float(v) for v in model.cam_intrinsic[camera])
+            return (
+                fpx / sw * width,
+                fpy / sh * height,
+                width / 2.0 - 0.5 - ppx / sw * width,
+                height / 2.0 - 0.5 - ppy / sh * height,
+            )
+    f = height / (2.0 * math.tan(math.radians(fovy) / 2.0))
+    return (f, f, (width - 1) / 2.0, (height - 1) / 2.0)
+
+
 def moving_bodies(model: mujoco.MjModel) -> np.ndarray:
     """Per body, whether it moves: it is not welded to the world, or it is a mocap body."""
     return (np.asarray(model.body_weldid) != 0) | (np.asarray(model.body_mocapid) >= 0)
@@ -944,6 +973,9 @@ class MujocoRenderer(Renderer):
         in_process=True,
         decorations=True,
         geom_groups=True,
+        principal_point=True,
+        non_square_pixels=True,
+        moving_only=True,
     )
     SETTINGS = {
         "atlas": Setting(
@@ -954,8 +986,8 @@ class MujocoRenderer(Renderer):
     }
 
     @classmethod
-    def validate_config(cls, settings) -> list[str]:
-        errors = super().validate_config(settings)
+    def validate_config(cls, settings, base_dir=None) -> list[str]:
+        errors = super().validate_config(settings, base_dir)
         if isinstance(settings, Mapping) and not isinstance(settings.get("atlas", True), bool):
             errors.append(f"'atlas' must be true or false, got {settings['atlas']!r}")
         return errors
@@ -1070,10 +1102,11 @@ class MujocoRenderer(Renderer):
     def _scene_key(request: CameraRequest):
         spec = request.camera
         decorate = None if request.decorate is None else id(request)
-        return (spec.geomgroup, decorate)
+        return (spec.geomgroup, spec.bodies, decorate)
 
     def _groups(self, requests: Sequence[CameraRequest]) -> list[list[int]]:
-        """Requests that share one scene build: the same geom groups and no decorations of their own."""
+        """Requests that share one scene build: the same geom groups and bodies, and no decorations
+        of their own."""
         groups: dict = {}
         for i, r in enumerate(requests):
             groups.setdefault(self._scene_key(r), []).append(i)
@@ -1095,15 +1128,21 @@ class MujocoRenderer(Renderer):
         return _fixed_camera(int(cam))
 
     def _build(self, model, data, first: CameraRequest) -> None:
-        """Populate the scene from *data*: every geom, once, for all the requests that share it."""
+        """Populate the scene from *data*: every geom, once, for all the requests that share it.
+
+        The moving bodies alone are MuJoCo's dynamic category: a body that is not welded to the
+        world, or a mocap body -- what :func:`moving_bodies` marks -- and no static geom, no floor and
+        no decoration.
+        """
         scene = self._scene
+        moving = first.camera.bodies == "moving"
         mujoco.mjv_updateScene(
             model,
             data,
             self._vopt_for(first.camera.geomgroup),
             None,
             self._mjv_camera(first),
-            mujoco.mjtCatBit.mjCAT_ALL.value,
+            (mujoco.mjtCatBit.mjCAT_DYNAMIC if moving else mujoco.mjtCatBit.mjCAT_ALL).value,
             scene,
         )
         self.stats["scene_builds"] += 1
@@ -1323,10 +1362,11 @@ class _Worker:
             target=self._run, name=f"roqsim-render-{name}-{shard}", daemon=True
         )
         self.thread.start()
-        if not self.opened.wait(service.timeout_s):
+        wait = service.open_timeout_s(name)
+        if not self.opened.wait(wait):
             raise RenderError(
-                f"renderer {name!r} (worker {shard}) did not open within {service.timeout_s:g} s "
-                "(sim.render.timeout_s)"
+                f"renderer {name!r} (worker {shard}) did not open within {wait:g} s "
+                "(sim.render.timeout_s, or the renderer's own open timeout where longer)"
             )
         if self.error is not None:
             raise RenderError(f"renderer {name!r} failed to open: {self.error}") from self.error
@@ -1515,6 +1555,7 @@ class RenderService:
         decorated: bool = False,
         max_geom: int | None = None,
         group: str | None = None,
+        bodies: str = "all",
     ) -> RenderView:
         """Register a camera; nothing renders until it is due (``wants``) or asked (:meth:`render_now`).
 
@@ -1526,12 +1567,16 @@ class RenderService:
         unknown = sorted(set(images) - set(IMAGES))
         if unknown:
             raise ValueError(f"view {id!r}: unknown image(s) {unknown}; one of {', '.join(IMAGES)}")
+        if bodies not in BODIES:
+            raise ValueError(f"view {id!r}: bodies {bodies!r}; one of {', '.join(BODIES)}")
+        model = camera_model_of(self.model, camera)
         spec = CameraSpec(
             id=id,
             width=int(width),
             height=int(height),
-            model=camera_model_of(self.model, camera),
+            model=model,
             fovy=self._fovy(camera),
+            intrinsics=self._intrinsics(camera, int(width), int(height)),
             near=near,
             far=far,
             images=frozenset(images),
@@ -1539,6 +1584,7 @@ class RenderService:
             geomgroup=None if geomgroup is None else tuple(int(g) for g in geomgroup),
             decorated=decorated,
             max_geom=max_geom,
+            bodies=bodies,
         )
         view = RenderView(self, spec, renderer or self.default_renderer, wants)
         view.group = id if group is None else str(group)
@@ -1568,6 +1614,13 @@ class RenderService:
             return float(self.model.vis.global_.fovy)
         return float(self.model.cam_fovy[camera])
 
+    def _intrinsics(self, camera, width: int, height: int) -> tuple | None:
+        """What :attr:`CameraSpec.intrinsics` holds for *camera* at this size."""
+        fovy = self._fovy(camera)
+        if camera_model_of(self.model, camera) == "orthographic" or fovy <= 0:
+            return None
+        return camera_intrinsics(self.model, camera, width, height, fovy)
+
     # -- the renderers ---------------------------------------------------------------------------
 
     def renderer_class(self, name: str) -> type:
@@ -1587,12 +1640,7 @@ class RenderService:
         for view in self.views:
             cls = self.renderer_class(view.renderer)
             caps = cls.capabilities_for(self.settings.get(view.renderer, {}))
-            missing = caps.missing(
-                sorted(view.spec.images),
-                view.spec.model,
-                view.spec.decorated,
-                view.spec.geomgroup is not None,
-            )
+            missing = view.spec.missing_from(caps)
             if missing:
                 problems.append(
                     f"camera {view.id!r} asks renderer {view.renderer!r} for {', '.join(missing)}; "
@@ -1603,6 +1651,11 @@ class RenderService:
                 )
         if problems:
             raise PluginError("; ".join(problems))
+
+    def open_timeout_s(self, name: str) -> float:
+        """How long renderer *name* may take to open: ``sim.render.timeout_s``, or its own where longer."""
+        own = self.renderer_class(name).open_timeout_s(self.settings.get(name, {}))
+        return max(self.timeout_s, float(own)) if own is not None else self.timeout_s
 
     def _renderer(self, name: str, shard: int = 0) -> Renderer:
         """The opened instance *shard* of renderer *name*, constructed and opened on first use."""
@@ -1624,7 +1677,7 @@ class RenderService:
     def _construct(self, name: str) -> Renderer:
         cls = self.renderer_class(name)
         settings = self.settings.get(name, {})
-        errors = cls.validate_config(settings)
+        errors = validate_renderer_config(cls, settings, self.base_dir)
         if errors:
             raise RenderError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
         return cls(settings)
@@ -1897,7 +1950,8 @@ class FrameRenderer:
     :meth:`render` returns a fresh ``(height, width, 3)`` uint8 array each call; :meth:`render_depth`
     and :meth:`render_segmentation` are the other passes. ``renderer`` names the renderer it draws
     through (MuJoCo's by default) and ``settings`` its settings block, as a world's ``sim.renderer``
-    and ``sim.renderers.<name>`` do. ``max_geom`` raises the geoms its scene holds, for a caller that
+    and ``sim.renderers.<name>`` do, and ``base_dir`` the world's directory a file named in them is
+    resolved against. ``max_geom`` raises the geoms its scene holds, for a caller that
     decorates it with many markers.
 
     For interactive navigation of a free camera, :meth:`move_camera` forwards mouse deltas to
@@ -1923,6 +1977,7 @@ class FrameRenderer:
         renderer: str = DEFAULT_RENDERER,
         settings: Mapping | None = None,
         max_geom: int | None = None,
+        base_dir=None,
     ) -> None:
         self.model = model
         self.width = int(width)
@@ -1933,7 +1988,7 @@ class FrameRenderer:
         self._geomgroup = geomgroup
         self._max_geom = max_geom
         self._service = RenderService(
-            model, renderer=renderer, renderers={renderer: dict(settings or {})}
+            model, renderer=renderer, renderers={renderer: dict(settings or {})}, base_dir=base_dir
         )
         self._view: RenderView | None = None
         self._pick_scene: mujoco.MjvScene | None = None
@@ -1991,6 +2046,7 @@ class FrameRenderer:
         spec.mujoco_camera = resolved
         spec.model = camera_model_of(self.model, resolved)
         spec.fovy = self._service._fovy(resolved)
+        spec.intrinsics = self._service._intrinsics(resolved, self.width, self.height)
         spec.near, spec.far = self._near, self._far
         return self._view
 
@@ -2001,9 +2057,7 @@ class FrameRenderer:
         caps = self._service.renderer_class(view.renderer).capabilities_for(
             self._service.settings.get(view.renderer, {})
         )
-        missing = caps.missing(
-            [image], view.spec.model, decorate is not None, view.spec.geomgroup is not None
-        )
+        missing = view.spec.missing_from(caps, [image], decorate is not None)
         if missing:
             raise RenderError(
                 f"renderer {view.renderer!r} cannot give {', '.join(missing)} for this view"

@@ -93,8 +93,13 @@ class Entity:
     meta: dict = field(default_factory=dict)
     #: Whether anything can perceive or touch it. Absent entities stay in the compiled model
     #: -- nothing can add a body to one at runtime -- but are excluded from raycasts, from
-    #: rendering, from contacts, and from what the control plane lists. See :mod:`roqsim.presence`.
+    #: rendering, from contacts, and from what the control plane lists. An entity inside an
+    #: absent one is hidden with it, whatever this says of it. See :mod:`roqsim.presence`.
     present: bool = True
+    #: Whether the control plane deals with it: lists it, gives it a pose endpoint, spawns, deletes
+    #: and places it. False for an entity a plugin keeps as part of another and changes itself (a
+    #: ``part_state`` state); it stays registered, so a recording still carries its presence.
+    listed: bool = True
 
 
 class EntityRegistry:
@@ -127,17 +132,23 @@ class EntityRegistry:
     def get(self, name: str) -> Entity | None:
         return self._entities.get(name)
 
-    def names(self, present_only: bool = False) -> list[str]:
-        """Entity names; with *present_only*, just the ones anything can currently perceive.
+    def names(self, present_only: bool = False, listed_only: bool = False) -> list[str]:
+        """Entity names; with *present_only*, just the ones that are not absent themselves (one
+        inside an absent entity is hidden with it: :func:`roqsim.presence.body_present`); with
+        *listed_only*, just the ones the control plane deals with (:attr:`Entity.listed`).
 
         The control plane lists the present ones, because an absent entity is one this world
         compiled but the trial has not brought in yet -- reporting it would make ``GetEntities``
         disagree with every sensor.
         """
-        return [n for n, e in self._entities.items() if e.present or not present_only]
+        return [e.name for e in self.all(present_only=present_only, listed_only=listed_only)]
 
-    def all(self, present_only: bool = False) -> list[Entity]:
-        return [e for e in self._entities.values() if e.present or not present_only]
+    def all(self, present_only: bool = False, listed_only: bool = False) -> list[Entity]:
+        return [
+            e
+            for e in self._entities.values()
+            if (e.present or not present_only) and (e.listed or not listed_only)
+        ]
 
 
 @dataclass
@@ -524,6 +535,14 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
+        #: Whether this world is compiled to look at it, a render, a replay, a check, a settled
+        #: export, rather than to run it (``Engine(preview=True)``). Such a world still steps and
+        #: calls every hook, so a plugin still computes what its sensors read; it writes no file a
+        #: run owns, starts or commands nothing and does not stop the run. It is built without its
+        #: transport plugins, so nothing in it publishes or waits for a peer.
+        self.preview: bool = False
+        #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
+        self.presence_holds: dict[str, dict] = {}
         #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
         self.entity_poses: set[str] = set()
         #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
@@ -567,6 +586,12 @@ class SimContext:
         #: the same noise when their seeds match (common random numbers).
         self.episode: int = 0
 
+        #: What happened when, on simulated time (:mod:`roqsim.events`): any plugin emits, a
+        #: recording carries every event on its ``events`` channel.
+        from .events import EventLog
+
+        self.events = EventLog(lambda: self.sim_time, lambda: self.episode)
+
         # Run-control (play/pause/step/reset); consulted by the standalone driver.
         from .control import RunControl
 
@@ -579,6 +604,12 @@ class SimContext:
         # scenario owns the end of the run and nothing reads this.
         self.stop_requested: bool = False
         self.stop_reason: str = ""
+
+        # What the run ended before (`report_unfinished`): one line per scene still running when the
+        # engine shut down. A shutdown cannot fail a run, so the driver reads this afterwards --
+        # `roqsim sim` exits `exit_status.UNFINISHED` on it. Under scenario-execution the scenario owns
+        # the run's result and nothing reads it.
+        self.unfinished: list[str] = []
 
         # Thread-safe command queue: external threads post, the physics thread drains. A deque's
         # append and popleft are atomic, so neither side takes a lock; the one consumer is the
@@ -757,6 +788,16 @@ class SimContext:
             self.stop_requested = True
             self.stop_reason = reason
             self.logger.info("stop requested: %s", reason or "(no reason given)")
+
+    def report_unfinished(self, what: str) -> None:
+        """Say that the run ended before ``what`` did -- a scene its shutdown found still running.
+
+        Logged as an error and kept in :attr:`unfinished`, for the driver to turn into the run's
+        status once the engine is shut down: a plugin's shutdown cannot fail the run itself
+        (:meth:`roqsim.engine.Engine.shutdown`). For a scene the run's end cut short, not a reset.
+        """
+        self.unfinished.append(what)
+        self.logger.error("the run ended before %s did", what)
 
     def publish_snapshot(self, snapshot: dict) -> None:
         with self._snapshot_lock:

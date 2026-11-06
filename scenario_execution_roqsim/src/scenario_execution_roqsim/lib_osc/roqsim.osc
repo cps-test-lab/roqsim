@@ -263,3 +263,34 @@ action entity_call:
                                                       # mapping of them, or a bare value for its
                                                       # only one
     require_verified: bool = true                     # fail on 'no_effect' or no confirmation
+
+action machine_run:
+    # Run a program of a machine and wait until that start has ended: the form of a Python scenario's
+    # `run`. A branch abandoned while it waits (`one_of`, `timeout`) cancels this start, and no
+    # start another client made.
+    #
+    #     machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
+    machine: string                                   # the machine's name in the world
+    program: string                                   # the program to run
+    args: string = ''                                 # its arguments, as 'name=value, name=value'
+    check: bool = true                                # fail on its error, or on a later start
+
+action zone_entered:
+    # Wait until an entity is inside a `zone_trigger`: the form of a Python scenario's `entered`.
+    # It reads who is inside now; with `since`, an entity that came and went since then counts too.
+    zone: string                                      # the zone's address in the world
+    pattern: string = '*'                             # an fnmatch of entity names
+    since: float = -1.0                               # sim time (s); negative: who is inside now
+
+action zone_left:
+    # Wait until no entity is inside a `zone_trigger`: the form of a Python scenario's `left`. It
+    # succeeds at once on an empty zone.
+    zone: string                                      # the zone's address in the world
+    pattern: string = '*'                             # an fnmatch of entity names
+
+action zone_dwelled:
+    # Wait until an entity has been inside a `zone_trigger` for its `dwell`: the form of a Python
+    # scenario's `dwelled`. A zone whose `dwell` is 0 is refused.
+    zone: string                                      # the zone's address in the world
+    pattern: string = '*'                             # an fnmatch of entity names
+    since: float = -1.0                               # sim time (s); negative: who dwells now

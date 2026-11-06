@@ -47,6 +47,7 @@ Developer workflow
    make test      # unit tests (+ nav2 integration when ROS is sourced)
    make format    # ruff format + autofix
    make lint      # ruff check (no changes)
+   make smoke     # headless-run every shipped world
    make doc       # build HTML docs into build/html
    make view-doc  # build + open in a browser
 
@@ -70,6 +71,24 @@ an export of every world ``roqsim_scenes`` ships to no error and no warning:
 .. code-block:: bash
 
    make test-gltf             # needs node and npm on PATH
+
+``make smoke`` runs every world a package or ``ros2_ws`` ships, headless, for ``SMOKE_STEPS``
+(200) steps (``tools/smoke.py``, tested by ``make test``). A world passes when ``roqsim sim`` exits
+``0`` on it, so its MJCF compiles, its plugins load and its assets resolve. A world with a scene (a
+Python scenario or an OpenSCENARIO ``scenario:`` entry) must also finish that scene within the run:
+``roqsim sim`` exits ``6`` on a scene the run cut short (:ref:`exit-status`), and smoke reports the
+world as a scene that did not finish, so a passing smoke still means every shipped scene runs to its
+end. Shorten the scene, or let the world say how long it needs with a comment line in its own file,
+which the world loader ignores and only smoke reads:
+
+.. code-block:: yaml
+
+   # smoke-steps: 3000
+
+The budget is a comment rather than a world key because a world refuses keys it does not know, and
+the number is smoke's alone; it sits beside the scene it budgets, so changing one shows the other.
+A world that needs an asset ``make external-resources`` generates, or a CUDA GPU the machine does
+not have, is reported as skipped.
 
 .. _adding-a-tool:
 

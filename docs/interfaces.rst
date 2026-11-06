@@ -386,8 +386,8 @@ That build has **no transport in it**, and ``dropped_transport`` names what went
 A describe publishes nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim
 render`` and the exporters -- and since the ROS bridge ships in a colcon package, a pip-only
 environment cannot resolve it at all, so requiring it would fail a describe over plugins that
-contribute no geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
-``drop_transport_plugins``): a misspelt geometry plugin has to stay fatal, because dropping it would
+contribute no geometry. The build is a preview engine, so only *identified* transport goes
+(:func:`roqsim.config.drop_transport`, without ``skip_unloadable``): a misspelt geometry plugin has to stay fatal, because dropping it would
 leave an entity missing from a list a caller reads as complete. The bridge is still in ``components``,
 so ``components.ros2_bridge.*`` remains a checkable override.
 
