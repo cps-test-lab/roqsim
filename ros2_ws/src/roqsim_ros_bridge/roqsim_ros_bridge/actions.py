@@ -532,6 +532,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     producer whose travel can take longer (a slow door) states its own bound in its ``timeout`` hint,
     and 0 waits however long it takes. A goal still moving when its time runs out is aborted, with
     neither ``reached_goal`` nor ``stalled`` set: it has not ended, and the result does not say it has.
+    Unlike a cancel, an abort commands nothing: the producer goes on toward the position (a door keeps
+    moving), and a caller that wants it elsewhere sends a new goal.
 
     ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
     every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an

@@ -14,7 +14,6 @@ import pytest
 from roqsim import entity_pose
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.machine import STOPPED_SPEED
 from roqsim.plugin import PluginError
 
 
@@ -314,7 +313,7 @@ def _finish(engine, door, seq, limit=20.0):
     return door.status()
 
 
-def test_open_and_close_ramp_at_the_stated_speed_and_end_when_there_and_at_rest(tmp_path):
+def test_open_and_close_ramp_at_the_stated_speed_and_end_when_the_leaf_first_arrives(tmp_path):
     engine = _built(tmp_path, {"max_angle": 90, "speed": 0.5})
     door = engine.ctx.blackboard.require("machine:door")
     openness = engine.ctx.blackboard.require("machine:door:openness")
@@ -328,13 +327,7 @@ def test_open_and_close_ramp_at_the_stated_speed_and_end_when_there_and_at_rest(
     assert door.status().error == ""
     # 90 degrees at 0.5 rad/s is 3.14 s; the leaf trails the ramp by about kv * speed / kp.
     assert 3.1 < there < 4.2
-    # It ends at rest, not on the way through: a scenario can rely on where the door is.
-    assert abs(openness()[1] * math.radians(90)) <= STOPPED_SPEED
-    lowest = 1.0
-    for _ in range(1000):
-        engine.step()
-        lowest = min(lowest, openness()[0])
-    assert lowest >= 0.98, "it does not ring away from where it ended"
+    assert engine.ctx.sim_time - t0 - there < 0.01, "it ends where the leaf first arrives"
     events = [e["event"] for e in engine.ctx.events.all() if e["source"] == "door"]
     assert events == ["program_start", "program_end"]
     assert _finish(engine, door, door.start("close")).error == ""
@@ -535,3 +528,45 @@ def test_a_door_under_manual_control_does_not_give_way(tmp_path):
     engine.ctx.manual_control = True
     _hold(engine, 60, 2500)  # 5 s, where an idle door gives way within 3
     assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
+
+
+@pytest.mark.parametrize(
+    "config, program, args",
+    [
+        pytest.param({"width": 1.6}, "open", {}, id="width-1.6-open"),
+        pytest.param(
+            {"width": 1.2, "stall_timeout": 1.0}, "move_to", {"openness": 0.75}, id="width-1.2-0.75"
+        ),
+    ],
+)
+def test_an_unobstructed_wide_door_arrives_without_a_stall(tmp_path, config, program, args):
+    """A heavier leaf swings past its target and back; slowing at a turn is not being held back."""
+    engine = _built(tmp_path, config)
+    door = engine.ctx.blackboard.require("machine:door")
+    assert _finish(engine, door, door.start(program, **args)).error == ""
+    assert not [e for e in engine.ctx.events.all() if e["event"] == "stalled"]
+
+
+def test_a_move_ends_only_once_its_ramp_has_reached_the_target(tmp_path):
+    """A leaf pushed to the openness before its ramp gets there has not arrived: the door's own
+    target is still on its way."""
+    engine = _built(tmp_path, {"max_angle": 90, "speed": 0.3, "stall_timeout": 10.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    _hold(engine, 60, 1500)  # it stands short of 60 degrees, where hand and servo balance
+    where = _hinge_angle(engine)
+    seq = door.start("move_to", openness=where / math.radians(90))
+    _hold(engine, 60, 5)
+    status = _finish(engine, door, seq)
+    assert status.error == ""
+    assert door.value("hinge_pos") == pytest.approx(where, abs=1e-6), "its target got there too"
+
+
+def test_short_pushes_do_not_add_up_to_a_give_way(tmp_path):
+    """Each push shorter than stall_timeout, together longer: the door returns after each."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    for _ in range(3):
+        _hold(engine, 60, 1150)  # held back for about 0.6 s of the 1 s
+        for _ in range(1500):
+            engine.step()
+    assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
+    assert math.degrees(_hinge_angle(engine)) == pytest.approx(45, abs=3)
