@@ -535,6 +535,9 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
+        #: Whether this world is compiled to look at it, a render, a replay, a check, rather than to
+        #: run it (``Engine(preview=True)``); what a plugin must not do then, it asks here.
+        self.preview: bool = False
         #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
         self.presence_holds: dict[str, dict] = {}
         #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).

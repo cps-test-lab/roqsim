@@ -540,3 +540,16 @@ def test_a_reset_does_not_stop_a_mover_for_the_next_episode():
         assert engine.ctx.blackboard.require("walker:worker").cancels == 0
     finally:
         engine.shutdown()
+
+
+def test_a_world_compiled_to_look_at_it_runs_no_scene():
+    world = {
+        "sim": {"gravity": [0, 0, 0]},
+        "components": [PRESS, {"scenario_fixtures:TwoStrokes": {}, "name": "scene"}],
+    }
+    with Engine(load_config_from_dict(world), preview=True) as engine:
+        engine.reset()
+        for _ in range(50):
+            engine.step()
+        assert _events(engine, "press") == []
+        assert engine.ctx.interface.find("scene", "done").read() is False
