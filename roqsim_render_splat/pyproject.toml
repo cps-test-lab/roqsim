@@ -21,10 +21,12 @@ dependencies = [
     "pyyaml>=6.0",
     # `roqsim splat collision` labels the furniture patches it fits boxes to.
     "scipy>=1.11",
+    # The example world's robot, so the example runs as installed.
+    "roqsim_mobile",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "roqsim_mobile"]
+test = ["pytest>=7.0"]
 
 [project.entry-points."roqsim.renderers"]
 splat = "roqsim_render_splat.renderer:SplatRenderer"
