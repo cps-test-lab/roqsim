@@ -52,7 +52,8 @@ The plugin (world-YAML toggle)
 ------------------------------
 
 List ``sensor_coverage_probe`` in a world's ``components:`` to compute coverage once (at ``configure``) and
-write ``report.json`` plus a render; omit it for none. ``sensors: auto`` evaluates every MuJoCo camera
+write ``report.json`` plus a render in a run (a world compiled only to look at it writes nothing); omit
+it for none. ``sensors: auto`` evaluates every MuJoCo camera
 in the world but a device's depth camera, which is another stream of the device beside its colour
 camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars/Livox or hypothetical placements.
 
