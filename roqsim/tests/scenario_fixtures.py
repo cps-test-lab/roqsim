@@ -290,6 +290,21 @@ class CancelsAFinishedStart(ScenarioPlugin):
         yield from self.join(later)
 
 
+class CancelledAfterAnotherStart(ScenarioPlugin):
+    """Scenario: another client cancels the task's start and starts the machine; then the task is
+    cancelled, its start still ending."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        mine = self.start(self.press, "dwell", seconds=1.0)
+        yield
+        self.press.cancel()
+        other = self.press.start("dwell", seconds=0.1)
+        mine.cancel()
+        yield from self.until(lambda: self.press.status().seq == other and not self.press.busy)
+
+
 class WatcherBeforeItsStart(ScenarioPlugin):
     """Scenario: a task created before the start it joins, the program returning at once."""
 

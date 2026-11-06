@@ -251,6 +251,11 @@ class InProcessAccess(WorldAccess):
             confirm = next((r["ep"] for r in rows if r["path"] == sibling), None)
         return _InProcessCommand(ctx, row, confirm, value)
 
+    def teardown(self) -> None:
+        # A posted command that has not run yet is no failure: it is applied at the next step, or
+        # the run has ended. Only a refusal is said.
+        self.report_unattended(unanswered=False)
+
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
         handle = self._nav_handle(name)

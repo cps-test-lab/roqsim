@@ -645,9 +645,15 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
 -  ``status() -> MachineStatus(seq, program, finished, error)``: the last start. A caller knows its
    own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
    else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
+-  ``cancel(seq=..., token=...) -> seq``: one start, pending or running, ends and the machine
+   stops where it is -- start ``seq``, or the start given that ``token`` (``start(program,
+   token=...)``, a string of the caller's own); 0 when that start has ended, is being cancelled
+   already, or the machine has no such start. A caller cancels its own start, so a start another
+   caller made is left alone: by its number once it has it, by its token before. ``cancel()`` with
+   neither ends whatever is pending or runs. Cancels are posted in order with the starts, so a
+   cancel by token sent right behind its start reaches it.
 -  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
-   precondition), ``cancel()`` (the machine stops where it is), ``value(name)`` (an actuator's or
-   setpoint's current target).
+   precondition), ``value(name)`` (an actuator's or setpoint's current target).
 
 It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
 (``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at
@@ -806,7 +812,8 @@ External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **n
 
 The control socket's threads (§13) follow the same rule: its request threads never touch ``data`` -- a
 ``read`` or a ``call`` is submitted to the physics thread and waited on -- and what it publishes is
-read in ``post_step``. The runner resets its pacer on every idle loop, so the first step after a pause
+read in ``post_step``. Calls are submitted in the order their requests arrived, though several
+threads answer them. The runner resets its pacer on every idle loop, so the first step after a pause
 is paced from when it is taken and the pause is not counted as falling behind.
 
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
