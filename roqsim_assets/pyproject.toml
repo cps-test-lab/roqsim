@@ -68,6 +68,10 @@ shelf = "roqsim_assets.plugins.shelf:ShelfPlugin"
 # self-occluding obstacle set -- a different planning problem from boxes and shelves.
 palm_tree = "roqsim_assets.plugins.palm_tree:PalmTreePlugin"
 door = "roqsim_assets.plugins.door:DoorPlugin"
+# Example machines on roqsim.machine: a press with a guard door and a sliding door, each with a
+# scenario under roqsim_assets.scenarios and a world under worlds/.
+press = "roqsim_assets.plugins.press:PressPlugin"
+sliding_door = "roqsim_assets.plugins.sliding_door:SlidingDoorPlugin"
 window = "roqsim_assets.plugins.window:WindowPlugin"
 workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
 # Ceiling fittings: what hangs under a soffit. All three sit above head height, so the core
@@ -101,6 +105,8 @@ roqsim_assets = [
     "models/*/meshes/*.obj", # some props (e.g. door) keep meshes in a meshes/ subfolder
     "models/*/textures/*.png", # prop colour maps live in a textures/ subfolder
     "models/*/CREDITS.txt",
+    "worlds/*.yaml",        # the example machines' worlds (make smoke runs each)
+    "worlds/*.xml",         # an example's own part, beside its world
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,14 @@
+<mujoco model="press_demo_strip">
+  <!-- A steel strip, 300 x 40 x 2 mm, for the press example: a plain strip whose `hole` state, a
+       punched hole 50 mm from one end, a press shows at its stroke's bottom (part_state). -->
+  <worldbody>
+    <body name="strip">
+      <geom name="strip" type="box" size="0.15 0.02 0.001" mass="0.19" rgba="0.72 0.74 0.77 1"
+            friction="0.8 0.005 0.0001"/>
+      <body name="look_hole" pos="0 0 0.0011">
+        <geom name="hole" type="cylinder" size="0.005 0.0001" rgba="0.05 0.05 0.06 1"
+              contype="0" conaffinity="0" mass="0"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

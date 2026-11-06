@@ -1,0 +1,45 @@
+# A sliding door that opens for whoever comes near and closes behind them.
+#
+#   roqsim sim roqsim_assets/src/roqsim_assets/worlds/sliding_door_demo.yaml
+#
+# The door is a machine (`sliding_door`): it opens and closes. The zone before it (`zone_trigger`)
+# reports who is near. The scenario (`DoorForWhoComes`) relates the two: it opens the door while a
+# walker or a robot is in the zone and closes it two seconds after the zone is empty. The walker
+# shuttles past the door along its approach.
+
+sim:
+  pacing: realtime
+
+components:
+  - sliding_door:
+      prefix: door_1_
+      pose: {position: {x: 0.0, y: 1.0}, orientation: {yaw: 0.0}}
+      width: 1.2
+      speed: 0.6
+    name: door_1
+
+  - zone_trigger:
+      pose: {position: {x: 0.0, y: 0.0, z: 1.0}}
+      size: [1.5, 1.0, 1.0]
+      entities: [walker_*]      # add robot_* (or any pattern) for a robot that comes through
+      point: origin
+    name: door_approach
+
+  - walker:
+      walker: MaleVisitorWalk
+      pose: {position: {x: -3.0, y: -0.2}, orientation: {yaw: 0.0}}
+    name: walker_1
+    components:
+      - navigator:
+          output: walker
+          speed: 1.0
+          goals: [[3.0, -0.2]]
+          loop: true
+          dwell: [[2, 2], [2, 2]]
+          arrival_radius: 0.25
+          radius: 0.26
+          avoidance: {steer: none, stop: false}
+
+  - "roqsim_assets.scenarios.door_for_who_comes:DoorForWhoComes":
+      close_delay: 2.0
+    name: doorman

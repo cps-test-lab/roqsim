@@ -1,0 +1,31 @@
+# A press with a guard door punches a strip: the example of a machine and of the scene around it.
+#
+#   roqsim sim roqsim_assets/src/roqsim_assets/worlds/press_demo.yaml
+#
+# The press is a machine (`press`): its stroke -- guard closed, three phases, the hole shown on the
+# part at the bottom, guard open -- is its own program. The scenario (`PressDemo`) is the scene: it
+# places the strip in the die and starts the press, then ends the run.
+
+sim:
+  pacing: realtime
+
+components:
+  - press:
+      prefix: press_1_
+      pose: {position: {x: 0.0, y: 0.0, z: 0.0}}
+    name: press_1
+
+  - spawn_model:
+      model: press_demo_strip.xml
+      prefix: strip_1_
+      pose: {position: {x: 0.8, y: 0.0, z: 0.002}}
+    name: strip_1
+
+  - part_state: {}
+
+  - "roqsim_assets.scenarios.press_demo:PressDemo":
+      part: strip_1
+      die_pose: {position: {x: 0.0, y: 0.0, z: 0.945}}
+      show: hole
+      stop_at_end: true
+    name: demo

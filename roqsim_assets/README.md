@@ -9,6 +9,8 @@ copy instead of each vendoring their own. Three kinds of thing, and a tool group
   core `spawn_model` plugin;
 - **scene plugins** (`box`, `moving_box`, `conveyor`, `door`, … — see [Plugins](#plugins)) — the props
   that are parametric or move, registered under `roqsim.plugins` so any world loads them by name;
+  the ones that do something are machines (see [Machines](#machines)), with example worlds and
+  scenarios;
 - **`roqsim assets`** — the import pipeline that brings an outside model in and makes it scene-ready
   (`roqsim assets --help`; `tools/README.md` walks it step by step).
 
@@ -28,6 +30,22 @@ program is an event timeline (`program_start`, its steps, `program_end`). `roqsi
 |---|---|---|---|
 | `door` | `open()`, `close()`, `move_to(openness)` | `speed` (rad/s at the hinge) | `stalled` |
 | `conveyor` | `run(speed)`, `stop()` | `ramp` (m/s²) | `started`, `stopped` |
+| `press` | `stroke(show, hide)`, `close_guard()`, `open_guard()` | its door and ram speeds (m/s) | `door_close`, `approach`, `power`, `bottom`, `return`, `door_open` |
+| `sliding_door` | `open()`, `close()` | `speed` (m/s) | `stalled` |
+
+`press` and `sliding_door` are the examples of a machine package: generated models, each a world in
+`src/roqsim_assets/worlds/` and a scenario in `roqsim_assets.scenarios` that uses it, written on
+`roqsim.scenario`:
+
+- **`press_demo.yaml`** — a C-frame press whose ram strokes only behind its closed guard door; the
+  strip in its die (its `die` zone, a `zone_trigger` the press carries) shows its hole at the
+  stroke's bottom through `part_state`. `PressDemo` places the strip in the die and starts the press.
+- **`sliding_door_demo.yaml`** — a sliding door and a `zone_trigger` before it. `DoorForWhoComes`
+  opens the door when the zone reports a walker (or a robot) and closes it two seconds after the
+  zone is empty. Needs `roqsim_walker` for its walker.
+- **`light_barrier_demo.yaml`** — a `zone_trigger` across the conveyor near its discharge end, between
+  two posts. `StopAtBarrier` stops the belt while a package is in it and runs it again once the
+  package is taken away. The barrier is not a machine: it reports, and the scene decides.
 
 ## Layout
 
