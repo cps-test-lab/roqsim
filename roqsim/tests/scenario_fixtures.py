@@ -206,8 +206,6 @@ class TimesOut(ScenarioPlugin):
     def program(self):
         timer = self.spawn(self.wait(0.05), name="timer")
         yield from self.first(self.start(self.press, "stroke"), timer)
-        yield  # the cancel reaches the machine on the next step
-        yield
         yield from self.run(self.press, "stroke")
 
 
@@ -230,6 +228,47 @@ class NoYield(ScenarioPlugin):
 
     def program(self):
         return None
+
+
+class CancelsAFinishedStart(ScenarioPlugin):
+    """Scenario: cancel a start that has ended, with the next start not yet applied."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        earlier = self.start(self.press, "dwell", seconds=0.05)
+        yield from self.until(lambda: not self.press.busy)
+        later = self.start(self.press, "dwell", seconds=0.1)
+        earlier.cancel()
+        yield from self.join(later)
+
+
+class WatcherBeforeItsStart(ScenarioPlugin):
+    """Scenario: a task created before the start it joins, the program returning at once."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        made = []
+
+        def watch():
+            while not made:
+                yield
+            try:
+                yield from self.join(made[0])
+            except ScenarioError as exc:
+                self.event("caught", error=str(exc))
+
+        self.spawn(watch(), name="watch")
+        made.append(self.start(self.press, "jam"))
+        yield
+
+
+class UntilNaN(ScenarioPlugin):
+    """Scenario: a condition with a timeout that is no number."""
+
+    def program(self):
+        yield from self.until(lambda: False, timeout=float("nan"))
 
 
 class Overtaken(ScenarioPlugin):
