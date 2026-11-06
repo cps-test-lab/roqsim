@@ -26,8 +26,15 @@ class EntityRefused(RuntimeError):
 
 
 def require_entity(ctx, name: str, *, spawning: bool = False):
-    """The entity called *name*, or :class:`UnknownEntity` saying what the name must be."""
+    """The entity called *name*, or :class:`UnknownEntity` saying what the name must be, or
+    :class:`EntityRefused` for one the control plane does not change (``Entity.listed``)."""
     entity = ctx.entities.get(name)
+    if entity is not None and not entity.listed:
+        owner = entity.meta.get("owner", "") if isinstance(entity.meta, dict) else ""
+        raise EntityRefused(
+            f"entity {name!r} is part of another entity and changed only by the plugin that keeps "
+            f"it{f' ({owner})' if owner else ''}; it cannot be placed, spawned or deleted"
+        )
     if entity is not None:
         return entity
     if spawning:

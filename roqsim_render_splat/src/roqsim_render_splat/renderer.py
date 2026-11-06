@@ -60,7 +60,7 @@ from .ply import SplatFileError, read_header, read_splat
 #: The keys of the ``splat`` block: the capture and where it sits.
 SPLAT_KEYS = ("file", "pose", "scale")
 
-#: GPU bytes one camera of a pass takes per Gaussian, and per pixel, as measured on the green room
+#: GPU bytes one camera of a pass takes per Gaussian, and per pixel, as measured on a captured room
 #: (gsplat 1.5, packed): what splits a batch into passes under ``max_pass_mib``.
 _BYTES_PER_GAUSSIAN_CAMERA = 72
 _BYTES_PER_PIXEL_CAMERA = 64

@@ -140,7 +140,7 @@ class NeedsAFile(Renderer):
 
 
 class OldSignature(Renderer):
-    """An override written before renderers were given the world's directory."""
+    """An override that takes only the settings, not the world's directory."""
 
     SETTINGS = {"x": Setting(1, "a number")}
     seen: list = []

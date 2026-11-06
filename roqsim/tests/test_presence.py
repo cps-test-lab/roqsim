@@ -8,6 +8,8 @@ accumulated.
 
 from __future__ import annotations
 
+import itertools
+
 import mujoco
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ from roqsim.context import Entity, SimContext
 from roqsim.presence import (
     ABSENT_GEOM_GROUP,
     arm_gravity_compensation,
+    body_present,
     entity_geom_ids,
     set_present,
     subtree_body_ids,
@@ -335,3 +338,62 @@ def test_a_subtree_is_the_root_and_every_descendant_and_nothing_beside_it():
     assert subtree_geom_ids(model, body("child")) == sorted([geom("child_g"), geom("grandchild_g")])
     assert entity_geom_ids(model, "root") == subtree_geom_ids(model, body("root"))
     assert entity_geom_ids(model, "no_such_body") == []
+
+
+def _appearance(ctx):
+    m = ctx.model
+    return (
+        m.geom_group.copy().tolist(),
+        m.geom_contype.copy().tolist(),
+        m.geom_conaffinity.copy().tolist(),
+        m.geom_rgba[:, 3].copy().tolist(),
+        m.body_gravcomp.copy().tolist(),
+    )
+
+
+@pytest.mark.parametrize("hide", list(itertools.permutations(["prop", "lid"])))
+@pytest.mark.parametrize("show", list(itertools.permutations(["prop", "lid"])))
+def test_an_entity_inside_another_composes_with_it_in_any_order(ctx, hide, show):
+    """The lid is hidden while either is absent, and everything comes back exactly."""
+    entities = {
+        "prop": Entity(name="prop", kind="object", body="prop"),
+        "lid": Entity(name="lid", kind="object", body="prop_lid"),
+    }
+    ctx.model.geom_group[mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "lid_geom")] = 2
+    before = _appearance(ctx)
+    lid_geom = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "lid_geom")
+    for name in hide:
+        set_present(ctx, entities[name], False)
+    assert ctx.model.geom_group[lid_geom] == ABSENT_GEOM_GROUP
+    set_present(ctx, entities[show[0]], True)
+    assert ctx.model.geom_group[lid_geom] == ABSENT_GEOM_GROUP, "the other still holds it"
+    assert ctx.model.body_gravcomp[ctx.model.geom_bodyid[lid_geom]] == 1.0
+    set_present(ctx, entities[show[1]], True)
+    assert _appearance(ctx) == before
+    assert ctx.presence_holds == {"geom": {}, "flex": {}, "gravcomp": {}}
+
+
+def test_an_inner_entity_absent_stays_hidden_when_the_outer_returns(ctx):
+    prop = Entity(name="prop", kind="object", body="prop")
+    lid = Entity(name="lid", kind="object", body="prop_lid")
+    prop_geom = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "prop_geom")
+    lid_geom = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "lid_geom")
+    set_present(ctx, lid, False)
+    set_present(ctx, prop, False)
+    set_present(ctx, prop, True)
+    assert ctx.model.geom_group[prop_geom] != ABSENT_GEOM_GROUP
+    assert ctx.model.geom_group[lid_geom] == ABSENT_GEOM_GROUP
+
+
+def test_a_body_is_present_only_while_every_entity_around_it_is(ctx):
+    prop = Entity(name="prop", kind="object", body="prop")
+    lid = Entity(name="lid", kind="object", body="prop_lid")
+    prop_body = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "prop")
+    lid_body = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "prop_lid")
+    assert body_present(ctx, prop_body) and body_present(ctx, lid_body)
+    set_present(ctx, lid, False)
+    assert body_present(ctx, prop_body) and not body_present(ctx, lid_body)
+    set_present(ctx, lid, True)
+    set_present(ctx, prop, False)
+    assert not body_present(ctx, lid_body), "absent with what is around it"
+    assert lid.present, "its own state"
