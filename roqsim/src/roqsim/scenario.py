@@ -19,7 +19,7 @@ A scenario is a :class:`ScenarioPlugin` whose :meth:`~ScenarioPlugin.program` is
         NEEDS = {"press": "machine:press_1"}     # resolved at reset, refused when missing
 
         def program(self):
-            yield from self.place("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
+            yield from self.set_entity_state("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
             yield from self.run(self.press, "stroke", show="hole", hide="plain")
             self.event("punched", part="strip_1")
 
@@ -357,7 +357,7 @@ class ScenarioPlugin(Plugin):
             raise ScenarioError(f"{handle.name}.{program} (seq {seq}): {status.error}")
         return status
 
-    def route(self, mover, poses, *, check: bool = True):
+    def navigate(self, mover, poses, *, check: bool = True):
         """Send a walker (``send_route``) or a navigator (``send_goals``) along ``poses`` and wait
         until that route ended; a route that did not reach its goals raises :class:`ScenarioError`
         unless ``check=False``. A route another overtook raises the same way, and with ``check=False``
@@ -502,7 +502,7 @@ class ScenarioPlugin(Plugin):
                 raise ScenarioError(f"{what} not true after {timeout:g} s")
             yield
 
-    def place(self, entity: str, pose: dict):
+    def set_entity_state(self, entity: str, pose: dict):
         """Put ``entity`` at ``pose``, at rest, as ``set_entity_state`` does; one step.
 
         ``pose`` is a world pose as a world file writes one (:func:`roqsim.pose.parse_pose`):

@@ -155,7 +155,7 @@ def test_two_runs_of_a_scene_give_the_same_timeline():
     assert run() == run()
 
 
-# -- place(), with a pose as a world file writes one ---------------------------------------------
+# -- set_entity_state(), with a pose as a world file writes one ---------------------------------------------
 BLOCK = """<mujoco model="block">
   <worldbody>
     <body name="block"><geom type="box" size="0.05 0.05 0.05" mass="1"/></body>
