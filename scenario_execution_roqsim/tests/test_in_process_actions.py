@@ -1632,6 +1632,18 @@ def test_an_unattended_call_that_is_refused_or_unanswered_is_logged(world, caplo
         access.unattended(_Answered(None), "a lost cancel")
         assert "a refused cancel was refused: no" in caplog.text
         assert "a lost cancel" not in caplog.text, "it may still be answered"
-        access.teardown()
+        access.report_unattended()
     assert "a lost cancel got no answer" in caplog.text
     assert "a cancel that landed" not in caplog.text
+
+
+def test_in_process_a_call_not_run_by_teardown_is_no_error(world, caplog):
+    """A posted command runs at the next step, or the run has ended; only a refusal is said."""
+    from scenario_execution_roqsim.access.in_process import InProcessAccess
+
+    _ctx, _clock, sim = world
+    access = InProcessAccess(sim)
+    with caplog.at_level("ERROR"):
+        access.unattended(_Answered(None), "a posted cancel")
+        access.teardown()
+    assert "a posted cancel" not in caplog.text

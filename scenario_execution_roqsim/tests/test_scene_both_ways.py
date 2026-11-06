@@ -202,6 +202,36 @@ def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_a
         engine.shutdown()
 
 
+LAST_TICK = """
+import osc.roqsim
+scenario last_tick:
+    do serial:
+        wait elapsed(1s)
+        one_of:
+            machine_run(machine: 'press', program: 'stroke', args: 'seconds=10.0')
+            zone_entered(zone: 'gate')
+"""
+
+
+def test_a_machine_run_abandoned_on_the_last_tick_logs_no_error(caplog):
+    engine = _engine()
+    try:
+        root = _build(LAST_TICK)
+        tree = py_trees.trees.BehaviourTree(root)
+        tree.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
+        with caplog.at_level("ERROR"):
+            while engine.ctx.sim_time < 3.0:
+                engine.step()
+                tree.tick()
+                if root.status != py_trees.common.Status.RUNNING:
+                    break
+            assert root.status == py_trees.common.Status.SUCCESS
+            tree.shutdown()  # before the step that applies the cancel
+        assert "got no answer" not in caplog.text and "refused" not in caplog.text, caplog.text
+    finally:
+        engine.shutdown()
+
+
 def test_since_finds_who_came_and_went_and_who_is_inside_now():
     engine = _engine()
     try:

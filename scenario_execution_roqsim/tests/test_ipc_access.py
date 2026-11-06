@@ -341,8 +341,8 @@ def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_s
 def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds_the_machine_free(
     press,
 ):
-    """``serial: one_of(machine_run, <true already>); machine_run(...)`` over the socket: each
-    action has its own connection, and the second start is sent right after the first is
+    """``serial: one_of(machine_run, <true already>); machine_run(...)`` over the socket: the
+    actions share one connection, and the second start is sent right after the first is
     abandoned, before the first start's reply has come."""
     import py_trees
 
