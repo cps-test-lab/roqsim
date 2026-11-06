@@ -6,7 +6,7 @@ robot hides it; the robot in front of the table hides the table.
 
 It stands behind roqsim's render service like any renderer (`sim.renderer: splat`). The splat is
 the static world, drawn by [gsplat](https://github.com/nerfstudio-project/gsplat) on a CUDA GPU,
-every camera of a tick in one call. The moving bodies are drawn by MuJoCo's own renderer, asked for
+cameras of the same size and clip planes in one call. The moving bodies are drawn by MuJoCo's own renderer, asked for
 them alone, and composited per pixel by depth. The world's own static geometry is what the robot
 collides with, and it is not drawn: a capture has no collision of its own.
 

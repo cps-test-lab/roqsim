@@ -14,7 +14,7 @@ import textwrap
 import pytest
 
 from roqsim import renderers
-from roqsim.config import load_config_from_dict, overrides_from_dotlist
+from roqsim.config import load_config, load_config_from_dict, overrides_from_dotlist
 from roqsim.plugin import PluginError
 from roqsim.registry import resolve_renderer
 from roqsim.render_api import Frame, Renderer, RendererCapabilities, Setting
@@ -161,6 +161,26 @@ def test_a_renderer_is_given_the_world_s_directory_to_check_its_files_at_load(tm
         load_config_from_dict(_with_block(ref, {"file": "room.ply"}), base_dir=tmp_path)
     (tmp_path / "room.ply").write_bytes(b"ply\n")
     load_config_from_dict(_with_block(ref, {"file": "room.ply"}), base_dir=tmp_path)
+
+
+def test_settings_a_world_inherits_resolve_beside_the_world_being_loaded(tmp_path):
+    """A relative file in an inherited renderer block resolves beside the child, not the parent:
+    a world meant to be extended names its files as ``<package>:<path>`` or absolute."""
+    ref = f"{__name__}:NeedsAFile"
+    parent = tmp_path / "parent" / "room.yaml"
+    parent.parent.mkdir()
+    (parent.parent / "room.ply").write_bytes(b"ply\n")
+    parent.write_text(
+        f"sim:\n  renderer: '{ref}'\n  renderers: {{'{ref}': {{file: room.ply}}}}\ncomponents: []\n"
+    )
+    load_config(parent)
+    child = tmp_path / "child" / "mine.yaml"
+    child.parent.mkdir()
+    child.write_text("extends: ../parent/room.yaml\n")
+    with pytest.raises(PluginError, match=f"not found at {tmp_path / 'child'}"):
+        load_config(child)
+    (child.parent / "room.ply").write_bytes(b"ply\n")
+    load_config(child)
 
 
 def test_an_override_that_takes_no_directory_is_still_called():

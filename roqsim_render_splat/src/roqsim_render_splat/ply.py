@@ -27,8 +27,8 @@ exporters differ in the order and in whether they write the unused normals ``nx,
 - ``f_rest_*``: the higher degrees, channel-major (all of red's, then green's, then blue's), 15 per
   channel for degree 3, 8 for 2, 3 for 1, none for 0.
 
-Only the header is read to check a file (:func:`read_header`); :func:`read_splat` reads the arrays
-through a memory map. Nothing here imports torch.
+Only the header is read to check a file (:func:`read_header`); :func:`read_splat` reads the arrays,
+as one float matrix where every property is float32 and through a memory map otherwise. Nothing here imports torch.
 """
 
 from __future__ import annotations
@@ -147,7 +147,15 @@ def read_header(path: str | Path) -> Header:
             f"{path}: {rest} f_rest_* properties; spherical harmonics of degree 1, 2 or 3 have "
             "9, 24 or 45 (none for degree 0)"
         )
-    return Header(path, count, tuple(props), size, REST_TO_DEGREE[rest])
+    header = Header(path, count, tuple(props), size, REST_TO_DEGREE[rest])
+    expected = size + count * header.dtype.itemsize
+    actual = path.stat().st_size
+    if actual < expected:
+        raise SplatFileError(
+            f"{path} is cut short: its header promises {count:,} Gaussians, {expected:,} bytes, and "
+            f"the file has {actual:,}"
+        )
+    return header
 
 
 @dataclass

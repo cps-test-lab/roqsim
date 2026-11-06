@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import mujoco
+import numpy as np
 import pytest
 
 import roqsim_render_splat
@@ -47,6 +48,16 @@ def test_the_example_room_s_walls_and_table_are_found(tmp_path):
     x, y, _ = table["centre"]
     hx, hy, _ = table["half"]
     assert [x - hx, x + hx, y - hy, y + hy] == pytest.approx([0.45, 1.35, 0.2, 0.8], abs=0.06)
+
+
+def test_a_world_that_inherits_its_splat_is_fitted_as_the_renderer_draws_it(tmp_path):
+    child = tmp_path / "mine" / "room.yaml"
+    child.parent.mkdir()
+    child.write_text("extends: roqsim_render_splat:splat_room_example\n")
+    points, block = collision.world_points(child)
+    example, _ = collision.world_points(EXAMPLE)
+    assert block["file"] == "roqsim_render_splat:splat_room_example/room.ply"
+    np.testing.assert_array_equal(points, example)
 
 
 def test_a_world_that_places_no_splat_is_said(tmp_path, capsys):

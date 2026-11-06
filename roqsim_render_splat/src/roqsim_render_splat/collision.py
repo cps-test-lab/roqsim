@@ -42,8 +42,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import yaml
 
+from roqsim.config import load_config
+from roqsim.plugin import PluginError
 from roqsim.world import resolve_file_ref
 
 from .ply import SplatFileError, read_splat
@@ -51,10 +52,13 @@ from .renderer import splat_placement
 
 
 def world_points(world: str | Path, min_opacity: float = 0.5) -> tuple[np.ndarray, dict]:
-    """The opaque Gaussians' centres of *world*'s splat, in the world's frame and metres."""
+    """The opaque Gaussians' centres of *world*'s splat, in the world's frame and metres.
+
+    The world is loaded as a run loads it, so a splat it inherits through ``extends`` is the one
+    the renderer draws, its file resolved beside *world*.
+    """
     world = Path(world)
-    doc = yaml.safe_load(world.read_text()) or {}
-    block = (((doc.get("sim") or {}).get("renderers") or {}).get("splat") or {}).get("splat")
+    block = load_config(world).renderers.get("splat", {}).get("splat")
     if not block:
         raise SplatFileError(f"{world} places no splat (sim.renderers.splat.splat)")
     path = resolve_file_ref(block["file"], world.parent, "splat file")
@@ -218,7 +222,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         points, _block = world_points(args.world)
-    except (FileNotFoundError, SplatFileError) as err:
+    except (FileNotFoundError, SplatFileError, PluginError) as err:
         print(f"roqsim splat collision: {err}", file=sys.stderr)
         return 2
     result = fit(

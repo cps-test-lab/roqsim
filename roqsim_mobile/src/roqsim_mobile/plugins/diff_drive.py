@@ -110,6 +110,42 @@ from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 
 class DiffDrivePlugin(Plugin):
+    REALISED = (
+        ("max_linear_vel", "max_v", "m/s", "a commanded linear speed above it is clipped to it"),
+        (
+            "max_angular_vel",
+            "max_w",
+            "rad/s",
+            "a commanded angular speed above it is clipped to it",
+        ),
+    )
+
+    def realised(self) -> list[dict]:
+        rows = super().realised()
+        noise = self._odom_noise
+        rows.append(
+            {
+                "key": "odom_noise",
+                "value": None
+                if noise is None
+                else dict(
+                    zip(
+                        ("linear_stddev", "angular_stddev", "linear_scale", "angular_scale"),
+                        noise,
+                        strict=True,
+                    )
+                ),
+                "unit": None,
+                "source": "config" if "odom_noise" in (self.config or {}) else "default",
+                "effect": (
+                    "odometry is exact: no error is drawn, so wheel odometry never drifts"
+                    if noise is None
+                    else "odometry error drawn per step"
+                ),
+            }
+        )
+        return rows
+
     #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
     #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
     requires_owner = True

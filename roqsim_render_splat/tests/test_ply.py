@@ -62,6 +62,17 @@ def test_properties_in_another_order_and_without_normals_read_the_same(tmp_path)
     np.testing.assert_array_equal(back.quats, splat.quats)
 
 
+def test_a_file_cut_short_is_refused_by_its_header(tmp_path):
+    splat = _splat(8, 0)
+    write_splat(tmp_path / "room.ply", splat)
+    data = (tmp_path / "room.ply").read_bytes()
+    (tmp_path / "cut.ply").write_bytes(data[: len(data) // 2])
+    with pytest.raises(SplatFileError, match="cut short: its header promises 8 Gaussians"):
+        read_header(tmp_path / "cut.ply")
+    with pytest.raises(SplatFileError, match="cut short"):
+        read_splat(tmp_path / "cut.ply")
+
+
 def test_a_file_that_is_no_ply_says_so(tmp_path):
     (tmp_path / "room.ply").write_bytes(b"glTF....")
     with pytest.raises(SplatFileError, match="is not a PLY file"):
