@@ -11,8 +11,13 @@ same repository steers, this one does not, and their models must not converge by
 description's only wheel macro is ``mpo_500_omni_wheel`` and there is no caster macro at all.
 
 The two scanners are ``sick_microscan3`` device models at the vendor's ``lidar_1_joint`` and
-``lidar_2_joint``, the rear one facing backwards, and each publishes on its own vendor topic (``scan``,
-``scan2``). The scan tests at the end check them in a closed room.
+``lidar_2_joint``, the rear one facing backwards, and each publishes its filtered scan on the topic the
+robot's bringup gives it (``lidar_1/scan_filtered``, ``lidar_2/scan_filtered``). The scan tests at the
+end check them in a closed room.
+
+The names a stack reads are the robot's: odometry is ``odom -> base_link`` as neo_kinematics_mecanum2
+publishes it, and the wheel joints are ``wheel_<corner>_joint`` as Neobotix's current description and
+the relayboard name them (``test_the_names_are_the_robots``).
 """
 
 from __future__ import annotations
@@ -50,6 +55,8 @@ AXIS_SEPARATION = 0.50
 #: configs/mpo_500/navigation.yaml. Deliberately different per axis -- see the module docstring.
 MAX_VEL_X = 0.6
 MAX_VEL_Y = 0.5
+#: The same profile's max_rot_vel.
+MAX_ROT_VEL = 0.8
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
 
 
@@ -102,7 +109,7 @@ def test_it_is_not_a_swerve_base():
         assert drive.config["axis_separation"] == pytest.approx(AXIS_SEPARATION)
         model = engine.ctx.model
         for corner in CORNERS:
-            named(model, mujoco.mjtObj.mjOBJ_JOINT, f"p_mpo_500_omni_wheel_{corner}_joint")
+            named(model, mujoco.mjtObj.mjOBJ_JOINT, f"p_wheel_{corner}_joint")
         assert model.njnt == 5, f"expected one free joint plus four wheels, got {model.njnt}"
     finally:
         engine.shutdown()
@@ -143,7 +150,7 @@ def test_it_rests_on_four_wheels():
             for g in (data.contact[i].geom1, data.contact[i].geom2)
         }
         for corner in CORNERS:
-            geom = f"p_mpo_500_omni_wheel_{corner}_link_tyre"
+            geom = f"p_wheel_{corner}_link_tyre"
             named(model, mujoco.mjtObj.mjOBJ_GEOM, geom)
             assert geom in touching, touching
         named(model, mujoco.mjtObj.mjOBJ_GEOM, "p_base_link_collision")
@@ -166,7 +173,7 @@ def test_the_wheel_contact_is_a_sphere():
         model = engine.ctx.model
         for corner in CORNERS:
             gid = named(model, mujoco.mjtObj.mjOBJ_GEOM,
-                        f"p_mpo_500_omni_wheel_{corner}_link_tyre")
+                        f"p_wheel_{corner}_link_tyre")
             assert model.geom_type[gid] == mujoco.mjtGeom.mjGEOM_SPHERE
             assert float(model.geom_size[gid][0]) == pytest.approx(WHEEL_RADIUS)
             assert model.geom_priority[gid] > 0
@@ -174,7 +181,7 @@ def test_the_wheel_contact_is_a_sphere():
         engine.shutdown()
 
 
-@pytest.mark.parametrize("command", [(0.6, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 1.0),
+@pytest.mark.parametrize("command", [(0.6, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, MAX_ROT_VEL),
                                      (0.4, 0.3, 0.0)])
 def test_it_tracks_a_holonomic_twist(command):
     engine = _engine()
@@ -208,7 +215,7 @@ def test_the_wheels_turn_and_turn_differently_when_strafing():
     try:
         model, data = engine.ctx.model, engine.ctx.data
         base = named(model, mujoco.mjtObj.mjOBJ_BODY, "p_base_link")
-        jids = [named(model, mujoco.mjtObj.mjOBJ_JOINT, f"p_mpo_500_omni_wheel_{c}_joint")
+        jids = [named(model, mujoco.mjtObj.mjOBJ_JOINT, f"p_wheel_{c}_joint")
                 for c in CORNERS]
 
         def spins():
@@ -241,13 +248,16 @@ def test_the_wheels_turn_and_turn_differently_when_strafing():
 
 #: neo_simulation2 @ 832041452c1a: robots/mpo_500/urdf/mpo_500_body.urdf.xacro:38 and :65 (the
 #: lidar_1_joint / lidar_2_joint rotations, written as the vendor writes them) and
-#: mpo_500_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic). The position is Neobotix's
+#: mpo_500_gazebo.urdf.xacro:27 and :41 (each scan's link); the topics are neo_mpo_500-2's bringup's
+#: (jazzy, launch/bringup.launch.py: lidar_N/scan_filtered). The position is Neobotix's
 #: hardware documentation (MPO-500 Mechanical Properties, Positions of Sensors) instead of the joints'
 #: (+-0.442, 0, 0.372): LS1 / LS2 at X +-454 and Z 372 mm above the floor, with base_link 3 mm below it.
 #: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
 MOUNTS = {
-    "scan_front": ("sick_microscan3", "lidar_1_link", (0.454, 0.0, 0.372 - REST_HEIGHT), (0.0, 0.0, 0.0), "scan"),
-    "scan_rear": ("sick_microscan3", "lidar_2_link", (-0.454, 0.0, 0.372 - REST_HEIGHT), (0.0, 0.0, 3.14), "scan2"),
+    "scan_front": ("sick_microscan3", "lidar_1_link", (0.454, 0.0, 0.372 - REST_HEIGHT), (0.0, 0.0, 0.0),
+                   "lidar_1/scan_filtered"),
+    "scan_rear": ("sick_microscan3", "lidar_2_link", (-0.454, 0.0, 0.372 - REST_HEIGHT), (0.0, 0.0, 3.14),
+                  "lidar_2/scan_filtered"),
 }
 NAMESPACE = "neo"
 
@@ -298,3 +308,24 @@ def test_the_scans_see_no_part_of_the_robot(scan):
 
 def test_the_tf_chain_and_topics_are_the_vendors(scan):
     assert_tf_chain(scan, "p", NAMESPACE, MOUNTS)
+
+
+def test_the_names_are_the_robots():
+    """Odometry points at base_link and the wheels carry the robot's joint names.
+
+    neo_kinematics_mecanum2 publishes ``odom`` with child ``base_link`` and the ``odom -> base_link``
+    transform, and the robot's description hangs ``base_footprint`` off ``base_link``; an odometry
+    child the model has no body for leaves the TF tree in two pieces. The wheel joints are what the
+    relayboard puts on ``joint_states``, so a robot_state_publisher over the real description poses them.
+    """
+    engine = _engine()
+    try:
+        drive = next(p for p in engine.plugins if type(p).__name__ == "OmniDrivePlugin")
+        assert drive.odom_child_frame == "base_link"
+        assert drive.max_w == pytest.approx(MAX_ROT_VEL)
+        model = engine.ctx.model
+        for corner in CORNERS:
+            named(model, mujoco.mjtObj.mjOBJ_JOINT, f"p_wheel_{corner}_joint")
+            named(model, mujoco.mjtObj.mjOBJ_BODY, f"p_wheel_{corner}_link")
+    finally:
+        engine.shutdown()

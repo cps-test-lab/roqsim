@@ -17,9 +17,12 @@ components:
       max_linear_vel: 0.6            # max_vel_x
       max_lateral_vel: 0.5           # max_vel_y
       max_combined_linear_vel: 0.6   # cap on hypot(vx, vy)
-      max_angular_vel: 1.0           # OURS: their profile states no max_vel_theta, so this borrows
-                                     # the magnitude of acc_lim_theta. An assumption.
+      max_angular_vel: 0.8           # max_rot_vel (NeoLocalPlanner's limit in the same profile)
       accel_limit: 0.25              # acc_lim_x / acc_lim_y
+      # The robot's kinematics node (neo_kinematics_mecanum2's neo_mecanum_node) publishes odom with
+      # child base_link and the odom -> base_link transform; base_footprint is a fixed child of
+      # base_link in Neobotix's description, published by robot_state_publisher.
+      odom_child_frame: base_link
       angular_accel_limit: 1.0       # acc_lim_theta
       # Wheels at (+-0.25, +-0.28), from the expanded xacro. The radius is Neobotix's hardware
       # documentation, not the xacro's 0.117 sphere: the MPO-500 "Mechanical Properties" page
@@ -28,8 +31,8 @@ components:
       wheel_radius: 0.127
       wheel_separation: 0.56         # lateral, 2 x 0.28
       axis_separation: 0.50          # longitudinal, 2 x 0.25
-      wheels: [mpo_500_omni_wheel_front_left, mpo_500_omni_wheel_front_right,
-               mpo_500_omni_wheel_back_left, mpo_500_omni_wheel_back_right]
+      # The robot's names (neo_mpo_500-2's robot_model): what its relayboard puts on joint_states.
+      wheels: [wheel_front_left, wheel_front_right, wheel_back_left, wheel_back_right]
       wheel_actuators: [wheel_front_left_motor, wheel_front_right_motor,
                         wheel_back_left_motor, wheel_back_right_motor]
   # TWO SICK microScan3s, front and rear on the centreline, each the `sick_microscan3` device model at
@@ -42,8 +45,13 @@ components:
   # (720 rays over +-1.48 rad at 100 Hz, sigma 0.01, mpo_500_gazebo.urdf.xacro:25-50) come from a
   # macro shared with the S300 robots whose noise comment derives the value for a Hokuyo
   # (components/common_macro/gazebo_lidar_macro.xacro:41-44), so none is a value for the microScan3
-  # on this robot and none is copied; their topics are the robot's ROS interface and are: one topic
-  # per scanner, `scan` and `scan2`.
+  # on this robot and none is copied.
+  #
+  # TOPICS: the robot's, from Neobotix's current bringup (neo_mpo_500-2, launch/bringup.launch.py),
+  # which publishes each scanner's filtered scan as `lidar_1/scan_filtered` and `lidar_2/scan_filtered`
+  # -- the names its Nav2 profile's costmaps read, and the names its own Gazebo simulation remaps to
+  # (mp_utils, mp_bringup/configs/gz_bridge). The bringup also relays both onto one `scan`; a stack
+  # that wants it runs the same relay.
   #
   # POSITION: Neobotix's hardware documentation, not the description. The same Mechanical Properties
   # page puts LS1 / LS2 at X +-454, Y 0, Z 372 mm in the platform frame, whose origin is on the floor
@@ -61,7 +69,7 @@ components:
     name: scan_front
     components:
       - lidar:
-          topics: {scan: scan}       # mpo_500_gazebo.urdf.xacro:36; relative, so the namespace scopes it
+          topics: {scan: lidar_1/scan_filtered}   # relative, so the namespace scopes it
   - spawn_sensor:
       model: sick_microscan3
       parent_frame: base_link
@@ -72,4 +80,4 @@ components:
     name: scan_rear
     components:
       - lidar:
-          topics: {scan: scan2}      # mpo_500_gazebo.urdf.xacro:50
+          topics: {scan: lidar_2/scan_filtered}
