@@ -379,11 +379,14 @@ class SplatRenderer(Renderer):
         self.stats["batches"] += 1
         frames = [Frame(r.id, snapshot.sim_time, snapshot.step) for r in requests]
         depths: list[np.ndarray | None] = [None] * len(requests)
-        by_size: dict[tuple[int, int], list[int]] = {}
+        # One rasterisation takes one size and one pair of clip planes, so cameras share a pass only
+        # where both agree: a camera is drawn as it would be alone.
+        by_pass: dict[tuple, list[int]] = {}
         for i, r in enumerate(requests):
-            by_size.setdefault((r.camera.width, r.camera.height), []).append(i)
+            key = (r.camera.width, r.camera.height, r.camera.near, r.camera.far)
+            by_pass.setdefault(key, []).append(i)
         bodies = self._draw_bodies(snapshot, requests) if self._moving else None
-        for (width, height), indices in by_size.items():
+        for (width, height, _near, _far), indices in by_pass.items():
             for chunk in self._passes(indices, width, height):
                 rgb, depth = self._rasterise(
                     [requests[i] for i in chunk],

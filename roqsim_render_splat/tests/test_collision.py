@@ -25,7 +25,9 @@ def _dense_room(tmp_path) -> Path:
     )
     write_splat(tmp_path / "room.ply", splat)
     world = tmp_path / "room.yaml"
-    text = EXAMPLE.read_text().replace("splat_room_example/room.ply", "room.ply")
+    text = EXAMPLE.read_text().replace(
+        "roqsim_render_splat:splat_room_example/room.ply", "room.ply"
+    )
     world.write_text(text)
     return world
 

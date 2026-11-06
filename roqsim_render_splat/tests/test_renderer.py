@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The splat renderer draws a capture where its pose puts it, and the moving bodies into it by depth.
 
-Every test but the last two needs a CUDA GPU (the ``gpu`` fixture skips, saying so, where there is
-none). The splats are written by the test: a few Gaussians at known places, so where they must land
+Every test that takes the ``gpu`` fixture needs a CUDA GPU; the fixture skips it, saying so, where
+there is none. The splats are written by the test: a few Gaussians at known places, so where they must land
 in a picture is computed, not looked at.
 """
 
@@ -186,6 +186,27 @@ def test_a_batch_draws_what_each_camera_drew_alone(gpu, tmp_path):
         alone = [_draw(service, [v], data)[0] for v in views]
     finally:
         service.close()
+    for a, b in zip(both, alone, strict=True):
+        np.testing.assert_array_equal(a.rgb, b.rgb)
+        np.testing.assert_array_equal(a.depth, b.depth)
+
+
+def test_cameras_with_their_own_clip_planes_draw_in_a_batch_as_alone(gpu, tmp_path):
+    """The wall is at 3 m: a camera whose far plane is 2 m sees none of it, batched or not."""
+    pts, colours = _wall(3.0, [0.9, 0.6, 0.1])
+    file = _write(tmp_path, pts, colours, sigma_m=0.04)
+    service, (near_view,), model, data = _service(tmp_path, file)
+    short = service.view(
+        "short", camera="cam", width=128, height=96, far=2.0, images=("rgb", "depth")
+    )
+    service.check()
+    _move_crate(model, data, -5.0)  # out of view
+    try:
+        both = _draw(service, [near_view, short], data)
+        alone = [_draw(service, [v], data)[0] for v in (near_view, short)]
+    finally:
+        service.close()
+    assert np.isinf(alone[1].depth).all() and not np.isinf(alone[0].depth).all()
     for a, b in zip(both, alone, strict=True):
         np.testing.assert_array_equal(a.rgb, b.rgb)
         np.testing.assert_array_equal(a.depth, b.depth)

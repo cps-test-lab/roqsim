@@ -412,9 +412,11 @@ class Renderer:
     def validate_config(cls, settings: Mapping, base_dir=None) -> list[str]:
         """Errors in *settings*, each naming the key; an unknown key names the valid ones.
 
-        *base_dir* is the directory of the world that states them (``None``: none, a tool's own), what
-        a relative path in them resolves against, so a renderer can name a missing or wrong file at
-        load rather than when it opens. An override that takes only *settings* is called so, and is
+        *base_dir* is the directory of the world being loaded (``None``: none, a tool's own), what a
+        relative path in them resolves against, so a renderer can name a missing or wrong file at
+        load rather than when it opens. Settings a world inherits through ``extends`` resolve there
+        too, not beside the parent, so a world meant to be extended names its files as
+        ``<package>:<path>`` or absolute (:func:`roqsim.world.resolve_file_ref`). An override that takes only *settings* is called so, and is
         not given it (:func:`validate_renderer_config`).
         """
         if not isinstance(settings, Mapping):
