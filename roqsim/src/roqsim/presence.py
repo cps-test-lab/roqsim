@@ -48,8 +48,7 @@ Presence composes
 -----------------
 
 A body is present only while every entity around it is. An entity's subtree can hold other entities
-(an arm on a robot), and each can go absent on its own, in any
-order. So each geom, flex and body's gravity compensation is held rather than overwritten: the first
+(an arm on a robot), and each can go absent on its own, in any order. So each geom, flex and body's gravity compensation is held rather than overwritten: the first
 entity to go absent saves the original, each later one adds a hold, and the last to return puts the
 original back. The result depends on which entities are absent, never on the order they changed in,
 so a reset or a replay can apply them in any order.
