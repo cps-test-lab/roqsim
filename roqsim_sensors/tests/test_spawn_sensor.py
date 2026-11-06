@@ -688,7 +688,7 @@ def test_the_rendered_pixels_are_where_camera_info_projects_them(dcx, dcy):
         {"spawn_sensor": {"model": "realsense_d435", "prefix": "cam_", "intrinsics": lens,
                           "pose": {"position": {"x": 0.0, "y": 0.0, "z": 1.0}, "orientation": {"pitch": 1.5707963}}},
          "name": "cam",
-         "components": [{"realsense_d435": {"width": width, "height": height}}, {"imu": {"enabled": False}}]},
+         "components": [{"realsense_d435": {"width": width, "height": height}}, {"imu": {}, "enabled": False}]},
     ]})
     engine = Engine(cfg)
     engine.ctx.seed = 1
