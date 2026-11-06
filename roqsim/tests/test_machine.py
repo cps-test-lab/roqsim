@@ -924,6 +924,18 @@ def test_a_program_may_have_a_parameter_named_program():
         engine.shutdown()
 
 
+def test_a_bare_yield_of_a_helper_stops_the_run_rather_than_doing_nothing():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        axis.start("yields_a_helper", x=0.4)
+        with pytest.raises(RuntimeError, match="yield from"):
+            for _ in range(5):
+                engine.step()
+    finally:
+        engine.shutdown()
+
+
 def _steps(engine, count):
     for _ in range(count):
         engine.step()

@@ -314,6 +314,63 @@ class YieldsAHelper(ScenarioPlugin):
         yield self.run(self.press, "stroke")
 
 
+class JoinsAFailureAndALongStart(ScenarioPlugin):
+    """Scenario: a join of a start that jams and one that runs on."""
+
+    NEEDS = {"press": "machine:press", "other": "machine:other"}
+
+    def program(self):
+        jam = self.start(self.press, "jam")
+        long = self.start(self.other, "dwell", seconds=100.0)
+        try:
+            yield from self.join(jam, long)
+        except ScenarioError as exc:
+            self.event("caught", error=str(exc), long_done=long.done)
+        long.cancel()
+
+
+class ReturnsBesideASpawnedRun(ScenarioPlugin):
+    """Scenario: a spawned run that jams, the program returning at once."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        self.spawn(self.run(self.press, "jam"), name="worker")
+        yield
+
+
+class ReturnsBesideABackgroundTask(ScenarioPlugin):
+    """Scenario: a background task that never ends, the program returning at once."""
+
+    def program(self):
+        def forever():
+            while True:
+                yield
+
+        self.spawn(forever(), name="watch", background=True)
+        yield
+
+
+class SpawnedRunLosesToATimer(ScenarioPlugin):
+    """Scenario: a timeout race a timer wins over a spawned run."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        timer = self.spawn(self.wait(0.05), name="timer")
+        worker = self.spawn(self.run(self.press, "stroke"), name="worker")
+        yield from self.first(worker, timer)
+        yield from self.run(self.press, "stroke")
+
+
+class SpawnsNoGenerator(ScenarioPlugin):
+    """Scenario: spawn of what is no generator."""
+
+    def program(self):
+        self.spawn(None)
+        yield
+
+
 class UntilNaN(ScenarioPlugin):
     """Scenario: a condition with a timeout that is no number."""
 
