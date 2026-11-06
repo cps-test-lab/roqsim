@@ -55,6 +55,10 @@ delete_entity = "scenario_execution_roqsim.actions.delete_entity:DeleteEntity"
 set_entity_state = "scenario_execution_roqsim.actions.set_entity_state:SetEntityState"
 spawn_entity = "scenario_execution_roqsim.actions.spawn_entity:SpawnEntity"
 entity_call = "scenario_execution_roqsim.actions.entity_call:EntityCall"
+machine_run = "scenario_execution_roqsim.actions.machine_run:MachineRun"
+zone_entered = "scenario_execution_roqsim.actions.zone:ZoneEntered"
+zone_left = "scenario_execution_roqsim.actions.zone:ZoneLeft"
+zone_dwelled = "scenario_execution_roqsim.actions.zone:ZoneDwelled"
 
 [tool.setuptools.packages.find]
 where = ["src"]
