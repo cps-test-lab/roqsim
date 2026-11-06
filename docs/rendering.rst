@@ -75,9 +75,11 @@ A renderer of your own
 ----------------------
 
 Subclass :class:`roqsim.render_api.Renderer`, declare its ``capabilities`` and ``SETTINGS``, check
-its block in ``validate_config(settings, base_dir)`` -- ``base_dir`` is the world's directory, so a
+its block in ``validate_config(settings, base_dir)`` -- ``base_dir`` is the directory of the world being loaded, so a
 file the settings name can be found missing, or of the wrong kind, when the world loads -- and
-register it in your package::
+register it in your package. A relative path in renderer settings resolves against the world that
+is loaded, also for settings it inherits through ``extends``; a world meant to be extended names its
+files as ``<package>:<path>``, which resolve wherever the package is installed::
 
    [project.entry-points."roqsim.renderers"]
    myrenderer = "my_package.renderer:MyRenderer"

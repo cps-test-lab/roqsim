@@ -335,7 +335,7 @@ def resolve_file_ref(ref: str, base_dir: str | Path | None, what: str = "file") 
     ``<package>:<path>`` resolves as ``sim.world`` does, by reference: against the worlds directory
     of a registered ``roqsim.worlds`` provider of that name, else the directory of an importable
     module exposing ``WORLDS_DIR``, so a world shipped in a package names its own files the same way
-    on every machine. A relative path resolves against *base_dir*, the world YAML's directory.
+    on every machine. A relative path resolves against *base_dir*, the directory of the world YAML being loaded.
     Raises ``FileNotFoundError`` naming *what* and the path it looked at.
     """
     ref = str(ref)
