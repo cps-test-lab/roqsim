@@ -440,3 +440,170 @@ def test_a_goal_driven_walker_starts_at_its_pose_heading_every_episode():
             _run(engine, 1.0)
     finally:
         engine.shutdown()
+
+
+@pytest.fixture(scope="module")
+def _standing_engine():
+    engine = Engine(_world(pose={"position": {"x": 1.0, "y": 1.0}}, navigator=None))
+    engine.setup()
+    yield engine
+    engine.shutdown()
+
+
+@pytest.fixture
+def standing(_standing_engine):
+    """A walker standing at (1, 1) facing +x with the default navigator, in a fresh episode."""
+    _standing_engine.reset()
+    return _standing_engine
+
+
+def _pair(z, x=1.5):
+    """A left and a right point ahead of the standing walker, at height ``z``."""
+    return np.array([x, 1.3, z]), np.array([x, 0.7, z])
+
+
+def _anim(engine):
+    from roqsim_walker.output import STATE_KEY
+
+    return engine.ctx.blackboard.get(STATE_KEY)["pedestrian"]
+
+
+def _head(engine):
+    model = engine.ctx.model
+    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pedestrian/head")
+    return engine.ctx.data.mocap_pos[model.body_mocapid[bid]].copy()
+
+
+@pytest.mark.parametrize("height", [1.0, 0.7])
+def test_a_reaching_walker_puts_its_wrists_on_the_points(standing, height):
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    points = _pair(height)
+    handle.reach(left=points[0], right=points[1])
+    _run(standing, 3.0)
+    # On them, not as far under them as the body is shifted down onto its feet.
+    for wrist, point in zip(handle.hands(), points, strict=True):
+        assert np.linalg.norm(wrist - point) < 0.005, (wrist, point)
+
+
+def test_a_walker_straightens_as_the_points_in_its_hands_come_up(standing):
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    handle.reach(*_pair(0.7))
+    _run(standing, 3.0)
+    # A box lifted 30 cm in a quarter of a second: the body comes up with it, not after it.
+    steps = int(0.25 / standing.ctx.dt)
+    for k in range(1, steps + 1):
+        handle.reach(*_pair(0.7 + 0.3 * k / steps))
+        standing.step()
+    lifted = _head(standing)[2]
+    _run(standing, 3.0)
+    assert lifted > _head(standing)[2] - 0.02, (lifted, _head(standing)[2])
+
+
+def test_a_quick_lift_lowered_at_once_never_bends_the_body_back(standing):
+    from roqsim_walker.reach import MAX_BEND
+
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    handle.reach(*_pair(0.7))
+    _run(standing, 3.0)
+    steps = int(0.1 / standing.ctx.dt)
+    bends = []
+    for heights in (
+        [0.7 + 0.3 * k / steps for k in range(1, steps + 1)],
+        [1.0 - 0.3 * k / steps for k in range(1, steps + 1)],
+    ):
+        for z in heights:
+            handle.reach(*_pair(z))
+            standing.step()
+            bends.append(_anim(standing).reach_bend)
+    assert 0.0 <= min(bends) and max(bends) <= MAX_BEND, (min(bends), max(bends))
+
+
+def test_one_hand_reaches_and_the_other_keeps_the_gait(standing):
+    from roqsim_walker.animation import _reach
+    from roqsim_walker.humanoid import JOINT_NAMES
+
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    point = np.array([1.5, 0.7, 0.75])
+    handle.reach(right=point)
+    _run(standing, 3.0)
+    assert np.linalg.norm(handle.hands()[1] - point) < 0.005
+    st = _anim(standing)
+    assert st.reach_bend > 0.0 and st.reach["l"].w == 0.0 and st.reach["l"].pose is None
+    # Blending the reach over a gait pose leaves the left arm's joints as the gait has them and
+    # moves the right arm's and the trunk's.
+    gait, root_z = st.idle.sample_array(0.3)
+    q = gait.copy()
+    _reach(st, q, st.body_pos, root_z, standing.ctx.dt)
+    for joint in ("shoulder_l", "elbow_l", "wrist_l"):
+        j = JOINT_NAMES.index(joint)
+        assert np.array_equal(q[j], gait[j]), joint
+    for joint in ("shoulder_r", "elbow_r", "pelvis"):
+        j = JOINT_NAMES.index(joint)
+        assert not np.allclose(q[j], gait[j]), joint
+
+
+def test_letting_go_with_one_hand_keeps_the_other_on_its_point(standing):
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    left, right = _pair(0.8)
+    handle.reach(left, right)
+    _run(standing, 3.0)
+    handle.reach(right=right)
+    # The left arm eases back to the walk, never jumping off its point, and the right hand stays on
+    # its own all the while.
+    wrist_l, wrist_r = handle.hands()
+    for _ in range(int(2.0 / standing.ctx.dt)):
+        standing.step()
+        now_l, wrist_r = handle.hands()
+        assert np.linalg.norm(now_l - wrist_l) < 0.05, (now_l, wrist_l)
+        assert np.linalg.norm(wrist_r - right) < 0.005, wrist_r
+        wrist_l = now_l
+    assert np.linalg.norm(wrist_l - left) > 0.1, wrist_l
+    st = _anim(standing)
+    assert st.reach["l"].w == 0.0 and st.reach["r"].w == 1.0
+
+
+def test_letting_go_straightens_the_body_and_the_next_reach_starts_upright(standing):
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    handle.reach(*_pair(0.7))
+    _run(standing, 3.0)
+    st = _anim(standing)
+    assert st.reach_bend > 0.5
+    handle.reach()
+    _run(standing, 2.0)
+    assert st.reach_bend == 0.0 and st.reach_bend_rate == 0.0
+    assert all(hand.w == 0.0 and hand.pose is None for hand in st.reach.values())
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        [1.0, 2.0],
+        [1.0, 2.0, 3.0, 4.0],
+        [1.0, float("nan"), 0.5],
+        (1.0, 0.0, float("inf")),
+        "abc",
+        [True, 0.0, 0.0],
+        ["1", "2", "3"],
+        5.0,
+    ],
+)
+@pytest.mark.parametrize("hand", ["left", "right"])
+def test_a_point_that_is_not_three_finite_numbers_is_refused_at_the_call(standing, hand, point):
+    handle = standing.ctx.blackboard.get("walker:pedestrian")
+    left, right = _pair(1.0)
+    handle.reach(left, right)
+    with pytest.raises(ValueError, match=f"the {hand} hand's point"):
+        handle.reach(**{"left": left, "right": right, hand: point})
+    # Neither hand changed.
+    st = _anim(standing)
+    assert np.array_equal(st.reach["l"].target, left)
+    assert np.array_equal(st.reach["r"].target, right)
+
+
+@pytest.mark.parametrize("lag", [-0.1, float("nan"), float("inf"), "0.1", True])
+def test_a_body_lag_that_is_no_finite_time_constant_is_refused(lag):
+    from roqsim_walker.plugins.walker import WalkerPlugin
+
+    config = {"body_lag": lag}
+    errors = WalkerPlugin(config).validate_config(config)
+    assert any("'body_lag' is a time constant" in e for e in errors), errors

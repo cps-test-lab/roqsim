@@ -112,7 +112,8 @@ def register(ctx: SimContext) -> None:
     gets no endpoint, so a lookup of it fails rather than returning a pose of something else.
     """
     done = ctx.entity_poses
-    for entity in ctx.entities.all():
+    # An unlisted entity (Entity.listed) is part of another, kept by a plugin: it gets no endpoint.
+    for entity in ctx.entities.all(listed_only=True):
         if entity.name in done or not entity.body:
             continue
         done.add(entity.name)

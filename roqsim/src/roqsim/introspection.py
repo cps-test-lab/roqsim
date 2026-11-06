@@ -479,6 +479,9 @@ def get_plugin_details(name: str) -> dict:
     class without building a world. A hint computed at configure time is not evaluated, so the rows
     name the backends rather than their contents, and ``conditional`` marks an endpoint a config
     may switch off. Endpoints a plugin adds by hand with ``ctx.interface.add`` are not listed.
+
+    A machine (:class:`roqsim.machine.MachinePlugin`) also gets ``programs``: each program's name,
+    first docstring line and parameters, read off its signature.
     """
     matches = [ep for ep in entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
@@ -516,6 +519,11 @@ def get_plugin_details(name: str) -> dict:
     endpoints = [spec.describe(cls) for spec in declared(cls)]
     if endpoints:
         details["endpoints"] = endpoints
+    describe_programs = getattr(cls, "describe_programs", None)
+    if callable(describe_programs):
+        programs = describe_programs()
+        if programs:
+            details["programs"] = programs
     return details
 
 

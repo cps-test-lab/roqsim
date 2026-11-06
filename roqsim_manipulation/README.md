@@ -29,6 +29,17 @@ downstream insertion experiment, `pick_place_metrics` with a downstream pick exp
 
 The test for a new plugin here is whether a *second* arm experiment would use it unchanged.
 
+## Planning in process
+
+`roqsim_manipulation.planning` plans a fixed arm's motions on the compiled world itself, with no ROS:
+seeded IK of a site, a collision checker over a copy of the world as it stands (the arm, what it
+holds, everything else within a clearance), RRT-Connect with shortcutting and straight Cartesian
+lines, time-optimal timing under per-joint velocity and acceleration limits retimed against the
+drives' torque limits, pose margins, and a hold check by the gripper pads' contacts. A plugin hands
+the timed knots to `ArmHandle.follow_trajectory` and closes the gripper with `ArmHandle.set_gripper`.
+`roqsim arm margins` reads a recording and reports each named pose's margins and the run's peak
+torques. The module docstrings carry the reasoning (`python -m pydoc roqsim_manipulation.planning`).
+
 ## Run standalone (no ROS)
 
 The demo worlds ship with the models, in `roqsim_manipulation_assets`:

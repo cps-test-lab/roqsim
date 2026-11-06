@@ -122,6 +122,11 @@ class RendererCapabilities:
     decorations: bool = False
     #: Whether it draws only the geom groups a camera names (:attr:`CameraSpec.geomgroup`).
     geom_groups: bool = False
+    #: Whether it projects a camera's principal point off the image centre
+    #: (:attr:`CameraSpec.intrinsics` ``cx, cy``), as a model camera with ``principal`` has.
+    principal_point: bool = False
+    #: Whether it projects non-square pixels (``fx != fy``).
+    non_square_pixels: bool = False
 
     def missing(
         self,
@@ -129,8 +134,11 @@ class RendererCapabilities:
         model: str | None = None,
         decorate: bool = False,
         geomgroup: bool = False,
+        off_centre: bool = False,
+        non_square: bool = False,
     ) -> list[str]:
-        """What of *images*, *model*, decorations and geom groups this renderer does not give."""
+        """What of *images*, *model*, decorations, geom groups, an *off_centre* principal point and
+        *non_square* pixels this renderer does not give."""
         out = [f"image {i!r}" for i in images if i not in self.images]
         if model is not None and model not in self.camera_models:
             out.append(f"camera model {model!r}")
@@ -138,6 +146,10 @@ class RendererCapabilities:
             out.append("decorations")
         if geomgroup and not self.geom_groups:
             out.append("only some geom groups")
+        if off_centre and not self.principal_point:
+            out.append("an off-centre principal point")
+        if non_square and not self.non_square_pixels:
+            out.append("non-square pixels (fx != fy)")
         return out
 
     def as_dict(self) -> dict:
@@ -151,6 +163,8 @@ class RendererCapabilities:
             "in_process": self.in_process,
             "decorations": self.decorations,
             "geom_groups": self.geom_groups,
+            "principal_point": self.principal_point,
+            "non_square_pixels": self.non_square_pixels,
         }
 
 
@@ -189,11 +203,32 @@ class CameraSpec:
     decorated: bool = False
     #: The most geoms its scene may hold (MuJoCo renderers; ``None`` is MuJoCo's default).
     max_geom: int | None = None
+    #: ``(fx, fy, cx, cy)`` in pixels, the projection MuJoCo draws this camera with at this size:
+    #: from the camera's ``sensorsize`` and ``focal``/``principal`` where the model states them,
+    #: else the symmetric pinhole of ``fovy``. ``cx, cy`` count pixel centres from the top-left
+    #: pixel's, as a ``sensor_msgs/CameraInfo`` does. ``None`` (orthographic, or a ``fovy`` of 0): use ``fovy``.
+    intrinsics: tuple[float, float, float, float] | None = None
 
     @property
     def fx(self) -> float:
         """The focal length in pixels a pinhole camera of this size and ``fovy`` has."""
         return 0.5 * self.height / float(np.tan(np.radians(self.fovy) / 2.0))
+
+    @property
+    def off_centre(self) -> bool:
+        """Whether its principal point is off the image centre (by more than a thousandth of a pixel)."""
+        if self.intrinsics is None:
+            return False
+        _fx, _fy, cx, cy = self.intrinsics
+        return abs(cx - (self.width - 1) / 2.0) > 1e-3 or abs(cy - (self.height - 1) / 2.0) > 1e-3
+
+    @property
+    def non_square(self) -> bool:
+        """Whether its pixels are not square: ``fx != fy``."""
+        if self.intrinsics is None:
+            return False
+        fx, fy, _cx, _cy = self.intrinsics
+        return abs(fx - fy) > 1e-6 * max(abs(fx), 1.0)
 
 
 @dataclass
@@ -297,6 +332,16 @@ class Renderer:
     def capabilities_for(cls, settings: Mapping) -> RendererCapabilities:
         """The capabilities a renderer configured with *settings* has; the class's by default."""
         return cls.capabilities
+
+    @classmethod
+    def open_timeout_s(cls, settings: Mapping) -> float | None:
+        """How long :meth:`open` may take with *settings*, in s, where that is longer than a tick.
+
+        A renderer that starts a process of its own and is slow to get ready states it; the
+        service then waits for the longer of this and ``sim.render.timeout_s`` before it names the
+        renderer as hung. ``None``: ``sim.render.timeout_s`` alone.
+        """
+        return None
 
     @classmethod
     def validate_config(cls, settings: Mapping) -> list[str]:

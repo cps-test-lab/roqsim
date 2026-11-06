@@ -22,7 +22,7 @@ NAMES = ["turtlebot", "obstacle_0", "obstacle_1"]
 def _plugin():
     plugin = SimInterfacesPlugin()
     entities = SimpleNamespace(
-        names=lambda present_only=False: list(NAMES),
+        names=lambda present_only=False, listed_only=False: list(NAMES),
         get=lambda name: (
             SimpleNamespace(name=name, body="b", meta={}, present=True) if name in NAMES else None
         ),

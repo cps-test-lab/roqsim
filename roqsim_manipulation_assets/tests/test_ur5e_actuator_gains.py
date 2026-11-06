@@ -162,7 +162,7 @@ def test_the_effort_limit_a_world_declares_reaches_the_model(tmp_path):
     world.write_text(
         "sim: {timestep: 0.002}\ncomponents:\n"
         '  - spawn_arm: {model: ur5e, prefix: "ur5e_", actuators: {control: impedance, '
-        "stiffness: 5.0, damping: 1.0, each: {shoulder_lift: {effort_limit: 150}}}}\n"
+        "stiffness: 5.0, damping: 1.0, each: {shoulder_lift: {effort_limit: 100}}}}\n"
         "    name: ur5e\n",
         encoding="utf-8",
     )
@@ -173,9 +173,9 @@ def test_the_effort_limit_a_world_declares_reaches_the_model(tmp_path):
         limits = dict(zip(
             [model.actuator(i).name for i in range(model.nu)], model.actuator_forcerange
         ))
-        assert list(limits["ur5e_shoulder_lift"]) == pytest.approx([-150.0, 150.0])
+        assert list(limits["ur5e_shoulder_lift"]) == pytest.approx([-100.0, 100.0])
         # Its neighbour keeps the model's own limit: an `each:` entry changes one actuator.
-        assert list(limits["ur5e_shoulder_pan"]) == pytest.approx([-120.0, 120.0])
+        assert list(limits["ur5e_shoulder_pan"]) == pytest.approx([-150.0, 150.0])
     finally:
         engine.shutdown()
 

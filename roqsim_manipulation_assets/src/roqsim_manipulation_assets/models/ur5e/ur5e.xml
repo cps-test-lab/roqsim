@@ -15,8 +15,11 @@
            UR5e's own actuator sizing, not a transcription slip: it is a 5 kg-payload arm, and a
            contact task reads the difference directly -- a stiffer servo pushes THROUGH a jam
            instead of letting the measured wrench rise. -->
+      <!-- forcerange is the joint's torque limit: 150 N*m for the size-3 joints (base, shoulder,
+           elbow) and 28 N*m for the size-1 wrists, as Universal Robots' own ROS 2 description gives
+           them (Universal_Robots_ROS2_Description, config/ur5e/joint_limits.yaml, max_effort). -->
       <general gaintype="fixed" biastype="affine" ctrlrange="-6.2831 6.2831"
-               gainprm="2000" biasprm="0 -2000 -400" forcerange="-120 120"/>
+               gainprm="2000" biasprm="0 -2000 -400" forcerange="-150 150"/>
       <default class="size3">
         <default class="size3_limited">
           <joint range="-3.1415 3.1415"/>
