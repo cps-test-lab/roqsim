@@ -2732,6 +2732,54 @@ exception stops the run with its own type, the scenario named in a note, and the
 reports done. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when the scene ended.
 
+An entity's states: ``part_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+What a machine does to a part shows on the part: a strip punched, bent or labelled; a machine's own
+lamp on. Each such state is a ``look_<name>`` body under the entity's root body, compiled in and
+shown or hidden at run time through :mod:`roqsim.presence`, so a recording replays it::
+
+   <body name="strip">
+     <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_plain">
+       <geom type="box" size="0.15 0.02 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+     <body name="look_hole">
+       <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+   </body>
+
+One ``part_state`` entry serves the world. Its handle, ``part_state``, shows and hides a state by
+entity and name (``show``, ``hide``, ``set`` for one of an ``exclusive`` group), and each change is a
+``shown``/``hidden`` event::
+
+   - part_state:
+       shown: {strip_*: [plain]}            # at the start of every episode, by name or pattern
+       exclusive: {strip_*: [[plain, hole]]}
+
+A state's bodies are **massless**: one with mass is refused, naming the body, because showing a state
+must change how the part looks and collides, never what it weighs. A state that moves the centre of
+mass -- a strip bent into an L -- names the root body's inertia while it is shown, as a custom
+numeric ``look_<name>_inertia`` of ten values (``pos``, ``quat``, ``diaginertia``); two shown states
+that both name one are refused before anything changes, by ``show`` and by ``set`` alike. A pattern
+that matches no entity with states, an unknown entity or an unknown state is refused by name. Of an
+exclusive group at most one state is shown: ``show`` of a member while another is shown is refused
+(``set`` swaps them), and so is a ``shown:`` naming two. The plugin decides nothing: when a part
+changes is the machine's or the scenario's.
+
+A state is registered as an entity (kind ``look``), so a recording carries and replays its presence,
+but it is not *listed*: ``GetEntities``, ``GetSpawnables`` and the per-entity pose endpoints leave it
+out, and spawning, deleting or placing it is refused -- only ``part_state`` changes a state. A replay
+draws the shown states; it does not restore the inertia one names, which the picture does not need.
+
+Presence composes, so a state's own presence and its owner's are independent: while the owner is
+absent a state shows nothing, and a state changed meanwhile is as it was left when the owner returns.
+
+**Limits.** A state body nested in another state body is refused. A shown state's inertia moves the
+physics but not the compiled ``invweight0`` values, so a part held by a weld is slightly softer or
+stiffer while it is shown. A state belongs to the nearest entity around it: list ``part_state`` after
+an entity nested in another whose states it serves.
+
 Writing your own
 ----------------
 

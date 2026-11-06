@@ -112,7 +112,7 @@ Passed to every hook. Key members:
 -  ``spec`` (build phase), ``model``, ``data``, ``dt``, ``sim_time``.
 -  ``config`` — the full parsed YAML dict.
 -  ``blackboard: Blackboard`` — ``set/get/require/__contains__``; typed cross-plugin store.
--  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present)`` (``names``/``all`` take ``present_only``); backs ``simulation_interfaces`` discovery.
+-  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present, listed)`` (``names``/``all`` take ``present_only`` and ``listed_only``); backs ``simulation_interfaces`` discovery.
 -  ``render`` — the ``RenderService`` every image comes through (set at setup; see §8).
 -  ``events: EventLog`` — ``emit(source, event, **fields)`` on the physics thread records what a plugin decided, stamped with ``sim_time`` and ``episode`` (``roqsim.events``); a recording carries each one on its ``events`` channel from the moment it starts, and ``Recording.events`` reads them back.
 -  ``post(cmd)`` / ``drain_commands()`` — the thread-safe command queue (§7).
@@ -686,6 +686,12 @@ name::
 
 ``spawn_model`` does not read a model's manifest, so the controller is written in the world (or in
 a world the cell ``extends``), not in the model's manifest.
+
+**What a machine works on has states of its own.** ``part_state`` shows and hides an entity's
+``look_<name>`` bodies through :mod:`roqsim.presence` -- a strip punched, bent, labelled; a machine's
+own lamp on -- each look with its own inertia where the model names one, through one handle
+(``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
+that handle: the part's state is the part's, and the machine only asks for it to change.
 
 **A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
 generator on simulated time, one ``yield`` per physics step, advanced in ``post_step``. It names the
