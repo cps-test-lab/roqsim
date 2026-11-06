@@ -74,15 +74,27 @@ class ZoneCounts:
 
 @dataclass(frozen=True)
 class ZoneOccupancy:
-    """Who is inside a zone.
+    """Who is inside a zone, and who has been this episode.
 
     Attributes:
         inside: the entities inside, in the order they entered
         count: how many
+        dwelling: the entities inside that have been for the zone's ``dwell``
+        dwell: seconds inside before an entity counts as dwelling; 0 means never
+        entered: every entity that entered, in order, once per entry
+        entered_at: when each of ``entered`` did (s, sim time)
+        dwelled: every entity that reached the zone's ``dwell``, in order
+        dwelled_at: when each of ``dwelled`` did (s, sim time)
     """
 
     inside: list[str] = field(default_factory=list)
     count: int = 0
+    dwelling: list[str] = field(default_factory=list)
+    dwell: float = 0.0
+    entered: list[str] = field(default_factory=list)
+    entered_at: list[float] = field(default_factory=list)
+    dwelled: list[str] = field(default_factory=list)
+    dwelled_at: list[float] = field(default_factory=list)
 
 
 class ZoneHandle:
@@ -312,5 +324,14 @@ class ZoneTriggerPlugin(Plugin):
     @endpoint.out(rate=10.0, ros2=None)
     def occupancy(self) -> ZoneOccupancy:
         """Who is inside the zone, in the order they entered."""
-        inside = self.handle.inside()
-        return ZoneOccupancy(inside=inside, count=len(inside))
+        h, inside = self.handle, self.handle.inside()
+        return ZoneOccupancy(
+            inside=inside,
+            count=len(inside),
+            dwelling=h.dwelling(),
+            dwell=h.dwell,
+            entered=[name for _, name in h._entries],
+            entered_at=[t for t, _ in h._entries],
+            dwelled=[name for _, name in h._dwells],
+            dwelled_at=[t for t, _ in h._dwells],
+        )

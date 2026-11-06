@@ -69,7 +69,7 @@ class Walk(ScenarioPlugin):
     NEEDS = {"walker": "walker:worker"}
 
     def program(self):
-        status = yield from self.route(self.walker, [(1.0, 0.0), (1.0, 1.0)], check=False)
+        status = yield from self.navigate(self.walker, [(1.0, 0.0), (1.0, 1.0)], check=False)
         self.event("arrived", error=status[-1])
 
 
@@ -156,11 +156,11 @@ class Place(ScenarioPlugin):
 
     Config::
 
-        pose: {}   # the pose place() is given
+        pose: {}   # the pose set_entity_state() is given
     """
 
     def program(self):
-        yield from self.place("block", self.config.get("pose"))
+        yield from self.set_entity_state("block", self.config.get("pose"))
         self.event("placed")
 
 
@@ -396,7 +396,7 @@ class RouteLosesToATimer(ScenarioPlugin):
 
     def program(self):
         timer = self.spawn(self.wait(0.05), name="timer")
-        route = self.spawn(self.route(self.walker, [(1.0, 0.0)]), name="route")
+        route = self.spawn(self.navigate(self.walker, [(1.0, 0.0)]), name="route")
         yield from self.first(route, timer)
         self.event("raced", cancels=self.walker.cancels)
 
@@ -414,7 +414,7 @@ class Overtaken(ScenarioPlugin):
     NEEDS = {"walker": "walker:worker"}
 
     def program(self):
-        route = self.spawn(self.route(self.walker, [(1.0, 0.0)], check=False), name="route")
+        route = self.spawn(self.navigate(self.walker, [(1.0, 0.0)], check=False), name="route")
         yield  # the route task sends its route (seq 1) in the next step
         yield
         self.walker.send_route([(2.0, 0.0)])  # seq 2 overtakes it

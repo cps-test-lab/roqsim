@@ -2703,7 +2703,7 @@ scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
        NEEDS = {"press": "machine:press_1"}
 
        def program(self):
-           yield from self.place("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
+           yield from self.set_entity_state("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
            yield from self.run(self.press, "stroke", show="hole", hide="plain")
            self.event("punched", part="strip_1")
 
@@ -2715,12 +2715,12 @@ and is placed after the machines it drives::
      - "my_cell.scenes:PressDemo": {stop_at_end: true}
        name: demo
 
-The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
-``entered``, ``left``, ``dwelled``, ``place``, ``event`` (:mod:`roqsim.scenario`). ``entered``,
+The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``navigate``, ``until``, ``wait``,
+``entered``, ``left``, ``dwelled``, ``set_entity_state``, ``event`` (:mod:`roqsim.scenario`). ``entered``,
 ``left`` and ``dwelled`` wait on a ``zone_trigger``'s handle and take a ``timeout`` as ``until``
 does. They read who is inside now, so a scenario goes after the zones it waits on; ``entered`` and
 ``dwelled`` with ``since`` (a sim time) also count an entity that has come and gone since then.
-``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``place`` takes a
+``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``set_entity_state`` takes a
 pose as a world file writes one:
 ``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
@@ -2731,11 +2731,56 @@ not end before a task has, unless it was spawned with ``background=True``, for o
 itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
 before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
 task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
-nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``route(check=False)``,
+nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
 reports done. Every scenario takes ``needs:`` (rename a handle) and
 ``stop_at_end:``; its ``done`` endpoint says when the scene ended.
+
+The same scene in OpenSCENARIO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A scene is written in Python or in OpenSCENARIO (``osc.roqsim``), in the same words and with the same
+outcome, so it moves from one to the other line by line:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Python scenario
+     - OpenSCENARIO
+   * - ``yield from self.run(press, "stroke")``
+     - ``machine_run(machine: 'press', program: 'stroke')``
+   * - ``self.start(...)``, ``self.spawn(...)``, ``self.join(...)``
+     - ``parallel:``
+   * - ``self.first(...)``
+     - ``one_of:``
+   * - ``self.wait(1.0)``
+     - ``wait elapsed(1s)``
+   * - ``self.until(cond)``
+     - ``wait <condition>``
+   * - ``self.navigate(mover, poses)``
+     - ``entity_navigate(entity: 'mover', goal_poses: [...])``
+   * - ``self.set_entity_state(entity, pose)``
+     - ``set_entity_state(entity: 'crate', pose: ...)``
+   * - ``self.entered(gate)``, ``self.dwelled(gate)``, ``self.left(gate)``
+     - ``zone_entered(zone: 'gate')``, ``zone_dwelled(zone: 'gate')``, ``zone_left(zone: 'gate')``
+
+An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does.
+
+A world names an OpenSCENARIO file as it names a Python scenario, and ``roqsim sim`` runs it through
+scenario-execution, in its own loop, with its recording, viewer and control socket::
+
+   - scenario: {file: press_cell.osc}    # relative to the world file
+     name: scene
+
+``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
+the scenario, and ``output_dir`` is where its ``test.xml`` goes. A scenario that fails stops the run
+with a non-zero exit. ``done`` and ``scenario_end`` are as for a Python scenario. It needs
+``scenario_execution_roqsim`` and scenario-execution only to run: rendering, replaying or checking the
+world parses nothing. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
+way to let scenario-execution own the loop, for a campaign or for scenario parameters.
+``roqsim/tests`` and ``scenario_execution_roqsim/tests`` hold one scene written both ways, and a test
+holds their timelines equal.
 
 An entity's states: ``part_state``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
