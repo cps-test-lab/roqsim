@@ -2,3 +2,8 @@
 licensed under CC Attribution (by) -- Author must be credited. Commercial use is allowed.
 source: https://sketchfab.com/3d-models/white-and-black-wooden-door-low-poly-f7e91629cc574a42a60e6c78e6b05e6a
 licence text: https://creativecommons.org/licenses/by/4.0/
+
+Modified for roqsim (its licence asks for changes to be indicated): the source's door was split into
+its leaf (this model), its frame (door_frame) and a glazed leaf (door_glass), and converted to OBJ
+meshes and a MuJoCo model, which may simplify, scale, move and recolour them. The leaf collides as
+its mesh's hull; its handle does not collide.

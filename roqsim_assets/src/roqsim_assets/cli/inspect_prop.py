@@ -24,7 +24,7 @@ prop is placed:
   textures wired at all.
 
 Also checks scale plausibility, up-axis (is it standing?), leftover download intermediates, and that a
-redistributable ``CREDITS.txt`` is present.
+redistributable ``CREDITS.txt`` is present, which under CC BY also says what was changed.
 
 Pure stdlib, no MuJoCo/GL -- geometry comes straight from the OBJ (honouring any ``scale`` on the
 ``<mesh>`` in the MJCF). Pair it with ``roqsim render <prop> --out check.png`` for the visual eyeball;
@@ -152,6 +152,16 @@ def _license_slug(prop_dir: str) -> str | None:
             if "licensed under" in line and m:
                 return m.group(1)
     return None
+
+
+#: How a CREDITS.txt says what was changed: the importer's `MODIFIED` ("Modified for roqsim ..."), or a
+#: line written by hand that begins "Changed for roqsim", "Changes:" or "Changes here:".
+_CHANGES_STATED = re.compile(r"^\s*((modified|changed) for roqsim\b|changes( here)?:)", re.M | re.I)
+
+
+def _changes_stated(prop_dir: str) -> bool:
+    with open(os.path.join(prop_dir, "CREDITS.txt")) as fh:
+        return bool(_CHANGES_STATED.search(fh.read()))
 
 
 def _mtl_has_map_kd(prop_dir: str) -> bool:
@@ -339,6 +349,15 @@ def _analyze(prop_dir: str, name: str, obj_path: str) -> tuple[list[Check], dict
                 "license",
                 "FAIL",
                 "no CREDITS.txt / licence slug -- provenance missing, do not commit",
+            )
+        )
+    elif slug in ("by", "by-sa") and not _changes_stated(prop_dir):
+        checks.append(
+            Check(
+                "license",
+                "FAIL",
+                f"licence '{slug}' asks a copy to indicate it was modified, and CREDITS.txt does not say "
+                "what the import changed -- add it, as the importer writes it, do not commit",
             )
         )
     elif slug not in _REDISTRIBUTABLE:
