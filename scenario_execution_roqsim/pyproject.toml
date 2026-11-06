@@ -34,6 +34,10 @@ dependencies = [
 osc = ["scenario_execution"]
 test = ["pytest>=7.0", "mujoco>=3.14,<3.15"]
 
+# A world entry that runs an OpenSCENARIO file (`- scenario: {file: x.osc}`).
+[project.entry-points."roqsim.plugins"]
+scenario = "scenario_execution_roqsim.scenario_file:ScenarioFilePlugin"
+
 # The OSC library, so `import osc.roqsim` resolves. The entry-point NAME is what a scenario imports.
 [project.entry-points."scenario_execution.osc_libraries"]
 roqsim = "scenario_execution_roqsim.get_osc_library:get_osc_library"
@@ -55,6 +59,10 @@ delete_entity = "scenario_execution_roqsim.actions.delete_entity:DeleteEntity"
 set_entity_state = "scenario_execution_roqsim.actions.set_entity_state:SetEntityState"
 spawn_entity = "scenario_execution_roqsim.actions.spawn_entity:SpawnEntity"
 entity_call = "scenario_execution_roqsim.actions.entity_call:EntityCall"
+machine_run = "scenario_execution_roqsim.actions.machine_run:MachineRun"
+zone_entered = "scenario_execution_roqsim.actions.zone:ZoneEntered"
+zone_left = "scenario_execution_roqsim.actions.zone:ZoneLeft"
+zone_dwelled = "scenario_execution_roqsim.actions.zone:ZoneDwelled"
 
 [tool.setuptools.packages.find]
 where = ["src"]

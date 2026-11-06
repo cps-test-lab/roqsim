@@ -247,6 +247,9 @@ PAYLOADS: dict[str, Any] = {
     "cmd_pos": ([0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0]),
     "motor_cmd": _motor_command,
     "speed": 0.2,
+    "show": ("part", "label"),
+    "hide": ("part", "plain"),
+    "set": ("part", "label"),
     "cmd": 1.0,
     "door": 1.0,
     "tare": None,
@@ -400,6 +403,26 @@ def _spot_policy() -> Path:
     return Path(roqsim_quadruped.__file__).parent / "policy" / "spot_policy.pt"
 
 
+#: A part with a state shown at the start and one to show: what `part_state` changes.
+_PART = """<mujoco model="part">
+  <worldbody>
+    <body name="part">
+      <geom type="box" size="0.05 0.05 0.05" mass="0.5"/>
+      <body name="look_plain"><geom type="box" size="0.05 0.05 0.001" mass="0"/></body>
+      <body name="look_label"><geom type="box" size="0.02 0.02 0.001" mass="0"/></body>
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+def _part_with_states(tmp: Path) -> dict:
+    (tmp / "part.xml").write_text(_PART)
+    return _world(
+        {"spawn_model": {"model": str(tmp / "part.xml"), "prefix": "p_"}, "name": "part"},
+        {"part_state": {"shown": {"part": ["plain"]}}},
+    )
+
+
 def _static(*components: dict, **sim) -> Case:
     return Case(lambda _tmp: _world(*components, **sim))
 
@@ -408,6 +431,8 @@ CASES: dict[str, Case] = {
     # core
     "dummy": _static({"dummy": {}}),
     "ceiling": _static({"ceiling": {}}),
+    "part_state": Case(_part_with_states),
+    "zone_trigger": _static({"zone_trigger": {"size": [0.5, 0.5, 0.5]}, "name": "zone"}),
     "spawn_model": _static(
         {
             "spawn_model": {
