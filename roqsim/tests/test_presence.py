@@ -18,6 +18,7 @@ from roqsim.context import Entity, SimContext
 from roqsim.presence import (
     ABSENT_GEOM_GROUP,
     arm_gravity_compensation,
+    body_present,
     entity_geom_ids,
     set_present,
     subtree_body_ids,
@@ -382,3 +383,18 @@ def test_an_inner_entity_absent_stays_hidden_when_the_outer_returns(ctx):
     set_present(ctx, prop, True)
     assert ctx.model.geom_group[prop_geom] != ABSENT_GEOM_GROUP
     assert ctx.model.geom_group[lid_geom] == ABSENT_GEOM_GROUP
+
+
+def test_a_body_is_present_only_while_every_entity_around_it_is(ctx):
+    prop = Entity(name="prop", kind="object", body="prop")
+    lid = Entity(name="lid", kind="object", body="prop_lid")
+    prop_body = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "prop")
+    lid_body = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "prop_lid")
+    assert body_present(ctx, prop_body) and body_present(ctx, lid_body)
+    set_present(ctx, lid, False)
+    assert body_present(ctx, prop_body) and not body_present(ctx, lid_body)
+    set_present(ctx, lid, True)
+    set_present(ctx, prop, False)
+    assert not body_present(ctx, lid_body), "absent with what is around it"
+    assert lid.present, "its own state"
+

@@ -129,7 +129,8 @@ class EntityRegistry:
         return self._entities.get(name)
 
     def names(self, present_only: bool = False) -> list[str]:
-        """Entity names; with *present_only*, just the ones anything can currently perceive.
+        """Entity names; with *present_only*, just the ones that are not absent themselves (one
+        inside an absent entity is hidden with it: :func:`roqsim.presence.body_present`).
 
         The control plane lists the present ones, because an absent entity is one this world
         compiled but the trial has not brought in yet -- reporting it would make ``GetEntities``

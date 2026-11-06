@@ -48,7 +48,7 @@ Presence composes
 -----------------
 
 A body is present only while every entity around it is. An entity's subtree can hold other entities
-(an arm on a robot, a ``part_state`` state on a part), and each can go absent on its own, in any
+(an arm on a robot), and each can go absent on its own, in any
 order. So each geom, flex and body's gravity compensation is held rather than overwritten: the first
 entity to go absent saves the original, each later one adds a hold, and the last to return puts the
 original back. The result depends on which entities are absent, never on the order they changed in,
@@ -201,6 +201,12 @@ def arm_gravity_compensation(spec) -> None:
     Called once per world, immediately before ``spec.compile()``.
     """
     spec.worldbody.gravcomp = 1.0
+
+
+def body_present(ctx, bid: int) -> bool:
+    """Whether body ``bid`` is present: whether no entity around it, or that it is the root of, is
+    absent. :attr:`roqsim.context.Entity.present` says only an entity's own state."""
+    return int(bid) not in ctx.presence_holds.get("gravcomp", {})
 
 
 def set_present(ctx, entity, present: bool) -> bool:
