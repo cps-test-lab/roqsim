@@ -1028,7 +1028,8 @@ collision``, ``inspect-prop``) failing a prop. ``6`` is ``roqsim sim`` ending --
 ``--steps``, on a signal, by its window closing, at a plugin's or a quit's asking -- while a scene of the world (a Python scenario or an
 OpenSCENARIO file) was still running: the scene neither passed nor failed, so the run is no pass. A
 scene that ended exits ``0``, one that failed stops the run with its error, and a world without a
-scene is unaffected. ``1`` is never returned on purpose, so it always means
+scene is unaffected. ``make smoke`` holds every shipped world with a scene to ending it within its
+run (:doc:`developer_guide`). ``1`` is never returned on purpose, so it always means
 the tool itself broke. Every other status comes with its reason: a line on stderr
 naming the command, or the report the tool prints (``check``, ``health``).
 
