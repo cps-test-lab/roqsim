@@ -1,4 +1,4 @@
-"""Sensor plugin: Intel RealSense D415 colour stream, via ``mujoco.Renderer`` (GL, offscreen).
+"""Sensor plugin: Intel RealSense D415 colour stream, drawn through the render service.
 
 RGB only -- no depth/IR yet (unlike :mod:`realsense_d435`, which has an opt-in depth +
 point-cloud path; add one here the same way once a D415 world needs it). Topic/frame naming follows
@@ -11,9 +11,9 @@ plugin/model so a robot that carries a real D415 is faithful. The bundled
 camera, and a ``d415_depth`` camera at the depth optical frame for a depth path to render from;
 attach it to a robot or mount it standalone with ``spawn_sensor``.
 
-Config: see ``camera_common.CameraPlugin`` (``camera``, ``width``/``height``,
-``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``). Defaults below match the
-D415's 640x480@30fps colour profile.
+Config: see ``camera_common.CameraPlugin`` (``camera``, ``width``/``height``, ``fovy``,
+``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``, ``render_near``). Defaults
+below match the D415's 640x480@30fps colour profile.
 """
 
 from __future__ import annotations

@@ -93,8 +93,13 @@ class Entity:
     meta: dict = field(default_factory=dict)
     #: Whether anything can perceive or touch it. Absent entities stay in the compiled model
     #: -- nothing can add a body to one at runtime -- but are excluded from raycasts, from
-    #: rendering, from contacts, and from what the control plane lists. See :mod:`roqsim.presence`.
+    #: rendering, from contacts, and from what the control plane lists. An entity inside an
+    #: absent one is hidden with it, whatever this says of it. See :mod:`roqsim.presence`.
     present: bool = True
+    #: Whether the control plane deals with it: lists it, gives it a pose endpoint, spawns, deletes
+    #: and places it. False for an entity a plugin keeps as part of another and changes itself (a
+    #: ``part_state`` state); it stays registered, so a recording still carries its presence.
+    listed: bool = True
 
 
 class EntityRegistry:
@@ -127,17 +132,23 @@ class EntityRegistry:
     def get(self, name: str) -> Entity | None:
         return self._entities.get(name)
 
-    def names(self, present_only: bool = False) -> list[str]:
-        """Entity names; with *present_only*, just the ones anything can currently perceive.
+    def names(self, present_only: bool = False, listed_only: bool = False) -> list[str]:
+        """Entity names; with *present_only*, just the ones that are not absent themselves (one
+        inside an absent entity is hidden with it: :func:`roqsim.presence.body_present`); with
+        *listed_only*, just the ones the control plane deals with (:attr:`Entity.listed`).
 
         The control plane lists the present ones, because an absent entity is one this world
         compiled but the trial has not brought in yet -- reporting it would make ``GetEntities``
         disagree with every sensor.
         """
-        return [n for n, e in self._entities.items() if e.present or not present_only]
+        return [e.name for e in self.all(present_only=present_only, listed_only=listed_only)]
 
-    def all(self, present_only: bool = False) -> list[Entity]:
-        return [e for e in self._entities.values() if e.present or not present_only]
+    def all(self, present_only: bool = False, listed_only: bool = False) -> list[Entity]:
+        return [
+            e
+            for e in self._entities.values()
+            if (e.present or not present_only) and (e.listed or not listed_only)
+        ]
 
 
 @dataclass
@@ -524,9 +535,13 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
+        #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
+        self.presence_holds: dict[str, dict] = {}
         #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
         self.entity_poses: set[str] = set()
-        self.render = None  # lazily set to a RenderService when first needed
+        #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
+        #: set by the engine at setup, or made on first use (:meth:`RenderService.of`).
+        self.render = None
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of
         #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``
@@ -565,6 +580,12 @@ class SimContext:
         #: the same noise when their seeds match (common random numbers).
         self.episode: int = 0
 
+        #: What happened when, on simulated time (:mod:`roqsim.events`): any plugin emits, a
+        #: recording carries every event on its ``events`` channel.
+        from .events import EventLog
+
+        self.events = EventLog(lambda: self.sim_time, lambda: self.episode)
+
         # Run-control (play/pause/step/reset); consulted by the standalone driver.
         from .control import RunControl
 
@@ -595,8 +616,14 @@ class SimContext:
 
     # -- deterministic randomness -------------------------------------------------------------
 
-    def rng_for(self, name: str, *, per_episode: bool = False):  # -> numpy.random.Generator
+    def rng_for(
+        self, name: str, *, per_episode: bool = False, at: float | None = None
+    ):  # -> numpy.random.Generator
         """A generator whose draws are a pure function of ``(seed, episode, sim_time, name)``.
+
+        ``at`` is the sim time to key the draw on, when it is not now: a camera frame rendered off
+        the physics thread is stamped with its snapshot's time and draws its noise there, so the
+        picture is the same whichever tick it is published in.
 
         ``per_episode=True`` drops ``sim_time`` from the key: the draw is the episode's, the same
         whenever in the episode it is made. That is the generator for a quantity a trial holds
@@ -655,7 +682,7 @@ class SimContext:
         if per_episode or self.model is None or self.data is None:
             step = 0
         else:
-            step = round(self.sim_time / self.dt)
+            step = round((self.sim_time if at is None else float(at)) / self.dt)
         # A stable hash of the sensor name: Python's hash() is salted per process, which would make a
         # run irreproducible across processes -- exactly what this exists to prevent.
         import zlib

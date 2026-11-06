@@ -2,75 +2,39 @@ Future work
 ===========
 
 A running list of design topics deferred from the current work. Recorded so the plugin lifecycle
-(:doc:`architecture`), the single-writer threading model (§7) and the planned ``RenderService`` (§8)
-are honoured when the work lands.
+(:doc:`architecture`), the single-writer threading model (§7) and the render service (§8) are
+honoured when the work lands.
 
 The 3D human-review addon has its own roadmap (a sketch-authored door hinge side, play/settle
 controls); it lives with that component under :doc:`scene_builder` › Roadmap.
 
-Off-thread (asynchronous) camera rendering
-------------------------------------------
+Rendering beyond the render service
+-----------------------------------
 
-**Problem.** Camera plugins render **inline on the physics thread**: ``CameraPlugin.post_step``
-(``roqsim_sensors/plugins/camera_common.py``) drives a private ``mujoco.Renderer`` synchronously,
-so every captured frame *blocks* a physics step. Rendering is far more expensive than a physics step
-(GL scene update + rasterisation, and it grows with scene/mesh complexity -- e.g. the Unitree G1's
-multi-MB link meshes), so a subscribed camera at meaningful resolution/rate pulls the real-time
-factor below 1: the whole sim -- including the robot's motion -- runs in slow motion. This is the
-sensor analogue of the interactive-viewer slowdown the runner avoids by rendering at a fixed display
-cadence, decoupled from the 500 Hz step.
+**Context.** Every image is drawn through the render service (§8): one context and one upload per
+renderer instance, one scene build per tick, an atlas read back once, and an ``async`` mode that
+draws off the physics thread from a snapshot. What it leaves:
 
-The plugin is ``parallel_safe = False`` and holds its own renderer, so it cannot be moved to the
-(planned) parallel ``post_step`` executor as-is.
-
-**What exists today (cheap mitigations, already in place).** ``camera_common.py`` already:
-
-- **throttles** capture to ``rate_hz`` (renders at e.g. 15--30 Hz, not every step), and
-- **skips** rendering entirely when no endpoint the render feeds is wanted -- no transport
-  subscriber and no in-process claim (``Endpoint.wanted()``; see :doc:`interfaces`).
-
-These bound *how often* we pay the cost, but each render still blocks the physics thread, so an
-actively-consumed camera still stalls the loop.
-
-**Proposed fix: a dedicated render thread owned by the** ``RenderService`` **(§8).** Rendering moves
-off the physics thread entirely:
-
-- The ``RenderService`` (§8 -- "owns all GL/EGL contexts and camera renderers, created lazily and
-  shared") gains a **render worker thread** with its **own** GL/EGL context (a GL context is
-  thread-affine; it must be created and used on that thread only).
-- The worker renders from an **immutable state snapshot**, never live ``MjData`` -- honouring the
-  single-writer rule (§7: only the physics thread touches ``model``/``data``). The physics thread
-  hands off a cheap snapshot per due frame (``mj_getState`` into a reusable buffer, or a
-  double-buffered ``MjData`` copy); the worker calls ``mjv_updateScene`` + ``render`` on its copy.
-  This extends the existing ``publish_snapshot``/``read_snapshot`` mechanism (§7) from scalar state
-  to render state.
-- Frames are produced at the worker's **own cadence** and published to the ``image`` endpoint
-  asynchronously. Physics keeps stepping at real-time; camera frames simply **lag slightly**.
-
-**Consequences / open questions.**
-
-- *Latency & timestamps.* A frame reflects the snapshot it was rendered from, not "now". The
-  frame's stamp must carry the **snapshot's sim-time**, not wall-clock, so downstream (tf, nav2,
-  perception) stays consistent. Bound the max lag (drop stale snapshots rather than queue them).
-- *Determinism / sync mode.* Under the planned synchronous/lockstep mode (§10), a camera is a
-  *producer gate* -- the tick must be able to wait for "this tick's frame". Async rendering needs a
-  path to run **synchronously** (block the gate until the worker returns the frame for the due tick)
-  when lockstep is enabled, and async otherwise. Keep both behind the same ``RenderService`` API.
-- *Back-pressure.* One worker shared across N cameras vs one worker per camera (context/VRAM cost);
-  a bounded frame queue with newest-wins drop policy.
-- *GL context lifetime.* Create/destroy the context on the worker thread; clean shutdown ordering
-  with the physics loop (``shutdown`` runs on the physics thread today).
-
-**Why not just render more/faster inline?** Lowering resolution/rate and decimating meshes (the fat
-G1 STLs) reduces per-frame cost but does not remove the coupling -- the render still blocks the step.
-Off-thread rendering is the structural fix; mesh/resolution work is complementary (raises the
-achievable frame rate once decoupled).
-
-**Reference point.** Isaac Sim solves this natively with a GPU render pipeline that runs concurrently
-with GPU physics; MuJoCo's ``mujoco.Renderer`` is single-context/thread-affine, so concurrency here
-is an explicit worker-thread + snapshot design rather than a built-in. For massively parallel RL
-(many envs) the separate answer is batched GPU rendering (MJX / Madrona), which is out of scope for
-this single-env, real-time, ROS-facing use.
+- *Post-processing on the physics thread.* A camera's own work on its frame -- ``mono8``
+  conversion, the depth clip, the lens map, noise -- and a bridge's encoding (JPEG, PNG, RVL) still
+  run in ``post_step``. For a depth camera that is most of its cost once the draw is shared; moving
+  it to the worker that drew the frame is the next step, and needs the camera's processing to be a
+  function of the frame and the seed alone, which it already is.
+- *Depth through the atlas.* Colour is read back once per batch; depth and segmentation are still
+  read per camera. A depth atlas needs the depth attachment's format matched and the reversed-Z
+  read reproduced exactly.
+- *A shadow map shared across one tick's cameras.* MuJoCo redraws it inside every ``mjr_render``,
+  although it depends only on the lights, and the shadow pass is a large share of a draw. Sharing it
+  needs owning MuJoCo's draw loop.
+- *Deferred read-back.* A pixel-buffer object would let the atlas read of one batch overlap the next
+  batch's draws, at the price of every frame arriving a tick later; with one read per batch that
+  price buys little, so it is not built.
+- *More than one GPU.* ``sim.render.workers`` deals cameras to several instances, each with a
+  context of its own, all on the device the GL backend chose. Placing each worker's context on a
+  device of its own (an EGL device per worker) is what a second GPU needs.
+- *A batch renderer.* MuJoCo Warp's ray-traced batch renderer takes exactly what the contract gives
+  (the model once, a state per tick, a batch of heterogeneous cameras) and suits worlds with very
+  many cameras that accept its look; it would stand behind the interface as a renderer of its own.
 
 Per-tick memoisation of lazy endpoint reads
 -------------------------------------------

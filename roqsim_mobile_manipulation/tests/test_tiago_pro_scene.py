@@ -16,7 +16,7 @@ Two things make this battery different from the husky/frankie/G2 ones:
   the base or the other arm's actuators, the symptom is a robot that silently stops driving or an arm
   that fights another controller — so E0 asserts the ownership split explicitly.
 
-Reference values are PAL's own (see the package `THIRD_PARTY.md` for the provenance table); the
+Reference values are PAL's own (the pinned revisions are listed in `tiago_pro_LICENSE`); the
 few substrate assumptions are named as such in the assertions they drive.
 """
 

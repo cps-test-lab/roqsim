@@ -112,7 +112,7 @@ class URDriverInterfacePlugin(Plugin):
                 state=INACTIVE,
                 namespace=ns,
                 owner=self.entity,
-                apply=self._refuse_unscaled,
+                veto=self._refuse_unscaled,
             )
         )
 
@@ -120,12 +120,13 @@ class URDriverInterfacePlugin(Plugin):
         self._slider = 1.0
 
     @staticmethod
-    def _refuse_unscaled(active: bool) -> None:
+    def _refuse_unscaled(active: bool) -> str | None:
         if active:
-            raise RuntimeError(
+            return (
                 "joint_trajectory_controller is listed as ur_robot_driver lists it, inactive, and is "
                 "not served in simulation: use scaled_joint_trajectory_controller"
             )
+        return None
 
     def speed_scaling_factor(self) -> float:
         """The speed scaling in effect, as a fraction: what the scaled trajectory controller runs at."""

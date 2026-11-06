@@ -1,4 +1,4 @@
-"""Sensor plugin: Intel RealSense D455 colour + depth + point cloud, via ``mujoco.Renderer``.
+"""Sensor plugin: Intel RealSense D455 colour + depth + point cloud, drawn through the render service.
 
 Topic/frame naming follows ``realsense-ros``'s conventions (``<ns>/camera/color/image_raw``,
 ``<ns>/camera/color/camera_info``, ``<ns>/camera/depth/image_rect_raw``,

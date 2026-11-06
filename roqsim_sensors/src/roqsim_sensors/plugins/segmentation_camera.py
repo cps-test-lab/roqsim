@@ -414,13 +414,15 @@ class SegmentationCameraPlugin(CameraPlugin):
 
     # -- capture ------------------------------------------------------------------------------
 
-    def _capture_extra(self, ctx: SimContext, renderer) -> None:
-        renderer.enable_segmentation_rendering()
-        # The scene options carry the absent-geom mask, so this pass passes them explicitly --
-        # `update_scene` otherwise uses MuJoCo's defaults, which include every geom group.
-        renderer.update_scene(ctx.data, camera=self._cam_id, scene_option=self._seg_opt)
-        seg = renderer.render()
-        renderer.disable_segmentation_rendering()
+    def _passes(self, ctx):
+        """The label pass is the colour view's, so labels and colour share one snapshot and planes."""
+        passes = super()._passes(ctx)
+        passes["color"].add("segmentation")
+        return passes
+
+    def _capture_extra(self, ctx: SimContext, frames) -> None:
+        # Through the colour view, so the labels are clipped at the planes the colour frame is.
+        seg = frames.render_segmentation(ctx.data, self._seg_opt)
 
         # (H, W, 2) int32: [..., 0] is the object id and [..., 1] its mjtObj type; background is
         # (-1, -1), and a non-geom object (a decor marker) is not something a world can label.

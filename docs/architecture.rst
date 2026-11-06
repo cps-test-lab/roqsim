@@ -112,8 +112,9 @@ Passed to every hook. Key members:
 -  ``spec`` (build phase), ``model``, ``data``, ``dt``, ``sim_time``.
 -  ``config`` — the full parsed YAML dict.
 -  ``blackboard: Blackboard`` — ``set/get/require/__contains__``; typed cross-plugin store.
--  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present)`` (``names``/``all`` take ``present_only``); backs ``simulation_interfaces`` discovery.
--  ``render`` — a ``RenderService`` (lazily set; see §8). **[planned]**
+-  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present, listed)`` (``names``/``all`` take ``present_only`` and ``listed_only``); backs ``simulation_interfaces`` discovery.
+-  ``render`` — the ``RenderService`` every image comes through (set at setup; see §8).
+-  ``events: EventLog`` — ``emit(source, event, **fields)`` on the physics thread records what a plugin decided, stamped with ``sim_time`` and ``episode`` (``roqsim.events``); a recording carries each one on its ``events`` channel from the moment it starts, and ``Recording.events`` reads them back.
 -  ``post(cmd)`` / ``drain_commands()`` — the thread-safe command queue (§7).
 -  ``publish_snapshot(d)`` / ``read_snapshot()`` — immutable snapshot for cross-thread readers.
 -  ``register_gate(name, role)`` / ``gates()`` — step-gate API for synchronous mode (§10); the engine does not wait on gates.
@@ -571,6 +572,153 @@ Types are *roles* (which hooks you implement), not separate base classes:
 
 ``DummyPlugin`` (``plugins/dummy.py``) is a minimal end-to-end example implementing every hook.
 
+.. _machines-and-scenarios:
+
+Machines and scenarios
+~~~~~~~~~~~~~~~~~~~~~~
+
+Two roles are easy to confuse, and a world that confuses them puts decisions where nobody looks for
+them. The line between them is the same in the code, the docs and the examples.
+
+**A machine is one entity's own procedures.** What the entity can do by itself -- move its
+actuators, run its programs, be in its states -- offered through its handle. A machine acts only on
+itself and on what it physically works on: the part in its tool, through that part's handle. It
+decides nothing about other entities: it does not wait for a robot, it does not open because someone
+is near, it does not stop a belt.
+
+**A scenario is the scene.** Which entities act when, who waits for whom, what a presence or an
+event leads to, the order of the work. It drives entities only through their handles, and is written
+either as OpenSCENARIO run by scenario-execution, or in Python.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 60 20 20
+
+   * -
+     - machine
+     - scenario
+   * - a press strokes with its guard door interlocked
+     - ✔
+     -
+   * - a robot loads the press, then starts it
+     -
+     - ✔
+   * - a door opens and closes, ramped, and gives up on an obstruction
+     - ✔
+     -
+   * - a door opens because a walker comes near
+     -
+     - ✔
+   * - a belt runs at a speed and stops
+     - ✔
+     -
+   * - a belt stops while a part is in a light barrier
+     -
+     - ✔
+   * - a part shows its hole when the ram reaches the bottom
+     - ✔ (through the part's handle)
+     -
+
+The test when in doubt: **would the machine do it standing alone in an empty world?** Then it is the
+machine's. If it needs another entity's state to decide, it is a scenario's. A world places a machine
+and sets its parameters (speeds, ``home``, sizes); it carries no machine programs, since a machine's
+behaviour is its package's code.
+
+**A machine** subclasses :class:`roqsim.machine.MachinePlugin`. It declares the position actuators
+it drives (``ACTUATORS``), plugin-owned quantities that ramp the same way (``SETPOINTS``, a belt's
+speed), where they stand after a reset (``HOME``, a world's ``home:`` over it), and its programs:
+generator methods marked ``@program``, each ``yield`` one physics step on simulated time. A program
+moves an actuator at once or ramped at a stated speed in the joint's unit per second -- the ramp
+moves the target, the physics moves the joint -- and waits until a condition holds, until actuators
+have reached their targets or stopped on them (what an interlock waits for), or for a time.
+Programs advance in ``post_step``, ramps in ``pre_step``.
+
+**Every machine has one handle**, a :class:`~roqsim.machine.MachineHandle` under
+``machine:<name>``, and it is the contract for everything that starts something and is waited on:
+
+-  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
+   machine that is busy, raises naming the machine -- stamped with the next sequence number, and
+   applied on the physics thread at the next step. Safe from any thread: starts and cancels reach
+   the physics thread in the order they were made, and a status never goes back to an older start.
+-  ``status() -> MachineStatus(seq, program, finished, error)``: the last start. A caller knows its
+   own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
+   else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
+-  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
+   precondition), ``cancel()`` (the machine stops where it is), ``value(name)`` (an actuator's or
+   setpoint's current target).
+
+It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
+(``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at
+``home``; sequence numbers keep counting, so a stale one never matches.
+
+**Every step is an event** on ``ctx.events``: ``program_start`` (program, seq, args), each step a
+program names, and ``program_end`` (with its error), so a recording carries each machine's timeline.
+The handle's ``start``, ``status`` and ``cancel`` are also endpoints of the machine's entity, so the
+control socket reaches them under ``<machine>/start`` and the same names.
+
+**Fail loudly.** A program ends with ``self.fail(reason)`` when its own outcome is a failure (a door
+stalled on an obstruction): the error is in ``status()`` and the run goes on, for the caller to
+decide. So does a program that sends an actuator outside its range, and one whose joint has not
+arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``, ``until_reached``
+and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
+else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
+``on_error: report`` puts it into ``status()`` instead. A program that ended in an error, or was
+cancelled, stops the machine where it is: each actuator is held where its joint stands, with the
+servo's standing offset under its load kept, so an obstructed joint does not move on by itself once
+the obstacle is gone and a loaded one does not sink at each hold. A handle a machine needs
+(``NEEDS``) that nothing published is refused at reset, naming the key, and a ``NEEDS`` name the
+machine already has is refused when the world loads. An actuator a machine drives is a plain
+position servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear, no dynamics
+that integrate its control -- so its control is the joint's target; a motor, a velocity servo, an
+``<intvelocity>`` or a geared servo is refused at configure.
+
+**How a package provides its machine.** A machine that builds its model from its config is a plugin
+registered under ``roqsim.plugins``, and a world places it by name. A machine with an MJCF model of
+its own is placed by ``spawn_model``, with its controller nested under that entry -- a
+``MachinePlugin`` with no ``build`` that sets ``registers_entity = False``, so its ``ACTUATORS``
+resolve under the spawned entity's prefix and its handle is published under the spawned entity's
+name::
+
+   - spawn_model: {model: my_press, prefix: press_1_}
+     name: press_1
+     components:
+       - my_press_controller: {}
+
+``spawn_model`` does not read a model's manifest, so the controller is written in the world (or in
+a world the cell ``extends``), not in the model's manifest.
+
+**What a machine works on has states of its own.** ``part_state`` shows and hides an entity's
+``look_<name>`` bodies through :mod:`roqsim.presence` -- a strip punched, bent, labelled; a machine's
+own lamp on -- each look with its own inertia where the model names one, through one handle
+(``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
+that handle: the part's state is the part's, and the machine only asks for it to change.
+
+**Presence is reported, never acted on.** ``zone_trigger`` is a box in the world or riding on a
+body that reports the entities entering, dwelling for a time and leaving, filtered by name pattern:
+as events, on a handle (``zone:<address>``) and as an ``occupied`` endpoint. It decides nothing; a
+door that opens for whoever comes near is a scenario reading the zone and starting the door.
+
+**A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
+generator on simulated time, one ``yield`` per physics step, advanced in ``post_step``. It names the
+handles it drives in ``NEEDS`` (``{"press": "machine:press_1"}``), resolved at every reset and refused
+by name when missing; a world may rename them (``needs:``), so one scenario serves two cells. It owns
+no model and writes no actuator. Its helper: ``yield from self.run(handle, program, **args)`` starts
+a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
+``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
+start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
+joined stops the run when the scene ends, and the scene does not end before a task has, unless it was spawned as ``background``);
+``self.navigate(walker, poses)`` sends a walker or a navigator and waits on its route's number;
+``until``, ``wait`` and ``event`` do what they say, and ``set_entity_state`` puts an entity at a pose as a
+world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
+in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
+the machines it drives; a start it makes is applied at the next step whatever the order.
+
+A program that raises stops the run with its own exception, and the scene never reports done.
+When ``program`` has returned and every task but a ``background`` one has ended, the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
+which an OpenSCENARIO ``entity_monitor`` can wait on; ``stop_at_end: true`` also ends a standalone
+``roqsim sim`` run (``ctx.request_stop``). It never ends a scenario-execution run (§4, *Who ends a
+run*).
+
 .. _6-porting-playbook:
 
 6. Porting playbook
@@ -676,14 +824,91 @@ Anti-patterns (do not do)
 8. Rendering
 ------------
 
-A ``RenderService`` on the context that owns all GL/EGL contexts and camera renderers -- created lazily and shared, so multiple sensor/render plugins never fight over contexts -- is **[planned]**. Everything else in this section is built.
+Every image roqsim draws comes through one ``RenderService`` (:mod:`roqsim.rendering`), and every
+renderer stands behind one contract (:mod:`roqsim.render_api`). The user-facing side -- choosing a
+renderer, its settings, the two modes -- is :doc:`rendering`; this is how it works.
 
 -  **Lidar** uses ``mujoco.mj_multiRay`` — **no GL**, works headless everywhere (nav2 needs a ``LaserScan``).
--  **Camera / RGB-D** uses ``mujoco.Renderer`` (offscreen). Cameras render **only when consumed** (lazy), and their expensive endpoints are not *published* to nobody either: ``image``, ``image_compressed``, ``depth``, ``depth_compressed``, ``registered_depth`` and ``points`` set ``Endpoint.lazy``, so a subscriber-less stream costs neither a GL pass nor a serialisation. The two checks answer different questions — the render gate ORs over every endpoint one pass feeds, the publish gate is per-endpoint — so a consumer of the compressed topic alone still gets frames, and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG, since RVL has no C library behind it). MuJoCo clips every camera at one near plane, ``visual/map znear`` times the model's extent, so in a large world it can stand beyond a depth camera's ``clip_near``; a depth camera lowers that plane to its ``clip_near`` in ``configure`` (never raises it), which every camera, the viewer and an export then render with.
+-  **A renderer is an extension.** It registers under the ``roqsim.renderers`` entry-point group, or
+   is named ``module:Class`` / ``file.py:Class``, resolved as plugins are (§12,
+   :func:`roqsim.registry.resolve_renderer`); the core names none. MuJoCo's own,
+   :class:`~roqsim.rendering.MujocoRenderer`, registers there as ``mujoco`` and is the default;
+   :class:`~roqsim.render_socket.SocketRenderer` (``socket``) is the client of a renderer in another
+   process, with ``TCP_NODELAY`` on both ends of a TCP connection, since a message is several writes.
+   A package for one server subclasses it: it starts that server, sends the scene in the form the
+   server reads (``scene_blobs``), and declares what it draws. A world chooses with ``sim.renderer``, a
+   camera may name its own with ``renderer:``, ``--renderer`` is ``--set sim.renderer=`` as a
+   flag, and a renderer's settings are its block ``sim.renderers.<name>``, validated by its
+   ``validate_config`` at load.
+-  **The contract** (:class:`~roqsim.render_api.Renderer`): ``open(scene)`` once with a
+   ``SceneDescription`` -- the compiled model (read-only), which bodies move, the cameras it will be
+   asked for, its settings; then ``render(snapshot, requests)`` per tick with a ``StateSnapshot``
+   (sim time, every body's pose, the model values presence changes at run time, and for an in-process
+   renderer a copy of ``MjData``) and a **batch** of ``CameraRequest`` (camera, images asked for,
+   world pose, field of view; the camera carries the intrinsics MuJoCo projects it with,
+   :func:`roqsim.rendering.camera_intrinsics`), answered with one ``Frame`` per request stamped with the snapshot's sim
+   time; ``close()``. Nothing in it assumes a GL context or the renderer's process. What a renderer
+   can give is declared on its class (``RendererCapabilities``: images, camera models, whether it
+   composes moving bodies, draws the static world, renders a batch at once, is deterministic, runs
+   in-process, draws decorations, draws only the geom groups a camera names, projects an off-centre
+   principal point, projects non-square pixels), and
+   :meth:`RenderService.check` holds every camera to it when the world loads: a camera a renderer
+   cannot serve fails the load naming both, and nothing falls back to MuJoCo's renderer. Every frame
+   a renderer returns is held to its request: its camera, its snapshot's sim time and step, and each
+   image's size and type (``render_api.IMAGE_FORMATS``); any other fails the tick naming both.
+-  **Per tick.** The engine builds one service at setup, before ``configure``, where each camera
+   registers a ``RenderView`` per pass (colour, plus the depth camera of a device whose depth has
+   optics of its own) with its own gate as the view's ``wants``. Between ``mj_step`` and
+   ``post_step`` the engine calls :meth:`RenderService.tick`: every view is asked whether it is due,
+   one snapshot is taken, and the due views go to their renderers as one batch each; a camera's
+   ``post_step`` then turns its frame into its streams. Cameras render **only when consumed** (lazy),
+   and their expensive endpoints are not *published* to nobody either: ``image``,
+   ``image_compressed``, ``depth``, ``depth_compressed``, ``registered_depth`` and ``points`` set
+   ``Endpoint.lazy``, so a subscriber-less stream costs neither a draw nor a serialisation, and a
+   camera nobody reads is in no batch -- a world whose cameras nobody reads opens no GL context. The
+   two checks answer different questions — the render gate ORs over every endpoint one pass feeds,
+   the publish gate is per-endpoint — so a consumer of the compressed topic alone still gets frames,
+   and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as
+   ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG,
+   since RVL has no C library behind it).
+-  **Two modes** (``sim.render.mode``). ``sync``, the default, draws on the physics thread and the
+   tick waits for its frames: deterministic, and what lockstep (§10) requires -- a world with
+   ``sim.sync.enabled`` cannot ask for ``async``. ``async`` gives each renderer a worker thread that
+   opens, drives and closes it (a GL context is thread-affine) and draws its own copy of the model,
+   updated from each snapshot; the physics thread hands it the batch and steps on. A slot of one:
+   a batch posted while another waits replaces it (newest wins, the replaced ones counted as
+   ``dropped``), so nothing queues, and a frame is stamped with its snapshot's time, a tick or more
+   before the one that publishes it; its noise is drawn at that time (``ctx.rng_for(..., at=)``), so
+   an async frame is the sync frame of its stamp. A worker whose renderer failed raises on the
+   physics thread at the next tick, and a worker that does not open or draw a batch a caller waits
+   for within ``sim.render.timeout_s`` is named as hung (opening waits for the renderer's own
+   ``open_timeout_s`` where that is longer: a renderer slow to start). ``sim.render.workers`` deals each
+   renderer's cameras to that many instances (a context each; a thread each in ``async``), one
+   camera's views together (a view's ``group``), so its passes of one snapshot arrive as one -- the
+   seam a second GPU or process goes behind, which no camera plugin sees.
+-  **MuJoCo's renderer** holds one ``MjrContext`` and one upload per instance, whatever the camera
+   count, and sizes its offscreen framebuffer to its largest camera in its own context, never in the
+   shared model. Per batch it builds the scene once (``mjv_updateScene``); each camera then sets only
+   its view (``mjv_updateCamera``), its lights (``mjv_makeLights``: the headlight follows the camera)
+   and its clip planes, is drawn at the origin of the framebuffer, and its colour image is copied on
+   the GPU into its tile of one atlas, read back once per batch. Depth and segmentation keep a pass
+   of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them. A camera with
+   its own geom groups or decorations gets a build of its own. The pictures are those a
+   ``mujoco.Renderer`` per camera drew (``roqsim/tests/test_render_service_pixels.py``). Under
+   MuJoCo's default 4x MSAA a frame is not bit-reproducible on every GPU, with or without the service:
+   a run may differ from another in a handful of values by one level; a model with
+   ``<quality offsamples="0"/>`` draws exactly.
+-  **Clip planes.** MuJoCo derives every camera's clip planes from the model, ``visual/map znear``/``zfar`` times its extent, so in a large world the near plane stands tens of centimetres out. A sensor camera draws instead between its ``render_near`` (a physical distance, default 0.01 m) and the model's own far plane, so what it sees does not depend on the world's size: the renderer sets those planes on the GL cameras of its own scene after the camera's view is set and linearises its depth reads with them, and the model, the viewer, an export and every other camera keep theirs. Every pass of a camera -- colour, depth, registered depth, labels -- is drawn with its planes. What a depth camera senses is separate: ``clip_near``/``clip_far`` mask the rendered depth to "no return" afterwards, so a surface nearer than ``clip_near`` is drawn, hides what is behind it and reads "no return"; ``render_near`` must not exceed ``clip_near``.
+-  **Without a tick.** ``roqsim render`` and its videos, the thumbnails, the scene review and the
+   coverage visualisation draw through :class:`~roqsim.rendering.FrameRenderer`, one view of a service
+   of its own; ``roqsim render`` takes the world's renderer, and the scene review stays on MuJoCo's,
+   since it picks and decorates the MuJoCo scene it edits.
 
 -  **The offscreen backend is bound by ``import mujoco``, so it is chosen by ``import roqsim``.** ``MUJOCO_GL`` is read exactly once, inside ``mujoco/rendering/classic/gl_context.py``, while mujoco is being imported; it assigns ``GLContext`` there and then, and an *unset* value is not an error but a choice — it falls through to **glfw**. Everything that follows from that is the reason :func:`roqsim.gl.select_offscreen_gl` is called from the package ``__init__`` rather than from a driver's ``main``: a driver module's own imports reach mujoco before its ``main`` body runs, so a selection made there sets a variable nobody will read again. A selection made in ``roqsim.runner.main`` would be inert for every headless run, invisibly, because a world with no camera never constructs a ``Renderer`` and therefore never instantiates the mis-bound backend; the first camera world on a headless node would then fail with ``mujoco.FatalError: gladLoadGL error`` from inside ``MjrContext``. A ``PYOPENGL_PLATFORM`` of ``egl`` or ``osmesa`` decides, since each backend refuses to import under the other's; with neither set, a node with a DRI render device gets ``egl`` and one without gets ``osmesa``; an explicit ``MUJOCO_GL`` always wins and ``ROQSIM_NO_GL_SELECT`` opts out. Both backends are installed in the container images for the same reason the choice is deferred: which one works is a property of the node, not of the image. The one case the package ``__init__`` cannot cover — a consumer importing ``mujoco`` first — is caught by :func:`roqsim.rendering.check_gl_backend`, which every renderer in the tree funnels through and which names the cause and the fix rather than leaving MuJoCo's message to stand.
 -  The interactive viewer (``mujoco.viewer.launch_passive``) is a *driver* concern, separate from the offscreen ``RenderService``, so windowed vs headless is a driver switch, not a plugin change. The standalone runner sets the viewer's initial free camera from the world's optional ``sim.view`` block (``lookat``/``distance``/``azimuth``/``elevation``, plus ``track`` — an entity or body to follow — and ``follow_heading``; any subset — omitted keys keep MuJoCo's model-derived default). ``sim.view`` is the camera and *only* the camera: it is schema-checked on load, so an unknown key fails the run rather than being silently dropped. The two Simulate side panels are deliberately **not** expressible there — they are run-level flags (``--left-ui``/``--right-ui``, passed to ``launch_passive``'s ``show_left_ui``/``show_right_ui``, both hidden by default), on the same footing as ``--manual-control``: a world describes the experiment, whereas panels and hand-driving describe one interactive session. All of it is windowed-only (ignored under ``headless``) and is not a plugin concern. The keys roqsim adds to that window are declared once (:mod:`roqsim.keys`): the handlers take their keycodes from those records and the **F1** list is rendered from them, so what the window says a key does and what it does are one declaration -- and the list a run shows is merged from the handlers that run actually wired, so it never offers a key this window lacks. The window's text overlay is owned by slot (:mod:`roqsim.overlay`) because ``set_texts`` replaces the whole set: the camera-mode notice and the key list are two writers, and either alone would take the other down.
 -  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture; a robot whose manifest mounts devices is thumbnailed as ``spawn_robot`` builds it, devices attached, since its own MJCF does not carry them. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back.
+
+-  **A see-through geom throws no shadow.** MuJoCo's shadow map is binary, so a pane or a shrink film at 10 % opacity would block a shadow-casting light as completely as a steel plate and leave what is behind it in the dark. :class:`roqsim.rendering.MujocoRenderer`, which every camera and ``roqsim render`` draw through, moves every geom whose resolved alpha is below 1 to ``mjCAT_DECOR`` after the scene is built -- the one category MuJoCo leaves out of its shadow pass and uses for nothing else at that point -- so it is still drawn and blended but no longer darkens what it covers. The interactive viewer is MuJoCo's own and keeps its shadows.
 
 -  **A scene export is one walk and a writer.** ``export gltf`` (glTF 2.0) writes the scene. :mod:`roqsim.scene_source` compiles it -- a world through the same ``Engine`` a run builds, reset and optionally settled, or a bare MJCF -- and :mod:`roqsim.scene_content` decides what it contains: bodies with their poses, the drawn geoms (one predicate, :func:`roqsim.scene_content.drawn_group`), meshes, skins and the flexes drawn as skins, materials, textures, the exported state a format without joints places bodies at (:func:`roqsim.scene_content.exported_state`) and the joints with their reference values, which glTF carries in ``extras``, and the sensor cameras the configured plugins declare through ``Plugin.scene_cameras`` (:func:`roqsim.scene_content.sensor_cameras`), each on its body with the projection of the image it publishes. A writer only spells that, and a test holds the file to the walk (``test_export_gltf.py``). Primitives as triangles come from :mod:`roqsim.tessellate`, shared with ``export mesh``; the textured surfaces there follow MuJoCo's own renderer, so a texture lands where MuJoCo draws it.
 -  **Closing the window is a wait, not a request.** MuJoCo runs the window on threads it owns and ``Handle.close()`` only sets ``exitrequest``, so the window, its GL context and its X drawable are destroyed *after* the call returns. A process that closes and then exits promptly (a world that fails to load, ``--steps 1``, a short ``--seconds``) would race its own teardown: Python's ``atexit`` runs ``glfw.terminate`` under the render thread, whose in-flight ``glXSwapBuffers`` then hits a destroyed drawable, and Xlib's default handler calls ``exit()`` from that thread while the main thread is already finalizing — the process hangs after its last line of output (or segfaults). Both drivers therefore open with :func:`roqsim.viewer.launch_viewer` and close with :func:`roqsim.viewer.close_viewer`, which joins those threads (~10 ms) so the teardown is ordered; never ``Handle.close()`` or ``with handle:`` directly. Relatedly, the cosmetic X11 window branding (:mod:`roqsim.window_branding`) polls other clients' windows, where a window closing mid-pass is normal, so it installs an ignoring X error handler for the duration — Xlib's default one would kill the process over a window title.
@@ -743,7 +968,7 @@ go through it. Three things live there because they must be decided once:
    refitted on every presence change. Measured against a 2D-lidar sweep the payoff is ~0: the
    simulator there is paced ``realtime`` with 30-40x headroom, and raycasting is ~2% of one core
    against a container that is mostly ROS transport. Cameras are unaffected either way — they
-   rasterize through ``mujoco.Renderer`` on the GPU already, and their depth is that render's
+   rasterize through the render service on the GPU already (§8), and their depth is that render's
    z-buffer, not a raycast.
 
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
@@ -844,7 +1069,7 @@ Design:
 -  **Config:** ``sim.sync = {enabled, timeout_s, wait_for: [sensors, control]}``; default off. ``GetSimulatorFeatures`` reports whether sync stepping is active.
 -  **Safety:** timeout + a deadlock diagnostic (which gate never fired) prevents a missing/late node from hanging the sim.
 
-The command-queue model (§7) is the substrate: sync mode adds a *wait on named gates*, not a new concurrency scheme. ``register_gate``/``gates`` exist and are reset each ``reset()``, and the engine does not wait on them. ``roqsim_aerial``'s ``px4_sitl`` is the one user: it registers a consumer gate and waits on it in its own ``post_step``, with the timeout and deadlock diagnostic this section requires.
+The command-queue model (§7) is the substrate: sync mode adds a *wait on named gates*, not a new concurrency scheme. A camera's frames already belong to their tick when the render service is in its default ``sync`` mode (§8), which is why a world turning lockstep on cannot ask for ``async``; a camera's producer gate would be satisfied by its ``post_step``, once its frame is in. ``register_gate``/``gates`` exist and are reset each ``reset()``, and the engine does not wait on them. ``roqsim_aerial``'s ``px4_sitl`` is the one user: it registers a consumer gate and waits on it in its own ``post_step``, with the timeout and deadlock diagnostic this section requires.
 
 .. _11-performance--benchmarking-impl:
 
@@ -861,7 +1086,7 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 ---------------
 
 -  **Layout:** the framework core is its own pip package ``roqsim/`` (engine, plugin API, drivers, the generic ``dummy`` plugin, and the driver-level capture/render modules). Generic, robot-family-agnostic sensors live in ``roqsim_sensors/`` (``lidar``, ``oakd_camera``, ``realsense_d435``, ``imu``, ``gnss``). Robot-family plugins + assets live in further sibling packages — wheeled bases in ``roqsim_mobile/`` (floorplan/spawn_robot/diff_drive/omni_drive, models, worlds); arms and manipulators are further siblings, aerial vehicles in ``roqsim_aerial/`` (``quadrotor_controller``, ``multirotor_motors``, ``px4_sitl``, models, worlds), and a robot belonging to two families goes in a package depending on both (``roqsim_mobile_manipulation/``) rather than widening one family's dependencies. The ROS bridge and the nav2 example are colcon packages under ``ros2_ws/src/`` (``roqsim_ros_bridge``, ``roqsim_nav2_example``). Keep the core ROS-free.
--  **Naming:** plugin classes ``PascalCase``, entry-point names ``snake_case``; blackboard handles under ``<kind>:<name>`` (``robot:<name>``, ``metrics:<name>``, ``model_override:<name>``, ``contact_monitor:<name>``, ``door:<name>:state``).
+-  **Naming:** plugin classes ``PascalCase``, entry-point names ``snake_case``; blackboard handles under ``<kind>:<name>`` (``robot:<name>``, ``metrics:<name>``, ``model_override:<name>``, ``contact_monitor:<name>``, ``door:<name>:state``, ``machine:<name>`` for every machine, see :ref:`machines-and-scenarios`).
 -  **Reaching a plugin from outside:** a plugin an out-of-process *or* out-of-package driver must reach **publishes a blackboard handle** in ``configure`` — a small callable or dataclass under ``<kind>:<name>``, where ``<name>`` is the instance's world-YAML ``name:``. Consumers resolve that key; they never iterate ``engine.plugins`` and never match on a class name, which breaks silently on a rename and cannot distinguish two instances of one plugin. Publish a *callable* when the value is replaced each step (``contact_monitor.read_state``) rather than the object it returns. The in-process seam a driver starts from is ``MujocoSim.context`` (a :class:`~roqsim.context.SimContext`, i.e. exactly the rights a plugin has, single-writer rule included) — not the ``Engine``, so ``plugins`` and ``config`` stay the engine's own. Over a transport the same capability is an ``Endpoint`` (§13); the two are the same declaration read two ways, which is what lets one scenario action serve a stepped run and a ROS run.
 -  **Assets:** record upstream license for any vendored MJCF/mesh next to it (see ``roqsim_mobile/.../husky_a200/husky_a200_LICENSE`` for the pattern). Where a provider ships its models *flat*, one directory holds several vendors' terms and "the file beside it" attributes the wrong one, so the model names its own with ``license:`` in its manifest (:func:`roqsim.manifest.manifest_license`, read by both the docs catalog and ``roqsim catalog models``).
 -  **Model headline:** open a model's MJCF with a comment whose first sentence says what the model *is* (``Clearpath Ridgeback (4-wheel mecanum, holonomic) for MuJoCo.``). The docs model catalog describes each model with that sentence and reads the licence out of the sidecar's own text, so neither is prose anyone maintains twice; a model without one falls back to repeating its package's summary, which ``roqsim/tests/test_model_docs.py`` fails on.
@@ -1001,6 +1226,18 @@ default, and missing it aborts with ``GOAL_TOLERANCE_VIOLATED``. Succeeding as s
 waypoint has been *fed* would make a blocked or saturated arm indistinguishable from one
 that did the job, and MoveIt forwards that verdict unchanged, so the caller would see a clean execution
 against a scene that never moved.
+
+The rest of a JointTrajectoryController's policy follows the controller's hints where a robot states
+them (``arm_controller``'s ``path_tolerance``, ``allow_partial_joints_goal``,
+``allow_nonzero_velocity_at_trajectory_end``): a goal the controller would refuse is rejected before
+it executes, a joint trailing the trajectory by more than its path tolerance aborts it with
+``PATH_TOLERANCE_VIOLATED``, and a goal time tolerance of 0 waits for the joints without limit,
+upstream's convention. Two of upstream's rules hold for every arm, whether or not it states hints:
+one goal executes per controller, so a new one ends the running one with "Current goal cancelled
+due to new incoming action.", and a goal that reaches its tolerance succeeds with "Goal successfully
+reached!" as its ``error_string``. And a producer that cannot move now
+-- ``arm_controller``'s motion gate, closed by a driver interface -- aborts its goal with the reason.
+These decisions are ROS-free (``roqsim_ros_bridge/trajectory_policy.py``) and tested without ROS.
 
 **The control socket (``ipc``).** The second backend, :class:`roqsim.ipc.bridge.IpcBridge`, is core
 roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default

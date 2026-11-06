@@ -34,6 +34,18 @@ read. `command` is the command's name, or
 `'<component>/<name>'` to pick one of two with that name (`entity_call(entity: 'ur5e', command:
 'force_torque/tare')`); the parameter is not called `call` because that is an OpenSCENARIO keyword.
 
+## Running a file from a world
+
+A world entry names a file, and `roqsim sim` runs it in its own loop:
+
+```yaml
+components:
+  - scenario: {file: press_cell.osc}   # relative to the world file
+    name: scene
+```
+
+See `docs/plugins.rst`, "The same scene in OpenSCENARIO".
+
 ## Conditions on what a plugin reports
 
 A plugin that knows something about an entity -- a `force_limit` that tripped, a `clearance`

@@ -88,7 +88,7 @@ a path or which package a tool lives in:
 
 The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a world, ``roqsim render``
 draws one, ``rebuild`` produces a recorded run's sensor streams, and ``state``, ``check``, ``health``,
-``catalog`` and ``plugins`` read a world, a run or the
+``catalog``, ``plugins`` and ``renderers`` read a world, a run or the
 registries; the core's exporters are the ``roqsim export`` group. Every package tool is
 ``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).
 

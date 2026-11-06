@@ -1,4 +1,4 @@
-"""Sensor plugin: Zivid 3 XL250 structured-light 3D camera, via ``mujoco.Renderer`` (GL, offscreen).
+"""Sensor plugin: Zivid 3 XL250 structured-light 3D camera, drawn through the render service.
 
 The Zivid 3 XL250 is an industrial structured-light 3D camera: a single imaging sensor yields both a
 colour 2D image and a coloured 3D point cloud (with a projector at a 250 mm baseline). This plugin

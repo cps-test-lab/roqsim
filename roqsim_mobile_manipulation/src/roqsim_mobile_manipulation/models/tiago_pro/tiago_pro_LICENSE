@@ -12,9 +12,9 @@ from. The same Apache-2.0 text covers all of them; it is vendored once here.
 
     all from https://github.com/pal-robotics/<repo>
 
-Derived files in this package: models/tiago_pro.xml (built by external/convert/
-build_tiago_pro_mjcf.py) and the 39 STL meshes under models/meshes/tiago_pro/ (copied verbatim).
-See roqsim_mobile_manipulation/THIRD_PARTY.md for the provenance and the adaptations made.
+Derived files in this package: models/tiago_pro/tiago_pro.xml (built by external/convert/
+build_tiago_pro_mjcf.py, which states the adaptations made) and the STL meshes under
+models/tiago_pro/meshes/ (copied verbatim).
 
 --------------------------------------------------------------------------------
 

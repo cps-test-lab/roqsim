@@ -148,6 +148,10 @@ scenario test_every_action:
             delete_entity(entity: 'crate')
             entity_call(entity: 'grip_fault', command: 'override', value: 'true',
                         require_verified: false)
+            machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1', check: false)
+            zone_entered(zone: 'gate', pattern: 'box_*', since: 0.0)
+            zone_dwelled(zone: 'gate', pattern: 'box_*', since: 0.0)
+            zone_left(zone: 'gate', pattern: 'box_*')
 """
 
 

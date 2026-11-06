@@ -9,9 +9,13 @@ Three forms are supported (mirroring scenario-execution's own simulation loader)
 3. **Filesystem ``path/to/file.py:Class``** -> loaded from a file (relative to ``base_dir``).
    e.g. ``./plugins/custom_ctrl.py:CustomController``
 
+A short name two installed packages register differently is refused, naming both.
+
 Resolution order: an entry-point name wins; otherwise, if the string contains ``:`` the left side
 is treated as a file path when it exists on disk, else as a module path. Failures raise
 :class:`PluginError` naming the form attempted and why it failed.
+
+Renderers resolve the same way, from the ``roqsim.renderers`` group (:func:`resolve_renderer`).
 """
 
 from __future__ import annotations
@@ -25,28 +29,46 @@ from .entry_points import entry_points as _entry_points
 from .plugin import Plugin, PluginError
 
 ENTRY_POINT_GROUP = "roqsim.plugins"
+#: Where a renderer registers (:mod:`roqsim.render_api`).
+RENDERER_GROUP = "roqsim.renderers"
 
 
-def _load_from_entry_point(name: str) -> type[Plugin] | None:
-    for ep in _entry_points(ENTRY_POINT_GROUP):
-        if ep.name == name:
-            try:
-                obj = ep.load()
-            except ImportError as err:
-                # Registered but not importable — its distribution is installed while one of *its*
-                # dependencies is not. The ROS bridge is the standing example: a wheel puts the entry
-                # point on the path, and importing it needs rclpy, which a ROS-free process has not
-                # sourced. That must be a PluginError like every other resolution failure, because
-                # callers distinguish "cannot resolve" from "resolved to something wrong" by this type
-                # alone: `drop_transport_plugins` drops an unresolvable ref (a geometry-only export
-                # needs no transport), and a raw ImportError sailed past it and killed the export.
-                raise PluginError(
-                    f"plugin {name!r} is registered by an installed package but could not be "
-                    f"imported: {err}"
-                ) from err
-            _check_is_plugin(obj, f"entry-point {name!r}")
-            return obj
+def _load_from_entry_point(name: str, group: str = ENTRY_POINT_GROUP, check=None) -> type | None:
+    check = check or _check_is_plugin
+    named = {ep.value: ep for ep in _entry_points(group) if ep.name == name}
+    if len(named) > 1:
+        # Which one the metadata lists first depends on the install, so taking it would let a world
+        # load another plugin than its author's without a word.
+        kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
+        by = "; ".join(f"{v} ({_distribution(ep)})" for v, ep in sorted(named.items()))
+        raise PluginError(
+            f"{kind} {name!r} is registered by more than one installed package: {by}. Uninstall "
+            f"one, or name the one meant as 'module.path:Class'."
+        )
+    for ep in named.values():
+        try:
+            obj = ep.load()
+        except ImportError as err:
+            # Registered but not importable — its distribution is installed while one of *its*
+            # dependencies is not. The ROS bridge is the standing example: a wheel puts the entry
+            # point on the path, and importing it needs rclpy, which a ROS-free process has not
+            # sourced. That must be a PluginError like every other resolution failure, because
+            # callers distinguish "cannot resolve" from "resolved to something wrong" by this type
+            # alone: `drop_transport_plugins` drops an unresolvable ref (a geometry-only export
+            # needs no transport), and a raw ImportError sailed past it and killed the export.
+            kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
+            raise PluginError(
+                f"{kind} {name!r} is registered by an installed package but could not be "
+                f"imported: {err}"
+            ) from err
+        check(obj, f"entry-point {name!r}")
+        return obj
     return None
+
+
+def _distribution(ep) -> str:
+    dist = getattr(ep, "dist", None)
+    return getattr(dist, "name", None) or "an unnamed distribution"
 
 
 def _split_ref(ref: str) -> tuple[str, str]:
@@ -65,7 +87,7 @@ def _split_ref(ref: str) -> tuple[str, str]:
 _FILE_MODULES: dict[Path, tuple[tuple[int, int], object]] = {}
 
 
-def _load_from_file(path: Path, cls_name: str, ref: str) -> type[Plugin]:
+def _load_from_file(path: Path, cls_name: str, ref: str, check=None) -> type:
     if not path.exists():
         raise PluginError(f"plugin file {path} (from {ref!r}) does not exist")
     resolved = path.resolve()
@@ -73,7 +95,7 @@ def _load_from_file(path: Path, cls_name: str, ref: str) -> type[Plugin]:
     stamp = (stat.st_mtime_ns, stat.st_size)
     cached = _FILE_MODULES.get(resolved)
     if cached is not None and cached[0] == stamp:
-        return _get_class(cached[1], cls_name, ref)
+        return _get_class(cached[1], cls_name, ref, check)
     module_name = f"roqsim_ext_{path.stem}_{abs(hash(str(resolved)))}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
@@ -85,25 +107,25 @@ def _load_from_file(path: Path, cls_name: str, ref: str) -> type[Plugin]:
     except Exception as exc:  # noqa: BLE001
         raise PluginError(f"error importing plugin file {path} (from {ref!r}): {exc}") from exc
     _FILE_MODULES[resolved] = (stamp, module)
-    return _get_class(module, cls_name, ref)
+    return _get_class(module, cls_name, ref, check)
 
 
-def _load_from_module(module_path: str, cls_name: str, ref: str) -> type[Plugin]:
+def _load_from_module(module_path: str, cls_name: str, ref: str, check=None) -> type:
     try:
         module = importlib.import_module(module_path)
     except Exception as exc:  # noqa: BLE001
         raise PluginError(
             f"could not import module {module_path!r} (from {ref!r}); is it on PYTHONPATH? {exc}"
         ) from exc
-    return _get_class(module, cls_name, ref)
+    return _get_class(module, cls_name, ref, check)
 
 
-def _get_class(module, cls_name: str, ref: str) -> type[Plugin]:
+def _get_class(module, cls_name: str, ref: str, check=None) -> type:
     try:
         obj = getattr(module, cls_name)
     except AttributeError as exc:
         raise PluginError(f"class {cls_name!r} not found in {ref!r}") from exc
-    _check_is_plugin(obj, ref)
+    (check or _check_is_plugin)(obj, ref)
     return obj
 
 
@@ -132,3 +154,40 @@ def resolve_plugin(ref: str, base_dir: Path | None = None) -> type[Plugin]:
     if left.endswith(".py") or candidate.exists():
         return _load_from_file(candidate, cls_name, ref)
     return _load_from_module(left, cls_name, ref)
+
+
+def _check_is_renderer(obj, where: str) -> None:
+    from .render_api import Renderer  # noqa: PLC0415 -- the plugin path never needs it
+
+    if not (isinstance(obj, type) and issubclass(obj, Renderer)):
+        raise PluginError(f"{where} does not resolve to a roqsim.render_api.Renderer subclass")
+
+
+def renderer_names() -> list[str]:
+    """The renderers installed: every name registered under :data:`RENDERER_GROUP`."""
+    return sorted({ep.name for ep in _entry_points(RENDERER_GROUP)})
+
+
+def resolve_renderer(ref: str, base_dir: Path | None = None) -> type:
+    """Resolve ``ref`` to a :class:`roqsim.render_api.Renderer` subclass, in the three plugin forms.
+
+    An unknown name lists the renderers installed, so the fix is in the message.
+    """
+    if ":" not in ref:
+        cls = _load_from_entry_point(ref, RENDERER_GROUP, _check_is_renderer)
+        if cls is not None:
+            return cls
+        installed = ", ".join(renderer_names()) or "(none)"
+        raise PluginError(
+            f"unknown renderer {ref!r}: no package installed registers it under "
+            f"'{RENDERER_GROUP}'. Installed: {installed}. A renderer from another package is "
+            f"installed with that package (e.g. roqsim_render_{ref}), or named as "
+            f"'module.path:Class' or 'path/to/file.py:Class'."
+        )
+    left, cls_name = _split_ref(ref)
+    candidate = Path(left)
+    if not candidate.is_absolute() and base_dir is not None:
+        candidate = base_dir / candidate
+    if left.endswith(".py") or candidate.exists():
+        return _load_from_file(candidate, cls_name, ref, _check_is_renderer)
+    return _load_from_module(left, cls_name, ref, _check_is_renderer)

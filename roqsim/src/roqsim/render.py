@@ -28,7 +28,8 @@ caller need not repeat what the file already knows. Where the camera is comes fr
 
 ``--set`` and ``--override`` are ``roqsim sim``'s own options (:mod:`roqsim.override_options`), so a
 world is rendered as the run with those overrides would build it. With ``--state`` they may set only
-``sim.view``: the recorded world is rebuilt from its provenance, and any other key is refused.
+``sim.view``, ``sim.renderer`` and ``sim.renderers``: the recorded world is rebuilt from its provenance,
+and any other key is refused.
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
@@ -61,9 +62,16 @@ from .capture import CaptureError
 from .config import _VIEW_KEYS, PluginError, assignments_from_mapping, overrides_from_dotlist
 from .exit_status import NO_GL
 from .models import ModelError
-from .override_options import add_override_options, overrides_from_options
+from .override_options import add_override_options, add_renderer_option, overrides_from_options
 from .recording import RecordingError
-from .rendering import FrameRenderer, GLBackendError, check_gl_backend, focus_camera
+from .rendering import (
+    DEFAULT_RENDERER,
+    FrameRenderer,
+    GLBackendError,
+    check_gl_backend,
+    draws_with_gl,
+    focus_camera,
+)
 from .viewer import GL_HELP, DisplayError, ViewError
 
 log = logging.getLogger(__name__)
@@ -634,17 +642,19 @@ def render_target(
                 "--camera-path cannot move it. Use --view or --focus for the base camera."
             )
     if state and overrides:
-        # A recording's model is the one its provenance names, so only the camera can be changed
-        # over it (see _render_recording). Anything else would be accepted and do nothing.
+        # A recording's model is the one its provenance names, so only how it is drawn can be
+        # changed over it -- the camera, and the renderer and its settings (see
+        # _render_recording). Anything else would be accepted and do nothing.
         ignored = sorted(
             ".".join(a.path)
             for a in assignments_from_mapping(overrides)
-            if a.path[:2] != ("sim", "view")
+            if a.path[:2] not in DRAWING_OVERRIDES
         )
         if ignored:
             raise RenderError(
                 f"--state rebuilds the recorded world from its provenance, so an override other "
-                f"than sim.view cannot change it: {', '.join(ignored)}."
+                f"than how it is drawn ({', '.join('.'.join(p) for p in DRAWING_OVERRIDES)}) "
+                f"cannot change it: {', '.join(ignored)}."
             )
     # Built before any world compiles: a misspelt overlay fails in milliseconds, not after the build.
     try:
@@ -699,7 +709,17 @@ def render_target(
         if check:
             record["rendered"] = False
             return record
-        _render_one(model, data, cam, width, height, out, geomgroup, overlays=overlays)
+        _render_one(
+            model,
+            data,
+            cam,
+            width,
+            height,
+            out,
+            geomgroup,
+            overlays=overlays,
+            choice=renderer_choice(ctx),
+        )
         record["rendered"] = True
         return record
 
@@ -733,6 +753,43 @@ def _base_record(out: Path, width: int, height: int, model, cam) -> dict:
     }
 
 
+#: The ``sim`` keys an override may set over a recording: how it is drawn, never what it holds.
+DRAWING_OVERRIDES = (("sim", "view"), ("sim", "renderer"), ("sim", "renderers"))
+
+
+def renderer_choice(ctx, overrides: dict | None = None) -> dict:
+    """The renderer the world chose (``sim.renderer`` and its block), as FrameRenderer takes it.
+
+    A render draws through the world's renderer, as its cameras do; a bare mesh or model, which has
+    no world, through MuJoCo's. *overrides* (``--renderer``, ``--set sim.renderers...``) are laid
+    over the world's choice: a recording is rebuilt from its own world, which never saw them.
+    """
+    sim = (overrides or {}).get("sim") or {}
+    service = getattr(ctx, "render", None)
+    if service is None and not sim:
+        return {}
+    name = sim.get("renderer") or (service.default_renderer if service else DEFAULT_RENDERER)
+    settings = dict(service.settings.get(name, {})) if service else {}
+    settings.update((sim.get("renderers") or {}).get(name) or {})
+    return {"renderer": name, "settings": settings}
+
+
+def open_frame_renderer(model, width: int, height: int, **kwargs) -> FrameRenderer:
+    """A :class:`FrameRenderer`, its failure to open told in its renderer's terms.
+
+    MuJoCo's renderer failing to open is a GL failure (no context, a wrong backend), and gets the
+    guidance for that; any other renderer's failure -- a socket server that never answered -- is
+    its own, and says so.
+    """
+    name = kwargs.get("renderer") or DEFAULT_RENDERER
+    try:
+        return FrameRenderer(model, width, height, **kwargs)
+    except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
+        if draws_with_gl(name):
+            raise RenderGLError(GL_HELP.format(err=err)) from err
+        raise RenderError(f"renderer {name!r} could not open: {err}") from err
+
+
 def _render_one(
     model,
     data,
@@ -744,11 +801,11 @@ def _render_one(
     *,
     overlays=None,
     sim_time: float = 0.0,
+    choice: dict | None = None,
 ) -> None:
-    try:
-        frame = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
-    except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
-        raise RenderGLError(GL_HELP.format(err=err)) from err
+    frame = open_frame_renderer(
+        model, width, height, camera=cam, geomgroup=geomgroup, **(choice or {})
+    )
     try:
         from PIL import Image
 
@@ -884,6 +941,7 @@ def _render_recording(
             camera_path=camera_path,
             overlays=overlays,
             scene=not framed,
+            choice=renderer_choice(ctx, merged),
         )
         if onset is not None:
             record["onset"] = onset.as_record()
@@ -924,6 +982,7 @@ def _render_recording(
         geomgroup,
         overlays=overlays,
         sim_time=sample.sim_time,
+        choice=renderer_choice(ctx, merged),
     )
     record["rendered"] = True
     if onset is not None:
@@ -1030,6 +1089,7 @@ def _render_video(
     camera_path=None,
     overlays=None,
     scene=False,
+    choice=None,
 ):
     """Render every sample in range and pipe it to ffmpeg. One sample is always exactly one frame.
 
@@ -1063,10 +1123,14 @@ def _render_video(
         for sample in rec.range(start, stop):
             cam = cameras.for_sample(sample)
             if renderer is None:
-                try:
-                    renderer = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
-                except Exception as err:  # noqa: BLE001
-                    raise RenderGLError(GL_HELP.format(err=err)) from err
+                renderer = open_frame_renderer(
+                    model,
+                    width,
+                    height,
+                    camera=cam,
+                    geomgroup=geomgroup,
+                    **(choice if choice is not None else renderer_choice(ctx)),
+                )
             else:
                 renderer.camera = cam
             count += 1
@@ -1325,6 +1389,7 @@ def main(argv: list | None = None) -> int:
     )
     # `roqsim sim`'s own --set/--override, so the picture is of the world that run would build.
     add_override_options(parser)
+    add_renderer_option(parser)
     parser.add_argument(
         "--check",
         action="store_true",

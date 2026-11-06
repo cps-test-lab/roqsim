@@ -1,0 +1,6 @@
+FANUC M-20iD/25 (m20id25)
+  Source:    https://github.com/FANUC-CORPORATION/fanuc_description @ fb40c9803a826ba68c7c8e28ba904a25efa7fcd2 (v2.3.0),
+             fanuc_m20_description, URDF m20_25_18d
+  Author:    FANUC America Corporation and FANUC CORPORATION
+  License:   Apache-2.0 (full text and changes: M20ID25_LICENSE beside this file)
+  Converted: external/convert/build_fanuc_mjcf.py

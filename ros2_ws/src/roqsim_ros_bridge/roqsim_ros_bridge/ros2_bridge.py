@@ -103,7 +103,7 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from roqsim.bridge import BridgeBase, _RateGate
 from roqsim_ros_bridge import registry as reg
 from roqsim_ros_bridge import typemap
-from roqsim_ros_bridge.actions import get_action_handler
+from roqsim_ros_bridge.actions import get_action_handler, goal_rejection
 from roqsim_ros_bridge.extensions import load_extensions
 from roqsim_ros_bridge.services import get_service_handler
 
@@ -778,7 +778,9 @@ class Ros2Bridge(BridgeBase):
                     # The endpoint rides along so the handler can resolve its producer's state
                     # (e.g. ctx.blackboard.get(f"walker:{endpoint.owner}")) without a hardcoded key.
                     execute_callback=lambda gh, e=ep: handler(gh, self._ctx, on_payload, e),
-                    goal_callback=lambda _g: GoalResponse.ACCEPT,
+                    # A goal the controller would refuse outright -- wrong joints, a moving end -- is
+                    # rejected here, before it executes, as a JointTrajectoryController rejects it.
+                    goal_callback=lambda g, e=ep, t=hints["action"]: self._goal_response(t, g, e),
                     cancel_callback=lambda _g: CancelResponse.ACCEPT,
                     callback_group=ReentrantCallbackGroup(),
                 )
@@ -793,6 +795,13 @@ class Ros2Bridge(BridgeBase):
             msg_type, topic, lambda m: on_payload(decode(m)), qos_of(hints["qos"])
         )
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "in"))
+
+    def _goal_response(self, type_path: str, goal_request, ep):
+        reason = goal_rejection(type_path, goal_request, ep)
+        if reason is None:
+            return GoalResponse.ACCEPT
+        self._node.get_logger().error(f"{ep.owner}/{ep.name}: goal rejected: {reason}")
+        return GoalResponse.REJECT
 
     def _check_peer_types(self) -> None:
         """Refuse a peer of another type on one of our topics, instead of letting it go silent.

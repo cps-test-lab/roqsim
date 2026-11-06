@@ -89,7 +89,7 @@ from .override_options import (
 
 logger = logging.getLogger(__name__)
 
-# MuJoCo geom type -> how URDF spells it. Capsules have no URDF equivalent; see _geom_geometry.
+# MuJoCo geom type -> how URDF spells it. Capsules have no URDF equivalent; see _write_geoms.
 _PRIMITIVES = {
     mujoco.mjtGeom.mjGEOM_BOX,
     mujoco.mjtGeom.mjGEOM_SPHERE,
@@ -277,9 +277,7 @@ class UrdfExporter:
                 geo, "cylinder", radius=f"{float(size[0]):.9g}", length=f"{2 * float(size[1]):.9g}"
             )
         elif gtype == mujoco.mjtGeom.mjGEOM_CAPSULE:
-            # URDF has no capsule. A cylinder of the same half-length is the inscribed
-            # approximation: it under-covers by the two hemispherical caps (radius `r` each), so
-            # planning is slightly optimistic at the ends of the segment rather than pessimistic.
+            # The capsule's cylinder; _write_geoms adds the caps as spheres.
             ET.SubElement(
                 geo, "cylinder", radius=f"{float(size[0]):.9g}", length=f"{2 * float(size[1]):.9g}"
             )
@@ -318,11 +316,23 @@ class UrdfExporter:
             # A MuJoCo geom is collidable unless contype and conaffinity are both zero; that is the
             # substrate's convention for visual-only decoration, and MoveIt must not plan around it.
             collidable = bool(self.m.geom_contype[g] or self.m.geom_conaffinity[g])
+            # URDF has no capsule: it is written exactly, as its cylinder and a sphere on each end.
+            # The cylinder alone would leave out both caps, and a planner would pass where the
+            # simulated segment collides.
+            caps = []
+            if self.m.geom_type[g] == mujoco.mjtGeom.mjGEOM_CAPSULE:
+                radius, half = float(self.m.geom_size[g][0]), float(self.m.geom_size[g][1])
+                axis = _quat_to_mat(quat)[:, 2] * half
+                caps = [pos + axis, pos - axis]
             for tag in ("visual",) + (("collision",) if collidable else ()):
                 el = ET.SubElement(link, tag)
                 _origin(el, pos, quat)
                 if not self._geom_geometry(el, g):
                     link.remove(el)
+                for centre in caps:
+                    cap = ET.SubElement(link, tag)
+                    _origin(cap, centre, quat)
+                    ET.SubElement(ET.SubElement(cap, "geometry"), "sphere", radius=f"{radius:.9g}")
 
     @staticmethod
     def _mat_quat(rot: np.ndarray) -> np.ndarray:

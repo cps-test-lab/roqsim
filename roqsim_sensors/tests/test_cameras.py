@@ -616,7 +616,7 @@ def test_the_encoded_frame_is_converted_once_per_capture():
     plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
     ep = _endpoint(engine, "depth")
     assert ep.read().data is ep.read().data
-    plugin._capture_extra(engine.ctx, plugin._frames.raw)
+    plugin._capture_extra(engine.ctx, plugin._frames["color"])
     assert plugin._depth_wire is None
 
 

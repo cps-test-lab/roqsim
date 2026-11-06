@@ -235,13 +235,17 @@ def test_listing_the_tree_does_not_import_the_tools(tree):
         "with contextlib.redirect_stdout(io.StringIO()):\n"  # the listing itself is not the answer
         "    try: c.main(['scenes', '--help'])\n"
         "    except SystemExit: pass\n"
-        "print('|'.join(m for m in ('torch', 'scipy', 'PIL', 'lxml') if m in sys.modules),"
-        " file=sys.stderr)"
+        "print('LEAKED:' + '|'.join(m for m in ('torch', 'scipy', 'PIL', 'lxml')"
+        " if m in sys.modules), file=sys.stderr)"
     )
     out = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, timeout=300, cwd=REPO
     )
-    leaked = out.stderr.strip().splitlines()[-1] if out.stderr.strip() else ""
+    # Its own line: a group whose package was installed without its requirements says so on
+    # stderr too, and that line is not the answer.
+    answer = [line for line in out.stderr.splitlines() if line.startswith("LEAKED:")]
+    assert answer, f"the probe did not answer: {out.stderr}"
+    leaked = answer[-1][len("LEAKED:") :]
     assert not leaked, f"listing the tools imported them: {leaked}"
 
 
@@ -269,6 +273,7 @@ _STATES_ITS_EXIT_STATUS = {
     "health",
     "catalog",
     "plugins",
+    "renderers",
     "export gltf",
     "export urdf",
     "export srdf",
@@ -317,6 +322,7 @@ def _missing_input_cases(root: Path) -> dict[str, list[str]]:
         "health": [nope],
         "catalog": ["model", "nope_xyz"],
         "plugins": ["describe", "nope_xyz"],
+        "renderers": ["describe", "nope_xyz"],
         "export gltf": ["--world", f"{nope}.yaml", "--out", str(root / "x.glb")],
         "export gltf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.glb")],
         "export urdf": ["--world", f"{nope}.yaml", "--out", str(root / "x.urdf")],

@@ -22,6 +22,7 @@ from importlib import import_module, metadata
 from pathlib import Path
 
 import pytest
+from installed_requirements import not_installed_with_its_requirements
 
 from roqsim import exit_status
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
@@ -99,10 +100,12 @@ def test_a_world_is_listed_exactly_when_its_package_offers_it_as_an_interface():
     for row in _rows(list_worlds(), "world"):
         listed.setdefault(row["provider"], set()).add(Path(row["path"]).name)
 
-    providers = {
-        ep.name: Path(import_module(ep.load().__name__).__file__).parent
-        for ep in _world_entry_points()
-    }
+    providers, incomplete = {}, []
+    for ep in _world_entry_points():
+        if reason := not_installed_with_its_requirements(ep):
+            incomplete.append(f"{ep.name}: {reason}")
+            continue
+        providers[ep.name] = Path(import_module(ep.load().__name__).__file__).parent
     assert providers, "no world providers installed -- this test would be vacuous"
     for provider, package_dir in providers.items():
         worlds = package_dir / "worlds"
@@ -113,6 +116,8 @@ def test_a_world_is_listed_exactly_when_its_package_offers_it_as_an_interface():
             f"provider {provider!r} registered its worlds, so every YAML it ships must be in the "
             f"catalog and nothing else may be"
         )
+    if incomplete:
+        pytest.skip("the rest agree; not checked: " + "; ".join(incomplete))
 
 
 def test_an_unregistered_packages_worlds_are_absent_by_design():

@@ -1,7 +1,7 @@
 """roqsim_manipulation_assets: the arm and gripper models for roqsim.
 
 The ASSET half of the arm stack: the plugins (``spawn_arm``, ``arm_controller``, ...) live in
-`roqsim_manipulation`, and the geometry -- 115 MB of it -- lives here.
+`roqsim_manipulation`, and the geometry -- about 160 MB of it -- lives here.
 
 Why they are separate: every robot family with an actuated limb needs ``arm_controller``, and almost
 none needs these models. `roqsim_humanoid` reuses it for the G1's arms; `roqsim_mobile_manipulation` reuses

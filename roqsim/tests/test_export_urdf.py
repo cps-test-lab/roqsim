@@ -613,6 +613,54 @@ def test_root_link_name_colliding_with_another_body_is_refused(tmp_path):
     assert {"base_footprint"} == {link.get("name") for link in root.findall("link")} - children
 
 
+@pytest.mark.parametrize("collidable", [True, False])
+def test_a_capsule_is_its_cylinder_and_a_sphere_on_each_end(tmp_path, collidable):
+    """URDF has no capsule. A bare cylinder would leave out both caps, so a planner would pass where
+    the simulated segment collides; the export is the exact shape instead."""
+    contact = "" if collidable else ' contype="0" conaffinity="0"'
+    model = mujoco.MjModel.from_xml_string(
+        f"""
+        <mujoco>
+          <worldbody>
+            <body name="base_link">
+              <geom type="box" size="0.1 0.1 0.1" mass="1"/>
+              <body name="arm_link" pos="0 0 0.2">
+                <joint name="arm_joint" type="hinge" axis="0 0 1" range="-1 1"/>
+                <geom type="capsule" size="0.03 0.1" pos="0.05 0 0.1" euler="0 90 0" mass="1"{contact}/>
+              </body>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    root = (
+        UrdfExporter(
+            model, prefix="", name="r", root_link="base_link", mesh_dir=tmp_path / "meshes"
+        )
+        .export()
+        .getroot()
+    )
+    link = next(link for link in root.findall("link") if link.get("name") == "arm_link")
+    for tag in ("visual", "collision") if collidable else ("visual",):
+        parts = link.findall(tag)
+        cylinders = [p for p in parts if p.find("geometry/cylinder") is not None]
+        spheres = [p for p in parts if p.find("geometry/sphere") is not None]
+        assert len(parts) == 3 and len(cylinders) == 1 and len(spheres) == 2
+        cylinder = cylinders[0].find("geometry/cylinder")
+        assert float(cylinder.get("radius")) == pytest.approx(0.03)
+        assert float(cylinder.get("length")) == pytest.approx(0.2)
+        assert [float(s.find("geometry/sphere").get("radius")) for s in spheres] == pytest.approx(
+            [0.03] * 2
+        )
+        # The capsule lies along x (its z turned by 90 deg about y): the caps sit at its ends.
+        centres = sorted(
+            tuple(float(v) for v in s.find("origin").get("xyz").split()) for s in spheres
+        )
+        assert np.allclose(centres, [(-0.05, 0, 0.1), (0.15, 0, 0.1)], atol=1e-9)
+    if not collidable:
+        assert link.findall("collision") == []
+
+
 def test_multi_joint_body_is_refused(tmp_path):
     """URDF has no spelling for it, so raise rather than drop a DOF."""
     spec = mujoco.MjSpec.from_string(

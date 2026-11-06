@@ -6,20 +6,17 @@ that went through the furniture -- would return ``SUCCESSFUL``. MoveIt forwards 
 caller would see a clean execution and a scene that had not changed. The stalled-arm case below is a
 manipulation cell that planned through its own bench: the arm stops 5.59 rad from the last waypoint.
 
-The policy is deliberately pure (`_goal_tolerances`, `_worst_violation`) so it is testable without
-an action server, a live ROS graph or a stepping simulation -- which is what makes it *tested*
-rather than exercised only by a cell that happens to run an arm.
+The policy is deliberately pure (`_goal_tolerances`, `trajectory_policy.worst_violation`) so it is
+testable without an action server, a live ROS graph or a stepping simulation -- which is what makes
+it *tested* rather than exercised only by a cell that happens to run an arm.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from roqsim_ros_bridge.actions import (
-    DEFAULT_GOAL_TOLERANCE,
-    _goal_tolerances,
-    _worst_violation,
-)
+from roqsim_ros_bridge.actions import DEFAULT_GOAL_TOLERANCE, _goal_tolerances
+from roqsim_ros_bridge.trajectory_policy import worst_violation
 
 JOINTS = ["shoulder_pan_joint", "elbow_joint"]
 
@@ -83,13 +80,13 @@ def test_a_tolerance_for_a_joint_we_do_not_own_is_ignored():
 
 def test_an_arm_that_arrived_reports_no_violation():
     tol = dict.fromkeys(JOINTS, 0.5)
-    assert _worst_violation(JOINTS, [1.0, 2.0], [1.02, 1.97], tol) is None
+    assert worst_violation(JOINTS, [1.0, 2.0], [1.02, 1.97], tol) is None
 
 
 def test_the_stalled_arm_is_caught():
     """The measured case: 5.59 rad short, which must not read as SUCCESSFUL."""
     tol = dict.fromkeys(JOINTS, DEFAULT_GOAL_TOLERANCE)
-    worst = _worst_violation(JOINTS, [5.004, 1.698], [-0.581, 1.663], tol)
+    worst = worst_violation(JOINTS, [5.004, 1.698], [-0.581, 1.663], tol)
     assert worst is not None, "a 5.59 rad miss must not read as a completed trajectory"
     joint, err, allowed = worst
     assert joint == "shoulder_pan_joint"
@@ -101,10 +98,10 @@ def test_the_worst_offender_is_the_one_reported():
     """By how far each joint EXCEEDS its own tolerance, since they need not share one."""
     tol = {"shoulder_pan_joint": 1.0, "elbow_joint": 0.01}
     # pan is 0.5 past its tolerance, elbow 0.09 past its own: pan is the worse breach.
-    worst = _worst_violation(JOINTS, [0.0, 0.0], [1.5, 0.1], tol)
+    worst = worst_violation(JOINTS, [0.0, 0.0], [1.5, 0.1], tol)
     assert worst[0] == "shoulder_pan_joint"
 
 
 def test_an_unconstrained_joint_cannot_fail_the_goal():
     tol = {"elbow_joint": 0.5}
-    assert _worst_violation(JOINTS, [0.0, 0.0], [99.0, 0.1], tol) is None
+    assert worst_violation(JOINTS, [0.0, 0.0], [99.0, 0.1], tol) is None

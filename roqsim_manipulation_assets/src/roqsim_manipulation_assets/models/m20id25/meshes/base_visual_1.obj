@@ -1,0 +1,38 @@
+# base_visual_1.obj: FANUC M-20iD/25 visual mesh, base, colour [0.6667, 0.6667, 0.6667].
+# Derived from FANUC-CORPORATION/fanuc_description @ fb40c9803a826ba68c7c8e28ba904a25efa7fcd2,
+#   fanuc_m20_description/meshes/m20_25_18d/visual/base.dae.
+# Modified by the roqsim authors: converted from COLLADA, one material, not decimated
+#   (external/convert/build_fanuc_mjcf.py). Apache-2.0: see the LICENSE beside the model.
+# SPDX-FileCopyrightText: 2025-2026, FANUC America Corporation
+# SPDX-FileCopyrightText: 2025-2026, FANUC CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+v -0.269284 0.009500 0.135500
+v -0.340284 0.009500 0.135500
+v -0.340284 0.009500 0.092500
+v -0.269284 0.009500 0.092500
+v -0.269284 0.009500 0.092500
+v -0.269284 0.082500 0.092500
+v -0.269284 0.082500 0.135500
+v -0.269284 0.009500 0.135500
+v -0.269284 0.082500 0.135500
+v -0.340284 0.082500 0.135500
+v -0.340284 0.009500 0.135500
+v -0.269284 0.009500 0.135500
+v -0.269284 0.009500 0.092500
+v -0.340284 0.009500 0.092500
+v -0.340284 0.082500 0.092500
+v -0.269284 0.082500 0.092500
+v -0.269284 0.082500 0.092500
+v -0.340284 0.082500 0.092500
+v -0.340284 0.082500 0.135500
+v -0.269284 0.082500 0.135500
+f 4 1 3
+f 2 3 1
+f 6 7 5
+f 8 5 7
+f 11 12 10
+f 9 10 12
+f 15 16 14
+f 13 14 16
+f 18 19 17
+f 20 17 19
