@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Machines the machine tests run: generated models, no file from outside.
+"""Machines the machine, scenario and zone tests run: generated models, no file from outside.
 
 A module rather than a conftest, so a world addresses them as ``machine_fixtures:<Class>`` -- the
 same reason :mod:`recording_plugin` is one.
@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import mujoco
 
+from roqsim.context import Entity
 from roqsim.machine import MachinePlugin, program
+from roqsim.plugin import Plugin
 
 #: A press: a guard door and a ram on slide joints, each a position servo, and a site at the die.
 PRESS = """<mujoco model="press">
@@ -273,6 +275,39 @@ class FedPress(Press):
     """Machine: the press, needing a feeder machine's handle."""
 
     NEEDS = {"feeder": "machine:feeder"}
+
+
+class Mover(Plugin):
+    """A mocap block that moves in a straight line at a constant speed: something to be present.
+
+    Config::
+
+        start: [0.0, 0.0, 0.0]     # where it is at t = 0 (m)
+        velocity: [0.0, 0.0, 0.0]  # m/s
+        com_offset: 0.0            # its mass sits this far along x from its origin (m)
+    """
+
+    provides_entity = True
+
+    def build(self, spec, ctx) -> None:
+        body = spec.worldbody.add_body(name=self.address, mocap=True, pos=self._start())
+        geom = body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.05, 0.05, 0.05])
+        geom.contype = geom.conaffinity = 0
+        geom.pos = [float(self.config.get("com_offset", 0.0)), 0.0, 0.0]
+
+    def _start(self):
+        return [float(v) for v in self.config.get("start", [0.0, 0.0, 0.0])]
+
+    def configure(self, ctx) -> None:
+        ctx.entities.add(Entity(name=self.address, kind="object", body=self.address))
+        self._mocap = int(ctx.model.body_mocapid[ctx.model.body(self.address).id])
+
+    def pre_step(self, ctx) -> None:
+        v = [float(x) for x in self.config.get("velocity", [0.0, 0.0, 0.0])]
+        t = ctx.sim_time + ctx.dt
+        ctx.data.mocap_pos[self._mocap] = [
+            s + vi * t for s, vi in zip(self._start(), v, strict=True)
+        ]
 
 
 #: A 5 kg carriage on a vertical slide, held by a position servo of kp 5000: under gravity it

@@ -110,6 +110,47 @@ class FakeWalker(Plugin):
             self.finished, self.until = True, None
 
 
+class LookedLate(ScenarioPlugin):
+    """Scenario: busy until an entity has come and gone, then asks who passed since the start."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.wait(2.0)
+        who = yield from self.entered(self.gate, since=0.0)
+        self.event("saw", who=who)
+        dwelt = yield from self.dwelled(self.gate, since=0.0)
+        self.event("dwelt", who=dwelt)
+
+
+class LookedNow(ScenarioPlugin):
+    """Scenario: asks who entered since now, of a zone with someone already in it."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.wait(0.1)
+        since = float(self.config.get("since", self._ctx.sim_time))
+        who = yield from self.entered(self.gate, since=since)
+        self.event("saw", who=who)
+        dwelt = yield from self.dwelled(self.gate, since=since)
+        self.event("dwelt", who=dwelt)
+
+
+class Watch(ScenarioPlugin):
+    """Scenario: wait for something in the gate, for it to dwell, then for the gate to empty."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        who = yield from self.entered(self.gate, "box_*")
+        self.event("saw", who=who)
+        yield from self.dwelled(self.gate)
+        self.event("dwelt")
+        yield from self.left(self.gate)
+        self.event("empty")
+
+
 class Place(ScenarioPlugin):
     """Scenario: place the block at the pose its config gives.
 
@@ -379,3 +420,26 @@ class Overtaken(ScenarioPlugin):
         self.walker.send_route([(2.0, 0.0)])  # seq 2 overtakes it
         yield from self.join(route)
         self.event("overtaken", seq=route.result[0])
+
+
+class WaitDwell(ScenarioPlugin):
+    """Scenario: wait for someone to dwell in the gate."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.dwelled(self.gate)
+
+
+class WaitEntry(ScenarioPlugin):
+    """Scenario: wait a while for someone to enter the gate.
+
+    Config::
+
+        timeout: 0.3   # seconds
+    """
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.entered(self.gate, timeout=float(self.config.get("timeout", 0.3)))

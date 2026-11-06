@@ -39,6 +39,7 @@ raises :class:`ScenarioError` in the program that waited for it, unless it asked
 
 from __future__ import annotations
 
+import fnmatch
 import inspect
 import math
 from collections.abc import Callable, Generator, Iterator
@@ -431,6 +432,74 @@ class ScenarioPlugin(Plugin):
             raise ScenarioError(f"wait() takes a number of seconds, not {seconds!r}")
         end = self._ctx.sim_time + float(seconds)
         while self._ctx.sim_time < end - 1e-9:
+            yield
+
+    def entered(
+        self, zone, pattern: str = "*", timeout: float | None = None, since: float | None = None
+    ):
+        """Wait until an entity matching ``pattern`` is inside ``zone`` (a ``zone_trigger``'s handle)
+        and return its name -- at once when one already is. With ``since`` (s, sim time), an entity
+        that entered at or after it counts too, even if it has left again, so a scene that was busy
+        cannot miss one passing through. Past ``timeout`` seconds raise :class:`ScenarioError`, as
+        :meth:`until` does."""
+        self._check_since(since)
+        names = (
+            zone.inside if since is None else lambda: [*zone.inside(), *zone.entered_since(since)]
+        )
+        return (
+            yield from self._first_of(
+                names, pattern, timeout, f"an entity matching {pattern!r} in zone {zone.name}"
+            )
+        )
+
+    def left(self, zone, pattern: str = "*", timeout: float | None = None):
+        """Wait until no entity matching ``pattern`` is inside ``zone``; ``timeout`` as
+        :meth:`entered`. It reads who is inside now: list a scenario after the zones it waits on, so
+        that on the first step a zone has already said."""
+        yield from self.until(
+            lambda: not any(fnmatch.fnmatchcase(n, pattern) for n in zone.inside()),
+            timeout,
+            f"zone {zone.name} empty of {pattern!r}",
+        )
+
+    def dwelled(
+        self, zone, pattern: str = "*", timeout: float | None = None, since: float | None = None
+    ):
+        """Wait until an entity matching ``pattern`` has been inside ``zone`` for its ``dwell``, and
+        return its name; ``timeout`` and ``since`` as :meth:`entered`. A zone whose ``dwell`` is 0
+        reports no dwelling at all, so waiting on one is refused rather than left to hang."""
+        self._check_since(since)
+        if not zone.dwell > 0:
+            raise ScenarioError(
+                f"zone {zone.name} has dwell 0, which reports no dwelling; give it a dwell to "
+                "wait on one"
+            )
+        return (
+            yield from self._first_of(
+                zone.dwelling
+                if since is None
+                else lambda: [*zone.dwelling(), *zone.dwelled_since(since)],
+                pattern,
+                timeout,
+                f"an entity matching {pattern!r} dwelling in zone {zone.name}",
+            )
+        )
+
+    @staticmethod
+    def _check_since(since: float | None) -> None:
+        if since is not None and not math.isfinite(since):
+            raise ScenarioError(f"since is a sim time, not {since!r}")
+
+    def _first_of(self, names: Callable[[], list[str]], pattern: str, timeout, what: str):
+        """Yield until one of ``names()`` matches ``pattern``, and return it; past ``timeout``
+        seconds raise :class:`ScenarioError` saying ``what`` was waited for."""
+        start = self._ctx.sim_time
+        while True:
+            for name in names():
+                if fnmatch.fnmatchcase(name, pattern):
+                    return name
+            if timeout is not None and self._ctx.sim_time - start > timeout:
+                raise ScenarioError(f"{what} not true after {timeout:g} s")
             yield
 
     def place(self, entity: str, pose: dict):

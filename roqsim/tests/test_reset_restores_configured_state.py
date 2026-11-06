@@ -432,6 +432,7 @@ CASES: dict[str, Case] = {
     "dummy": _static({"dummy": {}}),
     "ceiling": _static({"ceiling": {}}),
     "part_state": Case(_part_with_states),
+    "zone_trigger": _static({"zone_trigger": {"size": [0.5, 0.5, 0.5]}, "name": "zone"}),
     "spawn_model": _static(
         {
             "spawn_model": {
