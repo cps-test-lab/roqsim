@@ -25,7 +25,7 @@ pattern that matches no entity at the first reset is logged once as a warning, n
 
 **What it reports.** Each step, on the physics thread: an ``entered`` event with the entity, a
 ``dwelled`` event once it has been inside for ``dwell`` seconds, and a ``left`` event with how long
-it was inside. A :class:`ZoneHandle` under ``zone:<name>`` reads the same: who is inside, in the
+it was inside. A :class:`ZoneHandle` under ``zone:<address>`` reads the same: who is inside, in the
 order they entered, since when, who dwelt, the counts since the episode began. ``occupied`` (a
 ``bool``, ``std_msgs/Bool`` on ROS) is the barrier's signal for a stack or an OpenSCENARIO monitor;
 ``occupancy`` lists who is inside.
@@ -86,7 +86,7 @@ class ZoneOccupancy:
 
 
 class ZoneHandle:
-    """Published by ``zone_trigger`` under ``zone:<name>``. Latched in ``post_step``; safe to read
+    """Published by ``zone_trigger`` under ``zone:<address>``. Latched in ``post_step``; safe to read
     from any thread."""
 
     def __init__(self, name: str, dwell: float = 0.0):
@@ -289,6 +289,12 @@ class ZoneTriggerPlugin(Plugin):
             c = h._counts
             h._counts = ZoneCounts(c.entered + entered, c.left + left)
 
+    def _occupied_topic(self) -> str:
+        """The zone's own topic, relative to a namespace it is under: the entity that holds the
+        namespace names it, so only a zone with none spells out the entities around it."""
+        scoped = self.entity and self.endpoint_namespace(self._ctx)
+        return f"{self.label if scoped else self.address.replace('.', '/')}/occupied"
+
     @property
     def endpoint_owner(self) -> str:
         """The endpoints belong to this zone: an entity may carry several."""
@@ -298,9 +304,7 @@ class ZoneTriggerPlugin(Plugin):
         """The namespace of the entity the zone is nested under, the zone's own being no entity."""
         return super().endpoint_namespace(ctx, self.entity or owner)
 
-    @endpoint.out(
-        rate=10.0, ros2=lambda self: {"topic": self.address.replace(".", "/") + "/occupied"}
-    )
+    @endpoint.out(rate=10.0, ros2=lambda self: {"topic": self._occupied_topic()})
     def occupied(self) -> bool:
         """Whether an entity that counts is inside the zone."""
         return self.handle.occupied

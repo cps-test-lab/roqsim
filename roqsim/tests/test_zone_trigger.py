@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.endpoint import topic_of
 from roqsim.engine import Engine
-from roqsim.plugins.zone_trigger import ZoneHandle
+from roqsim.plugins.zone_trigger import ZoneHandle, ZoneTriggerPlugin
 from roqsim.presence import set_present
 from roqsim.scenario import ScenarioError
 
@@ -171,8 +172,6 @@ def test_a_scenario_waits_on_a_zone_for_an_entry_and_for_it_to_empty():
 
 # -- waits that would hang ---------------------------------------------------------------------
 def test_waiting_for_a_dwell_on_a_zone_that_reports_none_is_refused():
-    from roqsim.scenario import ScenarioError
-
     engine = _engine(
         _mover("box_1", [-1.0, 0.0, 0.5], [1.0, 0.0, 0.0]),
         _zone(),
@@ -187,8 +186,6 @@ def test_waiting_for_a_dwell_on_a_zone_that_reports_none_is_refused():
 
 
 def test_waiting_for_an_entry_times_out():
-    from roqsim.scenario import ScenarioError
-
     engine = _engine(_zone(), {"scenario_fixtures:WaitEntry": {"timeout": 0.3}, "name": "scene"})
     try:
         with pytest.raises(ScenarioError, match="in zone gate not true after 0.3 s"):
@@ -421,3 +418,13 @@ def test_a_rotated_zone_is_a_rotated_box():
 def test_an_empty_entities_list_is_refused():
     with pytest.raises(Exception, match="'entities' is a list"):
         _engine(_zone(entities=[]))
+
+
+def test_a_nested_zone_is_named_once_under_its_entitys_namespace():
+    zone = ZoneTriggerPlugin({"pose": {"position": {"x": 0, "y": 0, "z": 0}}, "size": [1, 1, 1]})
+    zone.label, zone.entity = "gate", "robot"
+    zone._ctx = SimpleNamespace(
+        entities=SimpleNamespace(get=lambda _: SimpleNamespace(meta={"namespace": "robot"}))
+    )
+    assert zone.endpoint_namespace(zone._ctx) == "robot"
+    assert zone._occupied_topic() == "gate/occupied", "not /robot/robot/gate/occupied"

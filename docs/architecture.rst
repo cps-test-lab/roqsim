@@ -695,7 +695,7 @@ that handle: the part's state is the part's, and the machine only asks for it to
 
 **Presence is reported, never acted on.** ``zone_trigger`` is a box in the world or riding on a
 body that reports the entities entering, dwelling for a time and leaving, filtered by name pattern:
-as events, on a handle (``zone:<name>``) and as an ``occupied`` endpoint. It decides nothing; a
+as events, on a handle (``zone:<address>``) and as an ``occupied`` endpoint. It decides nothing; a
 door that opens for whoever comes near is a scenario reading the zone and starting the door.
 
 **A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
