@@ -794,7 +794,7 @@ def test_without_a_control_range_the_joints_range_bounds_a_target():
         engine.shutdown()
 
 
-def test_a_start_another_thread_got_in_during_a_preempt_is_reported_cancelled():
+def test_a_start_another_thread_got_in_during_a_preempt_is_followed_by_a_larger_number():
     engine = _axis()
     try:
         axis = engine.ctx.blackboard.require("machine:axis")
@@ -831,3 +831,63 @@ def test_a_start_another_thread_got_in_during_a_preempt_is_reported_cancelled():
 )
 def test_a_parameters_annotation_is_read_through_its_forms(annotation, value, fits):
     assert machine_module._fits(annotation, value) is fits
+
+
+def test_a_moving_damped_joint_has_not_arrived_until_it_has():
+    engine = _axis(damping=400.0)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("go", x=0.4))
+        assert status.error == ""
+        assert _joint(engine, "x_joint") == pytest.approx(0.4, abs=0.0025)
+    finally:
+        engine.shutdown()
+
+
+def test_an_obstructed_damped_joint_fails_its_move():
+    engine = _axis(damping=400.0, obstacle=True, timeout=1.0)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("go", x=0.4))
+        assert "did not reach" in status.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_cancel_stops_a_damped_joint_where_it_is():
+    engine = _axis(damping=400.0)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        axis.start("go", x=0.4)
+        for _ in range(200):
+            engine.step()
+        moving = _joint(engine, "x_joint")
+        assert 0.01 < moving < 0.39
+        axis.cancel()
+        for _ in range(1500):
+            engine.step()
+        assert _joint(engine, "x_joint") == pytest.approx(moving, abs=0.01), "not on to the target"
+    finally:
+        engine.shutdown()
+
+
+def test_a_reset_lets_a_programs_cleanup_read_the_machine():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        axis.start("cleanup_reads_the_machine")
+        engine.step()
+        engine.reset()
+        assert axis._machine.seen_busy is False
+    finally:
+        engine.shutdown()
+
+
+def test_a_timeout_that_is_no_number_fails_the_program():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("wait_nan"))
+        assert "a timeout is a number" in status.error
+    finally:
+        engine.shutdown()
