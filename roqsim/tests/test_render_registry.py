@@ -14,7 +14,7 @@ import textwrap
 import pytest
 
 from roqsim import renderers
-from roqsim.config import load_config_from_dict, overrides_from_dotlist
+from roqsim.config import load_config, load_config_from_dict, overrides_from_dotlist
 from roqsim.plugin import PluginError
 from roqsim.registry import resolve_renderer
 from roqsim.render_api import Frame, Renderer, RendererCapabilities, Setting
@@ -123,3 +123,106 @@ def test_describe_lists_capabilities_and_settings(capsys):
         renderers.main(["describe", "nope_xyz"])
     assert code.value.code == 2
     assert "unknown renderer" in json.loads(capsys.readouterr().out)["error"]
+
+
+class NeedsAFile(Renderer):
+    """Names a missing file at load: what ``base_dir`` is for."""
+
+    SETTINGS = {"file": Setting(None, "a file beside the world")}
+
+    @classmethod
+    def validate_config(cls, settings, base_dir=None):
+        errors = super().validate_config(settings, base_dir)
+        path = (base_dir / settings["file"]) if base_dir is not None else None
+        if path is None or not path.is_file():
+            errors.append(f"file {settings['file']!r} not found at {path}")
+        return errors
+
+
+class OldSignature(Renderer):
+    """An override that takes only the settings, not the world's directory."""
+
+    SETTINGS = {"x": Setting(1, "a number")}
+    seen: list = []
+
+    @classmethod
+    def validate_config(cls, settings):
+        cls.seen.append(dict(settings))
+        return super().validate_config(settings)
+
+
+def _with_block(renderer: str, block: dict) -> dict:
+    return {"sim": {"renderer": renderer, "renderers": {renderer: block}}, "components": []}
+
+
+def test_a_renderer_is_given_the_world_s_directory_to_check_its_files_at_load(tmp_path):
+    ref = f"{__name__}:NeedsAFile"
+    with pytest.raises(PluginError, match=f"sim.renderers.{ref}: file 'room.ply' not found at "):
+        load_config_from_dict(_with_block(ref, {"file": "room.ply"}), base_dir=tmp_path)
+    (tmp_path / "room.ply").write_bytes(b"ply\n")
+    load_config_from_dict(_with_block(ref, {"file": "room.ply"}), base_dir=tmp_path)
+
+
+def test_settings_a_world_inherits_resolve_beside_the_world_being_loaded(tmp_path):
+    """A relative file in an inherited renderer block resolves beside the child, not the parent:
+    a world meant to be extended names its files as ``<package>:<path>`` or absolute."""
+    ref = f"{__name__}:NeedsAFile"
+    parent = tmp_path / "parent" / "room.yaml"
+    parent.parent.mkdir()
+    (parent.parent / "room.ply").write_bytes(b"ply\n")
+    parent.write_text(
+        f"sim:\n  renderer: '{ref}'\n  renderers: {{'{ref}': {{file: room.ply}}}}\ncomponents: []\n"
+    )
+    load_config(parent)
+    child = tmp_path / "child" / "mine.yaml"
+    child.parent.mkdir()
+    child.write_text("extends: ../parent/room.yaml\n")
+    with pytest.raises(PluginError, match=f"not found at {tmp_path / 'child'}"):
+        load_config(child)
+    (child.parent / "room.ply").write_bytes(b"ply\n")
+    load_config(child)
+
+
+def test_an_override_that_takes_no_directory_is_still_called():
+    ref = f"{__name__}:OldSignature"
+    OldSignature.seen.clear()
+    load_config_from_dict(_with_block(ref, {"x": 2}))
+    assert OldSignature.seen == [{"x": 2}]
+    with pytest.raises(PluginError, match="unknown key 'y'; valid keys: x"):
+        load_config_from_dict(_with_block(ref, {"y": 2}))
+
+
+def test_a_mistyped_key_names_the_nearest_valid_one():
+    ref = f"{__name__}:Flat"
+    with pytest.raises(
+        PluginError,
+        match=rf"sim.renderers.{ref}: unknown key 'colur'; valid keys: colour; did you mean 'colour'\?",
+    ):
+        load_config_from_dict(_with_block(ref, {"colur": [1, 2, 3]}))
+
+
+def test_a_key_in_a_nested_block_is_named_with_its_block():
+    from roqsim.render_api import unknown_keys
+
+    assert unknown_keys(
+        {"position": {}, "rotation": {}}, ("position", "orientation"), "splat.pose"
+    ) == ["unknown key 'rotation' in splat.pose; valid keys: orientation, position"]
+    assert unknown_keys({"positon": {}}, ("position", "orientation"), "splat.pose") == [
+        "unknown key 'positon' in splat.pose; valid keys: orientation, position; "
+        "did you mean 'position'?"
+    ]
+    assert unknown_keys({"position": 1}, ("position",), "splat.pose") == []
+
+
+def test_a_tool_s_renderer_resolves_files_against_the_world_s_directory(tmp_path):
+    """``roqsim render`` draws through the world's renderer, whose settings name files beside it."""
+    import mujoco
+
+    from roqsim.rendering import FrameRenderer
+
+    (tmp_path / "room.ply").write_bytes(b"ply\n")
+    model = mujoco.MjModel.from_xml_string("<mujoco><worldbody/></mujoco>")
+    ref = f"{__name__}:NeedsAFile"
+    with pytest.raises(Exception, match="file 'room.ply' not found at None"):
+        FrameRenderer(model, 8, 8, renderer=ref, settings={"file": "room.ply"})
+    FrameRenderer(model, 8, 8, renderer=ref, settings={"file": "room.ply"}, base_dir=tmp_path)
