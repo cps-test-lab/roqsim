@@ -112,6 +112,7 @@ one.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from contextlib import contextmanager
@@ -119,7 +120,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from roqsim import exit_status
-from roqsim.config import load_config, transport_rate_overrides, world_sources
+from roqsim.config import drop_transport, load_config, transport_rate_overrides, world_sources
 from roqsim.override_options import add_override_options, overrides_from_options
 from roqsim.plugin import PluginError
 from roqsim.world import resolve_world_yaml_ref
@@ -483,18 +484,21 @@ def main(argv=None) -> int:
         # The transport's per-endpoint rates, read from the world as declared: they are what a run
         # publishes each output at, though the preview build below leaves the transport out.
         rates = transport_rate_overrides(config)
+        # What the preview build leaves out, named before it runs, so a reply whose build fails
+        # still says the scene was asked for without its transport. The same rule the engine
+        # applies, on a copy: `config` keeps what the world declares.
+        dropped = drop_transport(copy.copy(config))
+        if dropped:
+            result["dropped_transport"] = dropped
+            print(
+                f"describing the scene without transport: dropped {', '.join(dropped)}",
+                file=sys.stderr,
+            )
         # ONE build, however many of these were asked for: compiling this world is the expensive part.
         stage = "build"
         try:
             with _built(config) as engine:
                 ctx = engine.ctx
-                if engine.dropped_transport:
-                    result["dropped_transport"] = engine.dropped_transport
-                    print(
-                        "describing the scene without transport: dropped "
-                        + ", ".join(engine.dropped_transport),
-                        file=sys.stderr,
-                    )
                 if args.entities:
                     result["entities"] = sorted(ctx.entities.names())
                     result["flexes"] = _flexes(ctx)

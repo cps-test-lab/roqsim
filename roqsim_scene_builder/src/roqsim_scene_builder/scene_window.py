@@ -175,11 +175,22 @@ def load_engine(target: str, settle_steps: int = 0, skip_unloadable: bool = True
 
 def _settled(cfg, settle_steps: int, skip_unloadable: bool = False):
     """A set-up engine for *cfg*, reset and stepped *settle_steps* times; shut down on failure."""
+    import sys
+
     from roqsim import Engine
 
     # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
     # one rather than the driver's to resolve.
     engine = Engine(cfg, preview=True, skip_unloadable=skip_unloadable)
+    # The engine logs what it left out at INFO, below what the window shows, so the notice is
+    # printed here; a ref it cannot load it warns about itself.
+    if engine.dropped_transport:
+        print(
+            f"roqsim-scene-builder: skipping {', '.join(engine.dropped_transport)} -- not needed "
+            "for a review.",
+            file=sys.stderr,
+            flush=True,
+        )
     with contextlib.ExitStack() as stack:
         stack.enter_context(engine)
         engine.reset()

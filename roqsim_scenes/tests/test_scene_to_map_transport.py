@@ -33,12 +33,12 @@ def ros_world(tmp_path: Path) -> Path:
     return path
 
 
-def test_a_world_declaring_the_bridge_maps_without_it(ros_world: Path, caplog):
-    with caplog.at_level("INFO", logger="roqsim.engine"):
-        tris, lo, hi, _ = scene_to_map._load_world(str(ros_world))
+def test_a_world_declaring_the_bridge_maps_without_it(ros_world: Path, capsys):
+    tris, lo, hi, _ = scene_to_map._load_world(str(ros_world))
     assert tris, "the room's geometry survived the drop"
     assert np.all(hi > lo)
-    assert "ros2_bridge" in caplog.text, "what was left out is named"
+    # Printed, not only logged: the command shows warnings and up, and the engine logs this at INFO.
+    assert "skipping: ros2_bridge, sim_interfaces" in capsys.readouterr().out
 
 
 def test_the_command_writes_a_map_for_it(ros_world: Path, tmp_path: Path, capsys):

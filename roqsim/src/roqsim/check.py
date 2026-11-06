@@ -116,6 +116,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import json
 import sys
 from pathlib import Path
@@ -157,7 +158,13 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
     probably did not mean.
     """
-    from roqsim.config import PluginError, input_errors, instantiate_plugins, load_config
+    from roqsim.config import (
+        PluginError,
+        drop_transport,
+        input_errors,
+        instantiate_plugins,
+        load_config,
+    )
 
     overrides = overrides or {}
     report: dict = {
@@ -197,14 +204,20 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
 
     # -- config, part two: the plugins accept what they were given -----------------------------
     # Constructing every declared plugin is what runs `validate_config` and aggregates the errors --
-    # the transport's too, which the preview engine below leaves out. It belongs to this stage, not
-    # to `build`: nothing has been compiled yet, and the report would otherwise blame the model for
-    # a typo in a key.
+    # the transport's too, which the build leaves out. It belongs to this stage, not to `build`:
+    # nothing has been compiled yet, and the report would otherwise blame the model for a typo in a
+    # key. The engine is handed the constructed plugins rather than constructing them again, so each
+    # plugin is validated, and its undocumented keys logged, once.
     from roqsim.engine import Engine
 
     try:
+        # The config the load runs, without its transport -- on a copy, so `cfg` keeps what the
+        # world declares and the transport's rates stay readable from it.
+        loaded = copy.copy(cfg)
+        transport = drop_transport(loaded)
         declared = instantiate_plugins(cfg)
-        engine = Engine(cfg, preview=True)
+        built = [plugin for plugin in declared if not type(plugin).transport_only]
+        engine = Engine(loaded, plugins=built, preview=True)
     except PluginError as exc:
         report["problems"].append(_problem("config", str(exc)))
         return report
@@ -217,16 +230,16 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
     report["warnings"].extend(undocumented_key_warnings(declared))
     rates = transport_rate_overrides(cfg)
 
-    # A transport plugin is config-checked above with the rest, and the preview engine leaves it
-    # out of the load: its `configure` opens a middleware node or waits for a peer (an autopilot
-    # dialling in), which is a run's business. Said in the report, so nobody reads the inventory
-    # as "the bridge came up".
-    if engine.dropped_transport:
+    # A transport plugin is config-checked above with the rest, and left out of the load as a
+    # preview engine leaves it out: its `configure` opens a middleware node or waits for a peer (an
+    # autopilot dialling in), which is a run's business. Said in the report, so nobody reads the
+    # inventory as "the bridge came up".
+    if transport:
         report["warnings"].append(
             _warning(
                 "transport",
-                f"not started: {', '.join(engine.dropped_transport)} -- a transport plugin connects "
-                f"to processes a check does not run, so its config was validated and nothing else",
+                f"not started: {', '.join(transport)} -- a transport plugin connects to processes a "
+                f"check does not run, so its config was validated and nothing else",
             )
         )
 

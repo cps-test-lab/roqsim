@@ -179,14 +179,17 @@ Transport plugins and the scene-only consumers
 A bridge publishes what the other plugins built; it adds nothing to the model. Such a plugin sets the
 class attribute ``transport_only = True`` — ``BridgeBase`` does, so every transport inherits it,
 including one you write — and every tool that wants the *scene* rather than a running simulation builds a
-preview engine (``Engine(cfg, preview=True)``), which leaves it out: ``roqsim render``, ``roqsim check``,
-``roqsim scenes describe``, the scene-review window (``roqsim_scene_builder``), ``roqsim export
-web/urdf/srdf/moveit``, ``scene-to-map`` and ``roqsim sensors coverage``. The ROS bridges are identified
-by name where they do not resolve.
+preview engine (``Engine(cfg, preview=True)``), which leaves it out: ``roqsim render``, ``roqsim scenes
+describe``, the scene-review window (``roqsim_scene_builder``), ``roqsim export web/urdf/srdf/moveit``,
+``scene-to-map`` and ``roqsim sensors coverage``. The ROS bridges are identified by name where they do
+not resolve, so each of these tools **builds a ``*_ros`` world without ROS installed**. The tools that
+only draw or export geometry (``skip_unloadable=True``) also skip any other plugin whose ref does not
+resolve and warn, naming it — geometry is unaffected for a transport, but the other way to get there is
+a misspelt ref.
 
-That is what makes a ``*_ros`` world **renderable without ROS**. The tools that only draw or export
-geometry (``skip_unloadable=True``) also skip any other plugin whose ref does not resolve and warn,
-naming it — geometry is unaffected for a transport, but the other way to get there is a misspelt ref.
+``roqsim check`` leaves the transport out of its load too, but first validates the config of every
+plugin the world declares, so it still needs the bridge's package: on a world whose bridge does not
+resolve it fails at the ``config`` stage.
 
 ``roqsim sim`` keeps both by default: a simulation genuinely needs its transport, so an unresolvable
 ``ros2_bridge`` there stays the loud failure it should be (source ``ros2_ws/install/setup.bash``).

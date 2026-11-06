@@ -134,9 +134,13 @@ def _load_world(
     # A map wants the scene, not a running simulation: the preview engine leaves out the transport
     # and any ref this environment cannot load, which is what lets a world declaring the ROS bridge
     # be mapped where the bridge is not installed -- a pip-only environment, or a container that
-    # never sourced the ROS overlay.
+    # never sourced the ROS overlay. The engine logs what it left out at INFO, below what this
+    # command shows, so the notice is printed here; a ref it cannot load it warns about itself.
+    engine = Engine(cfg, preview=True, skip_unloadable=True)
+    if engine.dropped_transport:
+        print(f"not needed for a map, skipping: {', '.join(engine.dropped_transport)}")
     # The model and data outlive the plugins: the slice reads only them.
-    with Engine(cfg, preview=True, skip_unloadable=True) as engine:
+    with engine:
         engine.reset()
         model, data = engine.ctx.model, engine.ctx.data
         mujoco.mj_forward(model, data)
