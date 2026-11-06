@@ -39,10 +39,11 @@ step it was punched. What a replay does not restore is the inertia a shown state
 draws the recorded poses and needs no mass, so the picture is the same. Every change is also an
 event (``shown``/``hidden``, with ``entity`` and ``look``), so a run's timeline says when.
 
-**Limits.** An entity with states that starts absent (``present: false``) is refused when the world
-loads: :mod:`roqsim.presence` restores an activated entity's whole body tree, hidden states included,
-and tells no plugin, so it would come back showing every state. A state body nested inside another
-state body is refused. Of an exclusive group at most one state is shown: ``show`` of a member
+Presence composes (:mod:`roqsim.presence`), so a state's own presence and its owner's are independent:
+while the owner is absent a state shows nothing, and a state changed meanwhile is as it was left when
+the owner returns.
+
+**Limits.** A state body nested inside another state body is refused. Of an exclusive group at most one state is shown: ``show`` of a member
 while another is shown is refused (``set`` swaps them), and so is a ``shown:`` naming two.
 
 Config::
@@ -319,9 +320,27 @@ class PartStatePlugin(Plugin):
         return errors
 
     def configure(self, ctx: SimContext) -> None:
+        if "part_state" in ctx.blackboard:
+            raise PartStateError(
+                f"part_state: {self.address!r} is a second entry; one serves the whole world"
+            )
         self.handle.ctx = ctx
         ctx.blackboard.set("part_state", self.handle)
+        self._refuse_stray_inertia(ctx.model)
         self._collect(ctx)
+
+    @staticmethod
+    def _refuse_stray_inertia(model: mujoco.MjModel) -> None:
+        """A numeric meant for a state whose body is not there would never move any mass."""
+        for nid in range(model.nnumeric):
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_NUMERIC, nid) or ""
+            if LOOK_PREFIX in name and name.endswith("_inertia"):
+                body = name[: -len("_inertia")]
+                if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) < 0:
+                    raise PartStateError(
+                        f"part_state: numeric {name!r} names an inertia for a state body "
+                        f"{body!r} the model does not have"
+                    )
 
     def _collect(self, ctx: SimContext) -> None:
         """Find every entity's states and register each as an entity.
@@ -334,15 +353,6 @@ class PartStatePlugin(Plugin):
             found = find_looks(ctx.model, entity)
             if not found:
                 continue
-            if entity.name not in self.handle.looks and not entity.present:
-                # roqsim.presence restores an activated entity's whole body tree, its hidden
-                # states included, and tells no plugin -- so a pooled entity with states would come
-                # back showing them all while this plugin reported them hidden.
-                raise PartStateError(
-                    f"part_state: {entity.name!r} has states and starts absent (present: false); "
-                    "activating it would show every hidden state, so an entity with states is "
-                    "not pooled"
-                )
             looks = {}
             for look, body in found.items():
                 owner = self._owner_of.setdefault(body, entity.name)

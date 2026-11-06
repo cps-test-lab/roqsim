@@ -12,12 +12,14 @@ start. The one-axis machine checks the base's refusals and waits on an actuator 
 
 from __future__ import annotations
 
+import math
 import threading
 from types import SimpleNamespace
 
 import pytest
 from machine_fixtures import APPROACH, BOTTOM, CONTACT, DOOR_CLOSED, DOOR_SPEED, POWER
 
+from roqsim import machine as machine_module
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.introspection import undeclared_config_reads
@@ -747,3 +749,85 @@ def test_a_loaded_joint_does_not_sink_at_every_hold():
         assert _joint(engine, "z_joint") == pytest.approx(standing, abs=0.0005), "nothing moved"
     finally:
         engine.shutdown()
+
+
+def test_a_loaded_joint_arrives_at_its_target_less_its_standing_offset():
+    engine = _engine([{"machine_fixtures:Lift": {}, "name": "lift"}])
+    try:
+        lift = engine.ctx.blackboard.require("machine:lift")
+        for _ in range(1000):
+            engine.step()
+        assert lift.ready and lift._machine.at_home(), "standing at home under its load"
+        status = _run_until_done(engine, lift, lift.start("go", z=0.1))
+        assert status.error == ""
+        assert _joint(engine, "z_joint") == pytest.approx(0.1 - 0.00981, abs=0.0025)
+    finally:
+        engine.shutdown()
+
+
+def test_a_program_named_like_what_every_machine_has_is_refused():
+    with pytest.raises(Exception, match=r"program\(s\) \['start'\]"):
+        _engine([{"machine_fixtures:ProgramClash": {}, "name": "lift"}])
+
+
+def test_a_target_or_home_that_is_no_number_is_refused():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("go", x=float("nan")))
+        assert "is no number" in status.error
+        assert not math.isnan(float(engine.ctx.data.ctrl[0]))
+    finally:
+        engine.shutdown()
+    with pytest.raises(Exception, match="home 'x' is a number"):
+        _axis(home={"x": float("inf")})
+
+
+def test_without_a_control_range_the_joints_range_bounds_a_target():
+    servo = '<position name="x" joint="x_joint" kp="400" kv="40"/>'
+    engine = _axis(actuator=servo)
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("go", x=50.0))
+        assert "outside its range" in status.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_start_another_thread_got_in_during_a_preempt_is_reported_cancelled():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        machine = axis._machine
+        axis.start("go_then_linger", x=0.8, speed=0.2)
+        engine.step()
+        finish, other = machine._finish, []
+
+        def finish_and_let_another_start(run, error):
+            finish(run, error)
+            other.append(machine.request_start("nudge", {"x": 0.1}))
+
+        machine._finish = finish_and_let_another_start
+        machine.preempt("nudge", x=0.2)
+        machine._finish = finish
+        assert other
+        assert machine.status_now.seq > other[0]
+        assert axis.status().seq > other[0], "a larger number says another start followed"
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("annotation", "value", "fits"),
+    [
+        ("Optional[float]", None, True),
+        ("Optional[float]", "fast", False),
+        ("Optional[float]", 1.0, True),
+        ("typing.Optional[str]", "a", True),
+        ("Any", None, True),
+        ("float", None, False),
+        ("float | None", None, True),
+    ],
+)
+def test_a_parameters_annotation_is_read_through_its_forms(annotation, value, fits):
+    assert machine_module._fits(annotation, value) is fits

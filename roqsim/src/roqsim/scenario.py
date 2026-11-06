@@ -28,7 +28,8 @@ so within a step it sees their state; a start it makes is applied at the next st
 order. Tasks (:meth:`~ScenarioPlugin.spawn`, :meth:`~ScenarioPlugin.start`) advance once per step
 in the order they were created, so a scenario is deterministic: no threads, no wall clock.
 
-When ``program`` returns, the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
+When ``program`` has returned and every start it did not join has ended, the scenario emits
+``scenario_end`` and its ``done`` endpoint turns true,
 for an OpenSCENARIO monitor to wait on; with ``stop_at_end: true`` it also ends a standalone run
 (``ctx.request_stop``). A scenario-execution run is ended by its scenario, never by a plugin. A
 program that raises stops the run naming the scenario; a machine's start that ends in an error
@@ -38,6 +39,8 @@ raises :class:`ScenarioError` in the program that waited for it, unless it asked
 from __future__ import annotations
 
 import fnmatch
+import inspect
+import math
 from collections.abc import Callable, Iterator
 
 from . import endpoint
@@ -69,6 +72,8 @@ class Task:
         self.error: BaseException | None = None
         #: Whether ``error`` has reached a joiner.
         self.delivered = False
+        #: Called when the task is cancelled, to stop what it started.
+        self.on_cancel: Callable[[], None] | None = None
 
     def advance(self) -> None:
         if self.done:
@@ -92,12 +97,14 @@ class Task:
         return self.error
 
     def cancel(self) -> None:
-        """Stop the task at its current ``yield``. What it started keeps running unless it is
-        cancelled through its own handle."""
+        """Stop the task at its current ``yield``, and what it started where it says how
+        (:meth:`ScenarioPlugin.start` cancels its machine's program)."""
         if not self.done:
             self._gen.close()
             self.done = True
             self.cancelled = True
+            if self.on_cancel is not None:
+                self.on_cancel()
 
 
 class ScenarioPlugin(Plugin):
@@ -149,6 +156,8 @@ class ScenarioPlugin(Plugin):
                     )
         # A handle is set as an attribute of that name, so a name the scenario already has would
         # replace it -- its context, its config, a method of the helper.
+        if not isinstance(config.get("stop_at_end", False), bool):
+            errors.append(f"scenario {self.address}: 'stop_at_end' is true or false")
         taken = sorted(n for n in self.NEEDS if hasattr(type(self), n) or n in vars(self))
         if taken:
             errors.append(
@@ -163,6 +172,7 @@ class ScenarioPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         """Resolve the handles and start the program from its beginning."""
         for task in self._tasks:
+            task.on_cancel = None  # a reset ends what it started as well
             task.cancel()
         needs = {**self.NEEDS, **(self.config.get("needs") or {})}
         for attr, key in needs.items():
@@ -176,7 +186,13 @@ class ScenarioPlugin(Plugin):
         self._failed = False
         self._tasks = []
         self._kept = []
-        self._main = self.spawn(self.program(), name="program")
+        program = self.program()
+        if not inspect.isgenerator(program):
+            raise ScenarioError(
+                f"scenario {self.address}: program() is a generator, with one yield per physics "
+                "step; this one has no yield"
+            )
+        self._main = self.spawn(program, name="program")
 
     def post_step(self, ctx: SimContext) -> None:
         """Advance every task by one step, in the order they were created."""
@@ -189,7 +205,10 @@ class ScenarioPlugin(Plugin):
                 self._fail(exc)
         self._tasks = [t for t in self._tasks if not t.done]
         if self._main.done and not self._done:
-            # A start's error nobody joined is not lost: it stops the run here.
+            # A start nobody joined is not abandoned: the scene ends when it has, and its error
+            # stops the run here.
+            if not all(task.done for task in self._kept):
+                return
             for task in self._kept:
                 error = task.take_error()
                 if error is not None:
@@ -202,14 +221,28 @@ class ScenarioPlugin(Plugin):
             if self.config.get("stop_at_end", False):
                 ctx.request_stop(f"scenario {self.address} done")
 
+    def shutdown(self, ctx: SimContext) -> None:
+        """A run that ended before the program did says what no one joined: a shutdown cannot fail
+        a run (:meth:`roqsim.engine.Engine.shutdown`), so it is an error in its log and its events."""
+        for task in self._kept:
+            error = task.take_error()
+            if error is not None:
+                ctx.logger.error(
+                    "scenario %s: a start nobody joined failed: %s", self.address, error
+                )
+                ctx.events.emit(self.address, "start_failed", error=str(error))
+
     def _fail(self, exc: BaseException):
         """Stop the scene on ``exc``: the run stops, and ``done`` never turns true."""
         self._failed = True
         if isinstance(exc, ScenarioError):
             raise ScenarioError(f"scenario {self.address}: {exc}") from exc
         # The program's own exception, of its own type, with the scenario named beside it.
+        note = f"raised in scenario {self.address}'s program"
         if hasattr(exc, "add_note"):  # Python 3.11+
-            exc.add_note(f"raised in scenario {self.address}'s program")
+            exc.add_note(note)
+        else:
+            self._ctx.logger.error("%s: %s", note, exc)
         raise exc
 
     @endpoint.out(rate=10.0)
@@ -235,14 +268,24 @@ class ScenarioPlugin(Plugin):
         """Start ``program`` on a machine's handle and return a task that ends when it does; the
         task's ``result`` is the status. With ``check``, the machine's error ends the task as a
         :class:`ScenarioError` that :meth:`join` or :meth:`first` raises in whoever waits on it -- a
-        ``try`` around the join catches it, as around :meth:`run`. An error nobody joins stops the
-        run when the program returns."""
+        ``try`` around the join catches it, as around :meth:`run`, and reaches the first to join it.
+        The scene does not end before the start has; an error nobody joined then stops the run. A
+        run that ends first logs that error. Cancelling the task cancels this start's program, so
+        ``first(start(...), timer)`` leaves the machine free."""
         seq = handle.start(program, **args)
-        return self.spawn(
+        task = self.spawn(
             self._await_start(handle, program, seq, check),
             name=f"{handle.name}.{program}",
             keeps_error=True,
         )
+
+        def cancel_the_program() -> None:
+            status = handle.status()
+            if status.seq <= seq:
+                handle.cancel()
+
+        task.on_cancel = cancel_the_program
+        return task
 
     def run(self, handle, program: str, *, check: bool = True, **args):
         """Start ``program`` on a machine's handle and wait until this start ended. Raises
@@ -289,7 +332,8 @@ class ScenarioPlugin(Plugin):
         return status
 
     def join(self, *tasks: Task):
-        """Wait until every task is done; raise the first error one of them ended on."""
+        """Wait until every task is done; raise the first error one of them ended on. An error
+        reaches one joiner: a second join of that task returns."""
         while not all(t.done for t in tasks):
             yield
         for task in tasks:
@@ -298,8 +342,11 @@ class ScenarioPlugin(Plugin):
                 raise error
 
     def first(self, *tasks: Task):
-        """Wait until one task is done, cancel the others, and return the one that finished."""
+        """Wait until one task is done, cancel the others, and return the one that finished. With
+        no task that can finish, it raises :class:`ScenarioError` rather than waiting forever."""
         while True:
+            if all(task.cancelled for task in tasks):
+                raise ScenarioError("first() was given no task that can finish")
             for task in tasks:
                 if task.done and not task.cancelled:
                     for other in tasks:
@@ -321,6 +368,8 @@ class ScenarioPlugin(Plugin):
 
     def wait(self, seconds: float):
         """Yield for ``seconds`` of simulated time."""
+        if not math.isfinite(seconds):
+            raise ScenarioError(f"wait() takes a number of seconds, not {seconds!r}")
         end = self._ctx.sim_time + float(seconds)
         while self._ctx.sim_time < end - 1e-9:
             yield

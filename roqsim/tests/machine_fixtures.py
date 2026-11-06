@@ -319,6 +319,15 @@ class Lift(MachinePlugin):
         yield from self.move("z", z)
 
 
+class ProgramClash(Lift):
+    """Machine: a program named like the machine's own ``start``."""
+
+    @program
+    def start(self):
+        """Replaces the endpoint of that name."""
+        yield
+
+
 class HomeClash(Press):
     """Machine: a handle named like the machine's own ``home``."""
 

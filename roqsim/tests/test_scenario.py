@@ -331,3 +331,71 @@ def test_after_a_program_raised_the_scene_never_reports_done():
         assert "scenario_end" not in [e["event"] for e in _events(engine, "scene")]
     finally:
         engine.shutdown()
+
+
+def test_a_start_still_running_at_return_keeps_the_scene_open_and_its_error_stops_the_run():
+    engine = _engine(PRESS, {"scenario_fixtures:ReturnsWhileAStartRuns": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="press.jam .seq 1.: jammed"):
+            for _ in range(1000):
+                engine.step()
+        assert engine.ctx.sim_time > 0.05, "not before the machine failed"
+        assert "scenario_end" not in {e["event"] for e in _events(engine, "scene")}
+    finally:
+        engine.shutdown()
+
+
+def test_the_scene_ends_only_once_a_start_it_did_not_join_has():
+    engine = _engine(PRESS, {"scenario_fixtures:ReturnsBesideAGoodStart": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        machine = {e["event"]: e for e in _events(engine, "press")}
+        scene = {e["event"]: e for e in _events(engine, "scene")}
+        assert scene["scenario_end"]["t"] >= machine["program_end"]["t"]
+    finally:
+        engine.shutdown()
+
+
+def test_a_run_ending_before_the_program_says_what_no_one_joined(caplog):
+    engine = _engine(PRESS, {"scenario_fixtures:Outlasts": {}, "name": "scene"})
+    for _ in range(1000):
+        engine.step()
+    with caplog.at_level("ERROR"):
+        events = engine.ctx.events
+        engine.shutdown()
+    assert "a start nobody joined failed: press.jam" in caplog.text
+    assert [e["error"] for e in events.all() if e["event"] == "start_failed"]
+
+
+def test_a_timer_that_wins_over_a_start_leaves_the_machine_free():
+    engine = _engine(PRESS, {"scenario_fixtures:TimesOut": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        ends = [e["error"] for e in _events(engine, "press") if e["event"] == "program_end"]
+        assert ends == ["cancelled", ""]
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("scenario", "said"),
+    [("FirstOfNothing", "no task that can finish"), ("WaitNaN", "number of seconds")],
+)
+def test_a_wait_that_could_not_end_is_refused(scenario, said):
+    engine = _engine({f"scenario_fixtures:{scenario}": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match=said):
+            for _ in range(5):
+                engine.step()
+    finally:
+        engine.shutdown()
+
+
+def test_a_program_with_no_yield_is_refused_naming_it():
+    with pytest.raises(ScenarioError, match="scenario scene: program.. is a generator"):
+        _engine({"scenario_fixtures:NoYield": {}, "name": "scene"})
+
+
+def test_stop_at_end_is_true_or_false():
+    with pytest.raises(Exception, match="'stop_at_end' is true or false"):
+        _engine({"scenario_fixtures:NoYield": {"stop_at_end": "false"}, "name": "scene"})
