@@ -215,7 +215,7 @@ def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, mon
 
 def test_scenario_adapter_records_each_scenario_into_its_own_directory(tmp_path: Path, monkeypatch):
     """A reset() told the scenario's output directory finishes the recording before it and
-    starts one there; a reset() in the same directory is a reset within that recording."""
+    starts one there; a reset() in the same directory is a reset within that scenario."""
     from roqsim.mcap_format import is_finished
 
     world = _write_world(tmp_path)

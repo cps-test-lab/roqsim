@@ -365,6 +365,10 @@ A recording is rebuilt from the world it ran in, so an override changes only how
 camera (``sim.view``) and the renderer with its settings (``--renderer``, ``sim.renderers.<name>``).
 Any other ``--set`` is refused, naming the key, since it could not change what was recorded.
 
+**A recording is one episode.** A reset ends it and starts the next file, ``run.mcap``, ``run-2.mcap``,
+as F9's takes are numbered, each with its own span and its episode in its provenance, so a time names
+one sample and a sensor replay draws that episode's noise. ``--video`` renders one video per file.
+
 **A recording target is a file path ending in ``.mcap``**, whether it comes from ``--record`` or
 ``ROQSIM_RECORD``. Anything else -- another suffix, no suffix, a directory -- is refused before the
 world compiles, with exit status ``2`` and the target named (``a recording is an .mcap file; got
@@ -987,7 +991,8 @@ cost more on every poll for as long as the run lasted. A verdict is accordingly 
 channels are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and
 the only evidence of a stall is that nothing arrives. ``--watch`` is watching a run it expects to
 continue, so that gap counts against it -- and it stops without complaint when the recording gains its
-summary section, since that is written by ``close()`` and so means the run *ended* rather than stopped. A one-shot
+summary section naming no next take, since that is written by ``close()`` and so means the run *ended*
+rather than stopped; a summary naming one (a reset) is followed into that take. A one-shot
 check has no such premise: it judges the span the record covers, because what happened after the last
 row is not in the file. Without that split, every finished run would be reported as a stall a minute
 after it ended. The cost is that **a one-shot check cannot see a run that stopped** — its rows simply

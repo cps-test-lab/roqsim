@@ -18,7 +18,7 @@ name, or a path) shown on its own in an empty room.
 This is one of two drivers (the other is :mod:`roqsim.scenario_adapter`); both wrap the same
 :class:`Engine`.
 
-Recording is the driver's own: ``--record`` samples MuJoCo state into one ``.mcap`` file (see
+Recording is the driver's own: ``--record`` samples MuJoCo state into one ``.mcap`` file per episode (see
 :class:`roqsim.capture.StateRecorder`), and every image is rendered *afterwards* from that file by
 ``roqsim render``. Capture is a session concern, not an experiment one — the same footing as the panel
 switches below — so it is a run-level flag and deliberately not world-YAML config. A render costs 41
@@ -45,7 +45,6 @@ from .capture import (
     CaptureError,
     RecordingError,
     RecordToggle,
-    StateRecorder,
     TakeRecorder,
     parse_fps,
     snap_fps,
@@ -224,12 +223,24 @@ def _deaf_to_stop_signals(logger: logging.Logger):
             logger.debug("teardown complete; stop signals handled normally again")
 
 
-def _tick(engine: Engine, pacer: Pacer) -> bool:
-    """Honor run-control; return True if a physics step was taken this iteration."""
+def _tick(engine: Engine, pacer: Pacer, recorder: TakeRecorder | None = None) -> bool:
+    """Honor run-control; return True if a physics step was taken this iteration.
+
+    A reset starts the recorder's next take: a recording is one episode, so the episode after a reset
+    goes to a file of its own (:meth:`roqsim.capture.TakeRecorder.before_reset`).
+    """
     c = engine.ctx.control
+    # A quit wins over a reset asked for in the same tick: the run ends, so no next take is named
+    # that nothing would ever write.
+    if c.state == ctl.QUITTING:
+        return False
     if c.take_reset():
+        if recorder is not None:
+            recorder.before_reset()
         engine.reset()
         pacer.reset()
+        if recorder is not None:
+            recorder.after_reset()
     if c.state == ctl.QUITTING:
         return False
     if c.should_step():
@@ -244,13 +255,13 @@ def _tick(engine: Engine, pacer: Pacer) -> bool:
 
 
 def _run_headless(
-    engine: Engine, pacer: Pacer, max_steps: int | None, recorder: StateRecorder | None = None
+    engine: Engine, pacer: Pacer, max_steps: int | None, recorder: TakeRecorder | None = None
 ) -> None:
     step = 0
     while max_steps is None or step < max_steps:
         if engine.ctx.stop_requested:
             break
-        took = _tick(engine, pacer)
+        took = _tick(engine, pacer, recorder)
         if took is False:
             break
         if took:
@@ -379,7 +390,7 @@ def _run_windowed(
         while viewer.is_running() and (max_steps is None or step < max_steps):
             if engine.ctx.stop_requested:
                 break
-            took = _tick(engine, pacer)
+            took = _tick(engine, pacer, recorder)
             if took is False:
                 break
             # F9 and F8 are acted on here, on the physics thread: the UI-thread callbacks only set a
@@ -757,7 +768,7 @@ def run(
             recorder = None
             if headless:
                 if record:
-                    recorder = StateRecorder(
+                    recorder = TakeRecorder(
                         engine.ctx,
                         record,
                         rate,
@@ -769,6 +780,7 @@ def run(
                         exclude=record_exclude,
                         logger=engine.logger or log,
                     )
+                    recorder.start()
             else:
                 # Windowed: always build the take recorder, even without --record, so F9 works in any windowed
                 # run. It costs nothing until a take starts -- recording is a memcpy.

@@ -420,7 +420,7 @@ class MujocoSim(_Base):
             RECORD_EXCLUDE_VAR,
             RECORD_TRACKS_VAR,
             CaptureError,
-            StateRecorder,
+            TakeRecorder,
             parse_fps,
             snap_fps,
         )
@@ -436,7 +436,7 @@ class MujocoSim(_Base):
             # recorded at some other rate would be worse than one that refuses.
             raise ValueError(f"ROQSIM_CAPTURE_FPS: {err}") from err
         rate.report(lg)
-        self._recorder = StateRecorder(
+        self._recorder = TakeRecorder(
             self._engine.ctx,
             self._resolve_out(target),
             rate,
@@ -446,6 +446,7 @@ class MujocoSim(_Base):
             exclude=env.get(RECORD_EXCLUDE_VAR),
             logger=lg,
         )
+        self._recorder.start()
 
     def _finish_recording(self) -> None:
         """Finish the recording: the summary section that marks a file as ended on purpose.
@@ -510,16 +511,18 @@ class MujocoSim(_Base):
             self._finish_recording()
             self._run_dir = output_dir
             self._scene_export_pending = True
+        if self._recorder is not None:
+            self._recorder.before_reset()
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
         self._engine.reset(**kwargs)
         if self._scene_export_pending:
             self._export_scene()
         # After reset, so the first sample is the world as the scenario starts rather than as it
-        # compiled; a re-reset of the same world restarts the schedule instead of continuing it.
+        # compiled; a re-reset of the same world starts the next take, a recording being one episode.
         if self._recorder is None:
             self._start_recording()
         else:
-            self._recorder.on_reset()
+            self._recorder.after_reset()
         # Open the interactive viewer once, when the scenario asked for it (default: headless).
         # A window needs a display; if none is set, fail with a clear message rather than crashing in
         # the native GLFW init. (The offscreen render backend falls back to CPU on its own.)

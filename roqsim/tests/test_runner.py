@@ -270,7 +270,7 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
         def close(self):
             return None
 
-    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
@@ -415,7 +415,7 @@ def test_the_teardown_runs_inside_the_protected_window(monkeypatch, tmp_path):
             closed.append(True)
             return None
 
-    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
@@ -506,11 +506,151 @@ def test_a_recording_that_cannot_be_written_still_shuts_the_engine_down(probe, m
         def close(self):
             raise RecordingError("disk full")
 
-    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     with pytest.raises(RecordingError, match="disk full"):
         runner.run(str(world), headless=True, max_steps=1, record="r.mcap", pacing="asap")
     assert module.LOG == ["shutdown"]
+
+
+# -- a recording is one episode -------------------------------------------------------------------
+
+
+def _free_ball_scene(tmp_path):
+    scene = tmp_path / "ball.xml"
+    scene.write_text(
+        "<mujoco><option timestep='0.002'/><worldbody>"
+        "<geom type='plane' size='1 1 .1'/>"
+        "<body pos='0 0 1'><freejoint/><geom type='sphere' size='.1'/></body>"
+        "</worldbody></mujoco>"
+    )
+    return scene
+
+
+def test_a_reset_starts_the_next_recording_and_each_file_is_one_episode(tmp_path):
+    from roqsim.capture import TakeRecorder, snap_fps
+    from roqsim.clock import Pacer
+    from roqsim.engine import Engine
+    from roqsim.recording import open_recording
+
+    cfg = runner.config_for_input(str(_free_ball_scene(tmp_path)))
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    rate = snap_fps(25, engine.dt)
+    recorder = TakeRecorder(engine.ctx, tmp_path / "run.mcap", rate, world="w")
+    recorder.start()
+    pacer = Pacer.from_config("asap", engine.dt)
+    try:
+        runner._run_headless(engine, pacer, 1000, recorder)  # 2 s of sim time
+        engine.ctx.control.request_reset()
+        runner._run_headless(engine, pacer, 100, recorder)  # 0.2 s
+        written = recorder.close()
+    finally:
+        engine.shutdown()
+    assert [path.name for path in written] == ["run.mcap", "run-2.mcap"]
+    with open_recording(written[0]) as first, open_recording(written[1]) as second:
+        assert len(first) == 50 and len(second) == 5
+        assert first.meta["episode"] + 1 == second.meta["episode"]
+        assert second.span[0] < 0.05, "the new episode's start is in it"
+        assert second.index_at(0.1) == 2
+        assert (first.times[1:] > first.times[:-1]).all()
+        assert (second.times[1:] > second.times[:-1]).all()
+
+
+def test_roqsim_sim_records_each_episode_in_its_own_file(tmp_path, monkeypatch):
+    world = tmp_path / "w.yaml"
+    world.write_text('sim: {}\ncomponents:\n  - "reset_after:Reset": {}\n    name: r\n')
+    (tmp_path / "reset_after.py").write_text(
+        "from roqsim.plugin import Plugin\n"
+        "class Reset(Plugin):\n"
+        "    done = False\n"
+        "    def post_step(self, ctx):\n"
+        "        if ctx.sim_time > 0.1 and not Reset.done:\n"
+        "            Reset.done = True\n"
+        "            ctx.control.request_reset()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    runner.run(str(world), headless=True, max_steps=200, record="r.mcap", pacing="asap")
+    assert (tmp_path / "r.mcap").exists() and (tmp_path / "r-2.mcap").exists()
+
+
+def test_a_take_with_nothing_in_it_leaves_no_gap_in_the_numbers(tmp_path):
+    from roqsim.capture import TakeRecorder, snap_fps
+    from roqsim.engine import Engine
+
+    cfg = runner.config_for_input(str(_free_ball_scene(tmp_path)))
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    recorder = TakeRecorder(engine.ctx, tmp_path / "run.mcap", snap_fps(25, engine.dt), world="w")
+    recorder.start()
+    try:
+        recorder.before_reset()  # before any sample
+        recorder.after_reset()
+        engine.step()
+        recorder.sample(engine.ctx)
+        assert [path.name for path in recorder.close()] == ["run.mcap"]
+    finally:
+        engine.shutdown()
+
+
+def test_each_episodes_events_are_in_its_own_file(tmp_path, monkeypatch):
+    from roqsim.recording import open_recording
+
+    world = tmp_path / "w.yaml"
+    world.write_text('sim: {}\ncomponents:\n  - "emits:Emits": {}\n    name: e\n')
+    (tmp_path / "emits.py").write_text(
+        "from roqsim.plugin import Plugin\n"
+        "class Emits(Plugin):\n"
+        "    done = False\n"
+        "    def on_reset(self, ctx):\n"
+        "        ctx.events.emit(self.address, 'episode_start')\n"
+        "    def post_step(self, ctx):\n"
+        "        if ctx.sim_time > 0.1 and not Emits.done:\n"
+        "            Emits.done = True\n"
+        "            ctx.control.request_reset()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    runner.run(str(world), headless=True, max_steps=200, record="r.mcap", pacing="asap")
+    with open_recording("r.mcap") as first, open_recording("r-2.mcap") as second:
+        first_episode, second_episode = first.meta["episode"], second.meta["episode"]
+        assert second_episode == first_episode + 1
+        assert {e["episode"] for e in first.events} == {first_episode}
+        starts = [e for e in second.events if e["event"] == "episode_start"]
+        assert {e["episode"] for e in second.events} == {second_episode} and len(starts) == 1
+
+
+def test_health_watch_follows_a_run_into_the_next_episode(tmp_path, monkeypatch, capsys):
+    """A take closed by a reset is no end of the run: a watch goes on in the next one."""
+    from roqsim import exit_status, health
+
+    world = tmp_path / "w.yaml"
+    world.write_text('sim: {}\ncomponents:\n  - "resets:Resets": {}\n    name: e\n')
+    (tmp_path / "resets.py").write_text(
+        "from roqsim.plugin import Plugin\n"
+        "class Resets(Plugin):\n"
+        "    done = False\n"
+        "    def post_step(self, ctx):\n"
+        "        if ctx.sim_time > 0.1 and not Resets.done:\n"
+        "            Resets.done = True\n"
+        "            ctx.control.request_reset()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    runner.run(str(world), headless=True, max_steps=200, record="r.mcap", pacing="asap")
+    assert health.next_take(tmp_path / "r.mcap") == tmp_path / "r-2.mcap"
+    assert health.next_take(tmp_path / "r-2.mcap") is None
+    argv = ["--recording", str(tmp_path / "r.mcap"), "--watch", "--poll", "0.01", "--json"]
+    assert health.main(argv) == exit_status.OK
+    assert "r-2.mcap was finished" in capsys.readouterr().out
 
 
 def test_a_world_without_a_scene_ends_at_its_seconds_with_success(tmp_path, monkeypatch):
@@ -519,3 +659,25 @@ def test_a_world_without_a_scene_ends_at_its_seconds_with_success(tmp_path, monk
     world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
     args = [str(world), "--headless", "--seconds", "0.05", "--pacing", "asap", "--control", "none"]
     assert runner.main(args) == exit_status.OK
+
+
+def test_a_quit_asked_with_a_reset_ends_the_run_naming_no_next_take(tmp_path, monkeypatch):
+    from roqsim import health
+
+    world = tmp_path / "w.yaml"
+    world.write_text('sim: {}\ncomponents:\n  - "quits:Quits": {}\n    name: q\n')
+    (tmp_path / "quits.py").write_text(
+        "from roqsim import control as ctl\n"
+        "from roqsim.plugin import Plugin\n"
+        "class Quits(Plugin):\n"
+        "    def post_step(self, ctx):\n"
+        "        if ctx.sim_time > 0.1:\n"
+        "            ctx.control.request_reset()\n"
+        "            ctx.control.set_state(ctl.QUITTING)\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    runner.run(str(world), headless=True, max_steps=200, record="r.mcap", pacing="asap")
+    assert health.next_take(tmp_path / "r.mcap") is None
+    assert not (tmp_path / "r-2.mcap").exists()

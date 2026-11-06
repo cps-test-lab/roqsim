@@ -1,6 +1,6 @@
 """The recording's on-disk shape: what the writer emits, and the framing loop that reads it back.
 
-A run is recorded as **one mcap file** (https://mcap.dev) and nothing else. This module holds the
+An episode is recorded as **one mcap file** (https://mcap.dev) and nothing else. This module holds the
 part of that which is pure format -- the channel and metadata names, the JSON schemas, the chunking
 writer and the record framing -- and deliberately imports no MuJoCo, so that ``roqsim health`` can
 follow a growing recording without importing the simulator it is checking.

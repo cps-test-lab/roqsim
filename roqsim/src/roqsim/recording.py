@@ -30,6 +30,7 @@ import json
 import logging
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import cached_property
 from pathlib import Path
 
 import mujoco
@@ -498,6 +499,10 @@ class Recording:
         for entity in ctx.entities.all():
             set_present(ctx, entity, entity.name not in absent)
 
+    @cached_property
+    def _one_way(self) -> bool:
+        return not np.any(np.diff(self.times) < 0)
+
     def index_at(self, when: float) -> int:
         """The index of the sample **nearest** ``when``; ties resolve to the earlier one.
 
@@ -505,6 +510,11 @@ class Recording:
         the simulation never had. Out of range is an error rather than a clamp -- silently returning the
         first or last sample is what makes a wrong answer look like a right one.
         """
+        if not self._one_way:
+            raise RecordingError(
+                f"{self.path} holds several episodes, its sim time going back at a reset, so a time "
+                "does not name one sample in it. A recording written now holds one episode."
+            )
         t0, t1 = self.span
         period = float(1 / self.fps)
         if when < t0 - period or when > t1 + period:

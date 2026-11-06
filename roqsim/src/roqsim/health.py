@@ -53,8 +53,9 @@ there is reason to think it is still alive**:
 
 * ``--watch`` is that reason -- it is watching a run it expects to continue -- so wall time keeps
   advancing while the record does not, and a stop is caught by check 3. It stops without complaint
-  when the recording gains its **summary section**, because that is written by ``close()`` and so
-  means the run ended on purpose rather than stopped dead.
+  when the recording gains its **summary section** naming no next take, because that is written by
+  ``close()`` and so means the run ended on purpose rather than stopped dead; a summary naming one
+  (``next_take``, a reset) is followed into that take.
 * a one-shot check has no such premise: it is handed a directory and asked what is in it. It judges
   the span the record actually covers, because what happened after the last message is not something
   the file can say. Otherwise every finished run would be reported as a stall a minute after it ended.
@@ -115,6 +116,7 @@ from .mcap_format import (
     MAGIC,
     META_ENTITIES,
     META_KEY,
+    META_RECORDING,
     POSE_WIDTH,
     RECORDING_SUFFIX,
     RecordingError,
@@ -530,6 +532,7 @@ class FileSource:
         pose_window: float | None = POSE_READ_S,
     ) -> None:
         self.path = path
+        self._clock_window, self._pose_window = clock_window, pose_window
         self._tail = Tail(path, clock_window, pose_window)
 
     def read(self) -> tuple[list[ClockRow], list[PoseRow]]:
@@ -538,6 +541,12 @@ class FileSource:
     @property
     def roster(self) -> list[dict] | None:
         return self._tail.roster
+
+    def follow(self, path: Path) -> None:
+        """Go on reading in the take the run continued in, after a reset."""
+        self._tail.close()
+        self.path = path
+        self._tail = Tail(path, self._clock_window, self._pose_window)
 
     def tails(self) -> list[tuple[str, Tail]]:
         """The open readers, labelled -- so a report can say what happened to each."""
@@ -550,9 +559,10 @@ class FileSource:
 class SeriesSplitter:
     """Cut a row stream where sim time goes backwards, because that is a reset and not a rewind.
 
-    ``StateRecorder.on_reset`` restarts the sample schedule and keeps writing to the **same** file,
-    while the wall clock deliberately keeps climbing ("real time did not restart"). A campaign
-    resets between repetitions, so this is the common case and not an edge one.
+    A reset starts the next take with sim time back at zero, while the wall clock keeps climbing
+    ("real time did not restart"), and a watch follows the run into it. A file written before a
+    recording was one episode holds both in one. A campaign resets between repetitions, so this is
+    the common case and not an edge one.
 
     Measuring across that boundary is how a healthy run gets failed: check 4 differences the first
     and last sim stamp in its window, and a window spanning a reset sees a full minute of progress
@@ -1116,6 +1126,13 @@ def finished(recording: Path) -> bool:
     return is_finished(recording)
 
 
+def next_take(recording: Path) -> Path | None:
+    """The file a finished recording says the run went on in after a reset, or ``None``."""
+    raw = (read_metadata(recording).get(META_RECORDING) or {}).get(META_KEY)
+    name = json.loads(raw).get("next_take") if raw else None
+    return recording.with_name(name) if name else None
+
+
 def resolve_path(args) -> tuple[Path | None, str | None]:
     """Locate the recording. Returns ``(recording, error)``; ``error`` is fatal when set."""
     if args.recording:
@@ -1287,8 +1304,18 @@ def main(argv: list | None = None) -> int:
                     print(finding.line(), flush=True)
             if not args.watch or any(f.level == ERROR for f in found):
                 break
-            if finished(recording):
-                ended = True
+            following = None
+            if recording.exists() and finished(recording):
+                following = next_take(recording)
+                if following is None:
+                    ended = True
+                else:
+                    # A reset: the run goes on in the next take, which its first sample creates.
+                    monitor.ingest()
+                    recording = following
+            if recording != source.path and recording.exists():
+                source.follow(recording)
+            if ended:
                 monitor.report.notes.append(
                     f"run ended: {recording.name} was finished with its summary"
                 )
