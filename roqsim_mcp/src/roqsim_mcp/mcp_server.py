@@ -69,9 +69,45 @@ _TOOLS = [
     step,
 ]
 
+#: What a client is told once, at connect time: the tools answer for THIS installation, a listed name
+#: is one that resolves, the ``use`` line each model and world row carries is what goes in a world
+#: file, and which tools act on a running simulation. Stated here rather than left to the tool
+#: descriptions because the loop -- list, detail, write, check, then run -- is not visible from any
+#: one tool.
+_INSTRUCTIONS = """\
+What this roqsim installation can put in a world, read from the same registries its loader resolves
+against -- so a name a tool returns is a name that resolves, and a name it does not return is not.
+
+- list_plugins / get_plugin_details: the installed `roqsim.plugins`, then one plugin's config keys.
+  `schema` (types, defaults, units, bounds) is authoritative where present; `parameters` is the
+  documented block otherwise.
+- list_models / get_model_details: what `spawn_model` can spawn, by the `ref` that resolves it, with
+  the components its manifest brings along.
+- list_worlds: every world YAML (`roqsim sim <ref>`, `extends: <ref>`), baked scene and built-in
+  definition (`sim.world` values).
+
+Every model and world row carries `use`, the line to write; a plugin is written as
+`- <name>: {<config>}` in a world's `components:` list. A name that resolves to nothing comes back as
+`{"error": "..."}` rather than as a tool failure.
+
+- check_world: after writing a world, whether it loads -- every problem at once, each with its stage
+  and a hint. It builds the world out of process and steps nothing.
+
+These tools do not start a run; a run is `roqsim sim`. Once one is running, these act on it:
+
+- list_endpoints / describe_endpoint / read_endpoint / call_endpoint: what the simulation publishes
+  and accepts, one endpoint in full, its current value, and a command or stream value sent to it.
+- pause / resume / step: hold the simulation, let it go on, or advance a paused one by n steps.
+
+Each finds the simulator as `roqsim ls` does, or takes its address as `control`; no simulator, or a
+refusal, is a `{"error": ..., "kind": ...}` answer. The same answers from a shell: `roqsim plugins`,
+`roqsim catalog`, `roqsim check`, and `roqsim ls` / `endpoints` / `describe` / `read` / `call` /
+`ctl`.
+"""
+
 
 def create_server() -> FastMCP:
-    mcp = FastMCP("roqsim")
+    mcp = FastMCP("roqsim", instructions=_INSTRUCTIONS)
     for fn in _TOOLS:
         mcp.tool()(fn)
     # After writing a world, whether it loads -- the one tool here that builds something, which is
