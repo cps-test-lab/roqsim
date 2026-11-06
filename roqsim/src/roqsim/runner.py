@@ -18,7 +18,7 @@ name, or a path) shown on its own in an empty room.
 This is one of two drivers (the other is :mod:`roqsim.scenario_adapter`); both wrap the same
 :class:`Engine`.
 
-Recording is the driver's own: ``--record`` samples MuJoCo state into one ``.mcap`` file (see
+Recording is the driver's own: ``--record`` samples MuJoCo state into one ``.mcap`` file per episode (see
 :class:`roqsim.capture.StateRecorder`), and every image is rendered *afterwards* from that file by
 ``roqsim render``. Capture is a session concern, not an experiment one — the same footing as the panel
 switches below — so it is a run-level flag and deliberately not world-YAML config. A render costs 41
@@ -227,14 +227,16 @@ def _tick(engine: Engine, pacer: Pacer, recorder: TakeRecorder | None = None) ->
     """Honor run-control; return True if a physics step was taken this iteration.
 
     A reset starts the recorder's next take: a recording is one episode, so the episode after a reset
-    goes to a file of its own (:meth:`roqsim.capture.TakeRecorder.on_reset`).
+    goes to a file of its own (:meth:`roqsim.capture.TakeRecorder.before_reset`).
     """
     c = engine.ctx.control
     if c.take_reset():
+        if recorder is not None:
+            recorder.before_reset()
         engine.reset()
         pacer.reset()
         if recorder is not None:
-            recorder.on_reset()
+            recorder.after_reset()
     if c.state == ctl.QUITTING:
         return False
     if c.should_step():

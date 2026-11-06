@@ -17,7 +17,7 @@ every single step at ``dt=0.002``, the worst case there is -- costs about **5.5%
 overhead (~20 us: the float32 cast, the copy into the write buffer, the binding call). So lower the rate
 because the file is large, and know that only an every-step rate is measurable at all.
 
-A sample goes **straight to the file** (see :class:`StateRecorder`): the recording is one mcap file,
+A sample goes **straight to the file** (see :class:`StateRecorder`): an episode's recording is one mcap file,
 written chunk by chunk as the run proceeds, so the footprint does not grow with the run's length and
 a run that is killed keeps every chunk that was closed before the kill.
 
@@ -1001,8 +1001,11 @@ class StateRecorder:
             mujoco.mj_forward(ctx.model, ctx.data)
             yield t, ctx.data
 
-    def close(self) -> Path | None:
+    def close(self, next_take: str | None = None) -> Path | None:
         """Finish the recording and return its path, or ``None`` when there was nothing to write.
+
+        ``next_take`` is the file the run goes on in, for a reader following it: without it, a
+        finished recording is a run that ended.
 
         Idempotent, because every call site is a ``finally`` and a driver may unwind more than once.
         The provenance is written a second time here with what is only known at the end (the
@@ -1012,6 +1015,8 @@ class StateRecorder:
         if self._closed:
             return None
         self._closed = True
+        if self._writer is None and next_take is not None:
+            return None  # a reset before the first sample: the run goes on, with nothing lost
         if self._writer is None:
             # Nothing sampled: say so rather than leaving an empty file that passes an existence check.
             self.log.warning(
@@ -1027,6 +1032,8 @@ class StateRecorder:
         self._provenance["endpoint_rates"] = _endpoint_rate_record(self._ctx)
         self._provenance["samples"] = self._count
         self._provenance["span"] = [self._first_t, self._last_t]
+        if next_take is not None:
+            self._provenance["next_take"] = next_take
         try:
             # Events after the last sample are still the run's.
             self._write_events(self._ctx)
@@ -1187,6 +1194,7 @@ class TakeRecorder:
         self.log = logger or log
         self._take = 0
         self._active: StateRecorder | None = None
+        self._resume = False
         self.written: list[Path] = []
 
     @property
@@ -1196,9 +1204,12 @@ class TakeRecorder:
     def _next_path(self) -> Path:
         """``run.mcap``, ``run-2.mcap``, ... so a second take never overwrites the first."""
         self._take += 1
-        if self._take == 1:
+        return self._path_of(self._take)
+
+    def _path_of(self, take: int) -> Path:
+        if take == 1:
             return self._base
-        return self._base.with_name(f"{self._base.stem}-{self._take}{self._base.suffix}")
+        return self._base.with_name(f"{self._base.stem}-{take}{self._base.suffix}")
 
     def start(self) -> None:
         if self._active is not None:
@@ -1224,13 +1235,26 @@ class TakeRecorder:
     def sample(self, ctx, cam=None) -> bool:
         return self._active.sample(ctx, cam=cam) if self._active is not None else False
 
-    def on_reset(self) -> None:
-        """A reset ends the running take and starts the next: a recording is one episode.
+    def before_reset(self) -> None:
+        """A reset ends the running take: a recording is one episode.
 
-        Its provenance holds one episode, which a replay's noise is keyed on, and its sim time runs
-        one way, which every lookup by time relies on. Nothing to do between takes."""
-        if self._active is not None:
-            self.stop()
+        Its provenance holds one episode, which a replay's noise is keyed on, its events are that
+        episode's, and its sim time runs one way, which every lookup by time relies on. Before the
+        reset, since the reset's own events belong to the next take. Nothing to do between takes."""
+        self._resume = self._active is not None
+        if not self._resume:
+            return
+        active, self._active = self._active, None
+        written = active.close(next_take=self._path_of(self._take + 1).name)
+        if written is not None:
+            self.written.append(written)
+        else:
+            self._take -= 1
+
+    def after_reset(self) -> None:
+        """Start the take a reset ended (:meth:`before_reset`)."""
+        if self._resume:
+            self._resume = False
             self.start()
 
     def close(self) -> list[Path]:

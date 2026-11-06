@@ -511,6 +511,8 @@ class MujocoSim(_Base):
             self._finish_recording()
             self._run_dir = output_dir
             self._scene_export_pending = True
+        if self._recorder is not None:
+            self._recorder.before_reset()
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
         self._engine.reset(**kwargs)
         if self._scene_export_pending:
@@ -520,7 +522,7 @@ class MujocoSim(_Base):
         if self._recorder is None:
             self._start_recording()
         else:
-            self._recorder.on_reset()
+            self._recorder.after_reset()
         # Open the interactive viewer once, when the scenario asked for it (default: headless).
         # A window needs a display; if none is set, fail with a clear message rather than crashing in
         # the native GLFW init. (The offscreen render backend falls back to CPU on its own.)
