@@ -11,6 +11,7 @@ from test_osc_library import _build  # noqa: E402
 
 from roqsim.config import load_config_from_dict  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
+from roqsim.machine import MachineStatus  # noqa: E402
 
 GATE = {
     "zone_trigger": {
@@ -135,6 +136,63 @@ def test_an_abandoned_machine_run_cancels_the_program():
         assert _run_osc(engine, RACE) == py_trees.common.Status.SUCCESS
         ends = [e["error"] for e in engine.ctx.events.all() if e["event"] == "program_end"]
         assert ends == ["cancelled", ""]
+    finally:
+        engine.shutdown()
+
+
+def _machine_run(engine, **args):
+    from scenario_execution_roqsim.actions.machine_run import MachineRun
+
+    action = MachineRun()
+    action.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
+    action.execute(machine="press", program="stroke", **args)
+    return action
+
+
+def _abandon(action):
+    action.terminate(py_trees.common.Status.INVALID)
+
+
+def test_a_machine_run_abandoned_in_flight_cancels_its_own_start_and_no_other():
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        # Accepted: its start is cancelled once its number is known.
+        action = _machine_run(engine, args="seconds=10.0")
+        assert action.update() == py_trees.common.Status.RUNNING
+        _abandon(action)
+        engine.step()
+        engine.step()
+        own = press.status()
+        assert own.finished and own.error == "cancelled" and not press.busy
+        # Refused, as another client's program runs: that program is left alone.
+        other = press.start("stroke", seconds=10.0)
+        engine.step()
+        action = _machine_run(engine, args="seconds=0.1")
+        assert action.update() == py_trees.common.Status.RUNNING
+        _abandon(action)
+        for _ in range(5):
+            engine.step()
+        assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
+    finally:
+        engine.shutdown()
+
+
+def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_alone():
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        action = _machine_run(engine, args="seconds=0.01")
+        action.update()
+        engine.step()
+        assert action.update() == py_trees.common.Status.RUNNING, "it knows its number now"
+        while press.busy:
+            engine.step()
+        other = press.start("stroke", seconds=10.0)
+        _abandon(action)
+        for _ in range(5):
+            engine.step()
+        assert press.busy and press.status().seq == other and not press.status().finished
     finally:
         engine.shutdown()
 

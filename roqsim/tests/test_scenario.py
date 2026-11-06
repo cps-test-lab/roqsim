@@ -412,6 +412,16 @@ def test_cancelling_a_finished_start_leaves_the_next_one_running():
         engine.shutdown()
 
 
+def test_cancelling_a_task_leaves_a_start_another_client_made_since_alone():
+    engine = _engine(PRESS, {"scenario_fixtures:CancelledAfterAnotherStart": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        ends = [e["error"] for e in _events(engine, "press") if e["event"] == "program_end"]
+        assert ends == ["cancelled", ""]
+    finally:
+        engine.shutdown()
+
+
 def test_a_reset_says_what_no_one_joined(caplog):
     engine = _engine(PRESS, {"scenario_fixtures:Outlasts": {}, "name": "scene"})
     try:

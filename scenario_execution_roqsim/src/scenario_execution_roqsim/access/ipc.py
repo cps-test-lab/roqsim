@@ -10,7 +10,8 @@ it -- ``ROQSIM_CONTROL``, or the only one running -- and until one
 answers, :meth:`IpcAccess.ready` is false, so a simulator that is still starting is waited for.
 
 **Nothing blocks.** Every request is sent and then polled with a zero wait, one in flight per
-call object; the tree's tick never waits on the socket.
+call object; the tree's tick never waits on the socket. A call handed over with
+:meth:`IpcAccess.after` is polled on a thread of its own, and the connection is used under a lock.
 
 The world's endpoints are listed once, when the simulator first answers, and every name a
 scenario uses is resolved against that list with the same functions the in-process backend uses
@@ -19,6 +20,8 @@ scenario uses is resolved against that list with the same functions the in-proce
 
 from __future__ import annotations
 
+import logging
+import threading
 import time
 
 import numpy as np
@@ -48,6 +51,8 @@ from . import (
     report_whole,
 )
 
+_log = logging.getLogger(__name__)
+
 #: Where the core serves entity placement and presence.
 _SET_STATE = "sim/entities/set_state"
 _SET_PRESENCE = "sim/entities/set_presence"
@@ -63,7 +68,7 @@ class _Request:
 
     def __init__(self, access: IpcAccess, op: str, value=None, **fields):
         self._access = access
-        self._rid = access._client.send(op, value, **fields)
+        self._rid = access._send(op, value, **fields)
         self.done = False
         self.value = None
         self.error = None
@@ -75,7 +80,7 @@ class _Request:
         from roqsim.ipc import ControlError
 
         try:
-            self.done, self.value = self._access._client.poll(self._rid, 0.0)
+            self.done, self.value = self._access._poll(self._rid)
         except ControlError as err:
             self.done, self.error = True, err
         return self.done
@@ -172,7 +177,7 @@ class _IpcRoute(NavCall):
         return None
 
     def cancel(self) -> None:
-        self._access._client.send("call", None, path=f"{self._base}/cancel_route")
+        self._access._send("call", None, path=f"{self._base}/cancel_route")
 
 
 class _IpcReport(ReportCall):
@@ -227,6 +232,9 @@ class IpcAccess(WorldAccess):
         self._unreachable: str | None = None
         self._asked_at: float | None = None
         self._poses: dict[str, _Request] = {}
+        #: The connection is shared with the threads that see handed-over calls through.
+        self._lock = threading.Lock()
+        self._followers: list[threading.Thread] = []
 
     # -- the world ------------------------------------------------------------------------------
     def ready(self) -> bool:
@@ -354,7 +362,47 @@ class IpcAccess(WorldAccess):
             value["orientation"] = quat
         return _IpcPlacement(self, self._entity_command(_SET_PRESENCE), value, SpawnOutcome)
 
+    def after(self, call: CommandCall, then) -> None:
+        thread = threading.Thread(
+            target=self._follow, args=(call, then), name="ipc-access-after", daemon=True
+        )
+        self._followers.append(thread)
+        thread.start()
+
+    def _follow(self, call: CommandCall, then) -> None:
+        outcome = self._settle(call)
+        if outcome is not None:
+            last = then(outcome)
+            if last is not None:
+                self._settle(last)
+
+    def _settle(self, call: CommandCall) -> CommandOutcome | None:
+        """``call``'s outcome, waited for as long as the simulator has to answer it."""
+        wait = self._client.timeout + _GRACE_S
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            outcome = call.poll()
+            if outcome is not None:
+                return outcome
+            time.sleep(0.005)
+        _log.error("no reply from %s within %g s to a handed-over call", self._client.uri, wait)
+        return None
+
+    # -- the connection ---------------------------------------------------------------------------
+    def _send(self, op: str, value=None, **fields) -> int:
+        with self._lock:
+            return self._client.send(op, value, **fields)
+
+    def _poll(self, rid: int):
+        with self._lock:
+            return self._client.poll(rid, 0.0)
+
     def teardown(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        # A handed-over call is seen through first, so a cancel it sends is not dropped unsent.
+        for thread in self._followers:
+            thread.join()
+        self._followers.clear()
+        with self._lock:
+            if self._client is not None:
+                self._client.close()
+                self._client = None

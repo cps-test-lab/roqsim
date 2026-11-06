@@ -645,9 +645,13 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
 -  ``status() -> MachineStatus(seq, program, finished, error)``: the last start. A caller knows its
    own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
    else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
+-  ``cancel(seq) -> seq``: start ``seq``, pending or running, ends and the machine stops where it
+   is; 0 when that start has ended, is being cancelled already or was never this machine's. A
+   caller cancels its own start by its number, so a start another caller made since is left alone;
+   ``cancel()`` without one ends whatever is pending or runs. Cancels are posted in order with the
+   starts.
 -  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
-   precondition), ``cancel()`` (the machine stops where it is), ``value(name)`` (an actuator's or
-   setpoint's current target).
+   precondition), ``value(name)`` (an actuator's or setpoint's current target).
 
 It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
 (``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at

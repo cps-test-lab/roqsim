@@ -29,9 +29,10 @@ The base gives every machine the same outside:
 
 * a :class:`MachineHandle` on the blackboard under ``machine:<name>``: ``start(program, **args)``
   returning a sequence number, ``status()`` (a :class:`MachineStatus`), ``busy``, ``ready``,
-  ``cancel()`` and ``value(name)``. A start while busy is refused at the call. It is the contract
+  ``cancel(seq)`` and ``value(name)``. A start while busy is refused at the call. It is the contract
   of the walker's ``send_route``/``status`` made general: a caller knows its own start ended when
-  ``status().seq`` is the number it was given and ``finished`` is set;
+  ``status().seq`` is the number it was given and ``finished`` is set, and cancels its own start,
+  and no other, with ``cancel(seq)``;
 * an event on ``ctx.events`` (:mod:`roqsim.events`) for each step a program names, between a
   ``program_start`` and a ``program_end``, so a recording carries the machine's timeline;
 * the endpoints ``start``, ``status`` and ``cancel`` on the machine's entity, for the control socket
@@ -158,9 +159,12 @@ class MachineHandle:
         """Not busy, and the machine's own precondition holds (:meth:`MachinePlugin.ready_when`)."""
         return not self._machine.busy and bool(self._machine.ready_when())
 
-    def cancel(self) -> int:
-        """End the running (or pending) program where it is; its sequence number, 0 if none."""
-        return self._machine.request_cancel()
+    def cancel(self, seq: int = 0) -> int:
+        """End start ``seq``, pending or running, where it is; its number, or 0 when it has ended,
+        is being cancelled already or was never this machine's. Without ``seq`` (0), whatever is
+        pending or runs; a caller that holds its start's number passes it, so it never cancels a
+        start another caller made since."""
+        return self._machine.request_cancel(seq)
 
     def value(self, name: str) -> float:
         """The current target of an actuator or setpoint (the end of any ramp is not it)."""
@@ -786,16 +790,17 @@ class MachinePlugin(Plugin):
             self._ctx.post(lambda _ctx, seq=seq: self._apply_start(seq))
         return seq
 
-    def request_cancel(self) -> int:
-        """Cancel the pending or running program; its sequence number, 0 if none. Any thread."""
+    def request_cancel(self, seq: int = 0) -> int:
+        """Cancel start ``seq`` (0: whatever is pending or runs); its number, 0 if there is nothing
+        to cancel. Posted under the lock, as a start is. Any thread."""
         with self._lock:
-            if self._pending is not None:
-                seq, name, _args = self._pending
+            pending = self._pending
+            if pending is not None and seq in (0, pending[0]):
                 self._pending = None
-                self._set_status(MachineStatus(seq, name, True, "cancelled"))
-                return seq
+                self._set_status(MachineStatus(pending[0], pending[1], True, "cancelled"))
+                return pending[0]
             run = self._run
-            if run is None or run.seq == self._cancelling:
+            if run is None or run.seq == self._cancelling or seq not in (0, run.seq):
                 return 0
             self._cancelling = run.seq
             self._ctx.post(lambda _ctx, seq=run.seq: self._apply_cancel(seq))
@@ -918,9 +923,14 @@ class MachinePlugin(Plugin):
         return self._status
 
     @endpoint.command(when="is_machine", ros2=None)
-    def cancel(self) -> int:
-        """End the running program where it is; its sequence number, 0 if none."""
-        return self.request_cancel()
+    def cancel(self, seq: int = 0) -> int:
+        """End start ``seq``, pending or running, where it is; its number, or 0 when it has ended,
+        is being cancelled already or was never this machine's.
+
+        Args:
+            seq: the start to cancel, as ``start`` returned it; 0 cancels whatever is pending or runs
+        """
+        return self.request_cancel(seq)
 
 
 def _not_a_position_servo(m: mujoco.MjModel, aid: int) -> str:

@@ -12,8 +12,9 @@ The OpenSCENARIO form of :meth:`roqsim.scenario.ScenarioPlugin.run`, with the sa
 string as an expression. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
 for this one. With ``check`` the machine's error, or another start following this one before it
 ended, fails the trial; without it the action succeeds whatever the program did. A branch abandoned
-while it waits (a ``one_of``, a ``timeout``) cancels the program, so the machine is free for the next
-start.
+while it waits (a ``one_of``, a ``timeout``) cancels this start by its number, so the machine is free
+for the next start and a start another client made is left alone. Abandoned before the start's reply
+came, it cancels the start once the reply names its number (:meth:`WorldAccess.after`).
 
 A machine that does not exist raises, as an authoring error; a refused start (the machine is busy, an
 unknown program or argument) is a FAILURE. See :mod:`scenario_execution_roqsim.base`.
@@ -101,8 +102,21 @@ class MachineRun(SimAction):
         return self.satisfied(f"{name} (seq {self._seq}) ended: {status['error'] or 'done'}")
 
     def request_cancel(self) -> bool:
-        """Cancel the program when the branch this sits in is abandoned, or it runs on behind the
-        scene and the machine's next start is refused as busy."""
-        if self._seq is not None and not self._ended:
-            self._access.call_endpoint(self._machine, "cancel")
+        """Cancel this start when the branch this sits in is abandoned, or it runs on behind the
+        scene and the machine's next start is refused as busy. By its number, so a start another
+        client made is never cancelled: one that ended or was refused has nothing to cancel."""
+        if self._start is None or self._ended:
+            return True
+        self._ended = True
+        if self._seq is not None:
+            self._access.call_endpoint(self._machine, "cancel", {"seq": self._seq})
+            return True
+        machine = self._machine
+
+        def cancel_own(outcome):
+            if not outcome.ok:
+                return None
+            return self._access.call_endpoint(machine, "cancel", {"seq": int(outcome.result)})
+
+        self._access.after(self._start, cancel_own)
         return True

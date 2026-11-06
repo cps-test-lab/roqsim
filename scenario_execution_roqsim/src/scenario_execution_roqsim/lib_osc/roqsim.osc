@@ -266,7 +266,8 @@ action entity_call:
 
 action machine_run:
     # Run a program of a machine and wait until that start has ended: the form of a Python scenario's
-    # `run`. A branch abandoned while it waits (`one_of`, `timeout`) cancels the program.
+    # `run`. A branch abandoned while it waits (`one_of`, `timeout`) cancels this start, and no
+    # start another client made.
     #
     #     machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
     machine: string                                   # the machine's name in the world

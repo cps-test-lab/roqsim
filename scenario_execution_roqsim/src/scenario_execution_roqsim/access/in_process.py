@@ -251,6 +251,20 @@ class InProcessAccess(WorldAccess):
             confirm = next((r["ep"] for r in rows if r["path"] == sibling), None)
         return _InProcessCommand(ctx, row, confirm, value)
 
+    def after(self, call: CommandCall, then) -> None:
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+
+        def settle(_ctx):
+            # Posted after the command, so it has run: commands run in the order they were made.
+            outcome = call.poll()
+            if outcome is None:
+                raise AccessError(f"{call!r} has no outcome after the command it waited on ran")
+            then(outcome)
+
+        ctx.post(settle)
+
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
         handle = self._nav_handle(name)

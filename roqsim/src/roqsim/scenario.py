@@ -345,13 +345,10 @@ class ScenarioPlugin(Plugin):
                     return status
                 yield
         except GeneratorExit:
-            # Cancelled: this start's program with it, but a finished one has nothing to cancel, and
-            # a later one is not this task's.
-            status = handle.status()
-            if not self._resetting and (
-                status.seq < seq or (status.seq == seq and not status.finished)
-            ):
-                handle.cancel()
+            # Cancelled: this start's program with it, by its number, so a start another caller
+            # made since is left alone and an ended one has nothing to cancel.
+            if not self._resetting:
+                handle.cancel(seq)
             raise
         if status.error and check:
             raise ScenarioError(f"{handle.name}.{program} (seq {seq}): {status.error}")

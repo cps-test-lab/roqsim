@@ -2908,10 +2908,13 @@ where the line to a scenario runs, is :ref:`machines-and-scenarios` in the archi
        assert status.error == ""                  # "" done; else the failure or "cancelled"
    elif status.seq > seq:
        ...                                        # another start followed this one
+   press.cancel(seq)                              # this start only; 0 once it has ended
 
 ``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
 ``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
-press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket. Every
+press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket, and
+``roqsim call press_1/cancel '{"seq": 3}'`` cancels that start and no other (without ``seq``,
+whatever is pending or runs). Every
 program run is an event timeline on the run's events (``program_start``, the program's steps,
 ``program_end``).
 
@@ -3025,7 +3028,7 @@ it as around ``run``; ``join`` raises as soon as one task fails, and the others 
 not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
 itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
 before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
-task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
+task, as ``first()`` does to the loser, cancels the machine start it waits on, by its number, or stops the route. A scene yields
 nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
@@ -3060,7 +3063,9 @@ outcome, so it moves from one to the other line by line:
    * - ``self.entered(gate)``, ``self.dwelled(gate)``, ``self.left(gate)``
      - ``zone_entered(zone: 'gate')``, ``zone_dwelled(zone: 'gate')``, ``zone_left(zone: 'gate')``
 
-An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does.
+An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does;
+``machine_run`` cancels its start by its number, once the start's reply names it, so a start another
+client made is left alone.
 
 A world names an OpenSCENARIO file as it names a Python scenario, and ``roqsim sim`` runs it through
 scenario-execution, in its own loop, with its recording, viewer and control socket::
