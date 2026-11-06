@@ -167,6 +167,71 @@ class Unjoined(ScenarioPlugin):
         yield from self.wait(0.5)
 
 
+class ReturnsWhileAStartRuns(ScenarioPlugin):
+    """Scenario: a start that jams later, the program returning at once."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        self.start(self.press, "jam")
+        yield
+
+
+class ReturnsBesideAGoodStart(ScenarioPlugin):
+    """Scenario: a start that succeeds, the program returning before it ends."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        self.start(self.press, "stroke")
+        yield
+
+
+class Outlasts(ScenarioPlugin):
+    """Scenario: a start that jams, the program outlasting any run."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        self.start(self.press, "jam")
+        while True:
+            yield
+
+
+class TimesOut(ScenarioPlugin):
+    """Scenario: a timeout race a timer wins over a machine's start."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        timer = self.spawn(self.wait(0.05), name="timer")
+        yield from self.first(self.start(self.press, "stroke"), timer)
+        yield  # the cancel reaches the machine on the next step
+        yield
+        yield from self.run(self.press, "stroke")
+
+
+class FirstOfNothing(ScenarioPlugin):
+    """Scenario: first() with no tasks."""
+
+    def program(self):
+        yield from self.first()
+
+
+class WaitNaN(ScenarioPlugin):
+    """Scenario: a wait that is no number of seconds."""
+
+    def program(self):
+        yield from self.wait(float("nan"))
+
+
+class NoYield(ScenarioPlugin):
+    """Scenario: a program with no yield."""
+
+    def program(self):
+        return None
+
+
 class Overtaken(ScenarioPlugin):
     """Scenario: send a route that another overtakes, without checking."""
 

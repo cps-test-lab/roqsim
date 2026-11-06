@@ -183,4 +183,4 @@ def test_a_number_that_is_not_finite_is_no_pose(pose, said):
     with pytest.raises(PoseError, match=said):
         parse_pose(pose)
     with pytest.raises(PoseError, match=said):
-        parse_pose(pose["pose"] if "pose" in pose else pose, relative=True)
+        parse_pose(pose, relative=True)
