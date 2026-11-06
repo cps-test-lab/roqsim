@@ -5,8 +5,12 @@
 # The belt is a machine (`conveyor`): it runs at a speed and stops. The barrier is a `zone_trigger`
 # across the belt near its discharge end, between two posts, as deep as a package so a part that
 # broke the beam is still in it when the belt has stopped; it reports the package entering and
-# leaving. The scenario (`StopAtBarrier`) stops the belt while the package is in the barrier and
-# runs it again once it is taken away -- a decision neither the belt nor the barrier makes.
+# leaving. The scenario (`StopAtBarrier`) stops the belt while the package is in the barrier --
+# a decision neither the belt nor the barrier makes -- and, playing the worker, takes the package
+# off the belt a second later; the belt runs again and the scene ends, one cycle. The package starts
+# just before the barrier, so the cycle is short.
+#
+# smoke-steps: 2500
 
 sim:
   pacing: realtime
@@ -20,6 +24,7 @@ components:
   - conveyor:
       speed: 0.2
       ramp: 0.5
+      package_pose: {position: {x: -0.5, y: 0.6, z: 0.996}}   # the belt's frame: 0.4 m before the barrier
     name: belt
 
   - box:
@@ -46,5 +51,7 @@ components:
       entities: [package]
     name: belt_end
 
-  - "roqsim_assets.scenarios.stop_at_barrier:StopAtBarrier": {}
+  - "roqsim_assets.scenarios.stop_at_barrier:StopAtBarrier":
+      hold: 1.0
+      take_to: {position: {x: -0.13, y: 0.0, z: 0.9}}   # on the table, beside the belt
     name: barrier_stop

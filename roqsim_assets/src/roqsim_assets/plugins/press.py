@@ -24,7 +24,9 @@ Programs (:class:`~roqsim.machine.MachineHandle` under ``machine:<name>``):
   changed at the bottom (``bottom``), a fast return (``return``), wait until the ram has stopped, open
   the guard (``door_open``). With ``show``/``hide`` it needs exactly one part in the die and a
   ``part_state`` entry in the world; with an empty die it fails, naming what it holds.
-* ``close_guard()`` and ``open_guard()`` -- the door alone, for a cell that loads behind it.
+* ``close_guard()`` -- the door alone, for a cell that loads behind it.
+* ``open_guard()`` -- returns the ram home and waits until it is at rest there (after a cancelled
+  stroke it may stand anywhere down its travel), then opens the door.
 
 The press is ``ready`` with its ram up and its guard open.
 
@@ -256,7 +258,8 @@ class PressPlugin(MachinePlugin):
 
     @program
     def open_guard(self):
-        """Open the guard door, once the ram is up."""
+        """Return the ram home, then open the guard door."""
+        yield from self.move("ram", self.home["ram"], speed=self.n["return_speed"], event="return")
         yield from self.until_stopped("ram")
         yield from self.move(
             "door", self.home["door"], speed=self.n["door_speed"], event="door_open"

@@ -5,6 +5,8 @@
 # The press is a machine (`press`): its stroke -- guard closed, three phases, the hole shown on the
 # part at the bottom, guard open -- is its own program. The scenario (`PressDemo`) is the scene: it
 # places the strip in the die and starts the press, then ends the run.
+#
+# smoke-steps: 4000
 
 sim:
   pacing: realtime

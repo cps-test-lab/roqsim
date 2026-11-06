@@ -217,3 +217,54 @@ def test_the_demo_world_places_the_strip_punches_it_and_ends():
         assert demo == ["punched", "scenario_end"]
     finally:
         engine.shutdown()
+
+
+def test_the_ram_starts_down_only_once_the_guard_has_come_to_rest():
+    """The interlock: closed is not enough, the guard must have stopped moving."""
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press_1")
+        m, d = engine.ctx.model, engine.ctx.data
+        door_dof = m.jnt_dofadr[m.joint("p1_door_slide").id]
+        press.start("stroke")
+        door_speed_at_approach = None
+        for _ in range(4000):
+            engine.step()
+            if any(e["event"] == "approach" for e in _events(engine)):
+                door_speed_at_approach = abs(float(d.qvel[door_dof]))
+                break
+        assert door_speed_at_approach is not None
+        assert door_speed_at_approach <= press._machine.STOPPED_SPEED
+    finally:
+        engine.shutdown()
+
+
+def test_open_guard_after_a_cancelled_stroke_returns_the_ram_home_before_the_guard_moves():
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press_1")
+        press.start("stroke")
+        while not any(e["event"] == "power" for e in _events(engine)):
+            engine.step()
+        for _ in range(100):
+            engine.step()
+        press.cancel()
+        engine.step()
+        assert _joint(engine, "p1_ram_slide") > 0.15, "cancelled with the ram down"
+        seq = press.start("open_guard")
+        ram_when_guard_moved = None
+        door_closed = _joint(engine, "p1_door_slide")
+        while not (press.status().seq == seq and press.status().finished):
+            engine.step()
+            if (
+                ram_when_guard_moved is None
+                and _joint(engine, "p1_door_slide") < door_closed - 0.005
+            ):
+                ram_when_guard_moved = _joint(engine, "p1_ram_slide")
+        assert press.status().error == ""
+        assert ram_when_guard_moved is not None and ram_when_guard_moved == pytest.approx(
+            0.0, abs=0.003
+        )
+        assert _joint(engine, "p1_door_slide") == pytest.approx(0.0, abs=0.003)
+    finally:
+        engine.shutdown()

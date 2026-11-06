@@ -135,3 +135,85 @@ def test_an_entity_the_zone_does_not_count_opens_nothing():
         assert not [e for e in engine.ctx.events.all() if e["source"] == "door_1"]
     finally:
         engine.shutdown()
+
+
+def test_a_blocked_leaf_never_pushes_harder_than_the_force_cap():
+    obstacle = {
+        "box": {
+            "prefix": "obs_",
+            "pose": {"position": {"x": -0.2, "y": 1.08}},
+            "size": [0.2, 0.2, 0.6],
+            "motion": "static",
+        },
+        "name": "obstacle",
+    }
+    door_cfg = {**DOOR["sliding_door"], "home": {"leaf": 1.2}, "max_force": 80.0}
+    engine = _engine({**DOOR, "sliding_door": door_cfg}, obstacle)
+    try:
+        door = engine.ctx.blackboard.require("machine:door_1")
+        aid = engine.ctx.model.actuator("d1_leaf").id
+        seq = door.start("close")
+        peak = 0.0
+        while not (door.status().seq == seq and door.status().finished):
+            engine.step()
+            peak = max(peak, abs(float(engine.ctx.data.actuator_force[aid])))
+        assert 60.0 < peak <= 80.0 + 1e-6, "pressing on the box, at most at the cap"
+    finally:
+        engine.shutdown()
+
+
+def test_the_door_stays_open_for_someone_who_came_back_before_it_closed():
+    # robot_1 is in the approach from 2.5 s to 5.5 s; robot_2, 4 m behind it, from 6.5 s to 9.5 s:
+    # one second after the zone emptied, inside the two-second close delay.
+    engine = _engine(
+        DOOR,
+        APPROACH,
+        _mover("robot_1"),
+        {
+            **_mover("robot_2"),
+            "moving_box": {
+                **_mover("robot_2")["moving_box"],
+                "pose": {"position": {"x": -8.0, "y": 0.0}},
+                "waypoints": [[4.0, 0.0]],
+            },
+        },
+        {**SCENE, "name": "doorman"},
+    )
+    try:
+        _run(engine, 14.0)
+        zone = [e for e in engine.ctx.events.all() if e["source"] == "door_approach"]
+        lefts = [e["t"] for e in zone if e["event"] == "left"]
+        door = [e for e in engine.ctx.events.all() if e["source"] == "door_1"]
+        starts = [(e["t"], e["program"]) for e in door if e["event"] == "program_start"]
+        assert [p for _, p in starts] == ["open", "close"], "it did not close between the two"
+        assert starts[1][0] == pytest.approx(lefts[-1] + 2.0, abs=0.01), "closed after the last"
+        came_back = [e for e in engine.ctx.events.all() if e["event"] == "came_back"]
+        assert [e["who"] for e in came_back] == ["robot_2"]
+    finally:
+        engine.shutdown()
+
+
+def test_the_demo_world_opens_the_door_for_its_robot_closes_it_and_ends():
+    from pathlib import Path
+
+    import roqsim_assets
+    from roqsim.config import load_config
+
+    world = Path(roqsim_assets.__file__).parent / "worlds" / "sliding_door_demo.yaml"
+    assert "walker" not in world.read_text().split("sim:")[1], "stand-alone: no walker"
+    engine = Engine(load_config(world))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 6.0)
+        door = [e for e in engine.ctx.events.all() if e["source"] == "door_1"]
+        assert [e["program"] for e in door if e["event"] == "program_end"] == ["open", "close"]
+        assert all(e["error"] == "" for e in door if e["event"] == "program_end")
+        assert any(e["event"] == "scenario_end" for e in engine.ctx.events.all())
+        m = engine.ctx.model
+        assert engine.ctx.data.qpos[
+            m.jnt_qposadr[m.joint("door_1_leaf_slide").id]
+        ] == pytest.approx(0.0, abs=0.01)
+    finally:
+        engine.shutdown()

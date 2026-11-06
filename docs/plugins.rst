@@ -2925,9 +2925,11 @@ other; with neither, whatever is pending or runs. A program cannot take an argum
 ``token``: that is the start's own. Every program run is an event timeline on the run's events
 (``program_start``, the program's steps, ``program_end``).
 
-``roqsim_assets`` ships the examples: ``door`` and ``conveyor``, and ``press`` (a guard door
-interlocked with a three-phase stroke) and ``sliding_door``, each with a world and a scenario in its
-``worlds/`` (``press_demo``, ``sliding_door_demo``, ``light_barrier_demo``).
+``roqsim_assets`` ships the machines ``door`` and ``conveyor``, and two examples of a machine
+package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
+example worlds in ``roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
+``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
+scenario from ``roqsim_assets.scenarios``.
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~
