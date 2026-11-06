@@ -24,7 +24,7 @@ download work on a box that has neither.
 
 **Licence matters for redistribution.** Only **CC0 / CC-BY / CC-BY-SA** may be committed to this
 (Apache-2.0) repo -- CC-BY* require crediting the author, captured in the ``CREDITS.txt`` written into
-the asset folder. Everything else (NC / ND / undeclared) is flagged; ``download`` refuses it unless
+the asset folder, and saying that it was changed, which ``import`` adds once it has converted it. Everything else (NC / ND / undeclared) is flagged; ``download`` refuses it unless
 ``--force`` (local-only use). ``download`` also refuses a model the author never enabled for API
 download (``downloadable: false``) -- there is no glTF to fetch and ``--force`` does not bypass it.
 
