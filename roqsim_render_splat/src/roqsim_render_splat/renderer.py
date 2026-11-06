@@ -20,8 +20,9 @@ Registered as ``splat`` (``roqsim.renderers``); a world chooses it with ``sim.re
 places its capture in ``sim.renderers.splat.splat`` (``file``, ``pose``, ``scale``).
 
 - **Static world**: the capture, rasterised by gsplat (Apache-2.0) on a CUDA GPU, the cameras of a
-  batch that share size and clip planes in one call, split into passes under ``max_pass_mib``. The Gaussians stay in the capture's frame; each camera is mapped into it by
-  the inverse of the splat's pose and scale, so no spherical harmonic is ever rotated.
+  batch that share size and clip planes in one call, split into passes under ``max_pass_mib``. The
+  Gaussians stay in the capture's frame; each camera is mapped into it by the inverse of the splat's
+  pose and scale, so no spherical harmonic is ever rotated.
 - **Moving bodies**: drawn by MuJoCo's own renderer, opened in this renderer with the same scene
   and asked for the moving bodies alone (``CameraSpec.bodies = "moving"``), from the same snapshot
   on the same thread, and composited per pixel by depth: the nearer wins.

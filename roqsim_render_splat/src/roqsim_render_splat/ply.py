@@ -28,7 +28,8 @@ exporters differ in the order and in whether they write the unused normals ``nx,
   channel for degree 3, 8 for 2, 3 for 1, none for 0.
 
 Only the header is read to check a file (:func:`read_header`); :func:`read_splat` reads the arrays,
-as one float matrix where every property is float32 and through a memory map otherwise. Nothing here imports torch.
+as one float matrix where every property is float32 and through a memory map otherwise. Nothing here
+imports torch.
 """
 
 from __future__ import annotations
