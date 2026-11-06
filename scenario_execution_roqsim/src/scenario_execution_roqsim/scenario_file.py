@@ -191,8 +191,8 @@ class ScenarioFilePlugin(Plugin):
         return next(iter(trees.values()))
 
     def _finish_tree(self, ctx, *, reported: bool) -> None:
-        """End a tree a reset or the run's end cut short, and say so: ``reported`` to the driver,
-        for the run's end, else as an error in the log."""
+        """End a tree a reset or the run's end cut short: the run's end is ``reported`` to the
+        driver; a reset starts the scene over, as a Python scene's does, and says so in test.xml."""
         execution, self._execution = self._execution, None
         if execution is None:
             return
@@ -200,9 +200,10 @@ class ScenarioFilePlugin(Plugin):
             what = f"scenario {self.address} ({self.config.get('file')})"
             if reported:
                 ctx.report_unfinished(what)
-            else:
-                _log.error("the run ended before %s did", what)
-            execution.on_scenario_shutdown(False, "the run ended before the scenario did")
+            execution.on_scenario_shutdown(
+                False,
+                "the run ended before the scenario did" if reported else "a reset started it over",
+            )
             execution.process_results()
         execution.behaviour_tree.shutdown()
 

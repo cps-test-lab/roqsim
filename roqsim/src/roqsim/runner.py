@@ -1025,7 +1025,8 @@ def main(argv: list | None = None) -> int:
             exit_status.RECORDING,
             exit_status.UNFINISHED,
             note="4 is a recording given as the target that cannot be replayed. 6 is a run that "
-            "--seconds, --steps, a signal or the closed window ended before its scene ended.",
+            "it stopped (--seconds, --steps, a signal, the closed window, a plugin or a quit asking) "
+            "before its scene ended.",
         ),
     )
     parser.add_argument(

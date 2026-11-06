@@ -52,7 +52,8 @@ RECORDING = 4
 #: finding, an export whose round trip disagrees with its source.
 FINDING = 5
 
-#: The run ended -- at ``--seconds`` or ``--steps``, on a signal, by the window closing -- before a
+#: The run ended -- at ``--seconds`` or ``--steps``, on a signal, by the window closing, at a
+#: plugin's or a quit's asking -- before a
 #: scene it was running did, so the scene neither passed nor failed.
 UNFINISHED = 6
 

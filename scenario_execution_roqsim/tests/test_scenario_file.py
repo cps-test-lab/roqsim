@@ -145,7 +145,7 @@ def test_a_reset_mid_scenario_starts_it_over(tmp_path, caplog):
             engine.step()
         with caplog.at_level("ERROR"):
             engine.reset()
-        assert "the run ended before" in caplog.text
+        assert "the run ended before" not in caplog.text, "a reset is no end of the run"
         assert engine.ctx.unfinished == []
         for _ in range(5):
             engine.step()
