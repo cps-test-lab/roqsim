@@ -163,3 +163,17 @@ def test_sim_profile_reports_the_physics_step(tmp_path, capsys):
     err = capsys.readouterr().err
     line = next(ln for ln in err.splitlines() if "mj_step" in ln)
     assert PHYSICS_GROUP in line and line.rstrip().endswith("µs")
+
+
+def test_a_world_compiled_to_look_at_it_leaves_the_runs_file_alone(tmp_path):
+    """A sensor replay run in the run's directory compiles the same world; the run's CSV survives."""
+    out = tmp_path / "timers.csv"
+    out.write_text("the run's rows\n")
+    components = [{"dummy": {"size": 0.1}, "name": "box"}, _timers(out)]
+    cfg = load_config_from_dict({"sim": {"timestep": DT}, "components": components})
+    with Engine(cfg, preview=True) as engine:
+        engine.reset()
+        for _ in range(STEPS):
+            engine.step()
+        assert mujoco.get_mjcb_time() is None
+    assert out.read_text() == "the run's rows\n"

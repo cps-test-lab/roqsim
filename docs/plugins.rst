@@ -3163,6 +3163,14 @@ YAML. Referenced directly, the ref (``my_pkg.mod:MyPlugin`` or ``./plugins/x.py:
 colon and is the plugins-list entry's *key*, so **quote it** — ``- "my_pkg.mod:MyPlugin": {...}`` —
 to keep the colon from splitting the key.
 
+**A world compiled to look at it acts on nothing.** A render, a replay (``Recording.build``,
+``roqsim state --sensor``), ``roqsim check``, a settled export, the scene builder and a map compile
+the world with ``Engine(preview=True)``, and ``ctx.preview`` is then true. Such a world still steps
+and calls every hook, a replay on each restored sample, so a plugin computes its outputs as in a
+run: a replay reads them. What it must not do then is act: write a file a run owns, start or command
+anything (a machine's program, a controller switch), or stop the run
+(``ctx.request_stop``). Ask ``ctx.preview`` in the hook that acts and skip that part only.
+
 **If your config names a file, implement ``sources``.** ``roqsim.config.world_sources`` — what
 ``roqsim scenes inputs`` and the exporters' ``--manifest`` report, and what a run harness
 stages a world by — walks the YAML's ``extends`` chain and the MJCF's assets. It cannot see
