@@ -701,7 +701,7 @@ no model and writes no actuator. Its helper: ``yield from self.run(handle, progr
 a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
 ``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
 start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
-joined stops the run when the scene ends, and the scene does not end before a start has);
+joined stops the run when the scene ends, and the scene does not end before a task has, unless it was spawned as ``background``);
 ``self.route(walker, poses)`` sends a walker or a navigator and waits on its route's number;
 ``until``, ``wait`` and ``event`` do what they say, and ``place`` puts an entity at a pose as a
 world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
@@ -709,7 +709,7 @@ in the order they were created, so a scene is as deterministic as the machines i
 the machines it drives; a start it makes is applied at the next step whatever the order.
 
 A program that raises stops the run with its own exception, and the scene never reports done.
-When ``program`` has returned and every start it did not join has ended, the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
+When ``program`` has returned and every task but a ``background`` one has ended, the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
 which an OpenSCENARIO ``entity_monitor`` can wait on; ``stop_at_end: true`` also ends a standalone
 ``roqsim sim`` run (``ctx.request_stop``). It never ends a scenario-execution run (§4, *Who ends a
 run*).

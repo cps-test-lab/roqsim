@@ -230,6 +230,11 @@ class Axis(MachinePlugin):
             self.seen_busy = self.handle.busy
 
     @program
+    def yields_a_helper(self, x: float):
+        """``yield`` where ``yield from`` is meant."""
+        yield self.move("x", x)
+
+    @program
     def arrive_nan(self):
         """Wait to arrive with a timeout that is no number."""
         yield from self.until_reached("x", timeout=float("nan"))
