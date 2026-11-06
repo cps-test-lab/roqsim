@@ -18,7 +18,8 @@ landed on.
 The file is one mcap (see :mod:`roqsim.mcap_format`): a ``state`` channel holding the MuJoCo state
 vector per sample (``t`` sim seconds, ``w`` elapsed wall seconds, the state, and the camera when it
 was tracked), three JSON channels -- ``poses``, ``joints``, ``clock`` -- a reader without the model
-can use, and the provenance and entity roster as metadata. :func:`open_recording` reads it with its
+can use, an ``events`` channel of what plugins reported as it happened (:mod:`roqsim.events`), and the
+provenance and entity roster as metadata. :func:`open_recording` reads it with its
 own framing loop rather than the library's reader, so a file left by a killed run -- every chunk
 closed before the kill, no summary -- opens like a finished one and yields every sample it holds.
 """
@@ -38,6 +39,7 @@ from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_
 from .document import check_version
 from .mcap_format import (
     CHANNEL_CLOCK,
+    CHANNEL_EVENTS,
     CHANNEL_JOINTS,
     CHANNEL_POSES,
     CHANNEL_STATE,
@@ -318,6 +320,20 @@ class Recording:
     def clock(self) -> list[dict]:
         """Every ``clock`` message: ``{"wall_ts": epoch seconds, "sim_ts": sim seconds}``."""
         return [json.loads(m.data) for m in self._channels.get(CHANNEL_CLOCK) or []]
+
+    @property
+    def events(self) -> list[dict]:
+        """Every event the run's plugins emitted (:mod:`roqsim.events`), in the order they happened.
+
+        Each is ``{"t", "episode", "source", "event", ...}`` with the fields its source added. A
+        recording made before the channel existed has none.
+        """
+        return [json.loads(m.data) for m in self.event_messages]
+
+    @property
+    def event_messages(self) -> list:
+        """The ``events`` channel's messages as stored, for a copy that keeps them as they are."""
+        return list(self._channels.get(CHANNEL_EVENTS) or [])
 
     def describe(self) -> dict:
         """A JSON-safe summary -- what ``--check`` reports, and what an MCP caller can read cheaply."""
@@ -690,7 +706,7 @@ def open_recording(path: str | Path) -> Recording:
         log.debug("%s: %d messages on unknown channels ignored", path, contents.unknown_channel)
     channels = {
         topic: contents.messages.get(topic) or []
-        for topic in (CHANNEL_POSES, CHANNEL_JOINTS, CHANNEL_CLOCK)
+        for topic in (CHANNEL_POSES, CHANNEL_JOINTS, CHANNEL_CLOCK, CHANNEL_EVENTS)
     }
     channels[CHANNEL_STATE] = states
     return Recording(

@@ -41,7 +41,7 @@ def _plugin(names=("near", "far", "arm", "marker")):
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     entities = SimpleNamespace(
-        names=lambda present_only=False: list(names),
+        names=lambda present_only=False, listed_only=False: list(names),
         get=lambda name: SimpleNamespace(body=_ENTITIES[name]),
     )
     plugin = SimInterfacesPlugin()

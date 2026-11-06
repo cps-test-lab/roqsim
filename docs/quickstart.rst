@@ -348,6 +348,11 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.mcap --out last.png        # where it ended up
    roqsim render --state run.mcap --at 12.5 --out t.png # one moment
    roqsim render --state run.mcap --out run.webm        # the whole run as video
+   roqsim render --state run.mcap --renderer my_renderer --out run.mp4  # drawn through another renderer
+
+A recording is rebuilt from the world it ran in, so an override changes only how it is drawn: the
+camera (``sim.view``) and the renderer with its settings (``--renderer``, ``sim.renderers.<name>``).
+Any other ``--set`` is refused, naming the key, since it could not change what was recorded.
 
 **A recording target is a file path ending in ``.mcap``**, whether it comes from ``--record`` or
 ``ROQSIM_RECORD``. Anything else -- another suffix, no suffix, a directory -- is refused before the
@@ -639,9 +644,10 @@ otherwise be ignored, and the run would look configured.
 What the recording holds
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Beside the ``state`` channel the file carries three JSON channels a reader **without the model** can
-use -- ``roqsim health`` is one, a campaign's ingest is another -- each with one message per sample,
-stamped ``log_time`` = simulated time and ``publish_time`` = wall clock (epoch), and its schema in the
+Beside the ``state`` channel the file carries JSON channels a reader **without the model** can
+use -- ``roqsim health`` is one, a campaign's ingest is another -- ``poses``, ``joints`` and ``clock``
+with one message per sample and ``events`` with one per event, each stamped ``log_time`` = simulated
+time and ``publish_time`` = wall clock (epoch), and its schema in the
 file:
 
 ``poses``
@@ -657,6 +663,11 @@ file:
    ``{"t", "w", "q": {joint: value}}`` -- every recorded hinge and slide joint, in radians or metres.
 ``clock``
    ``{"wall_ts", "sim_ts"}`` -- the pair a reader outside the process relates its own stamps to.
+``events``
+   ``{"t", "episode", "source", "event", ...}`` -- not one per sample but one per **event** a plugin
+   emitted (``ctx.events.emit(source, event, **fields)``, :mod:`roqsim.events`): a machine starting a
+   stroke, a controller beginning a move. Its ``log_time`` is the event's own simulated time, so an
+   event between two samples keeps its exact time; ``Recording.events`` reads them back in order.
 
 And two metadata records, each a JSON document under the key ``json``: ``roqsim.recording``, the
 provenance (world, overrides, the resolved component tree, actuator gains, endpoint rates, package
@@ -762,9 +773,10 @@ states them in, and textures its compiled pixels, embedded in the file. A textur
 texture coordinates for it, and a mesh without coordinates gets the ones MuJoCo generates, so a
 UV-less wall is tiled as in the simulator; ``texrepeat`` and ``texuniform`` scale them as MuJoCo
 does. A tint above 1 is multiplied into the image, since glTF's colour stops at 1. A cube or skybox
-texture on a drawn geom is refused, naming the material. Lights and the skybox are not exported
-(a viewer brings its own), and a world's ``sim.view`` becomes a camera named in ``extras`` as
-``{"roqsim": "view"}``, outside ``world``.
+texture on a drawn geom is refused, naming the material. Every light fixed to its body is a
+``KHR_lights_punctual`` light on its body's node (used, not required: a viewer without the extension
+brings its own); a light that tracks a body, the headlight and the skybox are not exported. A world's
+``sim.view`` becomes a camera named in ``extras`` as ``{"roqsim": "view"}``, outside ``world``.
 
 **Sensor cameras.** Every camera sensor in the world (an RGB or RGB-D camera plugin) is a glTF
 perspective camera on a node of its own, the child of the node of the body it is mounted on, at its

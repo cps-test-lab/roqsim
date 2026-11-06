@@ -76,7 +76,19 @@ mesh whose joints are its bone bodies' nodes, so a viewer that moves bodies by n
 node is a root of the scene (glTF ignores a skinned mesh's node transform), with ``extras`` naming
 the skin's index and, for a flex, the flex.
 
-Left out: lights and the skybox (a viewer brings its own), and collision-only geometry (group 3).
+**Lights.** Every light fixed to its body (:func:`roqsim.scene_content.lights`) is a
+``KHR_lights_punctual`` light on a node of its own, the child of its body's node at the light's
+position, turned so that the node's -z is the direction it shines: a MuJoCo ``spot`` is a glTF
+``spot`` whose outer cone is the ``cutoff``, a ``directional`` light a ``directional`` one, and a
+``point`` light a ``point``. Its colour is the light's ``diffuse``, converted to linear as a material's
+is; its ``intensity`` is MuJoCo's where the model states one and glTF's default (1) where it does not,
+since MuJoCo's own lighting has no physical unit. The node's ``extras`` repeat MuJoCo's values
+(``light``, ``light_id``, ``ambient``, ``specular``, ``castshadow``, ``active``, ``attenuation``,
+``exponent``), and the scene's ``extras.headlight`` the model's headlight, which follows whichever
+camera draws and so is no light of the scene. The extension is used, not required: a viewer without
+it draws the scene unlit by the model, with lights of its own.
+
+Left out: the skybox (a viewer brings its own), and collision-only geometry (group 3).
 """
 
 from __future__ import annotations
@@ -700,6 +712,65 @@ def _camera_node(view: dict, model: mujoco.MjModel) -> dict | None:
     }
 
 
+_LIGHTS = "KHR_lights_punctual"
+
+
+def rotation_onto(direction) -> list[float]:
+    """The glTF rotation ``[x, y, z, w]`` that turns the node's -z onto *direction*."""
+    d = np.asarray(direction, dtype=float)
+    norm = float(np.linalg.norm(d))
+    d = d / norm if norm > 0 else np.array([0.0, 0.0, -1.0])
+    a = np.array([0.0, 0.0, -1.0])
+    dot = float(np.dot(a, d))
+    if dot < -1.0 + 1e-9:  # straight up: half a turn about x
+        return [1.0, 0.0, 0.0, 0.0]
+    axis = np.cross(a, d)
+    q = np.array([*axis, 1.0 + dot])
+    q /= np.linalg.norm(q)
+    return [float(v) for v in q]
+
+
+def _light(doc: _Document, light, body_node: list[int]) -> None:
+    """*light* as a ``KHR_lights_punctual`` light on a child node of its body's node."""
+    if _LIGHTS not in doc.gltf.setdefault("extensionsUsed", []):
+        doc.gltf["extensionsUsed"].append(_LIGHTS)
+    spec: dict = {
+        "type": light.type,
+        "color": [srgb_to_linear(min(max(float(c), 0.0), 1.0)) for c in light.diffuse],
+    }
+    if light.name:
+        spec["name"] = light.name
+    if light.intensity > 0:
+        spec["intensity"] = light.intensity
+    if light.type != "directional" and light.range > 0:
+        spec["range"] = light.range
+    if light.type == "spot":
+        spec["spot"] = {
+            "innerConeAngle": 0.0,
+            "outerConeAngle": min(max(math.radians(light.cutoff), 1e-4), math.pi / 2),
+        }
+    lights = doc.gltf.setdefault("extensions", {}).setdefault(_LIGHTS, {"lights": []})["lights"]
+    lights.append(spec)
+    node = {
+        "translation": [float(v) for v in light.pos],
+        "rotation": rotation_onto(light.dir),
+        "extensions": {_LIGHTS: {"light": len(lights) - 1}},
+        "extras": {
+            "light": light.name,
+            "light_id": light.id,
+            "ambient": light.ambient,
+            "specular": light.specular,
+            "castshadow": light.castshadow,
+            "active": light.active,
+            "attenuation": light.attenuation,
+            "exponent": light.exponent,
+        },
+    }
+    if light.name:
+        node["name"] = light.name
+    doc.gltf["nodes"][body_node[light.body]].setdefault("children", []).append(doc.node(node))
+
+
 def export_gltf(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -841,6 +912,17 @@ def export_gltf(
             }
         )
         doc.gltf["nodes"][body_node[sensor.body]].setdefault("children", []).append(child)
+
+    for light in content.lights:
+        _light(doc, light, body_node)
+    if content.headlight is not None:
+        h = content.headlight
+        doc.gltf["scenes"][0]["extras"]["headlight"] = {
+            "active": h.active,
+            "ambient": h.ambient,
+            "diffuse": h.diffuse,
+            "specular": h.specular,
+        }
 
     cam = _camera_node(view or {}, model)
     if cam is not None:

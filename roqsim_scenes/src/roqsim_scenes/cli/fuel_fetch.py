@@ -41,8 +41,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
-
 from roqsim import env, exit_status
 
 _FUEL_HOSTS = ("fuel.gazebosim.org", "fuel.ignitionrobotics.org")
@@ -70,6 +68,19 @@ class Asset:
     local: str  # cache-relative directory holding the unpacked model
 
 
+def _requests():
+    """``requests``, imported only to talk to Fuel: an installation without it (``pip install
+    --no-deps``) still answers ``--help`` and says a missing input."""
+    try:
+        import requests  # noqa: PLC0415
+    except ImportError as err:
+        raise RuntimeError(
+            "fetching from Fuel needs `requests`, which roqsim_scenes declares and this "
+            "environment lacks: pip install requests"
+        ) from err
+    return requests
+
+
 def _is_fuel(uri: str) -> bool:
     return any(h in uri for h in _FUEL_HOSTS)
 
@@ -91,7 +102,7 @@ def _api(owner: str, name: str, version: str | None = None) -> str:
 
 
 def metadata(owner: str, name: str, version: str | None = None) -> dict:
-    r = requests.get(_api(owner, name, version), timeout=_TIMEOUT)
+    r = _requests().get(_api(owner, name, version), timeout=_TIMEOUT)
     if r.status_code != 200:
         raise FuelError(
             f"Fuel metadata {r.status_code} for {owner}/{name} -- record as a finding, do not substitute"
@@ -119,7 +130,7 @@ def fetch(uri: str, cache: Path = _DEFAULT_CACHE, force: bool = False) -> Asset:
 
     if not zip_path.exists() or force:
         url = _api(owner, name, version) + f"/{urllib.parse.quote(name)}.zip"
-        r = requests.get(url, timeout=_TIMEOUT, stream=True)
+        r = _requests().get(url, timeout=_TIMEOUT, stream=True)
         if r.status_code != 200:
             raise FuelError(f"Fuel download {r.status_code} for {url}")
         tmp = zip_path.with_suffix(".zip.part")
