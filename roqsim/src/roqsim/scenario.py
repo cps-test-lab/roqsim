@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import inspect
 import math
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 
 from . import endpoint
 from .context import SimContext
@@ -60,7 +60,7 @@ class Task:
     error is raised to whoever joins the task.
     """
 
-    def __init__(self, gen: Iterator, name: str = "", *, keeps_error: bool = False):
+    def __init__(self, gen: Generator, name: str = "", *, keeps_error: bool = False):
         self._gen = gen
         self.name = name
         self.done = False
@@ -288,7 +288,7 @@ class ScenarioPlugin(Plugin):
 
     def spawn(
         self,
-        gen: Iterator,
+        gen: Generator,
         name: str = "",
         *,
         keeps_error: bool = False,
@@ -316,11 +316,11 @@ class ScenarioPlugin(Plugin):
         run that ends first logs that error. Cancelling the task cancels this start's program, so
         ``first(start(...), timer)`` leaves the machine free, as with a spawned :meth:`run`."""
         seq = handle.start(program, **args)
-        return self.spawn(
-            self._await_start(handle, program, seq, check),
-            name=f"{handle.name}.{program}",
-            keeps_error=True,
-        )
+        waiting = self._await_start(handle, program, seq, check)
+        # Into its try: the program runs from here on, so a cancel before the task's first advance
+        # has to reach it too. Closing a generator that has not started runs nothing of it.
+        next(waiting, None)
+        return self.spawn(waiting, name=f"{handle.name}.{program}", keeps_error=True)
 
     def run(self, handle, program: str, /, *, check: bool = True, **args):
         """Start ``program`` on a machine's handle and wait until this start ended. Raises

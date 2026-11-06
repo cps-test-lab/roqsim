@@ -330,6 +330,18 @@ class SpawnsNoGenerator(ScenarioPlugin):
         yield
 
 
+class SharedDeadline(ScenarioPlugin):
+    """Scenario: a deadline already passed when a start is raced against it."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        deadline = self.spawn(self.wait(0.05), name="deadline")
+        yield from self.wait(0.1)
+        yield from self.first(self.start(self.press, "stroke"), deadline)
+        yield from self.run(self.press, "stroke")
+
+
 class UntilNaN(ScenarioPlugin):
     """Scenario: a condition with a timeout that is no number."""
 

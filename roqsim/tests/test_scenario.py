@@ -503,3 +503,13 @@ def test_spawn_of_what_is_no_generator_is_refused():
             engine.step()
     finally:
         engine.shutdown()
+
+
+def test_cancelling_a_start_before_its_first_advance_cancels_its_program():
+    engine = _engine(PRESS, {"scenario_fixtures:SharedDeadline": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        ends = [e["error"] for e in _events(engine, "press") if e["event"] == "program_end"]
+        assert ends[-1] == "", "the next start ran to its end"
+    finally:
+        engine.shutdown()
