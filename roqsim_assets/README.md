@@ -219,6 +219,7 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 
 ## Provenance & licences
 
-Each asset folder carries its **own** `CREDITS.txt` (source + licence). Only CC0 / CC-BY(-SA) assets
+Each asset folder carries its **own** `CREDITS.txt` (source + licence, and under CC BY what roqsim
+changed). Only CC0 / CC-BY(-SA) assets
 are committed here; see [THIRD_PARTY.md](THIRD_PARTY.md) for the convention. The bundled textures are
 ambientCG / Poly Haven (CC0).
