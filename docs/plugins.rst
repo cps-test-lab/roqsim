@@ -2658,7 +2658,8 @@ What a program has:
   naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
   loaded joint has arrived when it settles short of its target by its servo's standing offset. That
   offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
-  such as a part resting on a lift: such a machine's ``REACHED`` or stiffness has to allow for it;
+  such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
+  to allow for it;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and

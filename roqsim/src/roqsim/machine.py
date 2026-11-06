@@ -139,7 +139,7 @@ class MachineHandle:
         #: Its programs, by name.
         self.programs: tuple[str, ...] = tuple(sorted(type(machine).programs()))
 
-    def start(self, program: str, **args) -> int:
+    def start(self, program: str, /, **args) -> int:
         """Start ``program`` with ``args``; its sequence number. Raises :class:`MachineError` for an
         unknown program or argument, and while the machine is busy."""
         return self._machine.request_start(program, args)
@@ -482,6 +482,11 @@ class MachinePlugin(Plugin):
             act = self._actuators.get(name)
             if act is not None:
                 d.ctrl[act.aid] = value
+                # A filtered servo's force follows its activation, not its control: left at 0, it
+                # would pull toward 0 at the start of every episode.
+                adr = int(ctx.model.actuator_actadr[act.aid])
+                if adr >= 0:
+                    d.act[adr] = value
                 d.qpos[act.qadr] = value
                 d.qvel[act.dadr] = 0.0
         for attr, key in self.NEEDS.items():
@@ -591,6 +596,8 @@ class MachinePlugin(Plugin):
 
     def _until_arrived(self, names, still: bool, timeout: float | None):
         limit = self.MOVE_TIMEOUT if timeout is None else float(timeout)
+        if math.isnan(limit):
+            self.fail(f"machine {self.address}: a timeout is a number of seconds, not {limit!r}")
         arrived_target: dict[str, float] = {}  # name -> when its target arrived (its ramp ended)
         while True:
             now = self._ctx.sim_time
