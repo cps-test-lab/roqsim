@@ -500,18 +500,18 @@ def build_target(
     overrides: dict | None,
     *,
     no_ceiling: bool = False,
-    skip_transport: bool = True,
+    skip_unloadable: bool = True,
     world_model: dict | None = None,
 ):
     """Compile ``target`` and return ``(model, data, ctx, view, camera_or_None)``.
 
     A mesh short-circuits to the preview scene (no engine, no plugins, no ``sim.view``); everything else
-    goes through the same dispatch and the same plugin build as ``roqsim sim``, minus the plugins that
-    contribute nothing to the scene, so a world renders exactly as it simulates.
+    goes through the same dispatch and the same plugin build as ``roqsim sim``, minus the transport
+    plugins a preview engine leaves out, so a world renders exactly as it simulates.
 
-    That subtraction (``skip_transport``, see :func:`roqsim.config.drop_transport_plugins`) is what lets a
-    ``*_ros`` world be rendered without ROS installed. Pass ``skip_transport=False`` to demand the
-    simulator's own strict build.
+    ``skip_unloadable`` also leaves out any ref this environment cannot resolve, with a warning naming
+    it (see :class:`roqsim.engine.Engine`), so a world renders without its third-party transport
+    installed. Pass ``skip_unloadable=False`` to refuse such a ref instead.
 
     The engine is returned set up, as ``ctx.engine``, and the caller shuts it down; a failure before
     the return shuts it down here.
@@ -527,7 +527,6 @@ def build_target(
         reset_to_home(model, data)
         return model, data, None, None, cam
 
-    from .config import drop_transport_plugins
     from .engine import Engine
     from .runner import config_for_input
 
@@ -537,21 +536,11 @@ def build_target(
         cfg = SimConfig.from_record(world_model)
     else:
         cfg = config_for_input(target, overrides)
-    if skip_transport:
-        transport, unavailable = drop_transport_plugins(cfg)
-        if transport:
-            log.info("not needed for a render, skipping: %s", ", ".join(transport))
-        if unavailable:
-            log.warning(
-                "skipping plugin(s) this environment cannot load: %s. The geometry is unaffected "
-                "(a transport plugin builds none) -- but check the spelling if you expected one.",
-                ", ".join(unavailable),
-            )
     if no_ceiling:
         _disable_ceiling(cfg)
     from .runner import is_model_ref
 
-    engine = Engine(cfg, preview=True)
+    engine = Engine(cfg, preview=True, skip_unloadable=skip_unloadable)
     with contextlib.ExitStack() as stack:
         stack.enter_context(engine)
         engine.reset()

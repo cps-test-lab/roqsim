@@ -93,13 +93,13 @@ subtree is capped in node count, reporting ``truncated`` rather than silently ha
 tree with no indication it was cut.
 
 **The build has no transport in it**, and ``dropped_transport`` names what went. A describe publishes
-nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim render`` and the exporters
--- and since the ROS bridge ships in a colcon package, in a pip-only environment it does not even
-resolve at all, so requiring it would fail a describe over plugins that contribute no geometry. Only *identified*
-transport goes (:func:`roqsim.config.drop_transport`, not the lenient ``drop_transport_plugins``): a
-misspelt geometry plugin must stay the loud failure it is, because dropping it would leave an entity
-missing and let a caller conclude the world does not have it. The ``components`` list above is computed
-before the drop and still reports the bridge, so an override addressing it is still checkable.
+nothing, so it builds a preview engine, which leaves a world's bridge out exactly as it does for
+``roqsim render`` and the exporters -- and since the ROS bridge ships in a colcon package, in a pip-only
+environment it does not even resolve at all, so requiring it would fail a describe over plugins that
+contribute no geometry. Only *identified* transport goes (no ``skip_unloadable``): a misspelt geometry
+plugin must stay the loud failure it is, because dropping it would leave an entity missing and let a
+caller conclude the world does not have it. The ``components`` list above is read from the world as
+declared and still reports the bridge, so an override addressing it is still checkable.
 
 **Half an answer is still an answer, and says so.** When only the build fails -- the branches above,
 not loading the world -- the reply is printed with ``errors.build`` set and the build-fed keys left
@@ -112,6 +112,7 @@ one.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from contextlib import contextmanager
@@ -480,13 +481,13 @@ def main(argv=None) -> int:
         "errors": None,
     }
     if args.entities or args.overridable or args.body_tree:
-        # The transport's per-endpoint rates, read before it goes: they are what a run publishes
-        # each output at.
+        # The transport's per-endpoint rates, read from the world as declared: they are what a run
+        # publishes each output at, though the preview build below leaves the transport out.
         rates = transport_rate_overrides(config)
-        # The scene is what these questions are about, and a describe publishes nothing, so the
-        # transport goes before the build -- see the module docstring for why the strict variant.
-        # `components` is already in `result`, so the bridge stays in the reported list.
-        dropped = drop_transport(config)
+        # What the preview build leaves out, named before it runs, so a reply whose build fails
+        # still says the scene was asked for without its transport. The same rule the engine
+        # applies, on a copy: `config` keeps what the world declares.
+        dropped = drop_transport(copy.copy(config))
         if dropped:
             result["dropped_transport"] = dropped
             print(

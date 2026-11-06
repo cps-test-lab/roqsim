@@ -538,7 +538,8 @@ class SimContext:
         #: Whether this world is compiled to look at it, a render, a replay, a check, a settled
         #: export, rather than to run it (``Engine(preview=True)``). Such a world still steps and
         #: calls every hook, so a plugin still computes what its sensors read; it writes no file a
-        #: run owns, starts or commands nothing and does not stop the run.
+        #: run owns, starts or commands nothing and does not stop the run. It is built without its
+        #: transport plugins, so nothing in it publishes or waits for a peer.
         self.preview: bool = False
         #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
         self.presence_holds: dict[str, dict] = {}
