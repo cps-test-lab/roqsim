@@ -40,7 +40,17 @@ cut the same openings.
 Any endpoint-producing plugin below accepts an optional ``topics:`` map to set an endpoint's ROS
 topic. An absolute name **hardwires** it, overriding the namespace+default — e.g. ``topics: {image:
 /camera/color/image_raw}``; a relative name renames it inside the namespace — e.g. ``topics: {scan:
-scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics.
+scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics. The map is keyed
+on the name the plugin renames by -- the endpoint's own name, not the topic it publishes on by
+default -- and a key the plugin never renames is refused once the plugin has registered its
+endpoints, naming the names it does rename.
+
+A plugin **without** a ``CONFIG_SCHEMA`` accepts any key, so ``roqsim check`` and ``roqsim scenes
+describe`` warn (``config-key``) about each key its ``Config::`` block does not document, and a run
+logs the same warning: a misspelled key otherwise leaves its setting at the default. A warning and
+not a refusal, because such a plugin may read a key it does not document. ``enabled`` written inside
+a config is refused where the plugin neither documents nor names it: it is the sibling of the plugin
+ref, and one level too deep it switches nothing off.
 
 .. The catalog below is generated at build time from the roqsim.plugins entry points (see
    docs/_ext/plugin_docs.py), so it always matches the installed plugins. This note is a source

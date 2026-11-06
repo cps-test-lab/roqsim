@@ -210,6 +210,10 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         report["problems"].append(_problem("config", f"{type(exc).__name__}: {exc}"))
         return report
     report["reached"] = "config"
+    from roqsim.config import transport_rate_overrides, undocumented_key_warnings
+
+    report["warnings"].extend(undocumented_key_warnings(engine.plugins))
+    rates = transport_rate_overrides(cfg)
 
     # A transport plugin is config-checked above with the rest, and then left out of the load: its
     # `configure` opens a middleware node or waits for a peer (an autopilot dialling in), which is a
@@ -267,7 +271,10 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         report["warnings"].extend(as_warnings(engine.interpenetrations))
         report["warnings"].extend(friction_cone_warnings(engine))
 
-        report["world"] = _inventory(engine)
+        report["world"] = _inventory(engine, rates)
+        from roqsim.endpoint import rate_snap_warnings
+
+        report["warnings"].extend(rate_snap_warnings(report["world"]["endpoints"]))
         report["derived"], flex_warnings = _derive(engine)
         report["warnings"].extend(_warning(**warning) for warning in flex_warnings)
         report["ok"] = True
@@ -325,36 +332,32 @@ def _inputs(path: Path, report: dict) -> list[str]:
         return []
 
 
-def _inventory(engine) -> dict:
-    """What the loaded world turned out to be -- the half of this that is not about failure."""
+def _inventory(engine, rates: dict | None = None) -> dict:
+    """What the loaded world turned out to be -- the half of this that is not about failure.
+
+    *rates* are the transport's per-endpoint ``rates:``, read before the transport was dropped, so
+    each output's rate is the one a run publishes it at.
+    """
     import mujoco
 
-    from roqsim.endpoint import topic_of
+    from roqsim.config import realised_values
+    from roqsim.endpoint import describe_endpoints
     from roqsim.rebuild import rebuildable_streams
 
     ctx = engine.ctx
     model = ctx.model
     producers = {p.address: p for p in engine.plugins}
     rebuildable = {(s.sensor, s.name) for s in rebuildable_streams(ctx, engine.plugins)[0]}
-    endpoints = []
-    for endpoint in ctx.interface.all():
-        hints = endpoint.backend.get("ros2") or {}
+
+    def cost_fields(endpoint) -> dict:
         producer = producers.get(endpoint.producer)
-        endpoints.append(
-            {
-                "name": endpoint.name,
-                "direction": endpoint.direction,
-                "owner": endpoint.owner,
-                "namespace": endpoint.namespace,
-                "type": hints.get("type") or hints.get("service"),
-                "payload": endpoint.payload_type.name if endpoint.payload_type else None,
-                "topic": topic_of(endpoint, "ros2"),
-                "rate_hz": endpoint.rate_hz,
-                "lazy": bool(endpoint.lazy),
-                "cost": producer.output_cost(endpoint) if producer is not None else None,
-                "rebuildable": (endpoint.producer.replace(".", "/"), endpoint.name) in rebuildable,
-            }
-        )
+        return {
+            "lazy": bool(endpoint.lazy),
+            "cost": producer.output_cost(endpoint) if producer is not None else None,
+            "rebuildable": (endpoint.producer.replace(".", "/"), endpoint.name) in rebuildable,
+        }
+
+    endpoints = describe_endpoints(ctx, "ros2", rates, extra=cost_fields)
     entities = [
         {
             "name": entity.name,
@@ -374,7 +377,8 @@ def _inventory(engine) -> dict:
             for spec in engine.config.plugins
         ],
         "entities": entities,
-        "endpoints": sorted(endpoints, key=lambda e: (e["owner"] or "", e["name"])),
+        "endpoints": endpoints,
+        "realised": realised_values(engine.plugins),
         "model": {
             "nbody": int(model.nbody),
             "ngeom": int(model.ngeom),
