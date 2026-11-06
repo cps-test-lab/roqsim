@@ -57,13 +57,20 @@ class Cams(Plugin):
                 images=images,
                 wants=lambda i=images: i,
                 geomgroup=self.config.get("geomgroup"),
+                bodies=self.config.get("bodies") or "all",
             )
             for name, (w, h) in (("front", (32, 24)), ("top", (16, 16)))
         ]
 
 
 def _engine(
-    tmp_path, images=("rgb", "depth"), settings=None, geomgroup=None, lens=False, address=None
+    tmp_path,
+    images=("rgb", "depth"),
+    settings=None,
+    geomgroup=None,
+    lens=False,
+    address=None,
+    bodies="all",
 ) -> Engine:
     address = address or f"unix:{tmp_path / 'render.sock'}"
     socket_settings = {
@@ -82,7 +89,14 @@ def _engine(
                 "renderers": {"socket": socket_settings},
             },
             "components": [
-                {f"{__name__}:Cams": {"images": list(images), "geomgroup": geomgroup, "lens": lens}}
+                {
+                    f"{__name__}:Cams": {
+                        "images": list(images),
+                        "geomgroup": geomgroup,
+                        "lens": lens,
+                        "bodies": bodies,
+                    }
+                }
             ],
         }
     )
@@ -250,6 +264,26 @@ def test_a_server_that_declares_geom_groups_is_sent_the_cameras_groups(tmp_path)
         engine.shutdown()
     report = json.loads((tmp_path / "report.json").read_text())
     assert report["geomgroups"] == [[2], [2]]
+
+
+def test_a_camera_asking_for_the_moving_bodies_alone_is_refused_by_a_server_that_draws_all(
+    tmp_path,
+):
+    engine = _engine(tmp_path, settings={}, bodies="moving")
+    with pytest.raises(PluginError, match="the moving bodies alone"):
+        engine.setup()
+
+
+def test_a_server_that_declares_moving_only_is_sent_which_bodies_a_camera_draws(tmp_path):
+    engine = _engine(tmp_path, settings={"moving_only": True}, bodies="moving")
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+    finally:
+        engine.shutdown()
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["bodies_asked"] == ["moving", "moving"]
 
 
 def test_its_settings_are_validated_at_load():

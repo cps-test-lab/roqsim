@@ -329,6 +329,41 @@ def world_file(name: str | None, base_dir: str | Path) -> str | None:
     return str(path)
 
 
+def resolve_file_ref(ref: str, base_dir: str | Path | None, what: str = "file") -> Path:
+    """The file a world names: a path beside the world, absolute, or ``<package>:<path>``.
+
+    ``<package>:<path>`` resolves as ``sim.world`` does, by reference: against the worlds directory
+    of a registered ``roqsim.worlds`` provider of that name, else the directory of an importable
+    module exposing ``WORLDS_DIR``, so a world shipped in a package names its own files the same way
+    on every machine. A relative path resolves against *base_dir*, the directory of the world YAML being loaded.
+    Raises ``FileNotFoundError`` naming *what* and the path it looked at.
+    """
+    ref = str(ref)
+    if ":" in ref and not Path(ref).exists() and not Path(ref).is_absolute():
+
+        def beside(worlds_dir: Path, rel: str) -> Path | None:
+            path = worlds_dir / rel
+            return path if path.is_file() else None
+
+        resolved = _resolve_provider_ref(ref, beside, what)
+        if resolved is not None:
+            return Path(resolved)
+        raise FileNotFoundError(
+            f"{what} {ref!r}: no installed package {ref.partition(':')[0]!r} provides worlds; "
+            "a '<package>:<path>' ref names a package registered under 'roqsim.worlds'"
+        )
+    path = Path(ref)
+    if not path.is_absolute():
+        if base_dir is None:
+            raise FileNotFoundError(
+                f"{what} {ref!r} is relative, and there is no world directory to resolve it against"
+            )
+        path = Path(base_dir) / path
+    if not path.is_file():
+        raise FileNotFoundError(f"{what} not found: {path}")
+    return path
+
+
 def build_world(spec: mujoco.MjSpec, name: str | None) -> str:
     """Build the named world definition into ``spec`` (``None`` -> :data:`DEFAULT_WORLD`).
 
