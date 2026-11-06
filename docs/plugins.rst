@@ -2660,6 +2660,8 @@ What a program has:
   offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
   such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
   to allow for it;
+- a program yields nothing and waits on a helper with ``yield from``; a bare ``yield self.move(...)``
+  stops the run, as a defect does;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
