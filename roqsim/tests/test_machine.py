@@ -891,3 +891,40 @@ def test_a_timeout_that_is_no_number_fails_the_program():
         assert "a timeout is a number" in status.error
     finally:
         engine.shutdown()
+
+
+def test_a_filtered_servo_starts_an_episode_at_home():
+    engine = _engine(
+        [{"machine_fixtures:FilteredLift": {"home": {"z": 0.3}}, "name": "lift"}], gravity=False
+    )
+    try:
+        lowest = min(_joint(engine, "z_joint") for _ in _steps(engine, 100))
+        assert lowest == pytest.approx(0.3, abs=0.001)
+    finally:
+        engine.shutdown()
+
+
+def test_arriving_with_a_timeout_that_is_no_number_fails_the_program():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("arrive_nan"))
+        assert "a timeout is a number" in status.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_program_may_have_a_parameter_named_program():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        status = _run_until_done(engine, axis, axis.start("takes_a_program", program="x"))
+        assert status.error == ""
+    finally:
+        engine.shutdown()
+
+
+def _steps(engine, count):
+    for _ in range(count):
+        engine.step()
+        yield
