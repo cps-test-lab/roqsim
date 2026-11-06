@@ -1,0 +1,46 @@
+# A room captured as a Gaussian splat, with a robot driving through it.
+#
+# Copy this file for your own room: replace the .ply, run
+#   roqsim splat frame my_room.ply --known-height 2.6
+# and paste the `splat:` block it prints over the one below. Then
+#   roqsim render my_room.yaml --out shot.png
+# draws the room as captured, with the robot in it.
+#
+# The splat is what every camera sees. It has no collision of its own, so what the robot touches is
+# the world's own geometry (`sim.world`: the floor, the walls, the furniture it can meet), which the
+# splat renderer does not draw and MuJoCo's renderer does (`roqsim render ... --renderer mujoco`
+# shows what the robot collides with). The robot itself is drawn by MuJoCo's renderer and put into
+# the room by depth: a table in front of it hides it.
+#
+# The room shipped here is synthetic (a few thousand Gaussians, made by
+# roqsim_render_splat.synthetic) so that the example runs as installed; a real capture has millions.
+
+sim:
+  name: splat_room_example
+  world: splat_room_example/collision.xml  # floor, walls, a table: what the robot collides with
+  renderer: splat                    # every camera draws through the splat renderer
+                                     # (package roqsim_render_splat; `roqsim renderers list`)
+  renderers:
+    splat:                           # the splat renderer's own settings: every key but `file`
+                                     # has a default (`roqsim renderers describe splat`)
+      splat:
+        file: roqsim_render_splat:splat_room_example/room.ply  # a 3DGS .ply: <package>:<path>
+                                           # from an installed package, so a world that extends
+                                           # this one finds it; or a path beside your world
+        pose:                        # where the capture sits in this world, as any pose is written
+          position: {x: 0.0, y: 0.0, z: 1.0}                  # metres
+          orientation: {roll: -1.5708, pitch: 0.0, yaw: 0.35}  # radians: the capture's -y is up
+        scale: 0.5                   # metres per unit of the capture
+  view:                              # `roqsim render`'s camera: inside the room, on the robot
+    lookat: [-0.8, -0.6, 0.3]
+    distance: 2.2
+    azimuth: 210.0
+    elevation: -25.0
+
+components:
+  - spawn_robot:
+      model: roqsim_mobile:turtlebot4
+      pose:
+        position: {x: -0.8, y: -0.6}
+        orientation: {yaw: 0.6}
+    name: robot

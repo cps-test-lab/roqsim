@@ -39,7 +39,8 @@ in lower case without its ``mjTIMER_`` prefix. ``shutdown`` writes a final row. 
 cumulative, so a stage's share of a window is the difference of two rows; a reset zeroes them with
 the rest of ``mjData``, which is why each row carries its episode. A relative ``path`` lands in the
 run's output directory, anchored the way ``roqsim sim`` anchors its other session outputs
-(``RUN_OUTPUT_DIR``, then ``OUTPUT_DIR``, then the working directory).
+(``RUN_OUTPUT_DIR``, then ``OUTPUT_DIR``, then the working directory). A world compiled to look at
+it (``ctx.preview``) installs no callback and opens no file.
 
 **Reading the split.** ``STEP`` covers ``FORWARD`` plus ``ADVANCE`` (the integrator). Forward
 dynamics that falls outside the timed sub-stages -- for a flex under a discrete integrator, the
@@ -111,6 +112,10 @@ class StepTimersPlugin(Plugin):
         return []
 
     def configure(self, ctx: SimContext) -> None:
+        if ctx.preview:
+            # A replay or an export is not the run this file measures, and may be run in its
+            # directory.
+            return
         if mujoco.get_mjcb_time() is not None:
             raise RuntimeError(
                 f"step_timers[{self.label}]: a MuJoCo time callback (mjcb_time) is already "

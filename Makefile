@@ -185,7 +185,7 @@ test-%:
 
 .PHONY: smoke
 smoke:  ## Headless-run every shipped world (compiles the MJCF, loads plugins, resolves assets)
-	@fail=""; skipped=""; n=0; log=$$(mktemp); \
+	@fail=""; skipped=""; nogpu=""; n=0; log=$$(mktemp); \
 	if [ -n "$$ROS_DISTRO" ] && [ -f ros2_ws/install/setup.sh ]; then mute=""; note="as authored (ROS sourced)"; \
 	else mute="--no-communication"; note="with --no-communication (ROS not sourced)"; fi; \
 	run() { \
@@ -193,6 +193,7 @@ smoke:  ## Headless-run every shipped world (compiles the MJCF, loads plugins, r
 		if $(VENV)/bin/roqsim sim "$$1" --headless --pacing asap --steps $(SMOKE_STEPS) $$2 >"$$log" 2>&1; then return 0; fi; \
 		miss=$$(sed -n "s/.*Error opening file '\([^']*\)'.*/\1/p" "$$log" | head -1); \
 		if [ -n "$$miss" ] && grep -qF "$$(basename $$miss)" .gitignore; then skipped="$$skipped $$1"; \
+		elif grep -q "draws on a CUDA GPU" "$$log" && ! nvidia-smi >/dev/null 2>&1; then nogpu="$$nogpu $$1"; \
 		else fail="$$fail $$1"; fi; \
 	}; \
 	for w in $(WORLDS); do run "$$w" "--no-communication"; done; \
@@ -202,6 +203,9 @@ smoke:  ## Headless-run every shipped world (compiles the MJCF, loads plugins, r
 	if [ -n "$$skipped" ]; then echo; \
 		echo "SKIPPED -- needs an asset that is generated, not committed (external/external_assets.yaml):"; \
 		for w in $$skipped; do echo "  $$w"; done; fi; \
+	if [ -n "$$nogpu" ]; then echo; \
+		echo "SKIPPED -- its renderer draws on a CUDA GPU, and this machine has none:"; \
+		for w in $$nogpu; do echo "  $$w"; done; fi; \
 	if [ -n "$$fail" ]; then echo; echo "FAILED ($$n worlds run):"; for w in $$fail; do echo "  $$w"; done; exit 1; \
 	else echo; echo "$$n worlds run headless for $(SMOKE_STEPS) steps; none failed."; fi
 

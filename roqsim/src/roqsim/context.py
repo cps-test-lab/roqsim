@@ -535,8 +535,10 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
-        #: Whether this world is compiled to look at it, a render, a replay, a check, rather than to
-        #: run it (``Engine(preview=True)``); what a plugin must not do then, it asks here.
+        #: Whether this world is compiled to look at it, a render, a replay, a check, a settled
+        #: export, rather than to run it (``Engine(preview=True)``). Such a world still steps and
+        #: calls every hook, so a plugin still computes what its sensors read; it writes no file a
+        #: run owns, starts or commands nothing and does not stop the run.
         self.preview: bool = False
         #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
         self.presence_holds: dict[str, dict] = {}

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -72,7 +73,7 @@ def load_world(world: str, overrides: dict | None = None):
     # A world YAML / package ref: build through the roqsim engine so plugins (floorplan, spawns)
     # contribute their geometry, then read the compiled model/data back off the context.
     try:
-        from roqsim.config import load_config
+        from roqsim.config import drop_transport, load_config
         from roqsim.engine import Engine
         from roqsim.world import resolve_world_yaml_ref
     except ImportError as exc:  # pragma: no cover
@@ -82,6 +83,12 @@ def load_world(world: str, overrides: dict | None = None):
     # for a filename and errors.
     ref = resolve_world_yaml_ref(world) if (not p.exists() and ":" in world) else None
     cfg = load_config(ref or (str(p) if p.exists() else world), overrides or None)
+    # Coverage reads geometry: a transport would bind ports and wait for a peer that never comes.
+    dropped = drop_transport(cfg)
+    if dropped:
+        logging.getLogger(__name__).info(
+            "coverage: left out the transport plugin(s) %s", ", ".join(dropped)
+        )
     # The model and data outlive the plugins: coverage reads only them.
     with Engine(cfg, preview=True) as engine:
         ctx = engine.ctx

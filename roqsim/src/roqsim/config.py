@@ -1391,6 +1391,7 @@ def validate_render(sim: dict, base_dir: Path | None) -> None:
     the key, the block and the valid ones.
     """
     from .registry import resolve_renderer  # noqa: PLC0415 -- only worlds that name one pay
+    from .render_api import validate_renderer_config  # noqa: PLC0415
 
     renderer = sim.get("renderer")
     if renderer is not None and (not isinstance(renderer, str) or not renderer):
@@ -1426,7 +1427,7 @@ def validate_render(sim: dict, base_dir: Path | None) -> None:
         if name == DEFAULT_RENDERER and settings is None:
             continue
         cls = resolve_renderer(str(name), base_dir)
-        errors = cls.validate_config(settings or {})
+        errors = validate_renderer_config(cls, settings or {}, base_dir)
         if errors:
             raise PluginError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
 

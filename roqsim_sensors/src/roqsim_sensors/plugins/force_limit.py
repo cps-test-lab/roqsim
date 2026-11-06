@@ -50,7 +50,8 @@ Endpoint ``force_limit`` (out) reads a :class:`LimitReport`:
 ``(tripped, reason, at_time, force, torque)`` -- ``at_time`` is the simulation time of the first
 trip (``-1.0`` if none) and ``force``/``torque`` are the magnitudes that caused it, so a failure is
 attributable rather than merely flagged. ROS carries ``tripped`` alone, a ``std_msgs/Bool`` on
-``force_limit``.
+``force_limit``. A world compiled to look at it (``ctx.preview``) reports a trip the same way and
+neither releases the controllers nor stops the run.
 """
 
 from __future__ import annotations
@@ -174,6 +175,9 @@ class ForceLimitPlugin(Plugin):
         self._report.tripped, self._report.reason = True, reason
         if first:
             self._report.at_time = float(ctx.sim_time)
+            if ctx.preview:
+                # A replay or an export reports the trip and releases or stops nothing.
+                return
             if self.release_controllers:
                 self._release(ctx)
             if self.stop_run:
