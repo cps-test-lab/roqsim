@@ -104,6 +104,19 @@ class FakeWalker(Plugin):
             self.finished, self.until = True, None
 
 
+class LookedLate(ScenarioPlugin):
+    """Scenario: busy until an entity has come and gone, then asks who passed since the start."""
+
+    NEEDS = {"gate": "zone:gate"}
+
+    def program(self):
+        yield from self.wait(2.0)
+        who = yield from self.entered(self.gate, since=0.0)
+        self.event("saw", who=who)
+        dwelt = yield from self.dwelled(self.gate, since=0.0)
+        self.event("dwelt", who=dwelt)
+
+
 class Watch(ScenarioPlugin):
     """Scenario: wait for something in the gate, for it to dwell, then for the gate to empty."""
 

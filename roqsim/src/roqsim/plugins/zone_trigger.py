@@ -17,8 +17,9 @@ inside when its ``point`` is: ``com`` (default) the centre of mass of its root b
 root body's frame, for a body whose mass is not where it stands (a walker's mocap pelvis).
 
 **Who counts.** ``entities`` filters by name pattern (fnmatch, ``["box_*", "walker_*"]``); without it
-every present entity with a body counts, except the states of :mod:`part_state` and the entity the
-zone is nested under. A pattern that matches no entity at the first reset is logged once as a
+every present entity with a body counts, except the states of :mod:`part_state`. The entity the
+zone is nested under never counts, whatever ``entities`` says, and while it is absent the zone
+reports no one. A pattern that matches no entity at the first reset is logged once as a
 warning, not refused: a spare may still appear through ``spawn_entity``.
 
 **What it reports.** Each step, on the physics thread: an ``entered`` event with the entity, a
@@ -93,6 +94,9 @@ class ZoneHandle:
         self._inside: dict[str, float] = {}
         self._dwelt: list[str] = []
         self._counts = ZoneCounts()
+        #: ``(sim time, entity)`` of each entry and each dwell this episode.
+        self._entries: list[tuple[float, str]] = []
+        self._dwells: list[tuple[float, str]] = []
 
     def inside(self) -> list[str]:
         """The entities inside now, in the order they entered."""
@@ -105,6 +109,14 @@ class ZoneHandle:
     def dwelling(self) -> list[str]:
         """The entities inside that have been for the zone's ``dwell``."""
         return list(self._dwelt)
+
+    def entered_since(self, when: float) -> list[str]:
+        """The entities that entered at or after ``when`` (s, sim time), inside or gone since."""
+        return [name for t, name in self._entries if t >= when]
+
+    def dwelled_since(self, when: float) -> list[str]:
+        """The entities that reached the zone's ``dwell`` at or after ``when``, inside or gone since."""
+        return [name for t, name in self._dwells if t >= when]
 
     @property
     def occupied(self) -> bool:
@@ -152,6 +164,8 @@ class ZoneTriggerPlugin(Plugin):
             errors.append("zone_trigger: 'size' is three positive half-extents (m)")
         if str(config.get("point", "com")) not in ("com", "origin"):
             errors.append("zone_trigger: 'point' is com or origin")
+        if not isinstance(config.get("body", ""), str):
+            errors.append("zone_trigger: 'body' is a body's name")
         entities = config.get("entities")
         if entities is not None and not (
             isinstance(entities, list) and all(isinstance(p, str) for p in entities)
@@ -182,10 +196,10 @@ class ZoneTriggerPlugin(Plugin):
                     mujoco.mj_id2name(ctx.model, mujoco.mjtObj.mjOBJ_BODY, i)
                     for i in range(ctx.model.nbody)
                 ]
-                own = [b for b in bodies if b and b.startswith(prefix)] if prefix else []
+                own = [b for b in bodies if b and b.startswith(prefix)]
                 raise RuntimeError(
                     f"zone_trigger {self.address}: no body {name!r} to ride on"
-                    + (f" (the bodies of {self.entity}: {', '.join(own)})" if own else "")
+                    + (f" (the bodies: {', '.join(own)})" if own else "")
                 )
         ctx.blackboard.set(f"zone:{self.address}", self.handle)
 
@@ -193,6 +207,8 @@ class ZoneTriggerPlugin(Plugin):
         self.handle._inside = {}
         self.handle._dwelt = []
         self.handle._counts = ZoneCounts()
+        self.handle._entries = []
+        self.handle._dwells = []
         if not self._warned:
             self._warned = True
             names = ctx.entities.names()
@@ -224,7 +240,8 @@ class ZoneTriggerPlugin(Plugin):
         now = ctx.sim_time
         h = self.handle
         inside_now = []
-        for e in self._candidates(ctx):
+        owner = ctx.entities.get(self.entity) if self.entity else None
+        for e in () if owner is not None and not owner.present else self._candidates(ctx):
             bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, e.body)
             if bid < 0:
                 continue
@@ -245,9 +262,11 @@ class ZoneTriggerPlugin(Plugin):
             if name not in inside:
                 inside[name] = now
                 entered += 1
+                h._entries.append((now, name))
                 ctx.events.emit(self.address, "entered", entity=name)
             elif self.dwell > 0 and name not in dwelt and now - inside[name] >= self.dwell - 1e-9:
                 dwelt.append(name)
+                h._dwells.append((now, name))
                 ctx.events.emit(self.address, "dwelled", entity=name, after=now - inside[name])
         h._inside, h._dwelt = inside, dwelt
         if entered or left:

@@ -2711,7 +2711,10 @@ and is placed after the machines it drives::
 The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
 ``entered``, ``left``, ``dwelled``, ``place``, ``event`` (:mod:`roqsim.scenario`). ``entered``,
 ``left`` and ``dwelled`` wait on a ``zone_trigger``'s handle and take a ``timeout`` as ``until``
-does; ``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``place`` takes a pose as a world file writes one:
+does. They read who is inside now, so a scenario goes after the zones it waits on; ``entered`` and
+``dwelled`` with ``since`` (a sim time) also count an entity that has come and gone since then.
+``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``place`` takes a
+pose as a world file writes one:
 ``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
 ``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
@@ -2780,11 +2783,12 @@ presence leads to is a scenario's::
        dwell: 1.0                                     # s inside before `dwelled`; 0 never
      name: belt_end
 
-It emits ``entered``, ``dwelled`` and ``left`` events, keeps a handle under ``zone:<name>``
-(``inside()``, ``entered_at()``, ``dwelling()``, ``occupied``, ``counts``, ``dwell``) and publishes
+It emits ``entered``, ``dwelled`` (with ``after``, its seconds inside) and ``left`` (with
+``inside_s``) events, keeps a handle under ``zone:<name>`` (``inside()``, ``entered_at()``,
+``dwelling()``, ``entered_since()``, ``dwelled_since()``, ``occupied``, ``counts``, ``dwell``) and publishes
 ``occupied`` (a ``bool``, ``std_msgs/Bool`` on ROS) and ``occupancy``. With ``body:`` the box rides
-on that body; nested under an entity, ``body`` is named after the entity's prefix, and the entity
-it is nested under is never counted -- a zone that only rides another entity's body still counts
+on that body; nested under an entity, ``body`` is named after the entity's prefix, the entity it is
+nested under is never counted, and while that entity is absent the zone reports no one -- a zone that only rides another entity's body still counts
 that entity. ``point: com`` reads the root body's centre of mass, which a ``part_state`` state that
 names an inertia moves; ``point: origin`` reads its frame, for a mocap body.
 

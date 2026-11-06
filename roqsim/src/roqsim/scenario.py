@@ -374,29 +374,37 @@ class ScenarioPlugin(Plugin):
         while self._ctx.sim_time < end - 1e-9:
             yield
 
-    def entered(self, zone, pattern: str = "*", timeout: float | None = None):
+    def entered(
+        self, zone, pattern: str = "*", timeout: float | None = None, since: float | None = None
+    ):
         """Wait until an entity matching ``pattern`` is inside ``zone`` (a ``zone_trigger``'s handle)
-        and return its name -- at once when one already is. Past ``timeout`` seconds raise
-        :class:`ScenarioError`, as :meth:`until` does."""
+        and return its name -- at once when one already is. With ``since`` (s, sim time), an entity
+        that entered at or after it counts even if it has left again, so a scene that was busy
+        cannot miss one passing through. Past ``timeout`` seconds raise :class:`ScenarioError`, as
+        :meth:`until` does."""
+        names = zone.inside if since is None else lambda: zone.entered_since(since)
         return (
             yield from self._first_of(
-                zone.inside, pattern, timeout, f"an entity matching {pattern!r} in zone {zone.name}"
+                names, pattern, timeout, f"an entity matching {pattern!r} in zone {zone.name}"
             )
         )
 
     def left(self, zone, pattern: str = "*", timeout: float | None = None):
         """Wait until no entity matching ``pattern`` is inside ``zone``; ``timeout`` as
-        :meth:`entered`."""
+        :meth:`entered`. It reads who is inside now: list a scenario after the zones it waits on, so
+        that on the first step a zone has already said."""
         yield from self.until(
             lambda: not any(fnmatch.fnmatchcase(n, pattern) for n in zone.inside()),
             timeout,
             f"zone {zone.name} empty of {pattern!r}",
         )
 
-    def dwelled(self, zone, pattern: str = "*", timeout: float | None = None):
+    def dwelled(
+        self, zone, pattern: str = "*", timeout: float | None = None, since: float | None = None
+    ):
         """Wait until an entity matching ``pattern`` has been inside ``zone`` for its ``dwell``, and
-        return its name; ``timeout`` as :meth:`entered`. A zone whose ``dwell`` is 0 reports no
-        dwelling at all, so waiting on one is refused rather than left to hang."""
+        return its name; ``timeout`` and ``since`` as :meth:`entered`. A zone whose ``dwell`` is 0
+        reports no dwelling at all, so waiting on one is refused rather than left to hang."""
         if not zone.dwell > 0:
             raise ScenarioError(
                 f"zone {zone.name} has dwell 0, which reports no dwelling; give it a dwell to "
@@ -404,7 +412,7 @@ class ScenarioPlugin(Plugin):
             )
         return (
             yield from self._first_of(
-                zone.dwelling,
+                zone.dwelling if since is None else lambda: zone.dwelled_since(since),
                 pattern,
                 timeout,
                 f"an entity matching {pattern!r} dwelling in zone {zone.name}",

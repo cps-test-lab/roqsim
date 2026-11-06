@@ -12,6 +12,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.presence import set_present
 
 
 def _engine(*components):
@@ -256,3 +257,61 @@ def test_a_zone_counts_the_entity_whose_body_it_rides_unless_nested_under_it():
         assert engine.ctx.blackboard.require("zone:carrier.gate").inside() == []
     finally:
         engine.shutdown()
+
+
+def test_a_scene_busy_while_an_entity_passed_finds_it_with_since():
+    engine = _engine(
+        _mover("box_1", [-1.0, 0.0, 0.5], [1.0, 0.0, 0.0]),
+        _zone(dwell=0.25),
+        {"scenario_fixtures:LookedLate": {}, "name": "scene"},
+    )
+    try:
+        _run(engine, 2.5)
+        seen = {e["event"]: e["who"] for e in _events(engine, "scene") if "who" in e}
+        assert seen == {"saw": "box_1", "dwelt": "box_1"}
+        zone = engine.ctx.blackboard.require("zone:gate")
+        assert zone.inside() == [] and zone.entered_since(1.0) == []
+        engine.reset()
+        assert zone.entered_since(0.0) == []
+    finally:
+        engine.shutdown()
+
+
+def test_a_zone_under_an_absent_entity_reports_no_one():
+    nested = {
+        **_mover("carrier", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]),
+        "components": [
+            _zone(
+                body="carrier", pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}}, entities=["box"]
+            )
+        ],
+    }
+    engine = _engine(nested, _mover("box", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]))
+    try:
+        ctx = engine.ctx
+        zone = ctx.blackboard.require("zone:carrier.gate")
+        _run(engine, 0.05)
+        assert zone.inside() == ["box"]
+        set_present(ctx, ctx.entities.get("carrier"), False)
+        _run(engine, 0.05)
+        assert zone.inside() == [] and zone.counts.left == 1
+        set_present(ctx, ctx.entities.get("carrier"), True)
+        _run(engine, 0.05)
+        assert zone.inside() == ["box"]
+    finally:
+        engine.shutdown()
+
+
+def test_who_is_inside_is_on_the_occupancy_endpoint():
+    engine = _engine(_mover("box_1", [0.0, 0.0, 0.5], [0.0, 0.0, 0.0]), _zone())
+    try:
+        _run(engine, 0.05)
+        occupancy = engine.ctx.interface.find("gate", "occupancy").read()
+        assert occupancy.inside == ["box_1"] and occupancy.count == 1
+    finally:
+        engine.shutdown()
+
+
+def test_a_body_that_is_no_name_is_refused():
+    with pytest.raises(Exception, match="'body' is a body's name"):
+        _engine(_zone(body=5))
