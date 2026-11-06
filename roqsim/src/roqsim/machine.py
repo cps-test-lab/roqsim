@@ -826,20 +826,23 @@ class MachinePlugin(Plugin):
                 ) from exc
 
     def _finish(self, run: _Run, error: str) -> None:
+        if error:
+            # Cancelled or failed, the machine stops where it is: every ramp ends, each actuator is
+            # held where its joint stands, and each setpoint keeps the value it has now -- so
+            # nothing carries on toward a target the program had set, whatever its cleanup did.
+            try:
+                run.gen.close()
+            except Exception as exc:
+                error = f"{error}; its cleanup raised: {exc}"
+            self._ramps.clear()
+            for name, act in self._actuators.items():
+                self._cmd[name] = self._hold_target(act)
         with self._lock:
             if self._run is run:
                 self._run = None
             if self._cancelling == run.seq:
                 self._cancelling = 0
             self._set_status(MachineStatus(run.seq, run.program, True, error))
-        if error:
-            # Cancelled or failed, the machine stops where it is: every ramp ends, each actuator is
-            # held where its joint stands, and each setpoint keeps the value it has now -- so
-            # nothing carries on toward a target the program had set.
-            run.gen.close()
-            self._ramps.clear()
-            for name, act in self._actuators.items():
-                self._cmd[name] = self._hold_target(act)
         self._ctx.events.emit(
             self.machine_entity, "program_end", program=run.program, seq=run.seq, error=error
         )

@@ -522,6 +522,27 @@ def test_a_program_that_fails_mid_ramp_leaves_the_machine_holding_as_a_cancel_do
         engine.shutdown()
 
 
+def test_a_cleanup_that_goes_wrong_still_stops_the_machine_and_is_reported():
+    engine = _axis()
+    try:
+        axis = engine.ctx.blackboard.require("machine:axis")
+        seq = axis.start("go_then_linger", x=0.8, speed=0.2)
+        for _ in range(200):
+            engine.step()
+        axis.cancel()
+        engine.step()
+        status = axis.status()
+        assert status.seq == seq and status.finished
+        assert status.error.startswith("cancelled") and "cleanup raised" in status.error
+        assert _events(engine, "axis")[-1]["event"] == "program_end"
+        held = axis.value("x")
+        for _ in range(1000):
+            engine.step()
+        assert axis.value("x") == held, "nothing carries on toward the program's target"
+    finally:
+        engine.shutdown()
+
+
 @pytest.mark.parametrize(("config", "limit"), [({"timeout": 1.0}, 1.0), ({}, 5.0)])
 def test_an_obstructed_joint_fails_its_move_after_the_timeout_naming_machine_and_actuator(
     config, limit
