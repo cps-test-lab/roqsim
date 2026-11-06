@@ -114,7 +114,9 @@ roqsim assets inspect-prop models/<name>/ --fix-origin # centre footprint on (0,
 ```
 The deterministic sanity gate of the pipeline. Checks origin (footprint centred on the
 floor), scale plausibility, up-axis, single-mesh, textured MJCF, single material, licence, and leftover
-intermediates. **This is the only place geometry facts come from.** MuJoCo recentres a mesh to its centre
+intermediates. Under CC BY the licence check also asks `CREDITS.txt` to say what was changed: `import`
+adds that once it has converted the model (`roqsim_assets.sketchfab.MODIFIED`); after the steps by hand,
+add it yourself, or a line that begins "Changed for roqsim", "Changes:" or "Changes here:". **This is the only place geometry facts come from.** MuJoCo recentres a mesh to its centre
 of mass at compile time, so anything measured off a *compiled* model reports a nicely centred box even for
 a prop metres off origin; `inspect-prop` reads the raw OBJ (world truth = `raw × scale + geom pos`).
 `--fix-origin` bakes the correction into the OBJ vertices. FAIL = must fix; WARN = judge it against the
@@ -126,5 +128,5 @@ render.
   finding, not a limitation of the preview. Wiring a *surface* texture is a separate step (drop the Color PNG into
   `roqsim_assets/assets/<Name>/` and reference it as `roqsim_assets:<Name>` from a scene) — a
   multi-material atlas would need per-part meshes/materials.
-- **Licence hygiene:** keep the `CREDITS.txt` next to any model you add, and record the
-  attribution in the relevant package's `THIRD_PARTY.md`.
+- **Licence hygiene:** keep the `CREDITS.txt` next to any model you add, under CC BY with what was
+  changed, and record the attribution in the relevant package's `THIRD_PARTY.md`.

@@ -11,6 +11,8 @@ under non-commercial (CC-*-NC) or no-derivatives (CC-*-ND) terms are **not** add
 - **Textures** (`assets/<Name>/`) — a single 1K Color/albedo PNG + a `manifest.yaml` (reflectance /
   physical_size) + `CREDITS.txt`. Bundled today are ambientCG and Poly Haven textures (all CC0).
 - **Imported models** (`models/<Name>/`) — meshes brought in via `sketchfab_helper download`,
-  which writes the `CREDITS.txt` automatically from the source's licence metadata.
+  which writes the `CREDITS.txt` automatically from the source's licence metadata. Under CC BY, the
+  licence asks a copy to indicate that it was modified: `import` adds what it changed once it has,
+  a model changed further says so by hand, and `inspect-prop` fails one that does not.
 
 When adding an asset, keep its `CREDITS.txt` alongside it and honour whatever that file states.
