@@ -132,7 +132,7 @@ def _reference_frame(stamped, subject, entities, *, field):
             f"{field} is stated in the frame of {subject!r} itself, which the request moves, so "
             "it names no fixed frame. State it in the world frame or another entity's."
         )
-    entity = entities.get(frame_id)
+    entity = _listed(entities, frame_id)
     if entity is None or not entity.present or not getattr(entity, "body", None):
         return None, f"{field} is stated in frame {frame_id!r}, which is not one it knows. " + (
             _KNOWN_FRAMES

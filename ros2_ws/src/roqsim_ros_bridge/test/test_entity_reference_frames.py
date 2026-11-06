@@ -195,6 +195,15 @@ def test_an_entity_as_its_own_frame_is_refused(world):
     assert not world.written
 
 
+def test_a_frame_that_is_no_entity_of_the_control_plane_is_refused():
+    entities = _World()
+    entities.add("c.look_a")
+    entities.entities["c.look_a"].listed = False
+    stamped = SimpleNamespace(header=SimpleNamespace(frame_id="c.look_a"))
+    entity, refused = mod._reference_frame(stamped, "box", entities, field="pose")
+    assert entity is None and "not one it knows" in refused
+
+
 def test_a_frame_entity_deleted_before_the_write_is_refused(world):
     world.before_apply.append(lambda: setattr(world.entities["shelf"], "present", False))
     resp = _set(world, "shelf", pos=(1.0, 0.0, 0.0))

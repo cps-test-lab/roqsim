@@ -245,12 +245,19 @@ def find_looks(model: mujoco.MjModel, entity: Entity) -> dict[str, str]:
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or ""
         local = name[len(prefix) :] if prefix and name.startswith(prefix) else name
         if local.startswith(LOOK_PREFIX):
-            out[local[len(LOOK_PREFIX) :]] = name
-            ids[bid] = name
+            look = local[len(LOOK_PREFIX) :]
         elif f"_{LOOK_PREFIX}" in local:
             # A state another plugin added to the entity, named after the entity's body.
-            out[local.rsplit(f"_{LOOK_PREFIX}", 1)[1]] = name
-            ids[bid] = name
+            look = local.rsplit(f"_{LOOK_PREFIX}", 1)[1]
+        else:
+            continue
+        if look in out:
+            raise PartStateError(
+                f"part_state: bodies {out[look]!r} and {name!r} of {entity.name!r} both name the "
+                f"state {look!r}; a state is one body"
+            )
+        out[look] = name
+        ids[bid] = name
     # A state inside another would be shown and hidden with it as well as on its own.
     for bid, name in ids.items():
         parent = int(model.body_parentid[bid])
@@ -286,6 +293,7 @@ class PartStatePlugin(Plugin):
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.handle = PartStates(source=self.address)
+        self._owner_of: dict[str, str] = {}
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -337,6 +345,13 @@ class PartStatePlugin(Plugin):
                 )
             looks = {}
             for look, body in found.items():
+                owner = self._owner_of.setdefault(body, entity.name)
+                if owner != entity.name:
+                    # Each would hide it and keep what it hid, so the second's show changes nothing.
+                    raise PartStateError(
+                        f"part_state: state body {body!r} is under both {owner!r} and "
+                        f"{entity.name!r}; a state belongs to one entity"
+                    )
                 _refuse_mass(ctx.model, entity.name, body)
                 name = f"{entity.name}.{LOOK_PREFIX}{look}"
                 look_entity = ctx.entities.get(name)
@@ -378,7 +393,14 @@ class PartStatePlugin(Plugin):
                 for group in groups:
                     for look in group:
                         self.handle._look(entity, look)
-                    self.handle.groups.setdefault(entity, []).append(list(group))
+                    others = self.handle.groups.setdefault(entity, [])
+                    twice = sorted({look for other in others for look in other} & set(group))
+                    if twice:
+                        raise PartStateError(
+                            f"part_state: {twice} on {entity!r} are in two exclusive groups; a "
+                            "state is in one"
+                        )
+                    others.append(list(group))
         for entity, looks in shown.items():
             for group in self.handle.groups.get(entity, []):
                 both = sorted(set(group) & looks)
@@ -406,8 +428,15 @@ class PartStatePlugin(Plugin):
                     "diaginertia (3)"
                 )
             values = model.numeric_data[adr : adr + 10].copy()
-            quat = values[3:7] / max(float(np.linalg.norm(values[3:7])), 1e-12)
-            looks[look] = (values[:3].copy(), quat, values[7:].copy())
+            norm = float(np.linalg.norm(values[3:7]))
+            a, b, c = sorted(values[7:])
+            if not np.isfinite(values).all() or norm == 0.0 or a <= 0.0 or a + b < c:
+                raise PartStateError(
+                    f"part_state: {body}_inertia is no inertia: it takes finite numbers, a quat "
+                    "that is not zero, and a positive diaginertia no value of which exceeds the "
+                    "sum of the other two"
+                )
+            looks[look] = (values[:3].copy(), values[3:7] / norm, values[7:].copy())
         if not looks:
             return
         root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
@@ -429,7 +458,7 @@ class PartStatePlugin(Plugin):
             self.handle.place_mass(entity)
         mujoco.mj_forward(ctx.model, ctx.data)
 
-    @endpoint.command
+    @endpoint.command(ros2=None)
     def show(self, entity: str, look: str) -> bool:
         """Show a state on an entity; true if it was hidden.
 
@@ -439,7 +468,7 @@ class PartStatePlugin(Plugin):
         """
         return self.handle.show(entity, look)
 
-    @endpoint.command
+    @endpoint.command(ros2=None)
     def hide(self, entity: str, look: str) -> bool:
         """Hide a state on an entity; true if it was shown.
 
@@ -449,7 +478,7 @@ class PartStatePlugin(Plugin):
         """
         return self.handle.hide(entity, look)
 
-    @endpoint.command
+    @endpoint.command(ros2=None)
     def set(self, entity: str, look: str) -> bool:
         """Show a state and hide the others of its exclusive group; true if anything changed.
 
