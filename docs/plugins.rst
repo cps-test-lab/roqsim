@@ -2779,8 +2779,8 @@ with a non-zero exit. ``done`` and ``scenario_end`` are as for a Python scenario
 ``scenario_execution_roqsim`` and scenario-execution only to run: rendering, replaying or checking the
 world parses nothing. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
 way to let scenario-execution own the loop, for a campaign or for scenario parameters.
-``roqsim/tests`` and ``scenario_execution_roqsim/tests`` hold one scene written both ways, and a test
-holds their timelines equal.
+``scenario_execution_roqsim/tests`` holds one scene written both ways, and a test holds their
+timelines equal.
 
 An entity's states: ``part_state``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
