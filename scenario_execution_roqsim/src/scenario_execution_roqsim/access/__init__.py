@@ -50,10 +50,14 @@ dwell shorter than one tick means "the first tick past the threshold" on both pa
 from __future__ import annotations
 
 import dataclasses
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 
 class AccessError(RuntimeError):
@@ -616,8 +620,44 @@ class WorldAccess(ABC):
         """
         return None
 
+    def unattended(self, call: CommandCall, what: str) -> None:
+        """Keep *call*, whose caller will not poll it again, so its outcome is still read: a
+        refusal is logged as an error naming *what*, and over the socket so is no answer by
+        :meth:`teardown`. For a command an action sends as it is abandoned, a cancel."""
+        pending = [(c, w) for c, w in getattr(self, "_unattended", []) if not self._read(c, w)]
+        if not self._read(call, what):
+            pending.append((call, what))
+        self._unattended = pending
+
+    def _read(self, call: CommandCall, what: str) -> bool:
+        """Whether *call* has its outcome; a refusal is logged."""
+        try:
+            outcome = call.poll()
+        except AccessError as err:
+            _log.error("%s was refused: %s", what, err)
+            return True
+        if outcome is not None and not outcome.ok:
+            _log.error("%s was refused: %s", what, outcome.detail)
+        return outcome is not None
+
+    def report_unattended(self, wait: float = 0.0, *, unanswered: bool = True) -> None:
+        """Read the outcome of each :meth:`unattended` call, waiting up to *wait* seconds for those
+        not answered yet; one with no answer then is logged, with *unanswered*."""
+        pending = getattr(self, "_unattended", [])
+        deadline = time.monotonic() + wait
+        while True:
+            pending = [(c, w) for c, w in pending if not self._read(c, w)]
+            if not pending or time.monotonic() >= deadline:
+                break
+            time.sleep(0.005)
+        if unanswered:
+            for _call, what in pending:
+                _log.error("%s got no answer", what)
+        self._unattended = []
+
     def teardown(self) -> None:
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""
+        self.report_unattended(unanswered=False)
 
 
 def select(kwargs: dict) -> WorldAccess:
