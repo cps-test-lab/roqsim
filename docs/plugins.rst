@@ -2719,11 +2719,12 @@ The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``unt
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
 ``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
 reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
-it as around ``run``; the scene does not end before a start has, and one nobody joined then stops the
-run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
+it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
+not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
+itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
 before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
-start's task, as ``first()`` does to the loser, cancels its program; a program yields nothing, and
-waits on a helper with ``yield from``, a bare ``yield self.run(...)`` being refused. ``route(check=False)``,
+task, as ``first()`` does to the loser, cancels the machine program it waits on. A scene yields
+nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``route(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
 reports done. Every scenario takes ``needs:`` (rename a handle) and

@@ -450,3 +450,56 @@ def test_a_bare_yield_of_a_helper_is_refused_rather_than_doing_nothing():
             engine.step()
     finally:
         engine.shutdown()
+
+
+def test_a_join_raises_as_soon_as_one_task_fails():
+    other = {"machine_fixtures:Press": {"prefix": "p2_"}, "name": "other"}
+    engine = _engine(
+        PRESS, other, {"scenario_fixtures:JoinsAFailureAndALongStart": {}, "name": "scene"}
+    )
+    try:
+        _until_done(engine)
+        caught = next(e for e in _events(engine, "scene") if e["event"] == "caught")
+        assert "jammed" in caught["error"] and caught["long_done"] is False
+        assert engine.ctx.sim_time < 1.0
+    finally:
+        engine.shutdown()
+
+
+def test_a_spawned_run_keeps_the_scene_open_and_its_error_stops_the_run():
+    engine = _engine(PRESS, {"scenario_fixtures:ReturnsBesideASpawnedRun": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="press.jam .seq 1.: jammed"):
+            for _ in range(1000):
+                engine.step()
+        assert "scenario_end" not in {e["event"] for e in _events(engine, "scene")}
+    finally:
+        engine.shutdown()
+
+
+def test_a_background_task_does_not_keep_the_scene_open():
+    engine = _engine({"scenario_fixtures:ReturnsBesideABackgroundTask": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        assert engine.ctx.sim_time < 0.1
+    finally:
+        engine.shutdown()
+
+
+def test_a_timer_that_wins_over_a_spawned_run_leaves_the_machine_free():
+    engine = _engine(PRESS, {"scenario_fixtures:SpawnedRunLosesToATimer": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        ends = [e["error"] for e in _events(engine, "press") if e["event"] == "program_end"]
+        assert ends == ["cancelled", ""]
+    finally:
+        engine.shutdown()
+
+
+def test_spawn_of_what_is_no_generator_is_refused():
+    engine = _engine({"scenario_fixtures:SpawnsNoGenerator": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="spawn.. takes a generator"):
+            engine.step()
+    finally:
+        engine.shutdown()
