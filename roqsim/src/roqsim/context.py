@@ -93,7 +93,8 @@ class Entity:
     meta: dict = field(default_factory=dict)
     #: Whether anything can perceive or touch it. Absent entities stay in the compiled model
     #: -- nothing can add a body to one at runtime -- but are excluded from raycasts, from
-    #: rendering, from contacts, and from what the control plane lists. See :mod:`roqsim.presence`.
+    #: rendering, from contacts, and from what the control plane lists. An entity inside an
+    #: absent one is hidden with it, whatever this says of it. See :mod:`roqsim.presence`.
     present: bool = True
 
 
@@ -128,7 +129,8 @@ class EntityRegistry:
         return self._entities.get(name)
 
     def names(self, present_only: bool = False) -> list[str]:
-        """Entity names; with *present_only*, just the ones anything can currently perceive.
+        """Entity names; with *present_only*, just the ones that are not absent themselves (one
+        inside an absent entity is hidden with it: :func:`roqsim.presence.body_present`).
 
         The control plane lists the present ones, because an absent entity is one this world
         compiled but the trial has not brought in yet -- reporting it would make ``GetEntities``
@@ -524,6 +526,8 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
+        #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
+        self.presence_holds: dict[str, dict] = {}
         #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
         self.entity_poses: set[str] = set()
         #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
