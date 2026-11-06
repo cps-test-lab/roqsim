@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import tomllib
 import yaml
 
 pytest.importorskip("scenario_execution", reason="what the plugin runs")
@@ -12,7 +14,7 @@ pytest.importorskip("scenario_execution", reason="what the plugin runs")
 from test_osc_library import _entry_points  # noqa: E402
 
 from roqsim import runner  # noqa: E402
-from roqsim.config import load_config_from_dict  # noqa: E402
+from roqsim.config import load_config_from_dict, world_sources  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
 from roqsim.recording import open_recording  # noqa: E402
 from scenario_execution_roqsim.scenario_file import ScenarioFileError  # noqa: E402
@@ -253,3 +255,85 @@ def test_a_recording_replays_without_running_the_scenario(tmp_path, monkeypatch)
         rec.at(0.5)
         assert rec.build()
         assert "scenario_end" in {e["event"] for e in rec.events}
+
+
+def test_a_replay_with_sensors_does_not_run_the_scenario(tmp_path, monkeypatch):
+    """A replay drives post_step on restored samples, with no reset to start anything."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    path = _world(tmp_path, GOOD, output_dir="out")
+    out = tmp_path / "run.mcap"
+    argv = [str(path), "--headless", "--seconds", "5", "--pacing", "asap", "--control", "none"]
+    assert runner.main([*argv, "--record", str(out)]) == 0
+    verdict = (tmp_path / "out" / "test.xml").read_text()
+    assert 'failures="0"' in verdict
+    with (
+        open_recording(out) as rec,
+        patch(
+            "scenario_execution_roqsim.scenario_file.ScenarioFilePlugin._start",
+            side_effect=AssertionError("a replay ran the scenario"),
+        ),
+    ):
+        rec.enable_sensors()
+        rec.at(0.5)
+        assert (tmp_path / "out" / "test.xml").read_text() == verdict
+
+
+def test_a_second_entry_is_refused(tmp_path):
+    (tmp_path / "scene.osc").write_text(GOOD)
+    entries = [{PLUGIN: {"file": "scene.osc"}, "name": name} for name in ("a", "b")]
+    cfg = load_config_from_dict({"sim": {}, "components": entries}, base_dir=tmp_path)
+    with pytest.raises(ScenarioFileError, match="a second entry"):
+        Engine(cfg).setup()
+
+
+def test_an_error_in_a_tick_is_what_test_xml_says(tmp_path):
+    text = """
+import osc.roqsim
+scenario typo:
+    do serial:
+        entity_call(entity: 'press', command: 'no_such_command')
+"""
+    engine = _engine(tmp_path, text, output_dir="out")
+    try:
+        with pytest.raises(Exception, match="no_such_command"):
+            _until_stop(engine)
+        written = (tmp_path / "out" / "test.xml").read_text()
+        assert "no_such_command" in written and "the run ended before" not in written
+    finally:
+        engine.shutdown()
+
+
+def test_a_file_that_does_not_parse_is_in_test_xml(tmp_path):
+    engine = _engine(tmp_path, "this is { not a scenario\n", output_dir="out")
+    try:
+        with pytest.raises(ScenarioFileError, match="did not parse"):
+            engine.step()
+        assert "parsing failed" in (tmp_path / "out" / "test.xml").read_text()
+    finally:
+        engine.shutdown()
+
+
+def test_output_dir_is_relative_to_the_world_and_made_whole(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    engine = _engine(tmp_path, GOOD, output_dir="a/b/c")
+    try:
+        _until_stop(engine)
+        assert (tmp_path / "a/b/c/test.xml").exists()
+    finally:
+        engine.shutdown()
+
+
+def test_the_file_is_among_a_worlds_sources_from_any_directory(tmp_path, monkeypatch):
+    path = _world(tmp_path, GOOD)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert str(tmp_path / "scene.osc") in {str(p) for p in world_sources(str(path))}
+
+
+def test_the_short_name_is_the_plugin():
+    project = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())
+    target = project["project"]["entry-points"]["roqsim.plugins"]["scenario"]
+    assert target == PLUGIN
