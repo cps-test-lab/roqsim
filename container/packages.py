@@ -59,6 +59,13 @@ def requires(project: dict, dist: str) -> bool:
     return any(_NAME.match(req.strip()).group(0) == dist for req in project.get("dependencies", []))
 
 
+def torch_packages(root: Path = ROOT) -> list[str]:
+    """The packages ``INCLUDE_TORCH_PKGS=1`` adds: those that need torch, except the ones that need
+    a CUDA build of it, which no image carries."""
+    cuda = {name for excluded in EXCLUDE.values() for name, why in excluded.items() if why == CUDA}
+    return [n for n, p in discover(root).items() if requires(p, "torch") and n not in cuda]
+
+
 def _normalize(dist: str) -> str:
     return re.sub(r"[-_.]+", "-", dist).lower()
 
@@ -96,7 +103,7 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     if argv[0] == "torch":
-        print("\n".join(f"./{name}" for name, p in discover().items() if requires(p, "torch")))
+        print("\n".join(f"./{name}" for name in torch_packages()))
         return 0
     if argv[1:] == ["--check"]:
         return check(argv[0])
