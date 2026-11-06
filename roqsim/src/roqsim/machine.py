@@ -40,8 +40,8 @@ The base gives every machine the same outside:
   moves: a ramp moves the position actuator's target and the physics moves the joint. An actuator a
   machine drives is a plain position servo (fixed gain, affine bias whose stiffness matches the gain,
   unit gear, no dynamics that integrate its control), so its control is the joint's target; any
-  other is refused. Plugin-owned
-  :attr:`~MachinePlugin.SETPOINTS` (a belt's speed) ramp the same way and are applied by the plugin.
+  other is refused. Plugin-owned :attr:`~MachinePlugin.SETPOINTS` (a belt's speed) ramp the same way
+  and are applied by the plugin.
 
 Fail loudly: an actuator the model lacks or one that is no plain position servo, a ``home`` the
 machine does not drive or outside its range, a handle in :attr:`~MachinePlugin.NEEDS` that nothing
@@ -60,6 +60,7 @@ program had set.
 from __future__ import annotations
 
 import inspect
+import math
 import threading
 import types
 import typing
@@ -250,6 +251,10 @@ class MachinePlugin(Plugin):
         self._raise: BaseException | None = None
         self.handle: MachineHandle | None = None
 
+    #: Whether the subclass registers its own entity (a machine that builds its model); a controller
+    #: under a spawned model sets this False and speaks for its owner.
+    registers_entity = True
+
     # -- declaration --------------------------------------------------------------------------
     @classmethod
     def programs(cls) -> dict[str, Callable]:
@@ -287,7 +292,7 @@ class MachinePlugin(Plugin):
     @property
     def machine_prefix(self) -> str:
         """The MJCF name prefix :attr:`ACTUATORS` are resolved under: the ``prefix`` key, else the
-        owning entity's prefix for a controller a manifest put under a spawned model."""
+        owning entity's prefix for a controller nested under a spawned model."""
         if "prefix" in self.config:
             return str(self.config["prefix"])
         if self.entity and self._ctx is not None:
@@ -307,10 +312,6 @@ class MachinePlugin(Plugin):
         for a controller with no model of its own, the entity it is nested under."""
         return self.address if self.registers_entity else (self.entity or self.address)
 
-    #: Whether the subclass registers its own entity (a machine that builds its model); a controller
-    #: under a spawned model sets this False and speaks for its owner.
-    registers_entity = True
-
     # -- config ------------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
         """The keys every machine takes: ``home`` names what it drives, ``on_error`` is known."""
@@ -328,8 +329,20 @@ class MachinePlugin(Plugin):
                             f"{what}: home names {key!r}, which it does not drive (it drives "
                             f"{sorted(driven) or 'nothing'})"
                         )
-                    elif isinstance(value, bool) or not isinstance(value, (int, float)):
+                    elif (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                    ):
                         errors.append(f"{what}: home {key!r} is a number, not {value!r}")
+        # A program is an attribute of its name, so one named like a member of the base replaces it:
+        # its ``start`` endpoint, its ``wait``.
+        replaced = sorted(n for n in self.programs() if hasattr(MachinePlugin, n))
+        if replaced:
+            errors.append(
+                f"{what}: program(s) {replaced} are named like what every machine has; name them "
+                "otherwise"
+            )
         if str(config.get("on_error", "raise")) not in ON_ERROR:
             errors.append(f"{what}: 'on_error' is one of {list(ON_ERROR)}")
         # A handle is set as an attribute of that name, so a name the machine already has would
@@ -406,7 +419,14 @@ class MachinePlugin(Plugin):
                     f"machine {self.address}: actuator {prefix + name!r} is no plain position "
                     f"servo ({servo}), so its control is not the joint's target"
                 )
-            lo, hi = (float(v) for v in m.actuator_ctrlrange[aid])
+            # Without a control range the joint's own range bounds its target.
+            limited = bool(m.actuator_ctrllimited[aid] or m.jnt_limited[jid])
+            lo, hi = (
+                float(v)
+                for v in (
+                    m.actuator_ctrlrange[aid] if m.actuator_ctrllimited[aid] else m.jnt_range[jid]
+                )
+            )
             self._actuators[name] = _Actuator(
                 name=name,
                 aid=aid,
@@ -415,7 +435,7 @@ class MachinePlugin(Plugin):
                 dadr=int(m.jnt_dofadr[jid]),
                 lo=lo,
                 hi=hi,
-                limited=bool(m.actuator_ctrllimited[aid]),
+                limited=limited,
                 kp=float(m.actuator_gainprm[aid, 0]),
             )
 
@@ -625,7 +645,9 @@ class MachinePlugin(Plugin):
         if act is None:
             return True  # a setpoint is where its target is
         d = self._ctx.data
-        near = abs(float(d.qpos[act.qadr]) - self._cmd[name]) <= self.REACHED
+        # Where the servo's target would hold it: a loaded joint settles short of its target by its
+        # standing offset, and has arrived there; only something else stopping it leaves a gap.
+        near = abs(self._standing_target(act) - self._cmd[name]) <= self.REACHED
         return near and (not still or abs(float(d.qvel[act.dadr])) <= self.STOPPED_SPEED)
 
     def at_home(self, *names: str) -> bool:
@@ -646,22 +668,28 @@ class MachinePlugin(Plugin):
                 f"{sorted([*self._actuators, *self.SETPOINTS]) or 'nothing'})"
             )
 
-    def _hold_target(self, act: _Actuator) -> float:
+    def _standing_target(self, act: _Actuator) -> float:
         """The target that holds ``act``'s joint where it stands: its position plus the servo's
         standing offset under the load it carries (the force the servo supplies, gravity and the
         bias forces less what passive forces and actuator gravity compensation take, over its
-        stiffness). Holding at the position alone would let a loaded joint sink by load/kp at
-        every hold."""
+        stiffness)."""
         m, d = self._ctx.model, self._ctx.data
         dof = act.dadr
         load = float(d.qfrc_bias[dof]) - float(d.qfrc_passive[dof])
         if m.jnt_actgravcomp[act.jid]:
             load -= float(d.qfrc_gravcomp[dof])
-        here = float(d.qpos[act.qadr]) + (load / act.kp if act.kp > 0 else 0.0)
+        return float(d.qpos[act.qadr]) + (load / act.kp if act.kp > 0 else 0.0)
+
+    def _hold_target(self, act: _Actuator) -> float:
+        """The target that keeps ``act``'s joint where it stands, in range. Holding at the position
+        alone would let a loaded joint sink by load/kp at every hold."""
+        here = self._standing_target(act)
         return min(max(here, act.lo), act.hi) if act.limited else here
 
     def _in_range(self, name: str, value: float) -> float:
         """``value`` as a target of ``name``; outside the actuator's range the program fails."""
+        if not math.isfinite(value):
+            self.fail(f"machine {self.address}: target {value!r} for {name!r} is no number")
         act = self._actuators.get(name)
         if act is not None and act.limited and not act.lo <= value <= act.hi:
             self.fail(
@@ -772,6 +800,11 @@ class MachinePlugin(Plugin):
         if run is not None:
             self._finish(run, "cancelled")
         with self._lock:
+            # Another thread's start may have been accepted while the run above was finished.
+            if self._pending is not None:
+                self._set_status(
+                    MachineStatus(self._pending[0], self._pending[1], True, "cancelled")
+                )
             self._seq += 1
             seq = self._seq
             self._pending = (seq, program_name, dict(args))
@@ -913,7 +946,11 @@ def _union_parts(annotation) -> list:
     """The parts of a parameter's annotation: a string's (``from __future__ import annotations``)
     split at ``|``, a ``typing.Union``'s or an ``X | Y``'s arguments, else the annotation itself."""
     if isinstance(annotation, str):
-        return [p.strip() for p in annotation.split("|")]
+        text = annotation.strip()
+        for wrapper in ("typing.Optional[", "Optional["):
+            if text.startswith(wrapper) and text.endswith("]"):
+                return [*_union_parts(text[len(wrapper) : -1]), "None"]
+        return [p.strip() for p in text.split("|")]
     if typing.get_origin(annotation) in (typing.Union, types.UnionType):
         return list(typing.get_args(annotation))
     return [annotation]
@@ -929,9 +966,10 @@ def _fits(annotation, value) -> bool:
         return True
     nones = ("None", None, type(None))
     parts = _union_parts(annotation)
-    if value is None:
-        return any(p in nones for p in parts)
     kinds = {"float": float, "int": int, "str": str, "bool": bool}
+    plain = (float, int, str, bool)
+    if value is None:
+        return any(p in nones or kinds.get(p, p) not in plain for p in parts)
     for part in parts:
         kind = kinds.get(part, part) if isinstance(part, str) else part
         if kind in nones:

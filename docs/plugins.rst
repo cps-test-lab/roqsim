@@ -2653,7 +2653,8 @@ What a program has:
   ``self.until_stopped(*names, timeout=None)`` (reached and at rest: what an interlock waits for),
   ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
   by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
-  naming the machine and the actuator, so an obstructed joint never hangs a program silently;
+  naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
+  loaded joint has arrived when it settles short of its target by its servo's standing offset;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
