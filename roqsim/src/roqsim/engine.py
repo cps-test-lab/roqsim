@@ -154,6 +154,7 @@ class Engine:
         self.config = config
         self.logger = logger or logging.getLogger("roqsim.engine")
         self.ctx = SimContext(config.raw, logger=self.logger)
+        self.ctx.preview = preview
         if preview:
             # Assigned HERE and not in `setup`, because a driver may read or override it in
             # between -- and because a fixed seed a caller can see is the whole point: two renders
