@@ -13,7 +13,7 @@ pytest.importorskip("scenario_execution", reason="what the plugin runs")
 
 from test_osc_library import _entry_points  # noqa: E402
 
-from roqsim import runner  # noqa: E402
+from roqsim import exit_status, runner  # noqa: E402
 from roqsim.config import load_config_from_dict, world_sources  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
 from roqsim.recording import open_recording  # noqa: E402
@@ -145,7 +145,8 @@ def test_a_reset_mid_scenario_starts_it_over(tmp_path, caplog):
             engine.step()
         with caplog.at_level("ERROR"):
             engine.reset()
-        assert "the run ended before" in caplog.text
+        assert "the run ended before" not in caplog.text, "a reset is no end of the run"
+        assert engine.ctx.unfinished == []
         for _ in range(5):
             engine.step()
     finally:
@@ -159,6 +160,7 @@ def test_a_run_that_ends_first_says_so_and_writes_it(tmp_path, caplog):
     with caplog.at_level("ERROR"):
         engine.shutdown()
     assert "the run ended before" in caplog.text
+    assert engine.ctx.unfinished == ["scenario scene (scene.osc)"]
     assert "the run ended before the scenario did" in (tmp_path / "test.xml").read_text()
 
 
@@ -239,6 +241,14 @@ def test_roqsim_sim_runs_it_and_a_failure_is_not_a_success(tmp_path, monkeypatch
         runner.main([str(_world(tmp_path, BAD)), *argv])
 
 
+def test_roqsim_sim_ending_before_the_scenario_is_no_pass(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    argv = ["--headless", "--seconds", "1", "--pacing", "asap", "--control", "none"]
+    with caplog.at_level("ERROR"):
+        assert runner.main([str(_world(tmp_path, LONG)), *argv]) == exit_status.UNFINISHED
+    assert caplog.text.count("the run ended before scenario scene") == 1
+
+
 def test_a_recording_replays_without_running_the_scenario(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     path = _world(tmp_path, GOOD)
@@ -282,6 +292,7 @@ def test_a_settled_export_does_not_run_the_scenario(tmp_path):
         for _ in range(5):
             engine.step()
     assert not (tmp_path / "out").exists()
+    assert engine.ctx.unfinished == []
 
 
 def test_a_second_entry_is_refused(tmp_path):

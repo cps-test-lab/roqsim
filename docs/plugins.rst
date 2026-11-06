@@ -3027,7 +3027,10 @@ reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` aroun
 it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
 not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
 itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
-before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
+before the scene does logs a start's error that reached no one. A run that ends before a scene that
+has taken a step did -- at ``--seconds`` or ``--steps``, on a signal, by the window closing -- says
+so as an error, and ``roqsim sim`` exits ``6`` (:ref:`exit-status`); a reset only starts the scene
+again. Cancelling a
 task, as ``first()`` does to the loser, cancels the machine start it waits on, by its number, or stops the route. A scene yields
 nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
@@ -3075,7 +3078,8 @@ scenario-execution, in its own loop, with its recording, viewer and control sock
 
 ``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
 the scenario, and ``output_dir``, relative to the world file, is where its ``test.xml`` goes. A scenario
-that fails stops the run with a non-zero exit. ``done`` and ``scenario_end`` are as for a Python
+that fails stops the run with a non-zero exit, and one the run ends before is written to ``test.xml``
+as failed and makes ``roqsim sim`` exit ``6``, as for a Python scenario. ``done`` and ``scenario_end`` are as for a Python
 scenario. One entry serves a world. scenario-execution is needed only to run: rendering, replaying,
 checking or exporting the world runs nothing and parses nothing, though ``roqsim check`` needs
 ``scenario_execution_roqsim`` to know the entry. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
@@ -3167,6 +3171,14 @@ either register a ``roqsim.plugins`` entry-point or reference the class directly
 YAML. Referenced directly, the ref (``my_pkg.mod:MyPlugin`` or ``./plugins/x.py:Foo``) contains a
 colon and is the plugins-list entry's *key*, so **quote it** — ``- "my_pkg.mod:MyPlugin": {...}`` —
 to keep the colon from splitting the key.
+
+**A world compiled to look at it acts on nothing.** A render, a replay (``Recording.build``,
+``roqsim state --sensor``), ``roqsim check``, a settled export, the scene builder and a map compile
+the world with ``Engine(preview=True)``, and ``ctx.preview`` is then true. Such a world still steps
+and calls every hook, a replay on each restored sample, so a plugin computes its outputs as in a
+run: a replay reads them. What it must not do then is act: write a file a run owns, start or command
+anything (a machine's program, a controller switch), or stop the run
+(``ctx.request_stop``). Ask ``ctx.preview`` in the hook that acts and skip that part only.
 
 **If your config names a file, implement ``sources``.** ``roqsim.config.world_sources`` — what
 ``roqsim scenes inputs`` and the exporters' ``--manifest`` report, and what a run harness

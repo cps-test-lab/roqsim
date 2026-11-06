@@ -57,10 +57,13 @@ def test_an_image_carries_every_package_but_its_named_exclusions(packages, image
 
 def test_the_lean_image_leaves_out_exactly_the_packages_that_need_torch(packages):
     needs_torch = {name for name, p in packages.discover().items() if packages.requires(p, "torch")}
-    excluded = {
-        name for name, reason in packages.EXCLUDE["lean"].items() if reason == packages.TORCH
-    }
+    lean = packages.EXCLUDE["lean"]
+    excluded = {name for name, reason in lean.items() if reason in (packages.TORCH, packages.CUDA)}
     assert excluded == needs_torch
+    # The torch extra adds back the CPU-torch ones only; one that needs CUDA stays out of every image.
+    assert set(packages.torch_packages()) == {n for n in excluded if lean[n] == packages.TORCH}
+    for name in excluded - set(packages.torch_packages()):
+        assert all(packages.EXCLUDE[image].get(name) == packages.CUDA for image in packages.EXCLUDE)
 
 
 @pytest.mark.parametrize("dockerfile,image", DOCKERFILES.items())

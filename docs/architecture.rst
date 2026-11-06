@@ -857,7 +857,7 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    can give is declared on its class (``RendererCapabilities``: images, camera models, whether it
    composes moving bodies, draws the static world, renders a batch at once, is deterministic, runs
    in-process, draws decorations, draws only the geom groups a camera names, projects an off-centre
-   principal point, projects non-square pixels), and
+   principal point, projects non-square pixels, draws the moving bodies alone), and
    :meth:`RenderService.check` holds every camera to it when the world loads: a camera a renderer
    cannot serve fails the load naming both, and nothing falls back to MuJoCo's renderer. Every frame
    a renderer returns is held to its request: its camera, its snapshot's sim time and step, and each
@@ -899,7 +899,11 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    and its clip planes, is drawn at the origin of the framebuffer, and its colour image is copied on
    the GPU into its tile of one atlas, read back once per batch. Depth and segmentation keep a pass
    of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them. A camera with
-   its own geom groups or decorations gets a build of its own. The pictures are those a
+   its own geom groups or decorations gets a build of its own, and so does a camera asking for the
+   moving bodies alone (``CameraSpec.bodies``: ``moving``), whose build takes MuJoCo's dynamic
+   category only -- the bodies :func:`~roqsim.rendering.moving_bodies` marks, with no static geom, no
+   floor and no decoration -- which is what a renderer bringing its own static world composites by
+   depth. The pictures are those a
    ``mujoco.Renderer`` per camera drew (``roqsim/tests/test_render_service_pixels.py``). Under
    MuJoCo's default 4x MSAA a frame is not bit-reproducible on every GPU, with or without the service:
    a run may differ from another in a handful of values by one level; a model with

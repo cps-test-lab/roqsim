@@ -3,8 +3,9 @@
 The world-YAML front door to :mod:`roqsim_sensors.coverage`. List it in a world's ``components:``
 and it computes coverage **once** (at ``configure``, after the model is compiled) and writes an
 agent-digestible ``report.json`` plus a human render -- then does nothing per step. Omit it and there is
-no coverage output. The optimization *search* over hypothetical mounts is the CLI's job
-(``roqsim sensors coverage``); this plugin answers "what is the coverage of the sensors in this world?".
+no coverage output; a world compiled to look at it (``ctx.preview``) writes none either. The
+optimization *search* over hypothetical mounts is the CLI's job (``roqsim sensors coverage``); this
+plugin answers "what is the coverage of the sensors in this world?".
 
 Config::
 
@@ -137,6 +138,9 @@ class SensorCoverageProbePlugin(Plugin):
         return points, labels, names
 
     def configure(self, ctx: SimContext) -> None:
+        if ctx.preview:
+            # A render or an export of the world is not the run whose report this is.
+            return
         model, data = ctx.model, ctx.data
         mujoco.mj_forward(model, data)  # ensure cam/site/geom world poses are populated
         fovs = self._discover_fovs(model, data)

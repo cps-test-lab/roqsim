@@ -26,7 +26,9 @@ export) neither needs scenario-execution nor runs the scenario, though ``roqsim 
 package to know the entry.
 
 A scenario that fails stops the run with an error and a non-zero exit. One the run ends before it does
-cannot fail the run, since a shutdown cannot, so it is logged as an error and written to ``test.xml``.
+is written to ``test.xml`` as failed and reported to the driver (``ctx.report_unfinished``), so
+``roqsim sim`` exits non-zero; a reset that cuts it short logs that as an error, and the next episode
+runs it again.
 
 The other way to run a scenario is scenario-execution owning the loop (:mod:`roqsim.scenario_adapter`),
 for a campaign that runs it as its command, or for scenario parameters this entry does not take.
@@ -98,7 +100,7 @@ class ScenarioFilePlugin(Plugin):
         ctx.blackboard.set("scenario_file", self)
 
     def on_reset(self, ctx) -> None:
-        self._finish_tree()
+        self._finish_tree(ctx, reported=False)
         self._started = self._ended = self._done = False
 
     def post_step(self, ctx) -> None:
@@ -188,21 +190,25 @@ class ScenarioFilePlugin(Plugin):
             )
         return next(iter(trees.values()))
 
-    def _finish_tree(self) -> None:
-        """End a tree a reset or the run's end cut short, and say so."""
+    def _finish_tree(self, ctx, *, reported: bool) -> None:
+        """End a tree a reset or the run's end cut short: the run's end is ``reported`` to the
+        driver; a reset starts the scene over, as a Python scene's does, and says so in test.xml."""
         execution, self._execution = self._execution, None
         if execution is None:
             return
         if not execution.shutdown_requested:
-            _log.error(
-                "scenario %s: the run ended before %s did", self.address, self.config.get("file")
+            what = f"scenario {self.address} ({self.config.get('file')})"
+            if reported:
+                ctx.report_unfinished(what)
+            execution.on_scenario_shutdown(
+                False,
+                "the run ended before the scenario did" if reported else "a reset started it over",
             )
-            execution.on_scenario_shutdown(False, "the run ended before the scenario did")
             execution.process_results()
         execution.behaviour_tree.shutdown()
 
     def shutdown(self, ctx) -> None:
-        self._finish_tree()
+        self._finish_tree(ctx, reported=True)
 
     @endpoint.out(rate=10.0)
     def done(self) -> bool:

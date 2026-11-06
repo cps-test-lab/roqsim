@@ -1039,3 +1039,27 @@ def test_generated_candidates_are_poses_the_evaluator_reads():
         assert placed.pos[2] == pytest.approx(1.5)
         fov = build_fov(m, d, placed)
         assert np.allclose(fov.rot @ np.array([0, 0, -1.0]), [0, 0, -1], atol=1e-9)
+
+
+# -- a world compiled to look at it ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_the_probe_writes_its_report_in_a_run_and_not_in_a_preview(tmp_path, preview):
+    """A render or an export of the world compiles it with the probe in it; the run's report stays."""
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    out = tmp_path / "coverage"
+    probe = {
+        "sensors": [{"type": "livox_mid360", "pose": {"position": {"x": 0, "y": 0, "z": 1.0}}}],
+        "sample": {"objects": False, "resolution": 0.5, "heights": [0.5]},
+        "out": str(out),
+        "render": "none",
+    }
+    cfg = load_config_from_dict(
+        {"components": [{"dummy": {"size": 0.1}}, {"sensor_coverage_probe": probe}]}
+    )
+    with Engine(cfg, preview=preview):
+        pass
+    assert (out / "report.json").exists() is not preview

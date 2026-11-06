@@ -535,8 +535,10 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
-        #: Whether this world is compiled to look at it, a render, a replay, a check, rather than to
-        #: run it (``Engine(preview=True)``); what a plugin must not do then, it asks here.
+        #: Whether this world is compiled to look at it, a render, a replay, a check, a settled
+        #: export, rather than to run it (``Engine(preview=True)``). Such a world still steps and
+        #: calls every hook, so a plugin still computes what its sensors read; it writes no file a
+        #: run owns, starts or commands nothing and does not stop the run.
         self.preview: bool = False
         #: What absent entities hold, and what each held thing was (:mod:`roqsim.presence`).
         self.presence_holds: dict[str, dict] = {}
@@ -601,6 +603,12 @@ class SimContext:
         # scenario owns the end of the run and nothing reads this.
         self.stop_requested: bool = False
         self.stop_reason: str = ""
+
+        # What the run ended before (`report_unfinished`): one line per scene still running when the
+        # engine shut down. A shutdown cannot fail a run, so the driver reads this afterwards --
+        # `roqsim sim` exits `exit_status.UNFINISHED` on it. Under scenario-execution the scenario owns
+        # the run's result and nothing reads it.
+        self.unfinished: list[str] = []
 
         # Thread-safe command queue: external threads post, the physics thread drains. A deque's
         # append and popleft are atomic, so neither side takes a lock; the one consumer is the
@@ -779,6 +787,16 @@ class SimContext:
             self.stop_requested = True
             self.stop_reason = reason
             self.logger.info("stop requested: %s", reason or "(no reason given)")
+
+    def report_unfinished(self, what: str) -> None:
+        """Say that the run ended before ``what`` did -- a scene its shutdown found still running.
+
+        Logged as an error and kept in :attr:`unfinished`, for the driver to turn into the run's
+        status once the engine is shut down: a plugin's shutdown cannot fail the run itself
+        (:meth:`roqsim.engine.Engine.shutdown`). For a scene the run's end cut short, not a reset.
+        """
+        self.unfinished.append(what)
+        self.logger.error("the run ended before %s did", what)
 
     def publish_snapshot(self, snapshot: dict) -> None:
         with self._snapshot_lock:
