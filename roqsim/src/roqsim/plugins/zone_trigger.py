@@ -13,9 +13,8 @@ it.
 **The box.** ``size`` gives its half-extents, ``pose`` its centre and orientation: in the world, or,
 with ``body``, in that body's frame, so the zone rides on it (a barrier on a moving carriage, a die
 zone on a press). Nested under an entity, ``body`` is named after that entity's prefix. An entity is
-inside when its ``point`` is: ``com`` (default) the centre of mass of its root body, so a part is in
-the zone when most of it is; ``origin`` the root body's frame, for a body whose mass is not where it
-stands (a walker's mocap pelvis).
+inside when its ``point`` is: ``com`` (default) the centre of mass of its root body; ``origin`` the
+root body's frame, for a body whose mass is not where it stands (a walker's mocap pelvis).
 
 **Who counts.** ``entities`` filters by name pattern (fnmatch, ``["box_*", "walker_*"]``); without it
 every present entity with a body counts, except the states of :mod:`part_state` and the entity the
@@ -46,6 +45,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import math
 from dataclasses import dataclass, field
 
 import mujoco
@@ -158,7 +158,12 @@ class ZoneTriggerPlugin(Plugin):
         ):
             errors.append("zone_trigger: 'entities' is a list of entity name patterns")
         dwell = config.get("dwell", 0.0)
-        if isinstance(dwell, bool) or not isinstance(dwell, (int, float)) or dwell < 0:
+        if (
+            isinstance(dwell, bool)
+            or not isinstance(dwell, (int, float))
+            or not math.isfinite(dwell)
+            or dwell < 0
+        ):
             errors.append("zone_trigger: 'dwell' is seconds, 0 or more")
         return errors
 
@@ -170,7 +175,7 @@ class ZoneTriggerPlugin(Plugin):
             owner = ctx.entities.get(self.entity) if self.entity else None
             if owner is not None and isinstance(owner.meta, dict):
                 prefix = str(owner.meta.get("prefix", ""))
-            name = body if body.startswith(prefix) else prefix + body
+            name = prefix + body
             self._bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name)
             if self._bid < 0:
                 bodies = [

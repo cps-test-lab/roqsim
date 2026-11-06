@@ -132,6 +132,12 @@ def test_a_bad_config_is_refused_when_the_world_loads():
     assert "'point' is com or origin" in str(exc.value) and "'dwell' is seconds" in str(exc.value)
 
 
+@pytest.mark.parametrize("dwell", [float("inf"), float("nan")])
+def test_a_dwell_that_is_no_number_of_seconds_is_refused(dwell):
+    with pytest.raises(Exception, match="'dwell' is seconds"):
+        _engine(_zone(dwell=dwell))
+
+
 def test_a_reset_empties_the_zone_and_its_counts():
     engine = _engine(_mover("box_1", [-1.0, 0.0, 0.5], [1.0, 0.0, 0.0]), _zone())
     try:
