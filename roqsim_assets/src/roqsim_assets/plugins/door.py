@@ -18,7 +18,10 @@ the door (``docs/architecture.rst``, "Machines and scenarios").
 
 Actuation. A ``position`` actuator holds the hinge at its target. The programs ``open``, ``close``
 and ``move_to(openness)`` (a fraction in ``[0, 1]``, clamped) move that target -- at once, or ramped at
-``speed`` (rad/s at the hinge) -- and end when the leaf is within 0.02 of the openness. An automatic
+``speed`` (rad/s at the hinge) -- and end when the leaf is there and at rest: within 0.02 of the
+openness and still, so a scenario that waits for the program can rely on where the door is. A leaf
+stopped inside that 0.02, against something or not, has arrived; one creeping there slower than
+``stall_speed`` is taken as arrived after ``stall_timeout``. An automatic
 door only pushes *gently*: the actuator force is capped, so an obstacle is nudged, never crushed.
 A leaf that stays blocked -- behind its commanded target by more than 0.02 and barely moving -- for
 ``stall_timeout`` seconds holds where it is and the program ends with the error ``stalled at
@@ -41,11 +44,14 @@ imported here). Openness is a fraction in ``[0, 1]`` on every port, and a comman
 port replaces what the door was doing (``move_to``, preempting):
 
 * ``in``  ``<ns>/cmd``   -- ``std_msgs/Float64`` set-openness (fire-and-forget; the path an ``.osc``
-  ``topic_publish`` drives). A repeated value changes nothing.
+  ``topic_publish`` drives). A repeated value changes nothing while the door moves there or stands
+  there; after a stall or a cancel it starts the move again.
 * ``out`` ``<ns>/state`` -- ``std_msgs/Float64`` current openness, ~10 Hz.
 * ``in``  action ``<ns>/door`` -- ``control_msgs/action/GripperCommand`` for open/close *with feedback*
   (``goal.command.position`` is the target fraction; the handler reports reached/stalled by watching
   the ``machine:<name>:openness`` state reader on the blackboard -- see ``roqsim_ros_bridge.actions``).
+  A goal is given a full swing at ``speed``, plus ``stall_timeout``, plus 5 s; one still moving then
+  is aborted.
 
 Config::
 
@@ -72,11 +78,13 @@ Config::
       max_angle: 120         # fully-open hinge angle (deg); a leaf can swing well past 90 in free
                              #   space -- raise/lower per door for what its surroundings allow
       open: 0.0              # initial openness fraction 0..1 ('how open'): the door's home
+                             #   (a `home: {hinge_pos: <rad>}` overrides it, as on any machine)
       speed: 0.8             # hinge speed of open/close/move_to (rad/s); unset: the target jumps
       controllable: true     # expose the ROS endpoints/action; false = passive, held at 'open'
       namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
       kp: 40.0               # position-actuator stiffness
-      kv: 8.0                # position-actuator damping (velocity gain)
+      kv: 30.0               # position-actuator damping (velocity gain); about a third of
+                             #   critical for the default leaf, so it settles without ringing on
       max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
       stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
       stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
@@ -144,6 +152,8 @@ class DoorPlugin(MachinePlugin):
     _ACTUATOR = "hinge_pos"
     ACTUATORS = (_ACTUATOR,)
     ENTITY_KIND = "door"
+    #: Seconds a leaf stays at rest at its openness before a program counts it arrived.
+    _SETTLE = 0.1
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -187,7 +197,7 @@ class DoorPlugin(MachinePlugin):
         # A cased opening has nothing to command, so it is no machine: no handle, no endpoints.
         self.is_machine = self.leaf
         self.kp = self._float(self.config.get("kp"), 40.0)
-        self.kv = self._float(self.config.get("kv"), 8.0)
+        self.kv = self._float(self.config.get("kv"), 30.0)
         # An automatic door only pushes *gently*: the actuator force is capped, so an obstacle
         # (a robot, a person) is nudged, never crushed. If the door stays blocked -- barely moving
         # while short of its target -- for `stall_timeout` seconds, it gives up and holds where it is
@@ -199,7 +209,7 @@ class DoorPlugin(MachinePlugin):
         # Signed fully-open angle (rad); openness fraction maps linearly onto [0, _span].
         self._span = self.swing * self.max_angle
         self.HOME = {self._ACTUATOR: self.open0 * self._span}
-        self._goal = self.open0  # the openness the last move went for
+        self._goal = self.open0  # the openness the last move went for; home's from the first reset
         self._pushed = 0.0  # seconds an idle door has been held off its target
         self._reach_tol = 0.02  # openness within this of the target counts as reached
         # resolved in configure()
@@ -500,12 +510,26 @@ class DoorPlugin(MachinePlugin):
             self.ramp(self._ACTUATOR, angle, self.speed)
         else:
             self.set(self._ACTUATOR, angle)
-        blocked = 0.0
+        dt = self._ctx.dt
+        blocked = resting = slow = 0.0
         while True:
             now, rate = self.read_state()
-            if abs(now - target) <= self._reach_tol and self.reached(self._ACTUATOR):
-                return
-            blocked = blocked + self._ctx.dt if self._held_back(now, rate) else 0.0
+            # Arrived: the target has stopped moving, the leaf is within reach of it and at rest --
+            # still for _SETTLE, so a leaf ringing about the target, which stops for an instant at
+            # each turn, has not. A leaf held there, short of the servo's own tolerance, is at rest
+            # too; one that creeps slower than stall_speed is taken as there after stall_timeout.
+            if (
+                abs(self.value(self._ACTUATOR) - angle) <= 1e-9
+                and abs(now - target) <= self._reach_tol
+            ):
+                still = abs(rate * self._span) <= self.STOPPED_SPEED
+                resting = resting + dt if still else 0.0
+                slow = slow + dt if abs(rate) < self.stall_speed else 0.0
+                if resting >= self._SETTLE or slow >= self.stall_timeout:
+                    return
+            else:
+                resting = slow = 0.0
+            blocked = blocked + dt if self._held_back(now, rate) else 0.0
             if blocked >= self.stall_timeout:
                 # Stop pressing on the obstruction: hold where the leaf is (inside its range).
                 now = min(max(now, 0.0), 1.0)
@@ -536,6 +560,7 @@ class DoorPlugin(MachinePlugin):
         ros2=lambda self: {
             "action": "control_msgs.action.GripperCommand",
             "state_key": f"machine:{self.door_name}:openness",
+            "timeout": self.action_timeout(),
         },
     )
     def door(self, position: float) -> None:
@@ -546,11 +571,17 @@ class DoorPlugin(MachinePlugin):
         """
         self.set_openness(position)
 
+    def action_timeout(self) -> float:
+        """Sim seconds a door goal may take: a full swing at ``speed``, a stall, and time to settle."""
+        swing = abs(self.max_angle) / self.speed if self.speed else 0.0
+        return swing + self.stall_timeout + 5.0
+
     def set_openness(self, openness: float) -> None:
         """Make ``openness`` the target now, replacing whatever the door was doing (``move_to``).
 
-        For the transport ports, where a command means "this is the target now"; a repeated value
-        changes nothing, so a publisher at 10 Hz does not restart the move ten times a second."""
+        For the transport ports, where a command means "this is the target now". A repeated value
+        changes nothing while the last move to it runs or ended without error, so a publisher at
+        10 Hz does not restart the move ten times a second; after a stall or a cancel it retries."""
         openness = min(max(float(openness), 0.0), 1.0)
         if openness == self._goal and self.status_now.error == "":
             return  # moving there, or there
@@ -585,7 +616,11 @@ class DoorPlugin(MachinePlugin):
             return (0.0, 0.0)
         return (float(d.qpos[self._qadr]) / self._span, float(d.qvel[self._dadr]) / self._span)
 
+    def _home_openness(self) -> float:
+        """The openness the door's ``home`` stands at: ``open``, or a ``home: {hinge_pos: ...}``."""
+        return self.home[self._ACTUATOR] / self._span if self._span else 0.0
+
     def on_reset(self, ctx: SimContext) -> None:
         super().on_reset(ctx)
-        self._goal = self.open0
-        self._pushed = 0.0
+        if self.leaf:
+            self._goal = self._home_openness()

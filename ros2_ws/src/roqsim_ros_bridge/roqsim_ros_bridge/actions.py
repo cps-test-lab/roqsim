@@ -163,6 +163,9 @@ def _sample(p0, v0, p1, v1, alpha: float, span: float) -> list[float]:
 DEFAULT_GOAL_TOLERANCE = 0.5
 #: ...and how long after the final waypoint the joints are given to get inside it.
 DEFAULT_GOAL_TIME_TOLERANCE = 1.0
+#: Sim seconds a GripperCommand goal is given to reach its position or stall, unless the producer's
+#: ``timeout`` hint says otherwise.
+DEFAULT_GRIPPER_TIMEOUT = 5.0
 
 
 def _goal_tolerances(request, hints: dict, names: list[str]) -> dict[str, float]:
@@ -525,6 +528,11 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>``.
     Without a reader we wait a fixed settle time and report the command.
 
+    The goal is given :data:`DEFAULT_GRIPPER_TIMEOUT` seconds of sim time to reach or stall; a
+    producer whose travel can take longer (a slow door) states its own bound in its ``timeout`` hint,
+    and 0 waits however long it takes. A goal still moving when its time runs out is aborted, with
+    neither ``reached_goal`` nor ``stalled`` set: it has not ended, and the result does not say it has.
+
     ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
     every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
     arm_controller's ``GripperEffort``) clamps its joint effort at it; the clamp is posted before the
@@ -561,7 +569,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
 
     pos_tol = 0.005  # rad: close enough to call the goal reached
     vel_tol = 0.002  # rad/s: below this the fingers are considered stopped (stalled on an object)
-    timeout = 5.0
+    timeout = float(hints.get("timeout", DEFAULT_GRIPPER_TIMEOUT))
     settle = 0.5  # min time before a low velocity counts as a stall (let motion start)
 
     start = ctx.sim_time
@@ -569,7 +577,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     stalled = False
     reached = False
     feedback = GripperCommand.Feedback()
-    while ctx.sim_time - start < timeout:
+    while timeout <= 0.0 or ctx.sim_time - start < timeout:
         if goal_handle.is_cancel_requested:
             # Stop the fingers, the way the trajectory handler stops the arm: the producer holds the
             # last position it was commanded, so returning without a new one leaves the hand closing
@@ -612,10 +620,20 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             break
         time.sleep(0.01)
 
-    goal_handle.succeed()
     result.position = position
     if effort is not None:
         result.effort = effort.read_effort()
     result.stalled = stalled
     result.reached_goal = reached
+    if not (reached or stalled):
+        logger.warning(
+            "gripper goal %g still moving at %g after %g s; aborted. A producer that takes longer "
+            "states it in its endpoint's `timeout` hint",
+            target,
+            position,
+            timeout,
+        )
+        goal_handle.abort()
+        return result
+    goal_handle.succeed()
     return result
