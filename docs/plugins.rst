@@ -2595,6 +2595,99 @@ A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, 
 model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
 directories a manifest borrows through ``assets:`` are not searched for it.
 
+Machines: one interface for what does something
+-----------------------------------------------
+
+A machine is one entity's own procedures -- a press's stroke, a door's opening, a belt's run -- and
+every machine looks the same from outside, so a cell, a scenario, the control socket or a client
+drives any of them the same way: through the handle under ``machine:<name>``. What a machine is, and
+where the line to a scenario runs, is :ref:`machines-and-scenarios` in the architecture.
+
+.. code-block:: python
+
+   press = ctx.blackboard.require("machine:press_1")
+   seq = press.start("stroke", show="hole")      # refused at once while busy
+   ...                                            # one step later it runs
+   status = press.status()                        # MachineStatus(seq, program, finished, error)
+   if status.seq == seq and status.finished:
+       assert status.error == ""                  # "" done; else the failure or "cancelled"
+   elif status.seq > seq:
+       ...                                        # another start followed this one
+
+``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
+``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
+press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket. Every
+program run is an event timeline on the run's events (``program_start``, the program's steps,
+``program_end``).
+
+Writing a machine
+~~~~~~~~~~~~~~~~~
+
+Subclass :class:`roqsim.machine.MachinePlugin`, declare what it drives, and write each program as a
+generator method marked ``@program``. Each ``yield`` is one physics step::
+
+   from roqsim.machine import MachinePlugin, program
+
+   class GatePlugin(MachinePlugin):
+       """Machine: a gate on a slide that opens and closes."""
+
+       ACTUATORS = ("leaf",)           # position actuators, after the machine's prefix
+       HOME = {"leaf": 0.0}            # a world's `home:` overrides
+
+       def build(self, spec, ctx): ... # the model, from the config
+       def configure(self, ctx):
+           self.register_entity(ctx, body=self.config.get("prefix", "") + "gate")
+           super().configure(ctx)      # resolves ACTUATORS and home, publishes the handle
+
+       @program
+       def open(self, speed: float = 0.3):
+           """Slide the leaf open."""
+           yield from self.move("leaf", 1.2, speed=speed, event="opening")
+           yield from self.until_stopped("leaf")
+
+What a program has:
+
+- ``self.set(name, value)`` and ``self.ramp(name, value, speed)`` -- at once, or at ``speed`` in the
+  joint's unit per second; a target outside the actuator's range fails the program, naming the
+  machine, the actuator and the range; ``yield from self.move(name, value, speed=None, event=None,
+  timeout=None)`` does either and waits until reached;
+- ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names, timeout=None)``,
+  ``self.until_stopped(*names, timeout=None)`` (reached and at rest: what an interlock waits for),
+  ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
+  by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
+  naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
+  loaded joint has arrived when it settles short of its target by its servo's standing offset. That
+  offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
+  such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
+  to allow for it;
+- a program yields nothing and waits on a helper with ``yield from``; a bare ``yield self.move(...)``
+  stops the run, as a defect does;
+- ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
+  failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
+  each actuator is held where its joint stands (its servo's standing offset under load kept), and
+  each setpoint keeps its value;
+- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+
+``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
+``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and
+is waited on like an actuator. ``NEEDS = {"feeder": "machine:feeder_1"}`` names a handle the
+machine requires; it is resolved at every reset and refused naming the key when nothing published it.
+``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
+
+An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
+servo, an ``<intvelocity>`` or a geared servo is refused at configure, naming the machine and the
+actuator. A program's arguments are checked against its annotations, whether they are strings
+(``from __future__ import annotations``) or types, unions with ``None`` included.
+
+A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
+nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
+it drives the spawned model's actuators under the spawn's prefix and publishes its handle as
+``machine:<spawned entity>`` (:ref:`machines-and-scenarios`).
+
+Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
+endpoint of the machine's own whose command means "this is the target now" calls
+``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+
 Writing your own
 ----------------
 
