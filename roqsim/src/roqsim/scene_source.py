@@ -26,7 +26,7 @@ from typing import NamedTuple
 
 import mujoco
 
-from .config import drop_transport_plugins, load_config, world_sources
+from .config import load_config, world_sources
 from .engine import Engine
 from .override_options import add_override_options, overrides_from_options, refuse_world_options
 from .scene_content import SensorCamera
@@ -130,9 +130,9 @@ def compile_world(
 ) -> CompiledSource:
     """Compile a world YAML through the real build pipeline, so the export == the simulated scene.
 
-    Transport plugins are dropped first -- a geometry export needs no bridge, and one may not even be
-    loadable here (``roqsim.config.drop_transport_plugins``). ``skip`` then drops *further* plugins by
-    ``name`` or plugin ref before the engine is built. Everything that contributes geometry
+    The preview engine leaves out transport plugins and any ref that cannot be loaded here -- a
+    geometry export needs no bridge, and one may not even be installed (:class:`roqsim.engine.Engine`).
+    ``skip`` drops *further* plugins by ``name`` or plugin ref before the engine is built. Everything that contributes geometry
     (floorplan, spawn_robot, walker, conveyor, ...) stays. ``overrides`` (from ``--set``) is
     deep-merged into the world first -- e.g. to supply a floorplan ``mesh`` that a scenario would
     normally inject at run time.
@@ -148,15 +148,6 @@ def compile_world(
     its intrinsics are the ones the run renders with.
     """
     cfg = load_config(world, overrides or None)
-    transport, unavailable = drop_transport_plugins(cfg)
-    if transport:
-        logger.info("skipping transport plugins: %s", ", ".join(transport))
-    if unavailable:
-        logger.warning(
-            "skipping plugin(s) this environment cannot load: %s. They build no geometry, so the "
-            "export is unaffected -- but check the spelling if you expected one.",
-            ", ".join(unavailable),
-        )
     if skip:
         kept = [p for p in cfg.plugins if p.ref not in skip and (p.name or "") not in skip]
         dropped = [p.name or p.ref for p in cfg.plugins if p not in kept]
@@ -166,7 +157,7 @@ def compile_world(
     # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
     # one rather than the driver's to resolve.
     # The model and data outlive the plugins: an export reads only them.
-    with Engine(cfg, preview=True) as engine:  # build + compile + configure
+    with Engine(cfg, preview=True, skip_unloadable=True) as engine:  # build + compile + configure
         engine.reset()  # on_reset: re-pose mocap walkers, re-seat robot bases
         mujoco.mj_forward(engine.ctx.model, engine.ctx.data)  # re-posed mocap into data.xpos
         for _ in range(max(0, settle_steps)):

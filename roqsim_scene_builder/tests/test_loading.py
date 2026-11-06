@@ -47,11 +47,12 @@ def test_render_model_reference(_egl_ok):
     assert frame.dtype.name == "uint8"
 
 
-def test_a_world_whose_bridge_is_not_installed_still_loads(tmp_path):
+def test_a_world_whose_bridge_is_not_installed_still_loads(tmp_path, capsys):
     """A review is about geometry, so a `*_ros` world must open without ROS on the path.
 
     No GL needed: the point is that the *build* survives a plugin ref this environment cannot
-    resolve (``ros2_bridge`` ships in a colcon package -- see roqsim.config.drop_transport_plugins).
+    resolve (``ros2_bridge`` ships in a colcon package -- see roqsim.config.drop_transport). What it
+    left out is said where the window's user sees it, once.
     """
     from roqsim_scene_builder.scene_window import load_engine
 
@@ -62,6 +63,8 @@ def test_a_world_whose_bridge_is_not_installed_still_loads(tmp_path):
         assert engine.ctx.model is not None
     finally:
         engine.shutdown()
+    err = capsys.readouterr().err
+    assert err.count("skipping ros2_bridge, sim_interfaces -- not needed for a review") == 1
 
 
 def test_focus_names_an_object_in_the_scene_or_is_refused():

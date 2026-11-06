@@ -396,3 +396,34 @@ def test_a_transport_plugins_bad_config_is_still_a_config_problem(tmp_path):
     report = check_world(str(_world(tmp_path, world)))
     assert report["ok"] is False and report["reached"] == "resolve"
     assert any("port" in p["message"] for p in report["problems"])
+
+
+def _documented_class():
+    from roqsim.plugin import Plugin
+
+    class Keyed(Plugin):
+        """A plugin that documents one key.
+
+        Config::
+
+            size: 1.0   # the one key it reads
+        """
+
+    return Keyed
+
+
+Keyed = _documented_class()
+
+
+def test_an_undocumented_key_is_logged_once(tmp_path, caplog):
+    """Validating the declared plugins and building them is one construction, so one warning."""
+    world = f"""
+    sim: {{}}
+    components:
+      - "{__name__}:Keyed": {{size: 1.0, sise: 2.0}}
+    """
+    with caplog.at_level("WARNING"):
+        report = check_world(str(_world(tmp_path, world)))
+    assert report["reached"] == STAGES[-1], report["problems"]
+    assert sum("sise" in r.getMessage() for r in caplog.records) == 1
+    assert sum("sise" in w["message"] for w in report["warnings"]) == 1

@@ -1250,7 +1250,7 @@ def main(argv: list | None = None) -> int:
 
 
 def _run(args, log) -> int:
-    from .config import drop_transport_plugins, load_config
+    from .config import load_config
     from .engine import Engine
 
     if args.mjcf:
@@ -1261,13 +1261,10 @@ def _run(args, log) -> int:
         )
 
     cfg = load_config(args.world, overrides_from_options(args) or None)
-    transport, unavailable = drop_transport_plugins(cfg)
-    if transport:
-        log.info("skipping transport plugins: %s", ", ".join(transport))
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
     if skip:
         cfg.plugins = [p for p in cfg.plugins if p.ref not in skip and (p.name or "") not in skip]
-    with Engine(cfg, preview=True) as engine:
+    with Engine(cfg, preview=True, skip_unloadable=True) as engine:
         return _export(args, log, engine)
 
 
