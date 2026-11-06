@@ -11,7 +11,9 @@ identical, named by every ``pyproject.toml`` and listed in every ``MANIFEST.in``
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,9 +47,7 @@ def test_with_a_current_setuptools_it_is_setuptools_build_meta():
 
     if int(setuptools.__version__.split(".")[0]) < 64:
         pytest.skip(f"setuptools {setuptools.__version__} here: the backend would fetch 64+")
-    spec = importlib.util.spec_from_file_location("roqsim_build_backend_under_test", REFERENCE)
-    backend = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(backend)
+    backend = _backend()
     for hook in (
         "build_wheel",
         "build_sdist",
@@ -55,3 +55,55 @@ def test_with_a_current_setuptools_it_is_setuptools_build_meta():
         "prepare_metadata_for_build_wheel",
     ):
         assert getattr(backend, hook) is getattr(setuptools.build_meta, hook)
+
+
+def _backend():
+    spec = importlib.util.spec_from_file_location("roqsim_build_backend_under_test", REFERENCE)
+    backend = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(backend)
+    return backend
+
+
+def _pip_writes(backend, monkeypatch, complete: bool, returncode: int = 0):
+    """Stand in for pip: what it would leave in the directory ``--target`` names."""
+
+    def run(argv, **_kwargs):
+        where = Path(argv[argv.index("--target") + 1])
+        (where / "partial").write_text("x")
+        if complete:
+            (where / "setuptools").mkdir()
+            (where / "setuptools" / "__init__.py").write_text("")
+        return SimpleNamespace(returncode=returncode)
+
+    monkeypatch.setattr(backend.subprocess, "run", run)
+
+
+def test_what_it_imports_is_in_the_user_s_own_cache_not_a_shared_temporary_directory(
+    tmp_path, monkeypatch
+):
+    backend = _backend()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    assert Path(backend._cache()).is_relative_to(tmp_path)
+    monkeypatch.delenv("XDG_CACHE_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert Path(backend._cache()).is_relative_to(tmp_path / "home")
+
+
+def test_a_failed_install_leaves_nothing_a_later_build_would_import(tmp_path, monkeypatch):
+    backend = _backend()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    _pip_writes(backend, monkeypatch, complete=True, returncode=1)
+    with pytest.raises(RuntimeError, match="setuptools>=64"):
+        backend._declared_setuptools()
+    assert os.listdir(Path(backend._cache()).parent) == []
+
+
+def test_an_install_appears_whole_and_is_used_again(tmp_path, monkeypatch):
+    backend = _backend()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    _pip_writes(backend, monkeypatch, complete=True)
+    target = Path(backend._declared_setuptools())
+    assert (target / "setuptools" / "__init__.py").is_file()
+    assert os.listdir(target.parent) == [target.name]
+    monkeypatch.setattr(backend.subprocess, "run", None)  # a second build installs nothing
+    assert Path(backend._declared_setuptools()) == target

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,15 +40,26 @@ def _major(version: str) -> int:
 
 
 def _cache() -> str:
-    uid = os.getuid() if hasattr(os, "getuid") else "user"
-    return os.path.join(tempfile.gettempdir(), f"roqsim-build-setuptools-{REQUIRED}-{uid}")
+    """The declared setuptools' directory, in this user's cache: it is imported, so nobody else may
+    be able to put it there first."""
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(root, "roqsim-build", f"setuptools-{REQUIRED}")
 
 
 def _declared_setuptools() -> str:
-    """A directory holding the declared setuptools, installed there on first use."""
+    """A directory holding the declared setuptools, installed there on first use.
+
+    It is installed beside the directory and moved into place, so a build running at the same time
+    never imports half of it.
+    """
     target = _cache()
     marker = os.path.join(target, "setuptools", "__init__.py")
-    if not os.path.isfile(marker):
+    if os.path.isfile(marker):
+        return target
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    scratch = tempfile.mkdtemp(prefix=".setuptools-", dir=parent)
+    try:
         done = subprocess.run(
             [
                 sys.executable,
@@ -58,18 +70,27 @@ def _declared_setuptools() -> str:
                 "--disable-pip-version-check",
                 "--no-warn-script-location",
                 "--target",
-                target,
+                scratch,
                 SPEC,
             ],
             stdout=sys.stderr,
             check=False,
         )
-        if done.returncode != 0 or not os.path.isfile(marker):
+        if done.returncode != 0 or not os.path.isfile(
+            os.path.join(scratch, "setuptools", "__init__.py")
+        ):
             raise RuntimeError(
                 f"this package builds with {SPEC}; the importable setuptools is older, and "
                 f"installing {SPEC} into {target} failed (pip exited {done.returncode}). Install "
                 f"{SPEC} into the environment, or build with build isolation."
             )
+        try:
+            os.rename(scratch, target)
+        except OSError:
+            if not os.path.isfile(marker):  # not another build having put it there first
+                raise
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
     return target
 
 
