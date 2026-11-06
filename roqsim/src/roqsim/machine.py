@@ -73,7 +73,8 @@ from . import endpoint
 from .context import Entity, SimContext
 from .plugin import Plugin
 
-#: How near its target a position actuator's joint is when it has reached it (the joint's unit).
+#: How near a joint is to its target, its servo's standing offset allowed for, when it has reached it
+#: (the joint's unit).
 REACHED = 0.002
 #: How slowly a joint that has reached its target may still move to count as stopped (unit/s).
 STOPPED_SPEED = 0.01
@@ -466,10 +467,13 @@ class MachinePlugin(Plugin):
         if not self.is_machine:
             return
         with self._lock:
+            run, self._run = self._run, None
             self._pending = None
             self._cancelling = 0
-            self._run = None
             self._status = MachineStatus()
+        if run is not None:
+            # Outside the lock: a program's cleanup may read the machine.
+            run.gen.close()
         self._raise = None
         self._ramps.clear()
         d = ctx.data
@@ -562,6 +566,8 @@ class MachinePlugin(Plugin):
 
     def until(self, cond: Callable[[], bool], timeout: float | None = None, what: str = ""):
         """Yield until ``cond()`` holds; past ``timeout`` seconds the program fails."""
+        if timeout is not None and math.isnan(timeout):
+            self.fail(f"machine {self.address}: a timeout is a number of seconds, not {timeout!r}")
         start = self._ctx.sim_time
         while not cond():
             if timeout is not None and self._ctx.sim_time - start > timeout:
@@ -571,7 +577,8 @@ class MachinePlugin(Plugin):
             yield
 
     def until_reached(self, *names: str, timeout: float | None = None):
-        """Yield until each of ``names`` is at the end of its ramp (a joint within :attr:`REACHED`).
+        """Yield until each of ``names`` is at the end of its ramp (a joint within :attr:`REACHED`
+        of where its target holds it).
 
         A joint that has not arrived ``timeout`` seconds (default :attr:`MOVE_TIMEOUT`) after its
         target did -- an obstruction -- fails the program, naming the machine and the actuator."""
@@ -671,11 +678,12 @@ class MachinePlugin(Plugin):
     def _standing_target(self, act: _Actuator) -> float:
         """The target that holds ``act``'s joint where it stands: its position plus the servo's
         standing offset under the load it carries (the force the servo supplies, gravity and the
-        bias forces less what passive forces and actuator gravity compensation take, over its
-        stiffness)."""
+        bias forces less what springs and actuator gravity compensation take, over its stiffness).
+        Damping is no load: it acts only while the joint moves, and counting it would put a moving
+        joint's target ahead of it. A load carried through a contact is not seen here either."""
         m, d = self._ctx.model, self._ctx.data
         dof = act.dadr
-        load = float(d.qfrc_bias[dof]) - float(d.qfrc_passive[dof])
+        load = float(d.qfrc_bias[dof]) - (float(d.qfrc_passive[dof]) - float(d.qfrc_damper[dof]))
         if m.jnt_actgravcomp[act.jid]:
             load -= float(d.qfrc_gravcomp[dof])
         return float(d.qpos[act.qadr]) + (load / act.kp if act.kp > 0 else 0.0)

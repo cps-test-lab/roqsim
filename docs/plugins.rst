@@ -2599,7 +2599,7 @@ Machines: one interface for what does something
 -----------------------------------------------
 
 A machine is one entity's own procedures -- a press's stroke, a door's opening, a belt's run -- and
-every machine looks the same from outside, so a cell, a scenario, the control socket or an agent
+every machine looks the same from outside, so a cell, a scenario, the control socket or a client
 drives any of them the same way: through the handle under ``machine:<name>``. What a machine is, and
 where the line to a scenario runs, is :ref:`machines-and-scenarios` in the architecture.
 
@@ -2611,6 +2611,8 @@ where the line to a scenario runs, is :ref:`machines-and-scenarios` in the archi
    status = press.status()                        # MachineStatus(seq, program, finished, error)
    if status.seq == seq and status.finished:
        assert status.error == ""                  # "" done; else the failure or "cancelled"
+   elif status.seq > seq:
+       ...                                        # another start followed this one
 
 ``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
 ``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
@@ -2654,7 +2656,9 @@ What a program has:
   ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
   by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
   naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
-  loaded joint has arrived when it settles short of its target by its servo's standing offset;
+  loaded joint has arrived when it settles short of its target by its servo's standing offset. That
+  offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
+  such as a part resting on a lift: such a machine's ``REACHED`` or stiffness has to allow for it;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
@@ -2714,11 +2718,11 @@ The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``unt
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
 ``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
 reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
-it as around ``run``; the scene does not end before a start has, and one nobody joined then stops the run. A run that ends before the program does logs that error and emits ``start_failed``. Cancelling a start's task, as ``first()`` does to the loser, cancels its program. ``route(check=False)``,
+it as around ``run``; the scene does not end before a start has, and one nobody joined then stops the run. Every failed start emits ``start_failed``. A reset or a run that ends before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a start's task, as ``first()`` does to the loser, cancels its program. ``route(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
 reports done. Every scenario takes ``needs:`` (rename a handle) and
-``stop_at_end:``; its ``done`` endpoint says when its program returned.
+``stop_at_end:``; its ``done`` endpoint says when the scene ended.
 
 An entity's states: ``part_state``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
