@@ -3072,14 +3072,15 @@ scenario-execution, in its own loop, with its recording, viewer and control sock
      name: scene
 
 ``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
-the scenario, and ``output_dir`` is where its ``test.xml`` goes. A scenario that fails stops the run
-with a non-zero exit. One the run ends before is written to ``test.xml`` as failed, and ``roqsim sim``
-exits ``6``, as for a Python scenario. ``done`` and ``scenario_end`` are as for a Python scenario. It needs
-``scenario_execution_roqsim`` and scenario-execution only to run: rendering, replaying or checking the
-world parses nothing. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
+the scenario, and ``output_dir``, relative to the world file, is where its ``test.xml`` goes. A scenario
+that fails stops the run with a non-zero exit, and one the run ends before is written to ``test.xml``
+as failed and makes ``roqsim sim`` exit ``6``, as for a Python scenario. ``done`` and ``scenario_end`` are as for a Python
+scenario. One entry serves a world. scenario-execution is needed only to run: rendering, replaying,
+checking or exporting the world runs nothing and parses nothing, though ``roqsim check`` needs
+``scenario_execution_roqsim`` to know the entry. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
 way to let scenario-execution own the loop, for a campaign or for scenario parameters.
-``roqsim/tests`` and ``scenario_execution_roqsim/tests`` hold one scene written both ways, and a test
-holds their timelines equal.
+``scenario_execution_roqsim/tests`` holds one scene written both ways, and a test holds their
+timelines equal.
 
 An entity's states: ``part_state``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

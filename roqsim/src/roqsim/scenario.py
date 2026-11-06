@@ -217,7 +217,8 @@ class ScenarioPlugin(Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         """Advance every task by one step, in the order they were created."""
-        if self._main is None or self._failed:
+        # A world compiled to look at it steps too: a replay's sensors, a settled export.
+        if self._main is None or self._failed or ctx.preview:
             return
         self._started = True
         for task in list(self._tasks):
