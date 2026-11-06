@@ -24,8 +24,9 @@ sim:
     splat:                           # the splat renderer's own settings: every key but `file`
                                      # has a default (`roqsim renderers describe splat`)
       splat:
-        file: splat_room_example/room.ply  # a 3DGS .ply: a path beside this world,
-                                           # or <package>:<path> from an installed package
+        file: roqsim_render_splat:splat_room_example/room.ply  # a 3DGS .ply: <package>:<path>
+                                           # from an installed package, so a world that extends
+                                           # this one finds it; or a path beside your world
         pose:                        # where the capture sits in this world, as any pose is written
           position: {x: 0.0, y: 0.0, z: 1.0}                  # metres
           orientation: {roll: -1.5708, pitch: 0.0, yaw: 0.35}  # radians: the capture's -y is up

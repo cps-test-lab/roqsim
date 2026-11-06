@@ -35,7 +35,18 @@ def test_the_example_world_loads_as_shipped():
     cfg = load_config(EXAMPLE)
     assert cfg.renderer == "splat"
     block = cfg.renderers["splat"]["splat"]
-    assert block["file"] == "splat_room_example/room.ply" and block["scale"] == 0.5
+    assert (
+        block["file"] == "roqsim_render_splat:splat_room_example/room.ply" and block["scale"] == 0.5
+    )
+
+
+def test_a_world_that_extends_the_example_elsewhere_finds_its_capture(tmp_path):
+    """The example names its capture by package, so a world in another directory inherits it."""
+    child = tmp_path / "mine" / "room.yaml"
+    child.parent.mkdir()
+    child.write_text("extends: roqsim_render_splat:splat_room_example\n")
+    block = load_config(child).renderers["splat"]["splat"]  # loading checks the file is there
+    assert block["file"] == "roqsim_render_splat:splat_room_example/room.ply"
 
 
 def test_the_minimum_a_world_states_is_the_file(room):
