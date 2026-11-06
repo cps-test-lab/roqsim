@@ -14,6 +14,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
+from roqsim.plugin import PluginError
 from roqsim_assets.plugins.cylinders import CylindersPlugin
 
 _TWO = [
@@ -241,3 +242,14 @@ def test_saying_nothing_leaves_every_instance_present():
     _model, plugin, ctx = _build(instances=[_cyl(name="a")])
     plugin.apply_declared_presence(ctx)
     assert ctx.entities.get("a").present is True
+
+
+def test_an_instance_topics_key_naming_no_endpoint_it_renames_is_refused():
+    """The engine checks the topics: of the entries it lists; an instance's are checked here."""
+    instances = [dict(_TWO[0]), {**_TWO[1], "topics": {"pose": "/pillar_pose"}}]
+    with pytest.raises(PluginError, match="'pose'"):
+        _build(name="obstacles", instances=instances)
+
+
+def test_instances_without_a_topics_key_configure():
+    _build(name="obstacles", instances=[dict(entry) for entry in _TWO])
