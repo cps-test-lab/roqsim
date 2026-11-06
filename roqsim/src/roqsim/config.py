@@ -870,12 +870,9 @@ def _plugin_sources(cfg, leaf: Path, problems: list) -> list:
     for spec in getattr(cfg, "plugins", []) or []:
         try:
             plugin_cls = resolve_plugin(spec.ref, base_dir=cfg.base_dir)
-            found.extend(
-                plugin_cls(
-                    spec.config, name=spec.name, entity=spec.entity, label=spec.label
-                ).sources()
-                or []
-            )
+            plugin = plugin_cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
+            plugin.base_dir = cfg.base_dir
+            found.extend(plugin.sources() or [])
         except Exception as exc:  # noqa: BLE001 - see docstring: best-effort by design
             problems.append(
                 f"cannot ask plugin {spec.ref!r} in {leaf} for its files: "
