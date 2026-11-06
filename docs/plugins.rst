@@ -2688,6 +2688,50 @@ Each machine takes ``home:`` and ``on_error:`` in its config besides its own key
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
 
+Writing a scenario
+~~~~~~~~~~~~~~~~~~
+
+The scene around the machines -- who acts when, who waits for whom, what a presence leads to -- is a
+scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
+:class:`roqsim.scenario.ScenarioPlugin`::
+
+   from roqsim.scenario import ScenarioPlugin
+
+   class PressDemo(ScenarioPlugin):
+       """Scenario: place a strip in the press and punch it."""
+
+       NEEDS = {"press": "machine:press_1"}
+
+       def program(self):
+           yield from self.place("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
+           yield from self.run(self.press, "stroke", show="hole", hide="plain")
+           self.event("punched", part="strip_1")
+
+and is placed after the machines it drives::
+
+   components:
+     - press: {...}
+       name: press_1
+     - "my_cell.scenes:PressDemo": {stop_at_end: true}
+       name: demo
+
+The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``until``, ``wait``,
+``place``, ``event`` (:mod:`roqsim.scenario`). ``place`` takes a pose as a world file writes one:
+``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
+one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
+``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
+reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
+it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
+not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
+itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
+before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
+task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
+nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``route(check=False)``,
+like ``run(check=False)``, returns the status where another route overtook its own. A program's own
+exception stops the run with its own type, the scenario named in a note, and the scene never
+reports done. Every scenario takes ``needs:`` (rename a handle) and
+``stop_at_end:``; its ``done`` endpoint says when the scene ended.
+
 Writing your own
 ----------------
 
