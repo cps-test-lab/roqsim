@@ -27,14 +27,17 @@ PATTERNS = ("roqsim*/pyproject.toml", "scenario_execution_*/pyproject.toml")
 
 TORCH = "requires torch; the lean image adds it only with INCLUDE_TORCH_PKGS=1"
 GUI = "its tools are tkinter windows a person answers in; the images are headless"
+CUDA = "draws on a CUDA GPU through a CUDA build of torch and gsplat; these images carry CPU torch"
 
 EXCLUDE: dict[str, dict[str, str]] = {
     "lean": {
         "roqsim_humanoid": TORCH,
         "roqsim_quadruped": TORCH,
+        "roqsim_render_splat": CUDA,
         "roqsim_scene_builder": GUI,
     },
     "ros": {
+        "roqsim_render_splat": CUDA,
         "roqsim_scene_builder": GUI,
     },
 }
@@ -54,6 +57,13 @@ def discover(root: Path = ROOT) -> dict[str, dict]:
 def requires(project: dict, dist: str) -> bool:
     """Whether *project* lists *dist* among its unconditional dependencies."""
     return any(_NAME.match(req.strip()).group(0) == dist for req in project.get("dependencies", []))
+
+
+def torch_packages(root: Path = ROOT) -> list[str]:
+    """The packages ``INCLUDE_TORCH_PKGS=1`` adds: those that need torch, except the ones that need
+    a CUDA build of it, which no image carries."""
+    cuda = {name for excluded in EXCLUDE.values() for name, why in excluded.items() if why == CUDA}
+    return [n for n, p in discover(root).items() if requires(p, "torch") and n not in cuda]
 
 
 def _normalize(dist: str) -> str:
@@ -93,7 +103,7 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     if argv[0] == "torch":
-        print("\n".join(f"./{name}" for name, p in discover().items() if requires(p, "torch")))
+        print("\n".join(f"./{name}" for name in torch_packages()))
         return 0
     if argv[1:] == ["--check"]:
         return check(argv[0])
