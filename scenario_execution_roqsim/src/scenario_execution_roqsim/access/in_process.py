@@ -251,24 +251,6 @@ class InProcessAccess(WorldAccess):
             confirm = next((r["ep"] for r in rows if r["path"] == sibling), None)
         return _InProcessCommand(ctx, row, confirm, value)
 
-    def cancel_start(self, machine: str, start: CommandCall) -> None:
-        ctx = self._ctx()
-        if ctx is None:
-            raise AccessError("the world is not built yet; call ready() first")
-        handle = ctx.blackboard.get(f"machine:{machine}")
-        if handle is None:
-            raise AccessError(f"no machine {machine!r} publishes a handle to cancel its start")
-
-        def cancel(_ctx):
-            # Posted after the start, so it has run: commands run in the order they were made.
-            outcome = start.poll()
-            if outcome is None:
-                raise AccessError(f"machine {machine}: the start to cancel has not run")
-            if outcome.ok:
-                handle.cancel(int(outcome.result))
-
-        ctx.post(cancel)
-
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
         handle = self._nav_handle(name)

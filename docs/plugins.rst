@@ -2909,14 +2909,16 @@ where the line to a scenario runs, is :ref:`machines-and-scenarios` in the archi
    elif status.seq > seq:
        ...                                        # another start followed this one
    press.cancel(seq)                              # this start only; 0 once it has ended
+   press.start("stroke", token="mine")            # a token of the caller's own ...
+   press.cancel(token="mine")                     # ... cancels it before its number is known
 
 ``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
 ``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
 press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket, and
-``roqsim call press_1/cancel '{"seq": 3}'`` cancels that start and no other (without ``seq``,
-whatever is pending or runs). Every
-program run is an event timeline on the run's events (``program_start``, the program's steps,
-``program_end``).
+``roqsim call press_1/cancel '{"seq": 3}'`` (or ``'{"token": "mine"}'``) cancels that start and no
+other; with neither, whatever is pending or runs. A program cannot take an argument named
+``token``: that is the start's own. Every program run is an event timeline on the run's events
+(``program_start``, the program's steps, ``program_end``).
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~
@@ -3066,9 +3068,10 @@ outcome, so it moves from one to the other line by line:
    * - ``self.entered(gate)``, ``self.dwelled(gate)``, ``self.left(gate)``
      - ``zone_entered(zone: 'gate')``, ``zone_dwelled(zone: 'gate')``, ``zone_left(zone: 'gate')``
 
-An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does;
-``machine_run`` cancels its start by its number, once the start's reply names it, so a start another
-client made is left alone.
+An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does.
+``machine_run`` gives each start a token of its own and cancels by it, at once and right behind the
+start, so the next ``machine_run`` finds the machine free and a start another client made is left
+alone; a cancel that is refused or gets no answer is logged as an error.
 
 A world names an OpenSCENARIO file as it names a Python scenario, and ``roqsim sim`` runs it through
 scenario-execution, in its own loop, with its recording, viewer and control socket::

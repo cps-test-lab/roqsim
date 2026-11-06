@@ -334,8 +334,42 @@ def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_s
     _until(lambda: press.status().seq == other, "the other client's start never ran")
     action = _machine_run(0.1)  # refused: the machine is busy
     action.terminate(py_trees.common.Status.INVALID)
-    action.shutdown()  # sees the handed-over start through
+    action.shutdown()  # reads its cancel's answer
     assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
+
+
+def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds_the_machine_free(
+    press,
+):
+    """``serial: one_of(machine_run, <true already>); machine_run(...)`` over the socket: each
+    action has its own connection, and the second start is sent right after the first is
+    abandoned, before the first start's reply has come."""
+    import py_trees
+
+    from scenario_execution_roqsim.actions.machine_run import MachineRun
+
+    for _ in range(10):
+        following = MachineRun()
+        following.setup(clock=_HostClock())
+        following.execute(machine="press", program="stroke", args="seconds=1000.0")
+        abandoned = None
+        try:
+            _until(following._access.ready, "the second action never reached the simulator")
+            abandoned = _machine_run(1000.0)
+            assert abandoned._seq is None, "its start is still in flight"
+            abandoned.terminate(py_trees.common.Status.INVALID)
+            _until(
+                lambda f=following: f.update().name != "RUNNING" or f._seq is not None,
+                "the second start got no reply",
+            )
+            assert following._seq is not None, following.feedback_message
+            _until(lambda f=following: press.status().seq == f._seq, "the second start never ran")
+            following.terminate(py_trees.common.Status.INVALID)
+            _until(lambda: not press.busy, "the second start was not cancelled")
+        finally:
+            following.shutdown()
+            if abandoned is not None:
+                abandoned.shutdown()
 
 
 def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_alone_over_the_socket(

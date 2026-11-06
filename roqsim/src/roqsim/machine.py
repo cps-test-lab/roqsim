@@ -32,7 +32,8 @@ The base gives every machine the same outside:
   ``cancel(seq)`` and ``value(name)``. A start while busy is refused at the call. It is the contract
   of the walker's ``send_route``/``status`` made general: a caller knows its own start ended when
   ``status().seq`` is the number it was given and ``finished`` is set, and cancels its own start,
-  and no other, with ``cancel(seq)``;
+  and no other, with ``cancel(seq)`` -- or, before it knows the number, with ``cancel(token=...)``
+  for a token of its own it passed to ``start``;
 * an event on ``ctx.events`` (:mod:`roqsim.events`) for each step a program names, between a
   ``program_start`` and a ``program_end``, so a recording carries the machine's timeline;
 * the endpoints ``start``, ``status`` and ``cancel`` on the machine's entity, for the control socket
@@ -140,10 +141,12 @@ class MachineHandle:
         #: Its programs, by name.
         self.programs: tuple[str, ...] = tuple(sorted(type(machine).programs()))
 
-    def start(self, program: str, /, **args) -> int:
+    def start(self, program: str, /, *, token: str = "", **args) -> int:
         """Start ``program`` with ``args``; its sequence number. Raises :class:`MachineError` for an
-        unknown program or argument, and while the machine is busy."""
-        return self._machine.request_start(program, args)
+        unknown program or argument, and while the machine is busy. ``token``, a string of the
+        caller's own, is kept with the start, for a ``cancel(token=...)`` sent before the number
+        is known."""
+        return self._machine.request_start(program, args, token)
 
     def status(self) -> MachineStatus:
         """The last start's :class:`MachineStatus`."""
@@ -159,12 +162,12 @@ class MachineHandle:
         """Not busy, and the machine's own precondition holds (:meth:`MachinePlugin.ready_when`)."""
         return not self._machine.busy and bool(self._machine.ready_when())
 
-    def cancel(self, seq: int = 0) -> int:
-        """End start ``seq``, pending or running, where it is; its number, or 0 when it has ended,
-        is being cancelled already or was never this machine's. Without ``seq`` (0), whatever is
-        pending or runs; a caller that holds its start's number passes it, so it never cancels a
-        start another caller made since."""
-        return self._machine.request_cancel(seq)
+    def cancel(self, seq: int = 0, token: str = "") -> int:
+        """End one start, pending or running, where it is: start ``seq``, or the start that carries
+        ``token``; with neither, whatever is pending or runs. Its number, or 0 when that start has
+        ended, is being cancelled already, or the machine has no such start. A caller passes its
+        own start's number or token, so it never cancels a start another caller made."""
+        return self._machine.request_cancel(seq, token)
 
     def value(self, name: str) -> float:
         """The current target of an actuator or setpoint (the end of any ramp is not it)."""
@@ -192,6 +195,7 @@ class _Run:
     seq: int
     program: str
     gen: Iterator
+    token: str = ""
 
 
 class MachinePlugin(Plugin):
@@ -249,7 +253,8 @@ class MachinePlugin(Plugin):
         self._ramps: dict[str, tuple[float, float]] = {}
         self._lock = threading.Lock()
         self._seq = 0
-        self._pending: tuple[int, str, dict] | None = None
+        #: A start not applied yet: its number, program, arguments and token.
+        self._pending: tuple[int, str, dict, str] | None = None
         self._cancelling = 0
         self._run: _Run | None = None
         self._status = MachineStatus()
@@ -347,6 +352,15 @@ class MachinePlugin(Plugin):
             errors.append(
                 f"{what}: program(s) {replaced} are named like what every machine has; name them "
                 "otherwise"
+            )
+        # ``start``'s own keyword: an argument of that name would never reach the program.
+        tokened = sorted(
+            n for n, fn in self.programs().items() if "token" in inspect.signature(fn).parameters
+        )
+        if tokened:
+            errors.append(
+                f"{what}: program(s) {tokened} take an argument 'token', which is the start's own; "
+                "name it otherwise"
             )
         if str(config.get("on_error", "raise")) not in ON_ERROR:
             errors.append(f"{what}: 'on_error' is one of {list(ON_ERROR)}")
@@ -768,8 +782,9 @@ class MachinePlugin(Plugin):
                 )
         return lambda: fn(*bound.args, **bound.kwargs)
 
-    def request_start(self, program_name: str, args: dict) -> int:
-        """Check and stamp a start, and post it to the physics thread. Any thread."""
+    def request_start(self, program_name: str, args: dict, token: str = "") -> int:
+        """Check and stamp a start, with the caller's ``token``, and post it to the physics thread.
+        Any thread."""
         if not self.is_machine:
             raise MachineError(f"machine {self.address}: this one has nothing to start")
         args = dict(args or {})
@@ -784,23 +799,33 @@ class MachinePlugin(Plugin):
                 )
             self._seq += 1
             seq = self._seq
-            self._pending = (seq, program_name, args)
+            self._pending = (seq, program_name, args, str(token or ""))
             # Posted under the lock, so starts and cancels reach the physics thread in the order
             # they were made.
             self._ctx.post(lambda _ctx, seq=seq: self._apply_start(seq))
         return seq
 
-    def request_cancel(self, seq: int = 0) -> int:
-        """Cancel start ``seq`` (0: whatever is pending or runs); its number, 0 if there is nothing
-        to cancel. Posted under the lock, as a start is. Any thread."""
+    def request_cancel(self, seq: int = 0, token: str = "") -> int:
+        """Cancel start ``seq``, or the start carrying ``token`` (neither: whatever is pending or
+        runs); its number, 0 if there is nothing to cancel. Posted under the lock, as a start is, so
+        a cancel made after a start reaches the physics thread after it. Any thread."""
+        token = str(token or "")
+        if seq and token:
+            raise MachineError(f"machine {self.address}: cancel takes a seq or a token, not both")
+
+        def chosen(start_seq: int, start_token: str) -> bool:
+            if token:
+                return start_token == token
+            return seq in (0, start_seq)
+
         with self._lock:
             pending = self._pending
-            if pending is not None and seq in (0, pending[0]):
+            if pending is not None and chosen(pending[0], pending[3]):
                 self._pending = None
                 self._set_status(MachineStatus(pending[0], pending[1], True, "cancelled"))
                 return pending[0]
             run = self._run
-            if run is None or run.seq == self._cancelling or seq not in (0, run.seq):
+            if run is None or run.seq == self._cancelling or not chosen(run.seq, run.token):
                 return 0
             self._cancelling = run.seq
             self._ctx.post(lambda _ctx, seq=run.seq: self._apply_cancel(seq))
@@ -827,7 +852,7 @@ class MachinePlugin(Plugin):
                 )
             self._seq += 1
             seq = self._seq
-            self._pending = (seq, program_name, dict(args))
+            self._pending = (seq, program_name, dict(args), "")
         self._apply_start(seq)
         return seq
 
@@ -843,8 +868,8 @@ class MachinePlugin(Plugin):
         with self._lock:
             if self._pending is None or self._pending[0] != seq:
                 return
-            _seq, name, args = self._pending
-            run = _Run(seq=seq, program=name, gen=self.bind(name, args)())
+            _seq, name, args, token = self._pending
+            run = _Run(seq=seq, program=name, gen=self.bind(name, args)(), token=token)
             # The run is set before the pending start is cleared, so `busy` never reads False
             # between the two.
             self._run = run
@@ -908,14 +933,16 @@ class MachinePlugin(Plugin):
 
     # -- endpoints ----------------------------------------------------------------------------
     @endpoint.command(when="is_machine", ros2=None)
-    def start(self, program: str, args: dict | None = None) -> int:
+    def start(self, program: str, args: dict | None = None, token: str = "") -> int:
         """Start one of the machine's programs; its sequence number.
 
         Args:
             program: the program's name
             args: the program's arguments by name
+            token: a string of the caller's own, kept with the start, so ``cancel`` can name the
+                start before its number is known
         """
-        return self.request_start(program, args or {})
+        return self.request_start(program, args or {}, token)
 
     @endpoint.out(rate=10.0, when="is_machine", ros2=None)
     def status(self) -> MachineStatus:
@@ -923,14 +950,18 @@ class MachinePlugin(Plugin):
         return self._status
 
     @endpoint.command(when="is_machine", ros2=None)
-    def cancel(self, seq: int = 0) -> int:
-        """End start ``seq``, pending or running, where it is; its number, or 0 when it has ended,
-        is being cancelled already or was never this machine's.
+    def cancel(self, seq: int = 0, token: str = "") -> int:
+        """End one start, pending or running, where it is; its number, or 0 when that start has
+        ended, is being cancelled already, or the machine has no such start. With neither ``seq``
+        nor ``token``, whatever is pending or runs.
 
         Args:
-            seq: the start to cancel, as ``start`` returned it; 0 cancels whatever is pending or runs
+            seq: the start to cancel, as ``start`` returned it
+            token: the token the start to cancel was given; for a caller that does not know the
+                start's number yet. Cancels are applied in the order they were made, after any
+                start made before them, so one sent right behind its start reaches it.
         """
-        return self.request_cancel(seq)
+        return self.request_cancel(seq, token)
 
 
 def _not_a_position_servo(m: mujoco.MjModel, aid: int) -> str:

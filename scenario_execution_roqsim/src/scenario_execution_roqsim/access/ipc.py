@@ -10,9 +10,12 @@ it -- ``ROQSIM_CONTROL``, or the only one running -- and until one
 answers, :meth:`IpcAccess.ready` is false, so a simulator that is still starting is waited for.
 
 **Nothing blocks.** Every request is sent and then polled with a zero wait, one in flight per
-call object; the tree's tick never waits on the socket. A start cancelled while still in flight
-(:meth:`IpcAccess.cancel_start`) is followed on a thread of its own, and the connection is used
-under a lock.
+call object; the tree's tick never waits on the socket.
+
+**One connection per simulator.** Every action of the process that reaches the same simulator shares
+one connection, so the requests the tree sends arrive in the order it sent them, and the simulator
+writes the calls in that order: a cancel an abandoned action sends reaches the machine before the
+start the next action sends.
 
 The world's endpoints are listed once, when the simulator first answers, and every name a
 scenario uses is resolved against that list with the same functions the in-process backend uses
@@ -21,8 +24,6 @@ scenario uses is resolved against that list with the same functions the in-proce
 
 from __future__ import annotations
 
-import logging
-import threading
 import time
 
 import numpy as np
@@ -52,13 +53,43 @@ from . import (
     report_whole,
 )
 
-_log = logging.getLogger(__name__)
-
 #: Where the core serves entity placement and presence.
 _SET_STATE = "sim/entities/set_state"
 _SET_PRESENCE = "sim/entities/set_presence"
 #: The exception a producer raises for a name the world does not carry (roqsim.entity_control).
 _UNKNOWN = "UnknownEntity"
+#: The connection to each simulator, by its address, with the number of accesses using it.
+_CONNECTIONS: dict[str, list] = {}
+
+
+def _connect(control: str | None):
+    """The process's connection to the simulator at *control*, opened by its first user."""
+    from roqsim.control_client import Client
+    from roqsim.ipc import ControlError, discover
+
+    try:
+        uri = discover(control)
+    except ValueError as err:
+        raise ControlError(str(err), "bad_request") from None
+    entry = _CONNECTIONS.get(uri)
+    if entry is None:
+        entry = _CONNECTIONS[uri] = [Client(uri), 0]
+    entry[1] += 1
+    return entry[0]
+
+
+def _release(client) -> None:
+    """Closes the connection once its last user is done with it."""
+    entry = _CONNECTIONS.get(client.uri)
+    if entry is None or entry[0] is not client:
+        client.close()
+        return
+    entry[1] -= 1
+    if entry[1] <= 0:
+        del _CONNECTIONS[client.uri]
+        client.close()
+
+
 #: How long the first listing may go unanswered beyond the client's timeout before no simulator
 #: is taken to be at the address (seconds).
 _GRACE_S = 2.0
@@ -69,7 +100,7 @@ class _Request:
 
     def __init__(self, access: IpcAccess, op: str, value=None, **fields):
         self._access = access
-        self._rid = access._send(op, value, **fields)
+        self._rid = access._client.send(op, value, **fields)
         self.done = False
         self.value = None
         self.error = None
@@ -81,7 +112,7 @@ class _Request:
         from roqsim.ipc import ControlError
 
         try:
-            self.done, self.value = self._access._poll(self._rid)
+            self.done, self.value = self._access._client.poll(self._rid, 0.0)
         except ControlError as err:
             self.done, self.error = True, err
         return self.done
@@ -178,7 +209,7 @@ class _IpcRoute(NavCall):
         return None
 
     def cancel(self) -> None:
-        self._access._send("call", None, path=f"{self._base}/cancel_route")
+        self._access._client.send("call", None, path=f"{self._base}/cancel_route")
 
 
 class _IpcReport(ReportCall):
@@ -233,9 +264,6 @@ class IpcAccess(WorldAccess):
         self._unreachable: str | None = None
         self._asked_at: float | None = None
         self._poses: dict[str, _Request] = {}
-        #: The connection is shared with the threads that cancel a start once it is numbered.
-        self._lock = threading.Lock()
-        self._followers: list[threading.Thread] = []
 
     # -- the world ------------------------------------------------------------------------------
     def ready(self) -> bool:
@@ -247,9 +275,7 @@ class IpcAccess(WorldAccess):
             return False
         if self._client is None:
             try:
-                from roqsim.control_client import Client
-
-                self._client = Client(self._control)
+                self._client = _connect(self._control)
             except ControlError as err:
                 self._unreachable = str(err)
                 return False
@@ -363,48 +389,9 @@ class IpcAccess(WorldAccess):
             value["orientation"] = quat
         return _IpcPlacement(self, self._entity_command(_SET_PRESENCE), value, SpawnOutcome)
 
-    def cancel_start(self, machine: str, start: CommandCall) -> None:
-        thread = threading.Thread(
-            target=self._cancel_once_numbered,
-            args=(machine, start),
-            name=f"cancel {machine} start",
-            daemon=True,
-        )
-        self._followers.append(thread)
-        thread.start()
-
-    def _cancel_once_numbered(self, machine: str, start: CommandCall) -> None:
-        outcome = self._settle(start)
-        if outcome is not None and outcome.ok:
-            self._settle(self.call_endpoint(machine, "cancel", {"seq": int(outcome.result)}))
-
-    def _settle(self, call: CommandCall) -> CommandOutcome | None:
-        """``call``'s outcome, waited for as long as the simulator has to answer it."""
-        wait = self._client.timeout + _GRACE_S
-        deadline = time.monotonic() + wait
-        while time.monotonic() < deadline:
-            outcome = call.poll()
-            if outcome is not None:
-                return outcome
-            time.sleep(0.005)
-        _log.error("no reply from %s within %g s to a start to cancel", self._client.uri, wait)
-        return None
-
-    # -- the connection ---------------------------------------------------------------------------
-    def _send(self, op: str, value=None, **fields) -> int:
-        with self._lock:
-            return self._client.send(op, value, **fields)
-
-    def _poll(self, rid: int):
-        with self._lock:
-            return self._client.poll(rid, 0.0)
-
     def teardown(self) -> None:
-        # A start being cancelled is seen through first, so its cancel is not dropped unsent.
-        for thread in self._followers:
-            thread.join()
-        self._followers.clear()
-        with self._lock:
-            if self._client is not None:
-                self._client.close()
-                self._client = None
+        if self._client is not None:
+            # A cancel sent as an action was abandoned is answered before the connection goes.
+            self.report_unattended(wait=self._client.timeout + _GRACE_S)
+            _release(self._client)
+            self._client = None
