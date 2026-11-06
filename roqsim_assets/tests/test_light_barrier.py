@@ -66,6 +66,7 @@ def test_the_belt_stops_while_the_package_is_in_the_barrier_and_runs_once_it_is_
             ("barrier_stop", "released"),
             ("barrier_stop", "scenario_end"),  # one cycle
         ]
+        assert engine.ctx.stop_requested, "and the run with it: roqsim sim exits"
     finally:
         engine.shutdown()
 

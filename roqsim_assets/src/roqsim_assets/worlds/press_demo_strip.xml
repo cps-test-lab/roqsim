@@ -1,6 +1,6 @@
 <mujoco model="press_demo_strip">
   <!-- A steel strip, 300 x 40 x 2 mm, for the press example: a plain strip whose `hole` state, a
-       punched hole 50 mm from one end, a press shows at its stroke's bottom (part_state). -->
+       punched hole in its middle, a press shows at its stroke's bottom (part_state). -->
   <worldbody>
     <body name="strip">
       <geom name="strip" type="box" size="0.15 0.02 0.001" mass="0.19" rgba="0.72 0.74 0.77 1"

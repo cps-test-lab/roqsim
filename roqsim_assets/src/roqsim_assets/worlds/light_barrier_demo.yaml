@@ -7,8 +7,8 @@
 # broke the beam is still in it when the belt has stopped; it reports the package entering and
 # leaving. The scenario (`StopAtBarrier`) stops the belt while the package is in the barrier --
 # a decision neither the belt nor the barrier makes -- and, playing the worker, takes the package
-# off the belt a second later; the belt runs again and the scene ends, one cycle. The package starts
-# just before the barrier, so the cycle is short.
+# off the belt a second later; the belt runs again and the scene ends, one cycle, and so does the
+# run. The package starts just before the barrier, so the cycle is short.
 #
 # smoke-steps: 2500
 
@@ -54,4 +54,5 @@ components:
   - "roqsim_assets.scenarios.stop_at_barrier:StopAtBarrier":
       hold: 1.0
       take_to: {position: {x: -0.13, y: 0.0, z: 0.9}}   # on the table, beside the belt
+      stop_at_end: true
     name: barrier_stop

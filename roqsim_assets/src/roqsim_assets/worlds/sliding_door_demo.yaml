@@ -6,7 +6,7 @@
 # reports who is near; it counts entities named robot_*. The robot is a box driven along a straight
 # line (`moving_box`) that passes the door through the zone and goes on. The scenario
 # (`DoorForWhoComes`) relates the two: it opens the door when the robot enters the zone, closes it
-# two seconds after the robot has left, and ends -- one cycle.
+# two seconds after the robot has left, and ends -- one cycle -- and so does the run.
 #
 # smoke-steps: 4500
 
@@ -40,4 +40,5 @@ components:
 
   - "roqsim_assets.scenarios.door_for_who_comes:DoorForWhoComes":
       close_delay: 2.0
+      stop_at_end: true
     name: doorman

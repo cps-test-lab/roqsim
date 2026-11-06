@@ -211,9 +211,27 @@ def test_the_demo_world_opens_the_door_for_its_robot_closes_it_and_ends():
         assert [e["program"] for e in door if e["event"] == "program_end"] == ["open", "close"]
         assert all(e["error"] == "" for e in door if e["event"] == "program_end")
         assert any(e["event"] == "scenario_end" for e in engine.ctx.events.all())
+        assert engine.ctx.stop_requested, "and the run with it: roqsim sim exits"
         m = engine.ctx.model
         assert engine.ctx.data.qpos[
             m.jnt_qposadr[m.joint("door_1_leaf_slide").id]
         ] == pytest.approx(0.0, abs=0.01)
     finally:
         engine.shutdown()
+
+
+def test_slide_minus_one_opens_the_leaf_the_other_way_along_the_wall():
+    def leaf_x(slide):
+        door = {**DOOR, "sliding_door": {**DOOR["sliding_door"], "slide": slide}}
+        engine = _engine(door)
+        try:
+            handle = engine.ctx.blackboard.require("machine:door_1")
+            body = engine.ctx.model.body("d1_leaf").id
+            closed = float(engine.ctx.data.xpos[body][0])
+            assert _finish(engine, handle, handle.start("open")).error == ""
+            return float(engine.ctx.data.xpos[body][0]) - closed
+        finally:
+            engine.shutdown()
+
+    assert leaf_x(1) == pytest.approx(1.2, abs=0.01)
+    assert leaf_x(-1) == pytest.approx(-1.2, abs=0.01)

@@ -10,7 +10,7 @@ import pytest
 import roqsim_assets
 from roqsim.config import load_config, load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.machine import MachineError, MachineStatus
+from roqsim.machine import STOPPED_SPEED, MachineError, MachineStatus
 
 WORLDS = Path(roqsim_assets.__file__).parent / "worlds"
 STRIP = str(WORLDS / "press_demo_strip.xml")
@@ -266,5 +266,44 @@ def test_open_guard_after_a_cancelled_stroke_returns_the_ram_home_before_the_gua
             0.0, abs=0.003
         )
         assert _joint(engine, "p1_door_slide") == pytest.approx(0.0, abs=0.003)
+    finally:
+        engine.shutdown()
+
+
+def test_a_stroke_hides_a_state_at_its_bottom():
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press_1")
+        states = engine.ctx.blackboard.require("part_state")
+        engine.step()
+        states.show("strip_1", "hole")
+        seq = press.start("stroke", hide="hole")
+        while not any(e["event"] == "power" for e in _events(engine)):
+            engine.step()
+        assert states.shown("strip_1") == ["hole"], "not before the bottom"
+        assert _finish(engine, press, seq).error == ""
+        assert states.shown("strip_1") == []
+    finally:
+        engine.shutdown()
+
+
+def _speed(engine, name):
+    m = engine.ctx.model
+    return abs(float(engine.ctx.data.qvel[m.jnt_dofadr[m.joint(name).id]]))
+
+
+def test_the_guard_programs_end_with_the_guard_at_rest_and_ready_wants_it_open():
+    """Ready is the ram up *and* the guard open; each guard program ends with the door still."""
+    engine = _engine()
+    try:
+        press = engine.ctx.blackboard.require("machine:press_1")
+        assert press.ready
+        assert _finish(engine, press, press.start("close_guard")).error == ""
+        assert _speed(engine, "p1_door_slide") <= STOPPED_SPEED
+        assert _joint(engine, "p1_ram_slide") == pytest.approx(0.0, abs=1e-3), "the ram is home"
+        assert not press.ready, "not with its guard closed"
+        assert _finish(engine, press, press.start("open_guard")).error == ""
+        assert _speed(engine, "p1_door_slide") <= STOPPED_SPEED
+        assert press.ready
     finally:
         engine.shutdown()

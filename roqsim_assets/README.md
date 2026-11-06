@@ -35,7 +35,8 @@ program is an event timeline (`program_start`, its steps, `program_end`). `roqsi
 
 `press` and `sliding_door` are the examples of a machine package: generated models, used by three
 stand-alone worlds in `src/roqsim_assets/worlds/`, each running one cycle of a scenario from
-`roqsim_assets.scenarios`, written on `roqsim.scenario`, and ending:
+`roqsim_assets.scenarios`, written on `roqsim.scenario`, and ending, and the run with it
+(`stop_at_end`):
 
 - **`press_demo.yaml`** — a C-frame press whose ram strokes only behind its closed guard door; the
   strip in its die (its `die` zone, a `zone_trigger` the press carries) shows its hole at the
