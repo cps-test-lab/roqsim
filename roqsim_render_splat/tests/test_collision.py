@@ -60,6 +60,29 @@ def test_a_world_that_inherits_its_splat_is_fitted_as_the_renderer_draws_it(tmp_
     np.testing.assert_array_equal(points, example)
 
 
+def test_a_world_named_by_package_resolves_its_splat_beside_it(tmp_path, monkeypatch):
+    """A relative file in a world named ``<package>:<world>`` resolves beside that world, as the
+    renderer resolves it, not in the directory the tool runs in."""
+    package = tmp_path / "site" / "splat_rooms_pkg"
+    (package / "worlds" / "room").mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "from pathlib import Path\nWORLDS_DIR = Path(__file__).parent / 'worlds'\n"
+    )
+    ply = Path(roqsim_render_splat.WORLDS_DIR) / "splat_room_example" / "room.ply"
+    (package / "worlds" / "room" / "room.ply").write_bytes(ply.read_bytes())
+    (package / "worlds" / "room" / "collision.xml").write_bytes(
+        (ply.parent / "collision.xml").read_bytes()
+    )
+    text = EXAMPLE.read_text().replace("roqsim_render_splat:splat_room_example/", "room/")
+    text = text.replace("splat_room_example/collision.xml", "room/collision.xml")
+    (package / "worlds" / "room.yaml").write_text(text)
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    monkeypatch.chdir(tmp_path)
+    points, block = collision.world_points("splat_rooms_pkg:room")
+    assert block["file"] == "room/room.ply"
+    np.testing.assert_array_equal(points, collision.world_points(EXAMPLE)[0])
+
+
 def test_a_world_that_places_no_splat_is_said(tmp_path, capsys):
     world = tmp_path / "w.yaml"
     world.write_text("sim: {}\ncomponents: []\n")

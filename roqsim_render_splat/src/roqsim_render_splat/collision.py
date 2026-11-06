@@ -58,10 +58,11 @@ def world_points(world: str | Path, min_opacity: float = 0.5) -> tuple[np.ndarra
     the renderer draws, its file resolved beside *world*.
     """
     world = Path(world)
-    block = load_config(world).renderers.get("splat", {}).get("splat")
+    config = load_config(world)
+    block = config.renderers.get("splat", {}).get("splat")
     if not block:
         raise SplatFileError(f"{world} places no splat (sim.renderers.splat.splat)")
-    path = resolve_file_ref(block["file"], world.parent, "splat file")
+    path = resolve_file_ref(block["file"], config.base_dir, "splat file")
     splat = read_splat(path)
     opacity = 1.0 / (1.0 + np.exp(-splat.opacity_logits.astype(np.float64)))
     rot, trans, scale = splat_placement(block)
