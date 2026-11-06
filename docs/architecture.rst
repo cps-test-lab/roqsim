@@ -112,8 +112,9 @@ Passed to every hook. Key members:
 -  ``spec`` (build phase), ``model``, ``data``, ``dt``, ``sim_time``.
 -  ``config`` — the full parsed YAML dict.
 -  ``blackboard: Blackboard`` — ``set/get/require/__contains__``; typed cross-plugin store.
--  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present)`` (``names``/``all`` take ``present_only``); backs ``simulation_interfaces`` discovery.
+-  ``entities: EntityRegistry`` — ``add/remove/get/names/all`` of ``Entity(name, kind, body, meta, present, listed)`` (``names``/``all`` take ``present_only`` and ``listed_only``); backs ``simulation_interfaces`` discovery.
 -  ``render`` — the ``RenderService`` every image comes through (set at setup; see §8).
+-  ``events: EventLog`` — ``emit(source, event, **fields)`` on the physics thread records what a plugin decided, stamped with ``sim_time`` and ``episode`` (``roqsim.events``); a recording carries each one on its ``events`` channel from the moment it starts, and ``Recording.events`` reads them back.
 -  ``post(cmd)`` / ``drain_commands()`` — the thread-safe command queue (§7).
 -  ``publish_snapshot(d)`` / ``read_snapshot()`` — immutable snapshot for cross-thread readers.
 -  ``register_gate(name, role)`` / ``gates()`` — step-gate API for synchronous mode (§10); the engine does not wait on gates.
@@ -571,6 +572,153 @@ Types are *roles* (which hooks you implement), not separate base classes:
 
 ``DummyPlugin`` (``plugins/dummy.py``) is a minimal end-to-end example implementing every hook.
 
+.. _machines-and-scenarios:
+
+Machines and scenarios
+~~~~~~~~~~~~~~~~~~~~~~
+
+Two roles are easy to confuse, and a world that confuses them puts decisions where nobody looks for
+them. The line between them is the same in the code, the docs and the examples.
+
+**A machine is one entity's own procedures.** What the entity can do by itself -- move its
+actuators, run its programs, be in its states -- offered through its handle. A machine acts only on
+itself and on what it physically works on: the part in its tool, through that part's handle. It
+decides nothing about other entities: it does not wait for a robot, it does not open because someone
+is near, it does not stop a belt.
+
+**A scenario is the scene.** Which entities act when, who waits for whom, what a presence or an
+event leads to, the order of the work. It drives entities only through their handles, and is written
+either as OpenSCENARIO run by scenario-execution, or in Python.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 60 20 20
+
+   * -
+     - machine
+     - scenario
+   * - a press strokes with its guard door interlocked
+     - ✔
+     -
+   * - a robot loads the press, then starts it
+     -
+     - ✔
+   * - a door opens and closes, ramped, and gives up on an obstruction
+     - ✔
+     -
+   * - a door opens because a walker comes near
+     -
+     - ✔
+   * - a belt runs at a speed and stops
+     - ✔
+     -
+   * - a belt stops while a part is in a light barrier
+     -
+     - ✔
+   * - a part shows its hole when the ram reaches the bottom
+     - ✔ (through the part's handle)
+     -
+
+The test when in doubt: **would the machine do it standing alone in an empty world?** Then it is the
+machine's. If it needs another entity's state to decide, it is a scenario's. A world places a machine
+and sets its parameters (speeds, ``home``, sizes); it carries no machine programs, since a machine's
+behaviour is its package's code.
+
+**A machine** subclasses :class:`roqsim.machine.MachinePlugin`. It declares the position actuators
+it drives (``ACTUATORS``), plugin-owned quantities that ramp the same way (``SETPOINTS``, a belt's
+speed), where they stand after a reset (``HOME``, a world's ``home:`` over it), and its programs:
+generator methods marked ``@program``, each ``yield`` one physics step on simulated time. A program
+moves an actuator at once or ramped at a stated speed in the joint's unit per second -- the ramp
+moves the target, the physics moves the joint -- and waits until a condition holds, until actuators
+have reached their targets or stopped on them (what an interlock waits for), or for a time.
+Programs advance in ``post_step``, ramps in ``pre_step``.
+
+**Every machine has one handle**, a :class:`~roqsim.machine.MachineHandle` under
+``machine:<name>``, and it is the contract for everything that starts something and is waited on:
+
+-  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
+   machine that is busy, raises naming the machine -- stamped with the next sequence number, and
+   applied on the physics thread at the next step. Safe from any thread: starts and cancels reach
+   the physics thread in the order they were made, and a status never goes back to an older start.
+-  ``status() -> MachineStatus(seq, program, finished, error)``: the last start. A caller knows its
+   own start ended when ``seq`` is its number and ``finished`` is set; ``error`` is empty for done,
+   else the failure, ``cancelled``, or the exception. A larger ``seq`` means another start followed.
+-  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
+   precondition), ``cancel()`` (the machine stops where it is), ``value(name)`` (an actuator's or
+   setpoint's current target).
+
+It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
+(``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at
+``home``; sequence numbers keep counting, so a stale one never matches.
+
+**Every step is an event** on ``ctx.events``: ``program_start`` (program, seq, args), each step a
+program names, and ``program_end`` (with its error), so a recording carries each machine's timeline.
+The handle's ``start``, ``status`` and ``cancel`` are also endpoints of the machine's entity, so the
+control socket reaches them under ``<machine>/start`` and the same names.
+
+**Fail loudly.** A program ends with ``self.fail(reason)`` when its own outcome is a failure (a door
+stalled on an obstruction): the error is in ``status()`` and the run goes on, for the caller to
+decide. So does a program that sends an actuator outside its range, and one whose joint has not
+arrived ``MOVE_TIMEOUT`` seconds (5 s unless the machine sets another; ``move``, ``until_reached``
+and ``until_stopped`` each take a ``timeout``) after its target did. A program that raises anything
+else is a defect: by default (``on_error: raise``) the run stops naming the machine and the program;
+``on_error: report`` puts it into ``status()`` instead. A program that ended in an error, or was
+cancelled, stops the machine where it is: each actuator is held where its joint stands, with the
+servo's standing offset under its load kept, so an obstructed joint does not move on by itself once
+the obstacle is gone and a loaded one does not sink at each hold. A handle a machine needs
+(``NEEDS``) that nothing published is refused at reset, naming the key, and a ``NEEDS`` name the
+machine already has is refused when the world loads. An actuator a machine drives is a plain
+position servo -- fixed gain, an affine bias whose stiffness matches it, a unit gear, no dynamics
+that integrate its control -- so its control is the joint's target; a motor, a velocity servo, an
+``<intvelocity>`` or a geared servo is refused at configure.
+
+**How a package provides its machine.** A machine that builds its model from its config is a plugin
+registered under ``roqsim.plugins``, and a world places it by name. A machine with an MJCF model of
+its own is placed by ``spawn_model``, with its controller nested under that entry -- a
+``MachinePlugin`` with no ``build`` that sets ``registers_entity = False``, so its ``ACTUATORS``
+resolve under the spawned entity's prefix and its handle is published under the spawned entity's
+name::
+
+   - spawn_model: {model: my_press, prefix: press_1_}
+     name: press_1
+     components:
+       - my_press_controller: {}
+
+``spawn_model`` does not read a model's manifest, so the controller is written in the world (or in
+a world the cell ``extends``), not in the model's manifest.
+
+**What a machine works on has states of its own.** ``part_state`` shows and hides an entity's
+``look_<name>`` bodies through :mod:`roqsim.presence` -- a strip punched, bent, labelled; a machine's
+own lamp on -- each look with its own inertia where the model names one, through one handle
+(``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
+that handle: the part's state is the part's, and the machine only asks for it to change.
+
+**Presence is reported, never acted on.** ``zone_trigger`` is a box in the world or riding on a
+body that reports the entities entering, dwelling for a time and leaving, filtered by name pattern:
+as events, on a handle (``zone:<address>``) and as an ``occupied`` endpoint. It decides nothing; a
+door that opens for whoever comes near is a scenario reading the zone and starting the door.
+
+**A Python scenario** subclasses :class:`roqsim.scenario.ScenarioPlugin` and writes ``program()``, a
+generator on simulated time, one ``yield`` per physics step, advanced in ``post_step``. It names the
+handles it drives in ``NEEDS`` (``{"press": "machine:press_1"}``), resolved at every reset and refused
+by name when missing; a world may rename them (``needs:``), so one scenario serves two cells. It owns
+no model and writes no actuator. Its helper: ``yield from self.run(handle, program, **args)`` starts
+a program and waits for *that* start, raising with the machine's error; ``self.start(...)`` and
+``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
+start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
+joined stops the run when the scene ends, and the scene does not end before a task has, unless it was spawned as ``background``);
+``self.route(walker, poses)`` sends a walker or a navigator and waits on its route's number;
+``until``, ``wait`` and ``event`` do what they say, and ``place`` puts an entity at a pose as a
+world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
+in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
+the machines it drives; a start it makes is applied at the next step whatever the order.
+
+A program that raises stops the run with its own exception, and the scene never reports done.
+When ``program`` has returned and every task but a ``background`` one has ended, the scenario emits ``scenario_end`` and its ``done`` endpoint turns true,
+which an OpenSCENARIO ``entity_monitor`` can wait on; ``stop_at_end: true`` also ends a standalone
+``roqsim sim`` run (``ctx.request_stop``). It never ends a scenario-execution run (§4, *Who ends a
+run*).
+
 .. _6-porting-playbook:
 
 6. Porting playbook
@@ -686,19 +834,24 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    :func:`roqsim.registry.resolve_renderer`); the core names none. MuJoCo's own,
    :class:`~roqsim.rendering.MujocoRenderer`, registers there as ``mujoco`` and is the default;
    :class:`~roqsim.render_socket.SocketRenderer` (``socket``) is the client of a renderer in another
-   process. A world chooses with ``sim.renderer``, a camera may name its own with ``renderer:``,
-   ``--renderer`` is ``--set sim.renderer=`` as a flag, and a renderer's settings are its block
-   ``sim.renderers.<name>``, validated by its ``validate_config`` at load.
+   process, with ``TCP_NODELAY`` on both ends of a TCP connection, since a message is several writes.
+   A package for one server subclasses it: it starts that server, sends the scene in the form the
+   server reads (``scene_blobs``), and declares what it draws. A world chooses with ``sim.renderer``, a
+   camera may name its own with ``renderer:``, ``--renderer`` is ``--set sim.renderer=`` as a
+   flag, and a renderer's settings are its block ``sim.renderers.<name>``, validated by its
+   ``validate_config`` at load.
 -  **The contract** (:class:`~roqsim.render_api.Renderer`): ``open(scene)`` once with a
    ``SceneDescription`` -- the compiled model (read-only), which bodies move, the cameras it will be
    asked for, its settings; then ``render(snapshot, requests)`` per tick with a ``StateSnapshot``
    (sim time, every body's pose, the model values presence changes at run time, and for an in-process
    renderer a copy of ``MjData``) and a **batch** of ``CameraRequest`` (camera, images asked for,
-   world pose, field of view), answered with one ``Frame`` per request stamped with the snapshot's sim
+   world pose, field of view; the camera carries the intrinsics MuJoCo projects it with,
+   :func:`roqsim.rendering.camera_intrinsics`), answered with one ``Frame`` per request stamped with the snapshot's sim
    time; ``close()``. Nothing in it assumes a GL context or the renderer's process. What a renderer
    can give is declared on its class (``RendererCapabilities``: images, camera models, whether it
    composes moving bodies, draws the static world, renders a batch at once, is deterministic, runs
-   in-process, draws decorations, draws only the geom groups a camera names), and
+   in-process, draws decorations, draws only the geom groups a camera names, projects an off-centre
+   principal point, projects non-square pixels), and
    :meth:`RenderService.check` holds every camera to it when the world loads: a camera a renderer
    cannot serve fails the load naming both, and nothing falls back to MuJoCo's renderer. Every frame
    a renderer returns is held to its request: its camera, its snapshot's sim time and step, and each
@@ -728,7 +881,8 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    before the one that publishes it; its noise is drawn at that time (``ctx.rng_for(..., at=)``), so
    an async frame is the sync frame of its stamp. A worker whose renderer failed raises on the
    physics thread at the next tick, and a worker that does not open or draw a batch a caller waits
-   for within ``sim.render.timeout_s`` is named as hung. ``sim.render.workers`` deals each
+   for within ``sim.render.timeout_s`` is named as hung (opening waits for the renderer's own
+   ``open_timeout_s`` where that is longer: a renderer slow to start). ``sim.render.workers`` deals each
    renderer's cameras to that many instances (a context each; a thread each in ``async``), one
    camera's views together (a view's ``group``), so its passes of one snapshot arrive as one -- the
    seam a second GPU or process goes behind, which no camera plugin sees.
@@ -932,7 +1086,7 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 ---------------
 
 -  **Layout:** the framework core is its own pip package ``roqsim/`` (engine, plugin API, drivers, the generic ``dummy`` plugin, and the driver-level capture/render modules). Generic, robot-family-agnostic sensors live in ``roqsim_sensors/`` (``lidar``, ``oakd_camera``, ``realsense_d435``, ``imu``, ``gnss``). Robot-family plugins + assets live in further sibling packages — wheeled bases in ``roqsim_mobile/`` (floorplan/spawn_robot/diff_drive/omni_drive, models, worlds); arms and manipulators are further siblings, aerial vehicles in ``roqsim_aerial/`` (``quadrotor_controller``, ``multirotor_motors``, ``px4_sitl``, models, worlds), and a robot belonging to two families goes in a package depending on both (``roqsim_mobile_manipulation/``) rather than widening one family's dependencies. The ROS bridge and the nav2 example are colcon packages under ``ros2_ws/src/`` (``roqsim_ros_bridge``, ``roqsim_nav2_example``). Keep the core ROS-free.
--  **Naming:** plugin classes ``PascalCase``, entry-point names ``snake_case``; blackboard handles under ``<kind>:<name>`` (``robot:<name>``, ``metrics:<name>``, ``model_override:<name>``, ``contact_monitor:<name>``, ``door:<name>:state``).
+-  **Naming:** plugin classes ``PascalCase``, entry-point names ``snake_case``; blackboard handles under ``<kind>:<name>`` (``robot:<name>``, ``metrics:<name>``, ``model_override:<name>``, ``contact_monitor:<name>``, ``door:<name>:state``, ``machine:<name>`` for every machine, see :ref:`machines-and-scenarios`).
 -  **Reaching a plugin from outside:** a plugin an out-of-process *or* out-of-package driver must reach **publishes a blackboard handle** in ``configure`` — a small callable or dataclass under ``<kind>:<name>``, where ``<name>`` is the instance's world-YAML ``name:``. Consumers resolve that key; they never iterate ``engine.plugins`` and never match on a class name, which breaks silently on a rename and cannot distinguish two instances of one plugin. Publish a *callable* when the value is replaced each step (``contact_monitor.read_state``) rather than the object it returns. The in-process seam a driver starts from is ``MujocoSim.context`` (a :class:`~roqsim.context.SimContext`, i.e. exactly the rights a plugin has, single-writer rule included) — not the ``Engine``, so ``plugins`` and ``config`` stay the engine's own. Over a transport the same capability is an ``Endpoint`` (§13); the two are the same declaration read two ways, which is what lets one scenario action serve a stepped run and a ROS run.
 -  **Assets:** record upstream license for any vendored MJCF/mesh next to it (see ``roqsim_mobile/.../husky_a200/husky_a200_LICENSE`` for the pattern). Where a provider ships its models *flat*, one directory holds several vendors' terms and "the file beside it" attributes the wrong one, so the model names its own with ``license:`` in its manifest (:func:`roqsim.manifest.manifest_license`, read by both the docs catalog and ``roqsim catalog models``).
 -  **Model headline:** open a model's MJCF with a comment whose first sentence says what the model *is* (``Clearpath Ridgeback (4-wheel mecanum, holonomic) for MuJoCo.``). The docs model catalog describes each model with that sentence and reads the licence out of the sidecar's own text, so neither is prose anyone maintains twice; a model without one falls back to repeating its package's summary, which ``roqsim/tests/test_model_docs.py`` fails on.

@@ -38,6 +38,7 @@ components:
         position: {x: -2.0, y: -2.0}  # a world pose with no z (a walker stands on the floor)
         orientation: {yaw: 0.0}       # and a heading only; `pos` is refused
       motion: {walk: /abs/walk.npz}   # override a resolved locomotion clip
+      body_lag: 0.0            # s; > 0 draws the body smoothly behind its nav root (see below)
     name: pedestrian           # entity name (a sibling of the plugin ref, not config)
     components:
       - navigator:             # where it goes: roqsim_nav's navigator, as for any mover
@@ -54,6 +55,14 @@ Navigation is stated on the nested `navigator` only; a walker's own block refuse
 `waypoints`, `loop`, `dwell`, `avoidance`, `action_name`, `orca` and the rest by name, saying where
 each lives on the navigator. A walker with no nested `navigator` gets one that is goal-driven only:
 `output: walker`, `speed: 1.0`, `radius: 0.26` and `avoidance: {stop: false}`.
+
+The nav root starts, stops and turns at once. With `body_lag` set (0.15 s is a person's pace), the
+body is drawn on a point following it as a critically damped spring of that time constant, turns
+speed up and slow down over twice it, and the foot grounding eases too, so a walker seen close up,
+or bent over something in its hands, does not jolt; it comes to rest where the nav root is. While
+it moves, the drawn body trails the nav root by about `2 * body_lag * speed` (0.36 m at 0.15 s and
+1.2 m/s), so what is drawn is not where the navigator, its avoidance and a pose reading of the nav
+root place the walker. The default, 0, draws the body on the root.
 
 ### Navigation layers
 
@@ -89,6 +98,34 @@ A route overrides the patrol; on arrival the walker resumes patrolling from its 
 waypoint (or stands, if it had no patrol). `status()` latches `finished` under the route's own
 sequence number, so a caller can distinguish *its* completion from a stale or preempted one — this is
 exactly what the `NavigateThroughPoses` action handler polls.
+
+### Hands on something
+
+A walker can put one hand or both on world points -- a box by its handles, a part on a bench, a
+door handle:
+
+```python
+handle.reach(left=left_point, right=right_point)  # re-set it every step as the points move
+handle.reach(right=right_point)                   # one hand: the left goes back to the walk
+left, right = handle.hands()                      # where the wrists are now
+handle.reach()                                    # let go with both
+```
+
+Each point is three finite numbers (x, y, z, world); anything else raises `ValueError` at the
+call, and neither hand changes. A hand given `None`, or not given, goes back to the walk.
+
+Each arm reaches its point by two-bone IK on the walker's own bone lengths and eases onto it and
+back on its own, over the gait, which goes on underneath; an arm not reaching keeps the gait's swing.
+The body bends forward (most of it at the hips, the legs kept standing) only as far as the reaching
+hands need, blended by the stronger hand's weight. The bend follows points coming up at once, so a
+box lifted does not rise into a body still bent over it; points going down, and a hand let go, it
+follows at a bounded rate (`_BEND_RATE`, 1.2 rad/s, in `roqsim_walker.animation`), speeding up and
+slowing down, so for a moment the hands are above a thing set down quickly. A hand let go fades
+from the pose its arm last had, in the body's frame, to the gait's -- it does not reach back to
+its point; once both hands are back on the gait the body is upright and the next reach bends down
+from there. Whatever is in the hands is the caller's to move: a controller that carries a box
+drives the box and puts the hands on its handles (`roqsim_walker.reach`). Call `reach` on the
+physics thread.
 
 ## Assets
 
