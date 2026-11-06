@@ -728,6 +728,10 @@ _POSE = {"position": {"x": 1.0, "y": 0.0, "z": 0.0}}
 
 #: Valid arguments per registered action, so each one gets past ``execute`` to its first tick.
 NOT_READY_ARGS = {
+    "machine_run": dict(machine="press", program="stroke"),
+    "zone_entered": dict(zone="gate"),
+    "zone_left": dict(zone="gate"),
+    "zone_dwelled": dict(zone="gate"),
     "entity_moved": dict(
         entities=["crate"], threshold=0.05, mode="distance", dwell=0.0, require="all"
     ),
