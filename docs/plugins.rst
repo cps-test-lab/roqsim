@@ -2653,7 +2653,8 @@ What a program has:
   ``self.until_stopped(*names, timeout=None)`` (reached and at rest: what an interlock waits for),
   ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
   by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
-  naming the machine and the actuator, so an obstructed joint never hangs a program silently;
+  naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
+  loaded joint has arrived when it settles short of its target by its servo's standing offset;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
@@ -2713,7 +2714,7 @@ The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``route``, ``unt
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
 ``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
 reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
-it as around ``run``; one nobody joins stops the run when the program returns. ``route(check=False)``,
+it as around ``run``; the scene does not end before a start has, and one nobody joined then stops the run. A run that ends before the program does logs that error and emits ``start_failed``. Cancelling a start's task, as ``first()`` does to the loser, cancels its program. ``route(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
 reports done. Every scenario takes ``needs:`` (rename a handle) and
