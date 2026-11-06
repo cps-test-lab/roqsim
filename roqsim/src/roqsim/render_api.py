@@ -365,7 +365,7 @@ def unknown_keys(block: Mapping, valid: Collection[str], where: str = "") -> lis
 
 def validate_renderer_config(cls, settings: Mapping, base_dir=None) -> list[str]:
     """``cls.validate_config(settings, base_dir)``, or ``(settings)`` for an override that takes no
-    *base_dir* -- one written before renderers were given it."""
+    *base_dir*."""
     try:
         params = inspect.signature(cls.validate_config).parameters
     except (TypeError, ValueError):
