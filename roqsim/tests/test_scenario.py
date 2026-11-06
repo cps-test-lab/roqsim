@@ -363,8 +363,9 @@ def test_a_run_ending_before_the_program_says_what_no_one_joined(caplog):
     with caplog.at_level("ERROR"):
         events = engine.ctx.events
         engine.shutdown()
-    assert "a start nobody joined failed: press.jam" in caplog.text
-    assert [e["error"] for e in events.all() if e["event"] == "start_failed"]
+    assert "a start's error reached no one: press.jam" in caplog.text
+    failed = [e for e in events.all() if e["event"] == "start_failed"]
+    assert len(failed) == 1 and failed[0]["start"] == "press.jam"
 
 
 def test_a_timer_that_wins_over_a_start_leaves_the_machine_free():
@@ -399,3 +400,44 @@ def test_a_program_with_no_yield_is_refused_naming_it():
 def test_stop_at_end_is_true_or_false():
     with pytest.raises(Exception, match="'stop_at_end' is true or false"):
         _engine({"scenario_fixtures:NoYield": {"stop_at_end": "false"}, "name": "scene"})
+
+
+def test_cancelling_a_finished_start_leaves_the_next_one_running():
+    engine = _engine(PRESS, {"scenario_fixtures:CancelsAFinishedStart": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        ends = [e["error"] for e in _events(engine, "press") if e["event"] == "program_end"]
+        assert ends == ["", ""]
+    finally:
+        engine.shutdown()
+
+
+def test_a_reset_says_what_no_one_joined(caplog):
+    engine = _engine(PRESS, {"scenario_fixtures:Outlasts": {}, "name": "scene"})
+    try:
+        for _ in range(300):
+            engine.step()
+        with caplog.at_level("ERROR"):
+            engine.reset()
+        assert "a start's error reached no one: press.jam" in caplog.text
+    finally:
+        engine.shutdown()
+
+
+def test_a_joiner_created_before_its_start_still_catches_its_error():
+    engine = _engine(PRESS, {"scenario_fixtures:WatcherBeforeItsStart": {}, "name": "scene"})
+    try:
+        _until_done(engine)
+        scene = {e["event"] for e in _events(engine, "scene")}
+        assert "caught" in scene and "scenario_end" in scene
+    finally:
+        engine.shutdown()
+
+
+def test_a_timeout_that_is_no_number_is_refused():
+    engine = _engine({"scenario_fixtures:UntilNaN": {}, "name": "scene"})
+    try:
+        with pytest.raises(ScenarioError, match="until.. takes a timeout"):
+            engine.step()
+    finally:
+        engine.shutdown()

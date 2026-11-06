@@ -624,7 +624,7 @@ def test_the_commands_are_not_on_ros_where_a_bool_could_not_carry_them():
 
 
 def test_two_bodies_naming_one_state_are_refused(tmp_path):
-    bodies = ("arm_look_x", "leg_look_x")
+    bodies = ("look_x", "part_look_x")
     geoms = "".join(f'<body name="{b}"><geom size="0.01" mass="0"/></body>' for b in bodies)
     path = tmp_path / "part.xml"
     path.write_text(
@@ -638,7 +638,9 @@ def test_two_bodies_naming_one_state_are_refused(tmp_path):
 def test_a_state_body_two_entities_hold_is_refused(part_file):
     engine = _engine(_world(part_file))
     try:
-        engine.ctx.entities.add(Entity("c1_again", "object", body="c1_carton"))
+        engine.ctx.entities.add(
+            Entity("c1_again", "object", body="c1_carton", meta={"prefix": "c1_"})
+        )
         with pytest.raises(PartStateError, match="under both 'c1' and 'c1_again'"):
             engine.reset()
     finally:
@@ -744,3 +746,63 @@ def test_an_inertia_for_a_state_the_model_lacks_is_refused(tmp_path):
     path.write_text(STRIP.replace('name="look_bent_inertia"', 'name="look_bnet_inertia"'))
     with pytest.raises(PartStateError, match="look_bnet"):
         _engine(_world(path))
+
+
+NESTED = """<mujoco model="base">
+  <worldbody>
+    <body name="base">
+      <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+      <body name="look_open"><geom size="0.01" mass="0"/></body>
+      <body name="arm">
+        <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+        <body name="look_lamp"><geom name="lamp" size="0.01" mass="0"/></body>
+      </body>
+      <body name="tool">
+        <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+        <body name="tool_look_lamp"><geom size="0.01" mass="0"/></body>
+      </body>
+      <body name="camera_look_down"><geom name="eye" size="0.01" mass="0"/></body>
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+def _nested_engine(tmp_path, *inner):
+    path = tmp_path / "base.xml"
+    path.write_text(NESTED)
+    world = _world(path)
+    world["components"].reverse()  # part_state first, so that the first look is at the reset
+    engine = Engine(load_config_from_dict(world))
+    engine.ctx.seed = 1
+    engine.setup()
+    for name, body in inner:
+        engine.ctx.entities.add(Entity(name, "object", body=body, meta={"prefix": "c1_"}))
+    engine.reset()
+    return engine
+
+
+def test_a_state_belongs_to_the_nearest_entity_around_it(tmp_path):
+    engine = _nested_engine(tmp_path, ("arm", "c1_arm"), ("tool", "c1_tool"))
+    try:
+        states = engine.ctx.blackboard.require("part_state")
+        assert states.of("c1") == ["open"]
+        assert states.of("arm") == ["lamp"]
+        assert states.of("tool") == ["lamp"]
+    finally:
+        engine.shutdown()
+
+
+def test_a_body_that_only_contains_look_in_its_name_is_left_alone(tmp_path):
+    engine = _nested_engine(tmp_path, ("arm", "c1_arm"))
+    try:
+        assert not _hidden(engine.ctx.model, "c1_eye")
+        assert "down" not in engine.ctx.blackboard.require("part_state").of("c1")
+    finally:
+        engine.shutdown()
+
+
+def test_a_numeric_that_is_not_about_a_state_is_left_alone(tmp_path):
+    path = tmp_path / "strip.xml"
+    path.write_text(STRIP.replace('name="look_bent_inertia"', 'name="outlook_inertia"'))
+    engine = _engine(_world(path))
+    engine.shutdown()

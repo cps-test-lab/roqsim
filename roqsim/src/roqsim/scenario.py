@@ -72,6 +72,8 @@ class Task:
         self.error: BaseException | None = None
         #: Whether ``error`` has reached a joiner.
         self.delivered = False
+        #: Whether ``error`` has gone into the events.
+        self.said = False
         #: Called when the task is cancelled, to stop what it started.
         self.on_cancel: Callable[[], None] | None = None
 
@@ -117,7 +119,7 @@ class ScenarioPlugin(Plugin):
     Config (every scenario; a subclass adds its own keys)::
 
         needs: {press: machine:press_2}   # rename a handle NEEDS names, so one scenario serves two cells
-        stop_at_end: false                # end a standalone run when the program returns
+        stop_at_end: false                # end a standalone run when the scene ends
     """
 
     #: Blackboard handles the scenario drives, attribute -> key. Each is resolved at every reset,
@@ -131,6 +133,8 @@ class ScenarioPlugin(Plugin):
         #: Every task that keeps its error, so one that nobody joins still stops the run.
         self._kept: list[Task] = []
         self._main: Task | None = None
+        #: Whether the end was reached on this pass, leaving one more for a joiner to take an error.
+        self._closing = False
         self._done = False
         #: Set when a task raised: the run stops, and the scene never reports done.
         self._failed = False
@@ -154,10 +158,10 @@ class ScenarioPlugin(Plugin):
                         f"scenario {self.address}: 'needs' names {unknown}, which it does not use "
                         f"(it needs {sorted(self.NEEDS) or 'nothing'})"
                     )
-        # A handle is set as an attribute of that name, so a name the scenario already has would
-        # replace it -- its context, its config, a method of the helper.
         if not isinstance(config.get("stop_at_end", False), bool):
             errors.append(f"scenario {self.address}: 'stop_at_end' is true or false")
+        # A handle is set as an attribute of that name, so a name the scenario already has would
+        # replace it -- its context, its config, a method of the helper.
         taken = sorted(n for n in self.NEEDS if hasattr(type(self), n) or n in vars(self))
         if taken:
             errors.append(
@@ -171,6 +175,7 @@ class ScenarioPlugin(Plugin):
 
     def on_reset(self, ctx: SimContext) -> None:
         """Resolve the handles and start the program from its beginning."""
+        self._say_unjoined(ctx)
         for task in self._tasks:
             task.on_cancel = None  # a reset ends what it started as well
             task.cancel()
@@ -184,6 +189,7 @@ class ScenarioPlugin(Plugin):
             setattr(self, attr, value)
         self._done = False
         self._failed = False
+        self._closing = False
         self._tasks = []
         self._kept = []
         program = self.program()
@@ -204,10 +210,23 @@ class ScenarioPlugin(Plugin):
             except Exception as exc:
                 self._fail(exc)
         self._tasks = [t for t in self._tasks if not t.done]
+        for task in self._kept:
+            if task.error is not None and not task.said:
+                task.said = True
+                ctx.events.emit(
+                    self.address, "start_failed", start=task.name, error=str(task.error)
+                )
         if self._main.done and not self._done:
             # A start nobody joined is not abandoned: the scene ends when it has, and its error
             # stops the run here.
             if not all(task.done for task in self._kept):
+                self._closing = False
+                return
+            # One more pass for an error: a joiner created before the start has not yet seen it end.
+            if not self._closing and any(
+                t.error is not None and not t.delivered for t in self._kept
+            ):
+                self._closing = True
                 return
             for task in self._kept:
                 error = task.take_error()
@@ -222,15 +241,18 @@ class ScenarioPlugin(Plugin):
                 ctx.request_stop(f"scenario {self.address} done")
 
     def shutdown(self, ctx: SimContext) -> None:
-        """A run that ended before the program did says what no one joined: a shutdown cannot fail
-        a run (:meth:`roqsim.engine.Engine.shutdown`), so it is an error in its log and its events."""
+        self._say_unjoined(ctx)
+
+    def _say_unjoined(self, ctx: SimContext) -> None:
+        """Log a start's error that reached no one, for a trial a reset or the run's end cut short:
+        neither can fail the run (:meth:`roqsim.engine.Engine.shutdown`). ``start_failed`` is in the
+        events already, from the step the start failed in."""
         for task in self._kept:
             error = task.take_error()
             if error is not None:
                 ctx.logger.error(
-                    "scenario %s: a start nobody joined failed: %s", self.address, error
+                    "scenario %s: a start's error reached no one: %s", self.address, error
                 )
-                ctx.events.emit(self.address, "start_failed", error=str(error))
 
     def _fail(self, exc: BaseException):
         """Stop the scene on ``exc``: the run stops, and ``done`` never turns true."""
@@ -247,7 +269,7 @@ class ScenarioPlugin(Plugin):
 
     @endpoint.out(rate=10.0)
     def done(self) -> bool:
-        """Whether the scenario's program has returned."""
+        """Whether the scene has ended: its program returned, and every start it did not join ended."""
         return self._done
 
     # -- the helper ---------------------------------------------------------------------------
@@ -280,8 +302,9 @@ class ScenarioPlugin(Plugin):
         )
 
         def cancel_the_program() -> None:
+            # A finished start has nothing to cancel, and a later one is not this task's.
             status = handle.status()
-            if status.seq <= seq:
+            if status.seq < seq or (status.seq == seq and not status.finished):
                 handle.cancel()
 
         task.on_cancel = cancel_the_program
@@ -360,6 +383,8 @@ class ScenarioPlugin(Plugin):
 
     def until(self, cond: Callable[[], bool], timeout: float | None = None, what: str = ""):
         """Yield until ``cond()`` holds; past ``timeout`` seconds raise :class:`ScenarioError`."""
+        if timeout is not None and math.isnan(timeout):
+            raise ScenarioError(f"until() takes a timeout in seconds, not {timeout!r}")
         start = self._ctx.sim_time
         while not cond():
             if timeout is not None and self._ctx.sim_time - start > timeout:

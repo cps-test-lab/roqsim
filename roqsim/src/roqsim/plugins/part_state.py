@@ -14,8 +14,10 @@ changes is the machine's (the stroke's bottom) or the scenario's (see ``docs/arc
 "Machines and scenarios").
 
 **A state is a child body named** ``look_<name>`` **anywhere under an entity's root body**, after the
-entity's prefix (``s1_look_hole`` on an entity spawned with ``prefix: s1_``), or ``<body>_look_<name>``
-for one a plugin added to the entity at build. A state's bodies are massless -- one with mass is
+entity's prefix (``s1_look_hole`` on an entity spawned with ``prefix: s1_``), or ``<body>_look_<name>``,
+after the root body's own name, for one a plugin added to the entity at build. It belongs to the
+nearest entity around it, as a frame does: list ``part_state`` after an entity nested in another
+whose states it serves. A state's bodies are massless -- one with mass is
 refused when the states are collected, naming the body -- so showing or hiding a state never changes
 what the entity weighs. Its geoms are usually visual only; a state that changes the shape -- a flat
 strip against the bent one -- carries its own collision geoms, and they come and go with it. The mass
@@ -43,8 +45,10 @@ Presence composes (:mod:`roqsim.presence`), so a state's own presence and its ow
 while the owner is absent a state shows nothing, and a state changed meanwhile is as it was left when
 the owner returns.
 
-**Limits.** A state body nested inside another state body is refused. Of an exclusive group at most one state is shown: ``show`` of a member
-while another is shown is refused (``set`` swaps them), and so is a ``shown:`` naming two.
+**Limits.** A state body nested inside another state body is refused. Of an exclusive group at most
+one state is shown: ``show`` of a member while another is shown is refused (``set`` swaps them), and
+so is a ``shown:`` naming two. A shown state's inertia moves the physics but not the compiled
+``invweight0`` values, so a part held by a weld is slightly softer or stiffer while it is shown.
 
 Config::
 
@@ -230,8 +234,11 @@ class PartStates:
         return looks[look]
 
 
-def find_looks(model: mujoco.MjModel, entity: Entity) -> dict[str, str]:
-    """``{state name: body name}`` for the ``look_*`` bodies under ``entity``'s root body."""
+def find_looks(
+    model: mujoco.MjModel, entity: Entity, nested: frozenset = frozenset()
+) -> dict[str, str]:
+    """``{state name: body name}`` for the state bodies under ``entity``'s root body, down to where
+    a root in ``nested``, a nested entity's, takes over."""
     if not entity.body:
         return {}
     root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
@@ -240,16 +247,20 @@ def find_looks(model: mujoco.MjModel, entity: Entity) -> dict[str, str]:
     prefix = entity.meta.get("prefix", "") if isinstance(entity.meta, dict) else ""
     out = {}
     ids = {}
+    others = set()
     for bid in subtree_body_ids(model, root):
         if bid == root:
+            continue
+        if bid in nested or int(model.body_parentid[bid]) in others:
+            others.add(bid)
             continue
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or ""
         local = name[len(prefix) :] if prefix and name.startswith(prefix) else name
         if local.startswith(LOOK_PREFIX):
             look = local[len(LOOK_PREFIX) :]
-        elif f"_{LOOK_PREFIX}" in local:
+        elif name.startswith(f"{entity.body}_{LOOK_PREFIX}"):
             # A state another plugin added to the entity, named after the entity's body.
-            look = local.rsplit(f"_{LOOK_PREFIX}", 1)[1]
+            look = name[len(f"{entity.body}_{LOOK_PREFIX}") :]
         else:
             continue
         if look in out:
@@ -284,6 +295,21 @@ def _refuse_mass(model: mujoco.MjModel, entity: str, body: str) -> None:
             'are massless (mass="0" on their geoms), so that a state changes how the part looks and '
             "collides, never what it weighs -- a state that moves the mass names an inertia instead"
         )
+
+
+def _refuse_stray_inertia(model: mujoco.MjModel, entity: Entity) -> None:
+    """A numeric meant for a state of ``entity`` whose body is not there would never move any mass."""
+    prefix = entity.meta.get("prefix", "") if isinstance(entity.meta, dict) else ""
+    forms = (f"{prefix}{LOOK_PREFIX}", f"{entity.body}_{LOOK_PREFIX}")
+    for nid in range(model.nnumeric):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_NUMERIC, nid) or ""
+        if name.startswith(forms) and name.endswith("_inertia"):
+            body = name[: -len("_inertia")]
+            if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) < 0:
+                raise PartStateError(
+                    f"part_state: numeric {name!r} names an inertia for a state body {body!r} "
+                    "the model does not have"
+                )
 
 
 def _names_list(value) -> bool:
@@ -326,33 +352,23 @@ class PartStatePlugin(Plugin):
             )
         self.handle.ctx = ctx
         ctx.blackboard.set("part_state", self.handle)
-        self._refuse_stray_inertia(ctx.model)
         self._collect(ctx)
-
-    @staticmethod
-    def _refuse_stray_inertia(model: mujoco.MjModel) -> None:
-        """A numeric meant for a state whose body is not there would never move any mass."""
-        for nid in range(model.nnumeric):
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_NUMERIC, nid) or ""
-            if LOOK_PREFIX in name and name.endswith("_inertia"):
-                body = name[: -len("_inertia")]
-                if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) < 0:
-                    raise PartStateError(
-                        f"part_state: numeric {name!r} names an inertia for a state body "
-                        f"{body!r} the model does not have"
-                    )
 
     def _collect(self, ctx: SimContext) -> None:
         """Find every entity's states and register each as an entity.
 
         At ``configure`` for the entities spawned before this entry, and again at every reset for
         those spawned after it; a state already registered is kept, so the second pass only adds."""
-        for entity in list(ctx.entities.all()):
-            if entity.kind == "look":
-                continue
-            found = find_looks(ctx.model, entity)
+        entities = [e for e in ctx.entities.all() if e.kind != "look" and e.body]
+        roots = {
+            e.name: mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, e.body) for e in entities
+        }
+        for entity in entities:
+            nested = frozenset(r for r in roots.values() if r != roots[entity.name])
+            found = find_looks(ctx.model, entity, nested)
             if not found:
                 continue
+            _refuse_stray_inertia(ctx.model, entity)
             looks = {}
             for look, body in found.items():
                 owner = self._owner_of.setdefault(body, entity.name)

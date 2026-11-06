@@ -141,7 +141,7 @@ AXIS = """<mujoco model="axis">
   <worldbody>
     <body name="axis">
       <body name="slider">
-        <joint name="x_joint" type="slide" axis="1 0 0" range="-1 1"/>
+        <joint name="x_joint" type="slide" axis="1 0 0" range="-1 1" damping="{damping}"/>
         <geom name="block" type="box" size="0.05 0.05 0.05" mass="1"/>
       </body>
     </body>
@@ -165,6 +165,7 @@ class Axis(MachinePlugin):
 
         actuator: ""       # the MJCF <actuator> child driving x_joint, named x (default a servo)
         obstacle: false    # a wall stops the block at x = 0.3
+        damping: 0.0       # the joint's own damping
         timeout: 0.0       # MOVE_TIMEOUT for this instance (s); 0 keeps the class's
     """
 
@@ -179,6 +180,7 @@ class Axis(MachinePlugin):
         xml = AXIS.format(
             actuator=self.config.get("actuator") or SERVO,
             obstacle=WALL if self.config.get("obstacle") else "",
+            damping=float(self.config.get("damping", 0.0)),
         )
         frame = spec.worldbody.add_frame()
         frame.pos = [0, 0, 0.5]
@@ -220,6 +222,19 @@ class Axis(MachinePlugin):
             yield from self.wait(100.0)
         finally:
             yield
+
+    @program
+    def cleanup_reads_the_machine(self):
+        """Wait, with a cleanup that reads whether the machine is busy."""
+        try:
+            yield from self.wait(100.0)
+        finally:
+            self.seen_busy = self.handle.busy
+
+    @program
+    def wait_nan(self):
+        """Wait on a condition with a timeout that is no number."""
+        yield from self.until(lambda: False, timeout=float("nan"))
 
     @program
     def wait_for(self, seconds: float):
