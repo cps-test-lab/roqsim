@@ -1,6 +1,7 @@
-"""The hinged door: a leaf on a hinge joint driven by a position actuator, its openness
-live-controllable. It unifies a passive door (holds its ``open`` angle) and an automatic door
-(exposes ROS I/O), and locates the hinge from the opening centre + ``hinge_side``."""
+"""The hinged door: a machine whose leaf hangs on a hinge joint driven by a position actuator, opened
+and closed by its programs and live-controllable. It unifies a passive door (holds its ``open``
+angle) and an automatic door (exposes ROS I/O), and locates the hinge from the opening centre +
+``hinge_side``."""
 
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ def _door(tmp_path, extra=None):
 
 def _built(tmp_path, extra=None):
     engine = Engine(_door(tmp_path, extra))
+    engine.ctx.seed = 1
     engine.setup()
     engine.reset()
     return engine
@@ -60,7 +62,7 @@ def test_leaf_sized_to_opening(tmp_path):
 def test_command_opens_the_door(tmp_path):
     engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
     assert abs(_hinge_angle(engine)) < math.radians(2)  # starts closed
-    engine.ctx.blackboard.require("door:door").set_openness(1.0)
+    engine.ctx.blackboard.require("machine:door").start("open")
     for _ in range(3000):
         engine.step()
     assert math.degrees(_hinge_angle(engine)) > 88  # reached ~fully open
@@ -68,7 +70,7 @@ def test_command_opens_the_door(tmp_path):
 
 def test_swing_sign_sets_open_direction(tmp_path):
     engine = _built(tmp_path, {"swing": -1, "max_angle": 90})
-    engine.ctx.blackboard.require("door:door").set_openness(1.0)
+    engine.ctx.blackboard.require("machine:door").start("open")
     for _ in range(3000):
         engine.step()
     assert math.degrees(_hinge_angle(engine)) < -88  # opens to the other side
@@ -89,20 +91,24 @@ def test_passive_door_holds_open_angle(tmp_path):
     for _ in range(2000):
         engine.step()
     assert 40 < math.degrees(_hinge_angle(engine)) < 50
-    assert _plugin_endpoints(engine) == []
+    assert {e.name for e in _plugin_endpoints(engine)} == {"start", "status", "cancel"}
+    # No ROS surface, but a scenario in the same process can still open it.
+    door = engine.ctx.blackboard.require("machine:door")
+    _finish(engine, door, door.start("open"))
+    assert math.degrees(_hinge_angle(engine)) > 88
 
 
 def test_controllable_declares_endpoints(tmp_path):
     engine = _built(tmp_path, {"controllable": True, "namespace": "foyer"})
     eps = {e.name: e for e in _plugin_endpoints(engine)}
-    assert set(eps) == {"cmd", "state", "door"}
+    assert set(eps) == {"cmd", "state", "door", "start", "status", "cancel"}
     assert eps["cmd"].backend["ros2"]["type"] == "std_msgs.msg.Float64"
     assert eps["state"].direction == "out"
     action = eps["door"].backend["ros2"]
     assert action["action"] == "control_msgs.action.GripperCommand"
     # The action handler reads the door's own state, not a gripper's.
-    assert action["state_key"] == "door:door:state"
-    assert callable(engine.ctx.blackboard.get("door:door:state"))
+    assert action["state_key"] == "machine:door:openness"
+    assert callable(engine.ctx.blackboard.get("machine:door:openness"))
 
 
 def test_mesh_leaf_model_loads_and_swings(tmp_path):
@@ -111,7 +117,7 @@ def test_mesh_leaf_model_loads_and_swings(tmp_path):
     assert _id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge") >= 0
     # panel + handle geoms come in under the leaf_ prefix.
     assert _id(engine, mujoco.mjtObj.mjOBJ_MESH, "leaf_door_panel") >= 0
-    engine.ctx.blackboard.require("door:door").set_openness(1.0)
+    engine.ctx.blackboard.require("machine:door").start("open")
     for _ in range(3000):
         engine.step()
     assert math.degrees(_hinge_angle(engine)) > 85
@@ -212,6 +218,7 @@ def test_leafless_door_is_a_cased_opening(tmp_path):
     ent = engine.ctx.entities.get("door")
     assert ent.kind == "door" and ent.meta["leaf"] is False
     assert _plugin_endpoints(engine) == []  # nothing to command
+    assert engine.ctx.blackboard.get("machine:door") is None
     for _ in range(50):
         engine.step()  # the tick hooks stay quiet
 
@@ -259,15 +266,21 @@ def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
     engine.setup()
     engine.reset()
     aid = _id(engine, mujoco.mjtObj.mjOBJ_ACTUATOR, "hinge_pos")
-    engine.ctx.blackboard.require("door:door").set_openness(1.0)
+    door = engine.ctx.blackboard.require("machine:door")
+    seq = door.start("open")
     peak = 0.0
     for _ in range(4000):
         engine.step()
         peak = max(peak, abs(float(engine.ctx.data.actuator_force[aid])))
-    door = engine.ctx.blackboard.require("door:door")
     assert peak <= 15.0 + 1e-6  # never pushed harder than the cap
-    assert door.get_openness() == 1.0  # still commanded open...
-    assert door.read_state()[0] < 0.9  # ...but blocked short of it (gave up)
+    status = door.status()
+    # Blocked short of open, it gave up: the program's own failure, and the run went on.
+    assert status.seq == seq and status.finished and status.error.startswith("stalled at openness")
+    openness = engine.ctx.blackboard.get("machine:door:openness")()[0]
+    assert openness < 0.9
+    assert door.value("hinge_pos") == pytest.approx(openness * math.radians(120), abs=1e-3)
+    stalled = [e for e in engine.ctx.events.all() if e["event"] == "stalled"]
+    assert len(stalled) == 1 and stalled[0]["openness"] == pytest.approx(openness, abs=0.01)
 
 
 def test_validate_config_flags_bad_input(tmp_path):
@@ -279,3 +292,62 @@ def test_validate_config_flags_bad_input(tmp_path):
     assert any("open" in e for e in errors)
     assert any("hinge_side" in e for e in errors)
     assert any("swing" in e for e in errors)
+
+
+def _finish(engine, door, seq, limit=20.0):
+    t0 = engine.ctx.sim_time
+    while not (door.status().seq == seq and door.status().finished):
+        assert engine.ctx.sim_time - t0 < limit, door.status()
+        engine.step()
+    return door.status()
+
+
+def test_open_and_close_ramp_at_the_stated_speed_and_end_when_there(tmp_path):
+    engine = _built(tmp_path, {"max_angle": 90, "speed": 0.5})
+    door = engine.ctx.blackboard.require("machine:door")
+    t0 = engine.ctx.sim_time
+    assert _finish(engine, door, door.start("open")).error == ""
+    # 90 degrees at 0.5 rad/s is 3.14 s; the leaf trails the ramp a little.
+    assert 3.1 < engine.ctx.sim_time - t0 < 3.6
+    assert math.degrees(_hinge_angle(engine)) > 88
+    events = [e["event"] for e in engine.ctx.events.all() if e["source"] == "door"]
+    assert events == ["program_start", "program_end"]
+    assert _finish(engine, door, door.start("close")).error == ""
+    assert abs(math.degrees(_hinge_angle(engine))) < 2
+
+
+def test_a_start_while_it_moves_is_refused_and_the_command_port_takes_over(tmp_path):
+    engine = _built(tmp_path, {"max_angle": 90, "speed": 0.5})
+    door = engine.ctx.blackboard.require("machine:door")
+    first = door.start("open")
+    for _ in range(100):
+        engine.step()
+    with pytest.raises(Exception, match="busy running 'open'"):
+        door.start("close")
+    cmd = engine.ctx.interface.find("door", "cmd")
+    cmd.write({"data": 0.0})
+    engine.step()
+    assert door.status().seq == first + 1 and door.status().program == "move_to"
+    ends = [e for e in engine.ctx.events.all() if e["event"] == "program_end"]
+    assert ends[-1]["seq"] == first and ends[-1]["error"] == "cancelled"
+    # The same value again changes nothing: no new start.
+    cmd.write({"data": 0.0})
+    engine.step()
+    assert door.status().seq == first + 1
+    assert _finish(engine, door, first + 1).error == ""
+    assert abs(math.degrees(_hinge_angle(engine))) < 2
+
+
+def test_an_idle_door_holds_its_target_against_a_push(tmp_path):
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5})
+    door = engine.ctx.blackboard.require("machine:door")
+    m, d = engine.ctx.model, engine.ctx.data
+    dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+    for _ in range(500):
+        d.qfrc_applied[dof] = 5.0  # a steady push, below the 15 N*m cap
+        engine.step()
+    d.qfrc_applied[dof] = 0.0
+    for _ in range(1500):
+        engine.step()
+    assert 40 < math.degrees(_hinge_angle(engine)) < 50, "an idle door returns to its target"
+    assert door.status().seq == 0 and not door.busy

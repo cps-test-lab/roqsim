@@ -514,9 +514,9 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     This is the interaction MoveIt2's ``moveit_simple_controller_manager`` drives to open/close a
     gripper (controller ``type: GripperCommand``), but the policy is generic -- any producer with a
     single commandable position and a state reader reuses it (e.g. an automatic ``door``). The
-    commanded ``position`` is sent to the producer (e.g. ``ArmControllerPlugin.set_gripper``,
-    ``DoorPlugin.set_openness``) as the parameter ``position``; a typed producer that would refuse
-    it aborts the goal. We then watch the producer's state -- a ``() -> (position, velocity)``
+    commanded ``position`` is sent to the producer (e.g. ``ArmControllerPlugin.set_gripper``, or a
+    ``door``, whose ``move_to`` program it starts) as the parameter ``position``; a typed producer
+    that would refuse it aborts the goal. We then watch the producer's state -- a ``() -> (position, velocity)``
     reader on the blackboard -- and succeed once it reaches the target or stops moving short of it
     (a gripper closed on an object, a door met an obstruction). As ros2_control's gripper action
     controller reports them, ``reached_goal`` is the measured position within tolerance of the

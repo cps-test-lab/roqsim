@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_assets"
 version = "0.1.0"
-description = "Shared, reusable assets for roqsim scenes: surface textures (roqsim_assets:<Name>), placeable props (spawn_model), and the belt `conveyor` plugin + model."
+description = "Shared, reusable assets for roqsim scenes: surface textures (roqsim_assets:<Name>), placeable props (spawn_model), and the machines `conveyor` and `door` with their models."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -43,8 +43,9 @@ sketchfab_helper = "roqsim_assets.sketchfab:main"
 [project.entry-points."roqsim.commands"]
 assets = "roqsim_assets.cli:assets"
 
-# The reusable belt conveyor: a velocity-driven MuJoCo belt an object rides via a friction pair, with
-# a live-controllable `speed` endpoint. Any world loads it by this name.
+# The reusable belt conveyor: a velocity-driven MuJoCo belt an object rides via a friction pair, a
+# machine with `run`/`stop` programs and a live-controllable `speed` endpoint. Any world loads it by
+# this name.
 [project.entry-points."roqsim.plugins"]
 box = "roqsim_assets.plugins.box:BoxPlugin"
 # The same geometry as a LIST, so "how many" is the length of one config value rather than

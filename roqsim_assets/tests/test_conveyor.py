@@ -64,8 +64,8 @@ def test_speed_handle_reverses_belt(tmp_path):
     engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
     engine.setup()
     engine.reset()
-    handle = engine.ctx.blackboard.require("conveyor:conveyor")
-    handle.set_speed(-0.2)  # reverse toward the feed end (+x)
+    handle = engine.ctx.blackboard.require("machine:conveyor")
+    handle.start("run", speed=-0.2)  # reverse toward the feed end (+x)
     for _ in range(5):
         engine.step()
     x0 = _package_x(engine)
@@ -79,11 +79,11 @@ def test_reset_returns_the_belt_to_its_configured_speed(tmp_path):
     engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
     engine.setup()
     engine.reset()
-    handle = engine.ctx.blackboard.require("conveyor:conveyor")
-    handle.set_speed(-0.2)
+    handle = engine.ctx.blackboard.require("machine:conveyor")
+    handle.start("run", speed=-0.2)
     engine.step()
     engine.reset()
-    assert handle.get_speed() == pytest.approx(0.2)
+    assert handle.value("speed") == pytest.approx(0.2)
     for _ in range(5):
         engine.step()
     x0 = _package_x(engine)
@@ -186,3 +186,59 @@ def test_default_size_matches_base_model(tmp_path):
     engine.reset()
     assert np.allclose(_geom_size(engine, "belt_visual"), [1.221, 0.29, 0.0275])
     assert np.allclose(_body_pos(engine, "roller_a"), [-1.221, 0.0, 0.9425])
+
+
+def _finish(engine, handle, seq, limit=20.0):
+    t0 = engine.ctx.sim_time
+    while not (handle.status().seq == seq and handle.status().finished):
+        assert engine.ctx.sim_time - t0 < limit, handle.status()
+        engine.step()
+    return handle.status()
+
+
+def _belt_velocity(engine):
+    m = engine.ctx.model
+    jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "belt_x")
+    return float(engine.ctx.data.qvel[m.jnt_dofadr[jid]])
+
+
+def test_run_and_stop_ramp_at_the_stated_rate_with_an_event_at_each_start_and_stop(tmp_path):
+    engine = Engine(_belt_only(tmp_path, {"speed": 0.0, "ramp": 0.5}))
+    engine.setup()
+    engine.reset()
+    belt = engine.ctx.blackboard.require("machine:conveyor")
+    t0 = engine.ctx.sim_time
+    assert _finish(engine, belt, belt.start("run", speed=0.3)).error == ""
+    assert engine.ctx.sim_time - t0 == pytest.approx(0.6, abs=2 * engine.ctx.dt)
+    assert belt.value("speed") == pytest.approx(0.3)
+    for _ in range(50):
+        engine.step()
+    assert _belt_velocity(engine) == pytest.approx(0.3), "the belt runs on after its program ended"
+    t1 = engine.ctx.sim_time
+    assert _finish(engine, belt, belt.start("stop")).error == ""
+    assert engine.ctx.sim_time - t1 == pytest.approx(0.6, abs=2 * engine.ctx.dt)
+    engine.step()
+    assert _belt_velocity(engine) == pytest.approx(0.0, abs=1e-3)
+    events = [e["event"] for e in engine.ctx.events.all() if e["source"] == "conveyor"]
+    assert events == [
+        "program_start",
+        "started",
+        "program_end",
+        "program_start",
+        "stopped",
+        "program_end",
+    ]
+
+
+def test_a_repeated_speed_on_the_stream_starts_nothing(tmp_path):
+    engine = Engine(_belt_only(tmp_path, {"speed": 0.1}))
+    engine.setup()
+    engine.reset()
+    belt = engine.ctx.blackboard.require("machine:conveyor")
+    speed = engine.ctx.interface.find("conveyor", "speed")
+    for _ in range(5):
+        speed.write({"data": 0.25})
+        engine.step()
+    starts = [e for e in engine.ctx.events.all() if e["event"] == "program_start"]
+    assert len(starts) == 1 and starts[0]["args"] == {"speed": 0.25}
+    assert belt.value("speed") == pytest.approx(0.25)
