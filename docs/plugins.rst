@@ -2660,6 +2660,8 @@ What a program has:
   offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
   such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
   to allow for it;
+- a program yields nothing and waits on a helper with ``yield from``; a bare ``yield self.move(...)``
+  stops the run, as a defect does;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
@@ -2723,7 +2725,7 @@ it as around ``run``; ``join`` raises as soon as one task fails, and the others 
 not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
 itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
 before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
-task, as ``first()`` does to the loser, cancels the machine program it waits on. A scene yields
+task, as ``first()`` does to the loser, cancels the machine program or stops the route it waits on. A scene yields
 nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``route(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
