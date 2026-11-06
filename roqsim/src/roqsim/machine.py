@@ -626,7 +626,7 @@ class MachinePlugin(Plugin):
         while self._ctx.sim_time < end - 1e-9:
             yield
 
-    def step(self, name: str, **fields) -> dict:
+    def step(self, name: str, /, **fields) -> dict:
         """Emit the event of a named step of the running program."""
         run = self._run
         return self._ctx.events.emit(
@@ -860,7 +860,13 @@ class MachinePlugin(Plugin):
 
     def _advance(self, run: _Run) -> None:
         try:
-            next(run.gen)
+            yielded = next(run.gen)
+            if yielded is not None:
+                # A bare ``yield self.move(...)`` would move nothing and end as a success.
+                raise TypeError(
+                    f"it yielded {yielded!r}; a program yields nothing, and waits on a helper with "
+                    "``yield from``"
+                )
         except StopIteration:
             self._finish(run, "")
         except ProgramFailed as exc:
