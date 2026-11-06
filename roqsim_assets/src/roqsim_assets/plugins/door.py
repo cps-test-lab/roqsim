@@ -19,16 +19,22 @@ the door (``docs/architecture.rst``, "Machines and scenarios").
 Actuation. A ``position`` actuator holds the hinge at its target. The programs ``open``, ``close``
 and ``move_to(openness)`` (a fraction in ``[0, 1]``, clamped) move that target -- at once, or ramped at
 ``speed`` (rad/s at the hinge) -- and end when the leaf is within 0.02 of the openness. An automatic
-door only pushes *gently*: the actuator force is capped, so an obstacle is nudged, never crushed;
-a leaf that stays blocked -- barely moving short of its target -- for ``stall_timeout`` seconds holds
-where it is and the program ends with the error ``stalled at openness 0.42`` (and a ``stalled``
-event), for the caller to decide. An idle door holds its target. A **passive** door
+door only pushes *gently*: the actuator force is capped, so an obstacle is nudged, never crushed.
+A leaf that stays blocked -- behind its commanded target by more than 0.02 and barely moving -- for
+``stall_timeout`` seconds holds where it is and the program ends with the error ``stalled at
+openness 0.42`` (and a ``stalled`` event), for the caller to decide; a slow ramp is not a stall,
+since the leaf keeps up with the target it is given. An idle door pushed off its target gives way
+the same way: after ``stall_timeout`` it takes where it stands as its target and stops pressing back
+(a ``gave_way`` event), so a robot can push through an automatic door. A **passive** door
 (``controllable: false``) holds its ``open`` angle and declares no ROS surface; a scenario in the
 same process can still start its programs.
 
 Handle: a :class:`~roqsim.machine.MachineHandle` under ``machine:<name>`` -- ``start("open")``,
 ``start("move_to", openness=0.5)``, ``status()``, ``busy``, ``ready``, ``cancel()``,
-``value("hinge_pos")`` (the hinge target, rad). Its ``start``/``status``/``cancel`` are endpoints too.
+``value("hinge_pos")`` (the hinge *target* in rad -- not the openness, and not where the leaf is).
+Its ``start``/``status``/``cancel`` are endpoints too. Every door with a leaf, passive or not, also
+publishes its openness reader under ``machine:<name>:openness``: ``() -> (openness, d_openness/dt)``,
+the leaf's measured openness as a fraction.
 
 ROS interface (declared only when ``controllable``; wired by the generic ``ros2_bridge``, so no ROS is
 imported here). Openness is a fraction in ``[0, 1]`` on every port, and a command on either ``in``
@@ -194,6 +200,7 @@ class DoorPlugin(MachinePlugin):
         self._span = self.swing * self.max_angle
         self.HOME = {self._ACTUATOR: self.open0 * self._span}
         self._goal = self.open0  # the openness the last move went for
+        self._pushed = 0.0  # seconds an idle door has been held off its target
         self._reach_tol = 0.02  # openness within this of the target counts as reached
         # resolved in configure()
         self._aid = -1
@@ -463,11 +470,9 @@ class DoorPlugin(MachinePlugin):
         )
         super().configure(ctx)
 
-        if not self.controllable:
-            return  # passive door: holds `open`, no ROS surface
-
-        # State reader keyed by the door's own name so the (generalized) GripperCommand handler finds
-        # it without the door pretending to be a gripper (see roqsim_ros_bridge.actions).
+        # The openness reader, ``() -> (openness, d_openness/dt)``, for every door with a leaf:
+        # in-process callers read it, and the GripperCommand handler of a controllable door watches
+        # it (its `state_key`) without the door pretending to be a gripper (roqsim_ros_bridge.actions).
         ctx.blackboard.set(f"machine:{self.door_name}:openness", self.read_state)
 
     # -- programs ------------------------------------------------------------------------------
@@ -500,7 +505,7 @@ class DoorPlugin(MachinePlugin):
             now, rate = self.read_state()
             if abs(now - target) <= self._reach_tol and self.reached(self._ACTUATOR):
                 return
-            blocked = blocked + self._ctx.dt if abs(rate) < self.stall_speed else 0.0
+            blocked = blocked + self._ctx.dt if self._held_back(now, rate) else 0.0
             if blocked >= self.stall_timeout:
                 # Stop pressing on the obstruction: hold where the leaf is (inside its range).
                 now = min(max(now, 0.0), 1.0)
@@ -551,6 +556,28 @@ class DoorPlugin(MachinePlugin):
             return  # moving there, or there
         self.preempt("move_to", openness=openness)
 
+    def _held_back(self, openness: float, rate: float) -> bool:
+        """Whether the leaf is held back: behind the target it is commanded now -- not the end of a
+        ramp, which a slow door is meant to take its time to -- and barely moving."""
+        lag = abs(openness - self.value(self._ACTUATOR) / self._span)
+        return lag > self._reach_tol and abs(rate) < self.stall_speed
+
+    def post_step(self, ctx: SimContext) -> None:
+        super().post_step(ctx)
+        if not self.leaf or self.busy or ctx.manual_control:
+            self._pushed = 0.0
+            return
+        # An idle door pushed off its target gives way after stall_timeout rather than pressing back
+        # at max_torque for as long as it is pushed.
+        now, rate = self.read_state()
+        self._pushed = self._pushed + ctx.dt if self._held_back(now, rate) else 0.0
+        if self._pushed >= self.stall_timeout:
+            self._pushed = 0.0
+            now = min(max(now, 0.0), 1.0)
+            self.set(self._ACTUATOR, now * self._span)
+            self._goal = now
+            self.step("gave_way", openness=now)
+
     def read_state(self) -> tuple[float, float]:
         """(openness, d_openness/dt) as fractions -- computed on demand on the physics thread."""
         d = self._ctx.data
@@ -561,3 +588,4 @@ class DoorPlugin(MachinePlugin):
     def on_reset(self, ctx: SimContext) -> None:
         super().on_reset(ctx)
         self._goal = self.open0
+        self._pushed = 0.0

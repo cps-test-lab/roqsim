@@ -207,7 +207,9 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   `speed` (rad/s) where a world states one. Passive (holds its
   `open` angle) or, when `controllable`, an **automatic door**: `std_msgs/Float64` `cmd`/`state`
   topics + a `control_msgs/GripperCommand` action, and it pushes only gently — stalling on an
-  obstacle, then giving up, which ends its program with the error `stalled at openness …`. `color` / `frame_color` repaint the leaf and its casing, so a world can put
+  obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
+  door held off its target gives way after `stall_timeout`, so a robot can push through it.
+  `machine:<name>:openness` reads any door's measured openness. `color` / `frame_color` repaint the leaf and its casing, so a world can put
   its doors in its own trim colour without a recoloured copy of the model — only the leaf's *colliding*
   geometry is painted, leaving non-colliding decoration (the chrome handle) its own finish, and a glazed
   leaf should therefore set `frame_color` alone. `leaf: false` makes it a **cased opening** — a

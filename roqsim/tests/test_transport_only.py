@@ -88,22 +88,95 @@ def test_render_builds_a_world_whose_bridge_is_not_installed(tmp_path):
     assert model is not None  # the empty_room world definition, built without ROS
 
 
-def test_render_can_still_demand_the_simulators_strict_build(tmp_path):
-    """`roqsim sim` uses that build: a missing bridge there must stay a loud failure."""
+def test_render_can_still_refuse_a_ref_it_cannot_load(tmp_path):
+    """Without `skip_unloadable` a misspelt plugin stays the failure `roqsim sim` would raise."""
     from roqsim import render
 
-    target = _world(tmp_path, "components:\n  - ros2_bridge: {}\n")
-    with pytest.raises(PluginError, match="unknown plugin 'ros2_bridge'"):
-        render.build_target(target, None, skip_transport=False)
+    target = _world(tmp_path, "components:\n  - groud_truth_pose: {}\n")
+    with pytest.raises(PluginError, match="unknown plugin 'groud_truth_pose'"):
+        render.build_target(target, None, skip_unloadable=False)
 
 
 def test_render_warns_about_what_it_could_not_load(tmp_path, caplog):
     from roqsim import render
 
-    target = _world(tmp_path, "components:\n  - ros2_bridge: {}\n")
+    target = _world(tmp_path, "components:\n  - groud_truth_pose: {}\n")
     with caplog.at_level("WARNING"):
         render.build_target(target, None)
-    assert "ros2_bridge" in caplog.text  # a typo'd ref surfaces the same way
+    assert "groud_truth_pose" in caplog.text
+
+
+# -- a preview engine leaves the transport out itself ---------------------------------------------
+
+
+class Configured(Plugin):
+    """A transport that records being configured -- what a bridge binding its port would do."""
+
+    transport_only = True
+    configured: list[str] = []
+
+    def configure(self, ctx):
+        Configured.configured.append(self.name)
+
+
+CONFIGURED = f"{__name__}:Configured"
+
+
+@pytest.fixture
+def configured():
+    Configured.configured = []
+    return Configured.configured
+
+
+def test_a_preview_engine_does_not_configure_a_transport_plugin(configured, caplog):
+    """No consumer has to remember to drop it: one that forgot left a bridge waiting for a peer."""
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {CONFIGURED: {}, "name": "link"}]})
+    with caplog.at_level("INFO", logger="roqsim.engine"):
+        engine = Engine(cfg, preview=True)
+    with engine:
+        assert configured == []
+    assert engine.dropped_transport == [f"link ({CONFIGURED})"]
+    assert [type(p) for p in engine.plugins] == [Geometry]
+    assert caplog.text.count("link") == 1, "one line per build names what went"
+    assert _refs(cfg) == [GEOMETRY, CONFIGURED], "the caller's config keeps what the world declares"
+
+
+def test_a_preview_builds_a_world_whose_bridge_does_not_resolve(no_entry_points):
+    """The pip-only case `roqsim render` always handled, now for every preview."""
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(
+        {"components": [{GEOMETRY: {}}, {"ros2_bridge": {}}, {"sim_interfaces": {}}]}
+    )
+    with Engine(cfg, preview=True) as engine:
+        assert engine.ctx.model is not None
+    assert engine.dropped_transport == ["ros2_bridge", "sim_interfaces"]
+    assert engine.dropped_unloadable == []
+
+
+def test_a_preview_keeps_a_misspelt_ref_unless_asked_to_skip_it():
+    """Only identified transport goes by default; `skip_unloadable` is a consumer's choice."""
+    from roqsim.engine import Engine
+
+    raw = {"components": [{GEOMETRY: {}}, {"groud_truth_pose": {}}]}
+    with pytest.raises(PluginError, match="groud_truth_pose"):
+        Engine(load_config_from_dict(raw), preview=True)
+    engine = Engine(load_config_from_dict(raw), preview=True, skip_unloadable=True)
+    assert engine.dropped_unloadable == ["groud_truth_pose"]
+
+
+def test_a_run_engine_keeps_its_transport_plugins(configured):
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict({"sim": {"seed": 1}, "components": [{CONFIGURED: {}}]})
+    engine = Engine(cfg)
+    with engine:
+        assert len(configured) == 1
+    assert engine.dropped_transport == []
+    with pytest.raises(ValueError, match="skip_unloadable"):
+        Engine(cfg, skip_unloadable=True)
 
 
 def test_a_registered_but_unimportable_plugin_is_dropped_too(monkeypatch):
