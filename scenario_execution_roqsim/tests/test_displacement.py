@@ -107,7 +107,9 @@ def test_a_turn_past_half_a_turn_reads_as_the_shorter_way_round():
     1 deg the next, depending only on which sign MuJoCo happened to normalise to.
     """
     assert rotation_angle(IDENTITY, _quat_z(math.pi)) == pytest.approx(math.pi, abs=1e-6)
-    assert rotation_angle(IDENTITY, _quat_z(1.9 * math.pi)) == pytest.approx(0.1 * math.pi, abs=1e-5)
+    assert rotation_angle(IDENTITY, _quat_z(1.9 * math.pi)) == pytest.approx(
+        0.1 * math.pi, abs=1e-5
+    )
     assert rotation_angle(IDENTITY, -_quat_z(0.3)) == pytest.approx(0.3, abs=1e-6)
 
 

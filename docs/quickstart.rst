@@ -1014,6 +1014,7 @@ code   meaning
 ``3``  no GL context (set MUJOCO_GL=egl or osmesa, or give a window a display)
 ``4``  a recording that cannot be read or rebuilt
 ``5``  a check or health verdict that failed
+``6``  a run that ended before its scene did
 =====  ================================================================================
 
 ``2`` is anything the caller can fix by asking differently: a world, model, recording or file that
@@ -1023,7 +1024,11 @@ know) or whose world cannot be rebuilt from its provenance; a recording path tha
 does not end in ``.mcap``, is a ``2``. ``5`` is a verdict:
 ``roqsim check`` finding a problem in a world it resolved, an error-level ``roqsim health`` finding,
 an exporter's ``--check`` finding its output off its source, an asset check (``roqsim assets
-collision``, ``inspect-prop``) failing a prop. ``1`` is never returned on purpose, so it always means
+collision``, ``inspect-prop``) failing a prop. ``6`` is ``roqsim sim`` ending -- at ``--seconds`` or
+``--steps``, on a signal, by its window closing, at a plugin's or a quit's asking -- while a scene of the world (a Python scenario or an
+OpenSCENARIO file) was still running: the scene neither passed nor failed, so the run is no pass. A
+scene that ended exits ``0``, one that failed stops the run with its error, and a world without a
+scene is unaffected. ``1`` is never returned on purpose, so it always means
 the tool itself broke. Every other status comes with its reason: a line on stderr
 naming the command, or the report the tool prints (``check``, ``health``).
 
