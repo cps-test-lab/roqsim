@@ -182,3 +182,27 @@ def test_an_extends_that_does_not_resolve_is_reported_as_skipped(tmp_path):
     assert skipped
     assert all("no_such_parent.yaml" in problem for problem in skipped)
     assert any("extends" in problem for problem in skipped)
+
+
+def test_a_file_a_world_names_resolves_beside_it_or_in_a_package(tmp_path, monkeypatch):
+    import pytest
+
+    from roqsim.world import resolve_file_ref
+
+    (tmp_path / "room").mkdir()
+    (tmp_path / "room" / "room.ply").write_bytes(b"ply\n")
+    assert resolve_file_ref("room/room.ply", tmp_path) == tmp_path / "room" / "room.ply"
+    with pytest.raises(FileNotFoundError, match=r"splat file not found: .*room/nope\.ply"):
+        resolve_file_ref("room/nope.ply", tmp_path, "splat file")
+    # By reference: a file beside the worlds of a package, as `sim.world` resolves one.
+    package = tmp_path / "site" / "splat_rooms_pkg"
+    (package / "worlds" / "lab").mkdir(parents=True)
+    (package / "worlds" / "lab" / "lab.ply").write_bytes(b"ply\n")
+    (package / "__init__.py").write_text(
+        "from pathlib import Path\nWORLDS_DIR = Path(__file__).parent / 'worlds'\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    found = resolve_file_ref("splat_rooms_pkg:lab/lab.ply", None)
+    assert found == package / "worlds" / "lab" / "lab.ply"
+    with pytest.raises(FileNotFoundError, match="no installed package 'no_such_pkg'"):
+        resolve_file_ref("no_such_pkg:room.ply", tmp_path)

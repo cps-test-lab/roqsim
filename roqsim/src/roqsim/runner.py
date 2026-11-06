@@ -614,6 +614,10 @@ def run(
 ) -> Engine:
     """Load ``target``, run the loop, and return the (shut-down) engine. Programmatic entry point.
 
+    A scene the run ended before is in the returned engine's ``ctx.unfinished``
+    (:meth:`roqsim.context.SimContext.report_unfinished`), already logged; :func:`main` exits
+    :data:`roqsim.exit_status.UNFINISHED` on it.
+
     ``target`` is a world YAML, an MJCF scene, or a model reference — see :func:`config_for_input`.
     ``overrides`` is a nested dict deep-merged into the resulting world before it is built (see
     :func:`roqsim.config.apply_overrides`).
@@ -1019,7 +1023,10 @@ def main(argv: list | None = None) -> int:
             exit_status.BAD_INPUT,
             exit_status.NO_GL,
             exit_status.RECORDING,
-            note="4 is a recording given as the target that cannot be replayed.",
+            exit_status.UNFINISHED,
+            note="4 is a recording given as the target that cannot be replayed. 6 is a run that "
+            "it stopped (--seconds, --steps, a signal, the closed window, a plugin or a quit asking) "
+            "before its scene ended.",
         ),
     )
     parser.add_argument(
@@ -1241,7 +1248,7 @@ def main(argv: list | None = None) -> int:
         parser.error(f"--control: {err}")
 
     try:
-        run(
+        engine = run(
             args.target,
             headless=args.headless,
             pacing=pacing,
@@ -1276,7 +1283,8 @@ def main(argv: list | None = None) -> int:
         RecordingError,
     ) as err:
         return exit_status.fail("roqsim sim", err)
-    return exit_status.OK
+    # Said once already, by report_unfinished; the status is what a script reads.
+    return exit_status.UNFINISHED if engine.ctx.unfinished else exit_status.OK
 
 
 if __name__ == "__main__":  # pragma: no cover

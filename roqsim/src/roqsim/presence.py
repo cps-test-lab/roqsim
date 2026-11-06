@@ -42,8 +42,17 @@ of a flex resting on a floor, and either the group or the alpha alone takes it o
 frame. No raycast needs telling: ``mj_ray`` does not intersect a flex (measured: a ray aimed
 through a soft block reaches the floor behind it).
 
-The originals are saved on the entity, so returning is exact rather than a guess at what the
-world declared.
+The originals are saved once, so returning is exact rather than a guess at what the world declared.
+
+Presence composes
+-----------------
+
+A body is present only while every entity around it is. An entity's subtree can hold other entities
+(an arm on a robot), and each can go absent on its own, in any order. So each geom, flex and body's
+gravity compensation is held rather than overwritten: the first entity to go absent saves the
+original, each later one adds a hold, and the last to return puts the original back. The result
+depends on which entities are absent, never on the order they changed in,
+so a reset or a replay can apply them in any order.
 
 An absent entity is also frozen
 -------------------------------
@@ -99,14 +108,39 @@ PARK_Z = -100.0
 #: :data:`PARK_Z`, and well below the floor of any world a robot stands in.
 PARKED_BELOW_Z = -50.0
 
-#: Key under which an entity's saved geom appearance lives while it is absent.
+#: Key under which an entity's held geoms are listed while it is absent.
 _SAVED = "_presence_saved"
 
-#: Key under which an entity's saved per-body gravity compensation lives while it is absent.
+#: Key under which an entity's held bodies are listed while it is absent.
 _SAVED_GRAVCOMP = "_presence_saved_gravcomp"
 
-#: Key under which an entity's saved flex appearance and contact mask live while it is absent.
+#: Key under which an entity's held flexes are listed while it is absent.
 _SAVED_FLEX = "_presence_saved_flex"
+
+
+def _take(holds: dict, ids, read) -> list:
+    """Add a hold on each of ``ids``, saving the original on the first; those newly held."""
+    first = []
+    for i in ids:
+        held = holds.get(i)
+        if held is not None:
+            held[1] += 1
+        else:
+            holds[i] = [read(i), 1]
+            first.append(i)
+    return first
+
+
+def _release(holds: dict, ids) -> list:
+    """Drop a hold on each of ``ids``; ``(id, original)`` of those no entity holds any more."""
+    freed = []
+    for i in ids:
+        held = holds[i]
+        held[1] -= 1
+        if not held[1]:
+            freed.append((i, held[0]))
+            del holds[i]
+    return freed
 
 
 def subtree_body_ids(model, root: int) -> list[int]:
@@ -169,6 +203,12 @@ def arm_gravity_compensation(spec) -> None:
     spec.worldbody.gravcomp = 1.0
 
 
+def body_present(ctx, bid: int) -> bool:
+    """Whether body ``bid`` is present: whether no entity around it, or that it is the root of, is
+    absent. :attr:`roqsim.context.Entity.present` says only an entity's own state."""
+    return int(bid) not in ctx.presence_holds.get("gravcomp", {})
+
+
 def set_present(ctx, entity, present: bool) -> bool:
     """Make *entity* perceivable and collidable, or not. Physics thread only.
 
@@ -186,12 +226,12 @@ def set_present(ctx, entity, present: bool) -> bool:
     geoms = entity_geom_ids(ctx.model, entity.body)
     flexes = entity_flex_ids(ctx.model, entity.body)
     if present:
-        _restore(ctx.model, entity, geoms)
-        _restore_flexes(ctx.model, entity)
+        _restore(ctx, entity)
+        _restore_flexes(ctx, entity)
     else:
-        _hide(ctx.model, entity, geoms)
-        _hide_flexes(ctx.model, entity, flexes)
-        _freeze(ctx.model, ctx.data, entity)
+        _hide(ctx, entity, geoms)
+        _hide_flexes(ctx, entity, flexes)
+        _freeze(ctx, entity)
     entity.present = bool(present)
     # A transition writes model fields, while a recording's samples store `mjData` state
     # (roqsim.capture's STATE_SPEC is MuJoCo's keyframe notion), and the pose deliberately does
@@ -209,50 +249,58 @@ def set_present(ctx, entity, present: bool) -> bool:
     return True
 
 
-def _hide(model, entity, geoms) -> None:
-    saved = {}
-    for gid in geoms:
-        saved[gid] = (
+def _hide(ctx, entity, geoms) -> None:
+    model = ctx.model
+
+    def read(gid):
+        return (
             int(model.geom_group[gid]),
             int(model.geom_contype[gid]),
             int(model.geom_conaffinity[gid]),
             float(model.geom_rgba[gid][3]),
         )
+
+    for gid in _take(ctx.presence_holds.setdefault("geom", {}), geoms, read):
         model.geom_group[gid] = ABSENT_GEOM_GROUP
         model.geom_contype[gid] = 0
         model.geom_conaffinity[gid] = 0
         model.geom_rgba[gid][3] = 0.0
-    entity.meta[_SAVED] = saved
+    entity.meta[_SAVED] = list(geoms)
 
 
-def _hide_flexes(model, entity, flexes) -> None:
+def _hide_flexes(ctx, entity, flexes) -> None:
     """The flex counterpart of :func:`_hide`: the same three axes, on the flex's own fields."""
-    saved = {}
-    for fid in flexes:
-        saved[fid] = (
+    model = ctx.model
+
+    def read(fid):
+        return (
             int(model.flex_group[fid]),
             int(model.flex_contype[fid]),
             int(model.flex_conaffinity[fid]),
             float(model.flex_rgba[fid][3]),
         )
+
+    for fid in _take(ctx.presence_holds.setdefault("flex", {}), flexes, read):
         model.flex_group[fid] = ABSENT_GEOM_GROUP
         model.flex_contype[fid] = 0
         model.flex_conaffinity[fid] = 0
         model.flex_rgba[fid][3] = 0.0
-    entity.meta[_SAVED_FLEX] = saved
+    entity.meta[_SAVED_FLEX] = list(flexes)
 
 
-def _restore_flexes(model, entity) -> None:
-    """Put back exactly what :func:`_hide_flexes` saved, and nothing it did not."""
-    saved = entity.meta.pop(_SAVED_FLEX, None) or {}
-    for fid, (group, contype, conaffinity, alpha) in saved.items():
+def _restore_flexes(ctx, entity) -> None:
+    """Put back what :func:`_hide_flexes` saved, for each flex no other entity holds."""
+    model = ctx.model
+    held = entity.meta.pop(_SAVED_FLEX, None) or []
+    for fid, original in _release(ctx.presence_holds.setdefault("flex", {}), held):
+        group, contype, conaffinity, alpha = original
         model.flex_group[fid] = group
         model.flex_contype[fid] = contype
         model.flex_conaffinity[fid] = conaffinity
         model.flex_rgba[fid][3] = alpha
 
 
-def _freeze(model, data, entity) -> None:
+def _freeze(ctx, entity) -> None:
     """Stop an absent entity moving, so "not there" does not mean "falling out of the world".
 
     Zeroing ``contype``/``conaffinity`` takes an absent body out of the contact set, and a body with
@@ -280,36 +328,34 @@ def _freeze(model, data, entity) -> None:
     from rest. An absent entity whose actuators are still being commanded is a separate matter --
     its controller is driving it, and presence does not silence controllers.
     """
+    model, data = ctx.model, ctx.data
     bodies = entity_body_ids(model, entity.body)
-    saved = {}
-    for bid in bodies:
-        saved[bid] = float(model.body_gravcomp[bid])
+    holds = ctx.presence_holds.setdefault("gravcomp", {})
+    for bid in _take(holds, bodies, lambda b: float(model.body_gravcomp[b])):
         model.body_gravcomp[bid] = 1.0
+    for bid in bodies:
         adr, num = int(model.body_dofadr[bid]), int(model.body_dofnum[bid])
         if num:
             data.qvel[adr : adr + num] = 0.0
-    entity.meta[_SAVED_GRAVCOMP] = saved
+    entity.meta[_SAVED_GRAVCOMP] = list(bodies)
 
 
-def _thaw(model, entity) -> None:
+def _thaw(ctx, entity) -> None:
     """Give the subtree back the gravity it was compiled with.
 
     Velocity is deliberately not restored: an entity returns from absence either at rest or at the
     pose and velocity its spawn stated, never carrying momentum from before it left.
     """
-    for bid, gravcomp in (entity.meta.pop(_SAVED_GRAVCOMP, None) or {}).items():
-        model.body_gravcomp[bid] = gravcomp
+    held = entity.meta.pop(_SAVED_GRAVCOMP, None) or []
+    for bid, gravcomp in _release(ctx.presence_holds.setdefault("gravcomp", {}), held):
+        ctx.model.body_gravcomp[bid] = gravcomp
 
 
-def _restore(model, entity, geoms) -> None:
-    _thaw(model, entity)
-    saved = entity.meta.pop(_SAVED, None) or {}
-    for gid in geoms:
-        original = saved.get(gid)
-        if original is None:
-            # Never hidden by us: leave it exactly as the world declared it rather than
-            # inventing a group and a contact mask it never had.
-            continue
+def _restore(ctx, entity) -> None:
+    _thaw(ctx, entity)
+    model = ctx.model
+    held = entity.meta.pop(_SAVED, None) or []
+    for gid, original in _release(ctx.presence_holds.setdefault("geom", {}), held):
         group, contype, conaffinity, alpha = original
         model.geom_group[gid] = group
         model.geom_contype[gid] = contype

@@ -40,7 +40,17 @@ cut the same openings.
 Any endpoint-producing plugin below accepts an optional ``topics:`` map to set an endpoint's ROS
 topic. An absolute name **hardwires** it, overriding the namespace+default — e.g. ``topics: {image:
 /camera/color/image_raw}``; a relative name renames it inside the namespace — e.g. ``topics: {scan:
-scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics.
+scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics. The map is keyed
+on the name the plugin renames by -- the endpoint's own name, not the topic it publishes on by
+default -- and a key the plugin never renames is refused once the plugin has registered its
+endpoints, naming the names it does rename.
+
+A plugin **without** a ``CONFIG_SCHEMA`` accepts any key, so ``roqsim check`` and ``roqsim scenes
+describe`` warn (``config-key``) about each key its ``Config::`` block does not document, and a run
+logs the same warning: a misspelled key otherwise leaves its setting at the default. A warning and
+not a refusal, because such a plugin may read a key it does not document. ``enabled`` written inside
+a config is refused where the plugin neither documents nor names it: it is the sibling of the plugin
+ref, and one level too deep it switches nothing off.
 
 .. The catalog below is generated at build time from the roqsim.plugins entry points (see
    docs/_ext/plugin_docs.py), so it always matches the installed plugins. This note is a source
@@ -168,14 +178,18 @@ Transport plugins and the scene-only consumers
 
 A bridge publishes what the other plugins built; it adds nothing to the model. Such a plugin sets the
 class attribute ``transport_only = True`` — ``BridgeBase`` does, so every transport inherits it,
-including one you write — and the tools that want the *scene* rather than a running simulation drop it
-before building: ``roqsim render``, the scene-review window (``roqsim_scene_builder``), and ``roqsim export
-web/urdf/srdf/moveit``.
+including one you write — and every tool that wants the *scene* rather than a running simulation builds a
+preview engine (``Engine(cfg, preview=True)``), which leaves it out: ``roqsim render``, ``roqsim scenes
+describe``, the scene-review window (``roqsim_scene_builder``), ``roqsim export web/urdf/srdf/moveit``,
+``scene-to-map`` and ``roqsim sensors coverage``. The ROS bridges are identified by name where they do
+not resolve, so each of these tools **builds a ``*_ros`` world without ROS installed**. The tools that
+only draw or export geometry (``skip_unloadable=True``) also skip any other plugin whose ref does not
+resolve and warn, naming it — geometry is unaffected for a transport, but the other way to get there is
+a misspelt ref.
 
-That is what makes a ``*_ros`` world **renderable without ROS**. Those same tools also skip a plugin
-whose ref does not resolve at all (the bridge is registered by a colcon package, so it is absent from a
-pip-only environment) and say so on stderr, naming it — geometry is unaffected either way, but the
-other way to get there is a misspelt ref.
+``roqsim check`` leaves the transport out of its load too, but first validates the config of every
+plugin the world declares, so it still needs the bridge's package: on a world whose bridge does not
+resolve it fails at the ``config`` stage.
 
 ``roqsim sim`` keeps both by default: a simulation genuinely needs its transport, so an unresolvable
 ``ros2_bridge`` there stays the loud failure it should be (source ``ros2_ws/install/setup.bash``).
@@ -1000,45 +1014,358 @@ allowlist, with what each field does and how it can silently do nothing, is in t
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
 measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
 ``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
-flex name; its Young's modulus is not, for the reason in the next section.
+flex name; its Young's modulus is not, for the reason in
+:ref:`its material, as a world key <flex-material>`.
 
-A flex's material as a campaign factor
---------------------------------------
+.. _deformable-bodies:
 
-A deformable body is MuJoCo's own ``<flexcomp>``, written in whichever MJCF owns it -- a spawned
-asset, an arm's ``end_effector``, the world MJCF. What an experiment on it varies is its material,
-and ``flex_material`` states that in the world instead::
+Deformable bodies
+-----------------
+
+A soft block, a sheet, a cable or a compliant pad is a MuJoCo **flex**, and roqsim has no format of
+its own for one: it is written as MuJoCo's ``<flexcomp>`` in whichever MJCF owns it, and roqsim
+reads what that compiled into. This topic says where a flex can be written, what roqsim does for
+it, and what MuJoCo does with it that a world author has to know. Its snippets are two small
+models -- a soft block as a prop, and a pad as an arm's tool -- and a world that places both.
+
+Writing one
+~~~~~~~~~~~
+
+A 50 mm block of soft silicone is one ``<flexcomp>``, here in a model file ``block.xml`` of its
+own::
+
+   <mujoco>
+     <worldbody>
+       <body name="block">
+         <flexcomp name="block" type="grid" dim="3" count="5 5 5"
+                   spacing="0.0125 0.0125 0.0125" pos="0 0 0.027" mass="0.14" radius="0.002">
+           <edge equality="false"/>
+           <elasticity young="1e5" poisson="0.45" damping="0.001"/>
+           <contact solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2" friction="0.9" priority="1"
+                    selfcollide="none"/>
+         </flexcomp>
+       </body>
+     </worldbody>
+   </mujoco>
+
+What each value does, with the reason for the choice, is in the rest of this topic: a 5 x 5 x 5
+grid is 125 vertices; ``young`` and ``poisson`` are the material, which a world can restate
+(``flex_material``, below); ``damping`` is sized for a 1 ms step (numerical damping, below); the
+contact is stiffer than MuJoCo's default and carries a ``priority`` so that it is the one that runs
+(light vertices sink, and contact parameters mix, below); ``radius`` is the collision shell around
+each vertex, and the grid is raised by it so that the shell's bottom rests at the model's origin.
+
+A flex can be written in four places, and roqsim treats all four alike:
+
+* **an asset** placed with ``spawn_model`` -- a prop, like the block;
+* **an end effector** mounted with ``spawn_arm``'s ``end_effector:`` -- a tool, its vertices pinned
+  (``<pin>``) to a body of the tool model, like the pad below;
+* **the world MJCF** that ``sim.world`` names, compiled before any plugin builds;
+* **a plugin's** ``build``, which adds it to the spec like any other element.
+
+MuJoCo expands a ``<flexcomp>`` into bodies on three slide joints each, which carry the vertices,
+and the ``dof`` attribute decides how many there are:
+
+* ``full`` (the default): every vertex is a body -- 375 degrees of freedom for the block;
+* ``trilinear``: 8 nodes carry the flex and every vertex is interpolated from them (24);
+* ``quadratic``: 27 nodes (81).
+
+The two reduced modes compile only with ``selfcollide="none"``: MuJoCo 3.14 refuses
+``selfcollide="auto"`` under either ("trilinear interpolation cannot do self-collision"). A solid
+block cannot fold onto itself anyway, so stating ``none`` costs it nothing and keeps both modes
+open. ``roqsim check`` computes a flex's modes up to 2400 degrees of freedom and suggests a reduced
+mode above that; the web replay draws a ``quadratic`` flex approximately (below).
+
+**Elasticity is integrated only on a solid or an elastic shell.** ``young`` acts on a ``dim=3``
+flex, and on a ``dim=2`` flex whose ``elastic2d`` is not ``none``. On a ``dim=1`` cable, or on a
+shell left at ``elastic2d="none"`` (the default), it changes nothing: measured on MuJoCo 3.14, a
+pinned rope and a pinned sheet fall identically at 0, 1e4 and 1e7 Pa, where the same sheet at
+``elastic2d="both"`` holds its shape. A cable is made stiff with ``<edge stiffness>`` instead, and
+``flex_material`` refuses a modulus it would not read.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
+
+What roqsim does for it
+~~~~~~~~~~~~~~~~~~~~~~~
+
+**The integrator, and what it refuses.** ``sim.integrator: auto`` (the default) resolves after
+every plugin has built, so it sees a flex from any of the four places: to ``discrete`` for a flex
+whose elasticity MuJoCo integrates or that has passive contact, and to ``implicitfast`` otherwise.
+Before compile, roqsim refuses what such a flex cannot run under, naming the key to change:
+
+* a stated ``implicit`` or ``implicitfast`` (and, for passive contact, anything but ``discrete``);
+* ``sim.solver: pgs`` or ``sim.noslip_iterations`` above 0 -- MuJoCo supports neither with such a
+  flex under ``discrete``; ``newton`` (the default) and ``cg`` work;
+* a flex declared in a mocap body. A mocap body moves by having its frame replaced, which applies
+  no acceleration, so the flex would be carried rigidly and never deform. Declare it in a body that
+  follows the target through a weld, or on an arm's end effector.
+
+The rules, and the MuJoCo version they were measured on, are :mod:`roqsim.flex`'s; where they sit
+among the solver options is in :doc:`architecture` (§4, "Solver options").
+
+**A prop.** ``spawn_model`` places a model with a ``<flexcomp>`` like any other, and adds what the
+prop needs around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it (so ``SetEntityState`` has no ``base_joint`` to re-seat).
+  ``static`` and ``driven`` are refused for a flex nothing is pinned to -- welding the root would
+  hold none of it; ``<pin>`` the vertices that should be held. A flex pinned to a rigid body rides
+  that body's pose, whichever ``motion`` it has: the pad below, spawned ``static``, is a mat welded
+  where it is placed.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, where its contacts combine it with the other side's by priority (below).
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+
+**A tool.** ``spawn_arm``'s ``end_effector:`` mounts a model with a ``<flexcomp>`` pinned to one of
+its bodies, or written under its ``<worldbody>`` (moved into a body named after the file, so its
+pins hold on the mount). A 40 x 40 x 12 mm rubber pad on a rigid backing plate, ``pad.xml``, whose
+bottom vertex layer is pinned to the plate::
+
+   <mujoco>
+     <worldbody>
+       <body name="pad">
+         <geom name="plate" type="box" size="0.025 0.025 0.004" pos="0 0 0.004" mass="0.05"/>
+         <flexcomp name="pad" type="grid" dim="3" count="5 5 3" spacing="0.01 0.01 0.006"
+                   pos="0 0 0.0155" mass="0.02" radius="0.001">
+           <pin gridrange="0 0 0 4 4 0"/>
+           <edge equality="false"/>
+           <elasticity young="2e5" poisson="0.4" damping="0.001"/>
+           <contact solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2" friction="0.9" priority="1"
+                    selfcollide="none"/>
+         </flexcomp>
+       </body>
+     </worldbody>
+   </mujoco>
+
+The plate is the model's root, so it is what the mount welds, and the pad faces away from the
+mounting site along its +z. The pinned layer sits half a millimetre more than the radius clear of
+the plate: an element holding a pinned vertex has that radius as its collision shell, and at
+exactly one radius it grazes the plate as the pad deforms. The vertices are not
+gravity-compensated: the arm holds its pose and the pad hangs under its own weight, as a real one on
+a still arm does. The tool is welded at the site the arm's manifest declares for one
+(``end_effector: {site: ...}``), and a world's own ``end_effector.site`` wins over it. Where the arm
+has a force/torque cut, that site is below it: the UR5e declares ``tool_site``, the outer face of
+its adapter stack below ``fts_site``, while its bare ``attachment_site`` is on the flange beside the
+stack, where a sensor at ``fts_site`` reads none of the tool. ``force_torque`` refuses a sensor on an
+arm whose mounted tool is outside the subtree it reads.
+
+.. _flex-material:
+
+**Its material, as a world key.** What an experiment on a flex varies is its material, and a value
+that lives only in the MJCF that declares the flex cannot be a campaign factor. ``flex_material``
+states it in the world instead. A world that mounts the pad on a UR5e and drops the block in front
+of it, with the block's modulus a world key (model paths resolve beside the world file)::
+
+   sim:
+     timestep: 0.001
 
    components:
-     - spawn_arm: {model: ur5e, prefix: ur5e_, end_effector: {model: soft_tool.xml}}
+     - spawn_arm:
+         model: ur5e
+         prefix: ur5e_
+         pose: {position: {x: -0.25}, orientation: {yaw: 3.14159265}}
+         home: [-0.0671, -1.3800, 2.0314, -2.2222, -1.5708, -0.0671]
+         end_effector: {model: pad.xml}
        name: ur5e
-     - flex_material: {flex: ur5e_pad, young: 5.0e+5, poisson: 0.45, damping: 0.002,
-                       friction: 1.5, priority: 1}
-       name: pad_material
+     - spawn_model:
+         model: block.xml
+         pose: {position: {x: 0.25, y: 0.1, z: 0.05}}
+         motion: physics
+       name: block
+     - flex_material:
+         flex: block
+         young: 1.0e+5
+         poisson: 0.45
+       name: block_material
 
-Each key is then a sweep axis: ``--set components.pad_material.young=2.0e+5``, or a campaign's
-parameter variation over ``components.pad_material.young``. Three things to know:
+Each key is then a sweep axis: ``--set components.block_material.young=2.0e+5``, or a campaign's
+parameter variation over ``components.block_material.young``. Four things to know:
 
 * **It works on the spec, before compile, because it has to.** MuJoCo bakes ``young`` and
   ``poisson`` into the compiled element stiffness and keeps neither, so there is no model field a
   run-time write could reach -- which is why the modulus is a build-time component and not a
   ``model_override`` row. The contact values and the damping are compiled fields; setting them here
   keeps one material in one block, and ``model_override`` can still change the four live ones
-  during a run.
-* **The flex is named as it compiles**, with the prefix of the model that brought it in
-  (``ur5e_pad`` above). A name that matches nothing is refused with the list of the model's flexes,
-  so the first run tells you the right one. Plugins build in YAML order, so it is declared after
-  the component that brings the flex in -- below the arm, as here.
-* **A key the flex would not read is refused.** MuJoCo integrates elasticity only for a solid
-  (``dim=3``) or for a shell whose ``elastic2d`` is not ``none``; a modulus on a rope, on a shell left
-  at ``none``, or on a rigid flex would run exactly as without it. ``elastic2d`` and ``thickness`` can
-  be set in the same block, so a shell can be made elastic here.
+  (``flex_damping``, ``flex_friction``, ``flex_solref``, ``flex_solimp``) during a run.
+* **The flex is named as it compiles**, with the prefix of the model that brought it in -- the pad
+  on the arm above is ``ur5e_pad``. A name that matches nothing is refused with the list of the
+  model's flexes, so the first run tells you the right one. Plugins build in YAML order, so it is
+  declared after the component that brings the flex in -- the spawn, or the arm whose
+  ``end_effector`` carries it.
+* **A key the flex would not read is refused**: a modulus on a cable, on a shell left at
+  ``elastic2d: none`` or on a rigid flex would run exactly as without it. ``elastic2d`` and
+  ``thickness`` can be set in the same block, so a shell can be made elastic here, and a flex made
+  elastic here is integrated under ``discrete`` when ``sim.integrator`` is ``auto``.
+* **Write an exponent as** ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string --
+  refused, with that fix.
 
-Write an exponent as ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string -- refused,
-with that fix. A flex made elastic here is integrated under ``discrete`` when ``sim.integrator`` is
-``auto``, because the integrator is chosen after every plugin has built. The integrator's rules are
-in :mod:`roqsim.flex`; the material's, and the MuJoCo version they were measured on, are in
+The material's rules, and the MuJoCo version they were measured on, are in
 :mod:`roqsim.plugins._flex_material`.
+
+**Contacts are the flex's.** A contact with a flex carries ``geom = -1`` on the flex's side and the
+flex in ``contact.flex``. ``contact_monitor``, ``contact_impulse`` and ``contact_location`` read that
+side as the flex and attribute it to the entity that owns it (see *Navigation: detecting a
+collision*); ``roqsim check``'s interpenetration findings name it as ``flex '<name>'``.
+``contact_pair_override`` refuses a flex side, because a ``<pair>`` names two geoms and MuJoCo has
+none for a flex: a flex's contact is set on the flex (below). ``force_torque`` adds every flex contact
+with one side inside the subtree it senses to its reading (:class:`roqsim.flex.FlexContactWrench`),
+so a sensor at ``fts_site`` on the arm above reads what the pad touches as well as the pad's
+weight.
+
+**roqsim check explains each flex**, from the compiled model and before any step. On the world
+above, its flex lines::
+
+   WARN  [flex-timestep] flex 'ur5e_pad': mode 1 (135 Hz) is under-resolved by the timestep (omega * timestep = 0.85, above 0.3), and so are modes 2 and 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
+         hint: set sim.timestep <= 0.000325 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+   WARN  [flex-timestep] flex 'block': mode 3 (55.5 Hz) is under-resolved by the timestep (omega * timestep = 0.35, above 0.3); the damping ratio and frequency reported for it are not the ones that run: the discrete integrator distorts its dynamics, damping it less and ringing it slower than stated
+         hint: set sim.timestep <= 0.00086 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+
+   model: 186 bodies, 38 geoms, 531 joints, 6 actuators, 0 sensors, 1 cameras
+          timestep 0.001s, integrator discrete (auto: flex 'ur5e_pad' (elasticity), flex 'block' (elasticity))
+
+   flexes (2):
+     ur5e_pad  dim 3, 75 vertices, 192 elements, dof full, 25 pinned, on ur5e_pad (entity ur5e); elastic, no passive contact
+          modes 135*, 141*, 147* Hz; damping ratio 0.849*, 0.883*, 0.923* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
+          * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
+          contact solref 0.004 1 (flex), floor 0.00100504 s
+     block  dim 3, 125 vertices, 384 elements, dof full, 0 pinned, on block (entity block); elastic, no passive contact
+          modes 41.8, 41.8, 55.5* Hz; damping ratio 0.262, 0.262, 0.349* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
+          * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
+          contact solref 0.004 1 (flex), floor 0.00100504 s
+
+The integrator line says ``auto`` chose ``discrete`` and which flexes decided it. Each flex's first
+line is what it compiled into -- its pinned vertices, the body it is declared in and the entity that
+owns it; the second is its lowest elastic modes with everything else held, and the damping ratio
+each rings down with (the numerical-damping rule below); the last is its own contact ``solref``
+against the floor MuJoCo holds it to under this integrator (the ``solref`` floor, below: here
+``0.001 * sqrt(0.99) / 0.99`` at the flexes' ``solimp`` of 0.95 0.99 and damping ratio 1). A starred
+mode is one the timestep under-resolves (``omega * timestep`` above 0.3, the resolution limit
+below): its frequency and damping ratio are not the ones that run, the footnote line under the modes
+says so, and ``flex-timestep`` warns, with the ``sim.timestep`` that resolves every reported mode as
+its hint. Here the pad's three modes and the block's third are starred at the 1 ms step. At the
+default 2 ms step the same world also warns ``flex-damping``, because the integrator's share of the
+damping passes half::
+
+   WARN  [flex-damping] flex 'block': numerical damping is 67% of its damping (zeta_1 = 0.394, of which 0.262 is the discrete integrator's timestep * omega / 2), so its ringing changes with sim.timestep
+         hint: set sim.timestep <= 0.001 s (the flex's damping) to keep the integrator's share at most half, or raise <elasticity damping>
+
+(and the same for the pad, with every mode of both starred). The three flex warnings are
+``flex-damping``, ``flex-timestep`` and ``flex-solref`` (a contact time constant below the floor);
+none makes the check fail. In ``--json`` each mode carries ``omega_dt`` and ``resolved``, and each
+flex its ``max_timestep_resolved``; :doc:`quickstart` describes the report and its ``--json`` form.
+
+**Replay and recording.** ``roqsim export web`` draws each flex as a skin whose bones are the
+bodies its vertices follow (:mod:`roqsim.flex_skin`), so a replay deforms it from the run capture's
+pose tracks with no flex-specific code. A ``quadratic`` flex is drawn from the four nodes that weigh
+most for each vertex, where MuJoCo uses nine: exact at rest and under affine deformation,
+approximate where the flex curves between nodes, and the export warns. ``sim_poses.csv`` leaves out
+the vertex bodies (the run log names each flex left out); the recording and the run capture keep
+them.
+
+What MuJoCo does with it
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each of these was measured on MuJoCo 3.14.0, the version range the packages pin, and "the block"
+and "the pad" are the two models above.
+
+**Numerical damping under** ``discrete``. The integrator damps each elastic mode as if the stated
+``<elasticity damping>`` were one timestep larger: mode *i* rings down with damping ratio ``(damping
++ timestep) * omega_i / 2``, of which ``timestep * omega_i / 2`` is the integrator's. With no stated
+damping all of it is numerical, and changes with ``sim.timestep``; the integrator's share is at most
+half exactly when ``sim.timestep`` is at or below the damping. The relation, and the frequency the
+check reports, hold while the timestep resolves the mode. As ``omega * timestep`` grows, the
+integrator damps the mode less and rings it slower than reported. Measured on a pinned block's first
+mode, read from its ring-down with the damping one timestep, the damping ratio falls short by 0.5 %
+at ``omega * timestep`` 0.1, 2 % at 0.2, 4.4 % at 0.3, 11 % at 0.5 and 23 % at 0.85, and the
+frequency by 0.5 %, 1.8 %, 3.8 %, 9 % and 20 %; at a fixed ``omega * timestep`` the shortfall grows
+with the damping ratio. On the block's first mode, at its own damping, the reported ratio held
+within 1 % at ``omega * timestep`` 0.13 and 3 % at 0.26, and 0.9 of it rang at 0.52. The pad's first
+mode is 135 Hz, so at a 1 ms step ``omega * timestep`` is 0.85: ``roqsim check`` reports a damping
+ratio of 0.85, and a ring-down measures 0.65: a stiff, light flex at a coarse step is less damped
+than reported. ``roqsim check`` therefore takes 0.3 as the resolution limit -- at or below it, a
+mode damped at a ratio up to 0.3 rings within 5 % of both figures -- and stars and warns about
+(``flex-timestep``) every reported mode above it. Only the reported modes are judged; a flex's
+higher modes ring faster still. A coarser grid does not lower the lowest modes; a softer material
+does, ``omega`` scaling with the square root of ``young``.
+
+**The** ``solref`` **floor.** With ``refsafe`` enabled (MuJoCo's default) a contact whose time
+constant is shorter than the step can resolve is silently held to a floor, and the integrator
+decides how. Under ``euler``, ``rk4``, ``implicit`` and ``implicitfast`` the time constant itself is
+raised to **two** timesteps: measured with a sphere resting on a plane at a 1 ms step, 0.5, 1 and 2
+ms rest identically. Under ``discrete`` the time constant is left alone and the contact's
+*stiffness* is capped at what the step can resolve, damping ratio kept -- as a time constant,
+``timestep * sqrt(I) / (solimp[1] * dampratio)`` with ``I`` the impedance at the contact's depth,
+which is about **1.03** timesteps at MuJoCo's default ``solimp`` and a damping ratio of 1, and
+halves when the damping ratio doubles: measured the same way, 0.5 and 1 ms rest at the same depth
+and 2 ms deeper. With ``refsafe`` disabled there is no floor. :func:`roqsim.solref.solref_floor` is
+the one statement of the rule; ``roqsim check`` prints each flex's floor beside its ``solref`` and
+warns (``flex-solref``) when the ``solref`` is below it, and ``sim.contact_override`` refuses a time
+constant below the same floor.
+
+**Light vertices sink.** MuJoCo scales a contact's softness to the mass of the body it acts on: the
+depth at rest depends on the load the contact carries relative to that mass, not on the load
+alone. A flex's bottom vertex is a light body carrying the weight of the column above it. Measured:
+the block at MuJoCo's default contact (``solref`` 0.02 s, ``solimp`` 0.9 0.95) sinks its bottom
+vertices 0.8 mm into a plane, seven times as deep as a rigid box of the same weight; the depth grew
+with the vertex layers stacked above (0.6, 0.7, 1.0 and 1.8 mm for 2, 3, 5 and 9 layers of a
+50 mm block) and did not change with the block's total mass (0.15 kg and 1.5 kg sank alike). The
+block's own stiffer ``solref``/``solimp``, made the contact's own by ``priority`` (next), brings it
+to 0.03 mm.
+
+**Contact parameters mix, unless a priority decides.** At equal ``priority`` MuJoCo averages the
+two sides' ``solref`` and ``solimp`` (weighted by ``solmix``, equal by default) and takes the larger
+friction; the side with the higher ``priority`` gives all three outright. Measured with the block on
+a plane left at the defaults: at equal priority its 0.004 s ran as 0.012 s and its friction 0.3 as
+the plane's 0.9; at ``priority="1"`` both were its own. Two flexes of equal priority, such as the
+block and the pad, average each other's. No ``<pair>`` can name a flex, so the flex's own
+``<contact>`` with a ``priority`` is the one place to set a flex's contact. ``roqsim check``'s
+``contact solref`` line and floor check read the flex's own value, not the mixed one.
+
+**Friction is soft, so a sustained load creeps.** MuJoCo's friction is a soft constraint: a
+tangential load held below the Coulomb limit slides slowly rather than not at all, and a flex's many
+light contacts show it. Measured with the block on a plane tilted below its friction angle
+(friction 0.9): at 15 degrees it crept 2.3 mm/s, at 30 degrees 9 mm/s, at MuJoCo's defaults
+(``impratio`` 1, pyramidal cone). ``sim.impratio: 10`` cut both tenfold, and an elliptic cone
+(``sim.cone: elliptic``) with it by another factor of two. A press is enough to show it: the block
+on a table, pressed from above by the pad on a UR5e whose stalled position servos are not exactly
+vertical, is loaded sideways at 2 to 9 % of the normal load, and at the defaults it walks 24 mm
+across the table in three seconds; with both settings, 3.5 mm, at about three times the cost of a
+step, and either alone leaves 16 to 17 mm. A world that holds a flex under a sustained load should
+state both. ``noslip_iterations``, the solver's own slip removal, is refused with such a flex under
+``discrete``.
+
+**MuJoCo's site force sensor sees a flex's weight but none of its contacts.** A contact with a flex acts
+on its vertices and is not among the external forces MuJoCo's site force/torque sensor accounts
+for. Measured: a rigid probe pressed into a block reads its weight minus the contact force against
+a rigid block, and its weight alone against a flex block that pushes back with 4.8 N. Everything
+else a flex does reaches the sensor -- its weight, its elastic reaction at rest and in motion, a
+force applied to a vertex. That is the measurement behind ``force_torque``'s correction
+(:mod:`roqsim_sensors.plugins.force_torque`, "A flex's contacts are added to the reading").
+
+**Where a flex touches.** A contact names the flex's side by ``contact.flex`` and then either a
+vertex (``contact.vert``) or an element (``contact.elem``), never both. Measured on the block:
+against a plane every contact names a vertex (``vert >= 0``, ``elem == -1``); against a box, such as
+a table top, and against another flex every contact names an element (``vert == -1``,
+``elem >= 0``) -- a tetrahedron, whose four vertices include interior ones. So "which vertices are in
+contact" is not read off the contact list: take the flex's surface vertices within its collision
+radius (plus the contact's margin) of the other body, or near each ``contact.pos``.
+``model.flex_elem`` lists an element's vertices.
+
+**A stiff flex can leave the solve under-converged, and MuJoCo says so.** When a stiff flex meets a
+contact, MuJoCo may print ``Flex stiffness is too ill-conditioned for the effective-metric block
+preconditioner`` and ``Inertia matrix is too close to singular``, and carries on; roqsim does not
+intercept either. With the pad pressing the block, the block prints them as the pad lands from
+``young: 2.0e+5`` at a 1 ms step, and from ``5.0e+5`` even at 0.5 ms. A warned run at 2e5 Pa and
+1 ms matched the same run at 0.5 ms, which printed nothing, within 1 % in the block's deflection and
+2 % in the contact force. To trust a run that printed it, halve ``sim.timestep`` and compare.
 
 Perception ground truth
 -----------------------
@@ -2477,12 +2804,38 @@ the limits arrives late and is graded by ``goal_time_tolerance``. The module doc
 strike, a replayed demonstration -- hands it to ``ArmHandle.follow_trajectory(names, times, positions,
 velocities, accelerations)``. The controller samples it on simulated time every step (quintic between
 knots carrying accelerations, as ros2_control's controller does), holds the last knot, and gives way
-to any other command. Unlike the bridge's ``follow_joint_trajectory`` handler, which feeds waypoints
-on wall-clock time, this is deterministic in a stepped run. A position servo handed only the positions
+to any other command. Unlike the bridge's ``follow_joint_trajectory`` handler, which samples the
+trajectory on simulated time but from a ROS thread whose setpoints reach the physics thread through a
+queue, so that which step a setpoint lands on depends on scheduling, this is deterministic in a
+stepped run. A position servo handed only the positions
 trails them at speed by ``d·qd/p``; ``trajectory_feedforward: velocity`` cancels that, and ``dynamics``
 also adds the inverse dynamics, so a joint swept at a real arm's speed limit tracks to a hundredth of
 a degree. Where tracking is part of what a trial measures, still report the gains and the feed-forward
-with the setup.
+with the setup. The same handle commands a gripper in process, as a GripperCommand would:
+``ArmHandle.set_gripper(position)`` and ``set_gripper_max_effort(newtons)``.
+
+**Planning in process, without ROS** (``roqsim_manipulation.planning``). For a fixed arm in a cell,
+the planning can run on the world itself rather than on a planning scene described a second time:
+
+- ``ArmKinematics`` -- forward kinematics, the Jacobian and damped-least-squares IK of a site,
+  seeded and staying on the branch nearest the seed; an unreachable target raises ``IKError``.
+- ``CollisionChecker`` -- a copy of the model and data as they stand now (doors where they are, parts
+  where they lie), the arm and the parts it holds (``hold(body, data)``; ``release(body, data)`` leaves
+  a part where the world has it) checked against everything within a clearance, with allowed pairs for
+  a grip or a support. IK's restarts draw from the ``rng`` a call passes.
+- ``plan_path`` -- RRT-Connect then shortcutting, every segment checked; ``cartesian_path`` -- a
+  straight line of the site, for an approach into a fixture.
+- ``time_parameterize`` -- time-optimal timing along the path under per-joint velocity and
+  acceleration limits (reachability analysis, as TOPP-RA), retimed slower when the torques it needs,
+  by inverse dynamics with the payload (``ArmDynamics``), exceed a fraction of the drives' limits.
+  Its knots go straight to ``follow_trajectory``.
+- ``pose_margins`` -- a pose's distance to each joint limit, its singularity measures (the wrist, elbow
+  and shoulder by name for an arm of the UR kind) and its static
+  torques against the limits; ``roqsim arm margins RECORDING --arm … --site … --at …`` reports them
+  for a recorded run with the peak torques over it. ``HoldMonitor`` -- whether a part is held, by its
+  pads' contacts and its drift relative to the site.
+
+Everything random draws from the generator it is given, so a seeded run plans the same paths.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2541,33 +2894,281 @@ What the substrate owes such a cell is the arm, the sensing, the control law and
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
 
-Manipulation: a prop or a tool that deforms
--------------------------------------------
+Machines: one interface for what does something
+-----------------------------------------------
 
-A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
-model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
-``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto``
-picks the integrator the flex needs (:mod:`roqsim.flex`). What the spawn adds around it:
+A machine is one entity's own procedures -- a press's stroke, a door's opening, a belt's run -- and
+every machine looks the same from outside, so a cell, a scenario, the control socket or a client
+drives any of them the same way: through the handle under ``machine:<name>``. What a machine is, and
+where the line to a scenario runs, is :ref:`machines-and-scenarios` in the architecture.
 
-* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
-  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
-  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
-  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
-  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
-* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
-  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
-  that flex outright).
-* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
-  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
-  the flex, whose own value its contacts use.
-* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
-  lists its flexes in ``meta["flexes"]``.
-* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
-  under its own weight, as a real one on a still arm does.
+.. code-block:: python
 
-A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
-model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
-directories a manifest borrows through ``assets:`` are not searched for it.
+   press = ctx.blackboard.require("machine:press_1")
+   seq = press.start("stroke", show="hole")      # refused at once while busy
+   ...                                            # one step later it runs
+   status = press.status()                        # MachineStatus(seq, program, finished, error)
+   if status.seq == seq and status.finished:
+       assert status.error == ""                  # "" done; else the failure or "cancelled"
+   elif status.seq > seq:
+       ...                                        # another start followed this one
+   press.cancel(seq)                              # this start only; 0 once it has ended
+   press.start("stroke", token="mine")            # a token of the caller's own ...
+   press.cancel(token="mine")                     # ... cancels it before its number is known
+
+``roqsim plugins describe <machine>`` lists its ``programs`` with their parameters, and the handle's
+``start``, ``status`` and ``cancel`` are endpoints of the machine's entity: ``roqsim call
+press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the control socket, and
+``roqsim call press_1/cancel '{"seq": 3}'`` (or ``'{"token": "mine"}'``) cancels that start and no
+other; with neither, whatever is pending or runs. A program cannot take an argument named
+``token``: that is the start's own. Every program run is an event timeline on the run's events
+(``program_start``, the program's steps, ``program_end``).
+
+Writing a machine
+~~~~~~~~~~~~~~~~~
+
+Subclass :class:`roqsim.machine.MachinePlugin`, declare what it drives, and write each program as a
+generator method marked ``@program``. Each ``yield`` is one physics step::
+
+   from roqsim.machine import MachinePlugin, program
+
+   class GatePlugin(MachinePlugin):
+       """Machine: a gate on a slide that opens and closes."""
+
+       ACTUATORS = ("leaf",)           # position actuators, after the machine's prefix
+       HOME = {"leaf": 0.0}            # a world's `home:` overrides
+
+       def build(self, spec, ctx): ... # the model, from the config
+       def configure(self, ctx):
+           self.register_entity(ctx, body=self.config.get("prefix", "") + "gate")
+           super().configure(ctx)      # resolves ACTUATORS and home, publishes the handle
+
+       @program
+       def open(self, speed: float = 0.3):
+           """Slide the leaf open."""
+           yield from self.move("leaf", 1.2, speed=speed, event="opening")
+           yield from self.until_stopped("leaf")
+
+What a program has:
+
+- ``self.set(name, value)`` and ``self.ramp(name, value, speed)`` -- at once, or at ``speed`` in the
+  joint's unit per second; a target outside the actuator's range fails the program, naming the
+  machine, the actuator and the range; ``yield from self.move(name, value, speed=None, event=None,
+  timeout=None)`` does either and waits until reached;
+- ``yield from self.until(cond, timeout=None)``, ``self.until_reached(*names, timeout=None)``,
+  ``self.until_stopped(*names, timeout=None)`` (reached and at rest: what an interlock waits for),
+  ``self.wait(seconds)``. A joint that has not arrived ``timeout`` seconds after its target did --
+  by default the machine's ``MOVE_TIMEOUT``, 5 s unless the class sets another -- fails the program,
+  naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
+  loaded joint has arrived when it settles short of its target by its servo's standing offset. That
+  offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
+  such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
+  to allow for it;
+- a program yields nothing and waits on a helper with ``yield from``; a bare ``yield self.move(...)``
+  stops the run, as a defect does;
+- ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
+  failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
+  each actuator is held where its joint stands (its servo's standing offset under load kept), and
+  each setpoint keeps its value;
+- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+
+``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
+``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and
+is waited on like an actuator. ``NEEDS = {"feeder": "machine:feeder_1"}`` names a handle the
+machine requires; it is resolved at every reset and refused naming the key when nothing published it.
+``ready_when()`` states a precondition beyond "not busy" (a press ready only with its ram up).
+
+An actuator a machine drives is a plain ``<position>`` servo with a unit gear; a motor, a velocity
+servo, an ``<intvelocity>`` or a geared servo is refused at configure, naming the machine and the
+actuator. A program's arguments are checked against its annotations, whether they are strings
+(``from __future__ import annotations``) or types, unions with ``None`` included.
+
+A machine whose model is an MJCF file of its own is placed with ``spawn_model`` and its controller
+nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``registers_entity = False``:
+it drives the spawned model's actuators under the spawn's prefix and publishes its handle as
+``machine:<spawned entity>`` (:ref:`machines-and-scenarios`).
+
+Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
+endpoint of the machine's own whose command means "this is the target now" calls
+``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+
+Writing a scenario
+~~~~~~~~~~~~~~~~~~
+
+The scene around the machines -- who acts when, who waits for whom, what a presence leads to -- is a
+scenario, in OpenSCENARIO or in Python. A Python scenario subclasses
+:class:`roqsim.scenario.ScenarioPlugin`::
+
+   from roqsim.scenario import ScenarioPlugin
+
+   class PressDemo(ScenarioPlugin):
+       """Scenario: place a strip in the press and punch it."""
+
+       NEEDS = {"press": "machine:press_1"}
+
+       def program(self):
+           yield from self.set_entity_state("strip_1", {"position": {"x": 0.0, "y": 0.0, "z": 0.8}})
+           yield from self.run(self.press, "stroke", show="hole", hide="plain")
+           self.event("punched", part="strip_1")
+
+and is placed after the machines it drives::
+
+   components:
+     - press: {...}
+       name: press_1
+     - "my_cell.scenes:PressDemo": {stop_at_end: true}
+       name: demo
+
+The helper: ``run``, ``start``, ``spawn``, ``join``, ``first``, ``navigate``, ``until``, ``wait``,
+``entered``, ``left``, ``dwelled``, ``set_entity_state``, ``event`` (:mod:`roqsim.scenario`). ``entered``,
+``left`` and ``dwelled`` wait on a ``zone_trigger``'s handle and take a ``timeout`` as ``until``
+does. They read who is inside now, so a scenario goes after the zones it waits on; ``entered`` and
+``dwelled`` with ``since`` (a sim time) also count an entity that has come and gone since then.
+``dwelled`` on a zone whose ``dwell`` is 0, which reports no dwelling, is refused. ``set_entity_state`` takes a
+pose as a world file writes one:
+``x`` and ``y`` required, a missing ``z`` the floor (0.0, as ``spawn_model`` places a pose without
+one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
+``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
+reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
+it as around ``run``; ``join`` raises as soon as one task fails, and the others go on. The scene does
+not end before a task has, unless it was spawned with ``background=True``, for one that never ends by
+itself, and a start's error nobody joined then stops the run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
+before the scene does logs a start's error that reached no one. A run that ends before a scene that
+has taken a step did -- at ``--seconds`` or ``--steps``, on a signal, by the window closing -- says
+so as an error, and ``roqsim sim`` exits ``6`` (:ref:`exit-status`); a reset only starts the scene
+again. Cancelling a
+task, as ``first()`` does to the loser, cancels the machine start it waits on, by its number, or stops the route. A scene yields
+nothing and waits on a helper with ``yield from``; a bare ``yield self.run(...)`` is refused. ``navigate(check=False)``,
+like ``run(check=False)``, returns the status where another route overtook its own. A program's own
+exception stops the run with its own type, the scenario named in a note, and the scene never
+reports done. Every scenario takes ``needs:`` (rename a handle) and
+``stop_at_end:``; its ``done`` endpoint says when the scene ended.
+
+The same scene in OpenSCENARIO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A scene is written in Python or in OpenSCENARIO (``osc.roqsim``), in the same words and with the same
+outcome, so it moves from one to the other line by line:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Python scenario
+     - OpenSCENARIO
+   * - ``yield from self.run(press, "stroke")``
+     - ``machine_run(machine: 'press', program: 'stroke')``
+   * - ``self.start(...)``, ``self.spawn(...)``, ``self.join(...)``
+     - ``parallel:``
+   * - ``self.first(...)``
+     - ``one_of:``
+   * - ``self.wait(1.0)``
+     - ``wait elapsed(1s)``
+   * - ``self.until(cond)``
+     - ``wait <condition>``
+   * - ``self.navigate(mover, poses)``
+     - ``entity_navigate(entity: 'mover', goal_poses: [...])``
+   * - ``self.set_entity_state(entity, pose)``
+     - ``set_entity_state(entity: 'crate', pose: ...)``
+   * - ``self.entered(gate)``, ``self.dwelled(gate)``, ``self.left(gate)``
+     - ``zone_entered(zone: 'gate')``, ``zone_dwelled(zone: 'gate')``, ``zone_left(zone: 'gate')``
+
+An abandoned ``machine_run`` or ``entity_navigate`` stops what it started, as a cancelled task does.
+``machine_run`` gives each start a token of its own and cancels by it, at once and right behind the
+start, so the next ``machine_run`` finds the machine free and a start another client made is left
+alone; a cancel that is refused or gets no answer is logged as an error.
+
+A world names an OpenSCENARIO file as it names a Python scenario, and ``roqsim sim`` runs it through
+scenario-execution, in its own loop, with its recording, viewer and control socket::
+
+   - scenario: {file: press_cell.osc}    # relative to the world file
+     name: scene
+
+``scenario:`` says which one of a file holding several, ``stop_at_end`` (default true) ends the run with
+the scenario, and ``output_dir``, relative to the world file, is where its ``test.xml`` goes. A scenario
+that fails stops the run with a non-zero exit, and one the run ends before is written to ``test.xml``
+as failed and makes ``roqsim sim`` exit ``6``, as for a Python scenario. ``done`` and ``scenario_end`` are as for a Python
+scenario. One entry serves a world. scenario-execution is needed only to run: rendering, replaying,
+checking or exporting the world runs nothing and parses nothing, though ``roqsim check`` needs
+``scenario_execution_roqsim`` to know the entry. ``scenario_execution --simulation roqsim.scenario_adapter:MujocoSim`` remains the
+way to let scenario-execution own the loop, for a campaign or for scenario parameters.
+``scenario_execution_roqsim/tests`` holds one scene written both ways, and a test holds their
+timelines equal.
+
+An entity's states: ``part_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+What a machine does to a part shows on the part: a strip punched, bent or labelled; a machine's own
+lamp on. Each such state is a ``look_<name>`` body under the entity's root body, compiled in and
+shown or hidden at run time through :mod:`roqsim.presence`, so a recording replays it::
+
+   <body name="strip">
+     <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_plain">
+       <geom type="box" size="0.15 0.02 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+     <body name="look_hole">
+       <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
+   </body>
+
+One ``part_state`` entry serves the world. Its handle, ``part_state``, shows and hides a state by
+entity and name (``show``, ``hide``, ``set`` for one of an ``exclusive`` group), and each change is a
+``shown``/``hidden`` event::
+
+   - part_state:
+       shown: {strip_*: [plain]}            # at the start of every episode, by name or pattern
+       exclusive: {strip_*: [[plain, hole]]}
+
+A state's bodies are **massless**: one with mass is refused, naming the body, because showing a state
+must change how the part looks and collides, never what it weighs. A state that moves the centre of
+mass -- a strip bent into an L -- names the root body's inertia while it is shown, as a custom
+numeric ``look_<name>_inertia`` of ten values (``pos``, ``quat``, ``diaginertia``); two shown states
+that both name one are refused before anything changes, by ``show`` and by ``set`` alike. A pattern
+that matches no entity with states, an unknown entity or an unknown state is refused by name. Of an
+exclusive group at most one state is shown: ``show`` of a member while another is shown is refused
+(``set`` swaps them), and so is a ``shown:`` naming two. The plugin decides nothing: when a part
+changes is the machine's or the scenario's.
+
+A state is registered as an entity (kind ``look``), so a recording carries and replays its presence,
+but it is not *listed*: ``GetEntities``, ``GetSpawnables`` and the per-entity pose endpoints leave it
+out, and spawning, deleting or placing it is refused -- only ``part_state`` changes a state. A replay
+draws the shown states; it does not restore the inertia one names, which the picture does not need.
+
+Presence composes, so a state's own presence and its owner's are independent: while the owner is
+absent a state shows nothing, and a state changed meanwhile is as it was left when the owner returns.
+
+**Limits.** A state body nested in another state body is refused. A shown state's inertia moves the
+physics but not the compiled ``invweight0`` values, so a part held by a weld is slightly softer or
+stiffer while it is shown. A state belongs to the nearest entity around it: list ``part_state`` after
+an entity nested in another whose states it serves.
+
+Presence in a region: ``zone_trigger``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A light barrier at a belt's end, the space before an automatic door, the die of a press: a box in
+which a scene needs to know who is there. ``zone_trigger`` reports it and decides nothing -- what a
+presence leads to is a scenario's::
+
+   - zone_trigger:
+       pose: {position: {x: -0.9, y: 0.6, z: 1.0}}   # the box's centre, world or `body` frame
+       size: [0.12, 0.2, 0.08]                        # half-extents (m)
+       entities: [package]                            # name patterns that count; default all
+       point: com                                     # com (default) | origin
+       dwell: 1.0                                     # s inside before `dwelled`; 0 never
+     name: belt_end
+
+It emits ``entered``, ``dwelled`` (with ``after``, its seconds inside) and ``left`` (with
+``inside_s``) events, keeps a handle under ``zone:<address>`` (``zone:<name>``, or
+``zone:<entity>.<name>`` when nested; ``inside()``, ``entered_at()``, ``dwelling()``,
+``entered_since()``, ``dwelled_since()``, ``occupied``, ``counts``, ``dwell``) and publishes
+``occupied`` (a ``bool``, ``std_msgs/Bool`` on ROS, under ``<zone>/occupied``, in the namespace of
+the entity it is nested under) and ``occupancy``, both the zone's own endpoints, so an entity may
+carry several zones. With ``body:`` the box rides on that body; nested under an entity, ``body`` is
+named after the entity's prefix, the entity it is nested under is never counted, and while that
+entity or the ridden body is absent the zone reports no one -- a zone that only rides another
+entity's body still counts that entity. ``point: com`` reads the root body's centre of mass, which a
+``part_state`` state that names an inertia moves; ``point: origin`` reads its frame, for a mocap
+body.
 
 Writing your own
 ----------------
@@ -2577,6 +3178,14 @@ either register a ``roqsim.plugins`` entry-point or reference the class directly
 YAML. Referenced directly, the ref (``my_pkg.mod:MyPlugin`` or ``./plugins/x.py:Foo``) contains a
 colon and is the plugins-list entry's *key*, so **quote it** — ``- "my_pkg.mod:MyPlugin": {...}`` —
 to keep the colon from splitting the key.
+
+**A world compiled to look at it acts on nothing.** A render, a replay (``Recording.build``,
+``roqsim state --sensor``), ``roqsim check``, a settled export, the scene builder and a map compile
+the world with ``Engine(preview=True)``, and ``ctx.preview`` is then true. Such a world still steps
+and calls every hook, a replay on each restored sample, so a plugin computes its outputs as in a
+run: a replay reads them. What it must not do then is act: write a file a run owns, start or command
+anything (a machine's program, a controller switch), or stop the run
+(``ctx.request_stop``). Ask ``ctx.preview`` in the hook that acts and skip that part only.
 
 **If your config names a file, implement ``sources``.** ``roqsim.config.world_sources`` — what
 ``roqsim scenes inputs`` and the exporters' ``--manifest`` report, and what a run harness

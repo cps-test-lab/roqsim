@@ -37,6 +37,7 @@ from . import (
     pose_reading,
     published_field,
     report_value,
+    report_whole,
 )
 
 _MISSING = object()
@@ -67,9 +68,12 @@ class _InProcessReport(ReportCall):
     the physics thread, which in the stepped shape is the thread that ticks the tree.
     """
 
-    def __init__(self, access: InProcessAccess, entity: str, report: str, field: str):
+    def __init__(
+        self, access: InProcessAccess, entity: str, report: str, field: str, whole: bool = False
+    ):
         self._access = access
         self._entity, self._report, self._field = entity, report, field
+        self._whole = whole
 
     def poll(self) -> ReportReading | None:
         ctx = self._access._ctx()
@@ -89,6 +93,8 @@ class _InProcessReport(ReportCall):
         payload = ep.read()
         if payload is None:  # the producer has nothing to report yet
             return None
+        if self._whole:
+            return report_whole(f"{self._entity}.{self._report}", payload, "in-process")
         return report_value(
             f"{self._entity}.{self._report}",
             payload,
@@ -227,8 +233,10 @@ class InProcessAccess(WorldAccess):
         return pose_reading(name, ep.read())
 
     # -- reports ----------------------------------------------------------------------------------
-    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
-        return _InProcessReport(self, entity, report, field)
+    def entity_report(
+        self, entity: str, report: str, field: str = "", whole: bool = False
+    ) -> ReportCall:
+        return _InProcessReport(self, entity, report, field, whole)
 
     # -- commands ---------------------------------------------------------------------------------
     def call_endpoint(self, entity: str, endpoint: str, value=None) -> CommandCall:
@@ -242,6 +250,11 @@ class InProcessAccess(WorldAccess):
             sibling = row["path"].rpartition("/")[0] + "/" + row["ep"].confirm
             confirm = next((r["ep"] for r in rows if r["path"] == sibling), None)
         return _InProcessCommand(ctx, row, confirm, value)
+
+    def teardown(self) -> None:
+        # A posted command that has not run yet is no failure: it is applied at the next step, or
+        # the run has ended. Only a refusal is said.
+        self.report_unattended(unanswered=False)
 
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:

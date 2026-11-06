@@ -45,7 +45,8 @@ thread), and a frame is a function of the snapshot and the seed when it declares
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import inspect
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -85,6 +86,12 @@ SETTINGS_BLOCK = "sim.renderers"
 #: The renderer a world draws through when it names none: MuJoCo's own, registered as ``mujoco``.
 DEFAULT_RENDERER = "mujoco"
 
+#: Which bodies a camera draws. ``all`` is the world as it is; ``moving`` is the moving bodies alone
+#: (a robot, a prop a plugin moves; :attr:`SceneDescription.moving`), with no static geometry, no
+#: floor and nothing static to cast a shadow on them -- what a renderer that brings its own static
+#: world (a captured splat) composites into it by depth.
+BODIES = ("all", "moving")
+
 #: ``sim.render.mode``: ``sync`` waits each tick for the frames due in it; ``async`` renders them on a
 #: worker thread from a snapshot while physics steps on.
 RENDER_MODES = ("sync", "async")
@@ -122,6 +129,13 @@ class RendererCapabilities:
     decorations: bool = False
     #: Whether it draws only the geom groups a camera names (:attr:`CameraSpec.geomgroup`).
     geom_groups: bool = False
+    #: Whether it projects a camera's principal point off the image centre
+    #: (:attr:`CameraSpec.intrinsics` ``cx, cy``), as a model camera with ``principal`` has.
+    principal_point: bool = False
+    #: Whether it projects non-square pixels (``fx != fy``).
+    non_square_pixels: bool = False
+    #: Whether it draws the moving bodies alone for a camera that asks (:attr:`CameraSpec.bodies`).
+    moving_only: bool = False
 
     def missing(
         self,
@@ -129,8 +143,12 @@ class RendererCapabilities:
         model: str | None = None,
         decorate: bool = False,
         geomgroup: bool = False,
+        off_centre: bool = False,
+        non_square: bool = False,
+        moving_only: bool = False,
     ) -> list[str]:
-        """What of *images*, *model*, decorations and geom groups this renderer does not give."""
+        """What of *images*, *model*, decorations, geom groups, an *off_centre* principal point,
+        *non_square* pixels and the moving bodies alone (*moving_only*) this renderer does not give."""
         out = [f"image {i!r}" for i in images if i not in self.images]
         if model is not None and model not in self.camera_models:
             out.append(f"camera model {model!r}")
@@ -138,6 +156,12 @@ class RendererCapabilities:
             out.append("decorations")
         if geomgroup and not self.geom_groups:
             out.append("only some geom groups")
+        if off_centre and not self.principal_point:
+            out.append("an off-centre principal point")
+        if non_square and not self.non_square_pixels:
+            out.append("non-square pixels (fx != fy)")
+        if moving_only and not self.moving_only:
+            out.append("the moving bodies alone")
         return out
 
     def as_dict(self) -> dict:
@@ -151,6 +175,9 @@ class RendererCapabilities:
             "in_process": self.in_process,
             "decorations": self.decorations,
             "geom_groups": self.geom_groups,
+            "principal_point": self.principal_point,
+            "non_square_pixels": self.non_square_pixels,
+            "moving_only": self.moving_only,
         }
 
 
@@ -185,15 +212,52 @@ class CameraSpec:
     mujoco_camera: Any = None
     #: The geom groups drawn (``None``: MuJoCo's default groups).
     geomgroup: tuple[int, ...] | None = None
+    #: Which bodies it draws, one of :data:`BODIES`: ``moving`` asks for the moving bodies alone.
+    bodies: str = "all"
     #: Whether the caller decorates the scene (MuJoCo renderers only).
     decorated: bool = False
     #: The most geoms its scene may hold (MuJoCo renderers; ``None`` is MuJoCo's default).
     max_geom: int | None = None
+    #: ``(fx, fy, cx, cy)`` in pixels, the projection MuJoCo draws this camera with at this size:
+    #: from the camera's ``sensorsize`` and ``focal``/``principal`` where the model states them,
+    #: else the symmetric pinhole of ``fovy``. ``cx, cy`` count pixel centres from the top-left
+    #: pixel's, as a ``sensor_msgs/CameraInfo`` does. ``None`` (orthographic, or a ``fovy`` of 0): use ``fovy``.
+    intrinsics: tuple[float, float, float, float] | None = None
 
     @property
     def fx(self) -> float:
         """The focal length in pixels a pinhole camera of this size and ``fovy`` has."""
         return 0.5 * self.height / float(np.tan(np.radians(self.fovy) / 2.0))
+
+    def missing_from(self, caps: RendererCapabilities, images=None, decorate=None) -> list[str]:
+        """What of this camera *caps* does not give: its *images* (default: all it may ask for), its
+        camera model, its decorations (default: :attr:`decorated`), geom groups, principal point,
+        pixels and bodies."""
+        return caps.missing(
+            sorted(self.images if images is None else images),
+            self.model,
+            self.decorated if decorate is None else decorate,
+            self.geomgroup is not None,
+            self.off_centre,
+            self.non_square,
+            self.bodies == "moving",
+        )
+
+    @property
+    def off_centre(self) -> bool:
+        """Whether its principal point is off the image centre (by more than a thousandth of a pixel)."""
+        if self.intrinsics is None:
+            return False
+        _fx, _fy, cx, cy = self.intrinsics
+        return abs(cx - (self.width - 1) / 2.0) > 1e-3 or abs(cy - (self.height - 1) / 2.0) > 1e-3
+
+    @property
+    def non_square(self) -> bool:
+        """Whether its pixels are not square: ``fx != fy``."""
+        if self.intrinsics is None:
+            return False
+        fx, fy, _cx, _cy = self.intrinsics
+        return abs(fx - fy) > 1e-6 * max(abs(fx), 1.0)
 
 
 @dataclass
@@ -276,6 +340,42 @@ class Frame:
         return getattr(self, kind)
 
 
+def unknown_keys(block: Mapping, valid: Collection[str], where: str = "") -> list[str]:
+    """An error per key of *block* outside *valid*, naming the valid keys and the nearest one.
+
+    *where* is the dotted path of a block nested in a renderer's settings (``splat.pose``), so a
+    mistyped key deep in it is named with the block it sits in; the service prefixes every error
+    with ``sim.renderers.<name>``.
+    """
+    from difflib import get_close_matches  # noqa: PLC0415 -- only a mistake pays
+
+    names = sorted(str(k) for k in valid)
+    errors = []
+    for key in block:
+        if key in valid:
+            continue
+        near = get_close_matches(str(key), names, n=1, cutoff=0.8)
+        errors.append(
+            f"unknown key {key!r}{f' in {where}' if where else ''}; "
+            f"valid keys: {', '.join(names) if names else '(none)'}"
+            + (f"; did you mean {near[0]!r}?" if near else "")
+        )
+    return errors
+
+
+def validate_renderer_config(cls, settings: Mapping, base_dir=None) -> list[str]:
+    """``cls.validate_config(settings, base_dir)``, or ``(settings)`` for an override that takes no
+    *base_dir*."""
+    try:
+        params = inspect.signature(cls.validate_config).parameters
+    except (TypeError, ValueError):
+        params = {}
+    takes = "base_dir" in params or any(p.kind is p.VAR_KEYWORD for p in params.values())
+    return (
+        cls.validate_config(settings, base_dir=base_dir) if takes else cls.validate_config(settings)
+    )
+
+
 class Renderer:
     """Base of every renderer. Subclass it, declare :attr:`capabilities` and :attr:`SETTINGS`, and
     implement :meth:`open`, :meth:`render` and :meth:`close`.
@@ -299,16 +399,29 @@ class Renderer:
         return cls.capabilities
 
     @classmethod
-    def validate_config(cls, settings: Mapping) -> list[str]:
-        """Errors in *settings*, each naming the key; an unknown key names the valid ones."""
+    def open_timeout_s(cls, settings: Mapping) -> float | None:
+        """How long :meth:`open` may take with *settings*, in s, where that is longer than a tick.
+
+        A renderer that starts a process of its own and is slow to get ready states it; the
+        service then waits for the longer of this and ``sim.render.timeout_s`` before it names the
+        renderer as hung. ``None``: ``sim.render.timeout_s`` alone.
+        """
+        return None
+
+    @classmethod
+    def validate_config(cls, settings: Mapping, base_dir=None) -> list[str]:
+        """Errors in *settings*, each naming the key; an unknown key names the valid ones.
+
+        *base_dir* is the directory of the world being loaded (``None``: none, a tool's own), what a
+        relative path in them resolves against, so a renderer can name a missing or wrong file at
+        load rather than when it opens. Settings a world inherits through ``extends`` resolve there
+        too, not beside the parent, so a world meant to be extended names its files as
+        ``<package>:<path>`` or absolute (:func:`roqsim.world.resolve_file_ref`). An override that takes only *settings* is called so, and is
+        not given it (:func:`validate_renderer_config`).
+        """
         if not isinstance(settings, Mapping):
             return [f"settings must be a mapping, got {type(settings).__name__}"]
-        valid = sorted(cls.SETTINGS)
-        return [
-            f"unknown key {key!r}; valid keys: {', '.join(valid) if valid else '(none)'}"
-            for key in settings
-            if key not in cls.SETTINGS
-        ]
+        return unknown_keys(settings, cls.SETTINGS)
 
     def open(self, scene: SceneDescription) -> None:
         """Take the scene: upload what is static, remember what moves. Called once."""

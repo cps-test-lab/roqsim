@@ -14,7 +14,9 @@ attribute or config key its rate and presence come from -- and what each other b
   background thread. A ``read`` runs the endpoint's read on the physics thread through
   :meth:`~roqsim.context.SimContext.submit` and replies with it; a ``call`` writes a command and
   waits on its :class:`~roqsim.context.CommandFuture` -- a timeout is an error reply, never a
-  success -- or puts a stream's value in its slot.
+  success -- or puts a stream's value in its slot. Calls are written in the order the requests
+  arrived, though several threads answer them, so a command sent right behind another (a cancel
+  behind its start) reaches the physics thread after it.
 * an XPUB at :func:`roqsim.ipc.pub_uri` publishes the ``out`` endpoints some client subscribed to,
   from ``post_step`` at the endpoint's rate. ZeroMQ reports each subscription prefix to this
   socket, so the bridge publishes exactly the endpoints under a subscribed prefix and nothing when
@@ -38,6 +40,7 @@ Messages are :mod:`roqsim.ipc.wire`: JSON, with numpy arrays as raw frames besid
 from __future__ import annotations
 
 import collections
+import itertools
 import os
 import queue
 import threading
@@ -130,6 +133,10 @@ class IpcBridge(BridgeBase):
         self._push = None  # the physics thread's socket to the server thread
         self._inproc = f"inproc://roqsim-ipc-{id(self)}"
         self._requests: queue.SimpleQueue = queue.SimpleQueue()
+        #: Each request's place in arrival order, and the places whose call is not written yet.
+        self._arrivals = itertools.count()
+        self._unwritten: set[int] = set()
+        self._order = threading.Condition()
         self._threads: list[threading.Thread] = []
         self._registration = None
         self._late = threading.Lock()
@@ -291,7 +298,10 @@ class IpcBridge(BridgeBase):
             while True:
                 for sock, _ in poller.poll():
                     if sock is self._router:
-                        self._requests.put(self._router.recv_multipart(copy=False))
+                        place = next(self._arrivals)
+                        with self._order:
+                            self._unwritten.add(place)
+                        self._requests.put((place, self._router.recv_multipart(copy=False)))
                     elif sock is self._xpub:
                         self._subscription(self._xpub.recv())
                     else:
@@ -327,17 +337,34 @@ class IpcBridge(BridgeBase):
         except (zmq.ZMQError, AttributeError):
             return
         while True:
-            frames = self._requests.get()
-            if frames is None:
+            item = self._requests.get()
+            if item is None:
                 push.close()
                 return
+            place, frames = item
             identity, body = frames[0], frames[1:]
             try:
-                push.send_multipart([b"R", identity, *self._answer(body)], copy=False)
+                reply = self._answer(body, place)
+            finally:
+                self._written(place)
+            try:
+                push.send_multipart([b"R", identity, *reply], copy=False)
             except zmq.ZMQError:
                 return
 
-    def _answer(self, body: list) -> list:
+    # -- arrival order of the calls -----------------------------------------------------------------
+    def _await_turn(self, place: int) -> None:
+        """Wait until every request that arrived before ``place`` has written its call, or had none."""
+        with self._order:
+            self._order.wait_for(lambda: min(self._unwritten) == place)
+
+    def _written(self, place: int) -> None:
+        with self._order:
+            if place in self._unwritten:
+                self._unwritten.discard(place)
+                self._order.notify_all()
+
+    def _answer(self, body: list, place: int) -> list:
         rid = None
         try:
             header, value = wire.unpack(body)
@@ -353,7 +380,11 @@ class IpcBridge(BridgeBase):
                 raise _Refusal(
                     "bad_request", f"unknown op {op!r}; one of: hello, describe, read, call"
                 )
-            result = handler(header, value)
+            if handler == self._call:
+                result = self._call(header, value, place)
+            else:
+                self._written(place)  # writes nothing
+                result = handler(header, value)
             return wire.pack({"id": rid, "ok": True}, result)
         except _Refusal as refusal:
             return wire.pack(
@@ -497,22 +528,29 @@ class IpcBridge(BridgeBase):
         except Exception as exc:  # noqa: BLE001 - the producer's failure is the reply
             raise _Refusal("refused", f"{exc}", exception=type(exc).__name__) from None
 
-    def _call(self, header: dict, value) -> dict:
+    def _call(self, header: dict, value, place: int) -> dict:
         path = str(header.get("path") or "")
         ep = self._endpoint(path)
         if ep.direction != "in":
             raise _Refusal("wrong_kind", f"{path} is an out endpoint: use read")
         write = self._inputs[path]
         if endpoint_kind(ep) == "stream":
+            self._await_turn(place)
             try:
                 write(value)
             except ParameterError as exc:
                 raise _Refusal("bad_request", str(exc)) from None
+            finally:
+                self._written(place)
             return {"queued": True}
         timeout = self._timeout(header)
         confirm = self._confirm_of.get(path)
         waiter = _Confirmation(confirm) if confirm is not None else None
-        outcome = write(value)
+        self._await_turn(place)
+        try:
+            outcome = write(value)
+        finally:
+            self._written(place)
         if not isinstance(outcome, CommandFuture):
             raise _Refusal("refused", f"{path} could not be queued: the bridge is not running")
         if waiter is not None:

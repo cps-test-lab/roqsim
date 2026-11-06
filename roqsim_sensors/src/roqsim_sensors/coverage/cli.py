@@ -82,6 +82,8 @@ def load_world(world: str, overrides: dict | None = None):
     # for a filename and errors.
     ref = resolve_world_yaml_ref(world) if (not p.exists() and ":" in world) else None
     cfg = load_config(ref or (str(p) if p.exists() else world), overrides or None)
+    # Coverage reads geometry: the preview engine leaves out the transport, which would bind ports
+    # and wait for a peer that never comes.
     # The model and data outlive the plugins: coverage reads only them.
     with Engine(cfg, preview=True) as engine:
         ctx = engine.ctx

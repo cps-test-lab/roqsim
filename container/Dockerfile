@@ -9,7 +9,7 @@
 #
 # Contains every roqsim package in the repository except those container/packages.py excludes for
 # this image: the torch-backed ones (set INCLUDE_TORCH_PKGS=1 for a full non-ROS variant with CPU-only
-# torch) and the scene builder's windows.
+# torch), the one that draws on a CUDA GPU, which no image carries, and the scene builder's windows.
 
 ARG PYTHON_VERSION=3.12
 

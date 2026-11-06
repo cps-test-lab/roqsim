@@ -49,10 +49,15 @@ dwell shorter than one tick means "the first tick past the threshold" on both pa
 
 from __future__ import annotations
 
+import dataclasses
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 
 class AccessError(RuntimeError):
@@ -243,6 +248,19 @@ def plain(value):
         return value.item()
     tolist = getattr(value, "tolist", None)
     return tolist() if callable(tolist) else value
+
+
+def report_whole(name: str, payload, source: str) -> ReportReading:
+    """A whole report as one reading, its fields read at one moment: ``value`` is a mapping of them.
+
+    For an action that compares several fields of one report, which separate reads could catch on
+    either side of a step. In-process *payload* is the producer's object, over the socket the mapping
+    it arrived as, and both come out the same."""
+    if dataclasses.is_dataclass(payload):
+        payload = dataclasses.asdict(payload)
+    if not isinstance(payload, dict):
+        raise AccessError(f"{name} is a single value, with no fields to read together")
+    return ReportReading({k: plain(v) for k, v in payload.items()}, "", source)
 
 
 def published_field(backend: dict) -> str:
@@ -574,8 +592,11 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
-        """Watch one value a plugin publishes: field *field* of *entity*'s endpoint *report*.
+    def entity_report(
+        self, entity: str, report: str, field: str = "", whole: bool = False
+    ) -> ReportCall:
+        """With ``whole``, watch every field of the report, read together (:func:`report_whole`).
+        Otherwise watch one value a plugin publishes: field *field* of *entity*'s endpoint *report*.
 
         Addressed as the world names it -- the entity that owns the endpoint and the endpoint's name
         (``'ur5e'``, ``'force_limit'``), never a topic. An empty *field* means the one the
@@ -599,8 +620,44 @@ class WorldAccess(ABC):
         """
         return None
 
+    def unattended(self, call: CommandCall, what: str) -> None:
+        """Keep *call*, whose caller will not poll it again, so its outcome is still read: a
+        refusal is logged as an error naming *what*, and over the socket so is no answer by
+        :meth:`teardown`. For a command an action sends as it is abandoned, a cancel."""
+        pending = [(c, w) for c, w in getattr(self, "_unattended", []) if not self._read(c, w)]
+        if not self._read(call, what):
+            pending.append((call, what))
+        self._unattended = pending
+
+    def _read(self, call: CommandCall, what: str) -> bool:
+        """Whether *call* has its outcome; a refusal is logged."""
+        try:
+            outcome = call.poll()
+        except AccessError as err:
+            _log.error("%s was refused: %s", what, err)
+            return True
+        if outcome is not None and not outcome.ok:
+            _log.error("%s was refused: %s", what, outcome.detail)
+        return outcome is not None
+
+    def report_unattended(self, wait: float = 0.0, *, unanswered: bool = True) -> None:
+        """Read the outcome of each :meth:`unattended` call, waiting up to *wait* seconds for those
+        not answered yet; one with no answer then is logged, with *unanswered*."""
+        pending = getattr(self, "_unattended", [])
+        deadline = time.monotonic() + wait
+        while True:
+            pending = [(c, w) for c, w in pending if not self._read(c, w)]
+            if not pending or time.monotonic() >= deadline:
+                break
+            time.sleep(0.005)
+        if unanswered:
+            for _call, what in pending:
+                _log.error("%s got no answer", what)
+        self._unattended = []
+
     def teardown(self) -> None:
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""
+        self.report_unattended(unanswered=False)
 
 
 def select(kwargs: dict) -> WorldAccess:

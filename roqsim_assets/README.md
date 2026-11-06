@@ -195,14 +195,18 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   picks the drawer side, `superstructure: false` leaves a bare table. The uprights and light frame are
   floor-referenced; the tool panel and monitor mount ride with the worktop (0.20 m / 0.40 m above it,
   the catalogue's mounting positions), so the reach ergonomics hold at either column setting.
-- **`hazard_marking`** — paint on the floor in diagonal warning stripes, yellow and black: the
-  outline of a rectangle (`band`), which marks a set-down place and leaves bare floor for the load
-  inside it, or the whole rectangle (`band: 0`) for a keep-clear zone. `pose` is its centre and yaw,
-  `length` / `width` its outer size, `stripe` / `angle` / `colors` the pattern; by default a 5 cm
-  band in traffic yellow and anthracite with stripes 0.7 of the band wide, as marking tape is
-  printed. Without contact and half a millimetre thick: a wheel rolls over it, a camera sees it, and
-  a ray aimed at the floor returns from it. The stripes are cut geometry, not a texture, so they
-  stay sharp at any distance and run through an outline's corners.
+- **`floor_marking`** — paint on the floor: a line, the outline of a rectangle (`band`) or the
+  whole rectangle (`band: 0`), in one of three patterns. `solid` (the default) and `dashed` paint one
+  `color` — a lane's edge, a walkway's edge, a bay's outline; `dashed` cuts each painted side into
+  `dash`-long pieces with `dash` between them. `hazard` paints diagonal warning stripes in two
+  `colors`, with `stripe` / `angle` the pattern — the outline of a set-down place, which leaves bare
+  floor for the load inside it, or a whole keep-clear zone. A key of another pattern than the
+  marking's is refused. `pose` is its centre and yaw, `length` / `width` its outer size; by default
+  a 1.4 × 1.0 m outline with a 5 cm band in traffic yellow, and hazard stripes in traffic yellow and
+  anthracite 0.7 of the band wide, as marking tape is printed. Without contact and half a millimetre
+  thick: a wheel rolls over it, a camera sees it, and a ray aimed at the floor returns from it. Dashes
+  and stripes are cut geometry, not a texture, so they stay sharp at any distance and stripes run
+  through an outline's corners.
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers
@@ -215,6 +219,7 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
 
 ## Provenance & licences
 
-Each asset folder carries its **own** `CREDITS.txt` (source + licence). Only CC0 / CC-BY(-SA) assets
+Each asset folder carries its **own** `CREDITS.txt` (source + licence, and under CC BY what roqsim
+changed). Only CC0 / CC-BY(-SA) assets
 are committed here; see [THIRD_PARTY.md](THIRD_PARTY.md) for the convention. The bundled textures are
 ambientCG / Poly Haven (CC0).

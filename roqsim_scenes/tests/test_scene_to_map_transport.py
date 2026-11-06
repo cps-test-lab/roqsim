@@ -1,7 +1,7 @@
 """A world that publishes over ROS 2 is still mappable where ROS is not.
 
 ``scene-to-map --world`` wants the scene, not a running simulation: a transport plugin publishes what
-the others built and adds no geometry. So the loader drops it the way ``roqsim render`` does, which is
+the others built and adds no geometry. So the preview engine leaves it out as it does for ``roqsim render``, which is
 what lets a ``*_ros`` world be mapped in a pip-only environment -- or in a container whose ROS
 overlay nobody sourced, which is how a campaign's input generator runs.
 """
@@ -37,8 +37,8 @@ def test_a_world_declaring_the_bridge_maps_without_it(ros_world: Path, capsys):
     tris, lo, hi, _ = scene_to_map._load_world(str(ros_world))
     assert tris, "the room's geometry survived the drop"
     assert np.all(hi > lo)
-    out = capsys.readouterr()
-    assert "skipping" in out.out + out.err
+    # Printed, not only logged: the command shows warnings and up, and the engine logs this at INFO.
+    assert "skipping: ros2_bridge, sim_interfaces" in capsys.readouterr().out
 
 
 def test_the_command_writes_a_map_for_it(ros_world: Path, tmp_path: Path, capsys):
