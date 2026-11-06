@@ -659,3 +659,25 @@ def test_a_world_without_a_scene_ends_at_its_seconds_with_success(tmp_path, monk
     world.write_text("sim: {}\ncomponents:\n  - dummy: {}\n    name: d0\n")
     args = [str(world), "--headless", "--seconds", "0.05", "--pacing", "asap", "--control", "none"]
     assert runner.main(args) == exit_status.OK
+
+
+def test_a_quit_asked_with_a_reset_ends_the_run_naming_no_next_take(tmp_path, monkeypatch):
+    from roqsim import health
+
+    world = tmp_path / "w.yaml"
+    world.write_text('sim: {}\ncomponents:\n  - "quits:Quits": {}\n    name: q\n')
+    (tmp_path / "quits.py").write_text(
+        "from roqsim import control as ctl\n"
+        "from roqsim.plugin import Plugin\n"
+        "class Quits(Plugin):\n"
+        "    def post_step(self, ctx):\n"
+        "        if ctx.sim_time > 0.1:\n"
+        "            ctx.control.request_reset()\n"
+        "            ctx.control.set_state(ctl.QUITTING)\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    runner.run(str(world), headless=True, max_steps=200, record="r.mcap", pacing="asap")
+    assert health.next_take(tmp_path / "r.mcap") is None
+    assert not (tmp_path / "r-2.mcap").exists()

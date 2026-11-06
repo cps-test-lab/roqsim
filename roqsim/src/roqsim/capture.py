@@ -1016,7 +1016,7 @@ class StateRecorder:
             return None
         self._closed = True
         if self._writer is None and next_take is not None:
-            return None  # a reset before the first sample: the run goes on, with nothing lost
+            return None  # a reset before the first sample: the run goes on in the next take
         if self._writer is None:
             # Nothing sampled: say so rather than leaving an empty file that passes an existence check.
             self.log.warning(

@@ -53,8 +53,9 @@ there is reason to think it is still alive**:
 
 * ``--watch`` is that reason -- it is watching a run it expects to continue -- so wall time keeps
   advancing while the record does not, and a stop is caught by check 3. It stops without complaint
-  when the recording gains its **summary section**, because that is written by ``close()`` and so
-  means the run ended on purpose rather than stopped dead.
+  when the recording gains its **summary section** naming no next take, because that is written by
+  ``close()`` and so means the run ended on purpose rather than stopped dead; a summary naming one
+  (``next_take``, a reset) is followed into that take.
 * a one-shot check has no such premise: it is handed a directory and asked what is in it. It judges
   the span the record actually covers, because what happened after the last message is not something
   the file can say. Otherwise every finished run would be reported as a stall a minute after it ended.

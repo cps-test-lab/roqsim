@@ -230,6 +230,10 @@ def _tick(engine: Engine, pacer: Pacer, recorder: TakeRecorder | None = None) ->
     goes to a file of its own (:meth:`roqsim.capture.TakeRecorder.before_reset`).
     """
     c = engine.ctx.control
+    # A quit wins over a reset asked for in the same tick: the run ends, so no next take is named
+    # that nothing would ever write.
+    if c.state == ctl.QUITTING:
+        return False
     if c.take_reset():
         if recorder is not None:
             recorder.before_reset()
