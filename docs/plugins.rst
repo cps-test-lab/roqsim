@@ -2658,7 +2658,8 @@ What a program has:
   naming the machine and the actuator, so an obstructed joint never hangs a program silently. A
   loaded joint has arrived when it settles short of its target by its servo's standing offset. That
   offset covers gravity and springs on the joint's own bodies, not a load carried through a contact,
-  such as a part resting on a lift: such a machine's ``REACHED`` or stiffness has to allow for it;
+  such as a part resting on a lift, nor joint friction: such a machine's ``REACHED`` or stiffness has
+  to allow for it;
 - ``self.step(name, **fields)``, an event for a named step; ``self.fail(reason)``, the program's own
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
@@ -2723,7 +2724,11 @@ pose as a world file writes one:
 one), the orientation as a quaternion or ``roll``/``pitch``/``yaw``; anything else raises
 ``roqsim.pose.PoseError`` naming what is wrong, a NaN or an infinity included. A ``start``'s error
 reaches whoever waits on its task with ``join`` or ``first``, so a ``try`` around the join catches
-it as around ``run``; the scene does not end before a start has, and one nobody joined then stops the run. Every failed start emits ``start_failed``. A reset or a run that ends before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a start's task, as ``first()`` does to the loser, cancels its program. ``route(check=False)``,
+it as around ``run``; the scene does not end before a start has, and one nobody joined then stops the
+run. A failed start emits ``start_failed`` in the step its task sees it. A reset or a run that ends
+before the scene does cannot fail the run, so it logs an error that reached no one. Cancelling a
+start's task, as ``first()`` does to the loser, cancels its program; a program yields nothing, and
+waits on a helper with ``yield from``, a bare ``yield self.run(...)`` being refused. ``route(check=False)``,
 like ``run(check=False)``, returns the status where another route overtook its own. A program's own
 exception stops the run with its own type, the scenario named in a note, and the scene never
 reports done. Every scenario takes ``needs:`` (rename a handle) and
@@ -2738,6 +2743,9 @@ shown or hidden at run time through :mod:`roqsim.presence`, so a recording repla
 
    <body name="strip">
      <geom type="box" size="0.15 0.02 0.001" mass="0.19"/>
+     <body name="look_plain">
+       <geom type="box" size="0.15 0.02 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
+     </body>
      <body name="look_hole">
        <geom type="cylinder" size="0.005 0.0001" pos="0 0 0.0011" contype="0" conaffinity="0" mass="0"/>
      </body>
@@ -2769,8 +2777,10 @@ draws the shown states; it does not restore the inertia one names, which the pic
 Presence composes, so a state's own presence and its owner's are independent: while the owner is
 absent a state shows nothing, and a state changed meanwhile is as it was left when the owner returns.
 
-**Limits.** A state body nested in another state
-body is refused.
+**Limits.** A state body nested in another state body is refused. A shown state's inertia moves the
+physics but not the compiled ``invweight0`` values, so a part held by a weld is slightly softer or
+stiffer while it is shown. A state belongs to the nearest entity around it: list ``part_state`` after
+an entity nested in another whose states it serves.
 
 Presence in a region: ``zone_trigger``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

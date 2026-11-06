@@ -305,6 +305,15 @@ class WatcherBeforeItsStart(ScenarioPlugin):
         yield
 
 
+class YieldsAHelper(ScenarioPlugin):
+    """Scenario: ``yield`` where ``yield from`` is meant."""
+
+    NEEDS = {"press": "machine:press"}
+
+    def program(self):
+        yield self.run(self.press, "stroke")
+
+
 class UntilNaN(ScenarioPlugin):
     """Scenario: a condition with a timeout that is no number."""
 

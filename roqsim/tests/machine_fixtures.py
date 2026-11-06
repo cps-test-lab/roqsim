@@ -232,6 +232,17 @@ class Axis(MachinePlugin):
             self.seen_busy = self.handle.busy
 
     @program
+    def arrive_nan(self):
+        """Wait to arrive with a timeout that is no number."""
+        yield from self.until_reached("x", timeout=float("nan"))
+
+    @program
+    def takes_a_program(self, program: str):
+        """A parameter named as the handle's own."""
+        self.step("took", value=program)
+        yield
+
+    @program
     def wait_nan(self):
         """Wait on a condition with a timeout that is no number."""
         yield from self.until(lambda: False, timeout=float("nan"))
@@ -332,6 +343,20 @@ class Lift(MachinePlugin):
     def go(self, z: float):
         """Move to z at once."""
         yield from self.move("z", z)
+
+
+class FilteredLift(MachinePlugin):
+    """Machine: an axis on a servo with a filter, whose force follows its activation."""
+
+    ACTUATORS = ("z",)
+
+    def build(self, spec, ctx) -> None:
+        xml = LIFT.replace('kp="5000" kv="500"', 'kp="1000" kv="100" timeconst="0.05"')
+        spec.attach(mujoco.MjSpec.from_string(xml), prefix="", frame=spec.worldbody.add_frame())
+
+    def configure(self, ctx) -> None:
+        self.register_entity(ctx, body="lift")
+        super().configure(ctx)
 
 
 class ProgramClash(Lift):

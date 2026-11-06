@@ -397,4 +397,3 @@ def test_a_body_is_present_only_while_every_entity_around_it_is(ctx):
     set_present(ctx, prop, False)
     assert not body_present(ctx, lid_body), "absent with what is around it"
     assert lid.present, "its own state"
-

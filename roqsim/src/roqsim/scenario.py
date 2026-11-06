@@ -81,7 +81,7 @@ class Task:
         if self.done:
             return
         try:
-            next(self._gen)
+            yielded = next(self._gen)
         except StopIteration as stop:
             self.done = True
             self.result = stop.value
@@ -90,6 +90,14 @@ class Task:
                 raise
             self.done = True
             self.error = exc
+        else:
+            if yielded is not None:
+                # A bare ``yield self.run(...)`` would run nothing and look like success.
+                self._gen.close()
+                raise ScenarioError(
+                    f"{self.name or 'a task'} yielded {yielded!r}; a scene yields nothing, and "
+                    "waits on a helper with ``yield from``"
+                )
 
     def take_error(self) -> BaseException | None:
         """The error the task ended on, once: the first caller receives it."""
@@ -488,6 +496,6 @@ class ScenarioPlugin(Plugin):
         set_state(self._ctx, entity, [x, y, 0.0 if z is None else z], quat)
         yield
 
-    def event(self, name: str, **fields) -> dict:
+    def event(self, name: str, /, **fields) -> dict:
         """Emit an event of the scene, with the scenario as its source."""
         return self._ctx.events.emit(self.address, name, **fields)
