@@ -4,5 +4,5 @@ source: https://sketchfab.com/3d-models/office-table-c5e2ec3f92aa4e9fbc1826f5ef0
 licence text: https://creativecommons.org/licenses/by/4.0/
 
 Modified for roqsim (its licence asks for changes to be indicated): converted to an OBJ mesh and a
-MuJoCo model, which may simplify, scale, move and recolour the mesh, and which collides as boxes of
-its own: its top, columns and legs.
+MuJoCo model, which may simplify, scale, move and recolour the mesh, and which collides as boxes of its
+own: its top, columns, legs and feet.
