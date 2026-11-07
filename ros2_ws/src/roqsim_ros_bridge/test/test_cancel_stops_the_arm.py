@@ -290,7 +290,7 @@ def test_an_arm_that_never_arrives_is_still_aborted():
     assert "cancelled" not in result.error_string
 
 
-def _gripper_setup(start: float, *, converge=0.05):
+def _gripper_setup(start: float, *, converge=0.05, **hints):
     fingers = _Fingers(start, converge=converge)
     ctx, endpoint, on_payload = _wire(
         fingers.read_state,
@@ -301,6 +301,7 @@ def _gripper_setup(start: float, *, converge=0.05):
             "action": "control_msgs.action.GripperCommand",
             "name": "gripper_controller/gripper_cmd",
             "state_key": "gripper:ur5e",
+            **hints,
         },
     )
     return fingers, ctx, endpoint, on_payload
@@ -397,3 +398,35 @@ def test_a_gripper_that_stops_short_of_its_position_has_not_reached_it(fingers):
     assert result.position != pytest.approx(0.6, abs=0.05)
     assert result.reached_goal is False
     assert result.stalled is True
+
+
+#: Closes 0.4% of the remaining gap per step: 0 to 0.8 takes about 6.3 s of sim time, longer than the
+#: handler's default timeout, and it keeps moving faster than a stall the whole way.
+SLOW = 0.004
+
+
+def test_a_gripper_goal_still_moving_when_its_time_runs_out_is_aborted():
+    """Neither reached nor stalled: the goal has not ended, and the result does not say it did."""
+    fingers, ctx, endpoint, on_payload = _gripper_setup(0.0, converge=SLOW)
+    handle = _GoalHandle(_gripper_goal(0.8), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, endpoint)
+
+    assert handle.status == "aborted"
+    assert result.reached_goal is False
+    assert result.stalled is False
+    assert 0.1 < result.position < 0.79, "it was on its way"
+
+
+def test_a_producer_that_takes_longer_states_its_timeout_in_a_hint():
+    """A slow door names how long its goal may take, and the goal runs to its end."""
+    fingers, ctx, endpoint, on_payload = _gripper_setup(0.0, converge=SLOW, timeout=10.0)
+    handle = _GoalHandle(_gripper_goal(0.8), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, endpoint)
+
+    assert handle.status == "succeeded"
+    assert result.reached_goal is True
+    assert result.position == pytest.approx(0.8, abs=5e-3)

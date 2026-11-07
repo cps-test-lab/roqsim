@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -32,11 +33,11 @@ def test_conveyor_speed_is_a_stream_on_the_conveyor():
         speed = eps[("conveyor", "speed")]
         assert speed.namespace == "belt"
         assert [(p.name, p.type.unit) for p in speed.params] == [("data", "m/s")]
-        conveyor = engine.ctx.blackboard.get("conveyor:conveyor")
+        conveyor = engine.ctx.blackboard.get("machine:conveyor")
         speed.write({"data": -0.3})
-        assert conveyor.get_speed() != -0.3, "a stream is applied on the physics thread"
+        assert conveyor.value("speed") != -0.3, "a stream is applied on the physics thread"
         engine.step()
-        assert conveyor.get_speed() == -0.3
+        assert conveyor.value("speed") == -0.3
     finally:
         engine.shutdown()
 
@@ -56,14 +57,15 @@ def test_door_cmd_is_a_stream_and_door_a_command():
     engine = _engine({"door": {}, "name": "door"})
     try:
         eps = _endpoints(engine)
-        door = engine.ctx.blackboard.get("door:door")
+        door = engine.ctx.blackboard.get("machine:door")
+        span = math.radians(120)  # the default max_angle
         eps[("door", "cmd")].write({"data": 0.4})
         engine.step()
-        assert door.get_openness() == pytest.approx(0.4)
+        assert door.value("hinge_pos") == pytest.approx(0.4 * span)
         future = eps[("door", "door")].write({"position": 1.5})
         engine.step()
         assert future.result(0) is None
-        assert door.get_openness() == 1.0, "clamped to fully open"
+        assert door.value("hinge_pos") == pytest.approx(span), "clamped to fully open"
         assert isinstance(eps[("door", "state")].read(), float)
     finally:
         engine.shutdown()
@@ -87,3 +89,45 @@ def test_stage_progress_publishes_the_distance_travelled():
         ("done", None),
     ]
     assert rows["stage_progress"]["payload"] == "Progress"
+
+
+@pytest.mark.parametrize(
+    ("name", "programs"), [("door", {"open", "close", "move_to"}), ("conveyor", {"run", "stop"})]
+)
+def test_describe_lists_a_machines_programs(name, programs):
+    details = get_plugin_details(name)
+    assert {p["name"] for p in details["programs"]} == programs
+    assert {"start", "status", "cancel"} <= {row["name"] for row in details["endpoints"]}
+
+
+def test_a_door_and_a_conveyor_run_by_their_start_status_and_cancel_endpoints():
+    """What ``machine_run`` does with any machine: start a program by its endpoint with a token,
+    follow the status, cancel that start by its token."""
+    engine = _engine(
+        {"door": {"speed": 0.5}, "name": "door"}, {"conveyor": {"ramp": 0.5}, "name": "belt"}
+    )
+    try:
+        eps = _endpoints(engine)
+        future = eps[("door", "start")].write(
+            {"program": "move_to", "args": {"openness": 0.5}, "token": "t1"}
+        )
+        engine.step()
+        seq = future.result(1.0)
+        for _ in range(4000):
+            engine.step()
+            status = eps[("door", "status")].read()
+            if status.seq == seq and status.finished:
+                break
+        assert status.error == "" and eps[("door", "state")].read() == pytest.approx(0.5, abs=0.03)
+        future = eps[("belt", "start")].write(
+            {"program": "run", "args": {"speed": 0.4}, "token": "t2"}
+        )
+        engine.step()
+        seq = future.result(1.0)
+        cancelled = eps[("belt", "cancel")].write({"token": "t2"})
+        engine.step()
+        assert cancelled.result(1.0) == seq
+        engine.step()
+        assert eps[("belt", "status")].read().error == "cancelled"
+    finally:
+        engine.shutdown()
