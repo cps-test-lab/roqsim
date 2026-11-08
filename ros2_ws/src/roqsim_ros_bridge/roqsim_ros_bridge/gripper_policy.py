@@ -49,8 +49,8 @@ class GripperPolicy:
         if timeout < 0:
             raise ValueError(f"the `timeout` hint must be >= 0 (0 waits for ever), not {timeout!r}")
         tol = _number(hints, "reach_tolerance", DEFAULT_REACH_TOLERANCE)
-        if not tol > 0:
-            raise ValueError(f"the `reach_tolerance` hint must be > 0, not {tol!r}")
+        if not (tol > 0 and math.isfinite(tol)):
+            raise ValueError(f"the `reach_tolerance` hint must be a finite number > 0, not {tol!r}")
         on_timeout = hints.get("on_timeout", "succeed")
         if on_timeout not in ON_TIMEOUT:
             raise ValueError(

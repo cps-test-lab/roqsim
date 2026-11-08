@@ -73,6 +73,7 @@ def test_a_gripper_keeps_its_tight_tolerance():
         ({"reach_tolerance": -0.1}, "reach_tolerance"),
         ({"reach_tolerance": "0.02"}, "reach_tolerance"),
         ({"reach_tolerance": math.nan}, "reach_tolerance"),
+        ({"reach_tolerance": math.inf}, "reach_tolerance"),
         ({"timeout": -1.0}, "timeout"),
         ({"timeout": None}, "timeout"),
         ({"timeout": True}, "timeout"),
