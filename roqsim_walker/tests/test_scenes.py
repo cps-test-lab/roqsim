@@ -123,6 +123,26 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
         assert engine.ctx.blackboard.get("part_state").is_shown("tote_full", "full")
 
 
+def test_the_pedestrian_world_walks_as_it_did_before_hands():
+    """Hands off costs the walk nothing: each walker's pelvis, every 100 steps of a 5 s run, as the
+    world walked before hands existed (``data/walker_pedestrians_walk.npz``; the walk is
+    deterministic to the bit, ``test_walker_golden``)."""
+    want = np.load(Path(__file__).parent / "data" / "walker_pedestrians_walk.npz")["mocap_pos"]
+    engine = Engine(load_config(WORLDS / "walker_pedestrians.yaml"))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        got = []
+        for k in range(want.shape[0] * 100):
+            engine.step()
+            if k % 100 == 99:
+                got.append(engine.ctx.data.mocap_pos[::17].copy())
+        assert np.allclose(np.array(got), want, rtol=0.0, atol=1e-9)
+    finally:
+        engine.shutdown()
+
+
 def test_the_pedestrian_world_is_the_walker_as_it_was():
     engine = Engine(load_config(WORLDS / "walker_pedestrians.yaml"), preview=True)
     engine.setup()
