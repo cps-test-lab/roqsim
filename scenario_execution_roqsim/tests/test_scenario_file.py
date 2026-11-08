@@ -9,7 +9,7 @@ import pytest
 import tomllib
 import yaml
 
-pytest.importorskip("scenario_execution", reason="what the plugin runs")
+pytest.importorskip("scenario_execution", reason="scenario-execution: what the plugin runs")
 
 from test_osc_library import _entry_points  # noqa: E402
 
