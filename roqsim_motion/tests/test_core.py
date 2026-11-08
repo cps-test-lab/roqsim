@@ -112,12 +112,49 @@ def test_hand_poses_blend_and_a_grip_closes_finger_by_finger():
         st.set_pose("fist")
 
 
+def test_a_pose_change_eases_each_finger_whole_and_a_grip_closes_finger_by_finger():
+    st = H.HandState()
+    dt = 0.002
+    start = st.curls.copy()
+    st.set_pose("power")
+    goal = np.array(H.POSES["power"])
+    arrived = np.full((5, 3), np.nan)
+    moved = np.full(5, np.nan)
+    last = st.curls.copy()
+    t = 0.0
+    while t < 1.0:
+        st.advance(dt)
+        t += dt
+        step = np.abs(st.curls - last)
+        assert step.max() <= H.CURL_RATE * dt * 1.001  # never faster than the rate: no jump
+        last = st.curls.copy()
+        for f in range(5):
+            if np.isnan(moved[f]) and np.any(np.abs(st.curls[f] - start[f]) > 1e-9):
+                moved[f] = t
+            for k in range(3):
+                if np.isnan(arrived[f, k]) and abs(st.curls[f, k] - goal[f, k]) < 1e-9:
+                    arrived[f, k] = t
+    assert not np.isnan(arrived).any()
+    # each finger's bones arrive together: a finger folds as one, not joint by joint
+    assert np.all(np.ptp(arrived, axis=1) < 1e-9)
+    # index first, little last, the thumb over them after
+    assert moved[1] < moved[2] < moved[3] < moved[4] < moved[0]
+    # changed part-way, a pose starts from where the fingers are
+    st.set_pose("open")
+    st.advance(dt)
+    mid = st.curls.copy()
+    st.set_pose("point")
+    st.advance(dt)
+    assert np.abs(st.curls - mid).max() <= H.CURL_RATE * dt * 1.001
+
+
 def test_fingers_curl_toward_the_palm_of_each_hand():
     for side, palm in (("l", -1.0), ("r", 1.0)):
         lay = H.layout(side)
-        open_tips = H.fingertips(lay, [0, 0, 0], Q.IDENTITY, np.array(H.POSES["open"]))
+        flat = H.fingertips(lay, [0, 0, 0], Q.IDENTITY, np.array(H.POSES["flat"]))
         fist = H.fingertips(lay, [0, 0, 0], Q.IDENTITY, np.array(H.POSES["power"]))
-        assert np.all(palm * (fist[1:, 1] - open_tips[1:, 1]) > 0.02)
+        assert np.all(palm * (fist[1:, 1] - flat[1:, 1]) > 0.02)
+        assert np.all(fist[1:, 2] - flat[1:, 2] > 0.04)  # folded back toward the wrist
         pos, rot = H.finger_fk(lay, [0, 0, 0], Q.IDENTITY, np.array(H.POSES["open"]))
         assert pos.shape == (15, 3) and rot.shape == (15, 4)
         assert len(H.bone_names(side)) == 15

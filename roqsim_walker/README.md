@@ -143,12 +143,12 @@ world keeps its look and its timing unedited.
 
 - wrists that turn (three rotations each) and five fingers of three bones a hand, mocap bodies
   **with no geom**, so neither a ray nor a contact pays for them;
-- named hand poses, blended: `open`, `power`, `pinch`, `flat`, `point`; a grip closes finger by
-  finger until each meets what it holds;
-- a `grip_l`/`grip_r` site on each wrist, at the hand's grip frame: +x out of the palm, +z along the
-  fingers, the frame an object's grip site states so that holding makes the two one;
+- named hand poses, eased: `open`, `power`, `pinch`, `flat`, `point`; a grip closes finger by
+  finger, the thumb over them, until each meets what it holds;
+- a `grip_l`/`grip_r` site on each wrist, at the hand's grip frame: a handle's radius in front of
+  the palm across the knuckles, +x out of the palm, +z along the fingers, the frame an object's grip site states so that holding makes the two one;
 - a press proxy per hand: a fingertip sphere that pushes what has a degree of freedom (a button),
-  posed on the index fingertip while a move presses and parked below the floor otherwise;
+  posed on the drawn index fingertip while a move presses and parked below the floor otherwise;
 - its posing through the motion core, published as `humanoid_body:<name>`: each hand's goal (a pose
   with a rotation, or a point), the posture -- turning toward a target, crouching for a low one,
   bending forward as `reach` always has, leaning for one to the side -- and gaze, blended over the
@@ -225,11 +225,17 @@ squeezing a free body would push it with unbounded force, so that is left for a 
 own.
 
 **The skin.** Where a blueprint has finger weights (`<obj>.fingers.npz`), its hands deform with the
-fingers. The bundled characters' source rigs weight a thumb chain and *one* chain for the four
-fingers, so the thumb follows its bones and the four fingers' chain is split between the four
-fingers by the bone nearest each vertex; `roqsim walker import-actor --fingers-only` writes the
-sidecar for a blueprint from its source. A blueprint without one binds each hand to its wrist as one
-rigid part: its hand follows the wrist, and its fingers are not drawn from weights it does not have.
+fingers, and the hand's bones are measured on its mesh (`roqsim_walker.skin.fit_hands`): each finger's
+knuckle, joints, line and tip where the mesh has them, the palm's surface and the grip frame in front
+of it. The bones then turn the skin about its own knuckles, the index tip a press aims and the proxy
+sits on is the drawn one, and the hand keeps the size the character was modelled with (a generic hand
+on another mesh's fingers sweeps the skin about the wrong pivots: a fist deeper than the palm is
+broad, a fingertip centimetres off the one drawn). The bundled characters' source rigs weight a thumb
+chain and *one* chain for the four fingers, so the thumb follows its bones and the four fingers' chain
+is split along the palm's breadth, each vertex to the finger whose bones it is nearest;
+`roqsim walker import-actor --fingers-only` writes the sidecar for a blueprint from its source. A
+blueprint without one binds each hand to its wrist as one rigid part, with the default hand's
+geometry: its hand follows the wrist, and its fingers are not drawn from weights it does not have.
 
 **What hands on costs**, measured with `roqsim walker bench-hands` (a robot with its 360-ray lidar
 and 1 or 10 walkers patrolling; `off`, `on` idle, and `moving`: both hands on goals that move every

@@ -16,7 +16,7 @@ moves a worker makes, in which order and for what, is a scenario's (`docs/archit
 |---|---|
 | `description.py` | the canonical humanoid (the walker's seventeen joints), rest offsets, limits, forward kinematics |
 | `ik.py` | the whole-body solver: turn, crouch, bend and lean for the targets; two-bone arms and legs; the wrist on the target's rotation; gaze |
-| `hands.py` | five fingers of three bones a hand, the named poses `open`, `power`, `pinch`, `flat`, `point`, blended; a grip that closes finger by finger |
+| `hands.py` | five fingers of three bones a hand, each bone on its own axis (the thumb's first opposes it); a hand measured on a mesh or the default one; the named poses `open`, `power`, `pinch`, `flat`, `point`, each finger eased whole; a grip that closes finger by finger, index to little, the thumb over them |
 | `targets.py` | a hand's target: a world pose, or a site, body or entity with an offset, resolved every tick |
 | `retarget.py` | retargeting tables: a body mapped onto the canonical humanoid |
 
@@ -24,8 +24,8 @@ The solver is analytic, since it runs in Python on every update of every handlin
 left out of reach after the posture it allows is reported by its residual and never stretched to.
 Nothing is drawn and no iteration count depends on time, so a run is deterministic.
 
-**The grip frame** is where a hand holds: at the palm's centre, +x out of the palm toward what it
-holds, +z along the fingers. An object's grip site states the same frame, so holding is making the
+**The grip frame** is where a hand holds: in front of the palm across the knuckles, +x out of the
+palm toward what it holds, +z along the fingers. An object's grip site states the same frame, so holding is making the
 two frames one.
 
 ## The moves

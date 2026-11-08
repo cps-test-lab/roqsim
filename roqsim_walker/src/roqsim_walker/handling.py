@@ -32,13 +32,42 @@ POSTURE_RATE = {"turn": 1.5, "lean": 1.0, "crouch": 0.4, "bend": 1.5}
 _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
 
 
-def layouts_for(skeleton, block: dict | None = None) -> dict:
-    """Each hand's layout for a walker's skeleton: the default hand scaled to its forearm."""
+def layouts_for(skeleton, block: dict | None = None, mesh: str | None = None, tpose: bool = False,
+                flip=None) -> dict:
+    """Each hand's layout for a walker's skeleton: measured on its character ``mesh`` where that has
+    finger weights (:func:`roqsim_walker.skin.fit_hands`), so the bones turn the skin about its own
+    knuckles; else the default hand scaled to its forearm. A side the blueprint's ``hands`` block
+    states is the default hand with its overrides."""
+    fitted = _fitted(mesh, tpose, skeleton, flip) if mesh else None
+    if mesh and fitted is None:
+        raise ValueError(f"{mesh}: its finger weights do not show a thumb and four fingers to measure the hands on")
     out = {}
     for side in ("l", "r"):
+        stated = (block or {}).get(side)
+        if fitted is not None and not stated:
+            f = fitted[side]
+            out[side] = H.make_layout(side, f["bases"], f["lengths"], f["directions"], f["palm"], f["grip"])
+            continue
         forearm = float(np.linalg.norm(skeleton.offset(f"wrist_{side}")))
-        out[side] = H.layout(side, scale=forearm / 0.24, block=(block or {}).get(side))
+        out[side] = H.layout(side, scale=forearm / 0.24, block=stated)
     return out
+
+
+_FITS: dict = {}
+
+
+def _fitted(mesh, tpose, skeleton, flip):
+    """:func:`roqsim_walker.skin.fit_hands`, once per mesh and skeleton in a process: a world of
+    several workers of one character measures its hands once."""
+    import os
+
+    from roqsim_walker.skin import fit_hands
+
+    key = (os.path.abspath(mesh), os.path.getmtime(mesh), bool(tpose), flip,
+           tuple(sorted((skeleton.offsets or {}).items())), skeleton.root_height)
+    if key not in _FITS:
+        _FITS[key] = fit_hands(mesh, tpose=tpose, skeleton=skeleton, flip=flip)
+    return _FITS[key]
 
 
 def description_for(skeleton) -> Description:

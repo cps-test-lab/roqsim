@@ -255,7 +255,13 @@ class WalkerPlugin(Plugin):
             from roqsim_walker.handling import layouts_for
             from roqsim_walker.humanoid import to_skeleton
 
-            self._layouts = layouts_for(to_skeleton(blueprint["skeleton"]), blueprint["hands"])
+            self._layouts = layouts_for(
+                to_skeleton(blueprint["skeleton"]),
+                blueprint["hands"],
+                mesh=blueprint["mesh"] if use_skin and blueprint["hand_weights"] == "fingers" else None,
+                tpose=blueprint["tpose"],
+                flip=blueprint["flip"],
+            )
             kw["hands"] = self._layouts
         build_humanoid(
             spec,
