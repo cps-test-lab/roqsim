@@ -102,6 +102,7 @@ class ScenarioFilePlugin(Plugin):
     def on_reset(self, ctx) -> None:
         self._finish_tree(ctx, reported=False)
         self._started = self._ended = self._done = False
+        self._clock = None
 
     def post_step(self, ctx) -> None:
         # A world compiled to look at it steps too: a replay's sensors, a settled export.

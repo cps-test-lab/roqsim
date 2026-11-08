@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import importlib.util
 import logging
 import queue
 import threading
@@ -423,6 +424,22 @@ def _part_with_states(tmp: Path) -> dict:
     )
 
 
+def _needs_module(module: str, what: str) -> Callable[[], str | None]:
+    def check() -> str | None:
+        return None if importlib.util.find_spec(module) else f"{what} is not installed ({module})"
+
+    return check
+
+
+def _scenario_file(tmp: Path) -> dict:
+    """A scenario still running when the trial resets: the reset starts it over."""
+    osc = tmp / "reset.osc"
+    osc.write_text(
+        "import osc.helpers\n\nscenario reset_case:\n    do serial:\n        wait elapsed(1000s)\n"
+    )
+    return _world({"scenario": {"file": str(osc), "stop_at_end": False}, "name": "scenario"})
+
+
 def _static(*components: dict, **sim) -> Case:
     return Case(lambda _tmp: _world(*components, **sim))
 
@@ -670,6 +687,10 @@ CASES: dict[str, Case] = {
         lambda _: _world(_robot("spot", name="robot")),
         unavailable=_needs_file(_spot_policy, "the Spot policy (fetched, not shipped)"),
     ),
+    # scenario
+    "scenario": Case(
+        _scenario_file, unavailable=_needs_module("scenario_execution", "scenario-execution")
+    ),
 }
 
 _RAY_SENSORS = ("lidar", "range_sensor", "livox_mid360", "seyond_robin_w1g")
@@ -729,8 +750,6 @@ SKIPPED: dict[str, str] = {
     "RunControl, and a reset is one of its commands (test_ipc_bridge drives it)",
     "entity_control": "entity placement and presence served as commands; it holds no state of its "
     "own (test_entity_control drives it)",
-    "scenario": "runs an OpenSCENARIO file through scenario_execution, which these tests do not "
-    "install; a reset starts the scenario over (test_scenario_file drives it)",
 }
 
 # -- what a plugin's state is ------------------------------------------------------------------------

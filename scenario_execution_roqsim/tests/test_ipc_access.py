@@ -302,7 +302,7 @@ def press(tmp_path, monkeypatch):
         yield served.engine.ctx.blackboard.require("machine:press")
 
 
-#: The machine_run action imports scenario_execution; the access routes above are tested without it.
+#: The machine_run action imports scenario_execution; the access routes are tested without it.
 needs_scenario_execution = pytest.mark.skipif(
     importlib.util.find_spec("scenario_execution") is None,
     reason="the machine_run action imports scenario_execution",
