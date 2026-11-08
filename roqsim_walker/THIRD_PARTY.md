@@ -69,7 +69,8 @@ imported with `roqsim walker import-actor` and then changed by `roqsim walker de
 (`src/roqsim_walker/cli/derive_hivis_worker.py`, which says how): the surgical mask, its ties and the
 name badge removed and the mouth beneath closed, the mesh subdivided once, and the texture repainted
 as a work shirt with a high-visibility vest and two reflective bands, work trousers, safety shoes,
-hair and a mouth. Every colour is painted by that tool; nothing of another source is in it. Its
+hair and a mouth; its pelvis height, shoe soles and collision radii are measured on the derived
+mesh. Every colour is painted by that tool; nothing of another source is in it. Its
 `CREDITS.txt` names the source and the changes, as CC-BY asks of a derivative.
 
 ## What is this package's own (Apache-2.0)

@@ -136,6 +136,13 @@ skin vertex, so its normals are smooth wherever its UV map has no seam (MuJoCo s
 normal from that vertex's faces only). Locomotion clips live in `models/anims/<set>/` and are picked by body type +
 gender, falling back to `adult`.
 
+Every tick the body is lowered onto its lowest shoe-sole point. A blueprint whose sole carries a
+`hull` per shoe (the convex-hull corners of the shoe's vertices, each with its bind position and its
+skin weights) is grounded on those points, skinned as the mesh, so its skin touches the floor
+whichever way a foot is turned (`WorkerHiVisWalk`). One without is grounded on a heel and a toe
+point, each riding one joint, and a foot turned far, as at toe-off, can put its toe cap under the
+floor.
+
 Bundled blueprints (a blueprint can also come from any other installed `roqsim.models` provider):
 
 | blueprint | source | licence | notes |
