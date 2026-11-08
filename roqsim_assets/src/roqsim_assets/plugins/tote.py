@@ -19,6 +19,10 @@ from roqsim.plugin import Plugin
 from roqsim.pose import config_pose, config_pose_errors
 from roqsim.schema import Field
 
+#: How far out from its wall a handle's grip frame is (m): a handle's radius, where a palm on the wall
+#: holds it.
+GRIP_OUT = 0.015
+
 
 class TotePlugin(Plugin):
     provides_entity = True
@@ -59,10 +63,11 @@ class TotePlugin(Plugin):
             ((L / 2, t / 2, H / 2), (0.0, -W / 2 + t / 2, H / 2)),
         ):
             body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size), pos=list(at), **common)
-        # The handles: a hand's grip frame at each end, palm toward the tote, fingers down.
+        # The handles: a hand's grip frame at each end, palm toward the tote, fingers down; a
+        # handle's radius out from the wall, so the palm lies on it.
         hz = H - 0.03
-        body.add_site(name=f"{n}/grip_l", pos=[L / 2 + 0.03, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
-        body.add_site(name=f"{n}/grip_r", pos=[-L / 2 - 0.03, 0.0, hz], quat=[0.0, 1.0, 0.0, 0.0])
+        body.add_site(name=f"{n}/grip_l", pos=[L / 2 + GRIP_OUT, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
+        body.add_site(name=f"{n}/grip_r", pos=[-L / 2 - GRIP_OUT, 0.0, hz], quat=[0.0, 1.0, 0.0, 0.0])
         body.add_site(name=f"{n}/bottom", pos=[0.0, 0.0, 0.0])
         if s.contents:
             full = body.add_body(name=f"{n}/look_full")

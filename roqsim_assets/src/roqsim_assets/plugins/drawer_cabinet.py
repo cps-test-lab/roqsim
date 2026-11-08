@@ -94,8 +94,9 @@ class DrawerCabinetPlugin(Plugin):
             for y in (-0.12, 0.12):
                 d.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, fromto=[inner_d / 2, y, hz, hx, y, hz],
                            size=[0.008, 0, 0], rgba=_DARK, mass=0.02)
-            # the grip frame: +x toward the handle (the cabinet's -x), +z down along the fingers
-            d.add_site(name=f"{self.drawer(i)}/grip", pos=[hx + 0.045, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
+            # the grip frame on the bar's axis, where a hand holds it: +x toward the cabinet (the hand's
+            # palm faces it), +z down along the fingers
+            d.add_site(name=f"{self.drawer(i)}/grip", pos=[hx, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
             d.add_site(name=f"{self.drawer(i)}/inside", pos=[0.0, 0.0, t])
 
     def configure(self, ctx: SimContext) -> None:
