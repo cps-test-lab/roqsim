@@ -32,8 +32,19 @@ def hold_name(hand_site: str, object_site: str) -> str:
     return f"hold:{hand_site}->{object_site}"
 
 
+def _jointed(spec: mujoco.MjSpec, site: str) -> bool:
+    """Whether the body ``site`` is on moves on a joint other than a free one (a drawer's slide)."""
+    body = spec.site(site).parent
+    joints = list(body.joints)
+    return bool(joints) and all(j.type != mujoco.mjtJoint.mjJNT_FREE for j in joints)
+
+
 def add_holds(spec: mujoco.MjSpec, hand_sites: list[str], object_sites: list[str], solref=HOLD_SOLREF) -> list[str]:
-    """One inactive weld per (hand site, object site), named by :func:`hold_name`; the names."""
+    """One inactive weld per (hand site, object site), named by :func:`hold_name`; the names.
+
+    A free object (a tote) is held whole: it turns with the hand. An object on a joint (a drawer on
+    its slide) is held by its position only (the weld's torque scale 0): it cannot turn, and a hand a
+    few degrees off its handle would otherwise pull on it all the time it holds."""
     names = []
     for hand in hand_sites:
         for obj in object_sites:
@@ -46,6 +57,10 @@ def add_holds(spec: mujoco.MjSpec, hand_sites: list[str], object_sites: list[str
             eq.active = False
             eq.solref = list(solref)
             eq.solimp = list(HOLD_SOLIMP)
+            if _jointed(spec, obj):
+                data = list(eq.data)
+                data[10] = 0.0  # torquescale: position only
+                eq.data = data
             names.append(eq.name)
     return names
 

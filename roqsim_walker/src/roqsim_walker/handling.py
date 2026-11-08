@@ -61,6 +61,7 @@ class WalkerBody(HumanoidBody):
         self._wrist = {side: st.mocap[f"wrist_{side}"] for side in ("l", "r")}
         self._grip = {side: _site(model, f"{name}/grip_{side}") for side in ("l", "r")}
         self._frames = {side: H.FingerFrames(layouts[side]) for side in ("l", "r")}
+        self._data = None  # the run's data, set by the plugin at configure
         self._proxy = {side: int(model.body_mocapid[_body(model, f"{name}/press_{side}")]) for side in ("l", "r")}
         super().__init__(name)
 
@@ -89,8 +90,22 @@ class WalkerBody(HumanoidBody):
     def root(self):
         return float(self.st.pos[0]), float(self.st.pos[1]), float(self.st.yaw)
 
+    def carry_height(self) -> float:
+        return self.desc.root_height - 0.1
+
     def face(self, yaw):
         self.st.face = None if yaw is None else float(yaw)
+
+    def tip(self, data, side: str):
+        wid = self._wrist[side]
+        return self._frames[side].tip(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+
+    def fingertips(self, data, side: str):
+        wid = self._wrist[side]
+        return np.array([
+            self._frames[side].tip(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls, finger=f)
+            for f in range(5)
+        ])
 
     def press_proxy(self, data, side: str, on: bool) -> None:
         """Pose ``side``'s press proxy on its index fingertip from now on (``on``), or park it."""
@@ -132,7 +147,20 @@ class WalkerBody(HumanoidBody):
         shift = st.ground if st.ground is not None else 0.0
         root = np.array([body[0], body[1], st.skeleton.root_height + root_z - shift])
         local = {n: q[i].copy() for i, n in enumerate(JOINT_NAMES)}
-        goals = {s: (HandGoal(*self.goal[s]) if self.goal[s] is not None else None) for s in ("l", "r")}
+        goals = {}
+        for s in ("l", "r"):
+            if self.goal[s] is None:
+                goals[s] = None
+                continue
+            pos, quat = self.goal[s]
+            if quat is None and self.goal_frame[s] == "grip":
+                # The grip frame's position, the hand turned as it is: the wrist goes where the grip
+                # is then on the point.
+                wq = self._data.mocap_quat[self._wrist[s]]
+                from roqsim_motion.quat import rotate
+
+                pos = pos - rotate(wq, self.layouts[s].grip_pos)
+            goals[s] = HandGoal(pos, quat)
         sol = solve(self.desc, root, yaw_to_quat(st.yaw), local, goals, self.layouts, self.posture, self.gaze)
         self.residual.update(sol.residual)
         for side in ("l", "r"):

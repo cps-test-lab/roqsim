@@ -295,6 +295,7 @@ class WalkerPlugin(Plugin):
             from roqsim_walker.handling import WalkerBody
 
             self.body = WalkerBody(self.walker_name, self._anim, ctx.model, self._layouts)
+            self.body._data = ctx.data
             self._anim.rig = self.body
             ctx.blackboard.set(f"humanoid_body:{self.walker_name}", self.body)
         states = ctx.blackboard.get(STATE_KEY) or {}
@@ -426,7 +427,7 @@ class WalkerPlugin(Plugin):
                 if target is None:
                     self.body.free_hand(side)
                 else:
-                    self.body.set_hand(side, target)
+                    self.body.set_hand(side, target, frame="wrist")
             else:
                 self._anim.reach[side].target = target
 

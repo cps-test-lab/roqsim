@@ -267,6 +267,9 @@ PAYLOADS: dict[str, Any] = {
     "tare": None,
     "zero_ftsensor": None,
     "set_speed_slider": 0.5,
+    # a machine's program (the humanoid's moves): a move started and cancelled in the trial
+    "start": ("reach", {"hand": "right", "target": "tote", "orient": False}),
+    "cancel": (0, ""),
     **{
         f"{name}/target_frame": ([0.3, 0.2, 0.4], [1.0, 0.0, 0.0, 0.0])
         for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
@@ -518,6 +521,17 @@ CASES: dict[str, Case] = {
             ],
         }
     ),
+    "humanoid": _static(
+        {
+            "walker": {"walker": "MaleVisitorWalk", "hands": True, "skin": False},
+            "name": "worker",
+            "components": [
+                {"navigator": {"output": "walker", "speed": 1.0}},
+                {"humanoid": {"graspable": ["tote"]}},
+            ],
+        },
+        {"tote": {"pose": {"position": {"x": 0.6, "y": 0.0}}}, "name": "tote"},
+    ),
     # manipulation
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
@@ -743,6 +757,10 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     **{
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
+    },
+    "humanoid": {
+        "_seq": "a machine's start numbers keep counting across a reset, so a number from the last "
+        "episode never matches a start of this one (docs/architecture.rst, Machines and scenarios)",
     },
     "navigator": {
         "_radius": _MEASURED_ONCE,

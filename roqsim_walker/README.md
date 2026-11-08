@@ -157,6 +157,53 @@ world keeps its look and its timing unedited.
 `reach` keeps working with hands on; the core places the wrist on its point as the two-bone reach
 does with them off.
 
+### Moves
+
+A walker with hands takes moves from a `humanoid` component (`roqsim_motion`): each is one
+program on the machine contract -- `start(move, **args)` returns a sequence number, `status()`
+says when that start finished and with what error, `busy`, `cancel` -- and each step of it is an
+event. Which moves a worker makes, in which order and for what, is a scenario's (Python or
+OpenSCENARIO); a move never decides what comes next.
+
+```yaml
+- walker: {walker: MaleVisitorWalk, hands: true, pose: {position: {x: 0.0, y: 0.0}}}
+  name: worker
+  components:
+    - navigator: {output: walker, speed: 1.0, avoidance: {steer: none, stop: false}}
+    - humanoid: {graspable: [cabinet, tote_*]}   # what its hands may hold
+```
+
+```python
+worker = ctx.blackboard.get("humanoid:worker")
+seq = worker.grasp("both", "tote_1")             # = worker.start("grasp", hand="both", target="tote_1")
+status = worker.status()                         # MachineStatus(seq, program, finished, error)
+```
+
+A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its
+`name:` (its body), or a world pose; a hand is `left`, `right` or `both`.
+
+| move | parameters | events | fails with |
+|---|---|---|---|
+| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands) | `walking`, `arrived` | `unknown target`, `no route to …`, `cannot face …` |
+| `reach` | `hand`, `target`, `offset` (x, y, z[, r, p, y] in its frame), `orient` true, `pose` `open`, `speed` 0.8 m/s | `reached` | `out of reach: … approach first` |
+| `press` | `hand`, `target` (a site on the button's face), `max_force`, `travel`, `pose` `point` | `contact`, `pressed`, `released` | `button did not move: … at … N`, out of reach |
+| `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |
+| `release` | `hand` `both` | `opened` | `not holding anything` |
+| `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
+| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
+| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
+
+**Contact.** A press pushes with the hand's press proxy, so a button moves because it is pushed;
+the press stops at the button's travel or at `max_force`, since a kinematic hand would push through
+a joint's stop. A hold is a weld between the hand's grip site and the object's, added when the world
+is built for every `graspable` grip site and switched on and off while it runs; it carries a tote
+and pulls a drawer by the physics. A free object is held whole and turns with the hand; one on a
+joint (a drawer) is held by its position only. Two hands on one object: one weld carries it, the
+other hand rides on its own handle. A hold that pulls past `hold.max_force` or slips past
+`hold.slip` (each low-passed over 0.15 s, as the walker poses its hands at its own rate) lets go,
+and the move fails `lost hold`. What the walker may hold does not collide with its own body. A
+cancelled move stops where it is: a hold stays held. A reset drops the move and every hold.
+
 **The skin.** Where a blueprint has finger weights (`<obj>.fingers.npz`), its hands deform with the
 fingers. The bundled characters' source rigs weight a thumb chain and *one* chain for the four
 fingers, so the thumb follows its bones and the four fingers' chain is split between the four

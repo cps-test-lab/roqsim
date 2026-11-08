@@ -21,6 +21,10 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
+[project.entry-points."roqsim.plugins"]
+# A humanoid's moves, on the body of the walker or robot it is nested under.
+humanoid = "roqsim_motion.moves:HumanoidPlugin"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

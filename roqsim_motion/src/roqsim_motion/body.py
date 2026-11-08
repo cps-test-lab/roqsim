@@ -11,6 +11,7 @@ method runs on the physics thread; the body solves and writes at its own update.
 
 from __future__ import annotations
 
+import mujoco
 import numpy as np
 
 from .hands import HandState
@@ -32,15 +33,19 @@ class HumanoidBody:
 
     def reset(self) -> None:
         self.goal = {s: None for s in SIDES}  # side -> (pos, quat | None) world
+        self.goal_frame = {s: "grip" for s in SIDES}  # what a goal without a rotation places
         self.hand = {s: HandState() for s in SIDES}
         self.closing = {s: None for s in SIDES}  # side -> touching(finger) while a grip closes
         self.posture: Posture | None = None
         self.gaze = None
 
     # -- set by the moves -------------------------------------------------------------------------
-    def set_hand(self, side: str, pos, quat=None) -> None:
-        """Put ``side``'s grip frame on a world pose (``quat`` ``None``: the position only)."""
+    def set_hand(self, side: str, pos, quat=None, frame: str = "grip") -> None:
+        """Put ``side``'s grip frame on a world pose (``quat`` ``None``: the position only, the hand
+        turned as it is). ``frame="wrist"`` places the wrist instead, as ``WalkerHandle.reach``
+        always has."""
         self.goal[side] = (np.asarray(pos, float), None if quat is None else np.asarray(quat, float))
+        self.goal_frame[side] = frame
 
     def free_hand(self, side: str) -> None:
         """Let ``side`` go back to the gait, easing out."""
@@ -75,6 +80,28 @@ class HumanoidBody:
     def grip_site(self, side: str) -> str:
         """The name of ``side``'s grip site in the model (a hold welds it)."""
         raise NotImplementedError
+
+    def tip(self, data, side: str):
+        """Where ``side`` presses from: its index fingertip, or its grip frame for a hand without
+        fingers."""
+        return self.grip(data, side)[0]
+
+    def fingertips(self, data, side: str):
+        """``side``'s fingertips (n, 3) a grip closes, or ``None`` for a hand that closes as a
+        gripper (:meth:`gripper`)."""
+        return None
+
+    def gripper(self, data, side: str, closed: bool) -> None:
+        """Close or open ``side``'s gripper, for a hand that has one instead of fingers."""
+
+    def carry_height(self) -> float:
+        """The hands' height carrying something in front of the body (m)."""
+        return 0.8
+
+    def owns(self, model, body: int) -> bool:
+        """Whether ``body`` is part of this humanoid (its contact is not what it touches)."""
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) or ""
+        return name.startswith(f"{self.name}/")
 
     def shoulder(self, data, side: str):
         raise NotImplementedError
