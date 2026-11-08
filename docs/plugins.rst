@@ -2929,7 +2929,10 @@ other; with neither, whatever is pending or runs. A program cannot take an argum
 package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
 example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
 ``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
-scenario from ``roqsim_assets.scenarios``.
+scenario from ``roqsim_assets.scenarios``. ``DoorForWhoComes`` watches the zone while the door
+closes: someone entering it, or the close ending in a stall, cancels the close and opens the door
+again, and it closes once the zone is empty. ``StopAtBarrier`` reads the belt's speed each time it
+stops the belt and runs it again at that speed once the part is gone.
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~

@@ -44,7 +44,9 @@ stand-alone worlds in `src/roqsim_assets/worlds/`, each running one cycle of a s
   once. `open_guard()` returns the ram home before it opens the guard.
 - **`sliding_door_demo.yaml`** — a sliding door and a `zone_trigger` before it, and a box driven past
   it (`moving_box`, named `robot_1`). `DoorForWhoComes` opens the door when the box comes near and
-  closes it two seconds after it has gone -- later if someone came back meanwhile.
+  closes it two seconds after it has gone -- later if someone came back meanwhile. Someone entering
+  the zone while it closes, or the leaf stalling, cancels the close and opens the door again; it
+  closes once the zone is empty, so the scene ends with the door shut.
 - **`light_barrier_demo.yaml`** — a `zone_trigger` across the conveyor near its discharge end, between
   two posts. `StopAtBarrier` stops the belt while a package is in it; playing the worker, it takes
   the package off a second later, and the belt runs again at the speed it had when it stopped, read
