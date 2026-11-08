@@ -168,6 +168,10 @@ BASE_HEIGHT = 0.793
 #: The head mesh the Mid-360's opening is cut into, and the file the cut is written to.
 HEAD_MESH = "head_link"
 HEAD_WINDOW_FILE = "head_link_mid360_window.STL"
+#: The uncut head, drawn over the opening in the window geom group (roqsim.presence), which no ray
+#: sees: the head looks whole and the Mid-360 still scans out through it.
+HEAD_WHOLE_MESH = "head_link_whole"
+WINDOW_GEOM_GROUP = 5
 
 #: Welded links with no geometry and no mass that the URDF declares only as frames. Removed from the
 #: MJCF, which the build checks: a link listed here that carried anything would be refused.
@@ -365,6 +369,19 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
     if head is None:
         raise RuntimeError(f"mesh {HEAD_MESH!r} not in the converted MJCF")
     head.set("file", HEAD_WINDOW_FILE)
+    # What is drawn is the whole head, in the window group (roqsim.presence.WINDOW_GEOM_GROUP: every
+    # render draws it, no ray sees it); what collides and what a ray meets is the cut head, in the
+    # collision-only group. Drawn cut, the head's top floats above its torso across the opening.
+    asset = root.find("asset")
+    asset.insert(list(asset).index(head) + 1, ET.Element("mesh", {"name": HEAD_WHOLE_MESH, "file": f"{HEAD_MESH}.STL"}))
+    for geom in find_body(root, "head_link").findall("geom"):
+        if geom.get("mesh") != HEAD_MESH:
+            continue
+        if geom.get("contype") == "0":
+            geom.set("group", str(WINDOW_GEOM_GROUP))
+            geom.set("mesh", HEAD_WHOLE_MESH)
+        else:
+            geom.set("group", "3")
 
     # -- feet: replace upstream's single sphere per sole with the roqsim four-sphere footprint --------
     for side in ("left", "right"):
