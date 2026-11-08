@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_motion"
+version = "0.1.0"
+description = "One motion core for roqsim's humanoids: whole-body IK, hands, retargeting, and moves started through a handle."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "roqsim_nav",   # a humanoid robot is moved by the navigator, through this package's `humanoid` output
+    "mujoco>=3.14,<3.15",
+    "numpy>=1.24",
+    "scipy>=1.11",  # Euler decomposition of a joint's rotation onto a table's axes
+    "pyyaml>=6.0",  # retargeting tables
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

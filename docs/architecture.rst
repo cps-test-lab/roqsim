@@ -37,12 +37,15 @@ Non-goals: roqsim is not a general game engine or a physics fork; it orchestrate
 2. Lifecycle reference
 ----------------------
 
-A plugin (``roqsim.plugin.Plugin``) implements any subset of six hooks. The engine only calls hooks a plugin actually overrides (an un-overridden hook costs nothing and is absent from the timing table).
+A plugin (``roqsim.plugin.Plugin``) implements any subset of seven hooks. The engine only calls hooks a plugin actually overrides (an un-overridden hook costs nothing and is absent from the timing table).
 
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | Hook                 | When                                | May touch                                       | Typical use                                                                                    |
 +======================+=====================================+=================================================+================================================================================================+
 | ``build(spec, ctx)`` | once, pre-compile                   | ``spec`` only (``model``/``data`` are ``None``) | add bodies/geoms/sensors/assets                                                                |
++----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
+| ``build_late(spec,`` | once, after every ``build``,        | ``spec`` only                                   | link its own model to another plugin's (an equality between two entities), wherever the world |
+| ``ctx)``             | pre-compile                         |                                                 | lists them                                                                                     |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | ``configure(ctx)``   | once, post-compile                  | ``model``, ``data``, ids                        | resolve body/site ids, open resources, advertise services, register ``RobotHandle``/``Entity`` |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
