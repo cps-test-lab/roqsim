@@ -307,6 +307,60 @@ def test_a_door_that_keeps_failing_to_close_with_nobody_there_says_blocked_once_
         engine.shutdown()
 
 
+def test_someone_entering_during_a_close_starts_the_count_to_blocked_again():
+    from roqsim.entity_control import set_state
+
+    def box(name, y):
+        return {
+            "box": {
+                "prefix": f"{name}_",
+                "pose": {"position": {"x": -0.2, "y": y, "z": 0.3}},
+                "size": [0.2, 0.2, 0.6],
+                "motion": "driven",
+            },
+            "name": name,
+        }
+
+    scene = {**SCENE, "name": "doorman"}
+    scene[next(iter(SCENE))] = {"close_delay": 2.0, "blocked_after": 2}
+    # `obstacle` is not counted by the zone and stalls the leaf; `robot_2` is counted.
+    engine = _engine(
+        DOOR, APPROACH, _mover("robot_1"), box("obstacle", 3.0), box("robot_2", 4.0), scene
+    )
+    try:
+
+        def events(kind):
+            return [e for e in engine.ctx.events.all() if e["event"] == kind]
+
+        def closes():
+            return [p for _, p in _door_starts(engine) if p == "close"]
+
+        def until(cond, what):
+            while not cond():
+                assert engine.ctx.sim_time < 120.0, what
+                engine.step()
+
+        _run(engine, 5.0)
+        set_state(engine.ctx, "obstacle", [-0.2, 1.08, 0.3], [1.0, 0.0, 0.0, 0.0])
+        until(lambda: len(events("reopened")) == 1, "a first failed close")
+        until(lambda: len(closes()) == 2, "a second close")
+        set_state(engine.ctx, "robot_2", [0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0])  # into the zone
+        until(lambda: len(events("reopened")) == 2, "someone entered")
+        assert events("reopened")[1].get("who") == "robot_2"
+        set_state(engine.ctx, "robot_2", [0.0, 4.0, 0.3], [1.0, 0.0, 0.0, 0.0])  # gone again
+        until(lambda: len(events("reopened")) == 3, "another failed close")
+        assert not events("blocked"), "failed, someone, failed: not two failures in a row"
+        until(lambda: len(events("reopened")) == 4, "a second failed close in a row")
+        assert len(events("blocked")) == 1
+    finally:
+        engine.shutdown()
+
+
+def test_blocked_after_is_a_whole_number_of_closes():
+    with pytest.raises(Exception, match="blocked_after"):
+        _engine(DOOR, APPROACH, {next(iter(SCENE)): {"blocked_after": 0}, "name": "doorman"})
+
+
 def test_the_demo_world_opens_the_door_for_its_robot_closes_it_and_ends():
     from pathlib import Path
 

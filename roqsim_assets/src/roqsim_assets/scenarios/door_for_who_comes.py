@@ -30,6 +30,19 @@ class DoorForWhoComes(ScenarioPlugin):
 
     NEEDS = {"door": "machine:door_1", "near": "zone:door_approach"}
 
+    def validate_config(self, config: dict) -> list[str]:
+        errors = super().validate_config(config)
+        blocked_after = config.get("blocked_after", 3)
+        if (
+            isinstance(blocked_after, bool)
+            or not isinstance(blocked_after, int)
+            or blocked_after < 1
+        ):
+            errors.append(
+                f"scenario {self.address}: 'blocked_after' is a whole number of closes, 1 or more"
+            )
+        return errors
+
     def program(self):
         delay = float(self.config.get("close_delay", 2.0))
         cycles = int(self.config.get("cycles", 1))
