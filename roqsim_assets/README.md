@@ -15,6 +15,20 @@ copy instead of each vendoring their own. Three kinds of thing, and a tool group
 Robots, sensors and pedestrians are *not* here — they are robot-family packages (`roqsim_mobile`,
 `roqsim_sensors`, `roqsim_walker`). What lives here is the environment they act in.
 
+## Machines
+
+A machine is one entity's own procedures, offered through one handle under `machine:<name>`
+(`roqsim.machine`; the line between a machine and a scenario is `docs/architecture.rst`, "Machines
+and scenarios"): `start(program, **args)` returns a sequence number and is refused while busy,
+`status()` says how that start ended, plus `busy`, `ready`, `cancel()` and `value(name)`. Every
+program is an event timeline (`program_start`, its steps, `program_end`). `roqsim plugins describe
+<name>` lists each machine's programs.
+
+| machine | programs | ramps | events besides start/end |
+|---|---|---|---|
+| `door` | `open()`, `close()`, `move_to(openness)` | `speed` (rad/s at the hinge) | `stalled`, `gave_way` |
+| `conveyor` | `run(speed)`, `stop()` | `ramp` (m/s²) | `started`, `stopped` |
+
 ## Layout
 
 Textures live one-per-folder under `assets/<Name>/`:
@@ -155,7 +169,9 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   touching it the whole way (pinned in `tests/test_prop_trajectory.py`). Mocap *blocks*; a driven joint
   *carries*. Use `conveyor` for a one-axis belt an object rides, and this when the path is 2-D and
   given to you (a dynamic-grasping benchmark's object motion).
-- **`conveyor`** — a velocity-driven belt an object rides via a friction pair; live speed over ROS.
+- **`conveyor`** — a velocity-driven belt an object rides via a friction pair; a machine (see
+  [Machines](#machines)) with `run(speed)` and `stop()`, ramped at `ramp` (m/s²) where a world states
+  one, and its live speed over ROS.
   It is a **benchtop** unit (feet at z=0.76): put a table under it with `spawn_model` — the
   `industrial_table` prop is the one the belt is laid out for (spawn it at the belt's local
   `[-0.13, 0.6, 0]`), and any other ~0.76 m top does just as well.
@@ -169,10 +185,14 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   config, so a campaign can sweep crown density. Everything collides; nothing here is trim.
 - **`door`** — a hinged swing-door leaf (box or the `door` / `door_glass` mesh model) inside a static
   `door_frame` casing, with a force-limited position actuator, placed by opening centre + `hinge_side`.
-  Passive (holds its
+  A machine (see [Machines](#machines)) with `open`, `close` and `move_to(openness)`, ramped at
+  `speed` (rad/s) where a world states one; a program ends when the leaf first comes within 0.02
+  of its openness, and the leaf may still settle by a few hundredths after that. Passive (holds its
   `open` angle) or, when `controllable`, an **automatic door**: `std_msgs/Float64` `cmd`/`state`
   topics + a `control_msgs/GripperCommand` action, and it pushes only gently — stalling on an
-  obstacle, then giving up. `color` / `frame_color` repaint the leaf and its casing, so a world can put
+  obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
+  door held off its target gives way after `stall_timeout`, so a robot can push through it.
+  `machine:<name>:openness` reads any door's measured openness. `color` / `frame_color` repaint the leaf and its casing, so a world can put
   its doors in its own trim colour without a recoloured copy of the model — only the leaf's *colliding*
   geometry is painted, leaving non-colliding decoration (the chrome handle) its own finish, and a glazed
   leaf should therefore set `frame_color` alone. `leaf: false` makes it a **cased opening** — a
