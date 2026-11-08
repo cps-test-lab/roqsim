@@ -729,6 +729,8 @@ SKIPPED: dict[str, str] = {
     "RunControl, and a reset is one of its commands (test_ipc_bridge drives it)",
     "entity_control": "entity placement and presence served as commands; it holds no state of its "
     "own (test_entity_control drives it)",
+    "scenario": "runs an OpenSCENARIO file through scenario_execution, which these tests do not "
+    "install; a reset starts the scenario over (test_scenario_file drives it)",
 }
 
 # -- what a plugin's state is ------------------------------------------------------------------------
