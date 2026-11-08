@@ -2998,6 +2998,11 @@ it drives the spawned model's actuators under the spawn's prefix and publishes i
 Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+A machine that compares such a command with what it was commanded last records each start in
+``start_accepted(program, args)``: the base calls it, with its lock held, when a start is accepted,
+on the thread that made it, a step before the physics thread applies a handle's start. It touches
+neither the model nor the handle. The ``door`` records its target there, so a ``cmd`` back to where
+it stood, sent right after a handle's ``start("open")``, is not taken for a repeat.
 
 Writing a scenario
 ~~~~~~~~~~~~~~~~~~
