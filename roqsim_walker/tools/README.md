@@ -77,3 +77,12 @@ shirt with a yellow vest and two reflective bands over the torso, charcoal trous
 shoes, hair for the scrub cap. It is written for that source's layout and refuses any other, naming
 the UV island it cannot place. The thumbnail is `roqsim render <obj> --size 480x480`.
 
+The subdivision moves the skin by up to 2 cm, so the tool measures what `walker.json` says of the
+mesh's shape on the derived mesh, against the bones the skin is bound to at runtime
+(`skin._bind_bones`), not the source rig's own bones, which the walker's straight limbs do not keep:
+the pelvis height (the import's, lowered as the mesh is lowered onto the floor), the height, the
+collision radii, the heel and toe sole points with `foot_tip`, and each shoe's hull
+(`import_actor.measure_hull`), on which the walker is grounded. It copies the bone offsets (the
+source rig's), `tpose` and `flip` (the source's bind pose and facing), none of which depend on the
+mesh's shape.
+
