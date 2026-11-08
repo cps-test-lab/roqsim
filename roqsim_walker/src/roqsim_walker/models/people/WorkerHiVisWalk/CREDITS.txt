@@ -1,0 +1,13 @@
+WorkerHiVisWalk
+
+Source:  https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk (version 1)
+Licence: CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Author:  Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: Luca
+
+A derivative of that actor, under the same licence: imported with `roqsim walker
+import-actor` (the skin -- mesh, texture, skeleton, skin weights -- is the source's), then
+changed by `roqsim walker derive-hivis-worker`: the surgical mask, its ties and the name
+badge removed and the mouth closed, the mesh subdivided once, and the texture repainted
+(work shirt with a high-visibility vest, work trousers, safety shoes, hair, mouth).
+Locomotion comes from this package's models/anims/, which are CARLA retargets under
+CC-BY 4.0 -- so this walker carries CARLA attribution too; see THIRD_PARTY.md.

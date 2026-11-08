@@ -131,7 +131,9 @@ physics thread.
 
 `models/people/<Walker>/` is a **blueprint**: a textured OBJ, a `*.walker.json` sidecar (materials +
 outfit variants, per-rig bone table, per-limb collision radii, measured shoe-sole offsets) and the
-authored skin weights. Locomotion clips live in `models/anims/<set>/` and are picked by body type +
+authored skin weights. The OBJ's corners that share a position and a texture coordinate load as one
+skin vertex, so its normals are smooth wherever its UV map has no seam (MuJoCo sums a skin vertex's
+normal from that vertex's faces only). Locomotion clips live in `models/anims/<set>/` and are picked by body type +
 gender, falling back to `adult`.
 
 Bundled blueprints (a blueprint can also come from any other installed `roqsim.models` provider):
@@ -140,6 +142,7 @@ Bundled blueprints (a blueprint can also come from any other installed `roqsim.m
 |---|---|---|---|
 | `FemaleVisitorWalk` | [Open-RMF (Fuel: Luca)](https://fuel.gazebosim.org/1.0/Luca/models/FemaleVisitorWalk) | CC-BY 4.0 | handbag group dropped at import; T-posed, +X-facing (`flip: false`) |
 | `MaleVisitorWalk` | [Open-RMF (Fuel: OpenRobotics)](https://fuel.gazebosim.org/1.0/OpenRobotics/models/Male%20visitor) | CC0 1.0 | purple shirt; single-texture |
+| `WorkerHiVisWalk` | [Open-RMF (Fuel: Luca), *OpScrubsWalk*](https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk), derived | CC-BY 4.0 | an industrial worker: high-visibility vest (a texture region), work shirt and trousers, safety shoes; `roqsim walker derive-hivis-worker` |
 
 Each carries its licence + attribution in a `CREDITS.txt` beside the files (CC0 / CC-BY / CC-BY-SA
 only — the same bar as `roqsim_assets`). **The locomotion clips are CARLA-derived as well** — both
