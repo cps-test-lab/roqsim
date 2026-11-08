@@ -3195,7 +3195,8 @@ so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by cont
   with ``contents: true`` the ``look_full``/``look_empty`` bodies a ``part_state`` shows and hides.
 
 A grip site states the frame a hand holds it in (``roqsim_motion.hands``): +x from the palm toward
-the object, +z along the fingers. A hold welds the hand's grip site to it.
+the object, +z along the fingers. A hold is a weld between the hand and the object, added when the
+world is built and switched on with the object where it is in the hand (``roqsim_motion.contact``).
 
 **A pressable's housing must not collide with its button.** A child body of a body welded to the
 world is not filtered from that body's geoms, so a button sunk into its housing is held there by

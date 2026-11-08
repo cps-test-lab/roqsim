@@ -210,12 +210,19 @@ timeline:
 the press stops at the button's travel or at `max_force`, since a kinematic hand would push through
 a joint's stop. A hold is a weld between the hand's grip site and the object's, added when the world
 is built for every `graspable` grip site and switched on and off while it runs; it carries a tote
-and pulls a drawer by the physics. A free object is held whole and turns with the hand; one on a
-joint (a drawer) is held by its position only. Two hands on one object: one weld carries it, the
-other hand rides on its own handle. A hold that pulls past `hold.max_force` or slips past
+and pulls a drawer by the physics. It keeps the object as it was in the hand when taken, so a hand a
+few degrees off a handle does not turn it; a free object is held whole, one on a joint (a drawer) by
+its position only. Two hands on one object: one hold carries it, the other hand rides on its own
+handle (two holds would squeeze it between hands posed at the walker's own rate). A hold that pulls past `hold.max_force` or slips past
 `hold.slip` (each low-passed over 0.15 s, as the walker poses its hands at its own rate) lets go,
 and the move fails `lost hold`. What the walker may hold does not collide with its own body. A
 cancelled move stops where it is: a hold stays held. A reset drops the move and every hold.
+
+The fingers do not collide. A grip closes finger by finger until a ray from each fingertip finds what
+it holds within a few millimetres, so the hand takes the shape of a handle; contact between the
+fingers and what they hold is not modelled, and the hold carries the object. Kinematic fingers
+squeezing a free body would push it with unbounded force, so that is left for a measured step of its
+own.
 
 **The skin.** Where a blueprint has finger weights (`<obj>.fingers.npz`), its hands deform with the
 fingers. The bundled characters' source rigs weight a thumb chain and *one* chain for the four
@@ -230,19 +237,20 @@ step). One machine, rendering in software, so compare the rows, not the machines
 
 | walkers | case | MuJoCo step | posing in Python, per step | lidar scan | camera frame | skin bones |
 |---|---|---|---|---|---|---|
-| 1 | off | 7.0 µs | 60 µs | 1.56 ms | 40.0 ms | 17 |
-| 1 | on | 8.7 µs | 66 µs | 1.56 ms | 38.6 ms | 46 |
-| 1 | moving | 8.8 µs | 147 µs | 1.56 ms | 41.2 ms | 46 |
-| 10 | off | 20.3 µs | 583 µs | 1.80 ms | 44.4 ms | 170 |
-| 10 | on | 36.1 µs | 642 µs | 1.89 ms | 46.4 ms | 465 |
-| 10 | moving | 36.1 µs | 1465 µs | 1.87 ms | 44.0 ms | 465 |
+| 1 | off | 7.0 µs | 59 µs | 1.56 ms | 38.7 ms | 17 |
+| 1 | on | 8.8 µs | 65 µs | 1.57 ms | 42.8 ms | 46 |
+| 1 | moving | 8.7 µs | 142 µs | 1.57 ms | 39.6 ms | 46 |
+| 10 | off | 20.1 µs | 565 µs | 1.82 ms | 43.8 ms | 170 |
+| 10 | on | 38.8 µs | 630 µs | 1.90 ms | 45.1 ms | 465 |
+| 10 | moving | 38.9 µs | 1326 µs | 1.89 ms | 46.2 ms | 465 |
 
 The posing is what a walker world pays most, with hands or without: about half a millisecond per
 walker update for the gait. Hands on adds about a tenth while the hands hold their pose, the
 fingers' frames being recomputed only when a pose changes; a hand on a moving goal runs the solver on
-every update (up to about 0.7 ms for two hands bending). The thirty geom-less bones add about 1.6 µs
-a walker to MuJoCo's step, and the frame and the scan barely move: the skin is the same vertices
-split over more bones, and the fingers carry nothing a ray hits.
+every update (up to about 0.7 ms for two hands bending). The thirty geom-less bones and the two
+parked press proxies add about 1.9 µs a walker to MuJoCo's step, and the frame and the scan move by a
+few per cent: the skin is the same vertices split over more bones, and the fingers carry nothing a
+ray hits.
 
 ## Assets
 
