@@ -3186,7 +3186,8 @@ Three props in ``roqsim_assets`` are moved by whatever pushes or holds them, nev
 so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by contact:
 
 * ``push_button``: a sprung button on a housing, facing the housing's +x. It reports itself -- pressed
-  past ``threshold`` of its ``stroke``, the events ``pressed`` and ``released``, the ``pressed``
+  past ``threshold`` of its ``stroke`` and released back under ``release`` of it (a snap action, so a
+  button ringing as a finger lets go is pressed once), the events ``pressed`` and ``released``, the ``pressed``
   endpoint, a handle under ``button:<name>`` -- and decides nothing: a machine starting because it
   was pressed is a scenario's. Its front face carries the site ``<name>/button``.
 * ``drawer_cabinet``: drawers on slide joints with friction and an end stop, each an entity

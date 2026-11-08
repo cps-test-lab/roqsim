@@ -19,10 +19,11 @@ import numpy as np
 
 from roqsim.pose import yaw_to_quat
 from roqsim_motion import hands as H
+from roqsim_motion import quat as Q
 from roqsim_motion.body import HumanoidBody
 from roqsim_motion.description import Description
 from roqsim_motion.ik import HandGoal, Posture, solve
-from roqsim_walker.humanoid import JOINT_NAMES
+from roqsim_walker.humanoid import JOINT_NAMES, PRESS_RADIUS
 from roqsim_walker.motion import blend_quats
 
 #: How fast a hand's goal weight eases in and out (1/s), and the trunk joints the solver bends.
@@ -143,16 +144,30 @@ class WalkerBody(HumanoidBody):
             for f in range(5)
         ])
 
+    def press_aim(self, side: str, pose: str):
+        lay = self.layouts[side]
+        pos, rot = H.finger_fk(lay, np.zeros(3), Q.IDENTITY, np.array(H.POSES[pose], float))
+        tip = H.fingertips(lay, np.zeros(3), Q.IDENTITY, np.array(H.POSES[pose], float))[1]
+        along = tip - pos[5]  # the index's last bone
+        return Q.rotate(Q.inv(lay.grip_quat), along / np.linalg.norm(along))
+
     def press_proxy(self, data, side: str, on: bool) -> None:
         """Pose ``side``'s press proxy on its index fingertip from now on (``on``), or park it."""
         self.pressing[side] = bool(on)
         self._place_proxy(data, side)
 
     def _place_proxy(self, data, side: str) -> None:
+        """The proxy's front on the drawn index fingertip: its centre a radius back along the
+        finger's last bone, so what pushes a button is the fingertip a viewer sees."""
         pid = self._proxy[side]
         if self.pressing[side]:
             wid = self._wrist[side]
-            data.mocap_pos[pid] = self._frames[side].tip(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+            wp, wq = data.mocap_pos[wid], data.mocap_quat[wid]
+            curls = self.hand[side].curls
+            tip = self._frames[side].tip(wp, wq, curls)
+            last = self._frames[side].world(wp, wq, curls)[0][5]  # the index's last bone
+            along = (tip - last) / max(float(np.linalg.norm(tip - last)), 1e-9)
+            data.mocap_pos[pid] = tip - PRESS_RADIUS * along
         else:
             data.mocap_pos[pid] = (0.0, 0.0, -50.0)
 

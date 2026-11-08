@@ -172,3 +172,54 @@ def test_each_pose_reads_as_its_name(worker):
 
     pinch = _posed(worker, "pinch")
     assert np.linalg.norm(pinch.tip(0) - pinch.tip(1)) < 0.02, "pinch: thumb and index do not meet"
+
+
+def _drawn_index(engine, name: str = "worker", side: str = "r"):
+    """The drawn index finger's last two bones in the world: the vertices of its last bone, and the
+    way the finger points (its middle bone's centre to its last's)."""
+    m, d = engine.ctx.model, engine.ctx.data
+    scn = mujoco.MjvScene(m, maxgeom=20000)
+    mujoco.mjv_updateScene(m, d, mujoco.MjvOption(), mujoco.MjvPerturb(), mujoco.MjvCamera(),
+                           mujoco.mjtCatBit.mjCAT_ALL, scn)
+    out = []
+    for k in (2, 3):
+        bone = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{name}/f_{side}_index_{k}")
+        pts = []
+        for s in range(m.nskin):
+            adr, n = m.skin_vertadr[s], m.skin_vertnum[s]
+            v = scn.skinvert[3 * adr : 3 * (adr + n)].reshape(-1, 3)
+            for b in range(m.skin_boneadr[s], m.skin_boneadr[s] + m.skin_bonenum[s]):
+                if m.skin_bonebodyid[b] == bone:
+                    a, c = m.skin_bonevertadr[b], m.skin_bonevertnum[b]
+                    pts.append(v[m.skin_bonevertid[a : a + c][m.skin_bonevertweight[a : a + c] > 0.5]])
+        out.append(np.vstack(pts))
+    along = out[1].mean(axis=0) - out[0].mean(axis=0)
+    return out[1], along / np.linalg.norm(along)
+
+
+def test_a_press_puts_the_drawn_fingertip_on_the_button_along_its_axis():
+    from pathlib import Path
+
+    from roqsim.config import load_config
+
+    world = Path(__file__).resolve().parents[1] / "src" / "roqsim_walker" / "worlds" / "handling_start_machine.yaml"
+    engine = Engine(load_config(world))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        button = engine.ctx.blackboard.get("button:start")
+        d = engine.ctx.data
+        while not button.pressed and engine.ctx.sim_time < 15.0:
+            engine.step()
+        assert button.pressed, "the button was never pressed"
+        site = d.site("start/button")
+        normal = site.xmat.reshape(3, 3)[:, 0]  # out of the face
+        last, along = _drawn_index(engine)
+        tip = last[np.argmax(last @ -normal)]  # the drawn finger's front, toward the button
+        off = tip - site.xpos
+        assert abs(float(off @ normal)) < 0.005, f"the drawn fingertip is {float(off @ normal):+.3f} m off the face"
+        assert np.linalg.norm(off - (off @ normal) * normal) < 0.02, "the drawn fingertip is beside the button"
+        assert _angle(along, -normal) < 20, "the finger does not point along the button's axis"
+    finally:
+        engine.shutdown()

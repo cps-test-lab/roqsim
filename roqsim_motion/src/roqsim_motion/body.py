@@ -91,6 +91,12 @@ class HumanoidBody:
         fingers."""
         return self.grip(data, side)[0]
 
+    def press_aim(self, side: str, pose: str):
+        """The direction ``side``'s pressing fingertip points in ``pose``, in the grip frame (a unit
+        vector), so a press can turn the hand to aim it along a button's axis; ``None`` for a hand
+        that presses with its grip frame, as it is turned."""
+        return None
+
     def fingertips(self, data, side: str):
         """``side``'s fingertips (n, 3) a grip closes, or ``None`` for a hand that closes as a
         gripper (:meth:`gripper`)."""

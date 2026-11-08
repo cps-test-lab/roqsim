@@ -22,8 +22,9 @@ import numpy as np
 
 from roqsim.pose import yaw_to_quat
 
-#: The radius of a hand's press proxy (m): a fingertip.
+#: The radius of a hand's press proxy (m): a fingertip; and its contact's (timeconst, dampratio).
 PRESS_RADIUS = 0.009
+PRESS_SOLREF = (0.006, 1.0)
 # Pelvis standing height (m): with the leg offsets below the feet rest near z=0.
 ROOT_HEIGHT = 0.93
 # Nav collision proxy (r, half-height) -- the silhouette a lidar sees.
@@ -189,6 +190,12 @@ def build_humanoid(
             g.type = mujoco.mjtGeom.mjGEOM_SPHERE
             g.size = [PRESS_RADIUS, 0.0, 0.0]
             _collision_flags(g, physical=True)
+            # A fingertip that does not sink into what it presses: its own stiff contact wins
+            # (priority) over the softer default of a button, so the button goes in where the drawn
+            # fingertip is. MuJoCo raises a time constant under twice a world's timestep to that.
+            g.priority = 1
+            g.solref = list(PRESS_SOLREF)
+            g.solimp = [0.95, 0.99, 0.001, 0.5, 2.0]
     if mesh is not None:  # deformable character skin
         from roqsim_walker import skin
 

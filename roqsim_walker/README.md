@@ -206,8 +206,10 @@ timeline:
 `walker_pedestrians` is ten walkers with hands off beside a robot and its lidar: the world
 `bench-hands` measures.
 
-**Contact.** A press pushes with the hand's press proxy, so a button moves because it is pushed;
-the press stops at the button's travel or at `max_force`, since a kinematic hand would push through
+**Contact.** A press pushes with the hand's press proxy, so a button moves because it is pushed. The
+hand is turned so its pointing index lies along the button's axis, palm down, and the proxy's front is
+the drawn fingertip, its contact stiff enough not to sink into the button: what pushes the button is
+the finger a viewer sees. The press stops at the button's travel or at `max_force`, since a kinematic hand would push through
 a joint's stop. A hold is a weld between the hand's grip site and the object's, added when the world
 is built for every `graspable` grip site and switched on and off while it runs; it carries a tote
 and pulls a drawer by the physics. It keeps the object as it was in the hand when taken, so a hand a

@@ -2,8 +2,9 @@
 
 A sprung button on a slide joint in front of a static housing, facing the housing's +x. It moves
 because something pushes it -- a hand's press proxy, a robot's finger -- never because a controller
-sets it. It reports itself: pressed while it has travelled past ``threshold`` of its stroke, an event
-``pressed`` and ``released`` at each change, the ``pressed`` endpoint (for an OpenSCENARIO
+sets it. It reports itself: pressed once it has travelled past ``threshold`` of its stroke and until
+it comes back under ``release`` of it (a snap action, so a button ringing as it is let go is pressed
+once), an event ``pressed`` and ``released`` at each change, the ``pressed`` endpoint (for an OpenSCENARIO
 ``entity_monitor``), and a :class:`ButtonHandle` under ``button:<name>``. It decides nothing: what a
 press leads to -- a machine starting -- is a scenario's.
 
@@ -58,6 +59,8 @@ class PushButtonPlugin(Plugin):
         "radius": Field(float, default=0.02, minimum=0.005, unit="m", doc="the button's radius"),
         "stroke": Field(float, default=0.012, minimum=0.002, unit="m", doc="how far the button goes in"),
         "threshold": Field(float, default=0.6, minimum=0.05, maximum=1.0, doc="share of the stroke that is pressed"),
+        "release": Field(float, default=0.4, minimum=0.0, maximum=1.0,
+                         doc="share of the stroke it must come back under to be released (below threshold)"),
         "stiffness": Field(float, default=300.0, minimum=1.0, unit="N/m", doc="the spring that pushes it back"),
         "color": Field(list, default=[0.8, 0.1, 0.1, 1.0], length=4, doc="the button's colour"),
     }
@@ -117,7 +120,13 @@ class PushButtonPlugin(Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         self.travel_now = float(ctx.data.qpos[self._qadr])
-        pressed = self.travel_now >= self.settings.threshold * self.settings.stroke
+        s = self.settings
+        # a snap action: pressed past the threshold, released only back under the release point, so a
+        # button that rings as the finger lets go is pressed once
+        if self.is_pressed:
+            pressed = self.travel_now >= min(s.release, s.threshold) * s.stroke
+        else:
+            pressed = self.travel_now >= s.threshold * s.stroke
         if pressed != self.is_pressed:
             self.is_pressed = pressed
             if pressed:

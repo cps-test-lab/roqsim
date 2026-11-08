@@ -483,7 +483,9 @@ class HumanoidPlugin(MachinePlugin):
     def press(self, hand: str, target: str, max_force: float | None = None, travel: float | None = None,
               pose: str = "point"):
         """Press a button (or anything on a joint) with a fingertip until it has travelled its press,
-        then let go: in from the front of its face along the face's -x."""
+        then let go: in from the front of its face along the face's -x, the hand turned so the
+        pressing finger points along that axis (a hand with fingers; :meth:`HumanoidBody.press_aim`),
+        the palm down, and its drawn fingertip on the face."""
         (side,) = self._sides(hand) if hand != "both" else self.fail("a press is one hand's")
         site = self._site_id(target)
         if site < 0:
@@ -501,15 +503,21 @@ class HumanoidPlugin(MachinePlugin):
         self._far(d.site_xpos[site])
         self.body.set_pose(side, pose)
         normal = d.site_xmat[site].reshape(3, 3)[:, 0].copy()  # out of the face
+        aim_q = self._press_rotation(side, pose, -normal)
 
         def tip_goal(depth):
             def goal():
                 aim = d.site_xpos[site] + normal * (0.0 - depth)
                 offset = self.body.grip(d, side)[0] - self.body.tip(d, side)
-                return aim + offset, None
+                return aim + offset, aim_q
             return goal
 
-        yield from self._move_hands({side: tip_goal(-PRE)}, 0.8, target)
+        # judged by the fingertip's place: the tip goal follows the hand as it turns, and a hand its
+        # wrist cannot turn all the way still presses with the finger where it is
+        yield from self._move_hands({side: tip_goal(-PRE)}, 0.8, target, rot_tol=math.pi)
+        while not self.body.hand_done(side):  # the finger points before it goes in
+            self.body.set_hand(side, *tip_goal(-PRE)())
+            yield
         self.body.press_proxy(d, side, True)
         depth, touched = -PRE, False
         while True:
@@ -536,6 +544,28 @@ class HumanoidPlugin(MachinePlugin):
         self.body.free_hand(side)
         self.body.set_pose(side, "open")
         self.step("released", target=target)
+
+    def _press_rotation(self, side: str, pose: str, into):
+        """The grip frame's world rotation that points ``side``'s pressing finger along ``into``, the
+        palm turned down (toward the body's front for a press straight down); ``None`` for a hand
+        that presses as it is turned."""
+        along = self.body.press_aim(side, pose)
+        if along is None:
+            return None
+        into = np.asarray(into, float) / np.linalg.norm(into)
+        _, _, yaw = self.body.root()
+        for palm in (np.array([0.0, 0.0, -1.0]), np.array([math.cos(yaw), math.sin(yaw), 0.0])):
+            palm = palm - np.dot(palm, into) * into
+            if np.linalg.norm(palm) > 0.3:
+                break
+        palm /= np.linalg.norm(palm)
+        # the grip frame's own (finger, palm) pair, made orthonormal, onto the world's
+        a1 = np.asarray(along, float)
+        a2 = np.array([1.0, 0.0, 0.0]) - a1[0] * a1  # the grip frame's +x is out of the palm
+        a2 /= np.linalg.norm(a2)
+        local = np.column_stack([a1, a2, np.cross(a1, a2)])
+        world = np.column_stack([into, palm, np.cross(into, palm)])
+        return Q.from_matrix(world @ local.T)
 
     @program
     def grasp(self, hand: str, target: str, grip: str = "power"):

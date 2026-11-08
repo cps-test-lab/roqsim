@@ -51,6 +51,22 @@ def test_a_button_is_pressed_by_what_pushes_it_and_springs_back(props):
     assert events == ["pressed", "released"]
 
 
+def test_a_button_ringing_between_its_release_and_its_threshold_is_pressed_once(props):
+    """A snap action: in past the threshold, then ringing about it above the release point, is one
+    press; back under the release point, it is released."""
+    m, d = props.ctx.model, props.ctx.data
+    handle = props.ctx.blackboard.get("button:start")
+    q = int(m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "start/stroke")])
+    stroke = 0.012  # threshold 0.6, release 0.4 of it
+    for travel in [0.75, 0.55, 0.7, 0.5, 0.65, 0.45, 0.62] + [0.3]:
+        for _ in range(5):
+            d.qpos[q] = travel * stroke
+            d.qvel[:] = 0.0
+            props.step()
+        assert handle.pressed == (travel > 0.4), travel
+    assert handle.presses == 1
+
+
 def test_the_button_is_not_held_by_its_housing():
     engine = _engine([{"push_button": {"pose": {"position": {"x": 0.0, "y": 0.0, "z": 1.0}}}, "name": "b"}])
     try:
