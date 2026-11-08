@@ -3177,6 +3177,29 @@ entity's body still counts that entity. ``point: com`` reads the root body's cen
 ``part_state`` state that names an inertia moves; ``point: origin`` reads its frame, for a mocap
 body.
 
+What a hand works: buttons, drawers, totes
+------------------------------------------
+
+Three props in ``roqsim_assets`` are moved by whatever pushes or holds them, never by a controller,
+so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by contact:
+
+* ``push_button``: a sprung button on a housing, facing the housing's +x. It reports itself -- pressed
+  past ``threshold`` of its ``stroke``, the events ``pressed`` and ``released``, the ``pressed``
+  endpoint, a handle under ``button:<name>`` -- and decides nothing: a machine starting because it
+  was pressed is a scenario's. Its front face carries the site ``<name>/button``.
+* ``drawer_cabinet``: drawers on slide joints with friction and an end stop, each an entity
+  (``<name>/drawer_<i>``) with a grip site on its handle, ``<name>/drawer_<i>/grip``.
+* ``tote``: a free box with a grip site at each end, ``<name>/grip_l`` and ``<name>/grip_r``, and
+  with ``contents: true`` the ``look_full``/``look_empty`` bodies a ``part_state`` shows and hides.
+
+A grip site states the frame a hand holds it in (``roqsim_motion.hands``): +x from the palm toward
+the object, +z along the fingers. A hold welds the hand's grip site to it.
+
+**A pressable's housing must not collide with its button.** A child body of a body welded to the
+world is not filtered from that body's geoms, so a button sunk into its housing is held there by
+contact. ``push_button`` excludes the pair (``<contact><exclude>``); a button modelled otherwise needs
+the same.
+
 Writing your own
 ----------------
 

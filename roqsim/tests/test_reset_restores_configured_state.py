@@ -675,6 +675,13 @@ CASES: dict[str, Case] = {
     "window": _static({"window": {}, "name": "window"}),
     "shelf": _static({"shelf": {}, "name": "shelf"}),
     "workbench": _static({"workbench": {}, "name": "bench"}),
+    "push_button": _static(
+        {"push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}}, "name": "button"}
+    ),
+    "drawer_cabinet": _static(
+        {"drawer_cabinet": {"pose": {"position": {"x": 1.0, "y": 1.0}}}, "name": "cabinet"}
+    ),
+    "tote": _static({"tote": {"pose": {"position": {"x": 1.0, "y": -1.0}}}, "name": "tote"}),
     "palm_tree": _static({"palm_tree": {}, "name": "palm"}),
     "duct": _static({"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [3.0, 1.0], "z": 3.2}}),
     "strip_light": _static(
