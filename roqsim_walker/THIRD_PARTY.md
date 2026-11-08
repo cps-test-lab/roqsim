@@ -58,10 +58,19 @@ attribution of record.
 | --- | --- | --- |
 | `MaleVisitorWalk` | [Fuel: OpenRobotics / *Male visitor* (v2)](https://fuel.gazebosim.org/1.0/OpenRobotics/models/Male%20visitor) | CC0 1.0 Universal |
 | `FemaleVisitorWalk` | [Fuel: Luca / *FemaleVisitorWalk* (v1)](https://fuel.gazebosim.org/1.0/Luca/models/FemaleVisitorWalk) | CC-BY 4.0 (author: Wan Yi Seow, Open Robotics) |
+| `WorkerHiVisWalk` | [Fuel: Luca / *OpScrubsWalk* (v1)](https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk), a derivative (below) | CC-BY 4.0 (author: Wan Yi Seow, Open Robotics) |
 
 Only the **skin** (mesh, textures, per-rig skeleton, authored skin weights) comes from these sources.
 Their own `<animation>` tracks are ignored; locomotion is the CARLA-derived set above — so a world
 using `FemaleVisitorWalk` still depends on CARLA attribution.
+
+**`WorkerHiVisWalk` is a derivative work of *OpScrubsWalk*, under the same CC-BY 4.0.** It was
+imported with `roqsim walker import-actor` and then changed by `roqsim walker derive-hivis-worker`
+(`src/roqsim_walker/cli/derive_hivis_worker.py`, which says how): the surgical mask, its ties and the
+name badge removed and the mouth beneath closed, the mesh subdivided once, and the texture repainted
+as a work shirt with a high-visibility vest and two reflective bands, work trousers, safety shoes,
+hair and a mouth. Every colour is painted by that tool; nothing of another source is in it. Its
+`CREDITS.txt` names the source and the changes, as CC-BY asks of a derivative.
 
 ## What is this package's own (Apache-2.0)
 
