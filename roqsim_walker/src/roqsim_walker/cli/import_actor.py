@@ -211,23 +211,34 @@ def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict
     return out
 
 
+def _lowest(points: np.ndarray, rear: bool, what: str) -> np.ndarray:
+    """The lowest of ``points``; of several as low (to 0.02 mm), the rearmost or the foremost."""
+    if not len(points):
+        raise SystemExit(f"no vertex follows {what}; cannot measure its sole")
+    low = points[points[:, 2] <= points[:, 2].min() + 2e-5]
+    return low[np.argmin(low[:, 0])] if rear else low[np.argmax(low[:, 0])]
+
+
 def measure_sole(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> tuple[dict, list]:
     """``(sole, foot_tip)``: where each shoe actually touches the floor.
 
-    ``sole[s]['heel'|'toe']`` are offsets from the **ankle**/**toe** joints to the lowest sole
-    points, which is how ``animation._foot_ground`` reads them (``joint + rotate(q, offset)``);
-    at rest our joint frames are world-aligned, so a plain world-space delta is what it wants. Legs
-    are identical between the T-pose and rest (only the shoulders rotate), so ``bind_ours`` is the
-    right frame here too.
+    ``sole[s]['heel']`` is the lowest point of the vertices the **ankle** carries, as an offset from
+    the ankle; ``sole[s]['toe']`` the lowest of those the **toe** carries, from the toe -- which is
+    how ``animation._lowest_sole`` reads them (``joint + rotate(q, offset)``), each riding its
+    joint. Taking the lowest point (ties to the rearmost and foremost) puts the standing walker's
+    lowest point exactly on the floor whatever the sole's shape; a point merely low on the shoe
+    (the rearmost of its lowest centimetre) can stand above it and let the shoe sink.
+
+    ``bind_ours`` are the bones the skin is bound to at runtime (:func:`measure` takes them from
+    ``skin._bind_bones``); at rest their frames are world-aligned, so a plain world-space delta is
+    what the grounding wants.
     """
     dom = np.argmax(w, axis=1)
     col = {n: i for i, n in enumerate(JOINT_NAMES)}
     sole, tips = {}, []
     for s in ("l", "r"):
-        foot = verts[(dom == col[f"ankle_{s}"]) | (dom == col[f"toe_{s}"])]
-        lo = foot[foot[:, 2] < foot[:, 2].min() + 0.01]  # the sole: lowest 1 cm of the shoe
-        heel_pt = lo[np.argmin(lo[:, 0])]  # rearmost sole point
-        toe_pt = lo[np.argmax(lo[:, 0])]  # foremost sole point
+        heel_pt = _lowest(verts[dom == col[f"ankle_{s}"]], rear=True, what=f"ankle_{s}")
+        toe_pt = _lowest(verts[dom == col[f"toe_{s}"]], rear=False, what=f"toe_{s}")
         sole[s] = {
             "heel": [round(float(v), 4) for v in (heel_pt - bind_ours[f"ankle_{s}"])],
             "toe": [round(float(v), 4) for v in (toe_pt - bind_ours[f"toe_{s}"])],

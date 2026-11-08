@@ -112,6 +112,9 @@ def test_measure_takes_every_shape_value_from_the_derived_mesh():
         assert got["sole"][s]["heel"] == sole[s]["heel"]
         assert got["sole"][s]["toe"] == sole[s]["toe"]
         assert got["sole"][s]["hull"] == import_actor.measure_hull(P, W)[s]
-    # the heel's lowest point is on the floor: the sole is measured from the lowered bones
+    # the heel point is where the ankle's part of the mesh is lowest: measured from the lowered bones
+    from roqsim_walker.humanoid import JOINT_NAMES
+
     heel_z = bind["ankle_l"][2] + got["sole"]["l"]["heel"][2]
-    assert -1e-4 <= heel_z < 0.011
+    ankle_part = P[W.argmax(axis=1) == JOINT_NAMES.index("ankle_l")]
+    assert heel_z == pytest.approx(ankle_part[:, 2].min(), abs=1e-4)
