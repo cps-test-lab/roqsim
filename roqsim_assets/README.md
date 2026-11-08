@@ -215,6 +215,12 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   topics + a `control_msgs/GripperCommand` action, and it pushes only gently — stalling on an
   obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
   door held off its target gives way after `stall_timeout`, so a robot can push through it.
+  The action reports `reached_goal` within the same 0.02 the programs end in, so ROS and the door's
+  `status()` agree, and aborts a goal still moving after a full swing at `speed`, `stall_timeout`
+  and 5 s; the door states both in the action's hints (`reach_tolerance`, `on_timeout`), where an
+  arm's gripper keeps 0.005 and comes back succeeded. A `cmd` equal to the openness last commanded
+  — by a port, or by a handle `start` the physics thread has not applied yet — changes nothing
+  while the door moves there or stands there; after a stall or a cancel it is a retry.
   `machine:<name>:openness` reads any door's measured openness. `color` / `frame_color` repaint the leaf and its casing, so a world can put
   its doors in its own trim colour without a recoloured copy of the model — only the leaf's *colliding*
   geometry is painted, leaving non-colliding decoration (the chrome handle) its own finish, and a glazed

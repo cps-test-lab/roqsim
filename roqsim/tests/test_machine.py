@@ -555,6 +555,30 @@ def test_preempt_cancels_what_runs_and_starts_the_new_program_in_the_same_step()
         engine.shutdown()
 
 
+def test_a_start_is_told_to_the_machine_when_it_is_accepted_not_when_it_is_applied():
+    """``start_accepted`` sees a handle start before the physics thread applies it, a preempt at
+    once, and no start that was refused."""
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        seen = []
+        press._machine.start_accepted = lambda program, args: seen.append(
+            (program, args, press._machine.status_now.seq)
+        )
+        first = press.start("dwell", seconds=1.0)
+        assert seen == [("dwell", {"seconds": 1.0}, 0)], "told before it was applied"
+        with pytest.raises(MachineError, match="busy"):
+            press.start("dwell", seconds=2.0)
+        with pytest.raises(MachineError, match="no program"):
+            press.start("bend")
+        assert len(seen) == 1, "a refused start is not told"
+        engine.step()
+        press._machine.preempt("dwell", seconds=0.1)
+        assert seen[1:] == [("dwell", {"seconds": 0.1}, first)]
+    finally:
+        engine.shutdown()
+
+
 # -- a controller with no model of its own, under the spawn that placed the model -----------------
 def test_a_controller_nested_under_spawn_model_drives_that_entity_and_speaks_for_it(tmp_path):
     from machine_fixtures import PRESS

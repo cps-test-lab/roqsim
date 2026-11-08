@@ -797,6 +797,17 @@ class MachinePlugin(Plugin):
                 )
         return lambda: fn(*bound.args, **bound.kwargs)
 
+    def start_accepted(self, program_name: str, args: dict) -> None:
+        """Called once a start is accepted, before it is applied; a subclass records what it commands.
+
+        A handle's ``start`` is applied on the physics thread a step later, so a machine that compares
+        a new command with its last one (a door's repeated ``cmd``) reads the last one here, where it
+        is commanded, and not where it is applied. Called from :meth:`request_start` and
+        :meth:`preempt`, with the machine's lock held and on whichever thread made the start: it
+        must not take the lock, touch ``model``/``data`` or call the handle. ``args`` are checked
+        against the program already. The base does nothing.
+        """
+
     def request_start(self, program_name: str, args: dict, token: str = "") -> int:
         """Check and stamp a start, with the caller's ``token``, and post it to the physics thread.
         Any thread."""
@@ -814,6 +825,7 @@ class MachinePlugin(Plugin):
                 )
             seq = next(self._counter)
             self._pending = (seq, program_name, args, str(token or ""))
+            self.start_accepted(program_name, args)
             # Posted under the lock, so starts and cancels reach the physics thread in the order
             # they were made.
             self._ctx.post(lambda _ctx, seq=seq: self._apply_start(seq))
@@ -866,6 +878,7 @@ class MachinePlugin(Plugin):
                 )
             seq = next(self._counter)
             self._pending = (seq, program_name, dict(args), "")
+            self.start_accepted(program_name, dict(args))
         self._apply_start(seq)
         return seq
 
