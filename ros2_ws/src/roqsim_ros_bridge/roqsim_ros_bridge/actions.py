@@ -532,8 +532,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     sim time to reach or stall; a producer whose travel can take longer (a slow door) states its own
     bound in its ``timeout`` hint, and 0 waits however long it takes. A goal still moving when its
     time runs out has neither ``reached_goal`` nor ``stalled`` set, and ends as the producer's
-    ``on_timeout`` hint says: ``succeed`` by default, as an arm's gripper always has, so MoveIt goes
-    on with a slow hand; ``abort`` for a producer that computes its bound from its own travel, such
+    ``on_timeout`` hint says: ``succeed`` by default, for an arm's gripper, so MoveIt goes on
+    with a slow hand; ``abort`` for a producer that computes its bound from its own travel, such
     as a door, where a goal past it has gone wrong. Unlike a cancel, an abort commands nothing: the
     producer goes on toward the position (a door keeps moving), and a caller that wants it elsewhere
     sends a new goal. Both decisions are :class:`~roqsim_ros_bridge.gripper_policy.GripperPolicy`'s;

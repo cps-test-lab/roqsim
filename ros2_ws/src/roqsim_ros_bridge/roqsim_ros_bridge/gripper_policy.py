@@ -10,8 +10,8 @@ hints, and the handler asks rather than guessing from a name or a kind:
   :data:`DEFAULT_REACH_TOLERANCE`; a door states the band inside which it counts itself as arrived,
   so the result agrees with the door's own status.
 - ``on_timeout`` -- what a goal still moving when its ``timeout`` runs out ends as. ``succeed``
-  (the default) returns it succeeded with neither ``reached_goal`` nor ``stalled`` set, as a gripper
-  always has and as MoveIt expects of a slow hand; ``abort`` aborts it, for a producer that computes
+  (the default) returns it succeeded with neither ``reached_goal`` nor ``stalled`` set, as MoveIt
+  expects of a slow hand; ``abort`` aborts it, for a producer that computes
   its own bound from its travel, so a goal past it has gone wrong.
 
 A hint of the wrong kind is refused (:class:`ValueError`) rather than read as its default.

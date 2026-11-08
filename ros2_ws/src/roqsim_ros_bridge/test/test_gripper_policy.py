@@ -36,8 +36,8 @@ def test_a_gripper_that_states_nothing_keeps_its_defaults():
     assert DEFAULT_REACH_TOLERANCE == 0.005
 
 
-def test_a_gripper_goal_still_moving_at_its_timeout_succeeds_as_before():
-    """Neither reached nor stalled: what the handler returned for a slow hand all along."""
+def test_a_gripper_goal_still_moving_at_its_timeout_succeeds():
+    """Neither reached nor stalled: a slow hand comes back succeeded, as MoveIt expects."""
     assert GripperPolicy.from_hints(ARM_GRIPPER).verdict(reached=False, stalled=False) == SUCCEED
 
 

@@ -407,7 +407,7 @@ SLOW = 0.004
 
 def test_a_gripper_goal_still_moving_when_its_time_runs_out_succeeds_unreached():
     """A slow hand at its timeout comes back succeeded with neither ``reached_goal`` nor ``stalled``
-    set, as it always has: MoveIt takes an abort for a failed execution."""
+    set: MoveIt takes an abort for a failed execution."""
     fingers, ctx, endpoint, on_payload = _gripper_setup(0.0, converge=SLOW)
     handle = _GoalHandle(_gripper_goal(0.8), ctx)
 
