@@ -211,7 +211,7 @@ One consequence, stated rather than hidden:
 - **`scenario_execution` is the `[osc]` extra, not a declared dependency**, on purpose: where it is a
   colcon package (a sourced ROS workspace), a pip-installed copy beside it makes the parser find two
   import libraries and refuse every scenario. See the note in [`pyproject.toml`](pyproject.toml).
-  Elsewhere, `pip install scenario_execution_roqsim[osc]` installs it from PyPI.
+  Elsewhere, `pip install -e "scenario_execution_roqsim[osc]"` from a checkout installs it from PyPI.
 - **Net displacement, not path length.** `osc.ros`'s `odometry_distance_traveled` integrates; this
   measures a straight line from the baseline. On a curved approach the two disagree, sometimes a lot.
 - **Signed axis thresholds.** `mode: z, threshold: 0.05` is *risen* 5 cm, not `|Δz| ≥ 5 cm`. A campaign
