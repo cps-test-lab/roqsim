@@ -52,6 +52,10 @@ def _both(world: str, seconds: float, watch=None):
         yield python
     finally:
         python.shutdown()
+    try:
+        import scenario_execution  # noqa: F401 -- the OSC twin runs on it (scenario_execution_roqsim[osc])
+    except ImportError:
+        pytest.skip(f"{world}: scenario_execution is not installed, so the OSC twin's timeline is not compared")
     osc = _run(f"{world}_osc", seconds)
     try:
         assert _timeline(osc) == expected
