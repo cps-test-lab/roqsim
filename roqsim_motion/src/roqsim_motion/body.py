@@ -31,6 +31,9 @@ class HumanoidBody:
     #: ``both`` -- the second holds it too, by its position only (a body whose servos sag, whose one
     #: hand alone would let it tilt).
     two_hands = "ride"
+    #: How far in front of its root the body keeps clear of anything solid when it comes to take
+    #: something by its handles (m): its front, and its knees where it crouches.
+    stand_clear = 0.2
 
     def __init__(self, name: str):
         self.name = name

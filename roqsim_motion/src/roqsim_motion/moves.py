@@ -64,6 +64,9 @@ HOLD_REACH = 0.02
 #: The speed a press goes in at (m/s), and how far past the button's stroke it may go looking for it.
 PRESS_SPEED = 0.05
 PRESS_SEARCH = 0.04
+#: The heights a humanoid looks for what is in front of where it stands at (m), shin to hip; how far
+#: it keeps clear is its body's (HumanoidBody.stand_clear).
+CLEAR_HEIGHTS = (0.15, 0.35, 0.55, 0.75)
 #: How far a hand reaches from the body's root before a move refuses it without trying (m).
 FAR = 1.4
 #: How far above the highest thing under it -- a surface, a rim, a drawer's walls -- what is carried
@@ -375,10 +378,12 @@ class HumanoidPlugin(MachinePlugin):
 
     def _stand_for(self, target: str, standoff: float, facing):
         """Where to stand, and which way to face, to work on ``target``."""
-        d = self._d
+        d, m = self._d, self._m
         gl, gr = self._site_id(f"{target}/grip_l"), self._site_id(f"{target}/grip_r")
         site = self._site_id(target)
+        handle = -1  # the body a hand goes to: what stands proud of the rest, so not in the way
         if gl >= 0 and gr >= 0:
+            handle = int(m.site_bodyid[gl])
             # Carried in front: the left grip on the left, the right on the right.
             pl, pr = d.site_xpos[gl], d.site_xpos[gr]
             point = (pl + pr) / 2
@@ -390,6 +395,8 @@ class HumanoidPlugin(MachinePlugin):
             name = target.rsplit("/", 1)[-1]
             # a grip site's +x runs from the palm to the object; any other site faces out along it
             direction = np.array([x[0], x[1]]) if name.startswith("grip") else -np.array([x[0], x[1]])
+            if name.startswith("grip"):
+                handle = int(m.site_bodyid[site])
         else:
             point, _ = self._target(target).resolve(self._m, d)
             x, y, _ = self.body.root()
@@ -401,7 +408,45 @@ class HumanoidPlugin(MachinePlugin):
             self.fail(f"cannot face {target}: no direction to it")
         direction /= n
         stand = np.array([point[0], point[1]]) - standoff * direction
+        # Coming to take something by its handles, stand clear of what it stands on or in: a
+        # stand-off from a tote in the middle of a shelf would put the legs in the shelf. Step back
+        # until nothing is nearer than the body keeps clear in front; the arms and the bend reach
+        # the rest.
+        # (Coming to a surface, its stand-off is the scene's, as near as setting down needs.)
+        if handle >= 0:
+            free = self._clear_ahead(stand, direction, standoff, handle)
+            clear = self.body.stand_clear
+            if free < clear:
+                stand = stand - (clear - free) * direction
         return stand, math.atan2(direction[1], direction[0])
+
+    def _clear_ahead(self, stand, direction, reach: float, handle: int) -> float:
+        """How far in front of ``stand`` (toward ``direction``, up to ``reach``) the nearest solid
+        thing is, between shin and hip height: rays past the humanoid's own bodies, what it holds
+        and ``handle`` (and what is welded to it)."""
+        m, d = self._m, self._d
+        skip = {int(m.body_weldid[h.obj_body]) for h in self.holding.values() if h is not None}
+        if handle >= 0:
+            skip.add(int(m.body_weldid[handle]))
+        ray = np.array([direction[0], direction[1], 0.0])
+        geomid = np.zeros(1, np.int32)
+        nearest = reach
+        for z in CLEAR_HEIGHTS:
+            start = np.array([stand[0], stand[1], z])
+            gone = 0.0
+            while gone < nearest:
+                dist = mujoco.mj_ray(m, d, start, ray, None, 1, -1, geomid)
+                if dist < 0 or gone + dist >= nearest:
+                    break
+                g = int(geomid[0])
+                body = int(m.geom_bodyid[g])
+                solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
+                if solid and int(m.body_weldid[body]) not in skip and not self.body.owns(m, body):
+                    nearest = gone + dist
+                    break
+                gone += dist + 1e-4
+                start = start + (dist + 1e-4) * ray
+        return nearest
 
     def _walk(self, stand, yaw, what: str, while_walking=None):
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")

@@ -81,6 +81,7 @@ class WalkerBody(HumanoidBody):
     """The walker's side of the motion core (see the module docstring)."""
 
     has_proxies = True
+    stand_clear = 0.3  # a crouch brings the knees forward
 
     def __init__(self, name: str, st, model, layouts: dict):
         self.st = st

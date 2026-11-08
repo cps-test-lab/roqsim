@@ -94,7 +94,21 @@ def test_scene_2_a_drawer_opened_a_tote_carried_to_a_bench_and_set_down():
 
 
 def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
-    for engine in _both("handling_box_swap", 150.0):
+    deepest = []
+
+    def watch(engine):
+        # the worker stands clear of the rack it takes the empty tote from: no joint of its legs or
+        # pelvis inside the rack's box (> 0: inside, by that much)
+        m, d = engine.ctx.model, engine.ctx.data
+        rack = d.geom("rack_box")
+        size = m.geom_size[rack.id]
+        rot = rack.xmat.reshape(3, 3)
+        for joint in ("pelvis", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r", "toe_l", "toe_r"):
+            p = rot.T @ (d.body(f"worker/{joint}").xpos - rack.xpos)
+            deepest.append(float(np.min(size - np.abs(p))))
+
+    for engine in _both("handling_box_swap", 150.0, watch):
+        assert max(deepest) < 0.0, f"a leg is {max(deepest):.3f} m inside the rack"
         d = engine.ctx.data
         full, empty = d.body("tote_full").xpos, d.body("tote_empty").xpos
         assert abs(full[2] - 0.70) < 0.02 and np.hypot(full[0] + 1.2, full[1] - 1.0) < 0.45  # on the trolley
