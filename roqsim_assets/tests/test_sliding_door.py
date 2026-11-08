@@ -272,6 +272,41 @@ def test_a_close_that_stalls_reopens_the_door_and_closes_once_the_way_is_clear()
         engine.shutdown()
 
 
+def test_a_door_that_keeps_failing_to_close_with_nobody_there_says_blocked_once_and_keeps_trying():
+    from roqsim.entity_control import set_state
+
+    # A box the zone does not count, left in the doorway: every close stalls on it.
+    block = {
+        "box": {
+            "prefix": "obs_",
+            "pose": {"position": {"x": -0.2, "y": 3.0, "z": 0.3}},
+            "size": [0.2, 0.2, 0.6],
+            "motion": "driven",
+        },
+        "name": "obstacle",
+    }
+    scene = {**SCENE, "name": "doorman"}
+    engine = _engine(DOOR, APPROACH, _mover("robot_1"), block, scene)
+    try:
+
+        def events(kind):
+            return [e for e in engine.ctx.events.all() if e["event"] == kind]
+
+        _run(engine, 5.0)
+        set_state(engine.ctx, "obstacle", [-0.2, 1.08, 0.3], [1.0, 0.0, 0.0, 0.0])
+        while len(events("reopened")) < 4:
+            assert engine.ctx.sim_time < 90.0, _door_starts(engine)
+            engine.step()
+        blocked = events("blocked")
+        assert len(blocked) == 1 and blocked[0]["closes"] == 3
+        assert blocked[0]["t"] > events("reopened")[2]["t"] - 1e-9, "said at the third failed close"
+        assert not any(e["event"] == "scenario_end" for e in engine.ctx.events.all()), (
+            "it keeps trying"
+        )
+    finally:
+        engine.shutdown()
+
+
 def test_the_demo_world_opens_the_door_for_its_robot_closes_it_and_ends():
     from pathlib import Path
 
