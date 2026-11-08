@@ -120,6 +120,7 @@ def test_bundled_blueprint_resolves():
     [
         ("FemaleVisitorWalk", "female", False, 1),  # handbag group excluded at import
         ("MaleVisitorWalk", "adult", False, 1),
+        ("WorkerHiVisWalk", "adult", False, 1),  # derived from OpScrubsWalk (derive-hivis-worker)
     ],
 )
 def test_imported_openrmf_actor_resolves_and_compiles(name, anim, flip, n_skins):
@@ -184,7 +185,7 @@ def test_obj_corners_with_one_position_and_uv_are_one_skin_vertex(tmp_path):
     np.testing.assert_allclose(uv[faces[2][0]], [0.5, 0])
 
 
-@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "MaleVisitorWalk"])
+@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "MaleVisitorWalk", "WorkerHiVisWalk"])
 def test_an_imported_actor_s_skin_vertices_are_shared_by_their_faces(name):
     """Each vertex of an imported actor's skin is shared by the faces around it, as a smooth surface
     needs, not by the one or two faces of a corner of its own."""
@@ -196,16 +197,17 @@ def test_an_imported_actor_s_skin_vertices_are_shared_by_their_faces(name):
         assert faces.size / len(verts) > 4.0
 
 
-def test_imported_actor_weights_sidecar_matches_the_obj():
+@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "WorkerHiVisWalk"])
+def test_imported_actor_weights_sidecar_matches_the_obj(name):
     """The authored weights.npz must be row-matched to the OBJ verts (skin._load_weights KD-tree
     queries by position) and normalised across our 17 joints."""
-    if "FemaleVisitorWalk" not in available_walkers():
-        pytest.skip("FemaleVisitorWalk not imported")
+    if name not in available_walkers():
+        pytest.skip(f"{name} not imported")
     import os
 
     from roqsim_walker import skin
 
-    spec = resolve_walker("FemaleVisitorWalk")
+    spec = resolve_walker(name)
     npz = os.path.splitext(spec["mesh"])[0] + ".weights.npz"
     assert os.path.isfile(npz), "importer must write an authored weights sidecar"
     data = np.load(npz)
@@ -213,6 +215,17 @@ def test_imported_actor_weights_sidecar_matches_the_obj():
     np.testing.assert_allclose(data["weights"].sum(axis=1), 1.0, atol=1e-5)
     lookup = skin._load_weights(spec["mesh"])
     assert lookup is not None  # the sidecar is picked up, not the auto-rig fallback
+    obj_verts = np.vstack([v for _, v, _, _ in skin._load_parts(spec["mesh"])])
+    np.testing.assert_allclose(
+        data["positions"][skin_nearest(data["positions"], obj_verts)], obj_verts, atol=1e-6
+    )
+
+
+def skin_nearest(positions, verts):
+    """Each of *verts*' nearest row of *positions*."""
+    from scipy.spatial import cKDTree
+
+    return cKDTree(positions).query(verts)[1]
 
 
 def test_unknown_blueprint_raises():

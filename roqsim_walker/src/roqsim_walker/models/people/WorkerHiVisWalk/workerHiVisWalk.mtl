@@ -1,0 +1,6 @@
+# Material table for the walker. roqsim_walker resolves textures from the
+# *.walker.json, NOT from this file -- but trimesh needs the .mtl present to key the
+# OBJ's material group by name (skin.add_skin matches on that).
+newmtl WorkerHiVis-material
+Kd 1 1 1
+map_Kd WorkerHiVis.png

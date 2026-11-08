@@ -55,3 +55,25 @@ One rig, so one importer unlocks the set (all on Fuel): `Luca/FemaleVisitorWalk`
 `OpenRobotics/Male visitor` → `MaleVisitorWalk` (CC0), and the hospital actors
 (`DoctorFemaleWalk`, `NurseFemaleWalk`, `OpScrubsWalk`, `PatientWalkingCane`, `VisitorKidWalk`).
 Note `anims/` ships only `adult` and `female` today — a `kid` actor falls back to `adult`.
+
+## `roqsim walker derive-hivis-worker` -- the industrial worker, from an imported actor
+
+No redistributable rigged character with a high-visibility vest was found, so `WorkerHiVisWalk` is
+dressed from the Open-RMF *OpScrubsWalk* actor (CC-BY 4.0): import it, then derive.
+
+```bash
+roqsim walker import-actor OpScrubsWalk.dae --name OpScrubsWalk --out /tmp/people \
+    --credits-source "https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk (version 1)" \
+    --credits-licence "CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)" \
+    --credits-author "Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: Luca"
+roqsim walker derive-hivis-worker /tmp/people/OpScrubsWalk \
+    roqsim_walker/src/roqsim_walker/models/people/WorkerHiVisWalk
+```
+
+It keeps the actor's skeleton, skin weights, body and long trousers; removes the surgical mask, its
+ties and the name badge and closes the mouth beneath; subdivides the mesh once (Loop) so its outline
+is round up close; and repaints the texture by the 3-D position each texel lands on: a dark work
+shirt with a yellow vest and two reflective bands over the torso, charcoal trousers, dark safety
+shoes, hair for the scrub cap. It is written for that source's layout and refuses any other, naming
+the UV island it cannot place. The thumbnail is `roqsim render <obj> --size 480x480`.
+

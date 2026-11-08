@@ -104,3 +104,23 @@ def test_an_arm_it_does_not_have_is_refused():
     local = {name: IDENTITY for name in ("pelvis", "spine", "hip_l", "hip_r")}
     with pytest.raises(ValueError, match="no arm"):
         reach_pose(DEFAULT_SKELETON, ROOT, yaw_to_quat(0.0), local, {"x": np.zeros(3)})
+
+
+@pytest.mark.parametrize("name", ["MaleVisitorWalk", "WorkerHiVisWalk"])
+def test_a_blueprint_s_wrists_reach_a_box_s_handles(name):
+    """On a blueprint's own bone lengths: both hands on handles in front, at a box's height."""
+    from roqsim_walker.blueprint import resolve_walker
+    from roqsim_walker.humanoid import to_skeleton
+
+    skeleton = to_skeleton(resolve_walker(name)["skeleton"])
+    root = np.array([1.0, 2.0, skeleton.root_height])
+    rest = {n: IDENTITY for n in JOINT_NAMES}
+    local = {n: rest[n] for n in ("pelvis", "spine", "hip_l", "hip_r")}
+    for height in (0.95, 0.75):
+        targets = [root + [0.45, side, height - root[2]] for side in (0.22, -0.22)]
+        over = reach_pose(
+            skeleton, root, yaw_to_quat(0.0), local, {"l": targets[0], "r": targets[1]}
+        )
+        posed = forward_kinematics(root, 0.0, {**rest, **over}, skeleton)
+        assert np.linalg.norm(posed["wrist_l"][0] - targets[0]) < 0.005, (name, height)
+        assert np.linalg.norm(posed["wrist_r"][0] - targets[1]) < 0.005, (name, height)
