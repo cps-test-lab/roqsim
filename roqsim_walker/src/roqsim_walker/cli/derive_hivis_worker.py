@@ -103,8 +103,13 @@ MOUTH = (0.0, 1.427, 0.021, 0.0045)  # y, z of the lips' centre, half width, hal
 
 def load(src_dir: str):
     """The import: its OBJ's vertices, faces, texture coordinates, its texture, json and weights."""
-    meta_path = next(p for p in os.listdir(src_dir) if p.endswith(".walker.json"))
-    meta = json.load(open(os.path.join(src_dir, meta_path)))
+    meta_paths = [p for p in os.listdir(src_dir) if p.endswith(".walker.json")]
+    if len(meta_paths) != 1:
+        raise SystemExit(
+            f"{src_dir}: expected one .walker.json of an `import-actor` output, found {len(meta_paths)}"
+        )
+    with open(os.path.join(src_dir, meta_paths[0])) as f:
+        meta = json.load(f)
     mesh = trimesh.load(os.path.join(src_dir, meta["obj"]), process=False)
     (material,) = meta["materials"].values()
     texture = Image.open(os.path.join(src_dir, material["texture"])).convert("RGB")
@@ -320,7 +325,6 @@ def paint(texture: Image.Image, label, pos) -> Image.Image:
     my, mz, mw, mh = MOUTH
     lips = fill & (((y - my) / mw) ** 2 + ((z - mz) / mh) ** 2 < 1.0)
     out[lips] = skin * LIPS
-    painted = shirt | (label == "trousers") | (label == "shoe") | (label == "hair") | fill
     # carry each painted region's border texels outwards, so a mip level or a filtered sample at
     # an island's edge reads the new colour, not the old one beside it
     region_id = np.zeros(label.shape, int)
@@ -331,7 +335,6 @@ def paint(texture: Image.Image, label, pos) -> Image.Image:
     near = region_id[iy, ix]
     grow = (label == "") & (near > 0) & (ndimage.distance_transform_edt(label == "") < 6)
     out[grow] = out[iy[grow], ix[grow]]
-    del painted
     return Image.fromarray((out * 255 + 0.5).astype(np.uint8))
 
 
