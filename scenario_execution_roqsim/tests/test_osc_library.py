@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("scenario_execution", reason="the parser under test")
+pytest.importorskip("scenario_execution", reason="scenario-execution: the parser under test")
 
 import py_trees  # noqa: E402
 from antlr4 import InputStream  # noqa: E402
