@@ -160,6 +160,25 @@ def test_batten_is_a_fixture_and_emit_adds_a_light(tmp_path):
     assert added[2] < 3.5  # under the fixture, not inside it
 
 
+def test_an_emitted_light_casts_no_shadow_unless_asked(tmp_path):
+    def light_of(**extra):
+        cfg = {"prefix": "s_", "pose": _AT_2_3, "emit": True, **extra}
+        model = _built(tmp_path, [{"strip_light": cfg, "name": "s"}]).ctx.model
+        return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_LIGHT, "s_strip_light_light"), model
+
+    lid, model = light_of()
+    assert lid >= 0 and not model.light_castshadow[lid]
+    lid, model = light_of(castshadow=True)
+    assert model.light_castshadow[lid]
+
+
+def test_batten_rejects_a_castshadow_that_is_not_a_boolean():
+    from roqsim_assets.plugins.strip_light import StripLightPlugin
+
+    cfg = {"pose": _AT_2_3, "castshadow": "yes"}
+    assert any("'castshadow' must be a boolean" in e for e in StripLightPlugin(cfg).validate_config(cfg))
+
+
 def test_batten_rejects_a_position_without_a_height(tmp_path):
     from roqsim_assets.plugins.strip_light import StripLightPlugin
 

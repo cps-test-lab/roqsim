@@ -211,7 +211,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers
   (`start`/`end`/`branches`), and a linear LED batten that can carry a **real light** (`emit: true`),
-  so a room is lit from where the light visibly comes from. All three are visual-only and sit above
+  so a room is lit from where the light visibly comes from (casting no shadow unless `castshadow:
+  true`: each casting light costs a render pass per camera, and a baked room casts its own). All three are visual-only and sit above
   head height, which is what lets the core `ceiling` plugin (`roqsim`) delete slab, panels, battens and
   ducts in one go for a top-down view — list `ceiling` *after* them, build order is list order. The
   panels and the deck carry a little `emission`: a ceiling faces away from every lamp in the room, so

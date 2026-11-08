@@ -28,11 +28,19 @@ Config::
       emit: false         # also add a real light below the fixture
       diffuse: [0.25, 0.25, 0.25]   # its colour/intensity (only with emit)
       cutoff: 80.0        # its spot half-angle in degrees (only with emit)
+      castshadow: false   # whether its light casts shadows (only with emit)
 
 Keep ``emit`` for the few battens that should actually light the scene: MuJoCo's renderer draws 8
 lights in a frame, the headlight among them, and takes the model's lights in index order, so a light
 past the eighth is compiled and never drawn (:mod:`roqsim.lights` names them when the world builds).
 A world baked by ``roqsim scenes scene-to-mjcf`` brings its own lights first, which leaves fewer.
+
+The emitted light casts no shadow unless ``castshadow: true``. Every casting light renders the scene
+once more per camera and frame, so a hall lit by a row of battens pays for a pass per batten; a
+batten's light is a wide spot, which throws each shadow away from it across the floor; and a light
+that casts onto a wall wound inward makes the wall shadow itself (MuJoCo culls front faces when it
+draws a shadow map). A room baked by ``roqsim scenes scene-to-mjcf`` casts the contact shadows under
+what stands on the floor with its own downward light.
 """
 
 from __future__ import annotations
@@ -69,6 +77,7 @@ class StripLightPlugin(Plugin):
         self.emit = bool(self.config.get("emit", False))
         self.diffuse = self._rgba(self.config.get("diffuse")) or _DIFFUSE
         self.cutoff = self._float(self.config.get("cutoff"), 80.0)
+        self.castshadow = bool(self.config.get("castshadow", False))
 
     @staticmethod
     def _float(value, default: float) -> float:
@@ -117,8 +126,9 @@ class StripLightPlugin(Plugin):
                         errors.append(f"'{key}' must be > 0")
                 except (TypeError, ValueError):
                     errors.append(f"'{key}' must be a number > 0")
-        if "emit" in config and not isinstance(config["emit"], bool):
-            errors.append("'emit' must be a boolean")
+        for key in ("emit", "castshadow"):
+            if key in config and not isinstance(config[key], bool):
+                errors.append(f"'{key}' must be a boolean")
         if "emission" in config:
             try:
                 if not 0.0 <= float(config["emission"]) <= 1.0:
@@ -163,6 +173,7 @@ class StripLightPlugin(Plugin):
             light.diffuse = self.diffuse[:3]
             light.exponent = 0.0  # flat across the cone; MuJoCo's default 10 makes a hotspot
             light.cutoff = self.cutoff
+            light.castshadow = self.castshadow
 
     def configure(self, ctx: SimContext) -> None:
         ctx.entities.add(
