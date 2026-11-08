@@ -199,7 +199,7 @@ test-osc:  ## The scenario-execution tests, in a venv with the [osc] extra; noth
 	@mkdir -p $(dir $(OSC_LOG))
 	@$(PYTEST) $(OSC_TESTS) -q -rs $(XDIST) > $(OSC_LOG) 2>&1; status=$$?; cat $(OSC_LOG); \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	if grep -E '^SKIPPED.*scenario.execution' $(OSC_LOG); then \
+	if grep -E '^SKIPPED \[[0-9]+\] [^ ]+:[0-9]+: .*scenario.execution' $(OSC_LOG); then \
 		echo "test-osc: the tests above skipped for want of scenario-execution"; exit 1; \
 	fi
 
