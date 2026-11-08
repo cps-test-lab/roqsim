@@ -6,7 +6,10 @@
 # reports who is near; it counts entities named robot_*. The robot is a box driven along a straight
 # line (`moving_box`) that passes the door through the zone and goes on. The scenario
 # (`DoorForWhoComes`) relates the two: it opens the door when the robot enters the zone, closes it
-# two seconds after the robot has left, and ends -- one cycle -- and so does the run.
+# two seconds after the robot has left, and ends -- one cycle -- and so does the run. Had someone
+# entered the zone while the door closed, or the leaf stalled on something in the doorway, the
+# scene would have opened the door again and closed it once the zone was empty, as an automatic
+# door does; the door itself only opens and closes.
 #
 # smoke-steps: 4500
 
