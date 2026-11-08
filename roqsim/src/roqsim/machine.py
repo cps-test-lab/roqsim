@@ -174,6 +174,10 @@ class MachineHandle:
         """The current target of an actuator or setpoint (the end of any ramp is not it)."""
         return self._machine.value(name)
 
+    def goal(self, name: str) -> float:
+        """Where an actuator or setpoint is going: the end of its ramp, else its current target."""
+        return self._machine.goal(name)
+
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"MachineHandle({self.name!r}, programs={list(self.programs)})"
 
@@ -666,6 +670,12 @@ class MachinePlugin(Plugin):
         """The current target of an actuator or setpoint."""
         self._check_driven(name)
         return float(self._cmd[name])
+
+    def goal(self, name: str) -> float:
+        """Where an actuator or setpoint is going: the end of its ramp, else its current target."""
+        self._check_driven(name)
+        ramp = self._ramps.get(name)
+        return float(ramp[0]) if ramp is not None else float(self._cmd[name])
 
     def position(self, name: str) -> float:
         """Where an actuator's joint is now."""

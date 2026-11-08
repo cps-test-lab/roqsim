@@ -2980,7 +2980,7 @@ What a program has:
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
   each setpoint keeps its value;
-- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+- ``self.value(name)``, ``self.goal(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
 ``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and

@@ -22,9 +22,9 @@ Robots, sensors and pedestrians are *not* here — they are robot-family package
 A machine is one entity's own procedures, offered through one handle under `machine:<name>`
 (`roqsim.machine`; the line between a machine and a scenario is `docs/architecture.rst`, "Machines
 and scenarios"): `start(program, **args)` returns a sequence number and is refused while busy,
-`status()` says how that start ended, plus `busy`, `ready`, `cancel()` and `value(name)`. Every
-program is an event timeline (`program_start`, its steps, `program_end`). `roqsim plugins describe
-<name>` lists each machine's programs.
+`status()` says how that start ended, plus `busy`, `ready`, `cancel()`, `value(name)` and
+`goal(name)`. Every program is an event timeline (`program_start`, its steps, `program_end`).
+`roqsim plugins describe <name>` lists each machine's programs.
 
 | machine | programs | ramps | events besides start/end |
 |---|---|---|---|

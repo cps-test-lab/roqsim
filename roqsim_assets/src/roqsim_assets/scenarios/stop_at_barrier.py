@@ -7,8 +7,9 @@ from roqsim.scenario import ScenarioPlugin
 
 class StopAtBarrier(ScenarioPlugin):
     """Scenario: stop the belt when a part enters the barrier, run it again once the part is gone, at
-    the speed the belt had when it stopped -- read at each stop, so a belt something else re-speeded
-    comes back at its new speed.
+    the speed the belt was set to run at when it stopped -- read at each stop, so a belt something
+    else re-speeded comes back at its new speed, and one stopped while ramping comes back at the
+    speed it was ramping to. A belt that stood still when the part arrived stays still.
 
     The belt runs and stops; the barrier reports presence. That a part in the barrier stops the belt
     is this scene's decision, not the belt's. With ``take_to``, the scene also plays the worker who
@@ -29,7 +30,12 @@ class StopAtBarrier(ScenarioPlugin):
         done = 0
         while not cycles or done < cycles:
             part = yield from self.entered(self.barrier)
-            speed = self.belt.value("speed")  # what it runs at now, whoever set it
+            speed = self.belt.goal("speed")  # what it was set to run at, whoever set it
+            if self.belt.busy:
+                # Something is bringing the belt to a new speed: a part in the barrier stops it
+                # anyway, which is this scene's decision. Read the goal first; a cancel holds there.
+                self.belt.cancel()
+                yield from self.until(lambda: not self.belt.busy, what="the belt's run to end")
             yield from self.run(self.belt, "stop")
             self.event("held", part=part)
             if take_to:
