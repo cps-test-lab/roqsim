@@ -64,9 +64,15 @@ HOLD_REACH = 0.02
 #: The speed a press goes in at (m/s), and how far past the button's stroke it may go looking for it.
 PRESS_SPEED = 0.05
 PRESS_SEARCH = 0.04
-#: The heights a humanoid looks for what is in front of where it stands at (m), shin to hip; how far
+#: The heights a humanoid looks for what is in front of where it stands at (m), foot to knee; how far
 #: it keeps clear is its body's (HumanoidBody.stand_clear).
-CLEAR_HEIGHTS = (0.15, 0.35, 0.55, 0.75)
+CLEAR_HEIGHTS = (0.1, 0.25, 0.4)
+#: How near a pull or push brings what it holds to its distance (m), and how far past the distance
+#: its hand may go to get it there, at least (m; half the distance, if that is more).
+ALONG_TOL = 0.003
+ALONG_EXTRA = 0.05
+#: A stroke that would leave a slide this near its stop goes to the stop (m): a hand's width.
+ALONG_STOP = 0.03
 #: How far a hand reaches from the body's root before a move refuses it without trying (m).
 FAR = 1.4
 #: How far above the highest thing under it -- a surface, a rim, a drawer's walls -- what is carried
@@ -422,7 +428,7 @@ class HumanoidPlugin(MachinePlugin):
 
     def _clear_ahead(self, stand, direction, reach: float, handle: int) -> float:
         """How far in front of ``stand`` (toward ``direction``, up to ``reach``) the nearest solid
-        thing is, between shin and hip height: rays past the humanoid's own bodies, what it holds
+        thing is, between foot and knee height: rays past the humanoid's own bodies, what it holds
         and ``handle`` (and what is welded to it)."""
         m, d = self._m, self._d
         skip = {int(m.body_weldid[h.obj_body]) for h in self.holding.values() if h is not None}
@@ -722,6 +728,10 @@ class HumanoidPlugin(MachinePlugin):
         starts = {s: self.body.grip(d, s) for s in sides}
         self.step("moving", hand="both" if len(sides) > 1 else _side_word(sides[0]), distance=distance)
         at_stop = self._stop_check(h0.obj_body, axis)
+        # a lagging hand's stroke that would leave a slide short of its stop by less than a hand's
+        # width goes to it: a drawer pushed nearly shut is pushed shut, not left open by the lag
+        left = self._to_stop(h0.obj_body, axis)
+        to_stop = not self.body.hands_track_goals and left is not None and left - distance < ALONG_STOP
         duration = abs(distance) / max(speed, 1e-3)
         t0 = self._ctx.sim_time
         while True:
@@ -731,13 +741,27 @@ class HumanoidPlugin(MachinePlugin):
                 self.body.set_hand(s, starts[s][0] + u * distance * axis, starts[s][1])
             if at_stop():
                 # a drawer at its end stop is all the way out (or shut): done, not stuck
-                for s in sides:
-                    self.body.set_hand(s, *self.body.grip(d, s))
+                self._stop_at_stop(sides)
                 break
             self._check_holds()
             if u >= 1.0:
                 break
             yield
+        # The stroke is the object's, not the hand's: a hand that lags its goal (a servo under load)
+        # goes on, a little further at a time, until what it holds has moved the distance or is at
+        # its stop -- at most ALONG_EXTRA past the distance.
+        extra, cap = 0.0, max(ALONG_EXTRA, 0.5 * abs(distance))
+        while not at_stop() and extra < cap:
+            moved = float(np.dot(d.site_xpos[h0.obj_site] - obj0, axis))
+            if moved >= distance - ALONG_TOL and not to_stop:
+                break
+            extra = min(extra + 0.25 * speed * self._ctx.dt, cap)
+            for s in sides:
+                self.body.set_hand(s, starts[s][0] + (distance + extra) * axis, starts[s][1])
+            self._check_holds()
+            yield
+        if at_stop():
+            self._stop_at_stop(sides)
         yield from self.wait(0.3)
         self._check_holds()
         moved = float(np.dot(d.site_xpos[h0.obj_site] - obj0, axis))
@@ -746,6 +770,25 @@ class HumanoidPlugin(MachinePlugin):
         if moved < 0.8 * distance:
             self.fail(f"stuck: {what} moved {moved:.3f} of {distance:.3f} m")
         return moved
+
+    def _stop_at_stop(self, sides) -> None:
+        """At a stop, a posed hand's goal comes back onto the hand, so it pushes no further; a
+        servo-driven hand's stays, since a goal moved back onto a hand that lags it would pull the
+        drawer back by that lag."""
+        if self.body.hands_track_goals:
+            for s in sides:
+                self.body.set_hand(s, *self.body.grip(self._d, s))
+
+    def _to_stop(self, body: int, axis):
+        """How far ``body``'s limited slide joint is from its limit in the direction of ``axis`` (m),
+        or ``None`` for a body on no limited slide."""
+        m, d = self._m, self._d
+        jnt = int(m.body_jntadr[body])
+        if jnt < 0 or m.jnt_type[jnt] != mujoco.mjtJoint.mjJNT_SLIDE or not m.jnt_limited[jnt]:
+            return None
+        q = float(d.qpos[int(m.jnt_qposadr[jnt])])
+        lo, hi = (float(v) for v in m.jnt_range[jnt])
+        return hi - q if float(np.dot(d.xaxis[jnt], axis)) > 0 else q - lo
 
     def _stop_check(self, body: int, axis):
         """A test for ``body``'s slide joint being at its limit in the direction of ``axis``
@@ -766,16 +809,17 @@ class HumanoidPlugin(MachinePlugin):
 
     @program
     def pull(self, hand: str, distance: float, speed: float = 0.2, axis: list | None = None):
-        """Pull what a hand holds toward the humanoid by ``distance`` m: along its slide joint for a
-        drawer, else straight out of its grip. A drawer that reaches its end stop first is out."""
+        """Pull what a hand holds toward the humanoid by ``distance`` m -- what it holds moves that far,
+        the hand going on past it for a hand that lags -- along its slide joint for a drawer, else
+        straight out of its grip. A drawer that reaches its end stop first is out."""
         sides = self._held(hand)
         moved = yield from self._along(sides, distance, axis, speed, 1.0, "what it pulls")
         self.step("pulled", distance=moved)
 
     @program
     def push(self, hand: str, distance: float, speed: float = 0.2, axis: list | None = None):
-        """Push what a hand holds away from the humanoid by ``distance`` m: a drawer shut, done when it
-        reaches its stop."""
+        """Push what a hand holds away from the humanoid by ``distance`` m -- what it holds moves that
+        far, as a pull's -- a drawer shut, done when it reaches its stop."""
         sides = self._held(hand)
         moved = yield from self._along(sides, distance, axis, speed, -1.0, "what it pushes")
         self.step("pushed", distance=moved)

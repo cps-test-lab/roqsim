@@ -71,6 +71,10 @@ class RobotBody(HumanoidBody):
     has_proxies = False
     two_hands = "both"
 
+    @property
+    def hands_track_goals(self) -> bool:  # servo-driven hands lag their goals
+        return self.p.config["drive"] == "kinematic"
+
     def __init__(self, plugin: "HumanoidRobotPlugin"):
         self.p = plugin
         super().__init__(plugin.entity)

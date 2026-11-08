@@ -86,7 +86,7 @@ def test_scene_4_the_box_swap_by_a_humanoid_robot_physical_in_both_forms():
         assert abs(full[2] - 0.70) < 0.02 and np.hypot(full[0] + 1.2, full[1] - 1.0) < 0.45  # on the trolley
         assert abs(empty[2] - 0.645) < 0.02  # in the drawer
         slide = m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "cell/drawer_1/slide")]
-        assert d.qpos[slide] < 0.08  # pushed (nearly) shut by the robot's hand
+        assert d.qpos[slide] < 0.01  # pushed shut by the robot's hand, its lag taken up
         # physical: the robot's joints were tracked by servos and its base hung on its anchor; the
         # base stood up throughout, as nothing balanced it but the anchor
         assert abs(d.body("g1_base_link").xpos[2] - 0.793) < 0.05

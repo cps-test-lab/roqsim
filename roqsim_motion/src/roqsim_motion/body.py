@@ -31,6 +31,10 @@ class HumanoidBody:
     #: ``both`` -- the second holds it too, by its position only (a body whose servos sag, whose one
     #: hand alone would let it tilt).
     two_hands = "ride"
+    #: Whether the body's hands are where their goals put them (posed), or lag them under a load
+    #: (servo-driven): a stroke that ends at a stop leaves a posed hand where it is and a lagging
+    #: hand's goal where it was, so neither pulls back from the stop.
+    hands_track_goals = True
     #: How far in front of its root the body keeps clear of anything solid when it comes to take
     #: something by its handles (m): its front, and its knees where it crouches.
     stand_clear = 0.2

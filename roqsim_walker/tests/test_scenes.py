@@ -97,8 +97,13 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
     deepest = []
 
     def watch(engine):
-        # the worker stands clear of the rack it takes the empty tote from: no joint of its legs or
-        # pelvis inside the rack's box (> 0: inside, by that much)
+        # the worker stands clear of the rack while it takes the empty tote from it -- from arriving
+        # at the rack until the tote is lifted: no joint of its legs or pelvis inside the rack's box
+        # (> 0: inside, by that much)
+        events = [e for e in engine.ctx.events.all() if e["source"] == "worker"]
+        at_rack = [i for i, e in enumerate(events) if e["event"] == "arrived" and e["at"][0] < -1.0]
+        if not at_rack or any(e["event"] == "lifted" for e in events[at_rack[0]:]):
+            return
         m, d = engine.ctx.model, engine.ctx.data
         rack = d.geom("rack_box")
         size = m.geom_size[rack.id]
@@ -108,7 +113,7 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
             deepest.append(float(np.min(size - np.abs(p))))
 
     for engine in _both("handling_box_swap", 150.0, watch):
-        assert max(deepest) < 0.0, f"a leg is {max(deepest):.3f} m inside the rack"
+        assert deepest and max(deepest) < 0.0, f"a leg is {max(deepest):.3f} m inside the rack"
         d = engine.ctx.data
         full, empty = d.body("tote_full").xpos, d.body("tote_empty").xpos
         assert abs(full[2] - 0.70) < 0.02 and np.hypot(full[0] + 1.2, full[1] - 1.0) < 0.45  # on the trolley

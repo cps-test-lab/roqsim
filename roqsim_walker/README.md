@@ -195,9 +195,15 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 
 `approach` to something a hand takes by its handles (a grip site, a tote) stands its `standoff` from
 the handles, then steps back until nothing solid is within the body's clearance in front of it,
-shin to hip (a walker keeps 0.3 m, as a crouch brings its knees forward): a tote in the middle of a
+foot to knee (a walker keeps 0.3 m, as a crouch brings its knees forward): a tote in the middle of a
 rack is reached over the rack, not from inside it. An approach to a surface stands where its
 `standoff` says.
+
+`pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
+servo under the load) goes on past it until the object has, by at most half the distance; a lagging
+hand's stroke that would leave a drawer within a hand's width of its stop pushes it to the stop, and
+at a stop a posed hand's goal comes back onto it while a lagging hand's stays, so neither pulls the
+drawer back.
 
 **Scenes.** Three worlds show a worker handling things, each with its scenario in Python
 (`roqsim_motion.scenes`) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
