@@ -195,14 +195,14 @@ def test_a_file_a_world_names_resolves_beside_it_or_in_a_package(tmp_path, monke
     with pytest.raises(FileNotFoundError, match=r"splat file not found: .*room/nope\.ply"):
         resolve_file_ref("room/nope.ply", tmp_path, "splat file")
     # By reference: a file beside the worlds of a package, as `sim.world` resolves one.
-    package = tmp_path / "site" / "splat_rooms_pkg"
+    package = tmp_path / "site" / "world_sources_rooms_pkg"
     (package / "worlds" / "lab").mkdir(parents=True)
     (package / "worlds" / "lab" / "lab.ply").write_bytes(b"ply\n")
     (package / "__init__.py").write_text(
         "from pathlib import Path\nWORLDS_DIR = Path(__file__).parent / 'worlds'\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path / "site"))
-    found = resolve_file_ref("splat_rooms_pkg:lab/lab.ply", None)
+    found = resolve_file_ref("world_sources_rooms_pkg:lab/lab.ply", None)
     assert found == package / "worlds" / "lab" / "lab.ply"
     with pytest.raises(FileNotFoundError, match="no installed package 'no_such_pkg'"):
         resolve_file_ref("no_such_pkg:room.ply", tmp_path)

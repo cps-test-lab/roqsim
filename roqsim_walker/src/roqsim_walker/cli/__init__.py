@@ -4,6 +4,7 @@ A walker is a skinned character with a locomotion clip, so its import differs fr
 is only half of it, and the skeleton has to survive the conversion.
 
     python -m pydoc roqsim_walker.cli.import_actor
+    python -m pydoc roqsim_walker.cli.derive_hivis_worker
 """
 
 from __future__ import annotations
@@ -19,3 +20,4 @@ def walker() -> None:
 
 
 walker.add_command(tool("roqsim_walker.cli.import_actor"))
+walker.add_command(tool("roqsim_walker.cli.derive_hivis_worker"))
