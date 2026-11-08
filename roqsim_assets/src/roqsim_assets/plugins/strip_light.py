@@ -29,8 +29,10 @@ Config::
       diffuse: [0.25, 0.25, 0.25]   # its colour/intensity (only with emit)
       cutoff: 80.0        # its spot half-angle in degrees (only with emit)
 
-Keep ``emit`` for the few battens that should actually light the scene: MuJoCo caps a model at 100
-lights, and every extra one costs render time for a room that is already lit.
+Keep ``emit`` for the few battens that should actually light the scene: MuJoCo's renderer draws 8
+lights in a frame, the headlight among them, and takes the model's lights in index order, so a light
+past the eighth is compiled and never drawn (:mod:`roqsim.lights` names them when the world builds).
+A world baked by ``roqsim scenes scene-to-mjcf`` brings its own lights first, which leaves fewer.
 """
 
 from __future__ import annotations
