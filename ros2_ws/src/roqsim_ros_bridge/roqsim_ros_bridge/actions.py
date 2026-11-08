@@ -46,6 +46,7 @@ from control_msgs.action import FollowJointTrajectory, GripperCommand
 from roqsim.endpoint import ParameterError, bind
 
 from .extensions import EXTENSION_GROUP, load_extensions
+from .gripper_policy import ABORT, GripperPolicy
 from .params import payload_for
 from .trajectory_policy import (
     CURRENT_GOALS,
@@ -163,9 +164,6 @@ def _sample(p0, v0, p1, v1, alpha: float, span: float) -> list[float]:
 DEFAULT_GOAL_TOLERANCE = 0.5
 #: ...and how long after the final waypoint the joints are given to get inside it.
 DEFAULT_GOAL_TIME_TOLERANCE = 1.0
-#: Sim seconds a GripperCommand goal is given to reach its position or stall, unless the producer's
-#: ``timeout`` hint says otherwise.
-DEFAULT_GRIPPER_TIMEOUT = 5.0
 
 
 def _goal_tolerances(request, hints: dict, names: list[str]) -> dict[str, float]:
@@ -524,16 +522,22 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     (a gripper closed on an object, a door met an obstruction). As ros2_control's gripper action
     controller reports them, ``reached_goal`` is the measured position within tolerance of the
     commanded one and nothing else, and ``stalled`` is a stop anywhere else -- so fingers that
-    stopped on an object, or that went the wrong way, never report the goal reached. The reader's
-    blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>``.
-    Without a reader we wait a fixed settle time and report the command.
+    stopped on an object, or that went the wrong way, never report the goal reached. The tolerance
+    is the producer's ``reach_tolerance`` hint, 0.005 unless it states one: a door states the band
+    inside which it counts itself as arrived (0.02), so the result and the door's own status agree.
+    The reader's blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to
+    ``gripper:<owner>``. Without a reader we wait a fixed settle time and report the command.
 
-    The goal is given :data:`DEFAULT_GRIPPER_TIMEOUT` seconds of sim time to reach or stall; a
-    producer whose travel can take longer (a slow door) states its own bound in its ``timeout`` hint,
-    and 0 waits however long it takes. A goal still moving when its time runs out is aborted, with
-    neither ``reached_goal`` nor ``stalled`` set: it has not ended, and the result does not say it has.
-    Unlike a cancel, an abort commands nothing: the producer goes on toward the position (a door keeps
-    moving), and a caller that wants it elsewhere sends a new goal.
+    The goal is given :data:`~roqsim_ros_bridge.gripper_policy.DEFAULT_GRIPPER_TIMEOUT` seconds of
+    sim time to reach or stall; a producer whose travel can take longer (a slow door) states its own
+    bound in its ``timeout`` hint, and 0 waits however long it takes. A goal still moving when its
+    time runs out has neither ``reached_goal`` nor ``stalled`` set, and ends as the producer's
+    ``on_timeout`` hint says: ``succeed`` by default, as an arm's gripper always has, so MoveIt goes
+    on with a slow hand; ``abort`` for a producer that computes its bound from its own travel, such
+    as a door, where a goal past it has gone wrong. Unlike a cancel, an abort commands nothing: the
+    producer goes on toward the position (a door keeps moving), and a caller that wants it elsewhere
+    sends a new goal. Both decisions are :class:`~roqsim_ros_bridge.gripper_policy.GripperPolicy`'s;
+    a hint it cannot use aborts the goal before anything is sent, with the reason logged.
 
     ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
     every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
@@ -551,13 +555,18 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     target = float(cmd.position)
     max_effort = float(cmd.max_effort)
     result = GripperCommand.Result()
-    refusal = _refused(endpoint, position=target)
+    hints = _hints(endpoint)
+    try:
+        policy = GripperPolicy.from_hints(hints)
+    except ValueError as exc:
+        refusal = f"{getattr(endpoint, 'owner', '?')}/{getattr(endpoint, 'name', '?')}: {exc}"
+    else:
+        refusal = _refused(endpoint, position=target)
     if refusal is not None:
         # GripperCommand's result has no error field: the goal is aborted, and the reason logged.
         logger.error("gripper goal refused: %s", refusal)
         goal_handle.abort()
         return result
-    hints = _hints(endpoint)
     effort_key = hints.get("effort_key")
     effort = ctx.blackboard.get(effort_key) if effort_key else None
     if effort is not None:
@@ -569,9 +578,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
         state_key = hints.get("state_key", f"gripper:{endpoint.owner}")
         reader = ctx.blackboard.get(state_key)
 
-    pos_tol = 0.005  # rad: close enough to call the goal reached
     vel_tol = 0.002  # rad/s: below this the fingers are considered stopped (stalled on an object)
-    timeout = float(hints.get("timeout", DEFAULT_GRIPPER_TIMEOUT))
+    timeout = policy.timeout
     settle = 0.5  # min time before a low velocity counts as a stall (let motion start)
 
     start = ctx.sim_time
@@ -588,7 +596,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             if reader is not None:
                 position, _velocity = reader()
                 _send(on_payload, endpoint, position=position)
-                reached = abs(position - target) <= pos_tol
+                reached = policy.reached(position, target)
             else:
                 logger.warning(
                     "no state reader for %r, so a cancelled gripper command holds its target rather "
@@ -607,7 +615,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             return result
         if reader is not None:
             position, velocity = reader()
-            reached = abs(position - target) <= pos_tol
+            reached = policy.reached(position, target)
             stalled = (ctx.sim_time - start) > settle and abs(velocity) <= vel_tol and not reached
             feedback.position = position
             if effort is not None:
@@ -627,10 +635,10 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
         result.effort = effort.read_effort()
     result.stalled = stalled
     result.reached_goal = reached
-    if not (reached or stalled):
+    if policy.verdict(reached, stalled) == ABORT:
         logger.warning(
-            "gripper goal %g still moving at %g after %g s; aborted. A producer that takes longer "
-            "states it in its endpoint's `timeout` hint",
+            "gripper goal %g still moving at %g after %g s; aborted, as its producer's `on_timeout` "
+            "hint asks. A producer that takes longer states it in its endpoint's `timeout` hint",
             target,
             position,
             timeout,

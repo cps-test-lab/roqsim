@@ -405,9 +405,25 @@ def test_a_gripper_that_stops_short_of_its_position_has_not_reached_it(fingers):
 SLOW = 0.004
 
 
-def test_a_gripper_goal_still_moving_when_its_time_runs_out_is_aborted():
-    """Neither reached nor stalled: the goal has not ended, and the result does not say it did."""
+def test_a_gripper_goal_still_moving_when_its_time_runs_out_succeeds_unreached():
+    """A slow hand at its timeout comes back succeeded with neither ``reached_goal`` nor ``stalled``
+    set, as it always has: MoveIt takes an abort for a failed execution."""
     fingers, ctx, endpoint, on_payload = _gripper_setup(0.0, converge=SLOW)
+    handle = _GoalHandle(_gripper_goal(0.8), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, endpoint)
+
+    assert handle.status == "succeeded"
+    assert result.reached_goal is False
+    assert result.stalled is False
+    assert 0.1 < result.position < 0.79, "it was on its way"
+
+
+def test_a_goal_still_moving_when_its_time_runs_out_is_aborted_when_its_producer_says_so():
+    """A door bounds its goal by its own swing, so one still moving past it has gone wrong: its
+    ``on_timeout`` hint asks for an abort, and the result does not say the goal ended."""
+    fingers, ctx, endpoint, on_payload = _gripper_setup(0.0, converge=SLOW, on_timeout="abort")
     handle = _GoalHandle(_gripper_goal(0.8), ctx)
 
     with _Physics(ctx, fingers):
@@ -417,6 +433,59 @@ def test_a_gripper_goal_still_moving_when_its_time_runs_out_is_aborted():
     assert result.reached_goal is False
     assert result.stalled is False
     assert 0.1 < result.position < 0.79, "it was on its way"
+
+
+class _ShortFingers(_Fingers):
+    """Settles 0.015 short of where it is sent: inside a door's 0.02 band, outside a gripper's 0.005."""
+
+    def set_gripper(self, position) -> None:
+        super().set_gripper(float(position) - 0.015)
+
+
+@pytest.mark.parametrize(
+    "hints, reached",
+    [
+        pytest.param({}, False, id="a-gripper-at-0.005"),
+        pytest.param({"reach_tolerance": 0.02}, True, id="a-door-at-0.02"),
+    ],
+)
+def test_reached_goal_is_graded_on_the_producers_own_reach_tolerance(hints, reached):
+    """A door stopped 0.015 short has arrived by its own status, and ROS says so too; a gripper that
+    far off has not, and stalled."""
+    fingers = _ShortFingers(0.0, converge=0.5)
+    ctx, endpoint, on_payload = _wire(
+        fingers.read_state,
+        lambda position: fingers.set_gripper(position),
+        name="door",
+        state_key="gripper:ur5e",
+        backend={
+            "action": "control_msgs.action.GripperCommand",
+            "name": "door",
+            "state_key": "gripper:ur5e",
+            **hints,
+        },
+    )
+    handle = _GoalHandle(_gripper_goal(0.6), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, endpoint)
+
+    assert handle.status == "succeeded"
+    assert result.position == pytest.approx(0.585, abs=2e-3)
+    assert result.reached_goal is reached
+    assert result.stalled is not reached
+
+
+def test_a_hint_the_handler_cannot_use_aborts_the_goal_unmoved():
+    fingers, ctx, endpoint, on_payload = _gripper_setup(0.0, on_timeout="fail")
+    handle = _GoalHandle(_gripper_goal(0.8), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, endpoint)
+
+    assert handle.status == "aborted"
+    assert fingers.commands == [], "nothing is sent for a goal it refuses"
+    assert result.reached_goal is False
 
 
 def test_a_producer_that_takes_longer_states_its_timeout_in_a_hint():

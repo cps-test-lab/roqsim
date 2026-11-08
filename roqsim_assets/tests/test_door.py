@@ -122,6 +122,18 @@ def test_the_door_action_gives_a_slow_door_time_for_its_swing(tmp_path):
     assert action["timeout"] == pytest.approx(math.radians(120) / 0.3 + 3.0 + 5.0)
 
 
+def test_the_door_action_states_the_doors_arrival_band_and_an_abort_at_its_timeout(tmp_path):
+    """The handler asks the producer: ``reached_goal`` within the band the door's programs end in,
+    so ROS and the door's status agree, and an abort past the door's own bound, where an arm's
+    gripper keeps its result."""
+    engine = _built(tmp_path, {"speed": 0.3})
+    action = engine.ctx.interface.find("door", "door").backend["ros2"]
+    assert action["reach_tolerance"] == 0.02
+    assert action["on_timeout"] == "abort"
+    # The band is the one its programs end in (test_a_leaf_stopped_just_short_of_its_openness_...).
+    assert action["reach_tolerance"] == _door_plugin(engine)._reach_tol
+
+
 def test_mesh_leaf_model_loads_and_swings(tmp_path):
     # The textured leaf model (white panel + chrome handle) hangs on the hinge and opens on command.
     engine = _built(tmp_path, {"model": "door", "width": 0.9, "height": 2.0})

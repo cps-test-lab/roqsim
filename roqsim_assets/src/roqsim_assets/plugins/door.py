@@ -51,8 +51,10 @@ port replaces what the door was doing (``move_to``, preempting):
 * ``in``  action ``<ns>/door`` -- ``control_msgs/action/GripperCommand`` for open/close *with feedback*
   (``goal.command.position`` is the target fraction; the handler reports reached/stalled by watching
   the ``machine:<name>:openness`` state reader on the blackboard -- see ``roqsim_ros_bridge.actions``).
-  A goal is given a full swing at ``speed``, plus ``stall_timeout``, plus 5 s; one still moving then
-  is aborted.
+  The door states its own policy in the action's hints: ``reached_goal`` within its arrival band of
+  0.02 (``reach_tolerance``), the one its programs end in, so ROS and ``status()`` agree; a goal is
+  given a full swing at ``speed``, plus ``stall_timeout``, plus 5 s (``timeout``), and one still
+  moving then is aborted (``on_timeout: abort``) -- where an arm's gripper comes back succeeded.
 
 Config::
 
@@ -546,13 +548,16 @@ class DoorPlugin(MachinePlugin):
         return self.read_state()[0]
 
     # Served by the GripperCommand action, which reports reached or stalled by watching the door's
-    # own state reader (`state_key`) rather than a gripper's.
+    # own state reader (`state_key`) rather than a gripper's, grades `reached_goal` on the door's own
+    # arrival band, and aborts a goal still moving past the door's own bound.
     @endpoint.command(
         when="commandable",
         ros2=lambda self: {
             "action": "control_msgs.action.GripperCommand",
             "state_key": f"machine:{self.door_name}:openness",
             "timeout": self.action_timeout(),
+            "reach_tolerance": self._reach_tol,
+            "on_timeout": "abort",
         },
     )
     def door(self, position: float) -> None:
