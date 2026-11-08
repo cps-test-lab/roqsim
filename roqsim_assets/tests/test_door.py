@@ -570,3 +570,40 @@ def test_short_pushes_do_not_add_up_to_a_give_way(tmp_path):
             engine.step()
     assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
     assert math.degrees(_hinge_angle(engine)) == pytest.approx(45, abs=3)
+
+
+def _door_plugin(engine):
+    return next(p for p in engine.plugins if p.address == "door")
+
+
+@pytest.mark.parametrize("start", [("open", {}), ("move_to", {"openness": 0.7})])
+def test_a_command_back_right_after_a_handle_start_is_not_taken_for_a_repeat(tmp_path, start):
+    """A handle's start is applied a step after it is made, and the door compares a ``cmd`` with what
+    it was commanded last: commanded open, then back to closed before the start was applied, it
+    closes, rather than dropping the ``0.0`` as the target it stood at and opening."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    program, args = start
+    first = door.start(program, **args)
+    # The stream's value, applied on the physics thread before the posted start is: what a cmd
+    # arriving between the start and its step does.
+    _door_plugin(engine).cmd(0.0)
+    engine.step()
+    assert door.status().seq > first and door.status().program == "move_to"
+    started = [e["seq"] for e in engine.ctx.events.all() if e["event"] == "program_start"]
+    assert first not in started, "the handle's start was replaced before it ran"
+    assert _finish(engine, door, door.status().seq).error == ""
+    for _ in range(500):
+        engine.step()
+    assert abs(math.degrees(_hinge_angle(engine))) < 2
+
+
+def test_a_repeated_command_after_a_handle_start_is_still_a_repeat(tmp_path):
+    """Recorded at acceptance, the handle's target is what a ``cmd`` of the same value repeats."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    first = door.start("open")
+    _door_plugin(engine).cmd(1.0)
+    engine.step()
+    assert door.status().seq == first and door.status().program == "open"
+    assert _finish(engine, door, first).error == ""
