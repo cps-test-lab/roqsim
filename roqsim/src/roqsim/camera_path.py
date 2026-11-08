@@ -20,6 +20,10 @@ no keyframe states is never written, so the base camera keeps it. That is what l
 angles: it converts to the four orbit keys at load (:func:`roqsim.rendering.orbit_from_eye`), so the
 rest of the code sees one vocabulary.
 
+``near`` (metres) is the near clip plane the path is drawn with, for a camera that goes closer than
+the model's own (``visual/map znear`` times ``stat.extent``, tens of centimetres to a metre in a
+world whose extent a parked body stretches): a close shot of a hand clips at the model's.
+
 Azimuth takes the shortest arc between keyframes (350 -> 10 passes through 0), which is what a person
 means nine times in ten. A full orbit needs ``wrap: false`` and an angle past 180, e.g. 180 -> 540.
 """
@@ -38,7 +42,7 @@ ORBIT_KEYS = ("lookat", "distance", "azimuth", "elevation")
 KEYFRAME_KEYS = frozenset({"t", *ORBIT_KEYS, "eye", "target"})
 
 #: What a path document may state beside its keyframes.
-DOCUMENT_KEYS = frozenset({"keyframes", "ease", "wrap"})
+DOCUMENT_KEYS = frozenset({"keyframes", "ease", "wrap", "near"})
 
 EASES = ("linear", "smoothstep")
 
@@ -121,7 +125,9 @@ def _wrap180(deg: float) -> float:
 class CameraPath:
     """Keyframes, and the camera they give at any time between them."""
 
-    def __init__(self, keyframes: list[Keyframe], *, ease: str = "linear", wrap: bool = True):
+    def __init__(
+        self, keyframes: list[Keyframe], *, ease: str = "linear", wrap: bool = True, near: float | None = None
+    ):
         if not keyframes:
             raise CameraPathError("a camera path needs at least one keyframe")
         if ease not in EASES:
@@ -129,6 +135,9 @@ class CameraPath:
         self.keyframes = list(keyframes)
         self.ease = ease
         self.wrap = bool(wrap)
+        if near is not None and (isinstance(near, bool) or not isinstance(near, (int, float)) or near <= 0):
+            raise CameraPathError(f"near {near!r} is not a distance: give metres, more than 0")
+        self.near = None if near is None else float(near)
         self._tracks: dict[str, list[tuple[float, object]]] | None = None
         if self.anchored:
             self._index()
@@ -154,7 +163,9 @@ class CameraPath:
         if not isinstance(raw, list) or not raw:
             raise CameraPathError("camera path: 'keyframes' must be a non-empty list")
         frames = [_keyframe(entry, i) for i, entry in enumerate(raw)]
-        return cls(frames, ease=str(doc.get("ease", "linear")), wrap=bool(doc.get("wrap", True)))
+        return cls(
+            frames, ease=str(doc.get("ease", "linear")), wrap=bool(doc.get("wrap", True)), near=doc.get("near")
+        )
 
     @classmethod
     def from_arg(cls, text: str) -> CameraPath:
@@ -199,7 +210,7 @@ class CameraPath:
             Keyframe(k.t.resolve(moments) if isinstance(k.t, Moment) else k.t, k.values)
             for k in self.keyframes
         ]
-        return CameraPath(frames, ease=self.ease, wrap=self.wrap)
+        return CameraPath(frames, ease=self.ease, wrap=self.wrap, near=self.near)
 
     def _index(self) -> None:
         times = [k.time for k in self.keyframes]
@@ -314,6 +325,8 @@ class CameraPath:
             "ease": self.ease,
             "wrap": self.wrap,
         }
+        if self.near is not None:
+            out["near"] = self.near
         if self.anchored:
             out["span"] = [round(v, 6) for v in self.span]
             out["resolved"] = [
