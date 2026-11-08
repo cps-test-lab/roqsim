@@ -2931,6 +2931,19 @@ example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``,
 ``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
 scenario from ``roqsim_assets.scenarios``.
 
+A controllable ``door`` is driven over ROS too: its ``cmd`` topic and its ``door`` action
+(``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``. A ``cmd``
+equal to the openness last commanded -- through a port, or through a handle's ``start`` the physics
+thread has not applied yet -- changes nothing while the door moves there or stands there. The action
+is the bridge's generic 1-DOF handler (``roqsim_ros_bridge.actions.gripper_command``), which asks
+its producer, through the endpoint's hints, how to grade a goal and does not look at what the
+producer is: ``reach_tolerance`` is how near counts as ``reached_goal`` (0.005 unless stated; a door
+states 0.02, the band its programs end in, so ROS and ``status()`` agree), and ``on_timeout`` is what
+a goal still moving at its ``timeout`` ends as -- ``succeed``, with neither ``reached_goal`` nor
+``stalled`` set, unless stated (an arm's gripper), ``abort`` for a door, whose ``timeout`` is a full
+swing at its ``speed``, ``stall_timeout`` and 5 s. The decision is
+``roqsim_ros_bridge.gripper_policy``, free of ROS imports.
+
 Writing a machine
 ~~~~~~~~~~~~~~~~~
 
