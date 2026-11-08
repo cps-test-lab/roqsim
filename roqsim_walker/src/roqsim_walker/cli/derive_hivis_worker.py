@@ -1,6 +1,6 @@
 # Copyright (C) 2026 Frederik Pasch
 # SPDX-License-Identifier: Apache-2.0
-"""Derive the ``WorkerHiVisWalk`` blueprint from an import of the Open-RMF ``OpScrubsWalk`` actor.
+"""Derive the WorkerHiVisWalk blueprint from an import of the Open-RMF OpScrubsWalk actor.
 
     roqsim walker import-actor OpScrubsWalk.dae --name OpScrubsWalk --out /tmp/people \\
         --credits-source https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk \\
