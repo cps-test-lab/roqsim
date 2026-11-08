@@ -39,6 +39,9 @@ MAX_TURN = math.radians(60.0)
 MAX_LEAN = math.radians(25.0)
 #: A crouch lowers the pelvis by at most this share of its standing height.
 MAX_CROUCH = 0.45
+#: The share of a hand's twist about the forearm's line the forearm takes (pronation and supination
+#: turn the forearm's bones along it); the wrist keeps the rest.
+FOREARM_TWIST = 0.5
 
 
 @dataclass
@@ -242,6 +245,11 @@ def solve(
             sh_l, el_l, _, el_w = _limb(desc, f"shoulder_{s}", f"elbow_{s}", spine_w, shoulder, target, pole)
             if wq is None:
                 break
+            # The forearm turns with the hand: part of the twist the wrist's rotation asks for is the
+            # forearm's, about its own line (which leaves the wrist where it is), so a hand turned
+            # palm down twists the forearm along its length, not the skin at the wrist alone.
+            pronation = _twist_part(Q.mul(Q.inv(el_w), wq), desc.offset(f"wrist_{s}"), FOREARM_TWIST)
+            el_l, el_w = Q.mul(el_l, pronation), Q.mul(el_w, pronation)
             wrist_l = desc.clamp(f"wrist_{s}", Q.mul(Q.inv(el_w), wq))
             reached = Q.mul(el_w, wrist_l)
             if Q.angle_between(reached, wq) < 1e-4:
@@ -269,3 +277,16 @@ def solve(
             grip = wp if g.quat is None else wp + Q.rotate(wqq, layouts[s].grip_pos)
             sol.residual[s] = float(np.linalg.norm(grip - np.asarray(g.pos, float)))
     return sol
+
+
+def _twist_part(rot, axis, share: float) -> np.ndarray:
+    """``share`` of ``rot``'s twist about ``axis`` (its swing-twist decomposition), as a rotation."""
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    w, v = float(rot[0]), np.asarray(rot[1:], float)
+    along = float(v @ a)
+    if abs(w) < 1e-12 and abs(along) < 1e-12:
+        return Q.IDENTITY.copy()
+    angle = 2.0 * math.atan2(along, w)
+    angle = math.atan2(math.sin(angle), math.cos(angle))  # the short way round
+    return Q.axis_angle(a, share * angle)

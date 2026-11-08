@@ -17,6 +17,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim_motion import hands as H
+from roqsim_motion import quat as Q
 from roqsim_walker.blueprint import resolve_walker
 
 #: An adult hand at 1.75 m: wrist crease to middle fingertip, and across the palm at the knuckles
@@ -221,5 +222,13 @@ def test_a_press_puts_the_drawn_fingertip_on_the_button_along_its_axis():
         assert abs(float(off @ normal)) < 0.005, f"the drawn fingertip is {float(off @ normal):+.3f} m off the face"
         assert np.linalg.norm(off - (off @ normal) * normal) < 0.02, "the drawn fingertip is beside the button"
         assert _angle(along, -normal) < 20, "the finger does not point along the button's axis"
+        # the hand is turned no further than aiming the finger needs, and the forearm turns with it:
+        # what the wrist itself twists about the forearm's line stays small
+        body = engine.ctx.blackboard.get("humanoid_body:worker")
+        elbow = d.mocap_quat[body.st.mocap["elbow_r"]]
+        wrist = d.mocap_quat[body.st.mocap["wrist_r"]]
+        local = Q.mul(Q.inv(elbow), wrist)
+        twist = math.degrees(2.0 * math.atan2(abs(float(local[3])), float(local[0])))
+        assert min(twist, 360.0 - twist) < 40.0, f"the wrist twists {twist:.0f} deg on the forearm"
     finally:
         engine.shutdown()

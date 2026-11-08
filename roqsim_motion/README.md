@@ -15,7 +15,7 @@ moves a worker makes, in which order and for what, is a scenario's (`docs/archit
 | module | what it holds |
 |---|---|
 | `description.py` | the canonical humanoid (the walker's seventeen joints), rest offsets, limits, forward kinematics |
-| `ik.py` | the whole-body solver: turn, crouch, bend and lean for the targets; two-bone arms and legs; the wrist on the target's rotation; gaze |
+| `ik.py` | the whole-body solver: turn, crouch, bend and lean for the targets; two-bone arms and legs; the wrist on the target's rotation, its twist about the forearm shared with the forearm; gaze |
 | `hands.py` | five fingers of three bones a hand, each bone on its own axis (the thumb's first opposes it); a hand measured on a mesh or the default one; the named poses `open`, `power`, `pinch`, `flat`, `point`, each finger eased whole; a grip that closes finger by finger, index to little, the thumb over them |
 | `targets.py` | a hand's target: a world pose, or a site, body or entity with an offset, resolved every tick |
 | `retarget.py` | retargeting tables: a body mapped onto the canonical humanoid |

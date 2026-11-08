@@ -185,3 +185,32 @@ def test_targets_resolve_sites_bodies_entities_and_world_poses():
     assert np.allclose(p, [1, 2, 3]) and math.isclose(Q.yaw_of(r), 1.0)
     with pytest.raises(TargetError, match="unknown target 'nowhere'"):
         make_target(m, _Entities(), "nowhere")
+
+
+def _twist(rot, axis) -> float:
+    """``rot``'s twist about ``axis`` (deg)."""
+    a = np.asarray(axis, float) / np.linalg.norm(axis)
+    return math.degrees(2.0 * math.atan2(float(np.asarray(rot[1:]) @ a), float(rot[0])))
+
+
+@pytest.mark.parametrize("side", ["l", "r"])
+@pytest.mark.parametrize("turn", [-60.0, 60.0])
+def test_a_hand_turned_about_the_forearm_turns_the_forearm_too(side, turn, monkeypatch):
+    """Pronation is the forearm's: a hand turned about the forearm's line turns the forearm too, and
+    the wrist keeps about half the twist it would keep alone -- and the hand still arrives."""
+    from roqsim_motion import ik
+
+    arm = {**REST, f"elbow_{side}": Q.axis_angle("y", -1.2)}  # the forearm forward
+    poses = DESC.fk(ROOT, Q.IDENTITY, arm)
+    wp, wq = poses[f"wrist_{side}"]
+    forearm = Q.rotate(wq, DESC.offset(f"wrist_{side}"))
+    goal_q = Q.mul(Q.axis_angle(forearm, math.radians(turn)), Q.mul(wq, LAYOUTS[side].grip_quat))
+    goal_p = wp + Q.rotate(goal_q, Q.rotate(Q.inv(LAYOUTS[side].grip_quat), LAYOUTS[side].grip_pos))
+    goals = {side: HandGoal(goal_p, goal_q)}
+    sol = solve(DESC, ROOT, Q.IDENTITY, arm, goals, LAYOUTS)
+    assert sol.residual[side] < 0.005
+    shared = _twist(sol.rotations[f"wrist_{side}"], DESC.offset(f"wrist_{side}"))
+    monkeypatch.setattr(ik, "FOREARM_TWIST", 0.0, raising=False)
+    alone = _twist(solve(DESC, ROOT, Q.IDENTITY, arm, goals, LAYOUTS).rotations[f"wrist_{side}"],
+                   DESC.offset(f"wrist_{side}"))
+    assert abs(shared) < 0.6 * abs(alone), f"the wrist keeps {shared:.0f} deg; alone it would {alone:.0f}"

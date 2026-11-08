@@ -536,7 +536,7 @@ class HumanoidPlugin(MachinePlugin):
         """Press a button (or anything on a joint) with a fingertip until it has travelled its press,
         then let go: in from the front of its face along the face's -x, the hand turned so the
         pressing finger points along that axis (a hand with fingers; :meth:`HumanoidBody.press_aim`),
-        the palm down, and its drawn fingertip on the face."""
+        the palm turned no more than that needs, and its drawn fingertip on the face."""
         (side,) = self._sides(hand) if hand != "both" else self.fail("a press is one hand's")
         site = self._site_id(target)
         if site < 0:
@@ -598,14 +598,17 @@ class HumanoidPlugin(MachinePlugin):
 
     def _press_rotation(self, side: str, pose: str, into):
         """The grip frame's world rotation that points ``side``'s pressing finger along ``into``, the
-        palm turned down (toward the body's front for a press straight down); ``None`` for a hand
-        that presses as it is turned."""
+        palm turned from where it faces as little as that needs; ``None`` for a hand that presses as
+        it is turned."""
         along = self.body.press_aim(side, pose)
         if along is None:
             return None
         into = np.asarray(into, float) / np.linalg.norm(into)
         _, _, yaw = self.body.root()
-        for palm in (np.array([0.0, 0.0, -1.0]), np.array([math.cos(yaw), math.sin(yaw), 0.0])):
+        # the palm turned as little as aiming the finger needs: from where it faces now (a hand at
+        # rest faces the thigh, so it points thumb up), else down, else toward the body's front
+        now = Q.to_matrix(self.body.grip(self._d, side)[1])[:, 0]
+        for palm in (now, np.array([0.0, 0.0, -1.0]), np.array([math.cos(yaw), math.sin(yaw), 0.0])):
             palm = palm - np.dot(palm, into) * into
             if np.linalg.norm(palm) > 0.3:
                 break

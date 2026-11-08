@@ -219,7 +219,7 @@ timeline:
 `bench-hands` measures.
 
 **Contact.** A press pushes with the hand's press proxy, so a button moves because it is pushed. The
-hand is turned so its pointing index lies along the button's axis, palm down, and the proxy's front is
+hand is turned so its pointing index lies along the button's axis, its palm turned no more than that needs (a hand at rest points thumb up), and the proxy's front is
 the drawn fingertip, its contact stiff enough not to sink into the button: what pushes the button is
 the finger a viewer sees. The press stops at the button's travel or at `max_force`, since a kinematic hand would push through
 a joint's stop. A hold is a weld between the hand's grip site and the object's, added when the world
