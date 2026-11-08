@@ -10,6 +10,7 @@ backend. Every refusal a scenario can meet is run through both and must read the
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import threading
 import time
@@ -301,6 +302,13 @@ def press(tmp_path, monkeypatch):
         yield served.engine.ctx.blackboard.require("machine:press")
 
 
+#: The machine_run action imports scenario_execution; the access routes are tested without it.
+needs_scenario_execution = pytest.mark.skipif(
+    importlib.util.find_spec("scenario_execution") is None,
+    reason="the machine_run action imports scenario_execution",
+)
+
+
 def _machine_run(seconds):
     from scenario_execution_roqsim.actions.machine_run import MachineRun
 
@@ -322,6 +330,7 @@ def _until(cond, what):
         time.sleep(0.005)
 
 
+@needs_scenario_execution
 def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_socket(press):
     import py_trees
 
@@ -338,6 +347,7 @@ def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_s
     assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
 
 
+@needs_scenario_execution
 def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds_the_machine_free(
     press,
 ):
@@ -372,6 +382,7 @@ def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds
                 abandoned.shutdown()
 
 
+@needs_scenario_execution
 def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_alone_over_the_socket(
     press,
 ):
