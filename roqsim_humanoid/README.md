@@ -10,6 +10,21 @@ devices; the Livox Mid-360 device in the G1's head). Each controller declares th
 endpoints (`cmd_vel` in, `odom` / `joint_states` out), so the ROS 2 bridge and nav2 drive either
 humanoid with no humanoid-specific wiring.
 
+## Handling things without their controllers (`roqsim_motion`)
+
+The G1-dex1 and the Oli carry retargeting tables (`models/<model>.retarget.yaml`) that map them onto
+`roqsim_motion`'s canonical humanoid, so a `humanoid_robot` nested under the `spawn_model` that places
+one drives its joints from the motion core -- kinematic or physical -- and a nested `humanoid` gives
+it the moves a walker with hands has. None of the robot's own controllers runs, no locomotion or
+balance controller is written, and balance is not simulated: the base hangs on an anchor the
+navigator moves (`roqsim_motion/README.md`, "A humanoid robot").
+
+`worlds/handling_box_swap_g1.yaml` (and its OpenSCENARIO twin `handling_box_swap_g1_osc.yaml`) is the
+box swap of `roqsim_walker`'s `handling_box_swap` by the G1-dex1, physical: the same scenario, its
+handle renamed and its stand-offs the robot's -- a shorter reach, so the drawer comes out and goes
+back in five strokes, which leave it a few centimetres short of shut -- and a cabinet with its
+drawer at the robot's height.
+
 ## AgiBot Genie G2 (`agibot_g2`)
 
 A **wheeled dual-arm mobile manipulator** (contrast the legged G1/Oli): a 4-wheel swerve chassis,

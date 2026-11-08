@@ -554,7 +554,8 @@ class SpawnModelPlugin(Plugin):
         if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: motion: physics, but {asset.path} already gives its root "
-                f"body a joint. Spawn it without `free` -- the prop defines its own articulation."
+                f"body a joint. Spawn it with `motion: static`, which adds none -- the model defines its "
+                f"own articulation, its root's joint included."
             )
         if not len(root.geoms) and not float(root.mass):
             pinned = [

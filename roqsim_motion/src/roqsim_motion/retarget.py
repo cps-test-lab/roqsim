@@ -14,8 +14,10 @@ bone lengths (:class:`~roqsim_motion.description.Description`)::
               y: waist_pitch_joint]
       elbow_l: [y: left_elbow_joint]
     hands:
-      l: {frame: left_grasp, grip: {actuator: left_dex1_gripper, open: 0.0, closed: 0.04}}
+      l: {frame: left_grasp, rpy: [0, 0, 0],   # the frame site (or `body:` and `pos:`), and the turn
+          grip: {actuator: left_dex1_gripper, open: 0.0, closed: 0.04}}   # onto the grip convention
     gaze: spine                              # the joint that turns to look (head by default)
+    rest: {left_elbow_joint: 1.3}            # angles at rest, where the model's zero is not
     physical: {servos: own, kp: 300.0, kv: 10.0}
 
 A joint's angle is its canonical local rotation decomposed in the order listed, each angle times
@@ -60,6 +62,7 @@ class Table:
     gaze: str = "head"
     physical: dict = field(default_factory=dict)
     source: str = ""
+    rest: dict = field(default_factory=dict)  # model joint -> its angle standing at rest (rad)
 
     def angles(self, local: dict) -> dict:
         """Model joint name -> angle (rad) for the canonical local rotations ``local``."""
@@ -94,8 +97,10 @@ class Table:
             if not has(mujoco.mjtObj.mjOBJ_JOINT, j):
                 missing.append(f"joint {j!r}")
         for side, hand in self.hands.items():
-            if not has(mujoco.mjtObj.mjOBJ_SITE, hand["frame"]):
+            if "frame" in hand and not has(mujoco.mjtObj.mjOBJ_SITE, hand["frame"]):
                 missing.append(f"hands.{side}.frame {hand['frame']!r} (a site)")
+            if "body" in hand and not has(mujoco.mjtObj.mjOBJ_BODY, hand["body"]):
+                missing.append(f"hands.{side}.body {hand['body']!r}")
             act = (hand.get("grip") or {}).get("actuator")
             if act and not has(mujoco.mjtObj.mjOBJ_ACTUATOR, act):
                 missing.append(f"hands.{side}.grip.actuator {act!r}")
@@ -135,7 +140,7 @@ def load_table(path) -> Table:
 def parse_table(doc: dict, source: str = "") -> Table:
     if not isinstance(doc, dict):
         raise TableError(f"retargeting table {source}: a mapping, not {type(doc).__name__}")
-    known = {"humanoid", "base", "joints", "hands", "gaze", "physical"}
+    known = {"humanoid", "base", "joints", "hands", "gaze", "physical", "rest"}
     extra = sorted(set(doc) - known)
     if extra:
         raise TableError(f"retargeting table {source}: unknown key(s) {extra}; the keys are {sorted(known)}")
@@ -165,9 +170,23 @@ def parse_table(doc: dict, source: str = "") -> Table:
     for side, hand in (doc.get("hands") or {}).items():
         if side not in ("l", "r"):
             raise TableError(f"retargeting table {source}: hands are 'l' and 'r', not {side!r}")
-        hands[side] = {"frame": str(hand["frame"]), "grip": dict(hand.get("grip") or {})}
+        if ("frame" in hand) == ("body" in hand):
+            raise TableError(f"retargeting table {source}: hands.{side} names a 'frame' (a site) or a 'body', one of them")
+        hands[side] = {"grip": dict(hand.get("grip") or {})}
+        if "frame" in hand:
+            hands[side]["frame"] = str(hand["frame"])
+        else:
+            hands[side]["body"] = str(hand["body"])
+            hands[side]["pos"] = [float(v) for v in hand.get("pos", [0.0, 0.0, 0.0])]
+        if "rpy" in hand:
+            hands[side]["rpy"] = [float(v) for v in hand["rpy"]]
+    rest = {str(k): float(v) for k, v in (doc.get("rest") or {}).items()}
+    mapped = {d.joint for dofs in joints.values() for d in dofs}
+    unmapped = sorted(set(rest) - mapped)
+    if unmapped:
+        raise TableError(f"retargeting table {source}: rest names {unmapped}, which no canonical joint maps")
     return Table(name, base_body, height, joints, hands, str(doc.get("gaze", "head")),
-                 dict(doc.get("physical") or {}), source)
+                 dict(doc.get("physical") or {}), source, rest)
 
 
 def find_table(model_name: str) -> Table:

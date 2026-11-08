@@ -1,0 +1,36 @@
+# The Unitree G1 with Dex1 grippers mapped onto roqsim_motion's canonical humanoid: the moves of a
+# `humanoid` drive it through `humanoid_robot` (roqsim_motion.robot) as they drive a walker. Each
+# canonical joint lists the model's joints in their chain order (parent first) with the axis each
+# turns about; limits are read from the model.
+humanoid: unitree_g1_dex1
+base: {body: base_link, height: 0.793}
+joints:
+  spine: [z: waist_yaw_joint, x: waist_roll_joint, y: waist_pitch_joint]
+  shoulder_l: [y: left_shoulder_pitch_joint, x: left_shoulder_roll_joint, z: left_shoulder_yaw_joint]
+  elbow_l: [y: left_elbow_joint]
+  wrist_l: [x: left_wrist_roll_joint, y: left_wrist_pitch_joint, z: left_wrist_yaw_joint]
+  shoulder_r: [y: right_shoulder_pitch_joint, x: right_shoulder_roll_joint, z: right_shoulder_yaw_joint]
+  elbow_r: [y: right_elbow_joint]
+  wrist_r: [x: right_wrist_roll_joint, y: right_wrist_pitch_joint, z: right_wrist_yaw_joint]
+  hip_l: [y: left_hip_pitch_joint, x: left_hip_roll_joint, z: left_hip_yaw_joint]
+  knee_l: [y: left_knee_joint]
+  ankle_l: [y: left_ankle_pitch_joint, x: left_ankle_roll_joint]
+  hip_r: [y: right_hip_pitch_joint, x: right_hip_roll_joint, z: right_hip_yaw_joint]
+  knee_r: [y: right_knee_joint]
+  ankle_r: [y: right_ankle_pitch_joint, x: right_ankle_roll_joint]
+  head: none                 # no head joint: it looks by turning its waist
+# The grasp sites point along the fingers (+x) with the jaws closing along y; the grip frame has
+# the fingers along +z and +x toward the body's middle, where a palm faces (roqsim_motion.hands): the
+# jaws' axis, -y for the left hand (rpy [-pi/2, 0, -pi/2]) and +y for the right ([pi/2, 0, pi/2]).
+# The gripper's open and closed targets are the manifest's (unitree_g1_dex1.manifest.yaml).
+hands:
+  l: {frame: left_grasp, rpy: [-1.5707963, 0.0, -1.5707963],
+      grip: {actuator: left_dex1_gripper, open: 0.0245, closed: -0.02}}
+  r: {frame: right_grasp, rpy: [1.5707963, 0.0, 1.5707963],
+      grip: {actuator: right_dex1_gripper, open: 0.0245, closed: -0.02}}
+gaze: spine
+# At zero its forearms point forward; at rest they hang.
+rest: {left_elbow_joint: 1.3, right_elbow_joint: 1.3}
+# Its arms and waist have position servos already, too soft at the wrists (gain 20) to hold a load;
+# its legs have motors. A servo is added on every mapped joint, beside the model's own.
+physical: {servos: add, kp: 400.0, kv: 20.0}

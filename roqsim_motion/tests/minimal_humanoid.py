@@ -46,7 +46,7 @@ def mjcf() -> str:
         for j in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_roll", "wrist_pitch", "wrist_yaw")
     )
     return f"""<mujoco model="minimal_humanoid">
-  <compiler boundmass="0.05" boundinertia="0.0001"/>
+  <compiler angle="radian" boundmass="0.05" boundinertia="0.0001"/>
   <worldbody>
     <body name="pelvis" pos="0 0 0.8">
       <freejoint name="base_free"/>

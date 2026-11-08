@@ -26,6 +26,11 @@ class HumanoidBody:
     #: Whether the body's hands touch by contact proxies the moves switch (a walker's), or by its
     #: own geometry (a robot's).
     has_proxies = False
+    #: How two hands hold one object: ``ride`` -- the first holds it, the second rides on its own
+    #: grip site (a body posed at its own rate, whose two hands would squeeze it between two holds);
+    #: ``both`` -- the second holds it too, by its position only (a body whose servos sag, whose one
+    #: hand alone would let it tilt).
+    two_hands = "ride"
 
     def __init__(self, name: str):
         self.name = name
@@ -93,6 +98,10 @@ class HumanoidBody:
 
     def gripper(self, data, side: str, closed: bool) -> None:
         """Close or open ``side``'s gripper, for a hand that has one instead of fingers."""
+
+    def place_reach(self) -> float:
+        """How far in front of the body its hands set something down, at most (m)."""
+        return 0.55
 
     def carry_height(self) -> float:
         """The hands' height carrying something in front of the body (m)."""

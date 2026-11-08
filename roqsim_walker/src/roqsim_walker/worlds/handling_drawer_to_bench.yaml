@@ -3,7 +3,7 @@
 #
 #   roqsim sim roqsim_walker/src/roqsim_walker/worlds/handling_drawer_to_bench.yaml
 #
-# The scene: roqsim_walker.scenes.DrawerToBench; in OpenSCENARIO: handling_drawer_to_bench_osc.yaml.
+# The scene: roqsim_motion.scenes.DrawerToBench; in OpenSCENARIO: handling_drawer_to_bench_osc.yaml.
 # smoke-steps: 25000
 
 sim:
@@ -35,5 +35,5 @@ components:
       motion: static
     name: bench
 
-  - "roqsim_walker.scenes:DrawerToBench": {stop_at_end: true}
+  - "roqsim_motion.scenes:DrawerToBench": {stop_at_end: true}
     name: scene

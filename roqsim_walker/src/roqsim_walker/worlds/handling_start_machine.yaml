@@ -3,7 +3,7 @@
 #   roqsim sim roqsim_walker/src/roqsim_walker/worlds/handling_start_machine.yaml
 #
 # The worker's moves are its own (the `humanoid` component); the scenario decides which it makes and
-# that a pressed button starts the machine (roqsim_walker.scenes.StartMachine; the same scene in
+# that a pressed button starts the machine (roqsim_motion.scenes.StartMachine; the same scene in
 # OpenSCENARIO: handling_start_machine_osc.yaml). The button moves because the worker's fingertip
 # pushes it. The machine is `press_1`, roqsim_assets' example press; the scene knows it only as a
 # machine and the one program it starts (`stroke`), so another machine takes its place by swapping
@@ -33,5 +33,5 @@ components:
       pose: {position: {x: 2.3, y: 0.45, z: 1.1}, orientation: {yaw: 3.14159265}}
     name: start
 
-  - "roqsim_walker.scenes:StartMachine": {stop_at_end: true}
+  - "roqsim_motion.scenes:StartMachine": {stop_at_end: true}
     name: scene

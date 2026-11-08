@@ -24,6 +24,12 @@ test = ["pytest>=7.0"]
 [project.entry-points."roqsim.plugins"]
 # A humanoid's moves, on the body of the walker or robot it is nested under.
 humanoid = "roqsim_motion.moves:HumanoidPlugin"
+# A humanoid robot's joints as a body of the motion core, without its controller software.
+humanoid_robot = "roqsim_motion.robot:HumanoidRobotPlugin"
+
+# The navigator's embodiment for a humanoid robot: it moves the robot's root.
+[project.entry-points."roqsim_nav.outputs"]
+humanoid = "roqsim_motion.robot:HumanoidOutput"
 
 [tool.setuptools.packages.find]
 where = ["src"]

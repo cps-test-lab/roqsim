@@ -194,7 +194,7 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 | `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
 
 **Scenes.** Three worlds show a worker handling things, each with its scenario in Python
-(`roqsim_walker.scenes`) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
+(`roqsim_motion.scenes`) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
 timeline:
 
 | world | the scene |

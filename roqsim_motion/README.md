@@ -28,6 +28,56 @@ Nothing is drawn and no iteration count depends on time, so a run is determinist
 holds, +z along the fingers. An object's grip site states the same frame, so holding is making the
 two frames one.
 
+## The moves
+
+A `humanoid` component, nested under a walker with `hands: true` or under a humanoid robot, gives it
+the moves `approach`, `reach`, `press`, `grasp`, `release`, `pull`, `push`, `carry` and `place`: the
+programs of a `MachinePlugin`, so each is started through the machine handle (`machine:<name>`, and
+`humanoid:<name>` with a method per move), waited on by its status and recorded as events. Their
+parameters, events and failures: `roqsim_walker/README.md`, "Moves". The scenes that compose them --
+in Python here (`roqsim_motion.scenes`), in OpenSCENARIO with `scenario_execution_roqsim`'s
+`humanoid_*` actions -- are worlds of `roqsim_walker` and, for a robot, of `roqsim_humanoid`.
+
+## A humanoid robot
+
+`humanoid_robot`, nested under the `spawn_model` that places a humanoid robot, makes the robot a body
+of the core with its retargeting table (`<model>.retarget.yaml` beside the model). `spawn_model`
+reads no manifest, so none of the robot's own controller software runs: no locomotion policy, no arm
+controller.
+
+```yaml
+- spawn_model: {model: unitree_g1_dex1, prefix: g1_, motion: static}   # the model has its own free base
+  name: g1
+  components:
+    - humanoid_robot: {drive: physical}          # kinematic | physical
+    - navigator: {output: humanoid, speed: 0.5, arrival_radius: 0.05}
+    - humanoid: {graspable: [cell, tote_*]}
+```
+
+- **kinematic**: the joints are set to their targets and the base to the nav root, every step; the
+  robot pushes what it touches and is never pushed.
+- **physical**: every mapped joint is tracked by a plain position servo -- the model's own, servos
+  this plugin adds where the model has none (`servos: own`), or added beside the model's on every
+  joint (`servos: add`, for an arm whose own servos are too soft to hold a load) -- and the base hangs
+  on a soft weld to an anchor the navigator moves. The body pushes and is pushed.
+
+**No locomotion or balance controller is written, and balance is not simulated.** The base hangs on
+its anchor, the legs play a simple gait while it walks, the feet may slide or press into the floor,
+and the contact forces under them are not those of a standing robot.
+
+Its hands are solved on its own arm and waist joints by damped least squares with MuJoCo's site
+Jacobian, drawn back toward the table's `rest` pose where a goal leaves them free; a physical arm's
+sag under a load is trimmed out against the hand's actual pose. A table's hand names its grip frame
+(a site, or a body and an offset) and turns it into the grip-frame convention; a gripper closes
+through its actuator. Two hands on one object both hold it (the second by its position only), where
+a walker's second hand rides on its handle: the robot's servos sag, and one hand alone would let the
+object tilt.
+
+| model | table | tested |
+|---|---|---|
+| `unitree_g1_dex1` (BSD-3-Clause) | `roqsim_humanoid/.../unitree_g1_dex1.retarget.yaml` | physical, scene 4 |
+| `oli` (Apache-2.0) | `roqsim_humanoid/.../oli.retarget.yaml` | kinematic |
+
 ## Tests
 
 ```bash

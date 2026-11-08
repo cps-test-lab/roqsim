@@ -1,6 +1,9 @@
-"""Example scenes of a worker with hands: the scenarios, written on ``roqsim.scenario``'s helper.
+# SPDX-License-Identifier: Apache-2.0
+"""Example scenes of a humanoid handling things: the scenarios, written on ``roqsim.scenario``'s
+helper, for any humanoid body -- a walker with hands, or a humanoid robot.
 
-Each scene is a world in ``roqsim_walker/worlds/`` that runs the scenario below, and a twin world
+Each scene is a world (``roqsim_walker/worlds/handling_*.yaml``; the robot's in ``roqsim_humanoid``)
+that runs the scenario below, and a twin world
 (``*_osc.yaml``) that runs the same scene as OpenSCENARIO (``*.osc``, with ``osc.roqsim``'s
 ``humanoid_*`` actions). The two give one timeline. A scenario decides which moves the worker makes
 and when; each move is the worker's own (``roqsim_motion.moves``), and each machine runs its own
@@ -57,31 +60,49 @@ class BoxSwap(ScenarioPlugin):
     hands on the totes' handles, once the cell's tote shows full.
 
     The cell's side is what the cell reports: a ``zone_trigger`` on the drawer (a tote is in it) and
-    the tote's ``part_state`` (``full``). The robot that fills it is not part of the scene."""
+    the tote's ``part_state`` (``full``). The robot that fills it is not part of the scene. The same
+    scene drives a humanoid robot (rename the handle with ``needs:``), with its own stand-offs.
+
+    Config::
+
+        standoffs:               # how far in front of what it works the humanoid stands (m)
+          drawer: 0.75           #   to pull the drawer open
+          push: 0.35             #   to push it shut, in two strokes
+          tote: 0.45             #   to take a tote by its handles
+          place: 0.55            #   to set a tote down on the trolley or in the drawer
+        pull: 0.44               # how far the drawer is pulled out (m)
+        strokes: 1               # in how many strokes it is pulled out (and pushed shut, two at least)
+    """
 
     NEEDS = {"worker": "humanoid:worker", "states": "part_state", "drawer": "zone:drawer_zone"}
+    STANDOFFS = {"drawer": 0.75, "push": 0.35, "tote": 0.45, "place": 0.55}
 
     def program(self):
         w = self.worker
+        st = {**self.STANDOFFS, **(self.config.get("standoffs") or {})}
+        pull = float(self.config.get("pull", 0.44))
         yield from self.entered(self.drawer, "tote_*")
         yield from self.until(lambda: self.states.is_shown("tote_full", "full"), what="the cell's tote is full")
-        yield from self.run(w, "approach", target="cell/drawer_1/grip", standoff=0.75)
-        yield from self.run(w, "grasp", hand="right", target="cell/drawer_1/grip")
-        yield from self.run(w, "pull", hand="right", distance=0.44)
-        yield from self.run(w, "release", hand="right")
-        yield from self.run(w, "approach", target="tote_full", standoff=0.45)
+        strokes = int(self.config.get("strokes", 1))
+        for _ in range(strokes):
+            yield from self.run(w, "approach", target="cell/drawer_1/grip", standoff=st["drawer"])
+            yield from self.run(w, "grasp", hand="right", target="cell/drawer_1/grip")
+            yield from self.run(w, "pull", hand="right", distance=pull / strokes)
+            yield from self.run(w, "release", hand="right")
+        yield from self.run(w, "approach", target="tote_full", standoff=st["tote"])
         yield from self.run(w, "grasp", hand="both", target="tote_full")
         yield from self.run(w, "carry", to="trolley", standoff=0.9)
-        yield from self.run(w, "approach", target="trolley", standoff=0.55, facing=math.pi)
+        yield from self.run(w, "approach", target="trolley", standoff=st["place"], facing=math.pi)
         yield from self.run(w, "place", at="trolley")
-        yield from self.run(w, "approach", target="tote_empty", standoff=0.45)
+        yield from self.run(w, "approach", target="tote_empty", standoff=st["tote"])
         yield from self.run(w, "grasp", hand="both", target="tote_empty")
         yield from self.run(w, "carry", to="cell/drawer_1/inside", standoff=0.9)
-        yield from self.run(w, "approach", target="cell/drawer_1/inside", standoff=0.5, facing=0.0)
+        yield from self.run(w, "approach", target="cell/drawer_1/inside", standoff=st["place"] - 0.05, facing=0.0)
         yield from self.run(w, "place", at="cell/drawer_1/inside")
-        # A drawer pushed shut from where it was pulled open: in two strokes, stepping up between.
-        for distance in (0.2, 0.22):
-            yield from self.run(w, "approach", target="cell/drawer_1/grip", standoff=0.45)
+        # A drawer pushed shut from where it was pulled open: in strokes, stepping up between.
+        pushes = max(2, strokes)
+        for distance in [pull / pushes] * pushes:
+            yield from self.run(w, "approach", target="cell/drawer_1/grip", standoff=st["push"])
             yield from self.run(w, "grasp", hand="right", target="cell/drawer_1/grip")
             yield from self.run(w, "push", hand="right", distance=distance)
             yield from self.run(w, "release", hand="right")

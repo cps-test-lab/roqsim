@@ -532,6 +532,20 @@ CASES: dict[str, Case] = {
         },
         {"tote": {"pose": {"position": {"x": 0.6, "y": 0.0}}}, "name": "tote"},
     ),
+    "humanoid_robot": Case(
+        lambda _: _world(
+            {
+                "spawn_model": {"model": "unitree_g1_dex1", "prefix": "g1_", "motion": "static"},
+                "name": "g1",
+                "components": [
+                    {"humanoid_robot": {"drive": "physical"}},
+                    {"navigator": {"output": "humanoid", "speed": 0.5, "arrival_radius": 0.05,
+                                   "goals": [[0.5, 0.0]]}},
+                ],
+            },
+            timestep=0.002,
+        )
+    ),
     # manipulation
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),

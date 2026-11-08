@@ -57,8 +57,10 @@ HANDS = {"left": ("l",), "right": ("r",), "both": ("l", "r")}
 ARRIVED = 0.01
 ARRIVED_ROT = math.radians(6.0)
 SETTLE = 2.0
-#: How far in front of what it presses or grips a hand comes first (m).
+#: How far in front of what it presses or grips a hand comes first (m), and how far from a grip
+#: site a hold is made (m): the weld takes up the rest.
 PRE = 0.08
+HOLD_REACH = 0.02
 #: The speed a press goes in at (m/s), and how far past the button's stroke it may go looking for it.
 PRESS_SPEED = 0.05
 PRESS_SEARCH = 0.04
@@ -67,8 +69,6 @@ FAR = 1.4
 #: How far above the highest thing under it -- a surface, a rim, a drawer's walls -- what is carried
 #: goes before it is lowered (m).
 CLEAR = 0.05
-#: How far in front of the body a hand sets something down, at most (m).
-PLACE_REACH = 0.55
 #: How near a humanoid's navigator must bring it to where it stands to work (m): its arrival_radius.
 ARRIVAL = 0.1
 #: How fast a body carrying something turns on the spot (rad/s).
@@ -151,6 +151,9 @@ class HumanoidPlugin(MachinePlugin):
                 f"humanoid {spec.address}: its moves need hands -- set 'hands: true' on walker "
                 f"{owner.address}"
             )
+        if owner is not None and owner.ref == "spawn_model":
+            # a robot's bodies are named by its prefix: they are its own, as a walker's are
+            spec.config.setdefault("prefix", str((owner.config or {}).get("prefix", "")))
         navs = [c for c in (owner.children if owner is not None else []) if c.ref == "navigator"]
         for nav in navs:
             radius = float((nav.config or {}).get("arrival_radius", 0.25))
@@ -322,12 +325,13 @@ class HumanoidPlugin(MachinePlugin):
             yield
 
     def _site_goal(self, site: int, back: float = 0.0):
-        """A goal on a site's frame, ``back`` m out along its -x (in front of what it is on)."""
+        """A goal on a site's frame, ``back`` m out along its -z: a hand comes onto a grip from where
+        its fingers point from, above a handle its fingers close down over."""
 
         def goal():
             p = self._d.site_xpos[site]
             r = self._d.site_xmat[site].reshape(3, 3)
-            return p - back * r[:, 0], Q.from_matrix(r)
+            return p - back * r[:, 2], Q.from_matrix(r)
 
         return goal
 
@@ -558,9 +562,11 @@ class HumanoidPlugin(MachinePlugin):
             self._far(self._d.site_xpos[ids[s]])
             self.body.set_pose(s, "open")
         yield from self._move_hands({s: self._site_goal(ids[s], back=PRE) for s in sides}, 0.8, target,
-                                    rot_tol=tol)
+                                    rot_tol=tol, pos_tol=0.03)
         # judged by position: the hold makes the frames one, turning a free object to the hand
-        yield from self._move_hands({s: self._site_goal(ids[s]) for s in sides}, 0.3, target, rot_tol=tol)
+        # within what a hold takes up as it is made (see below)
+        yield from self._move_hands({s: self._site_goal(ids[s]) for s in sides}, 0.3, target, rot_tol=tol,
+                                    pos_tol=HOLD_REACH)
         self.step("closing", hand=hand, target=target)
         m, d = self._m, self._d
         for s in sides:
@@ -574,14 +580,17 @@ class HumanoidPlugin(MachinePlugin):
             yield
         for s in sides:
             apart = holds[s].separation(d)
-            if apart > 0.02:
+            if apart > HOLD_REACH:
                 self.fail(f"hold not made: the {_side_word(s)} hand is {apart:.3f} m from {sites[s]}")
+        ride = self.body.two_hands == "ride"
         for i, s in enumerate(sides):
-            # Two hands on one rigid object: one weld carries it, the other hand rides on its own grip
-            # site. Two welds would squeeze it between them by every millimetre the hands are off.
-            holds[s].set(d, i == 0)
+            # Each hand holds the object as it is in that hand now. Of two hands on one rigid object
+            # the first holds it whole; the second rides on its own grip site, or holds it by its
+            # position only, as the body says (HumanoidBody.two_hands).
+            if i == 0 or not ride:
+                holds[s].set(d, True, whole=None if i == 0 else False)
             self.holding[s] = holds[s]
-            self._riding[s] = i > 0
+            self._riding[s] = i > 0 and ride
             self._force[s] = self._apart[s] = 0.0
             self.body.set_hand(s, *self.body.grip(d, s))
         self.step("held", hand=hand, target=target)
@@ -730,8 +739,9 @@ class HumanoidPlugin(MachinePlugin):
             # a hand's breadth under the pelvis, or clear of the surface it goes to
             height = self.body.carry_height()
             lead = next(s for s in sides if not self._riding[s])
-            point, _ = self._target(to).resolve(m, d)
-            top = self._top(point, obj)
+            dest = self._target(to)
+            point, _ = dest.resolve(m, d)
+            top = self._top(point, obj, self._on(dest))
             bottom = self._site_id(f"{mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, obj)}/bottom")
             low = d.site_xpos[bottom][2] if bottom >= 0 else d.xpos[obj][2]
             below = self.body.grip(d, lead)[0][2] - low
@@ -749,7 +759,7 @@ class HumanoidPlugin(MachinePlugin):
             rel[s] = (lambda p=p, q=q, pull_in=pull_in: (
                 np.array([p[0], p[1], height]) - pull_in * heading, q))
         # what is held turns with the hands, so the lift is judged by where they are
-        yield from self._move_hands(rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.03)
+        yield from self._move_hands(rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05)
         self._check_holds()
         self.step("lifted", height=height)
         carried = self._carried()
@@ -762,22 +772,28 @@ class HumanoidPlugin(MachinePlugin):
         yield from self._walk(stand, yaw, to, while_walking=lambda: self._hold_carried(carried))
 
     def _turn(self, yaw: float, each=None):
-        """Turn the standing body to ``yaw`` at :data:`CARRY_TURN`, calling ``each`` every step."""
-        while True:
-            heading = self.body.root()[2]
-            err = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
-            if abs(err) < math.radians(3):
-                return
-            step = math.copysign(min(abs(err), CARRY_TURN * self._ctx.dt), err)
-            self.body.face(heading + step)
-            if each is not None:
-                each()
-            yield
+        """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
+        does), calling ``each`` every step."""
+        self.body.limit_turn(CARRY_TURN)
+        self.body.face(yaw)
+        t0 = self._ctx.sim_time
+        try:
+            while True:
+                heading = self.body.root()[2]
+                if abs(math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))) < math.radians(3):
+                    return
+                if self._ctx.sim_time - t0 > 2 * math.pi / CARRY_TURN + 2.0:
+                    self.fail(f"cannot turn to {math.degrees(yaw):.0f} deg: it stays at {math.degrees(heading):.0f}")
+                if each is not None:
+                    each()
+                yield
+        finally:
+            self.body.limit_turn(None)
 
-    def _surface(self, point, held: int):
+    def _surface(self, point, held: int, accept=None):
         """The top of whatever is under ``point``, and its body: a ray cast down from 1.5 m above
-        it, past what is held (and what is welded to it), the humanoid's own bodies and anything
-        that collides with nothing."""
+        it, past what is held (and what is welded to it), the humanoid's own bodies, anything
+        that collides with nothing, and with ``accept`` every body it refuses."""
         m, d = self._m, self._d
         start = np.array([point[0], point[1], point[2] + 1.5])
         geomid = np.zeros(1, np.int32)
@@ -790,7 +806,7 @@ class HumanoidPlugin(MachinePlugin):
             body = int(m.geom_bodyid[g])
             solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
             part_of_held = int(m.body_weldid[body]) == int(m.body_weldid[held])
-            if solid and not part_of_held and not self.body.owns(m, body):
+            if solid and not part_of_held and not self.body.owns(m, body) and (accept is None or accept(body)):
                 return np.array([point[0], point[1], hit[2]]), body
             start = hit - [0.0, 0.0, 1e-4]
 
@@ -813,12 +829,29 @@ class HumanoidPlugin(MachinePlugin):
         lo, hi = pts[:, :2].min(axis=0) + 0.01, pts[:, :2].max(axis=0) - 0.01
         return [np.zeros(3)] + [np.array([x, y, 0.0]) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])]
 
-    def _top(self, point, held: int) -> float:
+    def _on(self, target):
+        """A test for a body being the target's, or under it in the tree: what is set down on a
+        drawer clears the drawer's walls, not the cabinet's top above it."""
+        m = self._m
+        if target.kind == "world":
+            return None
+        root = target.body
+
+        def accept(body: int) -> bool:
+            while body > 0:
+                if body == root:
+                    return True
+                body = int(m.body_parentid[body])
+            return body == root
+
+        return accept
+
+    def _top(self, point, held: int, accept=None) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`) if it stood
-        with its origin over ``point``."""
+        with its origin over ``point``; with ``accept``, of the bodies it accepts."""
         tops = []
         for off in self._footprint(held):
-            p, under = self._surface(np.asarray(point, float) + off, held)
+            p, under = self._surface(np.asarray(point, float) + off, held, accept)
             if under >= 0:
                 tops.append(float(p[2]))
         return max(tops) if tops else float(point[2])
@@ -843,8 +876,9 @@ class HumanoidPlugin(MachinePlugin):
         for s in sides:
             g = starts[s][0][:2] + shift
             out = float(np.linalg.norm(g - [x, y]))
-            if out > PLACE_REACH:
-                shift *= max(0.0, 1.0 - (out - PLACE_REACH) / max(float(np.linalg.norm(shift)), 1e-9))
+            reach = self.body.place_reach()
+            if out > reach:
+                shift *= max(0.0, 1.0 - (out - reach) / max(float(np.linalg.norm(shift)), 1e-9))
         where = low()[:2] + shift
         surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj)
         if target.kind != "world" and under >= 0 and int(m.body_rootid[under]) != int(m.body_rootid[target.body]):
@@ -854,10 +888,10 @@ class HumanoidPlugin(MachinePlugin):
                 f"(a smaller standoff, facing it)"
             )
         origin = d.xpos[obj][:2] + shift
-        top = max(float(surface[2]), self._top(np.array([origin[0], origin[1], point[2]]), obj))
+        top = max(float(surface[2]), self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)))
         over = np.array([shift[0], shift[1], top + CLEAR - low()[2]])
         goals = {s: (lambda s=s: (starts[s][0] + over, starts[s][1])) for s in sides}
-        yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25))
+        yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
         self.step("lowering", at=at)
         starts = {s: self.body.grip(d, s) for s in sides}
         down = 0.0
