@@ -47,8 +47,8 @@ stand-alone worlds in `src/roqsim_assets/worlds/`, each running one cycle of a s
   closes it two seconds after it has gone -- later if someone came back meanwhile.
 - **`light_barrier_demo.yaml`** — a `zone_trigger` across the conveyor near its discharge end, between
   two posts. `StopAtBarrier` stops the belt while a package is in it; playing the worker, it takes
-  the package off a second later, and the belt runs again. The barrier is not a machine: it reports,
-  and the scene decides.
+  the package off a second later, and the belt runs again at the speed it had when it stopped, read
+  at each stop. The barrier is not a machine: it reports, and the scene decides.
 
 ## Layout
 

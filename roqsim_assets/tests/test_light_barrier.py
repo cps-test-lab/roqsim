@@ -84,3 +84,38 @@ def test_without_a_worker_the_belt_stays_stopped_until_someone_takes_the_package
         assert belt.value("speed") == pytest.approx(0.2)
     finally:
         engine.shutdown()
+
+
+def test_the_belt_comes_back_at_the_speed_it_was_re_speeded_to_between_two_packages():
+    from roqsim.entity_control import set_state
+
+    engine = _engine(cycles=2)
+    try:
+        belt = engine.ctx.blackboard.require("machine:belt")
+        start = engine.ctx.data.xipos[engine.ctx.model.body("package").id].copy()
+
+        def released():
+            return [e for e in engine.ctx.events.all() if e["event"] == "released"]
+
+        while not released():
+            assert engine.ctx.sim_time < 10.0
+            engine.step()
+        _run(engine, 1.0)
+        assert belt.value("speed") == pytest.approx(0.2)
+        # Something else re-speeds the belt; then the next package arrives before the barrier.
+        seq = belt.start("run", speed=0.3)
+        while not (belt.status().seq == seq and belt.status().finished):
+            engine.step()
+        set_state(engine.ctx, "package", start.tolist(), [1.0, 0.0, 0.0, 0.0])
+        while len(released()) < 2:
+            assert engine.ctx.sim_time < 25.0
+            engine.step()
+        _run(engine, 1.0)
+        assert belt.value("speed") == pytest.approx(0.3), "back at the speed it had, not 0.2"
+        assert [e["event"] for e in engine.ctx.events.all() if e["event"] == "held"] == [
+            "held",
+            "held",
+        ]
+        assert engine.ctx.stop_requested
+    finally:
+        engine.shutdown()
