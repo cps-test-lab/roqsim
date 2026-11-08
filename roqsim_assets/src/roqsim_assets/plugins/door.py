@@ -84,7 +84,7 @@ Config::
       namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
       kp: 40.0               # position-actuator stiffness
       kv: 30.0               # position-actuator damping (velocity gain); with kp 40 it damps the
-                             #   default leaf at zeta 0.54 (0.14 at kv 8, where it rang)
+                             #   default leaf at zeta 0.54, so a half-open target does not overshoot
       max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
       stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
       stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
