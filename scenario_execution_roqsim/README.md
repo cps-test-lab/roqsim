@@ -208,9 +208,10 @@ One consequence, stated rather than hidden:
 - **These actions cannot run under `remote()`.** A remote server is handed no `simulation` and is
   not where the simulator is. The modifier re-instantiates an action by entry-point name on another machine; anything
   reading the simulation must stay where the simulation is.
-- **`scenario_execution` is not a declared dependency**, on purpose — the PyPI name is a different,
-  older project, and installing it breaks every campaign at parse time. See the note in
-  [`pyproject.toml`](pyproject.toml). Every environment that runs these actions already provides it.
+- **`scenario_execution` is the `[osc]` extra, not a declared dependency**, on purpose: where it is a
+  colcon package (a sourced ROS workspace), a pip-installed copy beside it makes the parser find two
+  import libraries and refuse every scenario. See the note in [`pyproject.toml`](pyproject.toml).
+  Elsewhere, `pip install scenario_execution_roqsim[osc]` installs it from PyPI.
 - **Net displacement, not path length.** `osc.ros`'s `odometry_distance_traveled` integrates; this
   measures a straight line from the baseline. On a curved approach the two disagree, sometimes a lot.
 - **Signed axis thresholds.** `mode: z, threshold: 0.05` is *risen* 5 cm, not `|Δz| ≥ 5 cm`. A campaign
@@ -245,6 +246,16 @@ explains itself while it waits.
 right and a wrong answer is a table test in any venv. The actions need `scenario_execution` importable
 and their tests skip without it; `access/ipc.py` imports ZeroMQ only when no in-process simulation
 was handed over.
+
+Which CI job runs what (`.github/workflows/ci.yml`):
+
+| job | scenario-execution | runs |
+| --- | --- | --- |
+| `core` | absent | `make test`: here `test_displacement.py`, `test_geometry.py`, `test_find_endpoint.py`, `test_composition.py`, `test_blackboard_conventions.py` and the socket routes of `test_ipc_access.py`; every test that needs scenario-execution skips |
+| `ros` | absent | the same, with ROS sourced |
+| `osc` | `[osc]`, from PyPI | `make test-osc`: all of `tests/` -- the actions in process (`test_in_process_actions.py`), the OSC library and parser (`test_osc_library.py`), a world running a scenario (`test_scenario_file.py`, `test_scene_both_ways.py`), every action over the socket including `machine_run` (`test_ipc_access.py`) -- and the reset test's `scenario` case (`roqsim/tests/test_reset_restores_configured_state.py`); it fails if any of them skips for want of scenario-execution |
+
+`make test-osc` reproduces the `osc` job in a venv with the extra installed.
 
 The package depends on `roqsim` and nothing else. Importing a plugin package would pull MuJoCo into
 the behaviour-tree build, which happens before any world is compiled, and it would not stop at one:
