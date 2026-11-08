@@ -423,6 +423,26 @@ def test_a_setpoint_ramps_at_its_rate_and_the_plugin_applies_it():
         engine.shutdown()
 
 
+def test_goal_is_where_a_ramp_ends_and_otherwise_the_current_target():
+    engine = _engine([{"machine_fixtures:Spinner": {"ramp": 0.5}, "name": "spin"}])
+    try:
+        spin = engine.ctx.blackboard.require("machine:spin")
+        assert spin.goal("speed") == spin.value("speed") == pytest.approx(0.1)
+        seq = spin.start("run", speed=0.6)
+        for _ in range(20):
+            engine.step()
+        assert spin.goal("speed") == pytest.approx(0.6), "the end of the ramp"
+        assert 0.1 < spin.value("speed") < 0.6, "the target, part of the way"
+        spin.cancel(seq)
+        _run_until_done(engine, spin, seq)
+        assert spin.goal("speed") == spin.value("speed") < 0.6, "a cancel holds where the ramp was"
+        _run_until_done(engine, spin, spin.start("run", speed=0.3))
+        engine.reset()
+        assert spin.goal("speed") == spin.value("speed") == pytest.approx(0.1), "home again"
+    finally:
+        engine.shutdown()
+
+
 def test_manual_control_leaves_the_actuators_to_the_viewer():
     engine = _press()
     try:

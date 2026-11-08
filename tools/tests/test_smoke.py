@@ -110,3 +110,17 @@ def test_roqsim_sim_on_a_scene_holds_the_same_rule(tmp_path, monkeypatch, budget
     assert (done.returncode == 0) is passes, done.stdout
     if not passes:
         assert "its scene did not finish within 200 steps" in done.stdout
+
+
+def test_worlds_given_as_arguments_run_as_those_of_worlds(tmp_path):
+    fake = tmp_path / "roqsim"
+    fake.write_text(f"#!{sys.executable}\n{FAKE_ROQSIM}")
+    fake.chmod(0o755)
+    ok = _world(tmp_path, "short", "# needs: 150\n")
+    long = _world(tmp_path, "long", "# needs: 500\n")
+    argv = [sys.executable, str(SMOKE), "--roqsim", str(fake), "--steps", "200"]
+    argv += ["--gitignore", str(tmp_path / "none"), str(ok), str(long)]
+    done = subprocess.run(argv, capture_output=True, text=True, cwd=tmp_path)
+    assert done.returncode == 1, done.stdout
+    assert f"== {ok}" in done.stdout
+    assert f"{long}: its scene did not finish within 200 steps" in done.stdout

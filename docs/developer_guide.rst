@@ -97,6 +97,8 @@ which the world loader ignores and only smoke reads:
 
 The budget is a comment rather than a world key because a world refuses keys it does not know, and
 the number is smoke's alone; it sits beside the scene it budgets, so changing one shows the other.
+To smoke a few worlds rather than all of them, name them:
+``python3 tools/smoke.py --roqsim roqsim --steps 200 <world.yaml>...``.
 A world that needs an asset ``make external-resources`` generates, or a CUDA GPU the machine does
 not have, is reported as skipped.
 
