@@ -236,6 +236,46 @@ def measure_sole(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> tuple[dic
     return sole, [round(float(v), 4) for v in np.mean(tips, axis=0)]
 
 
+def measure_hull(verts: np.ndarray, w: np.ndarray) -> dict:
+    """``side -> {"joints", "at", "w"}``: the points of each shoe its foot grounding is taken on.
+
+    The lowest point of a body turned any way lies on its convex hull, so each shoe is sampled by
+    the hull's corners -- one hull per joint the shoe's vertices follow (ankle, toe), since the toe
+    bends against the foot. Each point keeps its bind position in the walker's frame (``at``) and
+    its skin weights over that leg's joints (``w``, columns ``joints``), so the runtime skins it
+    exactly as the mesh (``animation._lowest_sole``) and the shoe can turn no point of its skin
+    under the floor unseen -- as the toe cap at toe-off, which a heel and a toe point miss.
+    """
+    from scipy.spatial import ConvexHull
+
+    dom = np.argmax(w, axis=1)
+    col = {n: i for i, n in enumerate(JOINT_NAMES)}
+    out = {}
+    for s in ("l", "r"):
+        leg = [f"hip_{s}", f"knee_{s}", f"ankle_{s}", f"toe_{s}"]
+        idx = []
+        for j in (f"ankle_{s}", f"toe_{s}"):
+            group = np.flatnonzero(dom == col[j])
+            if len(group) < 4:
+                raise SystemExit(f"the {j} shoe has {len(group)} vertices; cannot take its hull")
+            idx.extend(group[ConvexHull(verts[group]).vertices])
+        idx = np.unique(idx)
+        wl = w[idx][:, [col[j] for j in leg]]
+        off_leg = 1.0 - wl.sum(axis=1)
+        if off_leg.max() > 1e-3:
+            raise SystemExit(
+                f"a {s} shoe vertex is {off_leg.max():.3f} skinned off its leg; refusing to drop it"
+            )
+        used = wl.max(axis=0) > 1e-3
+        wl = wl[:, used] / wl[:, used].sum(axis=1, keepdims=True)
+        out[s] = {
+            "joints": [j for j, u in zip(leg, used, strict=True) if u],
+            "at": np.round(verts[idx], 4).tolist(),
+            "w": np.round(wl, 4).tolist(),
+        }
+    return out
+
+
 def write_obj(path: str, parts, verts: np.ndarray, mtl_name: str) -> None:
     """Multi-material OBJ: one ``usemtl`` group per source material, sharing one vertex pool, so
     ``skin._load_parts`` (trimesh) splits it back into the groups walker.json keys by.
