@@ -101,20 +101,21 @@ Build them locally with `make doc` (or `make view-doc`).
 roqsim's own code is **Apache-2.0** (see [LICENSE](LICENSE)).
 
 Vendored third-party assets keep their own terms, and some of those terms **require attribution when
-you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in each package and the
-`CREDITS.txt` beside each asset; [NOTICE](NOTICE) summarises them.
+you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in each package, the
+`CREDITS.txt` beside each asset and the licence file beside each model; [NOTICE](NOTICE) summarises
+them by licence and says where they are.
 
-| license | assets |
+| license | what is under it |
 | --- | --- |
-| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq 2F-85 (ROS-Industrial), UR30 (parameters © Universal Robots; the UR10e's meshes), Robotiq Hand-E (© Robotiq), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
-| Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, FANUC M-20iD/25 and CRX-25iA (© FANUC; FANUC's trademarks are not licensed), Maker's Pet oomwoo! One and Mini |
-| MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
-| MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |
-| CC-BY-4.0 | the warehouse scene (Gazebo Fuel), locomotion clips (CARLA) |
-| CC0-1.0 or CC-BY-4.0 | pedestrian characters (Gazebo Fuel), each as the `CREDITS.txt` beside it states |
+| BSD (3-Clause, 2-Clause) | robot, arm, gripper and sensor models; locomotion policies |
+| Apache-2.0 | robot, arm, gripper and sensor models; a locomotion policy; a scene |
+| MIT | robot, aerial vehicle and sensor models |
+| MPL-2.0 | a robot model -- file-level copyleft, the notice travels with the files |
+| CC-BY-4.0 | props, a scene, pedestrian characters, every locomotion clip -- attribution required |
+| CC0-1.0 | surface textures, pedestrian characters |
 
-Props and surface textures in `roqsim_assets` carry their licence and attribution in the
-`CREDITS.txt` beside each, which ships with the package.
+An asset's own record carries its licence and the attribution that licence asks for, and ships
+with it in its package.
 
 Nothing under a non-commercial (`CC-*-NC`) or no-derivatives (`CC-*-ND`) license is included.
 The splat renderer (`roqsim_render_splat`) draws through gsplat (Apache-2.0) and PyTorch

@@ -2929,7 +2929,10 @@ other; with neither, whatever is pending or runs. A program cannot take an argum
 package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
 example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
 ``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
-scenario from ``roqsim_assets.scenarios``.
+scenario from ``roqsim_assets.scenarios``. ``DoorForWhoComes`` watches the zone while the door
+closes: someone entering it, or the close ending in a stall, cancels the close and opens the door
+again, and it closes once the zone is empty. ``StopAtBarrier`` reads the belt's speed each time it
+stops the belt and runs it again at that speed once the part is gone.
 
 A controllable ``door`` is driven over ROS too: its ``cmd`` topic and its ``door`` action
 (``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``. A ``cmd``
@@ -2990,7 +2993,8 @@ What a program has:
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
   each setpoint keeps its value;
-- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+- ``self.value(name)``, ``self.goal(name)``, ``self.position(name)``, ``self.reached(name)``,
+  ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
 ``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and

@@ -653,7 +653,8 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
    neither ends whatever is pending or runs. Cancels are posted in order with the starts, so a
    cancel by token sent right behind its start reaches it.
 -  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
-   precondition), ``value(name)`` (an actuator's or setpoint's current target).
+   precondition), ``value(name)`` (an actuator's or setpoint's current target), ``goal(name)``
+   (where it is going: the end of its ramp, else its current target).
 
 It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
 (``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at

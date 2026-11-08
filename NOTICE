@@ -16,109 +16,79 @@ travel with them.
 
 The authoritative, per-asset records are:
 
-  * a THIRD_PARTY.md in each package that vendors third-party content
+  * a THIRD_PARTY.md in each package that keeps one, for provenance a one-line record is too
+    short for
         roqsim_assets/THIRD_PARTY.md
         roqsim_humanoid/THIRD_PARTY.md
         roqsim_manipulation_assets/THIRD_PARTY.md
         roqsim_quadruped/THIRD_PARTY.md
         roqsim_scenes/THIRD_PARTY.md
         roqsim_walker/THIRD_PARTY.md
-  * a CREDITS.txt beside each individual asset (source URL, license, required attribution)
-  * a license file beside each vendored robot model (e.g. models/ur10e/UR10e_LICENSE)
+  * a CREDITS.txt in the folder of each prop, texture, scene, character and clip set (source,
+    license, required attribution), e.g. roqsim_walker/src/roqsim_walker/models/people/<name>/
+  * a license file beside each vendored robot, arm, gripper and sensor model, with its copyright
+    notice where upstream gives one, e.g.
+    roqsim_manipulation_assets/src/roqsim_manipulation_assets/models/ur10e/UR10e_LICENSE
+    (in roqsim_aerial, roqsim_mobile, roqsim_mobile_manipulation, roqsim_manipulation_assets and
+    roqsim_sensors under src/<package>/models/<name>/; in roqsim_humanoid and roqsim_quadruped
+    under src/<package>/models/LICENSE.* and src/<package>/policy/LICENSE.*)
 
-This file is a summary of those records, not a replacement for them.
+Each CREDITS.txt and license file ships in its package beside the files it covers. This file
+summarises them by license and lists no asset; an asset's terms and attribution are in its own
+record.
 
 --------------------------------------------------------------------------------
 Where the public/private line falls
 --------------------------------------------------------------------------------
 
-Vendored robot descriptions under BSD-3-Clause / Apache-2.0 / MPL-2.0 are redistributable and
+Vendored robot descriptions under BSD / Apache-2.0 / MIT / MPL-2.0 are redistributable and
 re-fetchable from public upstreams, so they are shipped here. Curated artwork whose upstream is
 gated behind an account or an API token is not shipped, even when its license would allow it.
 
 --------------------------------------------------------------------------------
-BSD 3-Clause
+The licenses of the bundled assets
 --------------------------------------------------------------------------------
-  Boston Dynamics Spot model      (c) 2021 Clearpath Robotics Inc., via MuJoCo Menagerie
-  Unitree G1 (12-DoF + policy)    (c) 2016-2023 HangZhou YuShu TECHNOLOGY CO.,LTD.
-  Unitree G1 29-DoF w/ Dex1       (c) 2016-2022 HangZhou YuShu TECHNOLOGY CO.,LTD.
-  UR10e, UR5e, Robotiq 2F-85      (c) 2018 ROS-Industrial Consortium / (c) 2013 ROS-Industrial
-  UR30                            parameters (c) 2021 Universal Robots A/S; meshes the UR10e's
-  Clearpath Jackal                (c) 2021 Clearpath Robotics Inc.
-  Clearpath Husky A200            (c) 2015 Clearpath Robotics, Paul Bovbel
-  Clearpath Ridgeback             (c) 2023 Clearpath Robotics, via clearpath_common
-  Clearpath Warthog               (c) 2023 Clearpath Robotics, via clearpath_common
-  UFACTORY xArm 7                 (c) 2018 UFACTORY Inc., via MuJoCo Menagerie
-  Interbotix ViperX 300 (vx300s)  (c) 2023 Trossen Robotics, via MuJoCo Menagerie
-  Interbotix WidowX 250 (wx250s)  (c) 2023 Trossen Robotics, via MuJoCo Menagerie
 
---------------------------------------------------------------------------------
+BSD (3-Clause, 2-Clause, and BSD as an upstream package manifest declares it without a text)
+    Robot, arm, gripper and sensor descriptions and meshes, and locomotion policies. Each model's
+    license file carries the copyright notice and conditions the license requires to be retained.
+
 Apache License 2.0
---------------------------------------------------------------------------------
-  LimX Oli (HU_D04_01) + policy   (c) LimX Dynamics Technology Co., Ltd.
-  Franka Panda                    via MuJoCo Menagerie
-  OpenManipulator-X               (c) ROBOTIS
-  TurtleBot 3 Waffle, TurtleBot 4 (c) ROBOTIS / Clearpath Robotics
-  PAL Tiago Pro                   (c) PAL Robotics S.L.
-  Schunk PG+70                    (c) 2018 Pilz GmbH & Co. KG
-  Husarion ROSbot                 (c) Husarion, via rosbot_ros
-  Husarion Panther                (c) Husarion, via husarion_ugv_ros
-  Doosan Robotics M1013           (c) Doosan Robotics, via dsr_description2
-  FANUC M-20iD/25, CRX-25iA       (c) FANUC America Corporation and FANUC CORPORATION, via
-                                  fanuc_description; modified (see each model's LICENSE file)
-  Maker's Pet oomwoo! One         (c) Ilia O. (makerspet.com)
-  Maker's Pet Mini                (c) Ilia O. (makerspet.com)
-  Intel RealSense D415/D435/D455 meshes
+    Robot, arm, gripper and sensor descriptions and meshes, a locomotion policy, and a scene. Each
+    model's license file, or the scene's CREDITS.txt, carries the license and its provenance. No
+    vendored upstream ships a NOTICE file of its own.
 
---------------------------------------------------------------------------------
-Mozilla Public License 2.0  --  file-level copyleft; these notices must be retained
---------------------------------------------------------------------------------
-  AgiBot Genie G2 robot model and meshes    (c) AgiBot (agibot.com), via genie_sim
-
---------------------------------------------------------------------------------
 MIT
---------------------------------------------------------------------------------
-  Frankie mobile manipulator description
-  Bitcraze Crazyflie 2            (c) 2024 whoenig, via MuJoCo Menagerie
-  RT Corporation Raspberry Pi Mouse  (c) 2016-2020 RT Corporation
-  LGDXRobot2                      (c) 2025 Kai Tung Yu
-  Neobotix MPO-700                (c) 2021 Neobotix GmbH, via neo_simulation2
-  Neobotix MPO-500                (c) 2021 Neobotix GmbH, via neo_simulation2
-  Neobotix MP-400                 (c) 2021 Neobotix GmbH, via neo_simulation2
+    Robot, aerial vehicle and sensor descriptions and meshes. Each model's license file carries the
+    copyright notice and permission notice the license requires.
 
---------------------------------------------------------------------------------
-Props and surface textures (roqsim_assets)
---------------------------------------------------------------------------------
-  Third-party props and textures carry their licence and attribution in the CREDITS.txt beside
-  them (roqsim_assets/src/roqsim_assets/models/<name>/, .../assets/<name>/), which ships with the
-  package. Where that licence is CC-BY, the CREDITS.txt must travel with the files.
+Mozilla Public License 2.0  --  file-level copyleft; these notices must be retained
+    A robot description and its meshes:
+    roqsim_humanoid/src/roqsim_humanoid/models/LICENSE.genie_sim and roqsim_humanoid/THIRD_PARTY.md.
 
---------------------------------------------------------------------------------
 CC-BY 4.0  --  ATTRIBUTION REQUIRED ON REDISTRIBUTION
---------------------------------------------------------------------------------
-  Depot warehouse scene
-      Gazebo Fuel, CC-BY-4.0. See roqsim_scenes/src/roqsim_scenes/scenes/depot/CREDITS.txt
+    Props, a scene, pedestrian characters and every locomotion clip. The attribution each requires
+    is its folder's CREDITS.txt, which travels with the files, and its package's THIRD_PARTY.md.
+    Every walker moves with the CC-BY clips, so anything shipping roqsim_walker's models/anims/, or
+    a character driven by them, ships their attribution too (roqsim_walker/THIRD_PARTY.md).
 
-  Pedestrian locomotion clips (models/anims/)
-      Derived from CARLA Simulator (https://carla.org), CC-BY-4.0.
-      Assets taken from the CARLA content repository:
-          https://bitbucket.org/carla-simulator/carla-content/src/master/
-      Copyright: Computer Vision Center (CVC) at the Universitat Autonoma de Barcelona (UAB).
-      Cite: "CARLA: An Open Urban Driving Simulator", Dosovitskiy et al., CoRL 2017.
-      These clips are our retargeted derivative works, so the CC-BY obligation travels with them:
-      anything shipping models/anims/ ships CARLA attribution too.
+CC0 1.0  --  no attribution required
+    Surface textures, pedestrian characters and the parts a scene includes; their CREDITS.txt or
+    THIRD_PARTY.md credits them all the same.
 
-  FemaleVisitorWalk character
-      Gazebo Fuel, CC-BY-4.0, author Wan Yi Seow (Open Robotics).
+Vendor CAD under the vendor's own terms  --  NOT redistributed
+    Some sensor meshes are converted from a vendor's published CAD. Those meshes are not committed:
+    they are fetched and converted on demand (external/external_assets.yaml), and the license file
+    beside each such model says where from.
 
-  MaleVisitorWalk character is CC0 1.0 (Open Robotics) and requires no attribution.
-
---------------------------------------------------------------------------------
 NVIDIA asset license  --  NOT redistributed
---------------------------------------------------------------------------------
-  The Boston Dynamics Spot locomotion policy (spot_policy.pt, spot_env.yaml) is under NVIDIA's
-  asset license: local/internal R&D use only, not modifiable or redistributable. It is therefore
-  NOT committed to this repository; it is downloaded on demand. See roqsim_quadruped/THIRD_PARTY.md.
+    A locomotion policy under NVIDIA's asset license (local/internal R&D use only, not modifiable or
+    redistributable) is not committed to this repository; it is downloaded on demand. See
+    roqsim_quadruped/THIRD_PARTY.md.
+
+roqsim's own work in the asset folders (Apache-2.0)
+    Props and models authored for roqsim say so in their CREDITS.txt, license file or model file,
+    and are covered by this repository's Apache-2.0 license.
 
 --------------------------------------------------------------------------------
 Excluded by policy
