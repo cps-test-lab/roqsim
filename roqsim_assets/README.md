@@ -9,6 +9,8 @@ copy instead of each vendoring their own. Three kinds of thing, and a tool group
   core `spawn_model` plugin;
 - **scene plugins** (`box`, `moving_box`, `conveyor`, `door`, … — see [Plugins](#plugins)) — the props
   that are parametric or move, registered under `roqsim.plugins` so any world loads them by name;
+  the ones that do something are machines (see [Machines](#machines)), with example worlds and
+  scenarios;
 - **`roqsim assets`** — the import pipeline that brings an outside model in and makes it scene-ready
   (`roqsim assets --help`; `tools/README.md` walks it step by step).
 
@@ -28,6 +30,25 @@ program is an event timeline (`program_start`, its steps, `program_end`). `roqsi
 |---|---|---|---|
 | `door` | `open()`, `close()`, `move_to(openness)` | `speed` (rad/s at the hinge) | `stalled`, `gave_way` |
 | `conveyor` | `run(speed)`, `stop()` | `ramp` (m/s²) | `started`, `stopped` |
+| `press` | `stroke(show, hide)`, `close_guard()`, `open_guard()` | its door and ram speeds (m/s) | `door_close`, `approach`, `power`, `bottom`, `return`, `door_open` |
+| `sliding_door` | `open()`, `close()` | `speed` (m/s) | `stalled` |
+
+`press` and `sliding_door` are the examples of a machine package: generated models, used by three
+stand-alone worlds in `src/roqsim_assets/worlds/`, each running one cycle of a scenario from
+`roqsim_assets.scenarios`, written on `roqsim.scenario`, and ending, and the run with it
+(`stop_at_end`):
+
+- **`press_demo.yaml`** — a C-frame press whose ram strokes only behind its closed guard door; the
+  strip in its die (its `die` zone, a `zone_trigger` the press carries) shows its hole at the
+  stroke's bottom through `part_state`. `PressDemo` sets the strip in the die and starts the press
+  once. `open_guard()` returns the ram home before it opens the guard.
+- **`sliding_door_demo.yaml`** — a sliding door and a `zone_trigger` before it, and a box driven past
+  it (`moving_box`, named `robot_1`). `DoorForWhoComes` opens the door when the box comes near and
+  closes it two seconds after it has gone -- later if someone came back meanwhile.
+- **`light_barrier_demo.yaml`** — a `zone_trigger` across the conveyor near its discharge end, between
+  two posts. `StopAtBarrier` stops the belt while a package is in it; playing the worker, it takes
+  the package off a second later, and the belt runs again. The barrier is not a machine: it reports,
+  and the scene decides.
 
 ## Layout
 

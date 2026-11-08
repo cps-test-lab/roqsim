@@ -234,9 +234,10 @@ def _motor_command(engine: Engine, endpoint) -> list[float]:
 def _machine_start(engine: Engine, endpoint) -> tuple:
     """A program of the machine that changes what it is doing: open a door, run a belt faster."""
     handle = engine.ctx.blackboard.get(f"machine:{endpoint.owner}")
-    if "open" in handle.programs:
-        return ("open", {})
-    return ("run", {"speed": 0.3})
+    for program, args in (("open", {}), ("close_guard", {}), ("run", {"speed": 0.3})):
+        if program in handle.programs:
+            return (program, args)
+    raise AssertionError(f"no program to start on {endpoint.owner}: {handle.programs}")
 
 
 #: What to write into an ``in`` endpoint, by endpoint name: a value, or ``f(engine, endpoint)``.
@@ -669,6 +670,8 @@ CASES: dict[str, Case] = {
     "prop_trajectory": Case(_trajectory_world),
     "conveyor": _static({"conveyor": {}, "name": "conveyor"}),
     "door": _static({"door": {}, "name": "door"}),
+    "press": _static({"press": {}, "name": "press"}),
+    "sliding_door": _static({"sliding_door": {}, "name": "sliding_door"}),
     "window": _static({"window": {}, "name": "window"}),
     "shelf": _static({"shelf": {}, "name": "shelf"}),
     "workbench": _static({"workbench": {}, "name": "bench"}),
