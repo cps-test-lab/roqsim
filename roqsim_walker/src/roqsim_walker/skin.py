@@ -179,8 +179,31 @@ def _load_parts(mesh_path) -> list:
     for key, g in items:
         uv = getattr(getattr(g, "visual", None), "uv", None)
         uv = np.asarray(uv, float) if uv is not None and len(uv) else None
-        parts.append((key, np.asarray(g.vertices, float), np.asarray(g.faces, np.int32), uv))
+        parts.append(
+            (key, *_merge_split(np.asarray(g.vertices, float), np.asarray(g.faces, np.int32), uv))
+        )
     return parts
+
+
+def _merge_split(verts, faces, uv):
+    """One vertex per distinct (position, texture coordinate): ``(verts, faces, uv)``.
+
+    trimesh splits an OBJ's vertex for every distinct ``v/vt`` index pair, and an OBJ may write a
+    ``vt`` per face corner with the same coordinates repeated (the Open-RMF actors do). MuJoCo sums a
+    skin vertex's normal from that vertex's own faces, so every such split is drawn as an edge: a
+    vertex shared by one face or two is shaded as a flat facet. Merging the copies that agree on
+    position and texture coordinate leaves a split only where the UV map really has a seam."""
+    keyed = verts if uv is None else np.hstack([verts, uv])
+    _, first, inverse = np.unique(
+        np.round(keyed, 7), axis=0, return_index=True, return_inverse=True
+    )
+    inverse = inverse.ravel()
+    keep = np.sort(first)  # keep the file's vertex order
+    renumber = np.empty(len(first), np.int64)
+    renumber[np.argsort(first)] = np.arange(len(first))
+    new_index = renumber[inverse]
+    merged_uv = None if uv is None else uv[keep]
+    return verts[keep], new_index[faces].astype(np.int32), merged_uv
 
 
 def add_skin(

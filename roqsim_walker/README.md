@@ -131,7 +131,9 @@ physics thread.
 
 `models/people/<Walker>/` is a **blueprint**: a textured OBJ, a `*.walker.json` sidecar (materials +
 outfit variants, per-rig bone table, per-limb collision radii, measured shoe-sole offsets) and the
-authored skin weights. Locomotion clips live in `models/anims/<set>/` and are picked by body type +
+authored skin weights. The OBJ's corners that share a position and a texture coordinate load as one
+skin vertex, so its normals are smooth wherever its UV map has no seam (MuJoCo sums a skin vertex's
+normal from that vertex's faces only). Locomotion clips live in `models/anims/<set>/` and are picked by body type +
 gender, falling back to `adult`.
 
 Bundled blueprints (a blueprint can also come from any other installed `roqsim.models` provider):
