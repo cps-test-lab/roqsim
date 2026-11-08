@@ -11,8 +11,8 @@ importer does -- world-space OBJs + ``scene.json`` -- then bakes them with the s
 YAML. The marker -> prop model choice is the one thing left to the caller: it is passed in as a
 ``--markers-map`` and a marker with no mapping is a hard error, never a silent placeholder.
 
-``--ceiling`` roofs the building with a concrete slab whose soffit is the wall top (``--ceiling-h``),
-and pulls the bake's overhead light under it so the room is not lit from above a solid slab. The roof
+``--ceiling`` roofs the building with a concrete slab whose soffit is the wall top (``--ceiling-h``);
+the bake finds the slab and hangs its light under it, so the room is not lit from above it. The roof
 comes back off at run time through the core ``ceiling`` plugin, which deletes by height rather than by
 name -- so a world screenshots from inside with the ceiling and from above without it.
 
@@ -77,7 +77,6 @@ from . import scene_to_mjcf
 _FLOOR_THICKNESS = 0.05
 _CEILING_THICKNESS = 0.25  # a slab of structural concrete, not a suspended tile grid
 _FLOOR_MARGIN_M = 0.2  # the floor extends this far beyond the outermost walls
-_LIGHT_UNDER_CEILING_M = 0.15  # how far below a ceiling the bake's overhead light is pulled
 _SHARED_CONFIG = Path(__file__).resolve().parent / "floorplan.scene.yaml"
 _SCENE_CONFIG_NAME = "scene.yaml"  # a scene dir may carry its own look, overriding the shared one
 _FLOORPLAN_NAME = (
@@ -445,32 +444,6 @@ def resolve_bake_config(out_dir: Path, explicit: Path | None) -> Path:
     return own if own.is_file() else _SHARED_CONFIG
 
 
-def light_under_ceiling(config_path: Path, ceiling_h: float, tmp_dir: Path) -> Path:
-    """Return a bake config whose overhead light hangs *below* ``ceiling_h`` (copying only if needed).
-
-    The bake puts one hemispherical light at ``light.height`` above the floor. With a ceiling slab in
-    the world, a light at or above the soffit is trapped above it and the room renders black -- a
-    failure that looks like a broken texture, not a misplaced light. So a ceiling always pulls the
-    light under it; the config is copied to ``tmp_dir`` rather than edited in place, since it may be
-    the shared one every other scene bakes against.
-    """
-    import yaml
-
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    height = float((config.get("light") or {}).get("height", 4.0))
-    if height < ceiling_h:
-        return config_path
-    lowered = round(ceiling_h - _LIGHT_UNDER_CEILING_M, 3)
-    config.setdefault("light", {})["height"] = lowered
-    print(
-        f"  ceiling {ceiling_h:g} m: overhead light lowered {height:g} -> {lowered:g} m "
-        f"(a light above the soffit leaves the room unlit)"
-    )
-    out = tmp_dir / "bake.scene.yaml"
-    out.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-    return out
-
-
 def generate(
     floorplan: dict,
     out_dir: Path,
@@ -485,8 +458,6 @@ def generate(
     bake_config: Path | None = None,
 ) -> Path:
     """Emit floorplan.json + scene.json + OBJs, bake the MJCF, write the world YAML. Returns it."""
-    import tempfile
-
     import yaml
 
     check_sketch(floorplan, "floorplan")
@@ -524,15 +495,12 @@ def generate(
     config_path = resolve_bake_config(out_dir, bake_config)
     baked_xml = world_out.parent / scene_name / f"{scene_name}.xml"
     baked_xml.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        if ceiling:
-            config_path = light_under_ceiling(config_path, ceiling_h, Path(tmp))
-        # Stage 2 is a module, so call it directly: a subprocess would need a path to a script file,
-        # and an installed package has no such path.
-        if scene_to_mjcf.main(
-            ["--scene", str(out_dir), "--config", str(config_path), "--out", str(baked_xml)]
-        ):
-            raise RuntimeError(f"baking {scene_name} failed; see the stage-2 output above")
+    # Stage 2 is a module, so call it directly: a subprocess would need a path to a script file, and
+    # an installed package has no such path.
+    if scene_to_mjcf.main(
+        ["--scene", str(out_dir), "--config", str(config_path), "--out", str(baked_xml)]
+    ):
+        raise RuntimeError(f"baking {scene_name} failed; see the stage-2 output above")
 
     door_plugins = door_placements(
         lines, floorplan.get("doors") or [], doors_map or {}, ceiling_h, opening_h

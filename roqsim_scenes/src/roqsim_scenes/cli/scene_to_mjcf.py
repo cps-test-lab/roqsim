@@ -8,7 +8,9 @@ plugin. It bakes, once and offline:
 - per-object colours or textured materials (textures resolved via :mod:`roqsim.textures`, UVs scaled
   to honour ``physical_size`` -- MuJoCo ignores ``texrepeat`` on a UV'd mesh; a ``materials`` entry
   may also set ``reflectance`` and ``emission``),
-- a ground plane + hemispherical light,
+- a ground plane, and two lights (see :func:`_add_lights`): a directional light straight down from
+  under the ceiling that casts the contact shadows, and a shadowless uplight that lights the walls
+  from below the way a ceiling throws light back,
 - optional extra props dropped in with ``--prop PATH,X,Y[,YAW]`` (footprint centre at X,Y, YAW in
   radians about it).
 
@@ -53,12 +55,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _SCENES_DIR = os.path.join(os.path.dirname(_HERE), "scenes")
 
 _DEFAULT_PHYSICAL_SIZE = 2.0
-_LIGHT_DEFAULTS = {
-    "height": 4.0,
-    "diffuse": [0.4, 0.4, 0.4],
-    "cutoff": 90.0,
-    "fill": [0.3, 0.3, 0.3],
-}
+_LIGHT_DEFAULTS = {"fixtures": False, "fill": [0.3, 0.3, 0.3]}
 
 
 def _resolve_scene(scene: str) -> str:
@@ -76,7 +73,10 @@ CONFIG_KEYS = frozenset(
     {"ground_plane", "ground_z", "floor", "light", "materials", "collision", "origin"}
 )
 FLOOR_KEYS = frozenset({"texture", "rgb1", "rgb2", "reflectance", "physical_size", "rgba"})
-LIGHT_KEYS = frozenset({"height", "diffuse", "cutoff", "fill"})
+LIGHT_KEYS = frozenset({"fixtures", "fill"})
+#: Keys of the single overhead lamp the bake placed before it found the ceiling itself. Refused with
+#: what replaces them, rather than as unknown: a config that set them was right when it was written.
+_RETIRED_LIGHT_KEYS = frozenset({"height", "diffuse", "cutoff"})
 MATERIAL_KEYS = frozenset({"match", "texture", "rgba", "reflectance", "emission", "physical_size"})
 
 
@@ -98,7 +98,18 @@ def check_config(config: dict, where: str) -> None:
     """Refuse a bake config carrying a key no block reads (see :data:`CONFIG_KEYS`)."""
     refuse_unknown_keys(config, CONFIG_KEYS, where)
     refuse_unknown_keys(config.get("floor") or {}, FLOOR_KEYS, f"{where}: floor")
-    refuse_unknown_keys(config.get("light") or {}, LIGHT_KEYS, f"{where}: light")
+    light = config.get("light") or {}
+    retired = sorted(_RETIRED_LIGHT_KEYS & set(light) if isinstance(light, dict) else ())
+    if retired:
+        raise ValueError(
+            f"{where}: light: {', '.join(map(repr, retired))} no longer set(s) anything. The bake "
+            f"finds the ceiling itself and lights every room the same way (see `roqsim scenes "
+            f"scene-to-mjcf --help`); the one choice a scene makes is 'fixtures: true', when the "
+            f"world's own fixtures (strip_light with emit) light it. Remove the key(s)."
+        )
+    refuse_unknown_keys(light, LIGHT_KEYS, f"{where}: light")
+    if "fixtures" in light and not isinstance(light["fixtures"], bool):
+        raise ValueError(f"{where}: light: 'fixtures' must be true or false")
     for i, entry in enumerate(config.get("materials") or []):
         refuse_unknown_keys(entry, MATERIAL_KEYS, f"{where}: materials[{i}]")
 
@@ -335,18 +346,122 @@ def _lowest_renderable_z(
     return lowest
 
 
+#: Where the lights go and how strong they are. Chosen by measuring candidate layouts on rooms with
+#: photos of the real room (the wall's brightness against height, the floor's darkening at the feet
+#: of what stands on it) and on scenes without: see :func:`_add_lights`.
+_HEAD_HEIGHT = 2.0  # rays look for a ceiling from here up, so a table top is not taken for one
+_CEILING_SHARE = 0.5  # the share of the plan a ceiling must cover to be one
+_CEILING_GAP = 0.05  # how far under the ceiling the down light sits
+_OPEN_GAP = 0.1  # how far over the scene's top it sits when there is no ceiling
+_CEILING_GRID_MAX = 40  # rays per side of the plan at most
+_DOWN_DIFFUSE = 0.18
+_UP_DIFFUSE = 0.4
+_UP_HEIGHT = 0.5
+
+
+def find_ceiling(
+    model: mujoco.MjModel, lo: list[float], hi: list[float], ground_z: float
+) -> float | None:
+    """The height of the ceiling over the plan, or None for a scene open to the sky.
+
+    Rays go straight up from :data:`_HEAD_HEIGHT` above the ground on a grid of about a metre over
+    the plan, against the drawn geoms (a collision stand-in in group 3 is not seen). A ceiling is what
+    at least :data:`_CEILING_SHARE` of them hit; its height is their median, so a duct or a rack top
+    over a few cells does not set it.
+    """
+    nx = min(_CEILING_GRID_MAX, max(1, int(round(hi[0] - lo[0]))))
+    ny = min(_CEILING_GRID_MAX, max(1, int(round(hi[1] - lo[1]))))
+    data = mujoco.MjData(model)
+    mujoco.mj_kinematics(model, data)
+    groups = np.array([1, 1, 1, 0, 1, 1], dtype=np.uint8)
+    geom = np.array([-1], dtype=np.int32)
+    up = np.array([0.0, 0.0, 1.0])
+    z0 = ground_z + _HEAD_HEIGHT
+    hits = []
+    for i in range(nx):
+        for j in range(ny):
+            x = lo[0] + (i + 0.5) * (hi[0] - lo[0]) / nx
+            y = lo[1] + (j + 0.5) * (hi[1] - lo[1]) / ny
+            d = mujoco.mj_ray(model, data, np.array([x, y, z0]), up, groups, 1, -1, geom)
+            if d >= 0:
+                hits.append(z0 + d)
+    if len(hits) < _CEILING_SHARE * nx * ny:
+        return None
+    return float(np.median(hits))
+
+
 def _add_lights(spec: mujoco.MjSpec, manifest: dict, origin: list[float], config: dict) -> None:
+    """Light the room: a directional light straight down that casts, and an uplight that does not.
+
+    Why not one lamp at the plan's centre, as the bake once did: it lights the walls with a light
+    that casts. MuJoCo culls front faces when it draws a shadow map, so a wall whose faces are wound
+    inward -- as an importer or a hand-written tool may write one -- draws its own room-facing side
+    into the map and shadows itself in a hard band; and a lamp at the centre throws every shadow away
+    from it, across the floor, instead of under what casts it. MuJoCo offers no shadow bias, and the
+    shadow-map size, scale, clip and the lamp's cutoff trade one artefact for another.
+
+    - **Down** (``scene_down``): a directional light pointing straight down, the one light that
+      casts. A vertical wall takes no light from it, so its shadow map cannot band one, however the
+      wall is wound; a floor, a table top or a robot's chassis does, so what stands on the floor has
+      its shadow under it. It hangs :data:`_CEILING_GAP` under the ceiling :func:`find_ceiling`
+      finds, because MuJoCo starts a light's shadow map at the light: a ceiling above it does not
+      shadow the room. (Tilted, the ceiling would.) With no ceiling it hangs over the scene's top.
+    - **Up** (``scene_up``): a shadowless hemisphere at the plan's centre, :data:`_UP_HEIGHT` above the
+      ground, pointing up. A room is lit as much by its ceiling as by its lamps: walls are brighter
+      near the ceiling and darker near the floor, which a lamp under the ceiling, meeting the upper
+      wall at a grazing angle, does the opposite of.
+    - **Fill**: the headlight's ambient, ``light.fill``.
+
+    Two lights, because MuJoCo's renderer draws eight a frame, the headlight among them, in index
+    order (:mod:`roqsim.lights`), and the bake's come first: each one more would leave a world's own
+    fixture dark. ``light.fixtures: true`` says the world's fixtures (``strip_light`` with ``emit``)
+    light the room; the bake then adds only the down light, for the shadows.
+    """
     cfg = {**_LIGHT_DEFAULTS, **(config.get("light") or {})}
     fill = [float(v) for v in cfg["fill"]]
     if any(fill):
         spec.visual.headlight.ambient = fill
     lo, hi = _bounds(manifest, origin)
-    light = spec.worldbody.add_light()
-    light.pos = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2] + float(cfg["height"])]
-    light.dir = [0, 0, -1]
-    light.diffuse = [float(v) for v in cfg["diffuse"]]
-    light.exponent = 0.0
-    light.cutoff = float(cfg["cutoff"])
+    ground_z = _ground_z(manifest, origin, config)
+    centre = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2]
+    ceiling = find_ceiling(spec.copy().compile(), lo, hi, ground_z)
+
+    down = spec.worldbody.add_light()
+    down.name = "scene_down"
+    down.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
+    if ceiling is not None:
+        top = ceiling - _CEILING_GAP
+    else:
+        top = max(hi[2], ground_z + _HEAD_HEIGHT) + _OPEN_GAP
+    down.pos = [*centre, top]
+    down.dir = [0.0, 0.0, -1.0]
+    down.diffuse = [_DOWN_DIFFUSE] * 3
+    down.castshadow = True
+
+    where = f"under the ceiling at {ceiling:.2f} m" if ceiling is not None else "over an open scene"
+    if cfg["fixtures"]:
+        print(f"  lights: down light {where}; the room is lit by the world's own fixtures")
+        return
+    up = spec.worldbody.add_light()
+    up.name = "scene_up"
+    up.pos = [*centre, ground_z + _UP_HEIGHT]
+    up.dir = [0.0, 0.0, 1.0]
+    up.cutoff = 90.0
+    up.exponent = 0.0
+    up.diffuse = [_UP_DIFFUSE] * 3
+    up.castshadow = False
+    print(f"  lights: down light {where}, uplight at the plan's centre")
+
+
+def _ground_z(manifest: dict, origin: list[float], config: dict) -> float:
+    """The ground height as the ground plane takes it: stated in the config or by the importer, else
+    the scene's lowest point."""
+    ground_z = config.get("ground_z")
+    if ground_z is None and manifest.get("ground_z") is not None:
+        ground_z = float(manifest["ground_z"]) + origin[2]
+    if ground_z is None:
+        ground_z = _bounds(manifest, origin)[0][2]
+    return float(ground_z)
 
 
 def _obj_footprint(path: str) -> tuple[float, float, float]:
@@ -477,9 +592,10 @@ def build_spec(
             g.group = 3
 
     _add_ground_plane(spec, manifest, origin, config, meshdir)
-    _add_lights(spec, manifest, origin, config)
     for p in props:
         print(f"+ prop {_add_prop(spec, p)}  <- {p}")
+    # Last, so the ceiling search sees everything the room holds.
+    _add_lights(spec, manifest, origin, config)
     return spec
 
 
@@ -500,8 +616,29 @@ def _relocate_assets(spec: mujoco.MjSpec, assets_dir: str) -> None:
     spec.texturedir = assets_dir
 
 
+_LIGHTING_HELP = """\
+lighting:
+  Every scene is lit the same way, with nothing to set: a directional light straight
+  down from just under the ceiling (found by rays, or over the scene's top when there
+  is none) casts the contact shadows under what stands on the floor, a shadowless
+  uplight near the floor lights the walls the way a ceiling throws light back, and the
+  headlight adds an ambient fill. In the scene's config (scene.yaml):
+
+    light:
+      fixtures: true      # the world's own fixtures (strip_light with emit: true) light
+                          # the room: the bake adds only the down light, for the shadows
+      fill: [0.3, 0.3, 0.3]   # the headlight's ambient (default shown)
+
+  The keys height, diffuse and cutoff of the former single lamp are refused.
+"""
+
+
 def main(argv: list | None = None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_LIGHTING_HELP,
+    )
     ap.add_argument("--scene", default="depot", help="bundled scene name or path to a scene.json")
     ap.add_argument(
         "--config", help="generation config YAML (default: scene.yaml beside scene.json)"

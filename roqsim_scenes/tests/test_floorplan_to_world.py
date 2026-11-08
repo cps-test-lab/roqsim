@@ -117,20 +117,31 @@ def test_bake_config_precedence(tmp_path):
     assert fw.resolve_bake_config(tmp_path, explicit) == explicit
 
 
-def test_a_ceiling_pulls_the_bake_light_under_the_soffit(tmp_path):
-    import yaml
+def test_a_roofed_building_is_lit_from_under_its_slab(tmp_path):
+    """The bake finds a --ceiling slab itself: its down light hangs under the soffit, where the slab
+    cannot shadow the room, and an open building's hangs over its walls."""
+    import mujoco
 
-    config = tmp_path / "look.yaml"
-    config.write_text(yaml.safe_dump({"light": {"height": 4.0, "cutoff": 90.0}}))
-    out = fw.light_under_ceiling(config, 3.5, tmp_path)
-    assert out != config  # the shared config is copied, never edited in place
-    lowered = yaml.safe_load(out.read_text())
-    assert lowered["light"]["height"] < 3.5
-    assert lowered["light"]["cutoff"] == 90.0  # the rest of the look is carried over
-    # A light already under the soffit is left alone -- and the config file itself is reused.
-    fine = tmp_path / "fine.yaml"
-    fine.write_text(yaml.safe_dump({"light": {"height": 3.0}}))
-    assert fw.light_under_ceiling(fine, 3.5, tmp_path) == fine
+    square = {
+        "lines": [
+            {"id": i, "x0_m": x0, "y0_m": y0, "x1_m": x1, "y1_m": y1}
+            for i, (x0, y0, x1, y1) in enumerate(
+                [(0, 0, 6, 0), (6, 0, 6, 5), (6, 5, 0, 5), (0, 5, 0, 0)], start=1
+            )
+        ]
+    }
+    for roofed in (True, False):
+        out = tmp_path / ("roofed" if roofed else "open")
+        world = fw.generate(
+            square, out / "scene", "t", out / "t.yaml", {}, ceiling_h=3.0, wall_thickness=0.15,
+            opening_h=2.0, ceiling=roofed,
+        )
+        model = mujoco.MjModel.from_xml_path(str(world.parent / "t" / "t.xml"))
+        down = model.light("scene_down")
+        if roofed:
+            assert 2.9 < float(down.pos[2]) < 3.0
+        else:
+            assert float(down.pos[2]) > 3.0
 
 
 def test_scene_manifest_references_floorplan_for_roundtrip():

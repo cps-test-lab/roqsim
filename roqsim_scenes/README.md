@@ -222,6 +222,36 @@ so their hulls are exact, a concave prop collides as its filled hull. `collision
 visual/lidar-only (only the ground plane is solid); `collide: false` on an object in `scene.json` opts
 one prim out.
 
+### Lighting
+
+The bake lights every scene the same way, and the scene sets nothing for it:
+
+- a **directional light straight down** (`scene_down`), the one light that casts shadows. A wall
+  takes no light from it, so it cannot band a wall; a floor, a table top or a robot's chassis does,
+  so what stands on the floor has its shadow under it. It hangs 5 cm under the **ceiling the bake
+  finds** — rays straight up from 2 m over a grid of the plan; a ceiling is what half of them hit, at
+  their median height — since MuJoCo starts a light's shadow map at the light and a ceiling above it
+  then shadows nothing. With no ceiling it hangs over the scene's top.
+- a shadowless **uplight** (`scene_up`) at the plan's centre, 0.5 m above the ground, pointing up:
+  the light a ceiling throws back, which makes a wall brighter towards the ceiling than at the floor.
+- the headlight's ambient **fill**, `light.fill` (default `[0.3, 0.3, 0.3]`).
+
+It replaces a single lamp at the plan's centre, which lit the walls with a light that casts: MuJoCo
+culls front faces when it draws a shadow map, so a wall whose faces are wound inward shadowed itself
+in a hard dark band, and every shadow fell away from the lamp across the floor rather than under what
+cast it. Two lights, because MuJoCo's renderer draws eight a frame, the headlight among them,
+in index order (`roqsim.lights`), and a baked scene's come first.
+
+One setting changes it. A world whose own fixtures light the room — `strip_light` with `emit: true`
+in `roqsim_assets` — says so, and the bake then adds only the down light, for the shadows:
+
+```yaml
+light:
+  fixtures: true
+```
+
+The former lamp's `height`, `diffuse` and `cutoff` are refused with that pointer.
+
 ## Importing another USD
 
 Stage 1 runs inside a **Blender 4.x** that ships a USD importer. The command finds Blender on `PATH`
@@ -312,8 +342,8 @@ roqsim scenes floorplan-to-world \
 
 By default a generated building has no ceiling — an open plan reads better from above, and that is
 what most worlds want. `--ceiling` adds a concrete slab over the whole plan with its **soffit at
-`--ceiling-h`** (`meshes/Ceiling.obj`, a `Ceiling` object in `scene.json`) and pulls the bake's
-overhead light under it, since a light left above a solid slab leaves the room black. Take the roof
+`--ceiling-h`** (`meshes/Ceiling.obj`, a `Ceiling` object in `scene.json`); the bake finds the slab
+and hangs its light under it ([Lighting](#lighting)). Take the roof
 back off at run time with the core `ceiling` plugin, which deletes by height rather than by name:
 
 ```yaml
