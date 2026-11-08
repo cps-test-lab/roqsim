@@ -1,3 +1,13 @@
+ROBOTIS OpenMANIPULATOR-X -- vendored geometry and description.
+
+Upstream:   ROBOTIS open_manipulator_description (ROS 2 package), URDF open_manipulator_x
+Copyright:  ROBOTIS
+License:    Apache License 2.0.
+
+Regenerate with: external/convert/build_open_manipulator_x_mjcf.py
+The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

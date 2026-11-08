@@ -1,9 +1,9 @@
 """Every prop and texture folder ships a CREDITS.txt that names its licence.
 
-Attribution for third-party content lives in the CREDITS.txt beside the files it credits, not in a
-central list. A folder of our own work says so in its CREDITS.txt with the OWN_WORK line, so every
-folder carries one: a folder without it cannot be told apart from third-party content that lost its
-attribution.
+Attribution for third-party content lives in the CREDITS.txt beside the files it credits, and the
+package's THIRD_PARTY.md names each such folder. A folder of our own work says so in its CREDITS.txt
+with the OWN_WORK line, so every folder carries one: a folder without it cannot be told apart from
+third-party content that lost its attribution.
 """
 
 from __future__ import annotations
@@ -73,6 +73,17 @@ def test_credits_under_cc_by_link_the_licence(folder):
     text = (folder / "CREDITS.txt").read_text(encoding="utf-8")
     if re.search(r"^licensed under .*CC Attribution", text, re.M):
         assert "creativecommons.org/licenses/by" in text, f"{folder.name}: no link to the licence"
+
+
+@pytest.mark.parametrize("folder", _asset_folders(), ids=lambda d: f"{d.parent.name}/{d.name}")
+def test_third_party_md_names_every_cc_by_folder(folder):
+    """A CC-BY asset is credited in its package's THIRD_PARTY.md as well as beside itself."""
+    text = (folder / "CREDITS.txt").read_text(encoding="utf-8")
+    if REDISTRIBUTABLE.search(text) and not re.search(r"\bCC0 1\.0\b", text):
+        third_party = (PACKAGE_ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
+        assert f"`{folder.parent.name}/{folder.name}/`" in third_party, (
+            f"{folder.parent.name}/{folder.name} is CC-BY and THIRD_PARTY.md has no row for it"
+        )
 
 
 def _credits_of(tmp_path, licence: dict) -> str:
