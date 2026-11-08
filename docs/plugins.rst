@@ -2024,8 +2024,9 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
      - ``g1_locomotion``, ``oli_locomotion``, ``spot_locomotion`` (``cmd_vel``; ``odom``,
        ``joint_states``), ``agibot_g2_controller`` (``joint_states``; ``joint_command``),
        ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
-       ``walker`` (``body_poses``), ``navigator`` (its route commands), ``conveyor`` (``speed``;
-       ``package_pose``), ``door`` (``cmd``, ``door``; ``state``), ``prop_trajectory``
+       ``walker`` (``body_poses``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
+       ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``cmd``, ``door``, ``start``,
+       ``cancel``; ``state``, ``status``), ``prop_trajectory``
        (``stage_progress``)
      - families: ``navigator`` (one command per configured route endpoint); owner: ``conveyor``,
        ``door``, ``prop_trajectory``, ``walker`` (the entity each registers), and ``conveyor``'s
@@ -2923,6 +2924,12 @@ press_1/start '{"program": "stroke", "args": {"show": "hole"}}'`` over the contr
 other; with neither, whatever is pending or runs. A program cannot take an argument named
 ``token``: that is the start's own. Every program run is an event timeline on the run's events
 (``program_start``, the program's steps, ``program_end``).
+
+``roqsim_assets`` ships the machines ``door`` and ``conveyor``, and two examples of a machine
+package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
+example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
+``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
+scenario from ``roqsim_assets.scenarios``.
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~

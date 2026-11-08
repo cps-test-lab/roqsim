@@ -62,6 +62,7 @@ program had set.
 from __future__ import annotations
 
 import inspect
+import itertools
 import math
 import threading
 import types
@@ -241,7 +242,8 @@ class MachinePlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        #: False for an instance whose config makes it no machine: no handle, no endpoints.
+        #: False for an instance whose config makes it no machine (a leafless door): no handle, no
+        #: endpoints.
         self.is_machine = True
         self.home: dict[str, float] = {}
         self.on_error = str(self.config.get("on_error", "raise"))
@@ -252,7 +254,8 @@ class MachinePlugin(Plugin):
         #: name -> (goal, speed): a target ramping toward its goal
         self._ramps: dict[str, tuple[float, float]] = {}
         self._lock = threading.Lock()
-        self._seq = 0
+        #: Sequence numbers, counting across episodes so a stale one never matches.
+        self._counter = itertools.count(1)
         #: A start not applied yet: its number, program, arguments and token.
         self._pending: tuple[int, str, dict, str] | None = None
         self._cancelling = 0
@@ -797,8 +800,7 @@ class MachinePlugin(Plugin):
                     f"machine {self.address}: busy running {running!r} (seq {seq}); start "
                     f"{program_name!r} once it is ready"
                 )
-            self._seq += 1
-            seq = self._seq
+            seq = next(self._counter)
             self._pending = (seq, program_name, args, str(token or ""))
             # Posted under the lock, so starts and cancels reach the physics thread in the order
             # they were made.
@@ -850,8 +852,7 @@ class MachinePlugin(Plugin):
                 self._set_status(
                     MachineStatus(self._pending[0], self._pending[1], True, "cancelled")
                 )
-            self._seq += 1
-            seq = self._seq
+            seq = next(self._counter)
             self._pending = (seq, program_name, dict(args), "")
         self._apply_start(seq)
         return seq

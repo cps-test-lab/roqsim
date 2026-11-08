@@ -1,4 +1,4 @@
-"""Scene + controller plugin: a hinged (swing) door with a ROS-controllable opening angle.
+"""Machine: a hinged (swing) door with open and close programs and a ROS-controllable opening angle.
 
 A door is the union of the two existing prop patterns: it is a *parametric* prop like the
 ``shelf`` (a leaf built to the opening's width/height, either a primitive box or a textured mesh
@@ -12,23 +12,46 @@ hinge); the leaf spans from there across the opening. A ``hinge`` joint about +Z
 ``swing`` (+1/-1) chooses which side of the wall it opens toward. ``open`` is the initial openness
 fraction (0 = closed, 1 = fully open at ``max_angle``) -- i.e. *how open* the door starts.
 
-Actuation. A ``position`` actuator holds the hinge at the target angle every ``pre_step``. This one
-mechanism unifies the two door kinds the user asked for: a **passive** door (``controllable: false``)
-simply holds its ``open`` angle and resists being pushed (finite ``kp``); an **automatic** door
-(``controllable: true``) additionally exposes ROS I/O so its target is commanded at runtime.
+A machine (:class:`roqsim.machine.MachinePlugin`): opening and closing is the door's own procedure;
+a door that opens because someone comes near is a scenario reading a ``zone_trigger`` and starting
+the door (``docs/architecture.rst``, "Machines and scenarios").
+
+Actuation. A ``position`` actuator holds the hinge at its target. The programs ``open``, ``close``
+and ``move_to(openness)`` (a fraction in ``[0, 1]``, clamped) move that target -- at once, or ramped at
+``speed`` (rad/s at the hinge) -- and end when the leaf first arrives: once the target has stopped
+moving, the first time the leaf is within 0.02 of the openness. The leaf may still settle by a few
+hundredths after that, further on a wider, heavier leaf with the same gains. A leaf stopped inside
+that 0.02, against something or not, has arrived. An automatic
+door only pushes *gently*: the actuator force is capped, so an obstacle is nudged, never crushed.
+A leaf that stays blocked -- behind its commanded target by more than 0.02 and barely moving -- for
+``stall_timeout`` seconds holds where it is and the program ends with the error ``stalled at
+openness 0.42`` (and a ``stalled`` event), for the caller to decide; a slow ramp is not a stall,
+since the leaf keeps up with the target it is given. An idle door pushed off its target gives way
+the same way: after ``stall_timeout`` it takes where it stands as its target and stops pressing back
+(a ``gave_way`` event), so a robot can push through an automatic door. A **passive** door
+(``controllable: false``) holds its ``open`` angle and declares no ROS surface; a scenario in the
+same process can still start its programs.
+
+Handle: a :class:`~roqsim.machine.MachineHandle` under ``machine:<name>`` -- ``start("open")``,
+``start("move_to", openness=0.5)``, ``status()``, ``busy``, ``ready``, ``cancel()``,
+``value("hinge_pos")`` (the hinge *target* in rad -- not the openness, and not where the leaf is).
+Its ``start``/``status``/``cancel`` are endpoints too. Every door with a leaf, passive or not, also
+publishes its openness reader under ``machine:<name>:openness``: ``() -> (openness, d_openness/dt)``,
+the leaf's measured openness as a fraction.
 
 ROS interface (declared only when ``controllable``; wired by the generic ``ros2_bridge``, so no ROS is
-imported here). Openness is a fraction in ``[0, 1]`` on every port:
+imported here). Openness is a fraction in ``[0, 1]`` on every port, and a command on either ``in``
+port replaces what the door was doing (``move_to``, preempting):
 
 * ``in``  ``<ns>/cmd``   -- ``std_msgs/Float64`` set-openness (fire-and-forget; the path an ``.osc``
-  ``topic_publish`` drives).
+  ``topic_publish`` drives). A repeated value changes nothing while the door moves there or stands
+  there; after a stall or a cancel it starts the move again.
 * ``out`` ``<ns>/state`` -- ``std_msgs/Float64`` current openness, ~10 Hz.
 * ``in``  action ``<ns>/door`` -- ``control_msgs/action/GripperCommand`` for open/close *with feedback*
   (``goal.command.position`` is the target fraction; the handler reports reached/stalled by watching
-  the ``door:<name>`` state reader on the blackboard -- see ``roqsim_ros_bridge.actions``).
-
-A :class:`DoorHandle` is also published on the blackboard under ``door:<name>`` for in-process
-drivers (scripts, tests) that bypass any transport.
+  the ``machine:<name>:openness`` state reader on the blackboard -- see ``roqsim_ros_bridge.actions``).
+  A goal is given a full swing at ``speed``, plus ``stall_timeout``, plus 5 s; one still moving then
+  is aborted.
 
 Config::
 
@@ -54,11 +77,14 @@ Config::
       swing: 1               # +1 / -1 -- which way the leaf opens about +Z
       max_angle: 120         # fully-open hinge angle (deg); a leaf can swing well past 90 in free
                              #   space -- raise/lower per door for what its surroundings allow
-      open: 0.0              # initial openness fraction 0..1 ('how open'); held until commanded
+      open: 0.0              # initial openness fraction 0..1 ('how open'): the door's home
+                             #   (a `home: {hinge_pos: <rad>}` overrides it, as on any machine)
+      speed: 0.8             # hinge speed of open/close/move_to (rad/s); unset: the target jumps
       controllable: true     # expose the ROS endpoints/action; false = passive, held at 'open'
       namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
       kp: 40.0               # position-actuator stiffness
-      kv: 8.0                # position-actuator damping (velocity gain)
+      kv: 30.0               # position-actuator damping (velocity gain); with kp 40 it damps the
+                             #   default leaf at zeta 0.54, so a half-open target does not overshoot
       max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
       stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
       stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
@@ -92,15 +118,14 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
-from dataclasses import dataclass
 
 import mujoco
 
 from roqsim import endpoint
 from roqsim.context import Entity, SimContext
+from roqsim.machine import MachinePlugin, program
 from roqsim.models import ModelError, apply_assets, resolve_model
-from roqsim.plugin import Plugin, PluginError
+from roqsim.plugin import PluginError
 from roqsim.pose import config_pose, config_pose_errors
 
 logger = logging.getLogger("roqsim_assets.door")
@@ -118,28 +143,15 @@ _MESH_H = 2.0
 _FRAME_BODY = "frame_frame"
 
 
-@dataclass
-class DoorHandle:
-    """Published by :class:`DoorPlugin`; consumed by in-process drivers (scripts, tests).
-
-    ``set_openness``/``get_openness`` traffic in the openness fraction (0 = closed, 1 = fully open).
-    ``read_state`` returns ``(openness, d_openness/dt)`` -- the reader the GripperCommand action
-    handler watches to report reached/stalled. All run on the physics thread.
-    """
-
-    name: str
-    set_openness: Callable[[float], None]
-    get_openness: Callable[[], float]
-    read_state: Callable[[], tuple[float, float]]
-
-
-class DoorPlugin(Plugin):
+class DoorPlugin(MachinePlugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
     _ROOT_BODY = "door_leaf"
     _JOINT = "hinge"
     _ACTUATOR = "hinge_pos"
+    ACTUATORS = (_ACTUATOR,)
+    ENTITY_KIND = "door"
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -175,11 +187,15 @@ class DoorPlugin(Plugin):
         self.swing = 1 if self._float(self.config.get("swing"), 1.0) >= 0 else -1
         self.max_angle = math.radians(self._float(self.config.get("max_angle"), 120.0))
         self.open0 = min(max(self._float(self.config.get("open"), 0.0), 0.0), 1.0)
+        speed = self.config.get("speed")
+        self.speed = self._float(speed, 0.0) if speed is not None else None
         self.controllable = bool(self.config.get("controllable", True))
         # The ROS surface needs something to command: a controllable door with a leaf.
         self.commandable = self.leaf and self.controllable
+        # A cased opening has nothing to command, so it is no machine: no handle, no endpoints.
+        self.is_machine = self.leaf
         self.kp = self._float(self.config.get("kp"), 40.0)
-        self.kv = self._float(self.config.get("kv"), 8.0)
+        self.kv = self._float(self.config.get("kv"), 30.0)
         # An automatic door only pushes *gently*: the actuator force is capped, so an obstacle
         # (a robot, a person) is nudged, never crushed. If the door stays blocked -- barely moving
         # while short of its target -- for `stall_timeout` seconds, it gives up and holds where it is
@@ -190,13 +206,11 @@ class DoorPlugin(Plugin):
 
         # Signed fully-open angle (rad); openness fraction maps linearly onto [0, _span].
         self._span = self.swing * self.max_angle
-        self._target = self.open0  # commanded openness fraction (from ROS / the handle)
-        self._effective = self.open0  # what we actually drive to (backed off when it gives up)
-        self._stall_t = 0.0  # seconds spent blocked short of the target
-        self._gave_up = False  # stopped pushing after a stall; reset on a new command
+        self.HOME = {self._ACTUATOR: self.open0 * self._span}
+        self._goal = self.open0  # the openness the last move went for; home's from the first reset
+        self._pushed = 0.0  # seconds an idle door has been held off its target
         self._reach_tol = 0.02  # openness within this of the target counts as reached
         # resolved in configure()
-        self._ctx: SimContext | None = None
         self._aid = -1
         self._jid = -1
         self._qadr = -1
@@ -254,6 +268,7 @@ class DoorPlugin(Plugin):
             "kv",
             "max_torque",
             "stall_timeout",
+            "speed",
         ):
             if key not in config:
                 continue
@@ -290,6 +305,7 @@ class DoorPlugin(Plugin):
             except ModelError as exc:
                 errors.append(f"{what} {ref!r} could not be resolved ({exc})")
         errors += config_pose_errors(config, "door")
+        errors += super().validate_config(config)
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -453,44 +469,67 @@ class DoorPlugin(Plugin):
         self._qadr = int(m.jnt_qposadr[self._jid])
         self._dadr = int(m.jnt_dofadr[self._jid])
 
-        ctx.entities.add(
-            Entity(
-                name=self.door_name,
-                kind="door",
-                body=p + self._ROOT_BODY,
-                meta={
-                    "prefix": p,
-                    "hinge_side": self.hinge_side,
-                    "swing": self.swing,
-                    "max_angle": self.max_angle,
-                },
-            )
+        self.register_entity(
+            ctx,
+            body=p + self._ROOT_BODY,
+            hinge_side=self.hinge_side,
+            swing=self.swing,
+            max_angle=self.max_angle,
         )
+        super().configure(ctx)
 
-        # In-process handle + the state reader the GripperCommand action handler watches.
-        ctx.blackboard.set(
-            f"door:{self.door_name}",
-            DoorHandle(
-                name=self.door_name,
-                set_openness=self.set_openness,
-                get_openness=lambda: self._target,
-                read_state=self.read_state,
-            ),
-        )
+        # The openness reader, ``() -> (openness, d_openness/dt)``, for every door with a leaf:
+        # in-process callers read it, and the GripperCommand handler of a controllable door watches
+        # it (its `state_key`) without the door pretending to be a gripper (roqsim_ros_bridge.actions).
+        ctx.blackboard.set(f"machine:{self.door_name}:openness", self.read_state)
 
-        if not self.controllable:
-            return  # passive door: holds `open`, no ROS surface
+    # -- programs ------------------------------------------------------------------------------
+    @program
+    def open(self):
+        """Open fully."""
+        yield from self.move_to(1.0)
 
-        # State reader keyed by the door's own name so the (generalized) GripperCommand handler finds
-        # it without the door pretending to be a gripper (see roqsim_ros_bridge.actions).
-        ctx.blackboard.set(f"door:{self.door_name}:state", self.read_state)
+    @program
+    def close(self):
+        """Close."""
+        yield from self.move_to(0.0)
+
+    @program
+    def move_to(self, openness: float):
+        """Move to an openness; fail if the leaf stays blocked short of it.
+
+        Args:
+            openness: 0 closed to 1 fully open; clamped
+        """
+        target = min(max(float(openness), 0.0), 1.0)
+        self._goal = target
+        angle = target * self._span
+        if self.speed:
+            self.ramp(self._ACTUATOR, angle, self.speed)
+        else:
+            self.set(self._ACTUATOR, angle)
+        blocked = 0.0
+        while True:
+            now, rate = self.read_state()
+            # Arrived: once the target has stopped moving, the first time the leaf is within reach
+            # of it -- moving or not, so a leaf held there short of the servo's own tolerance has
+            # arrived too. Outside that reach a leaf barely moving is held back, so every blocked
+            # leaf ends: arrived, or in a stall.
+            if (
+                abs(self.value(self._ACTUATOR) - angle) <= 1e-9
+                and abs(now - target) <= self._reach_tol
+            ):
+                return
+            blocked = blocked + self._ctx.dt if self._held_back(now, rate) else 0.0
+            if blocked >= self.stall_timeout:
+                # Stop pressing on the obstruction: hold where the leaf is (inside its range).
+                now = min(max(now, 0.0), 1.0)
+                self.set(self._ACTUATOR, now * self._span)
+                self.step("stalled", openness=now)
+                self.fail(f"stalled at openness {now:.2f}")
+            yield
 
     # -- endpoints, declared only when `commandable` -------------------------------------------
-    @property
-    def endpoint_owner(self) -> str:
-        """The door entity this plugin registers."""
-        return self.door_name
-
     @endpoint.stream(when="commandable", ros2={"type": "std_msgs.msg.Float64"})
     def cmd(self, data: float) -> None:
         """Target openness, fire-and-forget; applied once per step.
@@ -503,7 +542,7 @@ class DoorPlugin(Plugin):
     @endpoint.out(rate=10.0, when="commandable")
     def state(self) -> float:
         """Current openness, 0 closed to 1 fully open."""
-        return self._target if self._ctx is None else self.read_state()[0]
+        return self.read_state()[0]
 
     # Served by the GripperCommand action, which reports reached or stalled by watching the door's
     # own state reader (`state_key`) rather than a gripper's.
@@ -511,7 +550,8 @@ class DoorPlugin(Plugin):
         when="commandable",
         ros2=lambda self: {
             "action": "control_msgs.action.GripperCommand",
-            "state_key": f"door:{self.door_name}:state",
+            "state_key": f"machine:{self.door_name}:openness",
+            "timeout": self.action_timeout(),
         },
     )
     def door(self, position: float) -> None:
@@ -522,14 +562,43 @@ class DoorPlugin(Plugin):
         """
         self.set_openness(position)
 
-    def set_openness(self, openness: float) -> None:
-        """Set the target openness fraction (0 = closed, 1 = fully open); clamped.
+    def action_timeout(self) -> float:
+        """Sim seconds a door goal may take: a full swing at ``speed``, a stall, and time to settle."""
+        swing = abs(self.max_angle) / self.speed if self.speed else 0.0
+        return swing + self.stall_timeout + 5.0
 
-        A fresh command clears any earlier give-up, so the door tries again toward the new target.
-        """
-        self._target = min(max(float(openness), 0.0), 1.0)
-        self._stall_t = 0.0
-        self._gave_up = False
+    def set_openness(self, openness: float) -> None:
+        """Make ``openness`` the target now, replacing whatever the door was doing (``move_to``).
+
+        For the transport ports, where a command means "this is the target now". A repeated value
+        changes nothing while the last move to it runs or ended without error, so a publisher at
+        10 Hz does not restart the move ten times a second; after a stall or a cancel it retries."""
+        openness = min(max(float(openness), 0.0), 1.0)
+        if openness == self._goal and self.status_now.error == "":
+            return  # moving there, or there
+        self.preempt("move_to", openness=openness)
+
+    def _held_back(self, openness: float, rate: float) -> bool:
+        """Whether the leaf is held back: behind the target it is commanded now -- not the end of a
+        ramp, which a slow door is meant to take its time to -- and barely moving."""
+        lag = abs(openness - self.value(self._ACTUATOR) / self._span)
+        return lag > self._reach_tol and abs(rate) < self.stall_speed
+
+    def post_step(self, ctx: SimContext) -> None:
+        super().post_step(ctx)
+        if not self.leaf or self.busy or ctx.manual_control:
+            self._pushed = 0.0
+            return
+        # An idle door pushed off its target gives way after stall_timeout rather than pressing back
+        # at max_torque for as long as it is pushed.
+        now, rate = self.read_state()
+        self._pushed = self._pushed + ctx.dt if self._held_back(now, rate) else 0.0
+        if self._pushed >= self.stall_timeout:
+            self._pushed = 0.0
+            now = min(max(now, 0.0), 1.0)
+            self.set(self._ACTUATOR, now * self._span)
+            self._goal = now
+            self.step("gave_way", openness=now)
 
     def read_state(self) -> tuple[float, float]:
         """(openness, d_openness/dt) as fractions -- computed on demand on the physics thread."""
@@ -538,35 +607,11 @@ class DoorPlugin(Plugin):
             return (0.0, 0.0)
         return (float(d.qpos[self._qadr]) / self._span, float(d.qvel[self._dadr]) / self._span)
 
-    def on_reset(self, ctx: SimContext) -> None:
-        if not self.leaf:
-            return  # nothing to reset: a cased opening is static
-        self._target = self._effective = self.open0
-        self._stall_t = 0.0
-        self._gave_up = False
-        ctx.data.qpos[self._qadr] = self.open0 * self._span
-        ctx.data.ctrl[self._aid] = self.open0 * self._span
-        mujoco.mj_forward(ctx.model, ctx.data)
+    def _home_openness(self) -> float:
+        """The openness the door's ``home`` stands at: ``open``, or a ``home: {hinge_pos: ...}``."""
+        return self.home[self._ACTUATOR] / self._span if self._span else 0.0
 
-    def pre_step(self, ctx: SimContext) -> None:
-        if not self.leaf:
-            return  # a cased opening has no actuator
-        if ctx.manual_control:
-            return  # the viewer's slider owns the hinge actuator this run
-        openness, speed = self.read_state()
-        if not self._gave_up and abs(openness - self._target) > self._reach_tol:
-            # Trying to reach the target: if the leaf is barely moving it is blocked -- count the
-            # stall, and once it exceeds the timeout stop pushing and hold where it is.
-            if abs(speed) < self.stall_speed:
-                self._stall_t += ctx.dt
-            else:
-                self._stall_t = 0.0
-            if self._stall_t >= self.stall_timeout:
-                self._gave_up = True
-                self._effective = openness  # hold at the obstruction, stop pressing
-            else:
-                self._effective = self._target
-        elif not self._gave_up:
-            self._stall_t = 0.0
-            self._effective = self._target
-        ctx.data.ctrl[self._aid] = self._effective * self._span
+    def on_reset(self, ctx: SimContext) -> None:
+        super().on_reset(ctx)
+        if self.leaf:
+            self._goal = self._home_openness()

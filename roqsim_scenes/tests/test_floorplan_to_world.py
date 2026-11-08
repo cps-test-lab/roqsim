@@ -242,12 +242,14 @@ def test_door_placements_applies_map_overrides():
             "open": 0.3,
             "controllable": True,
             "namespace": "foyer",
+            "speed": 0.6,
         }
     }
     (d,) = [e["door"] for e in fw.door_placements(lines, doors, dmap, 2.5, 2.0)]
     assert d["model"] == "door_glass" and d["hinge_side"] == "right"
     assert d["swing"] == -1 and d["open"] == 0.3
     assert d["controllable"] is True and d["namespace"] == "foyer"
+    assert d["speed"] == 0.6
 
 
 @pytest.mark.parametrize(

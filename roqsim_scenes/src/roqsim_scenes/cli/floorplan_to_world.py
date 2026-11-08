@@ -91,6 +91,7 @@ _DOOR_FORWARDED_KEYS = (  # passed to the door plugin unchanged when present
     "thickness",
     "kp",
     "kv",
+    "speed",
     "color",
     "frame_color",
     "leaf",
@@ -546,7 +547,8 @@ def main(argv: list | None = None) -> int:
         "doors get a passive, closed wooden door hinged 'left'). Keys: model "
         "(door|door_glass), hinge_side (left|right), swing (+1/-1), open (0..1), "
         "controllable (bool -> automatic door), name, prefix, namespace, max_angle, thickness, "
-        "kp, kv, color, frame_color, leaf (false -> a cased opening: casing welded, no leaf "
+        "kp, kv, speed (rad/s of open and close), color, frame_color, leaf (false -> a cased "
+        "opening: casing welded, no leaf "
         "hung), skip (true -> emit no door plugin at all, for an opening a `window` fills or a "
         "deliberately bare gap). A door id the floorplan has not, or any other key, is refused",
     )

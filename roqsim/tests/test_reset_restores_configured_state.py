@@ -231,6 +231,15 @@ def _motor_command(engine: Engine, endpoint) -> list[float]:
     return [0.6] * motors.count
 
 
+def _machine_start(engine: Engine, endpoint) -> tuple:
+    """A program of the machine that changes what it is doing: open a door, run a belt faster."""
+    handle = engine.ctx.blackboard.get(f"machine:{endpoint.owner}")
+    for program, args in (("open", {}), ("close_guard", {}), ("run", {"speed": 0.3})):
+        if program in handle.programs:
+            return (program, args)
+    raise AssertionError(f"no program to start on {endpoint.owner}: {handle.programs}")
+
+
 #: What to write into an ``in`` endpoint, by endpoint name: a value, or ``f(engine, endpoint)``.
 PAYLOADS: dict[str, Any] = {
     "cmd_vel": (0.2, 0.0, 0.3),
@@ -248,6 +257,8 @@ PAYLOADS: dict[str, Any] = {
     "cmd_pos": ([0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0]),
     "motor_cmd": _motor_command,
     "speed": 0.2,
+    "start": _machine_start,
+    "cancel": None,
     "show": ("part", "label"),
     "hide": ("part", "plain"),
     "set": ("part", "label"),
@@ -659,6 +670,8 @@ CASES: dict[str, Case] = {
     "prop_trajectory": Case(_trajectory_world),
     "conveyor": _static({"conveyor": {}, "name": "conveyor"}),
     "door": _static({"door": {}, "name": "door"}),
+    "press": _static({"press": {}, "name": "press"}),
+    "sliding_door": _static({"sliding_door": {}, "name": "sliding_door"}),
     "window": _static({"window": {}, "name": "window"}),
     "shelf": _static({"shelf": {}, "name": "shelf"}),
     "workbench": _static({"workbench": {}, "name": "bench"}),
