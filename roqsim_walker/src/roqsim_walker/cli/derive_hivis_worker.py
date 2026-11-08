@@ -349,29 +349,19 @@ def measure(P, W, skeleton: dict, tpose: bool, lowered: float) -> dict:
 
     * ``skeleton.root_height``: the pelvis' height above the derived mesh's floor -- the import's,
       lowered as the mesh was, so the bones stay where they were in the skin.
-    * ``skeleton.height``: the mesh's top.
-    * ``sole`` (heel, toe), ``skeleton.foot_tip``, ``collision``: as ``import-actor`` measures them,
-      but against the bones the skin is bound to at runtime (``skin._bind_bones`` of this skeleton),
-      which are what the grounding adds an offset to and what a capsule rides. The import measures
-      against the source rig's own bones, which the walker's straight limbs do not keep.
-    * ``sole[side]["hull"]``: the points the foot grounding is taken on (``import_actor.measure_hull``).
+    * ``skeleton.height``, ``skeleton.foot_tip``, ``collision`` and ``sole`` (heel, toe, and each
+      shoe's hull): ``import_actor.measure``, as ``import-actor`` measures them, against the bones
+      the skin is bound to at runtime.
 
     The bone offsets are the source rig's, not the mesh's, and are kept.
     """
-    from roqsim_walker import skin
     from roqsim_walker.cli import import_actor
-    from roqsim_walker.humanoid import to_skeleton
 
     skeleton = dict(skeleton, root_height=round(float(skeleton["root_height"]) - lowered, 4))
-    poses = skin._bind_bones(tpose=tpose, skeleton=to_skeleton(skeleton))
-    bind = {name: pos for name, (pos, _) in poses.items()}
-    collision = import_actor.measure_collision(P, W, bind)
-    sole, foot_tip = import_actor.measure_sole(P, W, bind)
-    for side, hull in import_actor.measure_hull(P, W).items():
-        sole[side]["hull"] = hull
-    skeleton["height"] = round(float(P[:, 2].max()), 4)
-    skeleton["foot_tip"] = foot_tip
-    return {"skeleton": skeleton, "collision": collision, "sole": sole}
+    shape = import_actor.measure(P, W, skeleton, tpose=tpose, flip=False)
+    skeleton["height"] = shape["height"]
+    skeleton["foot_tip"] = shape["foot_tip"]
+    return {"skeleton": skeleton, "collision": shape["collision"], "sole": shape["sole"]}
 
 
 def write(dst: str, P, F, Fuv, W, texture: Image.Image, meta: dict) -> None:

@@ -189,9 +189,11 @@ def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict
     """joint -> capsule radius (m): the spread of the vertices this joint dominates, measured off
     its bone axis. Mirrors what a CARLA Phys asset gives, but derived from geometry.
 
-    Measured against ``bind_ours`` -- the source joints in the mesh's own (T-)pose, NOT the arms-down
-    rest pose. Using the rest pose here would place the arm bones vertically while the mesh arms
-    stick out sideways, inflating the arm radii to garbage.
+    Measured against ``bind_ours``, the bones the skin is bound to at runtime in the mesh's own
+    (T-)pose (:func:`measure` takes them from ``skin._bind_bones``), which are what each capsule
+    rides. Not the arms-down rest pose, which would place the arm bones vertically while the mesh's
+    arms stick out sideways; and not the source rig's own bones, which the walker's straight limbs
+    do not keep.
     """
     dom = np.argmax(w, axis=1)
     out = {}
@@ -285,6 +287,36 @@ def measure_hull(verts: np.ndarray, w: np.ndarray) -> dict:
             "w": np.round(wl, 4).tolist(),
         }
     return out
+
+
+def measure(verts: np.ndarray, w: np.ndarray, skeleton: dict, tpose: bool, flip: bool) -> dict:
+    """What a blueprint's ``walker.json`` says of its mesh's shape, measured on the mesh as MuJoCo
+    poses it: ``{"height", "foot_tip", "collision", "sole"}``, the sole with each shoe's ``hull``.
+
+    ``verts`` (soles on z = 0) and their skin weights ``w`` are turned as the skin turns them
+    (``skin._aligner``) and measured against the bones the skin is bound to at runtime -- ``skin._bind_bones``
+    of ``skeleton`` (a ``walker.json`` skeleton dict) and ``tpose`` -- which are what the foot
+    grounding adds a sole offset to and what a capsule rides. The source rig's own bones are not
+    those: the walker's limbs are straight where the rig's bend, which puts the runtime ankle
+    centimetres from the rig's. ``import-actor`` and the ``WorkerHiVisWalk`` recipe both measure
+    here.
+    """
+    from roqsim_walker import skin
+    from roqsim_walker.humanoid import to_skeleton
+
+    verts = skin._aligner(verts, flip=flip)(np.asarray(verts, float))
+    poses = skin._bind_bones(tpose=tpose, skeleton=to_skeleton(skeleton))
+    bind = {name: pos for name, (pos, _) in poses.items()}
+    collision = measure_collision(verts, w, bind)
+    sole, foot_tip = measure_sole(verts, w, bind)
+    for side, hull in measure_hull(verts, w).items():
+        sole[side]["hull"] = hull
+    return {
+        "height": round(float(verts[:, 2].max()), 4),
+        "foot_tip": foot_tip,
+        "collision": collision,
+        "sole": sole,
+    }
 
 
 def write_obj(path: str, parts, verts: np.ndarray, mtl_name: str) -> None:
@@ -399,20 +431,20 @@ def main(argv: list | None = None) -> None:
     verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
     zshift = verts[:, 2].min()
     verts[:, 2] -= zshift
-    height = float(verts[:, 2].max())
 
     # Only the vertices the KEPT groups reference feed the geometry measurements -- so a dropped bag
     # skinned to the hand does not inflate the wrist's collision radius.
     kept = np.unique(
         np.concatenate([np.asarray(p.triangleset().vertex_index).ravel() for p in parts])
     )
-
-    # Source joints in the mesh's own (T-)pose, z-shifted to match the dropped mesh. This is the
-    # frame the vertices live in, so it is what the geometric measurements below must use.
-    bind_ours = {ours: bind[src][:3, 3] - [0, 0, zshift] for ours, src in JOINT_MAP.items()}
-
-    collision = measure_collision(verts[kept], w17[kept], bind_ours)
-    sole, foot_tip = measure_sole(verts[kept], w17[kept], bind_ours)
+    shape = measure(
+        verts[kept],
+        w17[kept],
+        {"root_height": root_height, "offsets": offsets},
+        tpose=True,
+        flip=args.flip,
+    )
+    height, collision, sole = shape["height"], shape["collision"], shape["sole"]
 
     write_obj(os.path.join(wdir, f"{stem}.obj"), parts, verts, f"{stem}.mtl")
     write_mtl(os.path.join(wdir, f"{stem}.mtl"), materials)
@@ -433,8 +465,8 @@ def main(argv: list | None = None) -> None:
         "materials": {m: {"texture": i["texture"], "normal": None} for m, i in materials.items()},
         "skeleton": {
             "root_height": root_height,
-            "height": round(height, 4),
-            "foot_tip": foot_tip,
+            "height": height,
+            "foot_tip": shape["foot_tip"],
             "offsets": offsets,
         },
         "collision": collision,
