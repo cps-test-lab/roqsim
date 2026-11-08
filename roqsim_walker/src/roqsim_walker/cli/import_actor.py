@@ -298,8 +298,7 @@ def measure(verts: np.ndarray, w: np.ndarray, skeleton: dict, tpose: bool, flip:
     of ``skeleton`` (a ``walker.json`` skeleton dict) and ``tpose`` -- which are what the foot
     grounding adds a sole offset to and what a capsule rides. The source rig's own bones are not
     those: the walker's limbs are straight where the rig's bend, which puts the runtime ankle
-    centimetres from the rig's. ``import-actor`` and the ``WorkerHiVisWalk`` recipe both measure
-    here.
+    centimetres from the rig's. Anything that derives a blueprint from an import measures here too.
     """
     from roqsim_walker import skin
     from roqsim_walker.humanoid import to_skeleton
