@@ -156,6 +156,14 @@ def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = N
         "skeleton": meta.get("skeleton"),  # per-walker bone table (native proportions)
         "collision": meta.get("collision"),  # per-limb collision radii (CARLA Phys)
         "sole": meta.get("sole"),  # measured shoe-sole offsets (exact grounding)
+        # The hands (`hands: true`): the layout's overrides, and whether the mesh has finger
+        # weights (<obj>.fingers.npz, from `import-actor --fingers-only`) or binds the hand rigidly.
+        "hands": meta.get("hands") or {},
+        "hand_weights": (
+            "fingers"
+            if os.path.isfile(os.path.splitext(os.path.join(wdir, meta["obj"]))[0] + ".fingers.npz")
+            else "rigid"
+        ),
     }
 
     # CARLA uses a separate locomotion set per body type AND gender. Resolve each clip from the most

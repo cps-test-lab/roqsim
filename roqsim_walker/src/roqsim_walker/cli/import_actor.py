@@ -185,6 +185,50 @@ def fold_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
     return out / (out.sum(axis=1, keepdims=True) + 1e-9)
 
 
+#: The source rigs' hand chains, per side: a thumb and ONE chain for the four fingers, three bones
+#: each. ``--fingers-only`` keeps their weights apart in ``<stem>.fingers.npz``.
+FINGER_CHAINS = [(chain, side, k) for side in ("l", "r") for chain in ("thumb", "fingers") for k in (1, 2, 3)]
+
+
+def finger_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
+    """(nvert, 12): each vertex's share of its whole weight on each source finger bone, in
+    :data:`FINGER_CHAINS` order. The shares are the same ones ``fold_weights`` folds into the wrist,
+    so ``wrist - sum(shares)`` is what stays on the wrist."""
+    total = W.sum(axis=1, keepdims=True) + 1e-9
+    col = {n: i for i, n in enumerate(names)}
+    out = np.zeros((W.shape[0], len(FINGER_CHAINS)))
+    for j, (chain, side, k) in enumerate(FINGER_CHAINS):
+        src = f"{'Thumb' if chain == 'thumb' else 'Fingers'}{k}_{side.upper()}"
+        if src not in col:
+            raise SystemExit(f"--fingers-only: the source has no {src!r} bone, so no finger weights")
+        out[:, j] = W[:, col[src]] / total[:, 0]
+    return out
+
+
+def write_fingers(dae: str, wdir: str, stem: str) -> str:
+    """Write ``<stem>.fingers.npz`` beside an existing blueprint's weights, from the same source rig.
+
+    Refuses a source whose vertices are not the blueprint's: the shares are matched to the mesh by
+    position, as its weights are, and a mesh from another source would match nothing."""
+    weights = os.path.join(wdir, f"{stem}.weights.npz")
+    if not os.path.isfile(weights):
+        raise SystemExit(f"--fingers-only: no blueprint weights at {weights}; import the actor first")
+    _, ctrl, names, _, W, _, _ = load_skin(dae)
+    verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
+    verts[:, 2] -= verts[:, 2].min()
+    known = np.load(weights)["positions"]
+    if known.shape != verts.shape or np.abs(known - verts).max() > 1e-6:
+        raise SystemExit(f"--fingers-only: {dae} is not the source of {wdir} (its vertices differ)")
+    path = os.path.join(wdir, f"{stem}.fingers.npz")
+    np.savez_compressed(
+        path,
+        positions=verts,
+        weights=finger_weights(W, names),
+        chains=np.array([f"{c}_{s}_{k}" for c, s, k in FINGER_CHAINS]),
+    )
+    return path
+
+
 def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict:
     """joint -> capsule radius (m): the spread of the vertices this joint dominates, measured off
     its bone axis. Mirrors what a CARLA Phys asset gives, but derived from geometry.
@@ -315,16 +359,29 @@ def main(argv: list | None = None) -> None:
         metavar="NAME",
         help="drop this material group (a held prop like a handbag); repeatable",
     )
-    # Required: a blueprint is committed with the CREDITS.txt written here or not at all, and one
-    # written without its source, licence or author is an asset with no recorded licence.
-    ap.add_argument("--credits-source", required=True, help="where the actor came from (URL)")
-    ap.add_argument("--credits-licence", required=True, help='its licence, e.g. "CC-BY 4.0"')
-    ap.add_argument("--credits-author", required=True, help="its author, as the source names them")
+    ap.add_argument(
+        "--fingers-only",
+        action="store_true",
+        help="add the source's finger weights (<stem>.fingers.npz) to an existing blueprint of the "
+        "same source, for a walker with `hands: true`; nothing else is written",
+    )
+    # Required for an import: a blueprint is committed with the CREDITS.txt written here or not at
+    # all, and one written without its source, licence or author is an asset with no recorded licence.
+    ap.add_argument("--credits-source", help="where the actor came from (URL)")
+    ap.add_argument("--credits-licence", help='its licence, e.g. "CC-BY 4.0"')
+    ap.add_argument("--credits-author", help="its author, as the source names them")
     args = ap.parse_args(argv)
+    out_root = args.out or os.path.join(models_dir(), "people")
+    if args.fingers_only:
+        wdir = os.path.join(out_root, args.name)
+        print(f"wrote {write_fingers(args.dae, wdir, args.name[0].lower() + args.name[1:])}")
+        return
+    missing = [f"--credits-{k}" for k in ("source", "licence", "author") if not getattr(args, f"credits_{k}")]
+    if missing:
+        ap.error(f"an import needs {', '.join(missing)}")
 
     # Default to the same people/ the loader reads, so an import is visible to `resolve_walker`
     # without a path argument. Asking blueprint rather than recomputing it keeps one definition.
-    out_root = args.out or os.path.join(models_dir(), "people")
     wdir = os.path.join(out_root, args.name)
     os.makedirs(wdir, exist_ok=True)
     stem = args.name[0].lower() + args.name[1:]

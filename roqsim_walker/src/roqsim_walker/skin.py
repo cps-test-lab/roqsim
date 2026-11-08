@@ -207,7 +207,15 @@ def _merge_split(verts, faces, uv):
 
 
 def add_skin(
-    spec, name, mesh_path, materials=None, rgba=_DEFAULT_RGBA, tpose=False, skeleton=None, flip=None
+    spec,
+    name,
+    mesh_path,
+    materials=None,
+    rgba=_DEFAULT_RGBA,
+    tpose=False,
+    skeleton=None,
+    flip=None,
+    hands=None,
 ) -> None:
     """Bind the character mesh at ``mesh_path`` to the ``{name}/{joint}`` humanoid bodies (call after
     :func:`roqsim_walker.humanoid.build_humanoid`, before compile).
@@ -217,8 +225,19 @@ def add_skin(
     (or flat) ``<skin>``. ``tpose`` binds for a T-pose mesh; ``skeleton`` is the walker's per-rig
     bone table. ``flip`` turns a -X-facing mesh to our +X; it defaults to ``tpose`` because CARLA
     exports are both T-posed *and* -X-facing, but the two are independent -- the Open-RMF actors are
-    T-posed and already face +X, and set ``flip: false``."""
+    T-posed and already face +X, and set ``flip: false``.
+
+    ``hands`` (a walker with ``hands: true``) maps each side to its
+    :class:`~roqsim_motion.hands.HandLayout`: the fingers' bones join the skin. Where the blueprint
+    has finger weights (``<obj>.fingers.npz``), each hand vertex's share on the source's thumb and
+    finger chains moves from the wrist to those bones, the four-finger chain split between the four
+    fingers by the bone nearest the vertex; where it has none, the hand stays bound to the wrist as
+    one rigid part (:func:`hand_weights`)."""
     poses = _bind_bones(tpose=tpose, skeleton=skeleton)
+    bones = list(JOINT_NAMES)
+    if hands:
+        poses = {**poses, **_bind_fingers(poses, hands)}
+        bones += [b for side in ("l", "r") for b in _finger_bones(side)]
     segs = _segments(poses)
     objdir = os.path.dirname(os.path.abspath(mesh_path))
     materials = materials or {}
@@ -227,31 +246,102 @@ def add_skin(
         np.vstack([v for _, v, _, _ in parts]), flip=tpose if flip is None else bool(flip)
     )
     lookup = _load_weights(mesh_path)  # real CARLA skin weights, if exported
+    fingers = _load_fingers(mesh_path) if hands else None
     for i, (matname, verts, faces, uv) in enumerate(parts):
         w = lookup(verts) if lookup is not None else None  # match raw (pre-align) verts
+        shares = fingers(verts) if fingers is not None else None
         verts = apply(verts)
         if w is None:
             w = _weights(verts, segs)  # fallback: auto-rig
+        if hands:
+            w = hand_weights(w, verts, shares, poses)
         spec_mat = materials.get(matname, {})
         tex = spec_mat.get("texture")
         nrm = spec_mat.get("normal")
         texfile = os.path.join(objdir, tex) if tex else None
         nrmfile = os.path.join(objdir, nrm) if nrm else None
         color = spec_mat.get("color", rgba)
-        _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile)
+        _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile, bones)
 
 
-def _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile=None) -> None:
-    used = [bi for bi in range(len(JOINT_NAMES)) if np.any(w[:, bi] > 1e-3)]
+def _finger_bones(side: str) -> list[str]:
+    from roqsim_motion.hands import bone_names
+
+    return bone_names(side)
+
+
+def _bind_fingers(poses: dict, hands: dict) -> dict:
+    """The finger bones' bind poses: each hand's fingers open on its wrist at the bind pose."""
+    from roqsim_motion.hands import POSES, finger_fk
+
+    out = {}
+    for side, lay in hands.items():
+        wp, wq = poses[f"wrist_{side}"]
+        pos, rot = finger_fk(lay, wp, wq, np.array(POSES["flat"], float))
+        for k, bone in enumerate(_finger_bones(side)):
+            out[bone] = (pos[k], rot[k])
+    return out
+
+
+def _load_fingers(mesh_path):
+    """``lookup(verts) -> (n, 12)`` shares on the source's finger chains (``<obj>.fingers.npz``,
+    written by ``roqsim walker import-actor --fingers-only``), or ``None`` without one."""
+    path = os.path.splitext(os.path.abspath(mesh_path))[0] + ".fingers.npz"
+    if not os.path.isfile(path):
+        return None
+    d = np.load(path)
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(d["positions"])
+    shares = d["weights"]
+    return lambda verts: shares[tree.query(np.asarray(verts, float))[1]]
+
+
+def hand_weights(w17: np.ndarray, verts: np.ndarray, shares, poses: dict) -> np.ndarray:
+    """(n, 47) weights for a skin with finger bones, from the 17 joints' (n, 17).
+
+    With ``shares`` (n, 12; :data:`roqsim_walker.cli.import_actor.FINGER_CHAINS` order) a vertex's
+    share on a thumb bone moves from its wrist to that thumb bone, and its share on a bone of the
+    four-finger chain to the same bone of the finger nearest the vertex. Without them the hand stays
+    on the wrist: a rigid part, not a hand deformed from weights the mesh does not have."""
+    n = w17.shape[0]
+    out = np.zeros((n, len(JOINT_NAMES) + 30))
+    out[:, : len(JOINT_NAMES)] = w17
+    if shares is None:
+        return out
+    col = {name: i for i, name in enumerate(JOINT_NAMES)}
+    for s_i, side in enumerate(("l", "r")):
+        bones = _finger_bones(side)
+        base = len(JOINT_NAMES) + 15 * s_i
+        wrist = col[f"wrist_{side}"]
+        for k in range(3):
+            thumb = shares[:, 6 * s_i + k]
+            chain = shares[:, 6 * s_i + 3 + k]
+            # thumb bone k: index k in the bone list (thumb first, three bones a finger)
+            out[:, base + k] += thumb
+            # the four fingers' bone k: the nearest at bind
+            centres = np.array([poses[bones[3 * f + k]][0] for f in range(1, 5)])
+            nearest = np.argmin(np.linalg.norm(verts[:, None, :] - centres[None], axis=2), axis=1)
+            for f in range(4):
+                sel = nearest == f
+                out[sel, base + 3 * (f + 1) + k] += chain[sel]
+            out[:, wrist] -= thumb + chain
+    out[:, : len(JOINT_NAMES)] = np.clip(out[:, : len(JOINT_NAMES)], 0.0, None)
+    return out / (out.sum(axis=1, keepdims=True) + 1e-9)
+
+
+def _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile=None, bones=None) -> None:
+    bones = bones or JOINT_NAMES
+    used = [bi for bi in range(len(bones)) if np.any(w[:, bi] > 1e-3)]
     if not used:
         return
     sk = spec.add_skin()
     sk.name = f"{name}_sk{i}"
     sk.vert = verts.flatten()
     sk.face = faces.flatten()
-    sk.bodyname = [f"{name}/{JOINT_NAMES[bi]}" for bi in used]
-    sk.bindpos = np.array([poses[JOINT_NAMES[bi]][0] for bi in used]).flatten()
-    sk.bindquat = np.array([poses[JOINT_NAMES[bi]][1] for bi in used]).flatten()
+    sk.bodyname = [f"{name}/{bones[bi]}" for bi in used]
+    sk.bindpos = np.array([poses[bones[bi]][0] for bi in used]).flatten()
+    sk.bindquat = np.array([poses[bones[bi]][1] for bi in used]).flatten()
     vertid, vertweight = [], []
     for bi in used:
         ids = np.where(w[:, bi] > 1e-3)[0].astype(np.int32)

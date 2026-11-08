@@ -8,3 +8,7 @@ Imported with `roqsim walker import-actor`: the skin (mesh, textures,
 skeleton, skin weights) is the source's. Locomotion comes from this
 package's models/anims/, which are CARLA retargets under CC-BY 4.0 --
 so this walker carries CARLA attribution too; see THIRD_PARTY.md.
+
+The finger weights (*.fingers.npz) are the same source's, kept apart from
+the wrist by `roqsim walker import-actor --fingers-only`; a walker with
+`hands: true` binds its fingers with them.

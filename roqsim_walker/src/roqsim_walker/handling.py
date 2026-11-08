@@ -1,0 +1,167 @@
+"""A walker's hands on: the motion core driving its mocap skeleton.
+
+With ``hands: true`` a walker gets a :class:`WalkerBody`, which the animation calls on every update
+after the gait's blendspace (:func:`roqsim_walker.animation.animate`): it solves the hands' goals,
+the posture and the gaze with :func:`roqsim_motion.ik.solve` over the gait's pose, blends each
+hand's solution in by its own weight (the trunk by the stronger hand's), and writes the thirty
+finger bones from each hand's pose. It is published on the blackboard as ``humanoid_body:<name>``,
+the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through; a robot's
+body (:mod:`roqsim_motion.robot`) offers the same.
+
+A walker with ``hands: false`` has none, and its animation is the one it always had.
+"""
+
+from __future__ import annotations
+
+
+import mujoco
+import numpy as np
+
+from roqsim.pose import yaw_to_quat
+from roqsim_motion import hands as H
+from roqsim_motion.body import HumanoidBody
+from roqsim_motion.description import Description
+from roqsim_motion.ik import HandGoal, Posture, solve
+from roqsim_walker.humanoid import JOINT_NAMES
+from roqsim_walker.motion import blend_quats
+
+#: How fast a hand's goal weight eases in and out (1/s), and the trunk joints the solver bends.
+WEIGHT_RATE = 2.5
+_TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
+
+
+def layouts_for(skeleton, block: dict | None = None) -> dict:
+    """Each hand's layout for a walker's skeleton: the default hand scaled to its forearm."""
+    out = {}
+    for side in ("l", "r"):
+        forearm = float(np.linalg.norm(skeleton.offset(f"wrist_{side}")))
+        out[side] = H.layout(side, scale=forearm / 0.24, block=(block or {}).get(side))
+    return out
+
+
+def description_for(skeleton) -> Description:
+    from roqsim_walker.humanoid import SKELETON
+
+    return Description({j.name: tuple(skeleton.offset(j.name)) for j in SKELETON}, skeleton.root_height)
+
+
+class WalkerBody(HumanoidBody):
+    """The walker's side of the motion core (see the module docstring)."""
+
+    def __init__(self, name: str, st, model, layouts: dict):
+        self.st = st
+        self.layouts = layouts
+        self.desc = description_for(st.skeleton)
+        self._fingers = {
+            side: np.array([int(model.body_mocapid[_body(model, f"{name}/{b}")]) for b in H.bone_names(side)])
+            for side in ("l", "r")
+        }
+        self._wrist = {side: st.mocap[f"wrist_{side}"] for side in ("l", "r")}
+        self._grip = {side: _site(model, f"{name}/grip_{side}") for side in ("l", "r")}
+        super().__init__(name)
+
+    # -- HumanoidBody ---------------------------------------------------------------------------
+    def reset(self) -> None:
+        super().reset()
+        self.weight = {"l": 0.0, "r": 0.0}
+        self.last = {"l": None, "r": None}
+        self.residual = {"l": 0.0, "r": 0.0}
+        self.st.face = None
+
+    def grip(self, data, side):
+        sid = self._grip[side]
+        return data.site_xpos[sid].copy(), _mat_quat(data.site_xmat[sid])
+
+    def grip_site(self, side: str) -> str:
+        return f"{self.name}/grip_{side}"
+
+    def shoulder(self, data, side):
+        return data.mocap_pos[self.st.mocap[f"shoulder_{side}"]].copy()
+
+    def arm_reach(self, side: str) -> float:
+        return 0.97 * self.desc.arm_length(side) + float(np.linalg.norm(self.layouts[side].grip_pos))
+
+    def root(self):
+        return float(self.st.pos[0]), float(self.st.pos[1]), float(self.st.yaw)
+
+    def face(self, yaw):
+        self.st.face = None if yaw is None else float(yaw)
+
+    def settled(self, side: str) -> bool:
+        return self.goal[side] is None or self.weight[side] > 0.999
+
+    def wrist_poses(self, data) -> dict:
+        return {s: (data.mocap_pos[self._wrist[s]].copy(), data.mocap_quat[self._wrist[s]].copy()) for s in "lr"}
+
+    # -- the animation's hooks ------------------------------------------------------------------
+    def pose(self, st, q, body, root_z, dt) -> float:
+        """Blend the solved hands, posture and gaze over the gait's pose ``q`` in place; the pelvis
+        drop (m) a crouch asks for."""
+        for side in ("l", "r"):
+            self.hand[side].advance(dt)
+            if self.closing[side] is not None:
+                self.hand[side].close_on(self.closing[side])
+            if dt > 0.0:
+                aim = 1.0 if self.goal[side] is not None else 0.0
+                step = WEIGHT_RATE * dt
+                self.weight[side] = min(max(self.weight[side] + max(-step, min(step, aim - self.weight[side])), 0.0), 1.0)
+            if self.goal[side] is None and self.weight[side] < 1e-3:
+                self.last[side] = None
+        weight = max(self.weight.values())
+        gaze_w = 1.0 if self.gaze is not None else 0.0
+        if weight < 1e-3 and gaze_w == 0.0 and self.posture is None:
+            return 0.0
+        shift = st.ground if st.ground is not None else 0.0
+        root = np.array([body[0], body[1], st.skeleton.root_height + root_z - shift])
+        local = {n: q[i].copy() for i, n in enumerate(JOINT_NAMES)}
+        goals = {s: (HandGoal(*self.goal[s]) if self.goal[s] is not None else None) for s in ("l", "r")}
+        sol = solve(self.desc, root, yaw_to_quat(st.yaw), local, goals, self.layouts, self.posture, self.gaze)
+        self.residual.update(sol.residual)
+        for side in ("l", "r"):
+            if self.goal[side] is not None:
+                self.last[side] = {f"{j}_{side}": sol.rotations[f"{j}_{side}"] for j in ("shoulder", "elbow", "wrist")}
+        over = []
+        trunk_w = max(weight, 1.0 if self.posture is not None else 0.0)
+        for name in _TRUNK:
+            if name in sol.rotations:
+                over.append((name, sol.rotations[name], trunk_w))
+        if "head" in sol.rotations:
+            over.append(("head", sol.rotations["head"], gaze_w))
+        for side in ("l", "r"):
+            if self.last[side] is not None:
+                over += [(n, r, self.weight[side]) for n, r in self.last[side].items()]
+        for name, rot, w in over:
+            j = JOINT_NAMES.index(name)
+            q[j] = blend_quats(q[j : j + 1], np.asarray(rot)[None, :], w)[0]
+        return sol.root_drop * trunk_w
+
+    def write_fingers(self, data) -> None:
+        """Pose the thirty finger bones on the wrists as the animation left them."""
+        for side in ("l", "r"):
+            wid = self._wrist[side]
+            pos, rot = H.finger_fk(self.layouts[side], data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+            ids = self._fingers[side]
+            data.mocap_pos[ids] = pos
+            data.mocap_quat[ids] = rot
+
+
+def _body(model, name: str) -> int:
+    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+    if bid < 0:
+        raise ValueError(f"hand bone {name} not in the model (was the walker built with hands: true?)")
+    return bid
+
+
+def _site(model, name: str) -> int:
+    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
+    if sid < 0:
+        raise ValueError(f"grip site {name} not in the model (was the walker built with hands: true?)")
+    return sid
+
+
+def _mat_quat(mat) -> np.ndarray:
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.asarray(mat, float).reshape(9))
+    return q
+
+

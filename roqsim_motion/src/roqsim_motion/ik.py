@@ -229,12 +229,22 @@ def solve(
         sign = SIDES[s]
         shoulder = _shoulder(desc, s, spine_pos, spine_w)
         pole = Q.rotate(spine_w, [ELBOW_POLE[0], sign * ELBOW_POLE[1], ELBOW_POLE[2]])
-        sh_l, el_l, _, el_w = _limb(desc, f"shoulder_{s}", f"elbow_{s}", spine_w, shoulder, target, pole)
+        wrist_l = Q.IDENTITY.copy()
+        # A wrist clamped short of the goal's rotation holds the grip elsewhere than the goal
+        # assumed: the wrist's own goal is moved by what the clamp left, and the arm solved again.
+        for _ in range(4 if wq is not None else 1):
+            sh_l, el_l, _, el_w = _limb(desc, f"shoulder_{s}", f"elbow_{s}", spine_w, shoulder, target, pole)
+            if wq is None:
+                break
+            wrist_l = desc.clamp(f"wrist_{s}", Q.mul(Q.inv(el_w), wq))
+            reached = Q.mul(el_w, wrist_l)
+            if Q.angle_between(reached, wq) < 1e-4:
+                break
+            goal = goals[s]
+            target = np.asarray(goal.pos, float) - Q.rotate(reached, layouts[s].grip_pos)
         out[f"shoulder_{s}"] = sh_l
         out[f"elbow_{s}"] = el_l
-        out[f"wrist_{s}"] = (
-            Q.IDENTITY.copy() if wq is None else desc.clamp(f"wrist_{s}", Q.mul(Q.inv(el_w), wq))
-        )
+        out[f"wrist_{s}"] = wrist_l
 
     # Gaze: the head turns toward a point, inside its limits.
     if gaze is not None:

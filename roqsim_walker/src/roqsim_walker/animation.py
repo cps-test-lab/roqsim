@@ -182,6 +182,8 @@ def animate(data, st, new_pos, dt):
     pref = st.pref_vel
     if float(np.hypot(pref[0], pref[1])) > 1e-3:
         target = math.atan2(float(pref[1]), float(pref[0]))
+    elif st.face is not None:
+        target = st.face  # a move turned the standing body (hands on only)
     elif dist > 1e-4:
         target = math.atan2(float(delta[1]), float(delta[0]))
     else:
@@ -210,14 +212,18 @@ def animate(data, st, new_pos, dt):
     root_z = (1 - w_run) * root_z + w_run * zr
     q = _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
     _reach(st, q, body, root_z, dt)
+    # Hands on: the motion core's hands, posture and gaze over the gait (roqsim_walker.handling).
+    drop = st.rig.pose(st, q, body, root_z, dt) if st.rig is not None else 0.0
     joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
     poses = forward_kinematics(
-        [body[0], body[1], st.skeleton.root_height + root_z],
+        [body[0], body[1], st.skeleton.root_height + root_z - drop],
         st.yaw,
         joint_rot,
         skeleton=st.skeleton,
     )
     write_pose(data, st, _foot_ground(poses, st, dt))
+    if st.rig is not None:
+        st.rig.write_fingers(data)
     st.pos = new_pos
 
 
@@ -433,6 +439,10 @@ class AnimState:
     ground: float | None = None  # the foot grounding's shift (m) and how fast it changes
     ground_vel: float = 0.0
     yaw_rate: float = 0.0  # rad/s the heading turns at, eased with a body lag (:func:`_turn`)
+    #: hands on: the motion core's body (:class:`roqsim_walker.handling.WalkerBody`), and the heading
+    #: a move turned the standing body to; both ``None`` with hands off
+    rig: object = None
+    face: float | None = None
 
 
 def make_anim_state(model, spec) -> AnimState:

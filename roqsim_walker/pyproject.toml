@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 dependencies = [
     "roqsim",
     "roqsim_nav",   # the shared navigator: plan, follow, avoid; this package supplies the body
+    "roqsim_motion",  # the motion core a walker's hands, posture and moves run on (`hands: true`)
     "mujoco>=3.14,<3.15",
     "numpy>=1.24",
     "trimesh>=3.20",   # loads the CARLA character OBJ per material group (skinning)
@@ -68,7 +69,7 @@ roqsim_walker = [
     "models/people/*/*.obj",
     "models/people/*/*.mtl",   # required: trimesh reads it to key OBJ groups by CARLA material name
     "models/people/*/*.json",
-    "models/people/*/*.npz",
+    "models/people/*/*.npz",       # skin weights, and the finger weights `hands: true` binds
     "models/people/*/*.png",
     "models/people/*/CREDITS.txt",   # the asset's licence + attribution travels with it
     "models/anims/*/*.npz",

@@ -143,9 +143,15 @@ def build_humanoid(
     skeleton=None,
     collision=None,
     flip=None,
+    hands=None,
 ) -> list[str]:
     """Inject one mocap body per skeleton joint, each carrying a **per-limb collision capsule**
     (the robot's lidar/contact silhouette -- a thick torso, thinner limbs; arms sensing-only).
+
+    ``hands`` (a walker with ``hands: true``) maps each side to its
+    :class:`~roqsim_motion.hands.HandLayout`: each hand gets fifteen finger bones -- mocap bodies
+    with no geom, so neither the solver nor a ray pays for them -- and a ``grip_<side>`` site on its
+    wrist at the hand's grip frame. Without it the walker is the seventeen bodies above, unchanged.
 
     The visual is either capsule bones (``mesh=None`` fallback) or a deformable ``<skin>``.
     ``skeleton`` is the per-walker bone table; ``collision`` maps joint -> capsule radius (m, from
@@ -163,13 +169,32 @@ def build_humanoid(
             if term:
                 _add_terminal(b, term, rgba)
         _add_collision(b, j, skel, collision)  # per-limb hit-box (always)
+        if hands and j.name in ("wrist_l", "wrist_r"):
+            lay = hands[j.name[-1]]
+            b.add_site(name=f"{name}/grip_{j.name[-1]}", pos=list(lay.grip_pos), quat=list(lay.grip_quat))
+    bones = list(JOINT_NAMES)
+    if hands:
+        from roqsim_motion.hands import bone_names
+
+        for side in ("l", "r"):
+            for bone in bone_names(side):
+                spec.worldbody.add_body(name=f"{name}/{bone}", pos=list(park), mocap=True)
+                bones.append(bone)
     if mesh is not None:  # deformable character skin
         from roqsim_walker import skin
 
         skin.add_skin(
-            spec, name, mesh, materials=materials, rgba=rgba, tpose=tpose, skeleton=skel, flip=flip
+            spec,
+            name,
+            mesh,
+            materials=materials,
+            rgba=rgba,
+            tpose=tpose,
+            skeleton=skel,
+            flip=flip,
+            hands=hands,
         )
-    return list(JOINT_NAMES)
+    return bones
 
 
 def _collision_flags(g, physical: bool) -> None:
