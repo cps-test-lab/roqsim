@@ -27,6 +27,8 @@ from roqsim_walker.motion import blend_quats
 
 #: How fast a hand's goal weight eases in and out (1/s), and the trunk joints the solver bends.
 WEIGHT_RATE = 2.5
+#: How fast the posture may change: rad/s for turn, lean and bend, m/s for the crouch.
+POSTURE_RATE = {"turn": 1.5, "lean": 1.0, "crouch": 0.4, "bend": 1.5}
 _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
 
 
@@ -72,7 +74,9 @@ class WalkerBody(HumanoidBody):
         self.last = {"l": None, "r": None}
         self.residual = {"l": 0.0, "r": 0.0}
         self.pressing = {"l": False, "r": False}
+        self._last_posture = None
         self.st.face = None
+        self.st.turn_rate = None
 
     def grip(self, data, side):
         sid = self._grip[side]
@@ -92,6 +96,9 @@ class WalkerBody(HumanoidBody):
 
     def carry_height(self) -> float:
         return self.desc.root_height - 0.1
+
+    def limit_turn(self, rate):
+        self.st.turn_rate = None if rate is None else float(rate)
 
     def face(self, yaw):
         self.st.face = None if yaw is None else float(yaw)
@@ -143,6 +150,7 @@ class WalkerBody(HumanoidBody):
         weight = max(self.weight.values())
         gaze_w = 1.0 if self.gaze is not None else 0.0
         if weight < 1e-3 and gaze_w == 0.0 and self.posture is None:
+            self._last_posture = None
             return 0.0
         shift = st.ground if st.ground is not None else 0.0
         root = np.array([body[0], body[1], st.skeleton.root_height + root_z - shift])
@@ -161,7 +169,14 @@ class WalkerBody(HumanoidBody):
 
                 pos = pos - rotate(wq, self.layouts[s].grip_pos)
             goals[s] = HandGoal(pos, quat)
-        sol = solve(self.desc, root, yaw_to_quat(st.yaw), local, goals, self.layouts, self.posture, self.gaze)
+        heading = yaw_to_quat(st.yaw)
+        sol = solve(self.desc, root, heading, local, goals, self.layouts, self.posture, self.gaze)
+        # The posture the solver chose eases from the last one at a bounded rate: a goal that crosses
+        # from bending to crouching would otherwise move the body, and what it holds, at once.
+        eased = self._ease(sol.posture, dt)
+        if eased is not None:
+            sol = solve(self.desc, root, heading, local, goals, self.layouts, eased, self.gaze)
+        self._last_posture = sol.posture
         self.residual.update(sol.residual)
         for side in ("l", "r"):
             if self.goal[side] is not None:
@@ -180,6 +195,21 @@ class WalkerBody(HumanoidBody):
             j = JOINT_NAMES.index(name)
             q[j] = blend_quats(q[j : j + 1], np.asarray(rot)[None, :], w)[0]
         return sol.root_drop * trunk_w
+
+    def _ease(self, posture: Posture, dt: float):
+        """``posture`` limited to :data:`POSTURE_RATE` from the last update's, or ``None`` when it
+        is within it already."""
+        last = self._last_posture
+        if last is None or dt <= 0.0:
+            return None
+        out, changed = {}, False
+        for key in ("turn", "lean", "crouch", "bend"):
+            new, old = float(getattr(posture, key)), float(getattr(last, key))
+            step = POSTURE_RATE[key] * dt
+            value = old + max(-step, min(step, new - old))
+            changed |= abs(value - new) > 1e-9
+            out[key] = value
+        return Posture(**out) if changed else None
 
     def write_fingers(self, data) -> None:
         """Pose the thirty finger bones on the wrists as the animation left them."""

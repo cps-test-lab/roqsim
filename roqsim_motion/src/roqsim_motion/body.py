@@ -114,6 +114,10 @@ class HumanoidBody:
         """The nav root ``(x, y, yaw)``."""
         raise NotImplementedError
 
+    def limit_turn(self, rate) -> None:
+        """Turn no faster than ``rate`` (rad/s) -- carrying something -- or as fast as the body
+        does (``None``)."""
+
     def face(self, yaw) -> None:
         """Turn the standing body to ``yaw`` (world, rad); ``None``: wherever it walks."""
         raise NotImplementedError

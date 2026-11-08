@@ -526,7 +526,7 @@ CASES: dict[str, Case] = {
             "walker": {"walker": "MaleVisitorWalk", "hands": True, "skin": False},
             "name": "worker",
             "components": [
-                {"navigator": {"output": "walker", "speed": 1.0}},
+                {"navigator": {"output": "walker", "speed": 1.0, "arrival_radius": 0.05}},
                 {"humanoid": {"graspable": ["tote"]}},
             ],
         },

@@ -3064,6 +3064,8 @@ outcome, so it moves from one to the other line by line:
      - OpenSCENARIO
    * - ``yield from self.run(press, "stroke")``
      - ``machine_run(machine: 'press', program: 'stroke')``
+   * - ``yield from self.run(worker, "grasp", hand="both", target="tote_1")``
+     - ``humanoid_grasp(humanoid: 'worker', hand: 'both', target: 'tote_1')``
    * - ``self.start(...)``, ``self.spawn(...)``, ``self.join(...)``
      - ``parallel:``
    * - ``self.first(...)``

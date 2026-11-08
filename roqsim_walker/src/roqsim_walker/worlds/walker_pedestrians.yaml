@@ -1,0 +1,35 @@
+# Ten pedestrians, hands off, crossing a room with a robot and its lidar: the walker as it always
+# was, at no extra cost. `roqsim walker bench-hands` measures a world like this one, with hands off
+# and on, for what a walker's hands cost.
+#
+#   roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_pedestrians.yaml
+
+sim:
+  pacing: realtime
+
+components:
+  - spawn_robot:
+      model: turtlebot3_waffle
+      pose: {position: {x: 0.0, y: 0.0}}
+    name: robot
+
+  - {walker: {walker: MaleVisitorWalk, pose: {position: {x: 1.5, y: 0.0}}}, name: p0,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[-1.5, 0.0]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: FemaleVisitorWalk, pose: {position: {x: 1.21, y: 0.88}}}, name: p1,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[-1.21, -0.88]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: MaleVisitorWalk, pose: {position: {x: 0.46, y: 1.43}}}, name: p2,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[-0.46, -1.43]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: FemaleVisitorWalk, pose: {position: {x: -0.46, y: 1.43}}}, name: p3,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[0.46, -1.43]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: MaleVisitorWalk, pose: {position: {x: -1.21, y: 0.88}}}, name: p4,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[1.21, -0.88]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: FemaleVisitorWalk, pose: {position: {x: -1.5, y: 0.0}}}, name: p5,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[1.5, 0.0]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: MaleVisitorWalk, pose: {position: {x: -1.21, y: -0.88}}}, name: p6,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[1.21, 0.88]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: FemaleVisitorWalk, pose: {position: {x: -0.46, y: -1.43}}}, name: p7,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[0.46, 1.43]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: MaleVisitorWalk, pose: {position: {x: 0.46, y: -1.43}}}, name: p8,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[-0.46, 1.43]], avoidance: {steer: none, stop: false}}}]}
+  - {walker: {walker: FemaleVisitorWalk, pose: {position: {x: 1.21, y: -0.88}}}, name: p9,
+     components: [{navigator: {output: walker, speed: 1.0, loop: true, goals: [[-1.21, 0.88]], avoidance: {steer: none, stop: false}}}]}

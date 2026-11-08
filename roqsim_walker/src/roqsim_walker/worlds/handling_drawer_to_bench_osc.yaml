@@ -1,0 +1,7 @@
+# Scene 2 in OpenSCENARIO: handling_drawer_to_bench.yaml with handling_drawer_to_bench.osc.
+# smoke-steps: 25000
+extends: ./handling_drawer_to_bench.yaml
+disable: [scene]
+components:
+  - scenario: {file: handling_drawer_to_bench.osc}
+    name: scene_osc

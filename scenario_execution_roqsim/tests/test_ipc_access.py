@@ -841,6 +841,15 @@ _POSE = {"position": {"x": 1.0, "y": 0.0, "z": 0.0}}
 #: Valid arguments per registered action, so each one gets past ``execute`` to its first tick.
 NOT_READY_ARGS = {
     "machine_run": dict(machine="press", program="stroke"),
+    "humanoid_approach": dict(humanoid="worker", target="press/button"),
+    "humanoid_reach": dict(humanoid="worker", hand="right", target="press/button"),
+    "humanoid_press": dict(humanoid="worker", hand="right", target="press/button"),
+    "humanoid_grasp": dict(humanoid="worker", hand="both", target="tote"),
+    "humanoid_release": dict(humanoid="worker"),
+    "humanoid_pull": dict(humanoid="worker", hand="right", distance=0.3),
+    "humanoid_push": dict(humanoid="worker", hand="right", distance=0.3),
+    "humanoid_carry": dict(humanoid="worker", to="bench"),
+    "humanoid_place": dict(humanoid="worker", at="bench"),
     "zone_entered": dict(zone="gate"),
     "zone_left": dict(zone="gate"),
     "zone_dwelled": dict(zone="gate"),

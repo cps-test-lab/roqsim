@@ -1,0 +1,39 @@
+# Scene 2: a worker opens a drawer, takes a tote out by its handles, carries it to a bench and sets it
+# down. The drawer is pulled and the tote carried by the worker's holds (welds), not by a controller.
+#
+#   roqsim sim roqsim_walker/src/roqsim_walker/worlds/handling_drawer_to_bench.yaml
+#
+# The scene: roqsim_walker.scenes.DrawerToBench; in OpenSCENARIO: handling_drawer_to_bench_osc.yaml.
+# smoke-steps: 25000
+
+sim:
+  pacing: realtime
+
+components:
+  - walker:
+      walker: MaleVisitorWalk
+      hands: true
+      pose: {position: {x: 0.0, y: 0.0}}
+    name: worker
+    components:
+      - navigator: {output: walker, speed: 1.0, arrival_radius: 0.05, avoidance: {steer: none, stop: false}}
+      - humanoid: {graspable: [cabinet, tote_*]}
+
+  - drawer_cabinet:
+      pose: {position: {x: 2.0, y: -1.0}, orientation: {yaw: 3.14159265}}
+      drawers: 2
+    name: cabinet
+
+  # in the top drawer, its handles across the drawer
+  - tote:
+      pose: {position: {x: 2.28, y: -1.0, z: 0.497}, orientation: {yaw: 1.57079633}}
+    name: tote_1
+
+  - box:
+      pose: {position: {x: 0.0, y: 2.5}}
+      size: [0.8, 0.6, 0.75]
+      motion: static
+    name: bench
+
+  - "roqsim_walker.scenes:DrawerToBench": {stop_at_end: true}
+    name: scene

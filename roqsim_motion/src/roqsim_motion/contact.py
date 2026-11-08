@@ -86,6 +86,7 @@ class Hold:
     obj_site: int
     hand_site: int
     obj_body: int
+    whole: bool = True  # holds the object's rotation too (a free object), or its position only
 
     @classmethod
     def find(cls, model, hand_site: str, object_site: str) -> Hold | None:
@@ -94,7 +95,7 @@ class Hold:
             return None
         o = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, object_site)
         h = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, hand_site)
-        return cls(eq, o, h, int(model.site_bodyid[o]))
+        return cls(eq, o, h, int(model.site_bodyid[o]), bool(model.eq_data[eq][10] > 0.0))
 
     def active(self, data) -> bool:
         return bool(data.eq_active[self.eq])
@@ -105,12 +106,24 @@ class Hold:
     def separation(self, data) -> float:
         return float(np.linalg.norm(data.site_xpos[self.obj_site] - data.site_xpos[self.hand_site]))
 
-    def force(self, data) -> float:
-        """The weld's translational constraint force now (N): the norm of its first three rows."""
+    def force(self, data, axis=None) -> float:
+        """The weld's translational constraint force now (N): the norm of its first three rows, or
+        with ``axis`` (world, unit) its component along it -- what pulls an object on a slide along
+        the slide, the rest being the joint's reaction to a hand a little off its line."""
         rows = np.nonzero((data.efc_type == mujoco.mjtConstraint.mjCNSTR_EQUALITY) & (data.efc_id == self.eq))[0]
         if len(rows) == 0:
             return 0.0
-        return float(np.linalg.norm(data.efc_force[rows[:3]]))
+        f = data.efc_force[rows[:3]]
+        if axis is None:
+            return float(np.linalg.norm(f))
+        return float(abs(np.dot(f, axis)))
+
+    def slide_axis(self, model, data):
+        """The world axis of the slide the held object is on, or ``None`` (a free object)."""
+        jnt = int(model.body_jntadr[self.obj_body])
+        if jnt < 0 or model.jnt_type[jnt] != mujoco.mjtJoint.mjJNT_SLIDE:
+            return None
+        return data.xaxis[jnt].copy()
 
 
 def contact_force(model, data, body: int, exclude: set | None = None) -> float:

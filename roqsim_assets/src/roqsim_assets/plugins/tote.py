@@ -68,10 +68,10 @@ class TotePlugin(Plugin):
             full = body.add_body(name=f"{n}/look_full")
             full.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[L / 2 - 0.03, W / 2 - 0.03, H / 3],
                           pos=[0.0, 0.0, H / 3 + t], rgba=[0.75, 0.6, 0.3, 1.0], contype=0, conaffinity=0,
-                          mass=0.001)
+                          mass=0.0)
             empty = body.add_body(name=f"{n}/look_empty")
             empty.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.01, 0.01, 0.001], pos=[0.0, 0.0, t],
-                           rgba=list(s.color), contype=0, conaffinity=0, mass=0.001)
+                           rgba=list(s.color), contype=0, conaffinity=0, mass=0.0)
 
     def configure(self, ctx: SimContext) -> None:
         m = ctx.model

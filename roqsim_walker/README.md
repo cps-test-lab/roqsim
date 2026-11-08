@@ -169,7 +169,7 @@ OpenSCENARIO); a move never decides what comes next.
 - walker: {walker: MaleVisitorWalk, hands: true, pose: {position: {x: 0.0, y: 0.0}}}
   name: worker
   components:
-    - navigator: {output: walker, speed: 1.0, avoidance: {steer: none, stop: false}}
+    - navigator: {output: walker, speed: 1.0, arrival_radius: 0.05, avoidance: {steer: none, stop: false}}
     - humanoid: {graspable: [cabinet, tote_*]}   # what its hands may hold
 ```
 
@@ -192,6 +192,19 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 | `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
 | `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
 | `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
+
+**Scenes.** Three worlds show a worker handling things, each with its scenario in Python
+(`roqsim_walker.scenes`) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
+timeline:
+
+| world | the scene |
+|---|---|
+| `handling_start_machine` | walks to a machine, presses its start button, and the machine runs |
+| `handling_drawer_to_bench` | opens a drawer, takes a tote out by its handles, carries it to a bench and sets it down |
+| `handling_box_swap` | at a cell's drawer, swaps the full tote for an empty one once the cell reports it full |
+
+`walker_pedestrians` is ten walkers with hands off beside a robot and its lidar: the world
+`bench-hands` measures.
 
 **Contact.** A press pushes with the hand's press proxy, so a button moves because it is pushed;
 the press stops at the button's travel or at `max_force`, since a kinematic hand would push through

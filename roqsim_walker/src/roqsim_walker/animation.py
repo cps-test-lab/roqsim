@@ -231,12 +231,12 @@ def _turn(st, target, dt) -> float:
     """The heading after ``dt`` turning toward ``target`` at up to ``_MAX_TURN_RATE``: at once, or
     with ``st.body_lag`` set, speeding up and slowing down over twice the lag, so a body bent over
     something in its hands does not swing round from one frame to the next."""
+    cap = getattr(st, "turn_rate", None)  # a move's cap while it carries
+    rate = _MAX_TURN_RATE if cap is None else cap
     if st.body_lag <= 0.0 or dt <= 0.0:
-        return _approach_angle(st.yaw, target, _MAX_TURN_RATE * dt)
+        return _approach_angle(st.yaw, target, rate * dt)
     err = math.atan2(math.sin(target - st.yaw), math.cos(target - st.yaw))
-    yaw, st.yaw_rate = _slew(
-        st.yaw, st.yaw_rate, st.yaw + err, _MAX_TURN_RATE, _MAX_TURN_RATE / (2.0 * st.body_lag), dt
-    )
+    yaw, st.yaw_rate = _slew(st.yaw, st.yaw_rate, st.yaw + err, rate, rate / (2.0 * st.body_lag), dt)
     return yaw
 
 
@@ -443,6 +443,8 @@ class AnimState:
     #: a move turned the standing body to; both ``None`` with hands off
     rig: object = None
     face: float | None = None
+    #: the body's turn rate cap (rad/s) a move sets while it carries; ``None``: ``_MAX_TURN_RATE``
+    turn_rate: float | None = None
 
 
 def make_anim_state(model, spec) -> AnimState:

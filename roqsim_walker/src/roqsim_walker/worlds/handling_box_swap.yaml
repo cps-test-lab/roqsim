@@ -1,0 +1,63 @@
+# Scene 3: at a robot cell's drawer, a worker swaps the full tote for an empty one, hands on the
+# totes' handles: pull the drawer, take the full tote to the trolley, bring the empty one from the
+# rack, set it in the drawer, push the drawer shut. It goes once the cell reports: a tote in its
+# drawer (drawer_zone) that shows full (part_state). The robot that fills it is not modelled.
+#
+#   roqsim sim roqsim_walker/src/roqsim_walker/worlds/handling_box_swap.yaml
+#
+# The scene: roqsim_walker.scenes.BoxSwap; in OpenSCENARIO: handling_box_swap_osc.yaml.
+# smoke-steps: 50000
+
+sim:
+  pacing: realtime
+
+components:
+  - walker:
+      walker: MaleVisitorWalk
+      hands: true
+      pose: {position: {x: 0.0, y: 0.0}}
+    name: worker
+    components:
+      - navigator: {output: walker, speed: 1.0, arrival_radius: 0.05, avoidance: {steer: none, stop: false}}
+      - humanoid: {graspable: [cell, tote_*]}
+
+  - drawer_cabinet:
+      pose: {position: {x: 2.0, y: -1.0}, orientation: {yaw: 3.14159265}}
+      drawers: 2
+    name: cell
+
+  - tote:
+      pose: {position: {x: 2.28, y: -1.0, z: 0.497}, orientation: {yaw: 1.57079633}}
+      contents: true
+    name: tote_full
+
+  - box:
+      prefix: trolley_
+      pose: {position: {x: -1.2, y: 1.0}}
+      size: [0.6, 0.8, 0.7]
+      motion: static
+    name: trolley
+
+  - box:
+      prefix: rack_
+      pose: {position: {x: -1.2, y: -1.0}}
+      size: [0.6, 0.8, 0.7]
+      motion: static
+    name: rack
+
+  - tote:
+      pose: {position: {x: -1.2, y: -1.0, z: 0.701}, orientation: {yaw: 1.57079633}}
+      contents: true
+    name: tote_empty
+
+  - part_state:
+      shown: {tote_full: [full], tote_empty: [empty]}
+      exclusive: {"tote_*": [[full, empty]]}
+
+  - zone_trigger:
+      pose: {position: {x: 2.28, y: -1.0, z: 0.6}}
+      size: [0.5, 0.6, 0.3]
+    name: drawer_zone
+
+  - "roqsim_walker.scenes:BoxSwap": {stop_at_end: true}
+    name: scene

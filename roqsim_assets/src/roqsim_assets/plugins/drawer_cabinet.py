@@ -32,6 +32,7 @@ class DrawerCabinetPlugin(Plugin):
         "drawers": Field(int, default=2, minimum=1, maximum=6, doc="how many drawers, stacked"),
         "travel": Field(float, default=0.45, minimum=0.05, unit="m", doc="how far a drawer comes out"),
         "friction": Field(float, default=8.0, minimum=0.0, unit="N", doc="a drawer's sliding friction"),
+        "wall": Field(float, default=0.12, minimum=0.02, unit="m", doc="the height of a drawer's walls"),
     }
 
     def validate_config(self, config: dict) -> list[str]:
@@ -70,7 +71,7 @@ class DrawerCabinetPlugin(Plugin):
         inner_d = depth - wall - 0.02
         for i in range(s.drawers):
             z0 = 0.08 + i * slot
-            tray_h = slot - 0.02
+            tray_h = min(slot - 0.02, s.wall)
             d = carcass.add_body(name=self.drawer(i), pos=[-inner_d / 2, 0.0, z0 + 0.005])
             j = d.add_joint(name=f"{self.drawer(i)}/slide", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=[1.0, 0.0, 0.0])
             j.range = [0.0, s.travel]

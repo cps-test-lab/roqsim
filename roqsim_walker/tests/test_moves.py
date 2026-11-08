@@ -13,7 +13,7 @@ from roqsim.engine import Engine
 from roqsim.machine import MachineError
 from roqsim.plugin import PluginError
 
-NAV = {"output": "walker", "speed": 1.0, "avoidance": {"steer": "none", "stop": False}}
+NAV = {"output": "walker", "speed": 1.0, "arrival_radius": 0.05, "avoidance": {"steer": "none", "stop": False}}
 
 
 def _world(humanoid=None, hands=True, navigator=NAV):
@@ -121,13 +121,13 @@ def test_press_pushes_a_button_by_contact_and_lets_go(sim):
 
 
 def test_press_on_something_that_cannot_move_fails(sim):
-    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.65)
+    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
     st = sim.run("press", hand="right", target="cab/drawer_1/grip")  # a closed drawer, pushed in
     assert st.error.startswith("button did not move")
 
 
 def test_grasp_pull_push_and_release_a_drawer(sim):
-    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.65)
+    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
     sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
     sim.ok("pull", hand="right", distance=0.3)
     assert abs(sim.qpos("cab/drawer_1/slide") - 0.3) < 0.02  # pulled by the hold, not set
@@ -137,12 +137,28 @@ def test_grasp_pull_push_and_release_a_drawer(sim):
     assert {"closing", "held", "moving", "pulled", "pushed", "opened"} <= set(sim.events())
 
 
-def test_pulling_a_drawer_past_its_stop_is_stuck(sim):
-    sim.ok("approach", target="cab/drawer_0/grip", standoff=0.65)
-    sim.ok("grasp", hand="right", target="cab/drawer_0/grip")
-    sim.ok("pull", hand="right", distance=0.3)
-    st = sim.run("pull", hand="right", distance=0.3)
-    assert st.error.startswith("stuck") or st.error.startswith("lost hold")
+def test_a_drawer_pulled_to_its_stop_is_out_and_one_held_shut_is_stuck(sim):
+    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
+    sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
+    sim.ok("pull", hand="right", distance=0.6)  # more than its travel: it ends at the stop
+    assert abs(sim.qpos("cab/drawer_1/slide") - 0.45) < 0.01
+    pulled = [e for e in sim.e.ctx.events.all() if e["event"] == "pulled"][-1]
+    assert pulled["distance"] < 0.5
+
+
+def test_pulling_what_does_not_move_is_stuck():
+    world = _world({"graspable": ["cab", "tote_1"]})
+    world["components"][2]["drawer_cabinet"]["friction"] = 2000.0  # a drawer that will not budge
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
+        sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
+        st = sim.run("pull", hand="right", distance=0.3)
+        assert st.error.startswith("stuck") or st.error.startswith("lost hold")
+    finally:
+        engine.shutdown()
 
 
 def test_grasp_what_is_not_graspable_or_has_no_grip_fails(sim):
@@ -184,7 +200,7 @@ def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
 
 
 def test_a_start_while_busy_is_refused_and_a_cancel_keeps_a_hold(sim):
-    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.65)
+    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
     sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
     seq = sim.h.start("pull", hand="right", distance=0.3)
     with pytest.raises(MachineError, match="busy"):
@@ -207,7 +223,7 @@ def test_a_hold_pulled_past_its_force_lets_go_and_fails():
     try:
         engine.reset()
         sim = Sim(engine)
-        sim.ok("approach", target="cab/drawer_1/grip", standoff=0.65)
+        sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
         sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
         st = sim.run("pull", hand="right", distance=0.3)
         assert st.error.startswith("lost hold")
@@ -219,6 +235,8 @@ def test_a_hold_pulled_past_its_force_lets_go_and_fails():
 def test_moves_need_hands_and_no_patrol_and_a_graspable_that_exists():
     with pytest.raises(PluginError, match="set 'hands: true' on walker worker"):
         Engine(load_config_from_dict(_world(hands=False)))
+    with pytest.raises(PluginError, match="arrival_radius is 0.25 m"):
+        Engine(load_config_from_dict(_world(navigator={k: v for k, v in NAV.items() if k != "arrival_radius"})))
     with pytest.raises(PluginError, match="patrol"):
         Engine(load_config_from_dict(_world(navigator={**NAV, "goals": [[1.0, 0.0]], "loop": True})))
     engine = Engine(load_config_from_dict(_world({"graspable": ["crate_*"]})))

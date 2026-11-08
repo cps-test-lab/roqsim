@@ -1,0 +1,7 @@
+# Scene 3 in OpenSCENARIO: handling_box_swap.yaml with handling_box_swap.osc.
+# smoke-steps: 50000
+extends: ./handling_box_swap.yaml
+disable: [scene]
+components:
+  - scenario: {file: handling_box_swap.osc}
+    name: scene_osc

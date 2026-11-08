@@ -32,9 +32,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The handling scenes' tests use the props a hand works (roqsim_assets) and run their OpenSCENARIO
-# half (scenario_execution_roqsim with scenario-execution).
-test = ["pytest>=7.0", "roqsim_assets", "scenario_execution_roqsim[osc]"]
+# The handling scenes' tests use the props a hand works (roqsim_assets), run their OpenSCENARIO half
+# (scenario_execution_roqsim with scenario-execution), and the pedestrian world has a robot
+# (roqsim_mobile).
+test = ["pytest>=7.0", "roqsim_assets", "roqsim_mobile", "scenario_execution_roqsim[osc]"]
 # `roqsim walker import-actor` and `derive-hivis-worker` only: read a rigged COLLADA actor and paint a
 # blueprint's texture, to author a new blueprint offline. Not needed to *run* a walker, so they stay
 # out of the runtime deps.
