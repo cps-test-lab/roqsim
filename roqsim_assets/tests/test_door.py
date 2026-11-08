@@ -619,3 +619,32 @@ def test_a_repeated_command_after_a_handle_start_is_still_a_repeat(tmp_path):
     engine.step()
     assert door.status().seq == first and door.status().program == "open"
     assert _finish(engine, door, first).error == ""
+
+
+def test_a_start_accepted_while_the_door_gives_way_keeps_its_target(tmp_path):
+    """A handle start accepted from another thread between the give-way's busy check and its new
+    target: the start's target stands, so a ``cmd`` of the openness the door gave way at is not
+    dropped as a repeat."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    plugin = _door_plugin(engine)
+    m, d = engine.ctx.model, engine.ctx.data
+    dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+    started = []
+    plain_set = plugin.set
+
+    def set_while_a_start_arrives(actuator, value):
+        if not started:
+            started.append(door.start("open"))
+        plain_set(actuator, value)
+
+    plugin.set = set_while_a_start_arrives
+    held = math.radians(60)
+    for _ in range(1500):
+        d.qfrc_applied[dof] = 400.0 * (held - _hinge_angle(engine)) - 300.0 * float(d.qvel[dof])
+        engine.step()
+        if started:
+            break
+    d.qfrc_applied[dof] = 0.0
+    assert started and [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
+    assert plugin._goal == 1.0, "the accepted start's target, not where the door gave way"

@@ -615,7 +615,11 @@ class DoorPlugin(MachinePlugin):
             self._pushed = 0.0
             now = min(max(now, 0.0), 1.0)
             self.set(self._ACTUATOR, now * self._span)
-            self._goal = now
+            with self._lock:
+                # A start accepted since the busy check above has recorded its own target, and is
+                # applied on the next step.
+                if not self._busy():
+                    self._goal = now
             self.step("gave_way", openness=now)
 
     def read_state(self) -> tuple[float, float]:
