@@ -313,8 +313,7 @@ class ConveyorPlugin(MachinePlugin):
     @property
     def _goal(self) -> float:
         """The speed the belt is at or ramping to."""
-        ramp = self._ramps.get("speed")
-        return ramp[0] if ramp is not None else self.value("speed")
+        return self.goal("speed")
 
     def on_reset(self, ctx: SimContext) -> None:
         # A speed set through the endpoint or the handle belongs to the episode that set it.
