@@ -1,3 +1,12 @@
+LimX Oli (HU_D04_01) -- vendored description and meshes.
+
+Upstream:   https://github.com/limxdynamics/humanoid-description
+Copyright:  LimX Dynamics Technology Co., Ltd.
+License:    Apache License 2.0.
+
+Provenance per file: roqsim_humanoid/THIRD_PARTY.md. The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
