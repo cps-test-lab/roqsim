@@ -192,6 +192,12 @@ def solve(
         bend = posture.bend
     else:
         bend, ok = _bend_for(desc, lowered, heading, local, wrists, turn, lean)
+        low_target = bool(wrists) and min(p[2] for p in wrists.values()) < root[2]
+        if not ok and posture.crouch is None and low_target and crouch < MAX_CROUCH * desc.root_height:
+            # Bent over as far as it goes and still short: crouch deeper first.
+            crouch = MAX_CROUCH * desc.root_height
+            lowered = root - np.array([0.0, 0.0, crouch])
+            bend, ok = _bend_for(desc, lowered, heading, local, wrists, turn, lean)
         if not ok and posture.lean is None and wrists:
             # One to the side: lean toward it, as little as reaches.
             far = max(wrists.items(), key=lambda kv: abs(float(np.dot(kv[1] - root, hy))))

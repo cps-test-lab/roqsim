@@ -48,6 +48,8 @@ def description_for(skeleton) -> Description:
 class WalkerBody(HumanoidBody):
     """The walker's side of the motion core (see the module docstring)."""
 
+    has_proxies = True
+
     def __init__(self, name: str, st, model, layouts: dict):
         self.st = st
         self.layouts = layouts
@@ -58,6 +60,8 @@ class WalkerBody(HumanoidBody):
         }
         self._wrist = {side: st.mocap[f"wrist_{side}"] for side in ("l", "r")}
         self._grip = {side: _site(model, f"{name}/grip_{side}") for side in ("l", "r")}
+        self._frames = {side: H.FingerFrames(layouts[side]) for side in ("l", "r")}
+        self._proxy = {side: int(model.body_mocapid[_body(model, f"{name}/press_{side}")]) for side in ("l", "r")}
         super().__init__(name)
 
     # -- HumanoidBody ---------------------------------------------------------------------------
@@ -66,6 +70,7 @@ class WalkerBody(HumanoidBody):
         self.weight = {"l": 0.0, "r": 0.0}
         self.last = {"l": None, "r": None}
         self.residual = {"l": 0.0, "r": 0.0}
+        self.pressing = {"l": False, "r": False}
         self.st.face = None
 
     def grip(self, data, side):
@@ -86,6 +91,19 @@ class WalkerBody(HumanoidBody):
 
     def face(self, yaw):
         self.st.face = None if yaw is None else float(yaw)
+
+    def press_proxy(self, data, side: str, on: bool) -> None:
+        """Pose ``side``'s press proxy on its index fingertip from now on (``on``), or park it."""
+        self.pressing[side] = bool(on)
+        self._place_proxy(data, side)
+
+    def _place_proxy(self, data, side: str) -> None:
+        pid = self._proxy[side]
+        if self.pressing[side]:
+            wid = self._wrist[side]
+            data.mocap_pos[pid] = self._frames[side].tip(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+        else:
+            data.mocap_pos[pid] = (0.0, 0.0, -50.0)
 
     def settled(self, side: str) -> bool:
         return self.goal[side] is None or self.weight[side] > 0.999
@@ -139,10 +157,12 @@ class WalkerBody(HumanoidBody):
         """Pose the thirty finger bones on the wrists as the animation left them."""
         for side in ("l", "r"):
             wid = self._wrist[side]
-            pos, rot = H.finger_fk(self.layouts[side], data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+            pos, rot = self._frames[side].world(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
             ids = self._fingers[side]
             data.mocap_pos[ids] = pos
             data.mocap_quat[ids] = rot
+            if self.pressing[side]:
+                self._place_proxy(data, side)
 
 
 def _body(model, name: str) -> int:

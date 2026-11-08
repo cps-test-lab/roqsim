@@ -22,6 +22,8 @@ import numpy as np
 
 from roqsim.pose import yaw_to_quat
 
+#: The radius of a hand's press proxy (m): a fingertip.
+PRESS_RADIUS = 0.009
 # Pelvis standing height (m): with the leg offsets below the feet rest near z=0.
 ROOT_HEIGHT = 0.93
 # Nav collision proxy (r, half-height) -- the silhouette a lidar sees.
@@ -180,6 +182,13 @@ def build_humanoid(
             for bone in bone_names(side):
                 spec.worldbody.add_body(name=f"{name}/{bone}", pos=list(park), mocap=True)
                 bones.append(bone)
+            # The hand's press proxy: a fingertip that pushes what has a degree of freedom (a
+            # button, a switch), posed while a move presses and parked below the floor otherwise.
+            proxy = spec.worldbody.add_body(name=f"{name}/press_{side}", pos=list(park), mocap=True)
+            g = proxy.add_geom()
+            g.type = mujoco.mjtGeom.mjGEOM_SPHERE
+            g.size = [PRESS_RADIUS, 0.0, 0.0]
+            _collision_flags(g, physical=True)
     if mesh is not None:  # deformable character skin
         from roqsim_walker import skin
 

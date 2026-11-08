@@ -137,6 +137,47 @@ def finger_fk(lay: HandLayout, wrist_pos, wrist_quat, curls: np.ndarray):
     return pos.reshape(15, 3), rot.reshape(15, 4)
 
 
+def _matrix(q) -> np.ndarray:
+    w, x, y, z = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+class FingerFrames:
+    """A hand's fifteen bones in its wrist's frame, recomputed only when the curls change, and
+    placed on a wrist with one matrix product and one batched quaternion product: what a walker
+    pays per update for its fingers while their pose holds."""
+
+    def __init__(self, lay: HandLayout):
+        self.lay = lay
+        self._key = None
+        self._pos = self._rot = self._tips = None
+
+    def _update(self, curls: np.ndarray) -> None:
+        key = curls.tobytes()
+        if key != self._key:
+            ident = np.array([1.0, 0.0, 0.0, 0.0])
+            self._pos, self._rot = finger_fk(self.lay, np.zeros(3), ident, curls)
+            self._tips = fingertips(self.lay, np.zeros(3), ident, curls)
+            self._key = key
+
+    def tip(self, wrist_pos, wrist_quat, curls: np.ndarray, finger: int = 1) -> np.ndarray:
+        """One fingertip's world position (the index, by default)."""
+        self._update(curls)
+        return _matrix(np.asarray(wrist_quat, float)) @ self._tips[finger] + np.asarray(wrist_pos, float)
+
+    def world(self, wrist_pos, wrist_quat, curls: np.ndarray):
+        self._update(curls)
+        wq = np.asarray(wrist_quat, float)
+        pos = self._pos @ _matrix(wq).T + np.asarray(wrist_pos, float)
+        return pos, _qmul(np.broadcast_to(wq, self._rot.shape), self._rot)
+
+
 def fingertips(lay: HandLayout, wrist_pos, wrist_quat, curls: np.ndarray) -> np.ndarray:
     """World positions (5, 3) of the five fingertips."""
     pos, rot = finger_fk(lay, wrist_pos, wrist_quat, curls)
@@ -153,6 +194,12 @@ class HandState:
     pose: str = "open"
     stopped: np.ndarray = field(default_factory=lambda: np.zeros(5, bool))
 
+    def _goal(self) -> np.ndarray:
+        if getattr(self, "_goal_for", None) != self.pose:
+            self._goal_arr = np.array(POSES[self.pose], float)
+            self._goal_for = self.pose
+        return self._goal_arr
+
     def set_pose(self, name: str) -> None:
         if name not in POSES:
             raise ValueError(f"no hand pose {name!r}: the poses are {sorted(POSES)}")
@@ -162,7 +209,9 @@ class HandState:
     def advance(self, dt: float) -> bool:
         """Move the curls toward the pose by at most ``CURL_RATE * dt`` per bone, stopped fingers
         held; whether every finger has arrived or stopped."""
-        goal = np.array(POSES[self.pose], float)
+        goal = self._goal()
+        if self.curls is not None and np.array_equal(self.curls, goal):
+            return True
         step = CURL_RATE * max(dt, 0.0)
         delta = np.clip(goal - self.curls, -step, step)
         delta[self.stopped] = 0.0

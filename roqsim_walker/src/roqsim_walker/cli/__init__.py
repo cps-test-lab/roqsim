@@ -21,3 +21,4 @@ def walker() -> None:
 
 walker.add_command(tool("roqsim_walker.cli.import_actor"))
 walker.add_command(tool("roqsim_walker.cli.derive_hivis_worker"))
+walker.add_command(tool("roqsim_walker.cli.bench_hands"))

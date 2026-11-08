@@ -28,11 +28,19 @@ def inv(q) -> np.ndarray:
     return np.array([q[0], -q[1], -q[2], -q[3]])
 
 
+def _cross(a, b):
+    # numpy's cross costs microseconds of overhead on a 3-vector; the solver calls this thousands
+    # of times an update.
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
 def rotate(q, v) -> np.ndarray:
-    w, x, y, z = q
-    u = np.array([x, y, z])
-    vv = np.asarray(v, dtype=float)
-    return vv + 2.0 * np.cross(u, np.cross(u, vv) + w * vv)
+    w, x, y, z = (float(c) for c in q)
+    v0, v1, v2 = (float(c) for c in v)
+    t = _cross((x, y, z), (v0, v1, v2))
+    t = (t[0] + w * v0, t[1] + w * v1, t[2] + w * v2)
+    c = _cross((x, y, z), t)
+    return np.array([v0 + 2.0 * c[0], v1 + 2.0 * c[1], v2 + 2.0 * c[2]])
 
 
 def axis_angle(axis, angle: float) -> np.ndarray:
@@ -52,7 +60,7 @@ def between(a, b) -> np.ndarray:
         if np.linalg.norm(axis) < 1e-6:
             axis = np.cross(a, [0.0, 1.0, 0.0])
         return axis_angle(axis, math.pi)
-    q = np.array([1.0 + c, *np.cross(a, b)])
+    q = np.array([1.0 + c, *_cross(a, b)])
     return q / np.linalg.norm(q)
 
 

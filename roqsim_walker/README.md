@@ -127,6 +127,63 @@ from there. Whatever is in the hands is the caller's to move: a controller that 
 drives the box and puts the hands on its handles (`roqsim_walker.reach`). Call `reach` on the
 physics thread.
 
+## Hands
+
+A walker's hands are one switch, off by default:
+
+```yaml
+- walker: {walker: MaleVisitorWalk, hands: true}
+```
+
+**Off**, a walker is the seventeen-body walker described above, byte for byte: the same bodies,
+geoms and skin (a test holds a digest of them), and nothing new computed per step. Every existing
+world keeps its look and its timing unedited.
+
+**On**, a walker gets what handling things needs, from the motion core (`roqsim_motion`):
+
+- wrists that turn (three rotations each) and five fingers of three bones a hand, mocap bodies
+  **with no geom**, so neither a ray nor a contact pays for them;
+- named hand poses, blended: `open`, `power`, `pinch`, `flat`, `point`; a grip closes finger by
+  finger until each meets what it holds;
+- a `grip_l`/`grip_r` site on each wrist, at the hand's grip frame: +x out of the palm, +z along the
+  fingers, the frame an object's grip site states so that holding makes the two one;
+- a press proxy per hand: a fingertip sphere that pushes what has a degree of freedom (a button),
+  posed on the index fingertip while a move presses and parked below the floor otherwise;
+- its posing through the motion core, published as `humanoid_body:<name>`: each hand's goal (a pose
+  with a rotation, or a point), the posture -- turning toward a target, crouching for a low one,
+  bending forward as `reach` always has, leaning for one to the side -- and gaze, blended over the
+  gait by each hand's weight. A nested `humanoid` component (`roqsim_motion`) starts the moves on it.
+
+`reach` keeps working with hands on; the core places the wrist on its point as the two-bone reach
+does with them off.
+
+**The skin.** Where a blueprint has finger weights (`<obj>.fingers.npz`), its hands deform with the
+fingers. The bundled characters' source rigs weight a thumb chain and *one* chain for the four
+fingers, so the thumb follows its bones and the four fingers' chain is split between the four
+fingers by the bone nearest each vertex; `roqsim walker import-actor --fingers-only` writes the
+sidecar for a blueprint from its source. A blueprint without one binds each hand to its wrist as one
+rigid part: its hand follows the wrist, and its fingers are not drawn from weights it does not have.
+
+**What hands on costs**, measured with `roqsim walker bench-hands` (a robot with its 360-ray lidar
+and 1 or 10 walkers patrolling; `off`, `on` idle, and `moving`: both hands on goals that move every
+step). One machine, rendering in software, so compare the rows, not the machines; run it for yours:
+
+| walkers | case | MuJoCo step | posing in Python, per step | lidar scan | camera frame | skin bones |
+|---|---|---|---|---|---|---|
+| 1 | off | 7.0 µs | 60 µs | 1.56 ms | 40.0 ms | 17 |
+| 1 | on | 8.7 µs | 66 µs | 1.56 ms | 38.6 ms | 46 |
+| 1 | moving | 8.8 µs | 147 µs | 1.56 ms | 41.2 ms | 46 |
+| 10 | off | 20.3 µs | 583 µs | 1.80 ms | 44.4 ms | 170 |
+| 10 | on | 36.1 µs | 642 µs | 1.89 ms | 46.4 ms | 465 |
+| 10 | moving | 36.1 µs | 1465 µs | 1.87 ms | 44.0 ms | 465 |
+
+The posing is what a walker world pays most, with hands or without: about half a millisecond per
+walker update for the gait. Hands on adds about a tenth while the hands hold their pose, the
+fingers' frames being recomputed only when a pose changes; a hand on a moving goal runs the solver on
+every update (up to about 0.7 ms for two hands bending). The thirty geom-less bones add about 1.6 µs
+a walker to MuJoCo's step, and the frame and the scan barely move: the skin is the same vertices
+split over more bones, and the fingers carry nothing a ray hits.
+
 ## Assets
 
 `models/people/<Walker>/` is a **blueprint**: a textured OBJ, a `*.walker.json` sidecar (materials +
@@ -165,6 +222,11 @@ pip install 'roqsim_walker[import]'   # pycollada
 roqsim walker import-actor <actor.dae> --name NurseFemaleWalk --anim-set female \
     --credits-source <fuel-url> --credits-licence "CC-BY 4.0" --credits-author "..."
 ```
+
+## Tools
+
+`roqsim walker import-actor` (above) and `roqsim walker bench-hands`, which measures what hands on
+costs (`--smoke --robot none` for a quick run).
 
 ## Tests
 
