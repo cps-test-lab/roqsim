@@ -120,7 +120,7 @@ def test_the_scene_opens_the_door_before_a_robot_arrives_and_closes_it_after_it_
         starts = [(e["t"], e["program"]) for e in door if e["event"] == "program_start"]
         assert [p for _, p in starts] == ["open", "close"]
         # Opens as the robot enters the approach (one step to apply the start), which is 1.5 m
-        # before it reaches the door's line at 1 m/s.
+        # before it comes level with the door at 1 m/s.
         assert starts[0][0] == pytest.approx(entered, abs=0.01)
         assert starts[1][0] == pytest.approx(left + 2.0, abs=0.01)
         assert _leaf(engine) == pytest.approx(0.0, abs=0.003)

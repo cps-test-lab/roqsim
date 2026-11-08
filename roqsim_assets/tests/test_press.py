@@ -234,7 +234,7 @@ def test_the_ram_starts_down_only_once_the_guard_has_come_to_rest():
                 door_speed_at_approach = abs(float(d.qvel[door_dof]))
                 break
         assert door_speed_at_approach is not None
-        assert door_speed_at_approach <= press._machine.STOPPED_SPEED
+        assert door_speed_at_approach <= STOPPED_SPEED
     finally:
         engine.shutdown()
 

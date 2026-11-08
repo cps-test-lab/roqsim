@@ -2927,7 +2927,7 @@ other; with neither, whatever is pending or runs. A program cannot take an argum
 
 ``roqsim_assets`` ships the machines ``door`` and ``conveyor``, and two examples of a machine
 package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
-example worlds in ``roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
+example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
 ``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
 scenario from ``roqsim_assets.scenarios``.
 

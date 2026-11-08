@@ -1,4 +1,4 @@
-# A sliding door that opens for a robot coming near and closes behind it, once.
+# A sliding door that opens for a robot coming near and closes once it has gone.
 #
 #   roqsim sim roqsim_assets/src/roqsim_assets/worlds/sliding_door_demo.yaml
 #
