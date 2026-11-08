@@ -14,13 +14,15 @@ import pytest
 
 from roqsim_scenes import cad_to_png
 
-ezdxf = pytest.importorskip("ezdxf", reason="roqsim_scenes[preview] not installed")
-pytest.importorskip("matplotlib", reason="roqsim_scenes[preview] not installed")
+#: Needs the roqsim_scenes[preview] extra; deselected and named where it is not installed (conftest.py).
+pytestmark = pytest.mark.preview
 
 
 @pytest.fixture
 def drawing(tmp_path):
     """A 2-layer DXF: a WALLS square plus a TEXT-layer label and an off layer."""
+    import ezdxf
+
     doc = ezdxf.new(setup=True)
     doc.header["$INSUNITS"] = 6  # metres
     doc.layers.add("A_WALL")

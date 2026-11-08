@@ -1,8 +1,8 @@
 """Every bundled world exports as a glTF file the Khronos glTF Validator finds nothing wrong with.
 
 Run by `make test-gltf`, which installs the pinned validator (tools/gltf_validator) and requires it.
-Under `make test` this skips and says so: exporting the building-sized worlds is slow, and the
-validator is a Node.js program `make test` does not require.
+Under `make test` it is deselected, and the run's header says so (conftest.py): exporting the
+building-sized worlds is slow, and the validator is a Node.js program `make test` does not require.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import roqsim_scenes
-from roqsim import env, exit_status, export_gltf
+from roqsim import exit_status, export_gltf
 
 _VALIDATOR = Path(__file__).resolve().parents[2] / "tools" / "gltf_validator"
 _WORLDS = sorted((Path(roqsim_scenes.__file__).parent / "worlds").glob("*.yaml"))
@@ -41,11 +41,10 @@ def test_there_are_worlds_to_export():
     assert {w.stem for w in _WORLDS} >= {"depot", "tb3_world"}
 
 
+@pytest.mark.gltf_validator
 @pytest.mark.parametrize("compressed", [False, True], ids=["plain", "compressed"])
 @pytest.mark.parametrize("world", _WORLDS, ids=lambda w: w.stem)
 def test_khronos_validator_finds_nothing_wrong_with_a_bundled_world(tmp_path, world, compressed):
-    if env.get("ROQSIM_GLTF_VALIDATOR") != "required":
-        pytest.skip("every bundled world through the Khronos glTF Validator: `make test-gltf`")
     out = tmp_path / f"{world.stem}.glb"
     argv = ["--world", str(world), "--out", str(out)]
     if compressed:

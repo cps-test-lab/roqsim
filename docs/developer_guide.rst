@@ -66,7 +66,9 @@ serial path if a parallel run ever looks flaky:
 ``roqsim export gltf`` is checked by the Khronos glTF Validator, a Node.js program pinned in
 ``tools/gltf_validator``. ``make test`` runs it over an export of a small world when it is installed
 and reports a skip when it is not; ``make test-gltf`` installs it (``npm ci``), requires it, and holds
-an export of every world ``roqsim_scenes`` ships to no error and no warning:
+an export of every world ``roqsim_scenes`` ships to no error and no warning. Outside ``make test-gltf``
+that every-world check is deselected, and the run's header says so (``roqsim_scenes/tests/conftest.py``,
+which does the same for the tests that need the ``roqsim_scenes[preview]`` extra):
 
 .. code-block:: bash
 
