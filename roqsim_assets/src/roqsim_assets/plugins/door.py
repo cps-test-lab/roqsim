@@ -107,7 +107,7 @@ Leafless openings. ``leaf: false`` welds the casing but hangs **no leaf** -- a c
 wall opening should read as a doorway rather than a hole, while staying a ``door`` in the floorplan so the
 room loops it belongs to are unchanged. It is still registered as a ``door`` entity (on the casing body),
 so anything enumerating the building's doors still finds it. ``leaf: false`` with ``frame: false`` would
-place nothing at all and is refused.
+place nothing at all and is refused, as is ``controllable: true``, which would have no leaf to command.
 
 Colour. ``color`` repaints the leaf and (unless ``frame_color`` overrides it) the casing, so a world can
 match its doors to the rest of its trim without a recoloured copy of the model. Only the leaf's
