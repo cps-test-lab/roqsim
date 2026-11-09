@@ -1,6 +1,6 @@
-# Ten pedestrians, hands off, crossing a room with a robot and its lidar: the walker as it always
-# was, at no extra cost. `roqsim walker bench-hands` measures a world like this one, with hands off
-# and on, for what a walker's hands cost.
+# Ten pedestrians, hands off, crossing a room with a robot and its lidar: walkers with nothing of
+# the hands built or computed. `roqsim walker bench-hands` measures a world like this one, with hands
+# off and on, for what a walker's hands cost.
 #
 #   roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_pedestrians.yaml
 

@@ -151,7 +151,7 @@ world keeps its look and its timing unedited.
   posed on the drawn index fingertip while a move presses and parked below the floor otherwise;
 - its posing through the motion core, published as `humanoid_body:<name>`: each hand's goal (a pose
   with a rotation, or a point), the posture -- turning toward a target, crouching for a low one,
-  bending forward as `reach` always has, leaning for one to the side -- and gaze, blended over the
+  bending forward as `reach` does with hands off, leaning for one to the side -- and gaze, blended over the
   gait by each hand's weight. A nested `humanoid` component (`roqsim_motion`) starts the moves on it.
 
 `reach` keeps working with hands on; the core places the wrist on its point as the two-bone reach
@@ -211,14 +211,14 @@ at a stop a posed hand's goal comes back onto it while a lagging hand's stays, s
 drawer back.
 
 **Scenes.** Three worlds show a worker handling things, each with its scenario in Python
-(`roqsim_motion.scenes`) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
+(`roqsim_motion.scenes`, which the robot's box swap in `roqsim_humanoid` runs too) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
 timeline:
 
 | world | the scene |
 |---|---|
 | `handling_start_machine` | walks to a machine, presses its start button, and the machine runs |
 | `handling_drawer_to_bench` | opens a drawer, takes a tote out by its handles, carries it to a bench and sets it down |
-| `handling_box_swap` | at a cell's drawer, swaps the full tote for an empty one once the cell reports it full |
+| `handling_box_swap` | at a cell's drawer, swaps the full tote for an empty one once the cell reports a tote in its drawer |
 
 `walker_pedestrians` is ten walkers with hands off beside a robot and its lidar: the world
 `bench-hands` measures.
@@ -227,9 +227,10 @@ timeline:
 hand is turned so its pointing index lies along the button's axis, its palm turned no more than that needs (a hand at rest points thumb up), and the proxy's front is
 the drawn fingertip, its contact stiff enough not to sink into the button: what pushes the button is
 the finger a viewer sees. The press stops at the button's travel or at `max_force`, since a kinematic hand would push through
-a joint's stop. A hold is a weld between the hand's grip site and the object's, added when the world
-is built for every `graspable` grip site and switched on and off while it runs; it carries a tote
-and pulls a drawer by the physics. It keeps the object as it was in the hand when taken, so a hand a
+a joint's stop. A hold is a weld between the hand and the object, one per hand and `graspable` grip
+site, added when the world is built and switched on and off while it runs; it carries a tote and
+pulls a drawer by the physics. Switched on, it welds the object at the pose it has in the hand at
+that moment, not grip site onto grip site: it keeps the object as it was in the hand when taken, so a hand a
 few degrees off a handle does not turn it; a free object is held whole, one on a joint (a drawer) by
 its position only. Two hands on one object: one hold carries it, the other hand rides on its own
 handle (two holds would squeeze it between hands posed at the walker's own rate). A hold that pulls past `hold.max_force` or slips past
@@ -251,31 +252,20 @@ sits on is the drawn one, and the hand keeps the size the character was modelled
 on another mesh's fingers sweeps the skin about the wrong pivots: a fist deeper than the palm is
 broad, a fingertip centimetres off the one drawn). The bundled characters' source rigs weight a thumb
 chain and *one* chain for the four fingers, so the thumb follows its bones and the four fingers' chain
-is split along the palm's breadth, each vertex to the finger whose bones it is nearest;
-`roqsim walker import-actor --fingers-only` writes the sidecar for a blueprint from its source. A
+is split along the palm's breadth, each vertex to the finger whose bones it is nearest.
+`roqsim walker import-actor` writes the sidecar with the blueprint, and `--fingers-only` adds it to
+an existing blueprint from its source. A
 blueprint without one binds each hand to its wrist as one rigid part, with the default hand's
 geometry: its hand follows the wrist, and its fingers are not drawn from weights it does not have.
 
-**What hands on costs**, measured with `roqsim walker bench-hands` (a robot with its 360-ray lidar
-and 1 or 10 walkers patrolling; `off`, `on` idle, and `moving`: both hands on goals that move every
-step). One machine, rendering in software, so compare the rows, not the machines; run it for yours:
-
-| walkers | case | MuJoCo step | posing in Python, per step | lidar scan | camera frame | skin bones |
-|---|---|---|---|---|---|---|
-| 1 | off | 7.0 µs | 59 µs | 1.56 ms | 38.7 ms | 17 |
-| 1 | on | 8.8 µs | 65 µs | 1.57 ms | 42.8 ms | 46 |
-| 1 | moving | 8.7 µs | 142 µs | 1.57 ms | 39.6 ms | 46 |
-| 10 | off | 20.1 µs | 565 µs | 1.82 ms | 43.8 ms | 170 |
-| 10 | on | 38.8 µs | 630 µs | 1.90 ms | 45.1 ms | 465 |
-| 10 | moving | 38.9 µs | 1326 µs | 1.89 ms | 46.2 ms | 465 |
-
-The posing is what a walker world pays most, with hands or without: about half a millisecond per
-walker update for the gait. Hands on adds about a tenth while the hands hold their pose, the
-fingers' frames being recomputed only when a pose changes; a hand on a moving goal runs the solver on
-every update (up to about 0.7 ms for two hands bending). The thirty geom-less bones and the two
-parked press proxies add about 1.9 µs a walker to MuJoCo's step, and the frame and the scan move by a
-few per cent: the skin is the same vertices split over more bones, and the fingers carry nothing a
-ray hits.
+**What hands on costs.** With hands off a walker is the walker without hands, so it adds nothing a
+step. With hands on, the posing in Python, which is what a walker world pays most for, grows by
+about a tenth while the hands hold their pose: the fingers' frames are recomputed only when a pose
+changes. A hand on a moving goal (`moving`) runs the solver on every update. The lidar scan and the
+camera frame are unchanged, since the fingers carry nothing a ray hits and the skin is the same
+vertices split over more bones: 17 skin bones a walker with hands off, 46 with them on.
+`roqsim walker bench-hands` measures a machine's own numbers (a robot with its 360-ray lidar and 1
+or 10 walkers patrolling; `off`, `on` idle, and `moving`: both hands on goals that move every step).
 
 ## Assets
 

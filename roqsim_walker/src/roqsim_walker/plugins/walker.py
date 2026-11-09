@@ -14,7 +14,7 @@ Config::
       skin: true               # false -> capsule visuals instead of the character mesh
       hands: false             # true -> wrists that turn, five fingers a hand, grip poses, and
                                # the moves of a nested `humanoid` (roqsim_motion); false is the
-                               # seventeen-body walker as it always was, at no extra cost
+                               # seventeen-body walker, with nothing of the hands built or computed
       rgba: [r, g, b, a]       # colour of the capsule visuals (default: the humanoid's own)
       pose:                    # where the walker stands at the start and after every reset:
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
@@ -251,6 +251,7 @@ class WalkerPlugin(Plugin):
         if cfg.get("rgba") is not None:
             kw["rgba"] = tuple(cfg["rgba"])
         self._layouts = None
+        fingers = blueprint["hand_weights"] if use_skin else None
         if cfg.get("hands", False):
             from roqsim_walker.handling import layouts_for
             from roqsim_walker.humanoid import to_skeleton
@@ -258,11 +259,13 @@ class WalkerPlugin(Plugin):
             self._layouts = layouts_for(
                 to_skeleton(blueprint["skeleton"]),
                 blueprint["hands"],
-                mesh=blueprint["mesh"] if use_skin and blueprint["hand_weights"] == "fingers" else None,
+                mesh=blueprint["mesh"] if fingers else None,
                 tpose=blueprint["tpose"],
                 flip=blueprint["flip"],
+                finger_weights=fingers,
             )
             kw["hands"] = self._layouts
+            kw["finger_weights"] = fingers
         build_humanoid(
             spec,
             name=self.walker_name,

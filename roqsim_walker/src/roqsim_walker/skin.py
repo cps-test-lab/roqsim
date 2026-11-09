@@ -216,6 +216,7 @@ def add_skin(
     skeleton=None,
     flip=None,
     hands=None,
+    finger_weights=None,
 ) -> None:
     """Bind the character mesh at ``mesh_path`` to the ``{name}/{joint}`` humanoid bodies (call after
     :func:`roqsim_walker.humanoid.build_humanoid`, before compile).
@@ -228,11 +229,11 @@ def add_skin(
     T-posed and already face +X, and set ``flip: false``.
 
     ``hands`` (a walker with ``hands: true``) maps each side to its
-    :class:`~roqsim_motion.hands.HandLayout`: the fingers' bones join the skin. Where the blueprint
-    has finger weights (``<obj>.fingers.npz``), each hand vertex's share on the source's thumb and
-    finger chains moves from the wrist to those bones, the four-finger chain split between the four
-    fingers by the bone nearest the vertex; where it has none, the hand stays bound to the wrist as
-    one rigid part (:func:`hand_weights`)."""
+    :class:`~roqsim_motion.hands.HandLayout`: the fingers' bones join the skin. With
+    ``finger_weights`` (the blueprint's ``hand_weights``, the path of its ``<obj>.fingers.npz``), each
+    hand vertex's share on the source's thumb and finger chains moves from the wrist to those bones,
+    the four-finger chain split between the four fingers by the bone nearest the vertex; without it,
+    the hand stays bound to the wrist as one rigid part (:func:`hand_weights`)."""
     poses = _bind_bones(tpose=tpose, skeleton=skeleton)
     bones = list(JOINT_NAMES)
     if hands:
@@ -246,7 +247,7 @@ def add_skin(
         np.vstack([v for _, v, _, _ in parts]), flip=tpose if flip is None else bool(flip)
     )
     lookup = _load_weights(mesh_path)  # real CARLA skin weights, if exported
-    fingers = _load_fingers(mesh_path) if hands else None
+    fingers = _load_fingers(finger_weights) if hands and finger_weights else None
     for i, (matname, verts, faces, uv) in enumerate(parts):
         w = lookup(verts) if lookup is not None else None  # match raw (pre-align) verts
         shares = fingers(verts) if fingers is not None else None
@@ -284,18 +285,31 @@ def _bind_fingers(poses: dict, hands: dict) -> dict:
     return out
 
 
-def _load_fingers(mesh_path):
-    """``lookup(verts) -> (n, 12)`` shares on the source's finger chains (``<obj>.fingers.npz``,
-    written by ``roqsim walker import-actor --fingers-only``), or ``None`` without one."""
-    path = os.path.splitext(os.path.abspath(mesh_path))[0] + ".fingers.npz"
-    if not os.path.isfile(path):
-        return None
+#: How far a mesh vertex may be from the finger weights' nearest position (m): the OBJ's rounding.
+FINGERS_TOL = 1e-5
+
+
+def _load_fingers(path):
+    """``lookup(verts) -> (n, 12)``: each vertex's shares on the source's finger chains, from the
+    finger weights at ``path``. Refuses a vertex farther than :data:`FINGERS_TOL` from every
+    position the file has: weights of another mesh, which would bind its fingers to nearby vertices
+    of this one."""
     d = np.load(path)
     from scipy.spatial import cKDTree
 
     tree = cKDTree(d["positions"])
     shares = d["weights"]
-    return lambda verts: shares[tree.query(np.asarray(verts, float))[1]]
+
+    def lookup(verts):
+        dist, idx = tree.query(np.asarray(verts, float))
+        if len(dist) and float(dist.max()) > FINGERS_TOL:
+            raise ValueError(
+                f"{path}: these finger weights are not of this mesh -- a vertex is {float(dist.max()):.6f} m "
+                f"from every position they have; regenerate them with `roqsim walker import-actor`"
+            )
+        return shares[idx]
+
+    return lookup
 
 
 #: How far in front of the palm's surface a held handle's axis is (m): a handle's radius.
@@ -351,11 +365,12 @@ def _bounds(t: np.ndarray, shares: np.ndarray) -> list:
     return out
 
 
-def fit_hands(mesh_path, tpose=False, skeleton=None, flip=None) -> dict | None:
+def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) -> dict | None:
     """Each hand's geometry as the character's mesh has it, for
     :func:`roqsim_motion.hands.make_layout`: ``side -> dict(bases, lengths, directions, palm,
-    grip)`` in the wrist's frame at the bind pose, or ``None`` for a mesh without finger weights
-    (``<obj>.fingers.npz``).
+    grip)`` in the wrist's frame at the bind pose, measured with the finger weights at
+    ``finger_weights`` (the blueprint's ``hand_weights``), or ``None`` for a mesh without skin
+    weights.
 
     Measured on the vertices the source rig weights to its finger bones: the thumb is the line of
     its vertices; the four-finger chain is split into four fingers along the palm's breadth (1-D
@@ -364,9 +379,9 @@ def fit_hands(mesh_path, tpose=False, skeleton=None, flip=None) -> dict | None:
     its farthest vertex. The palm faces the body when the arms hang (+y of the right wrist, -y of the
     left), as the default hand's does; the grip frame is a handle's radius (:data:`GRIP_DEPTH`) in
     front of the palm's surface, across the fingers' knuckles, in the middle of the four."""
-    fingers = _load_fingers(mesh_path)
+    fingers = _load_fingers(finger_weights)
     weights = _load_weights(mesh_path)
-    if fingers is None or weights is None:
+    if weights is None:
         return None
     parts = _load_parts(mesh_path)
     raw = np.vstack([v for _, v, _, _ in parts])

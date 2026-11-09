@@ -8,7 +8,7 @@ finger bones from each hand's pose. It is published on the blackboard as ``human
 the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through; a robot's
 body (:mod:`roqsim_motion.robot`) offers the same.
 
-A walker with ``hands: false`` has none, and its animation is the one it always had.
+A walker with ``hands: false`` has none: its model and its animation have nothing of the hands.
 """
 
 from __future__ import annotations
@@ -36,12 +36,14 @@ _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "a
 
 
 def layouts_for(skeleton, block: dict | None = None, mesh: str | None = None, tpose: bool = False,
-                flip=None) -> dict:
-    """Each hand's layout for a walker's skeleton: measured on its character ``mesh`` where that has
-    finger weights (:func:`roqsim_walker.skin.fit_hands`), so the bones turn the skin about its own
-    knuckles; else the default hand scaled to its forearm. A side the blueprint's ``hands`` block
+                flip=None, finger_weights: str | None = None) -> dict:
+    """Each hand's layout for a walker's skeleton: measured on its character ``mesh`` with its
+    ``finger_weights`` (:func:`roqsim_walker.skin.fit_hands`), so the bones turn the skin about its
+    own knuckles; else, given neither, the default hand scaled to its forearm. A side the blueprint's ``hands`` block
     states is the default hand with its overrides."""
-    fitted = _fitted(mesh, tpose, skeleton, flip) if mesh else None
+    if bool(mesh) != bool(finger_weights):
+        raise ValueError("a hand is measured on a mesh with its finger weights: give both or neither")
+    fitted = _fitted(mesh, finger_weights, tpose, skeleton, flip) if mesh else None
     if mesh and fitted is None:
         raise ValueError(f"{mesh}: its finger weights do not show a thumb and four fingers to measure the hands on")
     out = {}
@@ -59,17 +61,18 @@ def layouts_for(skeleton, block: dict | None = None, mesh: str | None = None, tp
 _FITS: dict = {}
 
 
-def _fitted(mesh, tpose, skeleton, flip):
+def _fitted(mesh, finger_weights, tpose, skeleton, flip):
     """:func:`roqsim_walker.skin.fit_hands`, once per mesh and skeleton in a process: a world of
     several workers of one character measures its hands once."""
     import os
 
     from roqsim_walker.skin import fit_hands
 
-    key = (os.path.abspath(mesh), os.path.getmtime(mesh), bool(tpose), flip,
+    key = (os.path.abspath(mesh), os.path.getmtime(mesh), os.path.abspath(finger_weights),
+           os.path.getmtime(finger_weights), bool(tpose), flip,
            tuple(sorted((skeleton.offsets or {}).items())), skeleton.root_height)
     if key not in _FITS:
-        _FITS[key] = fit_hands(mesh, tpose=tpose, skeleton=skeleton, flip=flip)
+        _FITS[key] = fit_hands(mesh, finger_weights, tpose=tpose, skeleton=skeleton, flip=flip)
     return _FITS[key]
 
 

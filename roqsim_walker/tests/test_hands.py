@@ -1,4 +1,4 @@
-"""A walker's hands: off is the walker it always was; on adds wrists, fingers and the motion core."""
+"""A walker's hands: off adds nothing to the walker; on adds wrists, fingers and the motion core."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
 from roqsim_walker.skin import hand_weights
 
-#: The two bundled walkers, hands off, compiled before hands existed: the counts and a digest over
-#: their bodies, geoms and skins. Hands off must keep them, byte for byte.
+#: The two bundled walkers with hands off: the counts and a digest over their bodies, geoms and
+#: skins, as the walker builds them without the hands code. Hands off keeps them, byte for byte.
 HANDS_OFF = {"nbody": 35, "ngeom": 47, "nmocap": 34, "nsite": 0, "nskin": 2, "nskinbone": 34,
              "sha256": "3e048fda946c33276898288ea9e6021ca4a3af3b40428f28e4524f266fec5337"}
 FIELDS = ("body_pos", "body_quat", "body_mocapid", "geom_type", "geom_size", "geom_pos", "geom_quat",
@@ -41,7 +41,7 @@ def _walkers(hands=None):
 
 
 @pytest.mark.parametrize("hands", [None, False])
-def test_hands_off_is_the_walker_it_always_was(hands):
+def test_hands_off_adds_nothing_to_the_walkers_model(hands):
     engine = _engine(_walkers(hands), preview=True)
     try:
         m = engine.ctx.model
@@ -85,7 +85,7 @@ def test_hands_on_adds_thirty_geomless_finger_bones_two_grip_sites_and_two_proxi
 
 
 def test_the_fingers_sit_on_the_wrist_and_follow_its_pose(sim):
-    m, d = sim.ctx.model, sim.ctx.data
+    d = sim.ctx.data
     body = sim.ctx.blackboard.get("humanoid_body:worker")
     for side in "lr":
         wrist = d.mocap_pos[body._wrist[side]]
@@ -156,6 +156,67 @@ def test_a_hand_without_finger_weights_stays_rigid_on_its_wrist():
     assert np.allclose(w[:, 13], 1.0) and np.allclose(w[:, 17:], 0.0)
 
 
+def test_finger_shares_move_from_the_wrist_to_their_bones():
+    """A vertex's share on a thumb bone goes to that thumb bone, and one on the four-finger chain to
+    that bone of the finger the vertex is nearest; what stays on the wrist is the rest."""
+    from roqsim_walker.humanoid import JOINT_NAMES
+    from roqsim_walker.skin import _bind_bones, _bind_fingers, _finger_bones
+
+    poses = _bind_bones()
+    poses = {**poses, **_bind_fingers(poses, {s: H.layout(s) for s in "lr"})}
+    bones = _finger_bones("r")
+    index_mid, little_mid = poses[bones[3 * 1 + 1]][0], poses[bones[3 * 4 + 1]][0]
+    verts = np.array([index_mid, little_mid, poses[bones[0]][0]])
+    wrist = JOINT_NAMES.index("wrist_r")
+    w17 = np.zeros((3, 17))
+    w17[:, wrist] = 1.0
+    shares = np.zeros((3, 12))
+    shares[0, 6 + 3 + 1] = 0.6  # right, four-finger chain, bone 2: at the index
+    shares[1, 6 + 3 + 1] = 0.6  # the same bone, at the little finger
+    shares[2, 6 + 0] = 0.4  # right thumb, bone 1
+    w = hand_weights(w17, verts, shares, poses)
+    col = {b: 17 + 15 + k for k, b in enumerate(bones)}  # the right hand's bones follow the left's
+    assert np.isclose(w[0, col[bones[3 * 1 + 1]]], 0.6) and np.isclose(w[0, wrist], 0.4)
+    assert np.isclose(w[1, col[bones[3 * 4 + 1]]], 0.6) and np.isclose(w[1, col[bones[3 * 1 + 1]]], 0.0)
+    assert np.isclose(w[2, col[bones[0]]], 0.4) and np.isclose(w[2, wrist], 0.6)
+    assert np.allclose(w[:, 17:32], 0.0)  # nothing on the left hand
+    assert np.allclose(w.sum(axis=1), 1.0)
+
+
+def test_finger_weights_of_another_mesh_are_refused(tmp_path):
+    from roqsim_walker.skin import _load_fingers
+
+    path = tmp_path / "other.fingers.npz"
+    np.savez(path, positions=np.zeros((2, 3)), weights=np.zeros((2, 12)))
+    lookup = _load_fingers(str(path))
+    assert lookup(np.zeros((1, 3))).shape == (1, 12)
+    with pytest.raises(ValueError, match="not of this mesh"):
+        lookup(np.array([[0.0, 0.0, 0.001]]))
+
+
+def test_the_blueprints_hand_weights_decide_the_fingers_skin(monkeypatch):
+    """With the blueprint's ``hand_weights`` unset, the hand is bound rigidly though the file is
+    there: the key is what the skin reads."""
+    import roqsim_walker.plugins.walker as walker_plugin
+
+    def counts(engine):
+        m = engine.ctx.model
+        return int(m.nskinbone)
+
+    on = _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": True}, "name": "w"}], preview=True)
+    try:
+        with_weights = counts(on)
+    finally:
+        on.shutdown()
+    real = walker_plugin.resolve_walker
+    monkeypatch.setattr(walker_plugin, "resolve_walker", lambda *a, **k: {**real(*a, **k), "hand_weights": None})
+    rigid = _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": True}, "name": "w"}], preview=True)
+    try:
+        assert counts(rigid) < with_weights
+    finally:
+        rigid.shutdown()
+
+
 def test_hands_is_true_or_false():
     with pytest.raises(Exception, match="'hands' is true or false"):
         _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": "yes"}, "name": "w"}], preview=True)
@@ -173,8 +234,15 @@ def test_bench_hands_runs_and_hands_off_costs_nothing_new():
         assert row["mj_step_us"] > 0 and row["posing_us_per_step"] > 0 and row["lidar_us"] > 0
 
 
+def test_bench_hands_refuses_a_robot_with_no_lidar_rather_than_scan_from_a_fixed_point():
+    from roqsim_walker.cli.bench_hands import measure
+
+    with pytest.raises(SystemExit, match="robot 'piracer' has no lidar site"):
+        measure(1, "off", robot="piracer", steps=10, render=False)
+
+
 def test_a_press_proxy_is_parked_until_a_move_presses_then_rides_the_index_fingertip(sim):
-    m, d = sim.ctx.model, sim.ctx.data
+    d = sim.ctx.data
     body = sim.ctx.blackboard.get("humanoid_body:worker")
     pid = body._proxy["r"]
     assert d.mocap_pos[pid][2] < -40

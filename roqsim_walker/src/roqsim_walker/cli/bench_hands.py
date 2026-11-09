@@ -1,4 +1,4 @@
-"""``roqsim walker bench-hands`` -- what a walker's hands cost: hands off against hands on.
+"""What a walker's hands cost on this machine: hands off against hands on.
 
 Builds one world per case -- a robot with its lidar (``--robot``, default ``turtlebot3_waffle``) and
 1 or 10 walkers patrolling across it -- and measures, per physics step or per call:
@@ -64,8 +64,9 @@ def measure(n: int, case: str, robot: str = "turtlebot3_waffle", steps: int = 10
 
     import roqsim_walker.output as output
 
-    engine = Engine(_world(n, case != "off", robot))
-    engine.ctx.seed = 1
+    # A preview: what it keeps are timings, not the run's outcome, so there is no run to reproduce
+    # and no seed a caller could supply; the walkers' patrols draw nothing.
+    engine = Engine(_world(n, case != "off", robot), preview=True)
     engine.setup()
     try:
         engine.reset()
@@ -108,12 +109,17 @@ def measure(n: int, case: str, robot: str = "turtlebot3_waffle", steps: int = 10
             batches.append((time.perf_counter() - t) / 500 * 1e6)
         step = min(batches)
 
-        origin = np.array([0.0, 0.0, 0.3])
-        for i in range(m.nsite):
-            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_SITE, i) or ""
-            if robot != "none" and (name.endswith("lidar") or name.endswith("base_scan")):
-                origin = d.site_xpos[i].copy()
-                break
+        origin = np.array([0.0, 0.0, 0.3])  # --robot none: a fixed point, as the docstring says
+        if robot != "none":
+            sites = [i for i in range(m.nsite)
+                     if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_SITE, i) or "").endswith(("lidar", "base_scan"))]
+            if not sites:
+                raise SystemExit(
+                    f"bench-hands: robot {robot!r} has no lidar site (a site named '*lidar' or "
+                    f"'*base_scan'), so there is no scan of its to measure; pick a robot with a lidar, or "
+                    f"--robot none for a scan from a fixed point"
+                )
+            origin = d.site_xpos[sites[0]].copy()
         ang = np.linspace(-math.pi, math.pi, 360, endpoint=False)
         dirs = np.stack([np.cos(ang), np.sin(ang), np.zeros_like(ang)], axis=1)
         buf = raycast.buffers(360)

@@ -123,8 +123,9 @@ def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = N
     and :func:`~roqsim_walker.animation.make_anim_state`.
 
     Returns keys: ``mesh``, ``materials``, ``tpose``, ``flip``, ``skeleton``, ``collision``,
-    ``sole``, ``motion`` (clip kind -> absolute ``.npz`` path). ``motion`` entries passed in override
-    the resolved defaults for that kind.
+    ``sole``, ``hands``, ``hand_weights`` (the path of the mesh's finger weights, or ``None``),
+    ``motion`` (clip kind -> absolute ``.npz`` path). ``motion`` entries passed in override the
+    resolved defaults for that kind.
     """
     roots = _asset_roots(base_dir)
     wdir, sidecars = None, []
@@ -144,6 +145,7 @@ def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = N
     with open(sidecars[0]) as f:
         meta = json.load(f)
 
+    fingers = os.path.splitext(os.path.join(wdir, meta["obj"]))[0] + ".fingers.npz"
     spec = {
         "mesh": os.path.join(wdir, meta["obj"]),
         "materials": _apply_outfit(meta.get("materials") or {}, outfit),
@@ -156,14 +158,11 @@ def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = N
         "skeleton": meta.get("skeleton"),  # per-walker bone table (native proportions)
         "collision": meta.get("collision"),  # per-limb collision radii (CARLA Phys)
         "sole": meta.get("sole"),  # measured shoe-sole offsets (exact grounding)
-        # The hands (`hands: true`): the layout's overrides, and whether the mesh has finger
-        # weights (<obj>.fingers.npz, from `import-actor --fingers-only`) or binds the hand rigidly.
+        # The hands (`hands: true`): the layout's overrides, and the mesh's finger weights
+        # (<obj>.fingers.npz, from `import-actor`), or None for a hand bound rigidly to its wrist:
+        # the one place that decides it, for the hands' fit and the skin alike.
         "hands": meta.get("hands") or {},
-        "hand_weights": (
-            "fingers"
-            if os.path.isfile(os.path.splitext(os.path.join(wdir, meta["obj"]))[0] + ".fingers.npz")
-            else "rigid"
-        ),
+        "hand_weights": fingers if os.path.isfile(fingers) else None,
     }
 
     # CARLA uses a separate locomotion set per body type AND gender. Resolve each clip from the most

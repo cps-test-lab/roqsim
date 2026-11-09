@@ -147,6 +147,7 @@ def build_humanoid(
     collision=None,
     flip=None,
     hands=None,
+    finger_weights=None,
 ) -> list[str]:
     """Inject one mocap body per skeleton joint, each carrying a **per-limb collision capsule**
     (the robot's lidar/contact silhouette -- a thick torso, thinner limbs; arms sensing-only).
@@ -209,6 +210,7 @@ def build_humanoid(
             skeleton=skel,
             flip=flip,
             hands=hands,
+            finger_weights=finger_weights,
         )
     return bones
 
