@@ -354,6 +354,19 @@ def test_a_tote_is_carried_to_and_placed_at_a_world_pose_looking_at_a_world_poin
     assert abs(tote[2] - 0.75) < 0.02 and abs(tote[1] - 2.5) < 0.3
 
 
+def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
+    """What is set down is moved over the highest thing between where it is and where it goes,
+    not only over the target's own surface: a way across the bench (0.75 m) passes over it, one
+    beside it does not."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+    tote = sim.m.body("tote_1").id
+    across = plugin._path_top([-1.5, 2.5], [1.5, 2.5], tote, 0.0)
+    beside = plugin._path_top([-1.5, 1.5], [1.5, 1.5], tote, 0.0)
+    assert abs(across - 0.75) < 0.01 and beside < 0.01
+
+
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")

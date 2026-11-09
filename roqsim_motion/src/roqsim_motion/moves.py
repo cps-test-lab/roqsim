@@ -1199,6 +1199,15 @@ class HumanoidPlugin(MachinePlugin):
                 tops.append(float(p[2]))
         return max(tops) if tops else float(point[2])
 
+    def _path_top(self, a, b, held: int, z: float) -> float:
+        """The highest surface under the held object's footprint (:meth:`_footprint`) with its
+        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to."""
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        steps = max(2, int(math.ceil(float(np.linalg.norm(b - a)) / 0.05)))
+        return max(
+            self._top(np.array([*(a + k / steps * (b - a)), z]), held) for k in range(steps + 1)
+        )
+
     @program
     def place(self, at: str | dict, release: bool = True, speed: float = 0.15):
         """Set what the hands hold down on a target: over it, then lowered until it rests on what is
@@ -1239,7 +1248,17 @@ class HumanoidPlugin(MachinePlugin):
             float(surface[2]),
             self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)),
         )
-        over = np.array([shift[0], shift[1], top + CLEAR - low()[2]])
+        # Over it, clear of the highest thing it passes over on the way there (a drawer's front, a
+        # rim the target's footprint does not cover): straight up first where that is higher than
+        # it is carried, then across, so it never cuts down through one.
+        here = d.xpos[obj][:2].copy()
+        clear = max(top, self._path_top(here, here + shift, obj, point[2])) + CLEAR
+        rise = clear - low()[2]
+        if rise > 0.0:
+            up = np.array([0.0, 0.0, rise])
+            goals = {s: (lambda s=s: (starts[s][0] + up, starts[s][1])) for s in sides}
+            yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
+        over = np.array([shift[0], shift[1], rise])
         goals = {s: (lambda s=s: (starts[s][0] + over, starts[s][1])) for s in sides}
         yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
         self.step("lowering", at=at)
