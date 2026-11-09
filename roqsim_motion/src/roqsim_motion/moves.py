@@ -109,10 +109,10 @@ def _side_word(side: str) -> str:
 class HumanoidHandle(MachineHandle):
     """The machine handle with a method per move; each returns the start's sequence number."""
 
-    def approach(self, target: str, **kw) -> int:
+    def approach(self, target: str | dict, **kw) -> int:
         return self.start("approach", target=target, **kw)
 
-    def reach(self, hand: str, target: str, **kw) -> int:
+    def reach(self, hand: str, target: str | dict, **kw) -> int:
         return self.start("reach", hand=hand, target=target, **kw)
 
     def press(self, hand: str, target: str, **kw) -> int:
@@ -130,10 +130,10 @@ class HumanoidHandle(MachineHandle):
     def push(self, hand: str, distance: float, **kw) -> int:
         return self.start("push", hand=hand, distance=distance, **kw)
 
-    def carry(self, to: str, **kw) -> int:
+    def carry(self, to: str | dict, **kw) -> int:
         return self.start("carry", to=to, **kw)
 
-    def place(self, at: str, **kw) -> int:
+    def place(self, at: str | dict, **kw) -> int:
         return self.start("place", at=at, **kw)
 
     def play(self, clip: str, **kw) -> int:
@@ -142,7 +142,7 @@ class HumanoidHandle(MachineHandle):
     def stop_clip(self, clip: str = "") -> int:
         return self.start("stop_clip", clip=clip)
 
-    def look_at(self, target: str = "") -> int:
+    def look_at(self, target: str | list = "") -> int:
         return self.start("look_at", target=target)
 
 
@@ -302,7 +302,10 @@ class HumanoidPlugin(MachinePlugin):
         except TargetError as exc:
             self.fail(str(exc))
 
-    def _site_id(self, name: str) -> int:
+    def _site_id(self, name) -> int:
+        """The site named ``name``, or -1: for no such site, and for a target that is a world pose."""
+        if not isinstance(name, str):
+            return -1
         return mujoco.mj_name2id(self._m, mujoco.mjtObj.mjOBJ_SITE, name)
 
     def _grip_sites(self, target: str, sides) -> dict:
@@ -593,7 +596,7 @@ class HumanoidPlugin(MachinePlugin):
     @program
     def approach(
         self,
-        target: str,
+        target: str | dict,
         standoff: float = 0.6,
         facing: float | None = None,
         via: list | None = None,
@@ -623,7 +626,7 @@ class HumanoidPlugin(MachinePlugin):
     def reach(
         self,
         hand: str,
-        target: str,
+        target: str | dict,
         offset: list | None = None,
         orient: bool = True,
         pose: str = "open",
@@ -1019,7 +1022,7 @@ class HumanoidPlugin(MachinePlugin):
     @program
     def carry(
         self,
-        to: str,
+        to: str | dict,
         standoff: float = 0.6,
         height: float | None = None,
         via: list | None = None,
@@ -1176,7 +1179,7 @@ class HumanoidPlugin(MachinePlugin):
         return max(tops) if tops else float(point[2])
 
     @program
-    def place(self, at: str, release: bool = True, speed: float = 0.15):
+    def place(self, at: str | dict, release: bool = True, speed: float = 0.15):
         """Set what the hands hold down on a target: over it, then lowered until it rests on what is
         under it, then (``release``) let go."""
         held = self._held("both")
@@ -1300,8 +1303,9 @@ class HumanoidPlugin(MachinePlugin):
         self.step("stopped", clip=clip, layers=layers)
 
     @program
-    def look_at(self, target: str = ""):
-        """Turn the head toward a target (a site, body or entity by name, or a world pose),
+    def look_at(self, target: str | list = ""):
+        """Turn the head toward a target (a site, body or entity by name, or a world point
+        ``[x, y, z]``),
         following it as it moves, and end once it is on it; ``""`` turns it back to the body's own
         motion."""
         self._body_call("set_gaze", target or None)

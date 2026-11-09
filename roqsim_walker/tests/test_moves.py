@@ -277,6 +277,19 @@ def test_both_hands_carry_a_tote_and_place_it_on_a_bench(sim):
     assert sim.h.status().error == ""
 
 
+def test_a_tote_is_carried_to_and_placed_at_a_world_pose_looking_at_a_world_point(sim):
+    top = {"position": {"x": 0.0, "y": 2.5, "z": 0.75}}
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to=top, standoff=0.55, facing=math.pi / 2)
+    sim.ok("look_at", target=[0.0, 2.5, 0.75])
+    sim.ok("place", at=top)
+    for _ in range(300):
+        sim.e.step()
+    tote = sim.d.body("tote_1").xpos
+    assert abs(tote[2] - 0.75) < 0.02 and abs(tote[1] - 2.5) < 0.3
+
+
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
