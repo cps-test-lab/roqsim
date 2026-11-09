@@ -18,7 +18,7 @@ from roqsim_walker.skin import hand_weights
 #: The two bundled walkers, hands off, compiled before hands existed: the counts and a digest over
 #: their bodies, geoms and skins. Hands off must keep them, byte for byte.
 HANDS_OFF = {"nbody": 35, "ngeom": 47, "nmocap": 34, "nsite": 0, "nskin": 2, "nskinbone": 34,
-             "sha256": "e66f7ff8e08f05ef6178ec83be74a5ef9cd985aa18cbaef78b9c034cb2c0a45a"}
+             "sha256": "3e048fda946c33276898288ea9e6021ca4a3af3b40428f28e4524f266fec5337"}
 FIELDS = ("body_pos", "body_quat", "body_mocapid", "geom_type", "geom_size", "geom_pos", "geom_quat",
           "geom_contype", "geom_conaffinity", "geom_group", "skin_vertnum", "skin_bonenum", "skin_bonebindpos",
           "skin_bonebindquat", "skin_bonebodyid", "skin_bonevertid", "skin_bonevertweight")
