@@ -106,7 +106,7 @@ def test_an_arm_it_does_not_have_is_refused():
         reach_pose(DEFAULT_SKELETON, ROOT, yaw_to_quat(0.0), local, {"x": np.zeros(3)})
 
 
-@pytest.mark.parametrize("name", ["MaleVisitorWalk", "WorkerHiVisWalk"])
+@pytest.mark.parametrize("name", ["MaleVisitorWalk", "FemaleVisitorWalk"])
 def test_a_blueprint_s_wrists_reach_a_box_s_handles(name):
     """On a blueprint's own bone lengths: both hands on handles in front, at a box's height."""
     from roqsim_walker.blueprint import resolve_walker
