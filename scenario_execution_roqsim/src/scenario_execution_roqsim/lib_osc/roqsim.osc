@@ -348,6 +348,32 @@ action humanoid_place:
     release: bool = true
     check: bool = true
 
+action humanoid_play:
+    # Play a clip over the humanoid's own motion on some joints: once, ending with the clip; or with
+    # `loop`, ending once it has faded in and playing on until humanoid_stop_clip. Moves and hands
+    # come over it. A walker with hands off plays one through entity_call(command: 'play').
+    humanoid: string
+    clip: string                                      # a clip of the walker's anim set, or a .npz path
+    joints: string = ''                               # 'upper' or 'arm_r, head': groups and joints; empty: all
+    weight: float = 1.0                               # 0..1 of the pose under it
+    loop: bool = false
+    fade: float = 0.3                                 # s, in and out
+    speed: float = 1.0                                # times the clip's own pace
+    check: bool = true
+
+action humanoid_stop_clip:
+    # Fade out the clips playing `clip`, or every clip, and wait until they are gone.
+    humanoid: string
+    clip: string = ''
+    check: bool = true
+
+action humanoid_look_at:
+    # Turn the head toward a target (a site, body or entity by name), following it, and wait until it
+    # is on it; empty turns it back.
+    humanoid: string
+    target: string = ''
+    check: bool = true
+
 action zone_entered:
     # Wait until an entity is inside a `zone_trigger`: the form of a Python scenario's `entered`.
     # It reads who is inside now; with `since`, an entity that came and went since then counts too.

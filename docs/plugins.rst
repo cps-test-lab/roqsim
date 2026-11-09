@@ -2024,7 +2024,8 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
      - ``g1_locomotion``, ``oli_locomotion``, ``spot_locomotion`` (``cmd_vel``; ``odom``,
        ``joint_states``), ``agibot_g2_controller`` (``joint_states``; ``joint_command``),
        ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
-       ``walker`` (``body_poses``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
+       ``walker`` (``play``, ``stop_clip``, ``look_at``;
+       ``body_poses``, ``clips``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
        ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``cmd``, ``door``, ``start``,
        ``cancel``; ``state``, ``status``), ``prop_trajectory``
        (``stage_progress``)

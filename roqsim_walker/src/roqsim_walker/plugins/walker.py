@@ -19,7 +19,9 @@ Config::
       pose:                    # where the walker stands at the start and after every reset:
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
         orientation: {yaw: 0.0}     #   walker stands on the floor -- and a heading only
-      motion: {walk: /abs/walk.npz}  # override a resolved locomotion clip
+      motion: {walk: /abs/walk.npz}  # a locomotion clip of its own: a clip's name or a .npz
+      layers:                  # clips played over the gait from the start (roqsim_walker.layers):
+        - {clip: wave, joints: [arm_r], loop: true, weight: 1.0, fade: 0.3, speed: 1.0}
       body_lag: 0.0            # s: the body follows its nav root as a damped spring of this time
                                # constant and its turns speed up and slow down over twice it, so
                                # it starts, turns and stops smoothly (0: on the root, turning at once)
@@ -43,10 +45,8 @@ nested under it::
 
 from __future__ import annotations
 
-import itertools
 import math
 import numbers
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -63,8 +63,10 @@ from roqsim_walker.animation import HandReach, make_anim_state, write_pose
 from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.blueprint import BlueprintError, resolve_walker
+from roqsim_walker.blueprint import BlueprintError, find_clip, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
+from roqsim_walker.layers import Layers, check
+from roqsim_walker.motion import Clip
 from roqsim_walker.output import STATE_KEY
 
 
@@ -116,20 +118,11 @@ def _point(hand: str, point) -> np.ndarray | None:
 
 @dataclass
 class WalkerHandle:
-    """Published by :class:`WalkerPlugin` under ``walker:<name>``; consumed by goal-driven
-    interfaces (the ROS 2 ``NavigateThroughPoses`` action handler) and in-process drivers.
-
-    ``send_route`` is thread-safe: it stamps the route with a monotonically increasing sequence
-    number, marshals the change onto the physics thread, and returns that number immediately. Poll
-    :attr:`status` until it reports the same sequence as *finished* to know the walker arrived; a
-    larger sequence means a newer goal preempted this one.
-    """
+    """The walker's body, published by :class:`WalkerPlugin` under ``walker:<name>``: its hands, the
+    clips it plays over the gait and where it looks. Where it goes is its navigator's, through the
+    navigator's handle (``nav:<name>:handle``) as for every mover."""
 
     name: str
-    send_route: Callable[[list], int]  # poses [(x, y[, yaw]), ...] -> route sequence number
-    cancel_route: Callable[[], int]  # -> route sequence number
-    #: (seq, finished, goals_left, dist_left, error); ``error`` is ``""`` for an arrival
-    status: Callable[[], tuple[int, bool, int, float, str]]
     #: ``reach(left=None, right=None)`` puts each hand given a world point (3 floats) on it -- re-set
     #: it as the points move -- the spine bending as far as they need; a hand given ``None`` goes
     #: back to the walk, so ``reach()`` lets go with both. Each arm eases onto its point and back
@@ -138,6 +131,16 @@ class WalkerHandle:
     reach: Callable[..., None] | None = None
     #: the wrists' world positions now: ``(left, right)``
     hands: Callable[[], tuple] | None = None
+    #: ``play(clip, joints=("all",), weight=1.0, loop=False, fade=0.3, speed=1.0)`` plays a clip over
+    #: the gait on some joints and returns the layer's id; ``stop_clip(clip="")`` fades layers out;
+    #: ``clip_ended(id)``, ``playing()``; ``look_at(point)`` turns the head to a world point or a
+    #: callable giving one, ``None`` back (:class:`roqsim_walker.layers.Layers`). On the physics
+    #: thread.
+    play: Callable[..., int] | None = None
+    stop_clip: Callable[..., list] | None = None
+    clip_ended: Callable[[int], bool] | None = None
+    playing: Callable[[], list] | None = None
+    look_at: Callable[..., None] | None = None
 
 
 class WalkerPlugin(Plugin):
@@ -151,8 +154,6 @@ class WalkerPlugin(Plugin):
         self.blueprint = self.config.get("walker")
         self._spec: dict = {}
         self._ctx: SimContext | None = None
-        self._seq = itertools.count(1)  # route sequence numbers (1, 2, 3, ...)
-        self._seq_lock = threading.Lock()
         self._layouts = None  # each hand's layout, with `hands: true` (set in build)
         self.body = None  # the motion core's body, with `hands: true` (set in configure)
 
@@ -205,9 +206,13 @@ class WalkerPlugin(Plugin):
             errors.append("'walker' is required (a blueprint folder under models/people/)")
         else:
             try:
-                resolve_walker(config["walker"], outfit=config.get("outfit"))
+                blueprint = resolve_walker(
+                    config["walker"], outfit=config.get("outfit"), motion=config.get("motion")
+                )
             except BlueprintError as exc:
                 errors.append(str(exc))
+            else:
+                errors += self._layer_errors(config, blueprint["clip_dirs"])
         for key, there in self.NAVIGATION_KEYS.items():
             if key in config:
                 errors.append(
@@ -237,6 +242,35 @@ class WalkerPlugin(Plugin):
             errors.append(
                 f"walker: 'body_lag' is a time constant in seconds, 0 or more, not {lag!r}"
             )
+        return errors
+
+    #: The keys of one ``layers:`` entry, and what ``play`` takes them as.
+    LAYER_KEYS = ("clip", "joints", "weight", "loop", "fade", "speed")
+
+    def _layer_errors(self, config: dict, clip_dirs: list[str]) -> list[str]:
+        """What is wrong with ``layers:``: each a mapping with a ``clip`` the walker has and can
+        read, joints it has, and numbers in range."""
+        layers = config.get("layers", [])
+        if not isinstance(layers, list):
+            return [f"walker: 'layers' is a list of clips to play, not {layers!r}"]
+        errors = []
+        for i, entry in enumerate(layers):
+            where = f"walker: layers[{i}]"
+            if not isinstance(entry, dict) or "clip" not in entry:
+                errors.append(f"{where} is a mapping with a 'clip', not {entry!r}")
+                continue
+            unknown = sorted(set(entry) - set(self.LAYER_KEYS))
+            if unknown:
+                errors.append(
+                    f"{where}: {', '.join(map(repr, unknown))} not read; a layer takes "
+                    f"{', '.join(self.LAYER_KEYS)}"
+                )
+                continue
+            try:
+                Clip.load(find_clip(entry["clip"], clip_dirs, f"walker {config['walker']}"))
+                check(**{k: v for k, v in entry.items() if k != "clip"})
+            except (BlueprintError, ValueError) as exc:
+                errors.append(f"{where}: {exc}")
         return errors
 
     # -- lifecycle -----------------------------------------------------------------------------
@@ -286,6 +320,7 @@ class WalkerPlugin(Plugin):
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
+            "clip_dirs": blueprint["clip_dirs"],
             "body_lag": float(cfg.get("body_lag", 0.0)),
         }
 
@@ -299,6 +334,7 @@ class WalkerPlugin(Plugin):
         """
         self._ctx = ctx
         self._anim = make_anim_state(ctx.model, self._spec)
+        self.motion = Layers(self._anim, self.blueprint, self._spec["clip_dirs"], ctx)
         self.body = None
         if self._layouts is not None:
             from roqsim_walker.handling import WalkerBody
@@ -327,13 +363,17 @@ class WalkerPlugin(Plugin):
             f"walker:{self.walker_name}",
             WalkerHandle(
                 name=self.walker_name,
-                send_route=self.send_route,
-                cancel_route=self.cancel_route,
-                status=self.status,
                 reach=self.reach,
                 hands=self.hands,
+                play=self.motion.play,
+                stop_clip=self.motion.stop,
+                clip_ended=self.motion.ended,
+                playing=self.motion.playing,
+                look_at=self.motion.look_at,
             ),
         )
+        if self.body is not None:
+            self.body.motion = self.motion
 
         self._body_ids = [
             (name, mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name))
@@ -390,6 +430,9 @@ class WalkerPlugin(Plugin):
         st.pref_vel = np.zeros(2)
         if self.body is not None:
             self.body.reset()
+        self.motion.reset()
+        for entry in self.config.get("layers", []):  # what it plays from the start
+            self.motion.play(**{"loop": True, **entry})
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
         # animation frame here would advance the idle clock and settle the body a couple of
         # millimetres off the pose every previous episode started from.
@@ -404,32 +447,20 @@ class WalkerPlugin(Plugin):
         if self.body is not None:
             self.body.write_fingers(ctx.data)
 
-    def _next_seq(self) -> int:
-        with self._seq_lock:
-            return next(self._seq)
-
-    # -- goal interface ------------------------------------------------------------------------
-    # Delegated to the navigator's own handle, so a route sent to a walker and one sent to a robot
-    # take the same path through the simulator. ``WalkerHandle`` survives as a thin alias: the ROS
-    # action handler and any downstream code that looks up ``walker:<name>`` keeps working, and the
-    # names, the action type and the sequence-number contract are all unchanged.
-    def _nav(self):
-        return self._ctx.blackboard.get(f"nav:{self.walker_name}:handle") if self._ctx else None
-
-    def send_route(self, poses) -> int:
-        handle = self._nav()
-        return handle.send_goals(list(poses)) if handle is not None else self._next_seq()
-
-    def cancel_route(self) -> int:
-        handle = self._nav()
-        return handle.cancel() if handle is not None else self._next_seq()
-
+    # -- the body's interface (where it goes is its navigator's: nav:<name>:handle) ---------------
     def reach(self, left=None, right=None) -> None:
         """The left and right hand each on a world point, or back to the walk with ``None``.
 
-        Raises :class:`ValueError` for a point that is not 3 finite numbers, before either hand
-        changes."""
+        Raises :class:`ValueError` for a point that is not 3 finite numbers, and
+        :class:`RuntimeError` while a move of the walker's ``humanoid`` runs (the move places the
+        hands), before either hand changes."""
         targets = {"l": _point("left", left), "r": _point("right", right)}
+        moves = self._ctx.blackboard.get(f"machine:{self.walker_name}") if self._ctx else None
+        if moves is not None and moves.busy:
+            raise RuntimeError(
+                f"walker {self.walker_name}: reach refused while its move "
+                f"{moves.status().program!r} runs; cancel it, or wait for it to end"
+            )
         for side, target in targets.items():
             if self.body is not None:
                 # Hands on: the motion core places the wrist, as the two-bone reach does with them off.
@@ -444,8 +475,52 @@ class WalkerPlugin(Plugin):
         d = self._ctx.data
         return tuple(d.mocap_pos[self._anim.mocap[f"wrist_{s}"]].copy() for s in ("l", "r"))
 
-    def status(self) -> tuple[int, bool, int, float, str]:
-        """``(route_seq, finished, goals_remaining, distance_remaining, error)``; safe to poll
-        off-thread."""
-        handle = self._nav()
-        return handle.status() if handle is not None else (0, False, 0, 0.0, "")
+    # -- motion layers and the look, on the control socket and `entity_call` ---------------------
+    # Off ROS: none of them has a message of its own, and a ROS client moves a walker through its
+    # navigator's goal actions.
+    @endpoint.command(ros2=None)
+    def play(
+        self,
+        clip: str,
+        joints: list[str] | None = None,
+        weight: float = 1.0,
+        loop: bool = False,
+        fade: float = 0.3,
+        speed: float = 1.0,
+    ) -> int:
+        """Play a clip over the gait on some joints; the layer's id.
+
+        Args:
+            clip: a clip of the walker's anim set by name, or a path to a .npz
+            joints: joint groups (all, upper, arms, arm_l, arm_r, head, spine, pelvis, legs, leg_l,
+                leg_r) and joint names; all by default
+            weight: 0 to 1, how much of the pose under it the clip takes
+            loop: play it round and round until stopped, rather than once
+            fade: s it fades in and out over
+            speed: times the clip's own pace
+        """
+        return self.motion.play(clip, joints or ["all"], weight, loop, fade, speed)
+
+    @endpoint.command(ros2=None)
+    def stop_clip(self, clip: str = "") -> list[int]:
+        """Fade out the layers playing a clip, or every layer; the ids stopped.
+
+        Args:
+            clip: the clip's name as it was played, or empty for every layer
+        """
+        return self.motion.stop(clip)
+
+    @endpoint.command(ros2=None)
+    def look_at(self, target: str = "") -> None:
+        """Turn the head toward a target, following it as it moves; empty turns it back.
+
+        Args:
+            target: a site, body or entity of the world by name, or empty
+        """
+        self.motion.look_at(target)
+
+    @endpoint.out(rate=10.0, ros2=None)
+    def clips(self) -> list[dict]:
+        """The clips playing over the gait: each layer's id, clip, joints, loop, time, weight and
+        whether it is stopping."""
+        return self.motion.playing()

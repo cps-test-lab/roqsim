@@ -364,13 +364,12 @@ class ScenarioPlugin(Plugin):
         return status
 
     def navigate(self, mover, poses, *, check: bool = True):
-        """Send a walker (``send_route``) or a navigator (``send_goals``) along ``poses`` and wait
-        until that route ended; a route that did not reach its goals raises :class:`ScenarioError`
-        unless ``check=False``. A route another overtook raises the same way, and with ``check=False``
-        returns the status, as :meth:`run` does. Returns the mover's status tuple. Cancelling the
-        task it runs in stops the mover (a walker's ``cancel_route``, a navigator's ``cancel``)."""
-        send = getattr(mover, "send_route", None) or mover.send_goals
-        seq = send([tuple(p) for p in poses])
+        """Send a mover along ``poses`` through its navigator's handle (``nav:<name>:handle``, a
+        walker's as a robot's) and wait until that route ended; a route that did not reach its goals
+        raises :class:`ScenarioError` unless ``check=False``. A route another overtook raises the
+        same way, and with ``check=False`` returns the status, as :meth:`run` does. Returns the
+        handle's status tuple. Cancelling the task it runs in cancels the route."""
+        seq = mover.send_goals([tuple(p) for p in poses])
         try:
             while True:
                 status = mover.status()
@@ -386,7 +385,7 @@ class ScenarioPlugin(Plugin):
         except GeneratorExit:
             status = mover.status()
             if not self._resetting and (status[0] < seq or (status[0] == seq and not status[1])):
-                (getattr(mover, "cancel_route", None) or mover.cancel)()
+                mover.cancel()
             raise
         if status[-1] and check:
             raise ScenarioError(f"{mover.name}: route {seq}: {status[-1]}")

@@ -22,9 +22,10 @@ import re
 
 logger = logging.getLogger(__name__)
 
-#: Locomotion clips the controller looks for. ``idle``/``walk``/``run``/``short`` are required
-#: (procedural fallbacks exist); the rest flavour the direction axis and are optional.
+#: Locomotion clips the controller looks for. ``idle``/``walk``/``run``/``short`` are required; the
+#: rest flavour the direction axis and are optional.
 CLIP_KINDS = ("idle", "walk", "run", "short", "turn_l", "turn_r", "walk_l", "walk_r", "walk_back")
+REQUIRED_CLIPS = ("idle", "walk", "run", "short")
 
 _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
@@ -167,23 +168,76 @@ def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = N
 
     # CARLA uses a separate locomotion set per body type AND gender. Resolve each clip from the most
     # specific anim subdir that has it, falling back to the shared set ("" = anims/<kind>.npz).
-    search = _anim_dirs(meta, name) + [""]
-    # The blueprint's own root first: a package shipping characters may ship clips for them too.
+    spec["clip_dirs"] = _clip_dirs(meta, name, wdir, roots)
+    clips = {}
+    for kind, path in (motion or {}).items():  # an explicit clip wins
+        if kind not in CLIP_KINDS:
+            raise BlueprintError(
+                f"walker {name}: 'motion' names {kind!r}, which is no locomotion clip: the clips "
+                f"are {', '.join(CLIP_KINDS)}"
+            )
+        clips[kind] = find_clip(path, spec["clip_dirs"], f"walker {name}: motion.{kind}")
+    for kind in CLIP_KINDS:
+        if kind not in clips:
+            found = _find_clip(kind, spec["clip_dirs"])
+            if found:
+                clips[kind] = found
+    missing = [k for k in REQUIRED_CLIPS if k not in clips]
+    if missing:
+        raise BlueprintError(
+            f"walker {name}: no {', '.join(missing)} clip under any of "
+            f"{', '.join(spec['clip_dirs'])}; give it with motion: {{{missing[0]}: <clip>}}"
+        )
+    spec["motion"] = clips
+    return spec
+
+
+def _clip_dirs(meta: dict, name: str, wdir: str, roots: list[str]) -> list[str]:
+    """The ``anims/`` directories a walker's clips are looked up in, most specific first: its anim
+    set's, then the shared one; the blueprint's own package before the others, as a package shipping
+    characters may ship clips for them."""
     clip_roots = [os.path.dirname(os.path.dirname(wdir))]
     clip_roots += [r for r in roots if r not in clip_roots]
-    clips = dict(motion or {})
-    for kind in CLIP_KINDS:
-        if kind in clips:  # explicit override wins
-            continue
-        for sub, root in ((s, r) for s in search for r in clip_roots):
-            clip = os.path.join(root, "anims", sub, f"{kind}.npz")
-            if os.path.isfile(clip):
-                clips[kind] = clip
-                break
-    spec["motion"] = clips
-    missing = [k for k in ("idle", "walk", "run", "short") if k not in clips]
-    if missing:
-        logger.info(
-            "walker %s: no clip for %s; using procedural fallback", name, ", ".join(missing)
+    dirs = []
+    for sub in _anim_dirs(meta, name) + [""]:
+        for root in clip_roots:
+            d = os.path.normpath(os.path.join(root, "anims", sub))
+            if d not in dirs:
+                dirs.append(d)
+    return dirs
+
+
+def _find_clip(clip: str, dirs: list[str]) -> str | None:
+    for d in dirs:
+        path = os.path.join(d, f"{clip}.npz")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def find_clip(clip: str, dirs: list[str], where: str) -> str:
+    """``clip`` as a file: a path to a ``.npz`` as given (a relative one from the working directory),
+    or a clip's name looked up in ``dirs`` (a walker's ``clip_dirs``). Raises :class:`BlueprintError`
+    naming ``where`` for one it cannot find."""
+    clip = str(clip)
+    if clip.endswith(".npz") or os.sep in clip:
+        path = os.path.expanduser(clip)
+        if not os.path.isfile(path):
+            raise BlueprintError(f"{where}: no clip file {path}")
+        return path
+    found = _find_clip(clip, dirs)
+    if found is None:
+        known = sorted(
+            {
+                os.path.splitext(f)[0]
+                for d in dirs
+                if os.path.isdir(d)
+                for f in os.listdir(d)
+                if f.endswith(".npz")
+            }
         )
-    return spec
+        raise BlueprintError(
+            f"{where}: no clip {clip!r} in {', '.join(dirs)}; the clips there are "
+            f"{', '.join(known) or 'none'} (or give a path to a .npz)"
+        )
+    return found

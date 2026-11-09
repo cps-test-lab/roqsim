@@ -37,7 +37,8 @@ components:
       pose:                    # where the walker stands at the start and after every reset:
         position: {x: -2.0, y: -2.0}  # a world pose with no z (a walker stands on the floor)
         orientation: {yaw: 0.0}       # and a heading only; `pos` is refused
-      motion: {walk: /abs/walk.npz}   # override a resolved locomotion clip
+      motion: {walk: /abs/walk.npz}   # a locomotion clip of its own: a clip's name or a .npz
+      layers: []               # clips played over the gait from the start (see below)
       body_lag: 0.0            # s; > 0 draws the body smoothly behind its nav root (see below)
     name: pedestrian           # entity name (a sibling of the plugin ref, not config)
     components:
@@ -85,19 +86,75 @@ install `rvo2` the way `roqsim_nav`'s README gives it.
 
 ### Goals at runtime
 
-Every walker publishes a `WalkerHandle` on the blackboard under `walker:<name>`:
+Where a walker goes is its navigator's, as for every mover, so a route goes to the navigator's
+handle, `nav:<name>:handle`:
 
 ```python
-handle = ctx.blackboard.get("walker:pedestrian")
-seq = handle.send_route([(2.0, 0.0), (0.0, 2.0)])  # thread-safe; returns a sequence number
-seq_applied, finished, goals_left, dist_left, error = handle.status()
-handle.cancel_route()
+nav = ctx.blackboard.get("nav:pedestrian:handle")
+seq = nav.send_goals([(2.0, 0.0), (0.0, 2.0)])  # thread-safe; returns a sequence number
+seq_applied, finished, goals_left, dist_left, error = nav.status()
+nav.cancel()
 ```
 
 A route overrides the patrol; on arrival the walker resumes patrolling from its nearest patrol
 waypoint (or stands, if it had no patrol). `status()` latches `finished` under the route's own
-sequence number, so a caller can distinguish *its* completion from a stale or preempted one — this is
-exactly what the `NavigateThroughPoses` action handler polls.
+sequence number, so a caller can distinguish *its* completion from a stale or preempted one -- this is
+what the `NavigateThroughPoses` action handler polls.
+
+The walker's own handle, `walker:<name>`, is its body: its hands (`reach`, `hands`, below), the clips
+it plays over the gait and where it looks (`play`, `stop_clip`, `clip_ended`, `playing`, `look_at`).
+
+### Clips over the gait, and where it looks
+
+The gait poses the whole body from where the navigator moves it. A **motion layer** plays a clip
+over it on the joints it names, so a worker waves with one arm while it walks, talks on the phone
+with its head and right arm, or a clip of the whole body plays while it stands:
+
+```yaml
+- walker:
+    walker: MaleVisitorWalk
+    layers:                                     # played from the start of every episode
+      - {clip: phone_call, joints: [arm_r, head], loop: true}
+```
+
+```python
+walker = ctx.blackboard.get("walker:pedestrian")
+layer = walker.play("wave", joints=["arm_r"])  # once; returns the layer's id
+walker.clip_ended(layer)  # True once it has played and faded out
+walker.play("/abs/clips/carry_box.npz", joints="upper", loop=True, weight=0.7)
+walker.stop_clip("/abs/clips/carry_box.npz")  # fades it out; stop_clip() stops every layer
+walker.look_at("tote_1")  # the head follows an entity, a site or a body
+walker.look_at([2.0, 1.0, 1.6])  # or a world point; look_at(None) turns it back
+```
+
+| key | | |
+|---|---|---|
+| `clip` | required | a clip of the walker's anim set by name (`anims/<set>/<clip>.npz` in any `roqsim.models` provider, the walker's set before the shared one), or a path to a `.npz` (a relative one from the working directory) |
+| `joints` | `[all]` | groups -- `all`, `upper` (spine, head, arms), `arms`, `arm_l`, `arm_r`, `head`, `spine`, `pelvis`, `legs`, `leg_l`, `leg_r` -- and joint names, mixed |
+| `weight` | 1.0 | 0..1: how much of the pose under it the clip takes |
+| `loop` | `false` (`true` under `layers:`) | round and round until stopped, or once |
+| `fade` | 0.3 s | in and out; a clip played once fades within its own length |
+| `speed` | 1.0 | times the clip's own pace |
+
+Layers stack in the order they were started, each over what is under it. A hand's reach and the
+moves of a walker with hands come over them, and the look over everything: a worker plays a clip on
+its arms and still presses the button with its hand. A layer that includes `pelvis` carries the
+clip's height too, so a crouch in a clip lowers the body; the feet are grounded after it, as for
+the gait. The clip's travel and heading are not played: where the walker goes is its navigator's.
+
+`look_at` turns the head toward a target within its limits (70 degrees to a side, 40 up, 50 down),
+at a bounded rate (3 rad/s), and follows the target as it moves; `look_at(None)` eases back to the
+gait's. The `look_at` move ends once the head is on its target, so one aimed at a target crossing
+the view faster than the head turns fails after 4 s, naming the head turning.
+
+The same from outside the process: the walker's commands `play`, `stop_clip` and `look_at`, and its
+`clips` output (on the control socket, and from OpenSCENARIO through `entity_call`; not on ROS). A
+walker with hands moves through its `humanoid`'s `play`, `stop_clip` and `look_at` moves, which wait
+for the clip or the head.
+
+Everything a walker plays is checked when the world loads: a clip it cannot find or read, a joint
+it does not have, a weight out of range is refused, naming it. Clips come from BVH captures through
+`roqsim walker import-clip` (Tools, below).
 
 ### Hands on something
 
@@ -151,8 +208,9 @@ world keeps its look and its timing unedited.
   posed on the drawn index fingertip while a move presses and parked below the floor otherwise;
 - its posing through the motion core, published as `humanoid_body:<name>`: each hand's goal (a pose
   with a rotation, or a point), the posture -- turning toward a target, crouching for a low one,
-  bending forward as `reach` does with hands off, leaning for one to the side -- and gaze, blended over the
-  gait by each hand's weight. A nested `humanoid` component (`roqsim_motion`) starts the moves on it.
+  bending forward as `reach` does with hands off, leaning for one to the side -- blended over the
+  gait by each hand's weight. Where it looks is the walker's look, as with hands off (below). A
+  nested `humanoid` component (`roqsim_motion`) starts the moves on it.
 
 `reach` keeps working with hands on; the core places the wrist on its point as the two-bone reach
 does with them off.
@@ -192,6 +250,9 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 | `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
 | `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
 | `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
+| `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
+| `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
+| `look_at` | `target` (a site, body or entity; empty: back) | `looking` | `unknown target …` |
 
 `approach` to something a hand takes by its handles (a grip site, a tote) stands its `standoff` from
 the handles, then steps back until nothing solid is within the body's clearance in front of it,
@@ -274,7 +335,8 @@ outfit variants, per-rig bone table, per-limb collision radii, measured shoe-sol
 authored skin weights. The OBJ's corners that share a position and a texture coordinate load as one
 skin vertex, so its normals are smooth wherever its UV map has no seam (MuJoCo sums a skin vertex's
 normal from that vertex's faces only). Locomotion clips live in `models/anims/<set>/` and are picked by body type +
-gender, falling back to `adult`.
+gender, falling back to `adult`; a walker without its `idle`, `walk`, `run` and `short` clip, or
+whose `motion:` names one that cannot be read, is refused when the world loads.
 
 Every tick the body is lowered onto its lowest shoe-sole point. A blueprint whose sole carries a
 `hull` per shoe (the convex-hull corners of the shoe's vertices, each with its bind position and its
@@ -319,8 +381,23 @@ roqsim walker import-actor <actor.dae> --name NurseFemaleWalk --anim-set female 
 
 ## Tools
 
-`roqsim walker import-actor` (above) and `roqsim walker bench-hands`, which measures what hands on
-costs (`--smoke --robot none` for a quick run).
+`roqsim walker import-actor` (above); `roqsim walker bench-hands`, which measures what hands on
+costs (`--smoke --robot none` for a quick run); and `roqsim walker import-clip`, which turns a BVH
+motion capture into a clip:
+
+```bash
+roqsim walker import-clip wave.bvh --out my_pkg/models/anims/adult/wave.npz
+roqsim walker import-clip walk_cycle.bvh --out walk.npz --loop --map spine=Chest
+```
+
+Each walker bone points where its source bone does, frame by frame: the source's rest pose (a
+T-pose or an A-pose) is matched to the walker's arms-down rest bone by bone, so the capture moves the
+walker's limbs as it moves its own, whatever the proportions. Bones are found by the Mixamo, CMU and
+common game-rig names; one not found is an error naming the capture's bones, and `--map joint=Bone`
+names it. `--up` and `--forward` read a capture in other axes; `--loop` marks a cycle, whose stride
+is measured from its travel. The capture's travel is dropped, and its heading at the first frame
+(its later turns are kept); its height is kept.
+`python -m pydoc roqsim_walker.cli.import_clip` has the details.
 
 ## Tests
 

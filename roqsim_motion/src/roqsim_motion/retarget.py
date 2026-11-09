@@ -16,7 +16,8 @@ bone lengths (:class:`~roqsim_motion.description.Description`)::
     hands:
       l: {frame: left_grasp, rpy: [0, 0, 0],   # the frame site (or `body:` and `pos:`), and the turn
           grip: {actuator: left_dex1_gripper, open: 0.0, closed: 0.04}}   # onto the grip convention
-    gaze: spine                              # the joint that turns to look (head by default)
+    gaze: spine                              # the joint a look would turn (head by default); no
+                                             # robot body looks, so nothing reads it
     rest: {left_elbow_joint: 1.3}            # angles at rest, where the model's zero is not
     physical: {servos: own, kp: 300.0, kv: 10.0}
 
@@ -59,6 +60,8 @@ class Table:
     base_height: float
     joints: dict  # canonical joint -> [Dof, ...] in chain order
     hands: dict = field(default_factory=dict)  # side -> {"frame": site, "grip": {...}}
+    #: The joint a look would turn. Read and kept, but no robot body turns its head
+    #: (``HumanoidBody.set_gaze`` raises), so nothing uses it.
     gaze: str = "head"
     physical: dict = field(default_factory=dict)
     source: str = ""

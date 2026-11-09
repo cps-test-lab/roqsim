@@ -163,3 +163,46 @@ class HumanoidPlace(HumanoidMove):
 
     def execute(self, humanoid: str, at: str, release: bool = True, check: bool = True):
         self._begin(humanoid, {"at": at, "release": bool(release)}, check)
+
+
+class HumanoidPlay(HumanoidMove):
+    MOVE = "play"
+
+    def execute(
+        self,
+        humanoid: str,
+        clip: str,
+        joints: str = "",
+        weight: float = 1.0,
+        loop: bool = False,
+        fade: float = 0.3,
+        speed: float = 1.0,
+        check: bool = True,
+    ):
+        names = [j.strip() for j in str(joints or "").split(",") if j.strip()]
+        self._begin(
+            humanoid,
+            {
+                "clip": clip,
+                "joints": names or None,
+                "weight": float(weight),
+                "loop": bool(loop),
+                "fade": float(fade),
+                "speed": float(speed),
+            },
+            check,
+        )
+
+
+class HumanoidStopClip(HumanoidMove):
+    MOVE = "stop_clip"
+
+    def execute(self, humanoid: str, clip: str = "", check: bool = True):
+        self._begin(humanoid, {"clip": clip}, check)
+
+
+class HumanoidLookAt(HumanoidMove):
+    MOVE = "look_at"
+
+    def execute(self, humanoid: str, target: str = "", check: bool = True):
+        self._begin(humanoid, {"target": target}, check)

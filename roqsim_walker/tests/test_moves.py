@@ -339,3 +339,96 @@ def test_moves_need_hands_and_no_patrol_and_a_graspable_that_exists():
     engine.ctx.seed = 1
     with pytest.raises(Exception, match="graspable 'crate_\\*' matches no grip site"):
         engine.setup()
+
+
+def _raise_clip(path, frames=31):
+    """One second of the right arm raised sideways to the shoulder."""
+    from roqsim_walker.humanoid import JOINT_NAMES
+    from roqsim_walker.motion import Clip
+
+    rot = np.tile([1.0, 0.0, 0.0, 0.0], (frames, len(JOINT_NAMES), 1))
+    a = -math.pi / 2
+    rot[:, JOINT_NAMES.index("shoulder_r")] = [math.cos(a / 2), math.sin(a / 2), 0.0, 0.0]
+    Clip(rot, np.zeros(frames), fps=30.0, stride_len=1.0, loop=False).save(path)
+    return str(path)
+
+
+def test_play_ends_with_its_clip_and_a_looping_one_once_it_has_faded_in(sim, tmp_path):
+    clip = _raise_clip(tmp_path / "raise.npz")
+    t = sim.e.ctx.sim_time
+    sim.ok("play", clip=clip, joints=["arm_r"], fade=0.1)
+    assert sim.e.ctx.sim_time - t > 0.9  # the whole clip
+    assert sim.e.ctx.blackboard.get("walker:worker").playing() == []
+    sim.ok("play", clip=clip, joints=["arm_r"], loop=True, fade=0.2)
+    assert len(sim.e.ctx.blackboard.get("walker:worker").playing()) == 1
+    sim.ok("stop_clip", clip=clip)
+    assert sim.e.ctx.blackboard.get("walker:worker").playing() == []
+    assert {"playing", "played", "stopped"} <= set(sim.events(t))
+
+
+def test_a_cancelled_play_fades_its_clip_out_and_a_hand_comes_over_a_clip(sim, tmp_path):
+    clip = _raise_clip(tmp_path / "raise.npz", frames=300)
+    sim.h.start("play", clip=clip, joints=["arm_r"], fade=0.1)
+    for _ in range(50):
+        sim.e.step()
+    sim.h.cancel()
+    for _ in range(200):
+        sim.e.step()
+    assert sim.e.ctx.blackboard.get("walker:worker").playing() == []
+    sim.ok("play", clip=clip, joints=["arm_r"], loop=True, fade=0.0)
+    sim.ok("approach", target="start/button", standoff=0.5)
+    sim.ok("reach", hand="right", target="start/button", offset=[0.1, 0.0, 0.0], orient=False)
+    p, _ = sim.body.grip(sim.d, "r")
+    assert np.linalg.norm(p - (sim.d.site("start/button").xpos + [-0.1, 0, 0])) < 0.012
+
+
+def test_play_of_what_cannot_be_played_fails_with_the_reason(sim):
+    assert "no clip 'wave'" in sim.run("play", clip="wave").error
+    assert "no joint or joint group" in sim.run("play", clip="walk", joints=["wing"]).error
+
+
+def test_look_at_turns_the_head_onto_a_target_and_back(sim):
+    t = sim.e.ctx.sim_time
+    sim.ok("look_at", target="start/button")
+    assert "looking" in sim.events(t)
+    head = sim.body.st.mocap["head"]
+    q, pos = sim.d.mocap_quat[head], sim.d.mocap_pos[head]
+    to = sim.d.site("start/button").xpos - pos
+    from roqsim_walker.humanoid import quat_rotate
+
+    f = quat_rotate(q, [1.0, 0.0, 0.0])
+    assert abs(math.atan2(f[1], f[0]) - math.atan2(to[1], to[0])) < math.radians(3)
+    sim.ok("look_at")
+    assert "unknown target" in sim.run("look_at", target="nobody").error
+
+
+def test_reach_through_the_handle_is_refused_while_a_move_runs(sim):
+    handle = sim.e.ctx.blackboard.get("walker:worker")
+    sim.h.start("approach", target="start/button", standoff=0.5)
+    sim.e.step()
+    with pytest.raises(RuntimeError, match="reach refused while its move 'approach' runs"):
+        handle.reach(right=[1.0, 0.0, 1.0])
+    sim.h.cancel()
+
+
+def test_a_body_that_plays_no_clips_or_turns_no_head_says_so():
+    from roqsim_motion.body import HumanoidBody
+
+    body = HumanoidBody("robot")
+    with pytest.raises(NotImplementedError, match="robot plays no clips"):
+        body.play("wave")
+    with pytest.raises(NotImplementedError, match="robot turns no head"):
+        body.set_gaze([1.0, 0.0, 1.0])
+
+
+def test_a_look_at_a_new_target_ends_only_once_the_head_is_on_it(sim):
+    sim.ok("look_at", target="start/button")  # ahead, to its left
+    t = sim.e.ctx.sim_time
+    sim.ok("look_at", target="cab/drawer_1/grip")  # ahead, to its right: the head turns a while
+    assert sim.e.ctx.sim_time - t > 0.15
+    head = sim.body.st.mocap["head"]
+    to = sim.d.site("cab/drawer_1/grip").xpos - sim.d.mocap_pos[head]
+    from roqsim_walker.humanoid import quat_rotate
+
+    f = quat_rotate(sim.d.mocap_quat[head], [1.0, 0.0, 0.0])
+    assert abs(math.atan2(f[1], f[0]) - math.atan2(to[1], to[0])) < math.radians(3)

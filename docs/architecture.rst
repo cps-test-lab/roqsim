@@ -665,8 +665,8 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
    precondition), ``value(name)`` (an actuator's or setpoint's current target), ``goal(name)``
    (where it is going: the end of its ramp, else its current target).
 
-It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
-(``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at
+The navigator's route handle (``roqsim_nav.handle``: ``send_goals``, ``cancel``, ``status``) is the
+special case of it. A reset drops any program and puts the machine at
 ``home``; sequence numbers keep counting, so a stale one never matches.
 
 **Every step is an event** on ``ctx.events``: ``program_start`` (program, seq, args), each step a
@@ -735,7 +735,8 @@ a program and waits for *that* start, raising with the machine's error; ``self.s
 ``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
 start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
 joined stops the run when the scene ends, and the scene does not end before a task has, unless it was spawned as ``background``);
-``self.navigate(walker, poses)`` sends a walker or a navigator and waits on its route's number;
+``self.navigate(nav, poses)`` sends a mover through its navigator's handle (``nav:<name>:handle``, a
+walker's as a robot's) and waits on its route's number;
 ``until``, ``wait`` and ``event`` do what they say, and ``set_entity_state`` puts an entity at a pose as a
 world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
 in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after

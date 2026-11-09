@@ -1,12 +1,12 @@
-"""Motion clips for the mocap-driven human + a procedural bootstrap.
+"""Motion clips for the mocap-driven human.
 
-A :class:`Clip` is the compact runtime format the CARLA/BVH converters write and the walker player
-samples: per-joint **local** rotations over time, with the root's XY + heading stripped out (those
-come from the nav stack). Root vertical bob is kept. The joint order matches
-:data:`roqsim_walker.humanoid.JOINT_NAMES`.
+A :class:`Clip` is the compact runtime format a walker samples, and the one ``roqsim walker
+import-clip`` writes from a BVH: per-joint **local** rotations over time, with the root's XY and
+heading stripped out (those come from the navigator). The root's height is kept. The joint order
+matches :data:`roqsim_walker.humanoid.JOINT_NAMES`.
 
-:func:`procedural_walk` / :func:`procedural_idle` synthesise small clips in the same format so a
-walker animates out-of-the-box when a ``.npz`` clip is missing.
+:func:`procedural_walk` and :func:`procedural_idle` synthesise small clips in the same format, for
+tests and for examples of it.
 """
 
 from __future__ import annotations
@@ -33,6 +33,10 @@ def _roll(angle: float) -> np.ndarray:
     return np.array([math.cos(h), math.sin(h), 0.0, 0.0])
 
 
+class ClipError(ValueError):
+    """A clip that cannot be read or found."""
+
+
 class Clip:
     """Per-joint local rotations over time + root vertical bob."""
 
@@ -51,12 +55,35 @@ class Clip:
 
     @classmethod
     def load(cls, path) -> Clip:
-        d = np.load(path, allow_pickle=False)
+        """Read a clip ``.npz``; raises :class:`ClipError` saying what is wrong with it."""
+        try:
+            d = np.load(path, allow_pickle=False)
+        except (OSError, ValueError) as exc:
+            raise ClipError(f"clip {path}: cannot be read ({exc})") from exc
+        missing = [k for k in ("joint_rot", "root_z", "fps", "stride_len", "loop") if k not in d]
+        if missing:
+            raise ClipError(f"clip {path}: has no {', '.join(missing)}")
         names = [str(n) for n in d["joint_names"]] if "joint_names" in d else None
+        rot, root_z = np.asarray(d["joint_rot"], float), np.asarray(d["root_z"], float)
+        width = len(names) if names is not None else _J
+        if rot.ndim != 3 or rot.shape[1:] != (width, 4) or rot.shape[0] < 1:
+            raise ClipError(f"clip {path}: joint_rot is {rot.shape}, not (frames, {width}, 4)")
+        if root_z.shape != (rot.shape[0],):
+            raise ClipError(f"clip {path}: root_z is {root_z.shape}, not ({rot.shape[0]},)")
+        if not (np.all(np.isfinite(rot)) and np.all(np.isfinite(root_z))):
+            raise ClipError(f"clip {path}: holds values that are not finite")
+        fps = float(d["fps"])
+        if not (math.isfinite(fps) and fps > 0.0):
+            raise ClipError(f"clip {path}: fps is {fps!r}, not a positive number")
+        unknown = sorted(set(names or ()) - set(JOINT_NAMES))
+        if unknown:
+            raise ClipError(
+                f"clip {path}: names joints the walker does not have: {', '.join(unknown)}"
+            )
         clip = cls(
-            d["joint_rot"],
-            d["root_z"],
-            fps=float(d["fps"]),
+            rot,
+            root_z,
+            fps=fps,
             stride_len=float(d["stride_len"]),
             loop=bool(d["loop"]),
             joint_names=names,
@@ -96,6 +123,24 @@ class Clip:
         z = (1 - frac) * self.root_z[i0] + frac * self.root_z[i1]
         return q, float(z)
 
+    def sample_at(self, t: float, loop: bool):
+        """``(joint_rot (J,4), root_z)`` ``t`` seconds in: wrapping round with ``loop``, otherwise
+        held on the last frame from the end on."""
+        f = t * self.fps
+        n = self.num_frames
+        if loop:
+            f %= n
+            i0 = int(math.floor(f)) % n
+            i1 = (i0 + 1) % n
+        else:
+            f = min(max(f, 0.0), n - 1)
+            i0 = int(math.floor(f))
+            i1 = min(i0 + 1, n - 1)
+        frac = f - math.floor(f)
+        q = _nlerp(self.joint_rot[i0], self.joint_rot[i1], frac)
+        z = (1 - frac) * self.root_z[i0] + frac * self.root_z[i1]
+        return q, float(z)
+
     def sample(self, phase: float):
         """``(joint_rot dict, root_z)`` at fractional ``phase`` in [0, 1)."""
         q, z = self.sample_array(phase)
@@ -122,7 +167,7 @@ def smoothstep(x, lo, hi) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
-# -- procedural bootstrap clips (same format; replaced by real mocap) --------------------------
+# -- procedural clips, for tests and as examples of the format ---------------------------------
 def procedural_walk(frames=30, fps=30.0, stride_len=0.75) -> Clip:
     """A simple forward alternating gait. Sign conventions in our X-forward, Z-up frame: flexing a
     downward limb *forward* is a NEGATIVE pitch about +Y; a knee flexes the shin *backward*

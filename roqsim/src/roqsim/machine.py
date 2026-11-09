@@ -30,7 +30,7 @@ The base gives every machine the same outside:
 * a :class:`MachineHandle` on the blackboard under ``machine:<name>``: ``start(program, **args)``
   returning a sequence number, ``status()`` (a :class:`MachineStatus`), ``busy``, ``ready``,
   ``cancel(seq)``, ``value(name)`` and ``goal(name)``. A start while busy is refused at the call. It
-  is the contract of the walker's ``send_route``/``status`` made general: a caller knows its own
+  is the contract of the navigator's route handle (``send_goals``/``status``) made general: a caller knows its own
   start ended when ``status().seq`` is the number it was given and ``finished`` is set, and cancels
   its own start, and no other, with ``cancel(seq)`` -- or, before it knows the number, with
   ``cancel(token=...)`` for a token of its own it passed to ``start``. A scenario that owns the
