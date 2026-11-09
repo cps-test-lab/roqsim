@@ -62,3 +62,25 @@ def test_contact_force_and_touching_read_a_body():
     assert touching(m, d, box, ignore=set())
     assert not touching(m, d, box, ignore={0})  # the floor is the world body's
     assert np.isfinite(contact_force(m, d, box, exclude={0}))
+
+
+def test_holds_are_added_on_sites_added_after_a_compile_made_while_building():
+    """A plugin may compile the spec mid-build (the ceiling's removal measures the world so);
+    ``MjSpec.site`` then misses sites added after it, and holds on them are added all the same."""
+    spec = mujoco.MjSpec()
+    floor = spec.worldbody.add_body(name="floor")
+    floor.add_geom(size=[1.0, 1.0, 0.1])
+    floor.add_site(name="floor/mark")
+    spec.compile()
+    hand = spec.worldbody.add_body(name="hand", mocap=True)
+    hand.add_site(name="hand/grip")
+    box = spec.worldbody.add_body(name="box")
+    box.add_freejoint()
+    box.add_geom(size=[0.1, 0.1, 0.1])
+    box.add_site(name="box/grip")
+    assert spec.site("box/grip") is None  # the lookup this works round
+    (name,) = add_holds(spec, ["hand/grip"], ["box/grip"])
+    model = spec.compile()
+    eq = model.equality(name).id
+    assert model.body(int(model.eq_obj1id[eq])).name == "box"
+    assert model.body(int(model.eq_obj2id[eq])).name == "hand"

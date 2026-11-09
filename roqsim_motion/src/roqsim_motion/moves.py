@@ -48,7 +48,15 @@ from roqsim.schema import Field
 
 from . import quat as Q
 from .body import SIDES, HumanoidBody
-from .contact import HOLD_SOLREF, Hold, add_holds, check_solref, contact_force, touching
+from .contact import (
+    HOLD_SOLREF,
+    Hold,
+    add_holds,
+    check_solref,
+    contact_force,
+    spec_site,
+    touching,
+)
 from .targets import TargetError, make_target
 
 HANDS = {"left": ("l",), "right": ("r",), "both": ("l", "r")}
@@ -244,7 +252,7 @@ class HumanoidPlugin(MachinePlugin):
         # thighs would be pressed into them by the hold. Its hands still press buttons, which are no
         # graspable.
         own = [b.name for b in spec.bodies if self._own(b.name)]
-        held = {spec.site(o).parent.name for o in objects}
+        held = {spec_site(spec, o).parent.name for o in objects}
         for obj in sorted(held):
             for b in own:
                 ex = spec.add_exclude()
