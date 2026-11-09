@@ -292,6 +292,10 @@ class DoorPlugin(MachinePlugin):
                 errors.append(f"'{key}' must be [r, g, b] or [r, g, b, a] numbers")
         if not bool(config.get("leaf", True)) and not bool(config.get("frame", True)):
             errors.append("'leaf: false' with 'frame: false' would place nothing; keep the casing")
+        if not bool(config.get("leaf", True)) and config.get("controllable"):
+            errors.append(
+                "'controllable' on a door with 'leaf: false': there is no leaf to command"
+            )
         if "hinge_side" in config and str(config["hinge_side"]).lower() not in ("left", "right"):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
@@ -456,13 +460,6 @@ class DoorPlugin(MachinePlugin):
                     meta={"prefix": p, "leaf": False, "width": self.width, "height": self.height},
                 )
             )
-            # Only complain when a world explicitly asked for it -- `controllable` defaults to true, and
-            # a leafless entry that never mentions it has nothing to be warned about.
-            if self.config.get("controllable"):
-                logger.warning(
-                    "door %r: 'controllable' is ignored on a leafless door (nothing to command)",
-                    self.door_name,
-                )
             return
         self._jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, p + self._JOINT)
         self._aid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, p + self._ACTUATOR)

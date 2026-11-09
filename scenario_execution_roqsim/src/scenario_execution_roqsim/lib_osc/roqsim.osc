@@ -221,7 +221,7 @@ action set_entity_state:
     # Put a free-jointed entity in a state: at `pose`, moving at `twist`. The name and shape are
     # `simulation_interfaces`' SetEntityState, because it is the same operation -- and `twist`
     # defaults to zero, so a placement that states none behaves as a fresh spawn does. The
-    # counterpart of `spawn_robot.pos`/`.yaw` for a factor that is decided per RUN (a campaign's
+    # counterpart of a spawned entity's `pose:` for a factor that is decided per RUN (a campaign's
     # randomly generated start pose) rather than per CONFIGURATION -- nothing before compile knows a
     # value drawn once per repetition, and the substrate does not recompile mid-run. A FULL pose:
     # `orientation` takes roll/pitch/yaw or a quaternion, read by the same parser a world document
@@ -269,7 +269,7 @@ action machine_run:
     # `run`. A branch abandoned while it waits (`one_of`, `timeout`) cancels this start, and no
     # start another client made.
     #
-    #     machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
+    #     machine_run(machine: 'press', program: 'stroke', args: 'show=hole')
     machine: string                                   # the machine's name in the world
     program: string                                   # the program to run
     args: string = ''                                 # its arguments, as 'name=value, name=value'

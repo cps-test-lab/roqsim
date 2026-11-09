@@ -40,24 +40,28 @@ _EPS = 1e-6
 _MIN_SEG = 1e-3  # drop wall slivers shorter than this (m) after door cuts
 
 
+class WallDataError(ValueError):
+    """A floorplan whose json-ld walls are missing or cannot be read."""
+
+
 def wall_colliders(mesh_path: str) -> list[np.ndarray]:
     """Convex collider vertex sets (each an ``(n, 3)`` world-frame array) for the floorplan whose mesh
     is ``mesh_path``.
 
-    The json-ld is looked up next to the mesh at ``<env>/json-ld/``. Returns ``[]`` (with a warning)
-    when that data is missing or unreadable, so the caller degrades to visual-only walls.
+    The json-ld is looked up next to the mesh at ``<env>/json-ld/``. Raises :class:`WallDataError`
+    saying why when that data is missing or cannot be read: walls without colliders are walls a robot
+    drives through, which no later check would notice.
     """
     jdir = _json_ld_dir(mesh_path)
     if jdir is None:
-        logger.warning(
-            "no json-ld found next to %s; using visual-only walls", os.path.basename(mesh_path)
+        env = os.path.dirname(os.path.dirname(os.path.abspath(mesh_path)))
+        raise WallDataError(
+            f"no json-ld beside {mesh_path} (expected {os.path.join(env, 'json-ld')}/*.json)"
         )
-        return []
     try:
         return _parse(_load_graph(jdir))
-    except Exception as exc:  # noqa: BLE001 - never block the build
-        logger.warning("could not parse json-ld in %s (%s); using visual-only walls", jdir, exc)
-        return []
+    except Exception as exc:
+        raise WallDataError(f"the json-ld in {jdir} cannot be read: {exc}") from exc
 
 
 def _json_ld_dir(mesh_path):
