@@ -13,6 +13,8 @@ A walker with ``hands: false`` has none, and its animation is the one it always 
 
 from __future__ import annotations
 
+import math
+
 
 import mujoco
 import numpy as np
@@ -82,6 +84,7 @@ class WalkerBody(HumanoidBody):
 
     has_proxies = True
     stand_clear = 0.3  # a crouch brings the knees forward
+    carry_turn = math.radians(50.0)  # fingers forward and down, along a forearm carrying at the hips
 
     def __init__(self, name: str, st, model, layouts: dict):
         self.st = st

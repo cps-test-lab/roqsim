@@ -14,6 +14,7 @@ import pytest
 
 from roqsim.config import load_config
 from roqsim.engine import Engine
+from roqsim_motion import quat as Q
 
 WORLDS = Path(__file__).resolve().parents[1] / "src" / "roqsim_walker" / "worlds"
 
@@ -82,9 +83,21 @@ def test_scene_1_a_worker_presses_a_machines_start_button_and_it_runs():
 
 def test_scene_2_a_drawer_opened_a_tote_carried_to_a_bench_and_set_down():
     heights = []
+    bends = []
 
     def watch(engine):
         heights.append(float(engine.ctx.data.body("tote_1").xpos[2]))
+        # while it carries the tote (lifted, before it is lowered), the hands run on from the
+        # forearms: each wrist bent by little more than a hand at rest
+        events = [e["event"] for e in engine.ctx.events.all() if e["source"] == "worker"]
+        if "lifted" in events and "lowering" not in events:
+            d = engine.ctx.data
+            body = engine.ctx.blackboard.get("humanoid_body:worker")
+            for side in "lr":
+                local = Q.mul(Q.inv(d.mocap_quat[body.st.mocap[f"elbow_{side}"]]),
+                              d.mocap_quat[body.st.mocap[f"wrist_{side}"]])
+                twist = np.array([local[0], 0.0, 0.0, local[3]]) / np.hypot(local[0], local[3])
+                bends.append(np.degrees(Q.angle_between(Q.mul(local, Q.inv(twist)), Q.IDENTITY)))
 
     for engine in _both("handling_drawer_to_bench", 90.0, watch):
         d = engine.ctx.data
@@ -95,6 +108,7 @@ def test_scene_2_a_drawer_opened_a_tote_carried_to_a_bench_and_set_down():
         # carried, never dropped: from leaving the drawer to the bench it was never below the drawer
         lifted = next(i for i, z in enumerate(heights) if z > 0.6)
         assert min(heights[lifted:]) > 0.6
+        assert bends and max(bends) < 35.0, f"carrying, a wrist bends {max(bends):.0f} deg"
 
 
 def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():

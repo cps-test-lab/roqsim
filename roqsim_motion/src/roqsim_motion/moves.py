@@ -67,6 +67,8 @@ PRESS_SEARCH = 0.04
 #: The heights a humanoid looks for what is in front of where it stands at (m), foot to knee; how far
 #: it keeps clear is its body's (HumanoidBody.stand_clear).
 CLEAR_HEIGHTS = (0.1, 0.25, 0.4)
+#: Below this height (m) a handle is taken as its frame says, not turned for carrying: off the floor.
+CARRY_TURN_ABOVE = 0.45
 #: How near a pull or push brings what it holds to its distance (m), and how far past the distance
 #: its hand may go to get it there, at least (m; half the distance, if that is more).
 ALONG_TOL = 0.003
@@ -149,6 +151,7 @@ class HumanoidPlugin(MachinePlugin):
         self._force = {s: 0.0 for s in SIDES}
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}  # a second hand riding on what the first holds
+        self._turns = {s: 0.0 for s in SIDES}  # how far each hand turned on the handle it took (rad)
         self._holds: dict = {}
 
     # -- load and build -----------------------------------------------------------------------
@@ -245,6 +248,7 @@ class HumanoidPlugin(MachinePlugin):
         self._force = {s: 0.0 for s in SIDES}
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}
+        self._turns = {s: 0.0 for s in SIDES}
 
     # -- helpers ----------------------------------------------------------------------------
     @property
@@ -333,13 +337,24 @@ class HumanoidPlugin(MachinePlugin):
                 )
             yield
 
-    def _site_goal(self, site: int, back: float = 0.0):
+    def _site_goal(self, site: int, back: float = 0.0, turn: float = 0.0):
         """A goal on a site's frame, ``back`` m out along its -z: a hand comes onto a grip from where
-        its fingers point from, above a handle its fingers close down over."""
+        its fingers point from, above a handle its fingers close down over. ``turn`` (rad) turns the
+        hand on the handle, about the palm's normal, its fingers away from the body."""
 
         def goal():
             p = self._d.site_xpos[site]
             r = self._d.site_xmat[site].reshape(3, 3)
+            if turn:
+                x, y, _ = self.body.root()
+                away = np.array([p[0] - x, p[1] - y, 0.0])
+                best = None
+                for sign in (1.0, -1.0):
+                    q = Q.mul(Q.from_matrix(r), Q.axis_angle("x", sign * turn))
+                    score = float(Q.to_matrix(q)[:, 2] @ away)
+                    if best is None or score > best[0]:
+                        best = (score, Q.to_matrix(q))
+                r = best[1]
             return p - back * r[:, 2], Q.from_matrix(r)
 
         return goal
@@ -348,7 +363,7 @@ class HumanoidPlugin(MachinePlugin):
         """Keep a hand that rides on what the other holds on its own grip site."""
         for side, h in self.holding.items():
             if h is not None and self._riding[side]:
-                self.body.set_hand(side, *self._site_goal(h.obj_site)())
+                self.body.set_hand(side, *self._site_goal(h.obj_site, turn=self._turns.get(side, 0.0))())
 
     def _check_holds(self) -> None:
         """Let go of a hold, and fail, once it has pulled past ``max_force`` for a while (its force
@@ -645,11 +660,16 @@ class HumanoidPlugin(MachinePlugin):
         for s in sides:
             self._far(self._d.site_xpos[ids[s]])
             self.body.set_pose(s, "open")
-        yield from self._move_hands({s: self._site_goal(ids[s], back=PRE) for s in sides}, 0.8, target,
-                                    rot_tol=tol, pos_tol=0.03)
+        # a free object a hand will carry is taken with the hand turned on its handle as the body
+        # carries (HumanoidBody.carry_turn): the hold keeps it so. Not off the floor: a hand reaching
+        # down to a handle below the knees comes onto it fingers down, as its frame says.
+        low = min(float(self._d.site_xpos[ids[s]][2]) for s in sides) < CARRY_TURN_ABOVE
+        turn = self.body.carry_turn if all(holds[s].whole for s in sides) and not low else 0.0
+        goal = {s: (lambda back=0.0, s=s: self._site_goal(ids[s], back=back, turn=turn)) for s in sides}
+        yield from self._move_hands({s: goal[s](PRE) for s in sides}, 0.8, target, rot_tol=tol, pos_tol=0.03)
         # judged by position: the hold makes the frames one, turning a free object to the hand
         # within what a hold takes up as it is made (see below)
-        yield from self._move_hands({s: self._site_goal(ids[s]) for s in sides}, 0.3, target, rot_tol=tol,
+        yield from self._move_hands({s: goal[s]() for s in sides}, 0.3, target, rot_tol=tol,
                                     pos_tol=HOLD_REACH)
         self.step("closing", hand=hand, target=target)
         m, d = self._m, self._d
@@ -660,7 +680,7 @@ class HumanoidPlugin(MachinePlugin):
         t0 = self._ctx.sim_time
         while not all(self.body.hand_done(s) for s in sides) and self._ctx.sim_time - t0 < 1.0:
             for s in sides:
-                self.body.set_hand(s, *self._site_goal(ids[s])())
+                self.body.set_hand(s, *goal[s]()())
             yield
         for s in sides:
             apart = holds[s].separation(d)
@@ -675,6 +695,7 @@ class HumanoidPlugin(MachinePlugin):
                 holds[s].set(d, True, whole=None if i == 0 else False)
             self.holding[s] = holds[s]
             self._riding[s] = i > 0 and ride
+            self._turns[s] = turn
             self._force[s] = self._apart[s] = 0.0
             self.body.set_hand(s, *self.body.grip(d, s))
         self.step("held", hand=hand, target=target)

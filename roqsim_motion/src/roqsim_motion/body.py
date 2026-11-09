@@ -31,6 +31,10 @@ class HumanoidBody:
     #: ``both`` -- the second holds it too, by its position only (a body whose servos sag, whose one
     #: hand alone would let it tilt).
     two_hands = "ride"
+    #: How far a hand turns on the handle of something it will carry, about the palm's normal, its
+    #: fingers from the handle's line toward away from the body (rad): as a carrying forearm points,
+    #: so the hand runs on from it. A gripper takes a handle as its frame says.
+    carry_turn = 0.0
     #: Whether the body's hands are where their goals put them (posed), or lag them under a load
     #: (servo-driven): a stroke that ends at a stop leaves a posed hand where it is and a lagging
     #: hand's goal where it was, so neither pulls back from the stop.
