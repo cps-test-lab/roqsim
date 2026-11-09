@@ -29,11 +29,13 @@ The base gives every machine the same outside:
 
 * a :class:`MachineHandle` on the blackboard under ``machine:<name>``: ``start(program, **args)``
   returning a sequence number, ``status()`` (a :class:`MachineStatus`), ``busy``, ``ready``,
-  ``cancel(seq)`` and ``value(name)``. A start while busy is refused at the call. It is the contract
-  of the walker's ``send_route``/``status`` made general: a caller knows its own start ended when
-  ``status().seq`` is the number it was given and ``finished`` is set, and cancels its own start,
-  and no other, with ``cancel(seq)`` -- or, before it knows the number, with ``cancel(token=...)``
-  for a token of its own it passed to ``start``;
+  ``cancel(seq)``, ``value(name)`` and ``goal(name)``. A start while busy is refused at the call. It
+  is the contract of the walker's ``send_route``/``status`` made general: a caller knows its own
+  start ended when ``status().seq`` is the number it was given and ``finished`` is set, and cancels
+  its own start, and no other, with ``cancel(seq)`` -- or, before it knows the number, with
+  ``cancel(token=...)`` for a token of its own it passed to ``start``. A scenario that owns the
+  scene's decisions may end whatever runs with ``cancel()``; the caller whose start that was sees
+  it end with the error ``cancelled``;
 * an event on ``ctx.events`` (:mod:`roqsim.events`) for each step a program names, between a
   ``program_start`` and a ``program_end``, so a recording carries the machine's timeline;
 * the endpoints ``start``, ``status`` and ``cancel`` on the machine's entity, for the control socket
@@ -130,8 +132,8 @@ class MachineHandle:
 
     ``start``, ``cancel``, ``status`` and ``busy`` are safe from any thread: a start is checked and
     stamped at the call and applied on the physics thread at the next step, in the order the calls
-    were made. A status never goes back to an older start. ``value`` reads the physics thread's
-    state and belongs there.
+    were made. A status never goes back to an older start. ``value`` and ``goal`` read the physics
+    thread's state and belong there.
     """
 
     def __init__(self, machine: MachinePlugin):
@@ -173,6 +175,10 @@ class MachineHandle:
     def value(self, name: str) -> float:
         """The current target of an actuator or setpoint (the end of any ramp is not it)."""
         return self._machine.value(name)
+
+    def goal(self, name: str) -> float:
+        """Where an actuator or setpoint is going: the end of its ramp, else its current target."""
+        return self._machine.goal(name)
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"MachineHandle({self.name!r}, programs={list(self.programs)})"
@@ -667,6 +673,12 @@ class MachinePlugin(Plugin):
         self._check_driven(name)
         return float(self._cmd[name])
 
+    def goal(self, name: str) -> float:
+        """Where an actuator or setpoint is going: the end of its ramp, else its current target."""
+        self._check_driven(name)
+        ramp = self._ramps.get(name)
+        return float(ramp[0]) if ramp is not None else float(self._cmd[name])
+
     def position(self, name: str) -> float:
         """Where an actuator's joint is now."""
         return float(self._ctx.data.qpos[self._actuators[name].qadr])
@@ -785,6 +797,17 @@ class MachinePlugin(Plugin):
                 )
         return lambda: fn(*bound.args, **bound.kwargs)
 
+    def start_accepted(self, program_name: str, args: dict) -> None:
+        """Called once a start is accepted, before it is applied; a subclass records what it commands.
+
+        A handle's ``start`` is applied on the physics thread a step later, so a machine that compares
+        a new command with its last one (a door's repeated ``cmd``) reads the last one here, where it
+        is commanded, and not where it is applied. Called from :meth:`request_start` and
+        :meth:`preempt`, with the machine's lock held and on whichever thread made the start: it
+        must not take the lock, touch ``model``/``data`` or call the handle. ``args`` are checked
+        against the program already. The base does nothing.
+        """
+
     def request_start(self, program_name: str, args: dict, token: str = "") -> int:
         """Check and stamp a start, with the caller's ``token``, and post it to the physics thread.
         Any thread."""
@@ -802,6 +825,7 @@ class MachinePlugin(Plugin):
                 )
             seq = next(self._counter)
             self._pending = (seq, program_name, args, str(token or ""))
+            self.start_accepted(program_name, args)
             # Posted under the lock, so starts and cancels reach the physics thread in the order
             # they were made.
             self._ctx.post(lambda _ctx, seq=seq: self._apply_start(seq))
@@ -854,6 +878,7 @@ class MachinePlugin(Plugin):
                 )
             seq = next(self._counter)
             self._pending = (seq, program_name, dict(args), "")
+            self.start_accepted(program_name, dict(args))
         self._apply_start(seq)
         return seq
 

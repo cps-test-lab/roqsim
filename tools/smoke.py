@@ -76,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--steps", type=int, required=True, help="default steps per world")
     parser.add_argument("--gitignore", type=Path, default=Path(".gitignore"))
     parser.add_argument(
+        "world", nargs="*", type=Path, help="package worlds, run as those of --worlds are"
+    )
+    parser.add_argument(
         "--worlds",
         nargs="*",
         default=[],
@@ -91,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--ros", action="store_true", help="ROS is sourced and ros2_ws built")
     args = parser.parse_args(argv)
+    args.worlds = [*args.world, *args.worlds]
 
     ignored = args.gitignore.read_text() if args.gitignore.is_file() else ""
     mute = [] if args.ros else ["--no-communication"]

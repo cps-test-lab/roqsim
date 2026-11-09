@@ -2929,7 +2929,23 @@ other; with neither, whatever is pending or runs. A program cannot take an argum
 package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
 example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
 ``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
-scenario from ``roqsim_assets.scenarios``.
+scenario from ``roqsim_assets.scenarios``. ``DoorForWhoComes`` watches the zone while the door
+closes: someone entering it, or the close ending in a stall, cancels the close and opens the door
+again, and it closes once the zone is empty. ``StopAtBarrier`` reads the belt's speed each time it
+stops the belt and runs it again at that speed once the part is gone.
+
+A controllable ``door`` is driven over ROS too: its ``cmd`` topic and its ``door`` action
+(``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``. A ``cmd``
+equal to the openness last commanded -- through a port, or through a handle's ``start`` the physics
+thread has not applied yet -- changes nothing while the door moves there or stands there. The action
+is the bridge's generic 1-DOF handler (``roqsim_ros_bridge.actions.gripper_command``), which asks
+its producer, through the endpoint's hints, how to grade a goal and does not look at what the
+producer is: ``reach_tolerance`` is how near counts as ``reached_goal`` (0.005 unless stated; a door
+states 0.02, the band its programs end in, so ROS and ``status()`` agree), and ``on_timeout`` is what
+a goal still moving at its ``timeout`` ends as -- ``succeed``, with neither ``reached_goal`` nor
+``stalled`` set, unless stated (an arm's gripper), ``abort`` for a door, whose ``timeout`` is a full
+swing at its ``speed``, ``stall_timeout`` and 5 s. The decision is
+``roqsim_ros_bridge.gripper_policy``, free of ROS imports.
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~
@@ -2977,7 +2993,8 @@ What a program has:
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
   each setpoint keeps its value;
-- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+- ``self.value(name)``, ``self.goal(name)``, ``self.position(name)``, ``self.reached(name)``,
+  ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
 ``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and
@@ -2998,6 +3015,11 @@ it drives the spawned model's actuators under the spawn's prefix and publishes i
 Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+A machine that compares such a command with what it was commanded last records each start in
+``start_accepted(program, args)``: the base calls it, with its lock held, when a start is accepted,
+on the thread that made it, a step before the physics thread applies a handle's start. It touches
+neither the model nor the handle. The ``door`` records its target there, so a ``cmd`` back to where
+it stood, sent right after a handle's ``start("open")``, is not taken for a repeat.
 
 Writing a scenario
 ~~~~~~~~~~~~~~~~~~

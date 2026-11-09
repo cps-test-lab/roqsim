@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("scenario_execution", reason="the OpenSCENARIO half of the comparison")
+pytest.importorskip(
+    "scenario_execution", reason="scenario-execution: the OpenSCENARIO half of the comparison"
+)
 
 import py_trees  # noqa: E402
 from scenario_execution.actions.base_action import ActionError  # noqa: E402
