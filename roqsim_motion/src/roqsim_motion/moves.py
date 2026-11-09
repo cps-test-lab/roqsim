@@ -136,6 +136,15 @@ class HumanoidHandle(MachineHandle):
     def place(self, at: str, **kw) -> int:
         return self.start("place", at=at, **kw)
 
+    def play(self, clip: str, **kw) -> int:
+        return self.start("play", clip=clip, **kw)
+
+    def stop_clip(self, clip: str = "") -> int:
+        return self.start("stop_clip", clip=clip)
+
+    def look_at(self, target: str = "") -> int:
+        return self.start("look_at", target=target)
+
 
 class HumanoidPlugin(MachinePlugin):
     """A humanoid's moves (see the module docstring)."""
@@ -1202,6 +1211,66 @@ class HumanoidPlugin(MachinePlugin):
             for s in held:
                 self.body.free_hand(s)
             self.step("released", at=at)
+
+    def _body_call(self, method: str, *args, **kw):
+        """A call on the body that fails the move, with the body's reason, where it refuses."""
+        try:
+            return getattr(self.body, method)(*args, **kw)
+        except (NotImplementedError, ValueError) as exc:
+            self.fail(str(exc))
+
+    @program
+    def play(
+        self,
+        clip: str,
+        joints: list | None = None,
+        weight: float = 1.0,
+        loop: bool = False,
+        fade: float = 0.3,
+        speed: float = 1.0,
+    ):
+        """Play a clip over the body's own motion on some joints (groups and joint names; all by
+        default): once, ending when it has faded out; or with ``loop``, ending once it has faded in
+        and playing on until ``stop_clip``. A play cancelled or failed fades its clip out. Hands and
+        moves come over it."""
+        layer = self._body_call(
+            "play",
+            clip,
+            joints=joints or ["all"],
+            weight=weight,
+            loop=loop,
+            fade=fade,
+            speed=speed,
+        )
+        self.step("playing", clip=clip, layer=layer)
+        done = False
+        try:
+            if loop:
+                yield from self.wait(fade)
+            else:
+                yield from self.until(lambda: self.body.clip_ended(layer))
+            done = True
+        finally:
+            if not done:
+                self.body.stop_clip(layer)
+        self.step("played", clip=clip, layer=layer)
+
+    @program
+    def stop_clip(self, clip: str = ""):
+        """Fade out the clips playing ``clip`` (its name as played), or every clip, and end once they
+        are gone."""
+        layers = self._body_call("stop_clip", clip)
+        yield from self.until(lambda: all(self.body.clip_ended(i) for i in layers))
+        self.step("stopped", clip=clip, layers=layers)
+
+    @program
+    def look_at(self, target: str = ""):
+        """Turn the head toward a target (a site, body or entity by name, or a world pose),
+        following it as it moves, and end once it is on it; ``""`` turns it back to the body's own
+        motion."""
+        self._body_call("set_gaze", target or None)
+        yield from self.until(self.body.looking, timeout=SETTLE * 2, what="the head turning")
+        self.step("looking", target=target)
 
 
 def _graspable(site: str, pattern: str) -> bool:

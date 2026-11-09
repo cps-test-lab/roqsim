@@ -53,7 +53,6 @@ class HumanoidBody:
         self.hand = {s: HandState() for s in SIDES}
         self.closing = {s: None for s in SIDES}  # side -> touching(finger) while a grip closes
         self.posture: Posture | None = None
-        self.gaze = None
 
     # -- set by the moves -------------------------------------------------------------------------
     def set_hand(self, side: str, pos, quat=None, frame: str = "grip") -> None:
@@ -85,7 +84,26 @@ class HumanoidBody:
         self.posture = posture
 
     def set_gaze(self, point) -> None:
-        self.gaze = None if point is None else np.asarray(point, float)
+        """Turn the head toward ``point`` (a target as a move names one, a world point, or a
+        callable giving one), following it; ``None`` turns it back. A body whose head does not turn
+        raises :class:`NotImplementedError`."""
+        raise NotImplementedError(f"{self.name} turns no head")
+
+    def looking(self) -> bool:
+        """Whether the head has turned onto its point, or back."""
+        raise NotImplementedError(f"{self.name} turns no head")
+
+    def play(self, clip: str, **kw) -> int:
+        """Play a clip over the body's own motion on some joints; the layer's id. A body that plays
+        no clips raises :class:`NotImplementedError`."""
+        raise NotImplementedError(f"{self.name} plays no clips")
+
+    def stop_clip(self, clip="") -> list:
+        """Fade out the layers playing ``clip``, or every layer; the ids stopped."""
+        raise NotImplementedError(f"{self.name} plays no clips")
+
+    def clip_ended(self, layer: int) -> bool:
+        raise NotImplementedError(f"{self.name} plays no clips")
 
     def press_proxy(self, data, side: str, on: bool) -> None:
         """Pose ``side``'s press proxy on the hand (``on``) or park it; a body without proxies

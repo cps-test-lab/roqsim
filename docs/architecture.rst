@@ -665,8 +665,8 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
    precondition), ``value(name)`` (an actuator's or setpoint's current target), ``goal(name)``
    (where it is going: the end of its ramp, else its current target).
 
-It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
-(``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at
+The navigator's route handle (``roqsim_nav.handle``: ``send_goals``, ``cancel``, ``status``) is the
+special case of it. A reset drops any program and puts the machine at
 ``home``; sequence numbers keep counting, so a stale one never matches.
 
 **Every step is an event** on ``ctx.events``: ``program_start`` (program, seq, args), each step a

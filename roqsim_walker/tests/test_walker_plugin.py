@@ -1,8 +1,8 @@
 """End-to-end plugin tests: patrol, the goal-route interface, and reset -- driven through the engine.
 
 These are the in-process equivalent of what the ROS 2 ``NavigateThroughPoses`` handler does: send a
-route via the blackboard :class:`~roqsim_walker.plugins.walker.WalkerHandle`, poll ``status()``
-until it reports finished, and check the walker actually got there.
+route through the walker's navigator handle (``nav:<name>:handle``), poll ``status()`` until it
+reports finished, and check the walker actually got there.
 """
 
 from __future__ import annotations
@@ -109,6 +109,10 @@ def test_plugin_registers_entity_handle_and_goal_endpoint(sim):
         "start_route",
         "route_status",
         "cancel_route",
+        "play",
+        "stop_clip",
+        "look_at",
+        "clips",
     }
     assert endpoints["body_poses"].direction == "out"
     assert (
@@ -146,11 +150,11 @@ def test_reset_returns_the_walker_to_the_route_start(sim):
 
 
 # -- goal route (what the NavigateThroughPoses handler drives) ---------------------------------
-def test_send_route_overrides_patrol_and_reports_arrival(sim):
-    handle = sim.ctx.blackboard.get("walker:pedestrian")
+def test_a_route_sent_to_its_navigator_overrides_patrol_and_reports_arrival(sim):
+    handle = sim.ctx.blackboard.get("nav:pedestrian:handle")
     goals = [(0.0, 2.0), (-2.0, 0.0)]
 
-    seq = handle.send_route(goals)
+    seq = handle.send_goals(goals)
     assert seq >= 1
     _run(sim, 0.05)  # let the posted command reach the physics thread
     applied_seq, finished, goals_left, _, _ = handle.status()
@@ -166,8 +170,8 @@ def test_send_route_overrides_patrol_and_reports_arrival(sim):
 
 
 def test_route_feedback_counts_goals_down(sim):
-    handle = sim.ctx.blackboard.get("walker:pedestrian")
-    handle.send_route([(0.0, 2.0), (-2.0, 0.0)])
+    handle = sim.ctx.blackboard.get("nav:pedestrian:handle")
+    handle.send_goals([(0.0, 2.0), (-2.0, 0.0)])
     _run(sim, 0.05)
 
     seen = []
@@ -178,8 +182,8 @@ def test_route_feedback_counts_goals_down(sim):
 
 
 def test_patrol_resumes_after_the_route_completes(sim):
-    handle = sim.ctx.blackboard.get("walker:pedestrian")
-    handle.send_route([(0.0, 0.0)])
+    handle = sim.ctx.blackboard.get("nav:pedestrian:handle")
+    handle.send_goals([(0.0, 0.0)])
     _run(sim, 0.05)
     assert _run_until(sim, lambda: handle.status()[1]), "route never finished"
 
@@ -188,12 +192,12 @@ def test_patrol_resumes_after_the_route_completes(sim):
     assert np.linalg.norm(_xy(sim) - at_goal) > 0.5, "walker should resume patrolling, not stand"
 
 
-def test_cancel_route_stops_the_walker(sim):
-    handle = sim.ctx.blackboard.get("walker:pedestrian")
-    handle.send_route([(2.0, 2.0)])
+def test_cancelling_its_route_stops_the_walker(sim):
+    handle = sim.ctx.blackboard.get("nav:pedestrian:handle")
+    handle.send_goals([(2.0, 2.0)])
     _run(sim, 1.0)
 
-    seq = handle.cancel_route()
+    seq = handle.cancel()
     _run(sim, 0.3)
     applied_seq, finished, _, _, _ = handle.status()
     assert (applied_seq, finished) == (seq, True)
@@ -204,10 +208,10 @@ def test_cancel_route_stops_the_walker(sim):
 
 
 def test_a_newer_route_supersedes_an_older_one(sim):
-    handle = sim.ctx.blackboard.get("walker:pedestrian")
-    first = handle.send_route([(2.0, 2.0)])
+    handle = sim.ctx.blackboard.get("nav:pedestrian:handle")
+    first = handle.send_goals([(2.0, 2.0)])
     _run(sim, 0.5)
-    second = handle.send_route([(-2.0, -2.0)])
+    second = handle.send_goals([(-2.0, -2.0)])
     _run(sim, 0.05)
 
     applied_seq, finished, _, _, _ = handle.status()
@@ -226,8 +230,8 @@ def test_a_walker_with_the_default_navigator_stands_at_its_pose_until_commanded(
         _run(engine, 2.0)
         np.testing.assert_allclose(_xy(engine), [1.0, 1.0], atol=0.02)  # stands
 
-        handle = engine.ctx.blackboard.get("walker:pedestrian")
-        handle.send_route([(-1.0, 1.0)])
+        handle = engine.ctx.blackboard.get("nav:pedestrian:handle")
+        handle.send_goals([(-1.0, 1.0)])
         _run(engine, 0.05)
         assert _run_until(engine, lambda: handle.status()[1]), "route never finished"
         assert np.linalg.norm(_xy(engine) - np.array([-1.0, 1.0])) < 0.26
@@ -435,8 +439,8 @@ def test_a_goal_driven_walker_starts_at_its_pose_heading_every_episode():
             state = engine.ctx.blackboard.get(STATE_KEY)["pedestrian"]
             assert state.yaw == pytest.approx(1.2)
             np.testing.assert_allclose(_xy(engine), [1.0, -1.0], atol=1e-6)
-            handle = engine.ctx.blackboard.get("walker:pedestrian")
-            handle.send_route([(-1.0, -1.0)])
+            handle = engine.ctx.blackboard.get("nav:pedestrian:handle")
+            handle.send_goals([(-1.0, -1.0)])
             _run(engine, 1.0)
     finally:
         engine.shutdown()

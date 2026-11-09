@@ -62,6 +62,54 @@ SKELETON = [
 ]
 
 JOINT_NAMES = [j.name for j in SKELETON]
+
+#: Named groups of joints a motion layer is masked to (:func:`joints_of`). ``pelvis`` turns the whole
+#: body and carries a clip's height, so a layer that includes it moves the body over its feet.
+JOINT_GROUPS: dict[str, tuple[str, ...]] = {
+    "all": tuple(JOINT_NAMES),
+    "pelvis": ("pelvis",),
+    "spine": ("spine",),
+    "head": ("head",),
+    "arm_l": ("shoulder_l", "elbow_l", "wrist_l"),
+    "arm_r": ("shoulder_r", "elbow_r", "wrist_r"),
+    "arms": ("shoulder_l", "elbow_l", "wrist_l", "shoulder_r", "elbow_r", "wrist_r"),
+    "leg_l": ("hip_l", "knee_l", "ankle_l", "toe_l"),
+    "leg_r": ("hip_r", "knee_r", "ankle_r", "toe_r"),
+    "legs": ("hip_l", "knee_l", "ankle_l", "toe_l", "hip_r", "knee_r", "ankle_r", "toe_r"),
+    "upper": (
+        "spine",
+        "head",
+        "shoulder_l",
+        "elbow_l",
+        "wrist_l",
+        "shoulder_r",
+        "elbow_r",
+        "wrist_r",
+    ),
+}
+
+
+def joints_of(names) -> tuple[str, ...]:
+    """The joints ``names`` stand for -- group names (:data:`JOINT_GROUPS`) and joint names, mixed --
+    in skeleton order. Raises :class:`ValueError` naming one that is neither."""
+    if isinstance(names, str):
+        names = [names]
+    chosen: set[str] = set()
+    for name in names:
+        if name in JOINT_GROUPS:
+            chosen.update(JOINT_GROUPS[name])
+        elif name in JOINT_NAMES:
+            chosen.add(name)
+        else:
+            raise ValueError(
+                f"no joint or joint group {name!r}: the groups are {', '.join(JOINT_GROUPS)}; "
+                f"the joints {', '.join(JOINT_NAMES)}"
+            )
+    if not chosen:
+        raise ValueError("no joints named: give a group (e.g. 'upper') or joint names")
+    return tuple(n for n in JOINT_NAMES if n in chosen)
+
+
 CHILDREN: dict[str, list[str]] = defaultdict(list)
 for _j in SKELETON:
     if _j.parent:

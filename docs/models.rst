@@ -49,7 +49,8 @@ Two tool groups add to these catalogs; each tool's ``--help`` has its options:
   pipeline and the steps it calls. ``collision`` checks what the prop collides as against what it
   looks like (``roqsim_assets/README.md``, *Props: what a prop collides as*);
 * **a pedestrian** — ``roqsim walker import-actor`` turns a rigged Gazebo/Open-RMF actor into a
-  walker blueprint (``roqsim_walker/README.md``).
+  walker blueprint, and ``roqsim walker import-clip`` a BVH motion capture into a clip a walker plays
+  (``roqsim_walker/README.md``).
 
 Models
 ------

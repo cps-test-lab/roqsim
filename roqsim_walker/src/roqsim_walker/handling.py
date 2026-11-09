@@ -2,9 +2,10 @@
 
 With ``hands: true`` a walker gets a :class:`WalkerBody`, which the animation calls on every update
 after the gait's blendspace (:func:`roqsim_walker.animation.animate`): it solves the hands' goals,
-the posture and the gaze with :func:`roqsim_motion.ik.solve` over the gait's pose, blends each
-hand's solution in by its own weight (the trunk by the stronger hand's), and writes the thirty
-finger bones from each hand's pose. It is published on the blackboard as ``humanoid_body:<name>``,
+and the posture with :func:`roqsim_motion.ik.solve` over the gait's pose, blends each hand's
+solution in by its own weight (the trunk by the stronger hand's), and writes the thirty finger
+bones from each hand's pose; its gaze and its clips are the walker's look and motion layers
+(:mod:`roqsim_walker.layers`). It is published on the blackboard as ``humanoid_body:<name>``,
 the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through; a robot's
 body (:mod:`roqsim_motion.robot`) offers the same.
 
@@ -141,6 +142,25 @@ class WalkerBody(HumanoidBody):
         super().__init__(name)
 
     # -- HumanoidBody ---------------------------------------------------------------------------
+    #: The walker's clip player (:class:`roqsim_walker.layers.Layers`), set by the plugin.
+    motion = None
+
+    def set_gaze(self, point) -> None:
+        """The walker's look turns its head, over everything else (:mod:`roqsim_walker.layers`)."""
+        self.motion.look_at(point)
+
+    def looking(self) -> bool:
+        return self.motion.looking()
+
+    def play(self, clip: str, **kw) -> int:
+        return self.motion.play(clip, **kw)
+
+    def stop_clip(self, clip="") -> list:
+        return self.motion.stop(clip)
+
+    def clip_ended(self, layer: int) -> bool:
+        return self.motion.ended(layer)
+
     def reset(self) -> None:
         super().reset()
         self.weight = {"l": 0.0, "r": 0.0}
@@ -233,7 +253,7 @@ class WalkerBody(HumanoidBody):
 
     # -- the animation's hooks ------------------------------------------------------------------
     def pose(self, st, q, body, root_z, dt) -> float:
-        """Blend the solved hands, posture and gaze over the gait's pose ``q`` in place; the pelvis
+        """Blend the solved hands and posture over the gait's pose ``q`` in place; the pelvis
         drop (m) a crouch asks for."""
         for side in ("l", "r"):
             self.hand[side].advance(dt)
@@ -249,8 +269,7 @@ class WalkerBody(HumanoidBody):
             if self.goal[side] is None and self.weight[side] < 1e-3:
                 self.last[side] = None
         weight = max(self.weight.values())
-        gaze_w = 1.0 if self.gaze is not None else 0.0
-        if weight < 1e-3 and gaze_w == 0.0 and self.posture is None:
+        if weight < 1e-3 and self.posture is None:
             self._last_posture = None
             return 0.0
         shift = st.ground if st.ground is not None else 0.0
@@ -271,12 +290,12 @@ class WalkerBody(HumanoidBody):
                 pos = pos - rotate(wq, self.layouts[s].grip_pos)
             goals[s] = HandGoal(pos, quat)
         heading = yaw_to_quat(st.yaw)
-        sol = solve(self.desc, root, heading, local, goals, self.layouts, self.posture, self.gaze)
+        sol = solve(self.desc, root, heading, local, goals, self.layouts, self.posture)
         # The posture the solver chose eases from the last one at a bounded rate: a goal that crosses
         # from bending to crouching would otherwise move the body, and what it holds, at once.
         eased = self._ease(sol.posture, dt)
         if eased is not None:
-            sol = solve(self.desc, root, heading, local, goals, self.layouts, eased, self.gaze)
+            sol = solve(self.desc, root, heading, local, goals, self.layouts, eased)
         self._last_posture = sol.posture
         self.residual.update(sol.residual)
         for side in ("l", "r"):
@@ -290,8 +309,6 @@ class WalkerBody(HumanoidBody):
         for name in _TRUNK:
             if name in sol.rotations:
                 over.append((name, sol.rotations[name], trunk_w))
-        if "head" in sol.rotations:
-            over.append(("head", sol.rotations["head"], gaze_w))
         for side in ("l", "r"):
             if self.last[side] is not None:
                 over += [(n, r, self.weight[side]) for n, r in self.last[side].items()]

@@ -24,13 +24,7 @@ from roqsim_walker.humanoid import (
     quat_rotate,
     to_skeleton,
 )
-from roqsim_walker.motion import (
-    Clip,
-    blend_quats,
-    procedural_idle,
-    procedural_walk,
-    smoothstep,
-)
+from roqsim_walker.motion import Clip, ClipError, blend_quats, smoothstep
 from roqsim_walker.reach import MAX_BEND, SIDES, needed_bend, reach_pose
 
 logger = logging.getLogger(__name__)
@@ -265,16 +259,15 @@ def animate(data, st, new_pos, dt):
     q = blend_quats(q, qr, w_run)
     root_z = (1 - w_run) * root_z + w_run * zr
     q = _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
+    # Over the gait, in this order, each over what came before: the clips played on some joints
+    # (motion layers), a hand's reach, the motion core's hands and posture (hands on), the look.
+    root_z = _layers(st, q, root_z, dt)
     _reach(st, q, body, root_z, dt)
-    # Hands on: the motion core's hands, posture and gaze over the gait (roqsim_walker.handling).
     drop = st.rig.pose(st, q, body, root_z, dt) if st.rig is not None else 0.0
+    root = [body[0], body[1], st.skeleton.root_height + root_z - drop]
+    _look(st, q, root, dt)
     joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
-    poses = forward_kinematics(
-        [body[0], body[1], st.skeleton.root_height + root_z - drop],
-        st.yaw,
-        joint_rot,
-        skeleton=st.skeleton,
-    )
+    poses = forward_kinematics(root, st.yaw, joint_rot, skeleton=st.skeleton)
     write_pose(data, st, _foot_ground(poses, st, dt))
     if st.rig is not None:
         st.rig.write_fingers(data)
@@ -393,6 +386,125 @@ def _reach(st, q, new_pos, root_z, dt) -> None:
         q[j] = blend_quats(q[j : j + 1], np.asarray(rot)[None, :], w)[0]
 
 
+@dataclass
+class MotionLayer:
+    """A clip played over the gait on some of the joints: started by ``play``, it fades in to its
+    weight, plays (once, or round and round with ``loop``) at ``speed``, and fades out at its end
+    or once stopped. A layer that includes the pelvis carries the clip's height too."""
+
+    id: int
+    name: str
+    clip: Clip
+    joints: tuple  # indices into JOINT_NAMES
+    weight: float = 1.0
+    loop: bool = False
+    fade: float = 0.3
+    speed: float = 1.0
+    t: float = 0.0  # s into the clip
+    w: float = 0.0  # its weight now
+    stopping: bool = False
+
+    @property
+    def end(self) -> float:
+        """When a clip played once reaches its last frame (s)."""
+        return (self.clip.num_frames - 1) / self.clip.fps
+
+    def describe(self) -> dict:
+        return {
+            "id": self.id,
+            "clip": self.name,
+            "joints": [JOINT_NAMES[j] for j in self.joints],
+            "loop": self.loop,
+            "t": self.t,
+            "weight": self.w,
+            "stopping": self.stopping,
+        }
+
+
+def _layers(st, q, root_z, dt) -> float:
+    """Blend each playing layer's clip over ``q`` on its joints, in place, in the order they were
+    started; the root's height after them."""
+    for layer in list(st.layers):
+        if dt > 0.0:
+            layer.t += dt * layer.speed
+            if not layer.loop and layer.t >= layer.end - layer.fade * layer.speed:
+                layer.stopping = (
+                    True  # it fades out over its last `fade` and ends on its last frame
+                )
+            aim = 0.0 if layer.stopping else layer.weight
+            step = math.inf if layer.fade <= 0.0 else dt * layer.weight / layer.fade
+            layer.w += max(-step, min(step, aim - layer.w))
+        if layer.stopping and layer.w <= 1e-6:
+            st.layers.remove(layer)
+            st.layers_ended.add(layer.id)
+            continue
+        qc, zc = layer.clip.sample_at(layer.t, layer.loop)
+        for j in layer.joints:
+            q[j] = blend_quats(q[j : j + 1], qc[j : j + 1], layer.w)[0]
+        if 0 in layer.joints:  # the pelvis: the clip's height comes with it
+            root_z = (1.0 - layer.w) * root_z + layer.w * zc
+    return root_z
+
+
+@dataclass
+class Look:
+    """Where the head looks: a world point, or a callable giving one as it moves (``None``: where the
+    gait turns it); how much of the head's turn is the look's, and the head's rotation now."""
+
+    point: object = None
+    w: float = 0.0
+    rot: np.ndarray | None = None
+    settled: bool = False  # the head is on the point, within a degree
+    desc: object = None  # the walker's description for the head's limits (made on first use)
+
+
+#: How fast a look turns the head (rad/s), and fades in and out over the gait's (1/s).
+_LOOK_RATE = 3.0
+_LOOK_FADE = 2.5
+
+
+def look_point(point) -> np.ndarray | None:
+    p = point() if callable(point) else point
+    return None if p is None else np.asarray(p, float)
+
+
+def _look(st, q, root, dt) -> None:
+    """Turn the head toward ``st.look``'s point within its limits, in place, at a bounded rate."""
+    lk = st.look
+    head = JOINT_NAMES.index("head")
+    if dt > 0.0:
+        aim = 1.0 if lk.point is not None else 0.0
+        step = _LOOK_FADE * dt
+        lk.w = min(max(lk.w + max(-step, min(step, aim - lk.w)), 0.0), 1.0)
+    if lk.point is None and lk.w <= 1e-6:
+        lk.rot = None
+        return
+    if lk.rot is None:
+        lk.rot = np.asarray(q[head], float).copy()
+    point = look_point(lk.point) if lk.point is not None else None
+    if point is not None:
+        from roqsim_motion.ik import head_toward
+
+        from roqsim_motion import quat as Q
+
+        if lk.desc is None:
+            from roqsim_walker.handling import description_for
+
+            lk.desc = description_for(st.skeleton)
+        poses = forward_kinematics(
+            root,
+            st.yaw,
+            {name: q[j] for j, name in enumerate(JOINT_NAMES)},
+            skeleton=st.skeleton,
+        )
+        want = head_toward(lk.desc, *poses["spine"], point)
+        angle = Q.angle_between(lk.rot, want)
+        turn = _LOOK_RATE * dt
+        lk.rot = want if angle <= turn else Q.slerp(lk.rot, want, turn / angle)
+        lk.settled = angle <= max(turn, math.radians(1.0))
+    q[head] = blend_quats(q[head : head + 1], lk.rot[None, :], lk.w)[0]
+
+
 def _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist):
     """CARLA's BS_GEN3 ``Direction`` parameter, in two parts.
 
@@ -502,6 +614,12 @@ class AnimState:
     face: float | None = None
     #: the body's turn rate cap (rad/s) a move sets while it carries; ``None``: ``_MAX_TURN_RATE``
     turn_rate: float | None = None
+    #: the clips playing over the gait (:class:`MotionLayer`), in the order they were started, and
+    #: the ids of those that have ended
+    layers: list = field(default_factory=list)
+    layers_ended: set = field(default_factory=set)
+    #: where the head looks (:class:`Look`)
+    look: Look = field(default_factory=Look)
 
 
 def make_anim_state(model, spec) -> AnimState:
@@ -509,10 +627,10 @@ def make_anim_state(model, spec) -> AnimState:
     skel = to_skeleton(spec.get("skeleton"))
     st = AnimState(
         name=spec["name"],
-        walk=_load_clip(spec, "walk", procedural_walk, skel),
-        idle=_load_clip(spec, "idle", procedural_idle, skel),
-        run=_load_clip(spec, "run", procedural_walk, skel),
-        short=_load_clip(spec, "short", procedural_walk, skel),
+        walk=_load_clip(spec, "walk", skel),
+        idle=_load_clip(spec, "idle", skel),
+        run=_load_clip(spec, "run", skel),
+        short=_load_clip(spec, "short", skel),
         turn_l=_opt_clip(spec, "turn_l", skel),
         turn_r=_opt_clip(spec, "turn_r", skel),
         walk_l=_opt_clip(spec, "walk_l", skel),
@@ -532,32 +650,23 @@ def make_anim_state(model, spec) -> AnimState:
     return st
 
 
-def _load_clip(spec, kind, fallback, skel) -> Clip:
+def _load_clip(spec, kind, skel) -> Clip:
+    """The ``kind`` locomotion clip the blueprint resolved, grounded on this walker's feet."""
     path = (spec.get("motion") or {}).get(kind)
-    if path:
-        try:
-            return _ground_clip(Clip.load(path), skel)
-        except Exception as e:  # noqa: BLE001 -- fall back, log why
-            logger.warning(
-                "walker %s: could not load %s clip %s (%s); using procedural",
-                spec.get("name"),
-                kind,
-                path,
-                e,
-            )
-    return _ground_clip(fallback(), skel)
+    if not path:
+        raise ClipError(f"walker {spec.get('name')}: no {kind} clip resolved")
+    return _ground_clip(Clip.load(path), skel)
 
 
 def _opt_clip(spec, kind, skel):
-    """Load an optional clip (e.g. a turn) -> grounded Clip or None."""
+    """An optional locomotion clip (a turn, a strafe), grounded; ``None`` when there is none."""
     path = (spec.get("motion") or {}).get(kind)
-    if not path:
-        return None
-    try:
-        return _ground_clip(Clip.load(path), skel)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("walker %s: could not load %s clip %s (%s)", spec.get("name"), kind, path, e)
-        return None
+    return _ground_clip(Clip.load(path), skel) if path else None
+
+
+def load_layer_clip(path, skel) -> Clip:
+    """A clip a motion layer plays, grounded as the locomotion clips are."""
+    return _ground_clip(Clip.load(path), skel)
 
 
 def _mocap_ids(model, name) -> dict:

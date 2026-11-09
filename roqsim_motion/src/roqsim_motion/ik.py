@@ -283,13 +283,8 @@ def solve(
         out[f"elbow_{s}"] = el_l
         out[f"wrist_{s}"] = wrist_l
 
-    # Gaze: the head turns toward a point, inside its limits.
     if gaze is not None:
-        head_pos = spine_pos + Q.rotate(spine_w, desc.offset("head"))
-        d = Q.rotate(Q.inv(spine_w), np.asarray(gaze, float) - head_pos)
-        yaw = math.atan2(d[1], d[0])
-        pitch = -math.atan2(d[2], math.hypot(d[0], d[1]))
-        out["head"] = desc.clamp("head", Q.from_euler("zy", [yaw, pitch]))
+        out["head"] = head_toward(desc, spine_pos, spine_w, gaze)
 
     sol = Solution(out, crouch, {}, Posture(turn, lean, crouch, bend))
     if goals:
@@ -300,6 +295,16 @@ def solve(
             grip = wp if g.quat is None else wp + Q.rotate(wqq, layouts[s].grip_pos)
             sol.residual[s] = float(np.linalg.norm(grip - np.asarray(g.pos, float)))
     return sol
+
+
+def head_toward(desc: Description, spine_pos, spine_w, point) -> np.ndarray:
+    """The head's local rotation that turns it toward the world ``point``, inside its limits, for a
+    spine at world ``spine_pos`` turned by ``spine_w``."""
+    head_pos = np.asarray(spine_pos, float) + Q.rotate(spine_w, desc.offset("head"))
+    d = Q.rotate(Q.inv(spine_w), np.asarray(point, float) - head_pos)
+    yaw = math.atan2(d[1], d[0])
+    pitch = -math.atan2(d[2], math.hypot(d[0], d[1]))
+    return desc.clamp("head", Q.from_euler("zy", [yaw, pitch]))
 
 
 def _twist_part(rot, axis, share: float) -> np.ndarray:
