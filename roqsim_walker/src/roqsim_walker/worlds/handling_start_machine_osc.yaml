@@ -1,5 +1,5 @@
 # Scene 1 in OpenSCENARIO: handling_start_machine.yaml with handling_start_machine.osc for its scene.
-# smoke-steps: 6000
+# smoke-steps: 7000
 extends: ./handling_start_machine.yaml
 disable: [scene]
 components:

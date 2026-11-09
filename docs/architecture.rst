@@ -44,7 +44,7 @@ A plugin (``roqsim.plugin.Plugin``) implements any subset of seven hooks. The en
 +======================+=====================================+=================================================+================================================================================================+
 | ``build(spec, ctx)`` | once, pre-compile                   | ``spec`` only (``model``/``data`` are ``None``) | add bodies/geoms/sensors/assets                                                                |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
-| ``build_late(spec,`` | once, after every ``build``,        | ``spec`` only                                   | link its own model to another plugin's (an equality between two entities), wherever the world |
+| ``build_late(spec,`` | once, after every ``build``,        | ``spec`` only                                   | link its own model to another plugin's (an equality between two entities), wherever the world  |
 | ``ctx)``             | pre-compile                         |                                                 | lists them                                                                                     |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | ``configure(ctx)``   | once, post-compile                  | ``model``, ``data``, ids                        | resolve body/site ids, open resources, advertise services, register ``RobotHandle``/``Entity`` |
