@@ -119,12 +119,12 @@ with its head and right arm, or a clip of the whole body plays while it stands:
 
 ```python
 walker = ctx.blackboard.get("walker:pedestrian")
-layer = walker.play("wave", joints=["arm_r"])   # once; returns the layer's id
-walker.clip_ended(layer)                         # True once it has played and faded out
+layer = walker.play("wave", joints=["arm_r"])  # once; returns the layer's id
+walker.clip_ended(layer)  # True once it has played and faded out
 walker.play("/abs/clips/carry_box.npz", joints="upper", loop=True, weight=0.7)
-walker.stop_clip("/abs/clips/carry_box.npz")    # fades it out; stop_clip() stops every layer
-walker.look_at("tote_1")                         # the head follows an entity, a site or a body
-walker.look_at([2.0, 1.0, 1.6])                  # or a world point; look_at(None) turns it back
+walker.stop_clip("/abs/clips/carry_box.npz")  # fades it out; stop_clip() stops every layer
+walker.look_at("tote_1")  # the head follows an entity, a site or a body
+walker.look_at([2.0, 1.0, 1.6])  # or a world point; look_at(None) turns it back
 ```
 
 | key | | |
@@ -143,7 +143,9 @@ clip's height too, so a crouch in a clip lowers the body; the feet are grounded 
 the gait. The clip's travel and heading are not played: where the walker goes is its navigator's.
 
 `look_at` turns the head toward a target within its limits (70 degrees to a side, 40 up, 50 down),
-at a bounded rate, and follows the target as it moves; `look_at(None)` eases back to the gait's.
+at a bounded rate (3 rad/s), and follows the target as it moves; `look_at(None)` eases back to the
+gait's. The `look_at` move ends once the head is on its target, so one aimed at a target crossing
+the view faster than the head turns fails after 4 s, naming the head turning.
 
 The same from outside the process: the walker's commands `play`, `stop_clip` and `look_at`, and its
 `clips` output (on the control socket, and from OpenSCENARIO through `entity_call`; not on ROS). A
@@ -161,9 +163,9 @@ door handle:
 
 ```python
 handle.reach(left=left_point, right=right_point)  # re-set it every step as the points move
-handle.reach(right=right_point)                   # one hand: the left goes back to the walk
-left, right = handle.hands()                      # where the wrists are now
-handle.reach()                                    # let go with both
+handle.reach(right=right_point)  # one hand: the left goes back to the walk
+left, right = handle.hands()  # where the wrists are now
+handle.reach()  # let go with both
 ```
 
 Each point is three finite numbers (x, y, z, world); anything else raises `ValueError` at the
@@ -230,8 +232,8 @@ OpenSCENARIO); a move never decides what comes next.
 
 ```python
 worker = ctx.blackboard.get("humanoid:worker")
-seq = worker.grasp("both", "tote_1")             # = worker.start("grasp", hand="both", target="tote_1")
-status = worker.status()                         # MachineStatus(seq, program, finished, error)
+seq = worker.grasp("both", "tote_1")  # = worker.start("grasp", hand="both", target="tote_1")
+status = worker.status()  # MachineStatus(seq, program, finished, error)
 ```
 
 A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its

@@ -100,6 +100,7 @@ class Layers:
         :mod:`roqsim_motion.targets`), a world point (3 finite numbers), or a callable giving one.
         ``None`` or ``""`` turns it back to the gait's. Raises :class:`ValueError` for one it
         cannot look at."""
+        self.st.look.settled = False  # a new point: not on it until the head has turned
         if point is None or (isinstance(point, str) and point == ""):
             self.st.look.point = None
             return

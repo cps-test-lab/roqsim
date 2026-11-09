@@ -419,3 +419,16 @@ def test_a_body_that_plays_no_clips_or_turns_no_head_says_so():
         body.play("wave")
     with pytest.raises(NotImplementedError, match="robot turns no head"):
         body.set_gaze([1.0, 0.0, 1.0])
+
+
+def test_a_look_at_a_new_target_ends_only_once_the_head_is_on_it(sim):
+    sim.ok("look_at", target="start/button")  # ahead, to its left
+    t = sim.e.ctx.sim_time
+    sim.ok("look_at", target="cab/drawer_1/grip")  # ahead, to its right: the head turns a while
+    assert sim.e.ctx.sim_time - t > 0.15
+    head = sim.body.st.mocap["head"]
+    to = sim.d.site("cab/drawer_1/grip").xpos - sim.d.mocap_pos[head]
+    from roqsim_walker.humanoid import quat_rotate
+
+    f = quat_rotate(sim.d.mocap_quat[head], [1.0, 0.0, 0.0])
+    assert abs(math.atan2(f[1], f[0]) - math.atan2(to[1], to[0])) < math.radians(3)

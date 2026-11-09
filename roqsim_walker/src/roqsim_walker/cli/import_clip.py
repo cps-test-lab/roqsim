@@ -14,8 +14,9 @@ walker's ``motion:``; ``--loop`` marks a cycle, and its stride is measured from 
 frame by frame: the source's rest pose (a T-pose or an A-pose, as BVH captures come) is matched to the
 walker's arms-down rest by turning each walker bone onto its source bone at rest, so a capture moves
 the walker's limbs as it moves its own, whatever the two rigs' proportions. A bone's twist about its
-own line follows the source's. The walker's trunk has fewer bones than most rigs': its spine bone
-turns as the source's upper spine does, and a neck's bend is not drawn.
+own line follows the source's. The walker's trunk has fewer bones than most rigs': its pelvis turns
+as the source's hips do and its spine as the source's upper spine, so the bend of the spine bones
+between them and of a neck is not drawn; the head turns as the source's does.
 
 **Which bone is which.** Joints are found by name -- the Mixamo, CMU and most game rigs' names
 (``Hips``, ``LeftUpLeg``, ``LeftArm``, ``LeftForeArm``, ``thigh_l``, ...), any ``prefix:`` dropped --

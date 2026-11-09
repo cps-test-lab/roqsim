@@ -549,7 +549,7 @@ def test_a_reset_does_not_stop_a_mover_for_the_next_episode():
         engine.step()
         engine.step()
         engine.reset()
-        assert engine.ctx.blackboard.require("walker:worker").cancels == 0
+        assert engine.ctx.blackboard.require("nav:worker:handle").cancels == 0
     finally:
         engine.shutdown()
 

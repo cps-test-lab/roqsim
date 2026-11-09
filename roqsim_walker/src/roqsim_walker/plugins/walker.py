@@ -66,6 +66,7 @@ from roqsim_walker.animation import (
 from roqsim_walker.blueprint import BlueprintError, resolve_clip, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.layers import Layers, check
+from roqsim_walker.motion import Clip
 from roqsim_walker.output import STATE_KEY
 
 
@@ -244,8 +245,8 @@ class WalkerPlugin(Plugin):
     LAYER_KEYS = ("clip", "joints", "weight", "loop", "fade", "speed")
 
     def _layer_errors(self, config: dict) -> list[str]:
-        """What is wrong with ``layers:``: each a mapping with a ``clip`` the walker has, joints it
-        has, and numbers in range -- checked by playing it on a scratch player."""
+        """What is wrong with ``layers:``: each a mapping with a ``clip`` the walker has and can
+        read, joints it has, and numbers in range."""
         layers = config.get("layers", [])
         if not isinstance(layers, list):
             return [f"walker: 'layers' is a list of clips to play, not {layers!r}"]
@@ -263,7 +264,7 @@ class WalkerPlugin(Plugin):
                 )
                 continue
             try:
-                resolve_clip(config.get("walker", ""), entry["clip"])
+                Clip.load(resolve_clip(config.get("walker", ""), entry["clip"]))
                 check(**{k: v for k, v in entry.items() if k != "clip"})
             except (BlueprintError, ValueError) as exc:
                 errors.append(f"{where}: {exc}")

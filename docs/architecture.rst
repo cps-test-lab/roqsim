@@ -735,7 +735,8 @@ a program and waits for *that* start, raising with the machine's error; ``self.s
 ``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
 start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
 joined stops the run when the scene ends, and the scene does not end before a task has, unless it was spawned as ``background``);
-``self.navigate(walker, poses)`` sends a walker or a navigator and waits on its route's number;
+``self.navigate(nav, poses)`` sends a mover through its navigator's handle (``nav:<name>:handle``, a
+walker's as a robot's) and waits on its route's number;
 ``until``, ``wait`` and ``event`` do what they say, and ``set_entity_state`` puts an entity at a pose as a
 world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
 in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
