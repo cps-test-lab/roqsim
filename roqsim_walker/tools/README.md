@@ -27,8 +27,11 @@ roqsim walker import-actor <actor.dae> --name FemaleVisitorWalk --anim-set femal
     --credits-source <fuel-url> --credits-licence "CC-BY 4.0" --credits-author "..."
 ```
 
-Writes `<name>.obj` + `.mtl` + textures, `<name>.walker.json` (skeleton/collision/sole), and the
-authored `<name>.weights.npz`, plus a `CREDITS.txt`. Like the `roqsim_assets` prop tools, it
+Writes `<name>.obj` + `.mtl` + textures, `<name>.walker.json` (skeleton/collision/sole), the
+authored `<name>.weights.npz` and, where the rig has finger bones, the finger weights
+`<name>.fingers.npz` a walker with `hands: true` binds its fingers with, plus a `CREDITS.txt`.
+`--fingers-only` adds the finger weights, and their sentence in `CREDITS.txt`, to an existing
+blueprint of the same source. Like the `roqsim_assets` prop tools, it
 **only produces files** — committing them and honouring the licence is on you (CC0 / CC-BY /
 CC-BY-SA only; see the package [`THIRD_PARTY.md`](../THIRD_PARTY.md)).
 
