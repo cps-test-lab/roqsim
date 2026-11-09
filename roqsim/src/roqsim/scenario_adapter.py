@@ -42,6 +42,16 @@ Because the world is *compiled* when the engine is built (not on ``reset``), the
 lazily -- on the first of ``reset()``/``dt``/``step()`` -- so it is constructed with the world and
 overrides in place. A later ``reset()`` naming a different world, or different overrides, rebuilds.
 
+The same two names arrive from a parameter document's ``_reset`` mapping, which scenario-execution
+passes to ``reset()`` as runner arguments: that is how one process runs a parameter file whose
+documents name different worlds, one after another. A rebuild happens at a world change and nowhere
+else, in this order: the recording of the run before is finished with its summary, the engine is
+shut down, the new world is built, reset, and the next run's recording started. The episode
+counter continues across the rebuild -- the new engine starts where the old one stopped, with the
+seed it drew kept (below) -- so no two runs of one process share a ``(seed, episode)`` pair in
+their recordings. An empty ``world_overrides`` mapping means "none", the same as no mapping at all,
+so a document that says so neither inherits the deployment's overrides nor forces a rebuild.
+
 The deployment may also supply overrides without the scenario mentioning them, through
 ``ROQSIM_WORLD_OVERRIDES`` (a path to the same YAML document ``roqsim sim --override``
 reads) -- the stepped shape's equivalent of that flag, since scenario-execution constructs
@@ -164,6 +174,14 @@ def _wrap_logger(logger):
     return _EagerLogger(logger)
 
 
+def _same_overrides(a, b) -> bool:
+    """Whether two ``world_overrides`` values build the same world: an empty mapping is no
+    overrides, the same as ``None``. The unbuilt sentinel equals nothing."""
+    if a is _UNBUILT or b is _UNBUILT:
+        return False
+    return (a or None) == (b or None)
+
+
 def _resolve_world(world: str) -> str:
     """Accept the same world references ``roqsim sim`` does, not only a filesystem path.
 
@@ -284,8 +302,16 @@ class MujocoSim(_Base):
         *experiment is the world* sweeps it per configuration, and reusing the previous
         model for a new world would silently run the wrong one.
         """
-        if self._engine is not None and world == self._world and overrides == self._built_overrides:
+        if (
+            self._engine is not None
+            and world == self._world
+            and _same_overrides(overrides, self._built_overrides)
+        ):
             return
+        # The trials the process has run so far, whatever engine ran them: a rebuilt engine
+        # starts counting where the old one stopped, so with the seed kept across the rebuild
+        # (see `_drawn_seed`) every run of the process has a (seed, episode) pair of its own.
+        episodes = self._engine.ctx.episode if self._engine is not None else 0
         self._teardown_engine()
         cfg = load_config(_resolve_world(world), overrides, self._transport)
         engine = Engine(cfg, logger=_wrap_logger(self._logger))
@@ -293,6 +319,7 @@ class MujocoSim(_Base):
         # resolved after this point would reach the tick-time consumers and silently miss the
         # configure-time ones.
         engine.ctx.seed = self._seed_for(cfg)
+        engine.ctx.episode = episodes
         # A setup that raises has shut down what it configured; held only once it succeeded, so
         # the next call builds afresh instead of stepping an engine that never set up.
         engine.setup()
@@ -500,6 +527,10 @@ class MujocoSim(_Base):
     def reset(
         self, world=None, world_overrides=None, headless=None, output_dir=None, **kwargs
     ) -> None:
+        # `world` and `world_overrides` come from the scenario's own parameters or from its
+        # document's `_reset` mapping; either way a change of world rebuilds here, before the
+        # engine is reset and the run's recording started -- see the module docstring for the
+        # order and for why an empty mapping is "no overrides" rather than "the default".
         self._build(
             world or self._default_world,
             world_overrides if world_overrides is not None else self._default_overrides,
