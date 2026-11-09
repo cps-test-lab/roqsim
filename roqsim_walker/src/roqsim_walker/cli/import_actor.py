@@ -233,9 +233,11 @@ def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict
     """joint -> capsule radius (m): the spread of the vertices this joint dominates, measured off
     its bone axis. Mirrors what a CARLA Phys asset gives, but derived from geometry.
 
-    Measured against ``bind_ours`` -- the source joints in the mesh's own (T-)pose, NOT the arms-down
-    rest pose. Using the rest pose here would place the arm bones vertically while the mesh arms
-    stick out sideways, inflating the arm radii to garbage.
+    Measured against ``bind_ours``, the bones the skin is bound to at runtime in the mesh's own
+    (T-)pose (:func:`measure` takes them from ``skin._bind_bones``), which are what each capsule
+    rides. Not the arms-down rest pose, which would place the arm bones vertically while the mesh's
+    arms stick out sideways; and not the source rig's own bones, which the walker's straight limbs
+    do not keep.
     """
     dom = np.argmax(w, axis=1)
     out = {}
@@ -255,29 +257,109 @@ def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict
     return out
 
 
+def _lowest(points: np.ndarray, rear: bool, what: str) -> np.ndarray:
+    """The lowest of ``points``; of several as low (to 0.02 mm), the rearmost or the foremost."""
+    if not len(points):
+        raise SystemExit(f"no vertex follows {what}; cannot measure its sole")
+    low = points[points[:, 2] <= points[:, 2].min() + 2e-5]
+    return low[np.argmin(low[:, 0])] if rear else low[np.argmax(low[:, 0])]
+
+
 def measure_sole(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> tuple[dict, list]:
     """``(sole, foot_tip)``: where each shoe actually touches the floor.
 
-    ``sole[s]['heel'|'toe']`` are offsets from the **ankle**/**toe** joints to the lowest sole
-    points, which is how ``animation._foot_ground`` reads them (``joint + rotate(q, offset)``);
-    at rest our joint frames are world-aligned, so a plain world-space delta is what it wants. Legs
-    are identical between the T-pose and rest (only the shoulders rotate), so ``bind_ours`` is the
-    right frame here too.
+    ``sole[s]['heel']`` is the lowest point of the vertices the **ankle** carries, as an offset from
+    the ankle; ``sole[s]['toe']`` the lowest of those the **toe** carries, from the toe -- which is
+    how ``animation._lowest_sole`` reads them (``joint + rotate(q, offset)``), each riding its
+    joint. Taking the lowest point (ties to the rearmost and foremost) puts the standing walker's
+    lowest point exactly on the floor whatever the sole's shape; a point merely low on the shoe
+    (the rearmost of its lowest centimetre) can stand above it and let the shoe sink.
+
+    ``bind_ours`` are the bones the skin is bound to at runtime (:func:`measure` takes them from
+    ``skin._bind_bones``); at rest their frames are world-aligned, so a plain world-space delta is
+    what the grounding wants.
     """
     dom = np.argmax(w, axis=1)
     col = {n: i for i, n in enumerate(JOINT_NAMES)}
     sole, tips = {}, []
     for s in ("l", "r"):
-        foot = verts[(dom == col[f"ankle_{s}"]) | (dom == col[f"toe_{s}"])]
-        lo = foot[foot[:, 2] < foot[:, 2].min() + 0.01]  # the sole: lowest 1 cm of the shoe
-        heel_pt = lo[np.argmin(lo[:, 0])]  # rearmost sole point
-        toe_pt = lo[np.argmax(lo[:, 0])]  # foremost sole point
+        heel_pt = _lowest(verts[dom == col[f"ankle_{s}"]], rear=True, what=f"ankle_{s}")
+        toe_pt = _lowest(verts[dom == col[f"toe_{s}"]], rear=False, what=f"toe_{s}")
         sole[s] = {
             "heel": [round(float(v), 4) for v in (heel_pt - bind_ours[f"ankle_{s}"])],
             "toe": [round(float(v), 4) for v in (toe_pt - bind_ours[f"toe_{s}"])],
         }
         tips.append(toe_pt - bind_ours[f"toe_{s}"])
     return sole, [round(float(v), 4) for v in np.mean(tips, axis=0)]
+
+
+def measure_hull(verts: np.ndarray, w: np.ndarray) -> dict:
+    """``side -> {"joints", "at", "w"}``: the points of each shoe its foot grounding is taken on.
+
+    The lowest point of a body turned any way lies on its convex hull, so each shoe is sampled by
+    the hull's corners -- one hull per joint the shoe's vertices follow (ankle, toe), since the toe
+    bends against the foot. Each point keeps its bind position in the walker's frame (``at``) and
+    its skin weights over that leg's joints (``w``, columns ``joints``), so the runtime skins it
+    exactly as the mesh (``animation._lowest_sole``) and the shoe can turn no point of its skin
+    under the floor unseen -- as the toe cap at toe-off, which a heel and a toe point miss.
+    """
+    from scipy.spatial import ConvexHull
+
+    dom = np.argmax(w, axis=1)
+    col = {n: i for i, n in enumerate(JOINT_NAMES)}
+    out = {}
+    for s in ("l", "r"):
+        leg = [f"hip_{s}", f"knee_{s}", f"ankle_{s}", f"toe_{s}"]
+        idx = []
+        for j in (f"ankle_{s}", f"toe_{s}"):
+            group = np.flatnonzero(dom == col[j])
+            if len(group) < 4:
+                raise SystemExit(f"the {j} shoe has {len(group)} vertices; cannot take its hull")
+            idx.extend(group[ConvexHull(verts[group]).vertices])
+        idx = np.unique(idx)
+        wl = w[idx][:, [col[j] for j in leg]]
+        off_leg = 1.0 - wl.sum(axis=1)
+        if off_leg.max() > 1e-3:
+            raise SystemExit(
+                f"a {s} shoe vertex is {off_leg.max():.3f} skinned off its leg; refusing to drop it"
+            )
+        used = wl.max(axis=0) > 1e-3
+        wl = wl[:, used] / wl[:, used].sum(axis=1, keepdims=True)
+        out[s] = {
+            "joints": [j for j, u in zip(leg, used, strict=True) if u],
+            "at": np.round(verts[idx], 4).tolist(),
+            "w": np.round(wl, 4).tolist(),
+        }
+    return out
+
+
+def measure(verts: np.ndarray, w: np.ndarray, skeleton: dict, tpose: bool, flip: bool) -> dict:
+    """What a blueprint's ``walker.json`` says of its mesh's shape, measured on the mesh as MuJoCo
+    poses it: ``{"height", "foot_tip", "collision", "sole"}``, the sole with each shoe's ``hull``.
+
+    ``verts`` (soles on z = 0) and their skin weights ``w`` are turned as the skin turns them
+    (``skin._aligner``) and measured against the bones the skin is bound to at runtime -- ``skin._bind_bones``
+    of ``skeleton`` (a ``walker.json`` skeleton dict) and ``tpose`` -- which are what the foot
+    grounding adds a sole offset to and what a capsule rides. The source rig's own bones are not
+    those: the walker's limbs are straight where the rig's bend, which puts the runtime ankle
+    centimetres from the rig's. Anything that derives a blueprint from an import measures here too.
+    """
+    from roqsim_walker import skin
+    from roqsim_walker.humanoid import to_skeleton
+
+    verts = skin._aligner(verts, flip=flip)(np.asarray(verts, float))
+    poses = skin._bind_bones(tpose=tpose, skeleton=to_skeleton(skeleton))
+    bind = {name: pos for name, (pos, _) in poses.items()}
+    collision = measure_collision(verts, w, bind)
+    sole, foot_tip = measure_sole(verts, w, bind)
+    for side, hull in measure_hull(verts, w).items():
+        sole[side]["hull"] = hull
+    return {
+        "height": round(float(verts[:, 2].max()), 4),
+        "foot_tip": foot_tip,
+        "collision": collision,
+        "sole": sole,
+    }
 
 
 def write_obj(path: str, parts, verts: np.ndarray, mtl_name: str) -> None:
@@ -327,6 +409,10 @@ def credits_text(name: str, source: str, licence: str, author: str) -> str:
         f"{name}\n\nSource:  {source}\n"
         f"Licence: {licence}\n"
         f"Author:  {author}\n\n"
+        "Every file here is regenerated from that source by the import below;\n"
+        "none is edited by hand. Its walker.json is measured on the mesh against\n"
+        "the bones the walker's skin is posed on at runtime, and grounds each\n"
+        "shoe on its hull.\n\n"
         "Imported with `roqsim walker import-actor`: the skin (mesh, textures,\n"
         "skeleton, skin weights) is the source's. Locomotion comes from this\n"
         "package's models/anims/, which are CARLA retargets under CC-BY 4.0 --\n"
@@ -405,20 +491,20 @@ def main(argv: list | None = None) -> None:
     verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
     zshift = verts[:, 2].min()
     verts[:, 2] -= zshift
-    height = float(verts[:, 2].max())
 
     # Only the vertices the KEPT groups reference feed the geometry measurements -- so a dropped bag
     # skinned to the hand does not inflate the wrist's collision radius.
     kept = np.unique(
         np.concatenate([np.asarray(p.triangleset().vertex_index).ravel() for p in parts])
     )
-
-    # Source joints in the mesh's own (T-)pose, z-shifted to match the dropped mesh. This is the
-    # frame the vertices live in, so it is what the geometric measurements below must use.
-    bind_ours = {ours: bind[src][:3, 3] - [0, 0, zshift] for ours, src in JOINT_MAP.items()}
-
-    collision = measure_collision(verts[kept], w17[kept], bind_ours)
-    sole, foot_tip = measure_sole(verts[kept], w17[kept], bind_ours)
+    shape = measure(
+        verts[kept],
+        w17[kept],
+        {"root_height": root_height, "offsets": offsets},
+        tpose=True,
+        flip=args.flip,
+    )
+    height, collision, sole = shape["height"], shape["collision"], shape["sole"]
 
     write_obj(os.path.join(wdir, f"{stem}.obj"), parts, verts, f"{stem}.mtl")
     write_mtl(os.path.join(wdir, f"{stem}.mtl"), materials)
@@ -439,8 +525,8 @@ def main(argv: list | None = None) -> None:
         "materials": {m: {"texture": i["texture"], "normal": None} for m, i in materials.items()},
         "skeleton": {
             "root_height": root_height,
-            "height": round(height, 4),
-            "foot_tip": foot_tip,
+            "height": height,
+            "foot_tip": shape["foot_tip"],
             "offsets": offsets,
         },
         "collision": collision,
