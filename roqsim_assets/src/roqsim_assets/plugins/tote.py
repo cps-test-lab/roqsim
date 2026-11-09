@@ -1,10 +1,11 @@
-"""Scene plugin: a tote -- an open box with two handles -- that hands carry by its handles.
+"""Scene plugin: a tote -- an open box of five walls -- that hands carry by its two ends.
 
-A free body, so physics carries it and a scenario can place it. Its handles are slots in its two
-short sides (the tote's ±x); each has a grip site, ``<name>/grip_l`` (the +x end, for a left hand
-when the tote is carried in front, its long side across the body) and ``<name>/grip_r`` (the -x
-end), in the grip-frame convention of ``roqsim_motion.hands``: +x out of the palm toward the tote,
-+z along the fingers, down. ``look_full`` / ``look_empty`` bodies, contents shown and hidden, let a
+A free body, so physics carries it and a scenario can place it. Its two short sides (the tote's ±x)
+are solid walls with no handle built into them; where a hand holds each is a grip site outside the
+wall, a handle's radius (:data:`GRIP_OUT`) from it and 3 cm under the rim: ``<name>/grip_l`` (the +x
+end, for a left hand when the tote is carried in front, its long side across the body) and
+``<name>/grip_r`` (the -x end), in the grip-frame convention of ``roqsim_motion.hands``: +x out of
+the palm toward the tote, +z along the fingers, down. ``look_full`` / ``look_empty`` bodies, contents shown and hidden, let a
 ``part_state`` give it those states.
 
 Contact is tuned to be held and set down, as ``graspable_box``'s: box primitives, ``condim 4``.
@@ -63,8 +64,8 @@ class TotePlugin(Plugin):
             ((L / 2, t / 2, H / 2), (0.0, -W / 2 + t / 2, H / 2)),
         ):
             body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size), pos=list(at), **common)
-        # The handles: a hand's grip frame at each end, palm toward the tote, fingers down; a
-        # handle's radius out from the wall, so the palm lies on it.
+        # Where a hand holds it: a grip frame outside each end wall, palm toward the tote, fingers
+        # down; a handle's radius out from the wall, so the palm lies on it.
         hz = H - 0.03
         body.add_site(name=f"{n}/grip_l", pos=[L / 2 + GRIP_OUT, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
         body.add_site(name=f"{n}/grip_r", pos=[-L / 2 - GRIP_OUT, 0.0, hz], quat=[0.0, 1.0, 0.0, 0.0])

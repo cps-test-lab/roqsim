@@ -74,7 +74,15 @@ class PushButtonPlugin(Plugin):
         self.handle = ButtonHandle(self)
 
     def validate_config(self, config: dict) -> list[str]:
-        return config_pose_errors(config, f"push_button {self.address}")
+        errors = config_pose_errors(config, f"push_button {self.address}")
+        threshold = config.get("threshold", self.CONFIG_SCHEMA["threshold"].default)
+        release = config.get("release", self.CONFIG_SCHEMA["release"].default)
+        if isinstance(threshold, (int, float)) and isinstance(release, (int, float)) and release >= threshold:
+            errors.append(
+                f"push_button {self.address}: 'release' ({release}) is where a pressed button comes back "
+                f"to, so it lies below 'threshold' ({threshold})"
+            )
+        return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         s = self.settings
@@ -124,7 +132,7 @@ class PushButtonPlugin(Plugin):
         # a snap action: pressed past the threshold, released only back under the release point, so a
         # button that rings as the finger lets go is pressed once
         if self.is_pressed:
-            pressed = self.travel_now >= min(s.release, s.threshold) * s.stroke
+            pressed = self.travel_now >= s.release * s.stroke
         else:
             pressed = self.travel_now >= s.threshold * s.stroke
         if pressed != self.is_pressed:

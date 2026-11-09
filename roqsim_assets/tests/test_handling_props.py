@@ -107,3 +107,9 @@ def test_a_tote_stands_on_the_floor_with_two_handle_sites_facing_it(props):
         x = site.xmat.reshape(3, 3)[:, 0]
         assert np.dot(x, centre - site.xpos) > 0  # the palm faces the tote
         assert np.allclose(site.xmat.reshape(3, 3)[:, 2], [0, 0, -1], atol=1e-6)
+
+
+def test_a_release_point_at_or_above_the_threshold_is_refused():
+    with pytest.raises(Exception, match=r"'release' \(0.7\).*below 'threshold' \(0.6\)"):
+        _engine([{"push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}, "release": 0.7},
+                  "name": "start"}])
