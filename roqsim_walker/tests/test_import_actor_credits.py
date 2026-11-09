@@ -71,3 +71,14 @@ def test_a_bundled_blueprints_finger_weights_are_credited_as_the_import_writes_t
 
     has_weights = any(folder.glob("*.fingers.npz"))
     assert (FINGERS_CREDIT in (folder / "CREDITS.txt").read_text()) == has_weights
+
+
+def test_fingers_only_credits_its_weights_once_in_the_current_wording():
+    from roqsim_walker.cli.import_actor import FINGERS_CREDIT, with_fingers_credit
+
+    plain = credits_text("Actor", *VALUES)
+    older = plain + "\nThe finger weights (*.fingers.npz) came from elsewhere.\n"
+    for text in (plain, older, credits_text("Actor", *VALUES, fingers=True)):
+        out = with_fingers_credit(text)
+        assert out.count("The finger weights") == 1 and out.endswith(FINGERS_CREDIT)
+    assert with_fingers_credit(plain) == credits_text("Actor", *VALUES, fingers=True)

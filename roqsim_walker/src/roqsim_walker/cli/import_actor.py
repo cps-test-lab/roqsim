@@ -262,9 +262,8 @@ def write_fingers(dae: str, wdir: str, stem: str) -> str:
     path = save_fingers(os.path.join(wdir, f"{stem}.fingers.npz"), verts, W, names)
     with open(credits) as f:
         text = f.read()
-    if FINGERS_CREDIT not in text:
-        with open(credits, "w") as f:
-            f.write(text.rstrip("\n") + "\n\n" + FINGERS_CREDIT)
+    with open(credits, "w") as f:
+        f.write(with_fingers_credit(text))
     return path
 
 
@@ -450,6 +449,14 @@ FINGERS_CREDIT = (
 )
 
 
+def with_fingers_credit(text: str) -> str:
+    """``CREDITS.txt``'s ``text`` with :data:`FINGERS_CREDIT` as its last paragraph, in place of one
+    of another wording (a paragraph that begins as it does)."""
+    head = FINGERS_CREDIT.split()[:4]
+    paragraphs = [p for p in text.rstrip("\n").split("\n\n") if p.split()[:4] != head]
+    return "\n\n".join(paragraphs) + "\n\n" + FINGERS_CREDIT
+
+
 def credits_text(name: str, source: str, licence: str, author: str, fingers: bool = False) -> str:
     """The ``CREDITS.txt`` an imported blueprint carries: its own terms, the clips' CARLA ones, and
     with ``fingers`` the sentence on its finger weights (:data:`FINGERS_CREDIT`)."""
@@ -523,10 +530,11 @@ def main(argv: list | None = None) -> None:
     # Default to the same people/ the loader reads, so an import is visible to `resolve_walker`
     # without a path argument. Asking blueprint rather than recomputing it keeps one definition.
     wdir = os.path.join(out_root, args.name)
-    os.makedirs(wdir, exist_ok=True)
     stem = args.name[0].lower() + args.name[1:]
 
     doc, ctrl, names, bind, W, parts, materials = load_skin(args.dae)
+    fingers = has_fingers(names)  # refused before anything is written
+    os.makedirs(wdir, exist_ok=True)
     offsets, root_height = skeleton_from_bind(bind)
     w17 = fold_weights(W, names)
 
@@ -571,7 +579,6 @@ def main(argv: list | None = None) -> None:
         weights=w17,
         joints=np.array(JOINT_NAMES),
     )
-    fingers = has_fingers(names)
     if fingers:
         save_fingers(os.path.join(wdir, f"{stem}.fingers.npz"), verts, W, names)
 
