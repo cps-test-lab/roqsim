@@ -4,6 +4,11 @@ Source:  https://fuel.gazebosim.org/1.0/Luca/models/FemaleVisitorWalk (version 1
 Licence: CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)
 Author:  Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: Luca
 
+Every file here is regenerated from that source by the import below;
+none is edited by hand. Its walker.json is measured on the mesh against
+the bones the walker's skin is posed on at runtime, and grounds each
+shoe on its hull.
+
 Imported with `roqsim walker import-actor`: the skin (mesh, textures,
 skeleton, skin weights) is the source's. Locomotion comes from this
 package's models/anims/, which are CARLA retargets under CC-BY 4.0 --

@@ -33,9 +33,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
-# `roqsim walker import-actor` and `derive-hivis-worker` only: read a rigged COLLADA actor and paint a
-# blueprint's texture, to author a new blueprint offline. Not needed to *run* a walker, so they stay
-# out of the runtime deps.
+# `roqsim walker import-actor` only: read a rigged COLLADA actor and its texture, to author a new
+# blueprint offline. Not needed to *run* a walker, so they stay out of the runtime deps.
 import = ["pycollada>=0.7", "pillow>=9"]
 
 [project.entry-points."roqsim.plugins"]

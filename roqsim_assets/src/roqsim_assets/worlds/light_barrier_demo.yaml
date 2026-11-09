@@ -7,8 +7,9 @@
 # broke the beam is still in it when the belt has stopped; it reports the package entering and
 # leaving. The scenario (`StopAtBarrier`) stops the belt while the package is in the barrier --
 # a decision neither the belt nor the barrier makes -- and, playing the worker, takes the package
-# off the belt a second later; the belt runs again and the scene ends, one cycle, and so does the
-# run. The package starts just before the barrier, so the cycle is short.
+# off the belt a second later; the belt runs again, at the speed it had when it stopped (read at
+# each stop, so a belt re-speeded meanwhile comes back at its new speed), and the scene ends, one
+# cycle, and so does the run. The package starts just before the barrier, so the cycle is short.
 #
 # smoke-steps: 2500
 

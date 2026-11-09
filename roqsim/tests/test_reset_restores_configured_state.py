@@ -567,15 +567,18 @@ CASES: dict[str, Case] = {
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
     "spot_body_camera": Case(lambda _: _sensor("spot_body_camera")),
-    "fiducial_marker": _static(
-        {
-            "fiducial_marker": {
-                "family": "apriltag_36h11",
-                "id": 0,
-                "size": 0.12,
-                "pose": {"position": {"z": 0.5}},
+    "fiducial_marker": Case(
+        lambda _tmp: _world(
+            {
+                "fiducial_marker": {
+                    "family": "apriltag_36h11",
+                    "id": 0,
+                    "size": 0.12,
+                    "pose": {"position": {"z": 0.5}},
+                }
             }
-        }
+        ),
+        unavailable=_needs_module("cv2", "opencv-python, roqsim_sensors' [markers] extra,"),
     ),
     "object_detector": Case(
         lambda _: _world(
