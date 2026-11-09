@@ -63,7 +63,8 @@ speed up and slow down over twice it, and the foot grounding eases too, so a wal
 or bent over something in its hands, does not jolt; it comes to rest where the nav root is. While
 it moves, the drawn body trails the nav root by about `2 * body_lag * speed` (0.36 m at 0.15 s and
 1.2 m/s), so what is drawn is not where the navigator, its avoidance and a pose reading of the nav
-root place the walker. The default, 0, draws the body on the root.
+root place the walker. A walker with hands poses them on the drawn body, so what its hands carry
+moves with the body a viewer sees. The default, 0, draws the body on the root.
 
 ### Navigation layers
 

@@ -171,6 +171,45 @@ def test_a_carry_stands_facing_the_way_it_is_given(sim):
     assert math.hypot(x - 0.0, y - (2.5 - 0.55)) < 0.1
 
 
+def test_with_a_body_lag_a_carried_tote_stays_in_front_of_the_drawn_body():
+    """A walker drawn behind its nav root carries a tote in front of the body drawn, not of the nav
+    root: the hands start and stop with the body, so the tote neither runs ahead of it nor is
+    jerked by a root that starts at once."""
+    world = _world()
+    world["components"][0]["walker"]["body_lag"] = 0.15
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)  # walks some 3 m
+        pelvis = sim.m.body("worker/pelvis").id
+        tote = sim.m.body("tote_1").id
+        ahead = []
+        seq = sim.h.approach("start/button", standoff=0.6)
+        while True:
+            sim.e.step()
+            d = sim.d.xpos[tote][:2] - sim.d.xpos[pelvis][:2]
+            ahead.append(float(np.linalg.norm(d)))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == ""
+        assert max(ahead) - min(ahead) < 0.12, (min(ahead), max(ahead))
+    finally:
+        engine.shutdown()
+
+
+def test_a_carry_whose_first_via_point_is_where_it_stands_sets_off_toward_the_next(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, _ = sim.body.root()
+    seq = sim.h.carry("bench", standoff=0.55, via=[[x + 0.01, y], [-1.4, 1.6]])
+    st, nearest = _nearest_on_the_way(sim, seq, (-1.4, 1.6))
+    assert st.error == "" and nearest < 0.1
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")

@@ -537,6 +537,12 @@ class HumanoidPlugin(MachinePlugin):
             points.append((x, y))
         return points
 
+    def _first_leg(self, points) -> tuple:
+        """The first of ``points`` the body does not stand on (farther than 5 cm), which the walk
+        sets off toward; the last if it stands on them all."""
+        x, y, _ = self.body.root()
+        return next((p for p in points if math.hypot(p[0] - x, p[1] - y) > 0.05), points[-1])
+
     def _walk(self, stand, yaw, what: str, while_walking=None, via=()):
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
@@ -611,7 +617,7 @@ class HumanoidPlugin(MachinePlugin):
             # holding something: it goes along, as in a carry
             carried = self._carried()
             x, y, _ = self.body.root()
-            first = points[0] if points else stand
+            first = self._first_leg([*points, stand])
             if math.hypot(first[0] - x, first[1] - y) > 0.05:
                 yield from self._turn(
                     math.atan2(first[1] - y, first[0] - x), lambda: self._hold_carried(carried)
@@ -1075,7 +1081,7 @@ class HumanoidPlugin(MachinePlugin):
         # Turn toward the way it leaves at a carrying pace first: a body turning on the spot at its
         # walking rate swings what it holds faster than a hold follows.
         x, y, heading = self.body.root()
-        first = points[0] if points else stand
+        first = self._first_leg([*points, stand])
         leave = math.atan2(first[1] - y, first[0] - x)
         yield from self._turn(leave, lambda: self._hold_carried(carried))
         yield from self._walk(

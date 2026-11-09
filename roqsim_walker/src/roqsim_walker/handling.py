@@ -187,7 +187,13 @@ class WalkerBody(HumanoidBody):
         )
 
     def root(self):
-        return float(self.st.pos[0]), float(self.st.pos[1]), float(self.st.yaw)
+        """Where the body is drawn, and its heading: with a ``body_lag`` the point that follows the
+        nav root (:func:`roqsim_walker.animation._follow`), so hands posed in the body's frame move
+        with the body a viewer sees, starting and stopping as it does, not with the nav root that
+        starts and stops at once."""
+        st = self.st
+        pos = st.body_pos if st.body_lag > 0.0 and st.body_pos is not None else st.pos
+        return float(pos[0]), float(pos[1]), float(st.yaw)
 
     def carry_height(self) -> float:
         return self.desc.root_height - 0.1
