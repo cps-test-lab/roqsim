@@ -586,6 +586,7 @@ def launch_viewer(
     handle = mujoco.viewer.launch_passive(
         model, data, key_callback=key_callback, **ui_kwargs(left_ui, right_ui)
     )
+    show_windows(handle)
     _VIEWER_HELP[handle] = helper
     if walker is not None:
         _VIEWER_WALK[handle] = walker
@@ -593,6 +594,18 @@ def launch_viewer(
     if fresh:
         _VIEWER_THREADS[handle] = fresh
     return handle
+
+
+def show_windows(handle) -> None:
+    """Switch on the window geom group (:data:`roqsim.presence.WINDOW_GEOM_GROUP`) in a viewer, as
+    every roqsim render draws it: MuJoCo's viewer starts with groups 0-2 only, and a head drawn whole
+    in that group over the opening its lidar scans through would show the opening there and nowhere
+    else. Absent entities stay out of the picture (:data:`roqsim.presence.ABSENT_GEOM_GROUP` is off
+    by default too)."""
+    from .presence import WINDOW_GEOM_GROUP
+
+    with handle.lock():
+        handle.opt.geomgroup[WINDOW_GEOM_GROUP] = 1
 
 
 def close_viewer(handle, *, timeout: float = _CLOSE_TIMEOUT_S) -> None:

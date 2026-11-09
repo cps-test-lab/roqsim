@@ -103,7 +103,8 @@ ABSENT_GEOM_GROUP = 4
 
 #: Geom group of what a camera sees and no ray does: a sensor's window, such as the band of a
 #: robot's head its lidar scans out through. Every raycast mask leaves it out
-#: (:func:`visible_geomgroup_mask`) and every roqsim render draws it, so a head can look whole while
+#: (:func:`visible_geomgroup_mask`) and every roqsim render and viewer window draws it
+#: (:func:`roqsim.viewer.show_windows`), so a head can look whole while
 #: its lidar sees through the band. A geom here collides with nothing (``contype``/``conaffinity``
 #: 0): it is a picture, not a part.
 WINDOW_GEOM_GROUP = 5

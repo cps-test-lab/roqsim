@@ -2,9 +2,10 @@
 its Mid-360 scans out.
 
 The head mesh carries the opening its lidar needs (``external/convert/g1_head_window.py``), a band all
-round the head; drawn, that band left the head's top floating above the torso. The cut head is the
+round the head, which drawn would show the head's top apart from the torso. The cut head is the
 collision geometry a ray meets; the drawn head is the whole one, in the window geom group
-(:data:`roqsim.presence.WINDOW_GEOM_GROUP`), which every render draws and no ray sees.
+(:data:`roqsim.presence.WINDOW_GEOM_GROUP`), which every render and viewer window draws and no ray
+sees.
 """
 
 from __future__ import annotations

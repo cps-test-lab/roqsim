@@ -980,7 +980,8 @@ go through it. Three things live there because they must be decided once:
    that have been made absent — an absent entity reported as a return, with nothing downstream able
    to tell. Making the mask the default turns "forgot the mask" into an explicit ``geomgroup=None``.
    The mask also leaves out :data:`roqsim.presence.WINDOW_GEOM_GROUP` (5): a sensor's window, which
-   every render draws (``rendering._vopt``) and no ray meets. A head with its lidar's opening cut
+   every render (``rendering._vopt``) and every viewer window (``viewer.show_windows``) draw and no
+   ray meets. A head with its lidar's opening cut
    into its collision mesh is drawn whole there, so it looks like the robot and still scans out.
 -  **It is single-threaded on purpose, and that is measured.** Splitting a batch across threads looks
    free — rays are independent, ``mj_multiRay`` releases the GIL, and the output is bit-identical

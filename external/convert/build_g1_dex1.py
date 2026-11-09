@@ -70,6 +70,8 @@ from g1_head_window import cut_head, stl_bytes
 from model_headline import with_headline
 from sources import resolve_source
 
+from roqsim.presence import WINDOW_GEOM_GROUP
+
 # Pinned upstream revision -- must match the table in roqsim_humanoid/THIRD_PARTY.md.
 HEADLINE = (
     "Unitree G1, 29-DoF manipulation variant: the 12-DoF walking legs plus waist, arms and a "
@@ -171,7 +173,6 @@ HEAD_WINDOW_FILE = "head_link_mid360_window.STL"
 #: The uncut head, drawn over the opening in the window geom group (roqsim.presence), which no ray
 #: sees: the head looks whole and the Mid-360 still scans out through it.
 HEAD_WHOLE_MESH = "head_link_whole"
-WINDOW_GEOM_GROUP = 5
 
 #: Welded links with no geometry and no mass that the URDF declares only as frames. Removed from the
 #: MJCF, which the build checks: a link listed here that carried anything would be refused.
