@@ -1,3 +1,13 @@
+ROBOTIS TurtleBot3 Waffle -- vendored geometry and description.
+
+Upstream:   ROBOTIS's MuJoCo model, robotis_mujoco_menagerie/robotis_tb3 @ d8344c0, and
+            turtlebot3_description
+Copyright:  ROBOTIS
+License:    Apache License 2.0.
+
+The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
