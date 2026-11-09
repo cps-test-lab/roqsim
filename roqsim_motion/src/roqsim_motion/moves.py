@@ -520,7 +520,21 @@ class HumanoidPlugin(MachinePlugin):
                 start = start + (dist + 1e-4) * ray
         return nearest
 
-    def _walk(self, stand, yaw, what: str, while_walking=None):
+    def _via(self, via) -> list:
+        """The floor points a move walks through before its stand-off, checked: each ``[x, y]``,
+        finite."""
+        points = []
+        for p in via or []:
+            try:
+                x, y = (float(v) for v in p)
+            except (TypeError, ValueError):
+                self.fail(f"via: a point is [x, y] on the floor, not {p!r}")
+            if not (math.isfinite(x) and math.isfinite(y)):
+                self.fail(f"via: a point is [x, y] on the floor, not {p!r}")
+            points.append((x, y))
+        return points
+
+    def _walk(self, stand, yaw, what: str, while_walking=None, via=()):
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to walk to {what} with")
@@ -528,7 +542,7 @@ class HumanoidPlugin(MachinePlugin):
         # carrying, it turns at a carrying pace all the way
         self.body.limit_turn(CARRY_TURN if while_walking is not None else None)
         try:
-            yield from self._route(nav, stand, what, while_walking)
+            yield from self._route(nav, stand, what, while_walking, via)
         finally:
             self.body.limit_turn(None)
         if while_walking is not None:
@@ -548,11 +562,11 @@ class HumanoidPlugin(MachinePlugin):
             yield
         self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
 
-    def _route(self, nav, stand, what: str, while_walking):
-        """Walk the navigator to ``stand``. A move that ends before the route does -- cancelled, or
-        failed while walking -- cancels the route, so the body stops where it is rather than walking
+    def _route(self, nav, stand, what: str, while_walking, via=()):
+        """Walk the navigator through ``via`` to ``stand``. A move that ends before the route does --
+        cancelled, or failed while walking -- cancels the route, so the body stops where it is rather than walking
         on without the move; a route another sender replaced is theirs and left running."""
-        seq = nav.send_goals([(float(stand[0]), float(stand[1]))])
+        seq = nav.send_goals([*via, (float(stand[0]), float(stand[1]))])
         ended = False
         try:
             self.step("walking", to=[float(stand[0]), float(stand[1])])
@@ -577,23 +591,33 @@ class HumanoidPlugin(MachinePlugin):
 
     # -- the moves ----------------------------------------------------------------------------
     @program
-    def approach(self, target: str, standoff: float = 0.6, facing: float | None = None):
+    def approach(
+        self,
+        target: str,
+        standoff: float = 0.6,
+        facing: float | None = None,
+        via: list | None = None,
+    ):
         """Walk to a stand-off in front of a target and face it: a grip site's or a face's front, a
-        tote's long side (its left grip on the left), or the target as seen from here."""
+        tote's long side (its left grip on the left), or the target as seen from here. ``via``:
+        floor points ``[x, y]`` it walks through first, in order -- a way of the scene's, round
+        what stands between."""
+        points = self._via(via)
         stand, yaw = self._stand_for(target, standoff, facing)
         if any(h is not None for h in self.holding.values()):
             # holding something: it goes along, as in a carry
             carried = self._carried()
             x, y, _ = self.body.root()
-            if math.hypot(stand[0] - x, stand[1] - y) > 0.05:
+            first = points[0] if points else stand
+            if math.hypot(first[0] - x, first[1] - y) > 0.05:
                 yield from self._turn(
-                    math.atan2(stand[1] - y, stand[0] - x), lambda: self._hold_carried(carried)
+                    math.atan2(first[1] - y, first[0] - x), lambda: self._hold_carried(carried)
                 )
             yield from self._walk(
-                stand, yaw, target, while_walking=lambda: self._hold_carried(carried)
+                stand, yaw, target, while_walking=lambda: self._hold_carried(carried), via=points
             )
         else:
-            yield from self._walk(stand, yaw, target)
+            yield from self._walk(stand, yaw, target, via=points)
 
     @program
     def reach(
@@ -993,12 +1017,19 @@ class HumanoidPlugin(MachinePlugin):
         self._check_holds()
 
     @program
-    def carry(self, to: str, standoff: float = 0.6, height: float | None = None):
+    def carry(
+        self,
+        to: str,
+        standoff: float = 0.6,
+        height: float | None = None,
+        via: list | None = None,
+    ):
         """Carry what the hands hold to a target: lift it to a carrying height in front of the body
         (``height``: the hands' height, m; default a hand's breadth under the pelvis, or high enough
         for what is held to clear the surface the target is on by :data:`CLEAR`), turn toward
-        the way it leaves, walk to a stand-off in front of the target holding it there, and face the
-        target."""
+        the way it leaves, walk to a stand-off in front of the target holding it there -- through
+        the floor points ``via`` first, in order, as ``approach`` does -- and face the target."""
+        points = self._via(via)
         sides = self._held("both")
         d = self._d
         m = self._m
@@ -1039,9 +1070,12 @@ class HumanoidPlugin(MachinePlugin):
         # Turn toward the way it leaves at a carrying pace first: a body turning on the spot at its
         # walking rate swings what it holds faster than a hold follows.
         x, y, heading = self.body.root()
-        leave = math.atan2(stand[1] - y, stand[0] - x)
+        first = points[0] if points else stand
+        leave = math.atan2(first[1] - y, first[0] - x)
         yield from self._turn(leave, lambda: self._hold_carried(carried))
-        yield from self._walk(stand, yaw, to, while_walking=lambda: self._hold_carried(carried))
+        yield from self._walk(
+            stand, yaw, to, while_walking=lambda: self._hold_carried(carried), via=points
+        )
 
     def _turn(self, yaw: float, each=None):
         """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it

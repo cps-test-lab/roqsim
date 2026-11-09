@@ -153,7 +153,7 @@ scenario test_every_action:
             zone_dwelled(zone: 'gate', pattern: 'box_*', since: 0.0)
             zone_left(zone: 'gate', pattern: 'box_*')
             humanoid_approach(humanoid: 'worker', target: 'press/button', standoff: 0.5, facing: 1.5,
-                              check: false)
+                              via: '0.5, 1.0; 1.0, 1.0', check: false)
             humanoid_reach(humanoid: 'worker', hand: 'right', target: 'press/button',
                            relative: '0.1, 0, 0', orient: false, pose: 'point', check: false)
             humanoid_press(humanoid: 'worker', hand: 'right', target: 'press/button', max_force: 30.0,
@@ -162,7 +162,8 @@ scenario test_every_action:
             humanoid_release(humanoid: 'worker', hand: 'both', check: false)
             humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
             humanoid_push(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
-            humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, check: false)
+            humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, via: '1.0, 0.0',
+                           check: false)
             humanoid_place(humanoid: 'worker', at: 'bench', release: true, check: false)
             humanoid_play(humanoid: 'worker', clip: 'wave', joints: 'arm_r, head', weight: 0.5,
                           loop: true, fade: 0.2, speed: 1.5, check: false)
@@ -436,3 +437,13 @@ def test_the_where_conditions_parse_and_hand_over_positions_in_metres():
     assert [_args(n)["outside"] for n in regions] == [False, True]
     for node in [*near, point, *regions]:
         node.execute(**_args(node))
+
+
+def test_a_humanoid_via_is_floor_points_and_anything_else_is_refused():
+    from scenario_execution_roqsim.actions.humanoid import _via
+
+    assert _via("") is None
+    assert _via("0.5, 1.0; 1.0, -2") == [[0.5, 1.0], [1.0, -2.0]]
+    for bad in ("1.0", "1, 2, 3", "1, north"):
+        with pytest.raises(ValueError, match="floor points"):
+            _via(bad)

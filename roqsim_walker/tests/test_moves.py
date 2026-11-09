@@ -132,6 +132,41 @@ def test_approach_walks_to_a_standoff_and_faces_the_target(sim):
     assert {"walking", "arrived"} <= set(sim.events())
 
 
+def _nearest_on_the_way(sim, seq, point, limit=30.0):
+    """Step until the move ``seq`` ends; how near the body's root came to ``point`` on the way."""
+    nearest, t0 = math.inf, sim.e.ctx.sim_time
+    while True:
+        sim.e.step()
+        x, y, _ = sim.body.root()
+        nearest = min(nearest, math.hypot(x - point[0], y - point[1]))
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            return st, nearest
+        assert sim.e.ctx.sim_time - t0 < limit
+
+
+def test_approach_and_carry_walk_through_their_via_points_first(sim):
+    # The straight way to the button passes nowhere near (-0.5, 1.5); the via makes it.
+    seq = sim.h.approach("start/button", standoff=0.5, via=[[-0.5, 1.5]])
+    st, nearest = _nearest_on_the_way(sim, seq, (-0.5, 1.5))
+    assert st.error == "" and nearest < 0.1
+    x, y, _ = sim.body.root()
+    assert math.hypot(x - 1.5, y - 1.0) < 0.3
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    seq = sim.h.carry("bench", standoff=0.55, via=[[-1.4, 1.6]])
+    st, nearest = _nearest_on_the_way(sim, seq, (-1.4, 1.6))
+    assert st.error == "" and nearest < 0.1
+    assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
+
+
+def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
+    st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
+    assert st.error.startswith("via: a point is [x, y]")
+    st = sim.run("approach", target="start/button", via=[[1.0, 2.0, 3.0]])
+    assert st.error.startswith("via: a point is [x, y]")
+
+
 def test_approach_to_nothing_fails_naming_it(sim):
     st = sim.run("approach", target="nowhere")
     assert "unknown target 'nowhere'" in st.error

@@ -284,6 +284,7 @@ action humanoid_approach:
     target: string                                    # a site, body or entity by name
     standoff: float = 0.6                             # metres in front of the target
     facing: float = 1000.0                            # world yaw (rad) to face; unset: the target's front
+    via: string = ''                                  # floor points walked through first: 'x, y; x, y'
     check: bool = true
 
 action humanoid_reach:
@@ -339,6 +340,7 @@ action humanoid_carry:
     humanoid: string
     to: string
     standoff: float = 0.6
+    via: string = ''                                  # floor points walked through first: 'x, y; x, y'
     check: bool = true
 
 action humanoid_place:
