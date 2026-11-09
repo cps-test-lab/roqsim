@@ -7,6 +7,8 @@ import math
 
 import numpy as np
 
+from roqsim.pose import rpy_to_quat
+
 IDENTITY = np.array([1.0, 0.0, 0.0, 0.0])
 AXES = {"x": np.array([1.0, 0.0, 0.0]), "y": np.array([0.0, 1.0, 0.0]), "z": np.array([0.0, 0.0, 1.0])}
 
@@ -99,8 +101,9 @@ def slerp(a, b, t: float) -> np.ndarray:
 
 
 def from_rpy(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """Roll about x, then pitch about y, then yaw about z, in the fixed frame (as a world YAML)."""
-    return mul(axis_angle("z", yaw), mul(axis_angle("y", pitch), axis_angle("x", roll)))
+    """Roll about x, then pitch about y, then yaw about z, in the fixed frame: the convention of
+    :func:`roqsim.pose.rpy_to_quat`, which this is."""
+    return np.array(rpy_to_quat(float(roll), float(pitch), float(yaw)))
 
 
 def to_matrix(q) -> np.ndarray:

@@ -153,7 +153,7 @@ def solve(
     or ``None``) over the clip pose ``local`` (joint -> local rotation), for a pelvis at
     ``root_xyz`` turned by ``heading`` (world). ``layouts`` holds each hand's
     :class:`~roqsim_motion.hands.HandLayout` (where its grip frame is on the wrist). A goal without a
-    rotation places the wrist, as ``WalkerHandle.reach`` always has. ``gaze`` is a world point the
+    rotation places the wrist, as ``WalkerHandle.reach`` does. ``gaze`` is a world point the
     head turns to."""
     posture = posture or Posture()
     root = np.asarray(root_xyz, float)

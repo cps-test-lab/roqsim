@@ -54,6 +54,31 @@ def test_a_reachable_grip_pose_is_reached_within_5_mm_and_5_degrees(side):
     assert misses <= 10
 
 
+@pytest.mark.parametrize("side", ["l", "r"])
+def test_a_wrist_clamped_short_of_its_rotation_still_puts_the_grip_on_the_goal(side):
+    """A goal turned past what the wrist bends: the wrist stops at its limit, so the grip is not
+    where the goal's rotation assumed, and the arm is solved again onto where the grip will be. A
+    single solve leaves every such grip centimetres off; re-solved, most arrive within 5 mm (the
+    rest are left with their residual, as a goal out of reach is)."""
+    rng = np.random.default_rng(11)
+    clamped = arrived = 0
+    for _ in range(60):
+        pos, rot = _random_reachable(rng, side)
+        rot = Q.mul(rot, Q.axis_angle("y", math.radians(150)))  # past the wrist's limits
+        sol = solve(DESC, ROOT, Q.IDENTITY, REST, {side: HandGoal(pos, rot)}, LAYOUTS,
+                    Posture(turn=0.0, lean=0.0, crouch=0.0))
+        poses = DESC.fk(ROOT - [0, 0, sol.root_drop], Q.IDENTITY, {**REST, **sol.rotations})
+        wp, wq = poses[f"wrist_{side}"]
+        assert DESC.within(f"wrist_{side}", sol.rotations[f"wrist_{side}"])
+        if Q.angle_between(Q.mul(wq, LAYOUTS[side].grip_quat), rot) < math.radians(10):
+            continue  # nothing was clamped
+        clamped += 1
+        grip = wp + Q.rotate(wq, LAYOUTS[side].grip_pos)
+        arrived += np.linalg.norm(grip - pos) < 0.005
+        assert math.isclose(sol.residual[side], float(np.linalg.norm(grip - pos)), abs_tol=1e-3)
+    assert clamped >= 40 and arrived >= 0.75 * clamped
+
+
 def test_the_solver_is_deterministic():
     rng = np.random.default_rng(3)
     pos, rot = _random_reachable(rng, "r")
@@ -185,6 +210,19 @@ def test_targets_resolve_sites_bodies_entities_and_world_poses():
     assert np.allclose(p, [1, 2, 3]) and math.isclose(Q.yaw_of(r), 1.0)
     with pytest.raises(TargetError, match="unknown target 'nowhere'"):
         make_target(m, _Entities(), "nowhere")
+
+
+def test_a_world_pose_for_a_hand_with_no_height_is_refused_naming_it():
+    m = mujoco.MjModel.from_xml_string(MJCF)
+    with pytest.raises(TargetError, match=r"'x': 1.*position\.z"):
+        make_target(m, None, {"position": {"x": 1, "y": 2}})
+
+
+def test_from_rpy_is_the_simulators_roll_pitch_yaw():
+    from roqsim.pose import rpy_to_quat
+
+    for rpy in [(0.3, -0.7, 1.9), (1.2, 0.4, -2.5)]:
+        assert np.allclose(Q.from_rpy(*rpy), rpy_to_quat(*rpy))
 
 
 def _twist(rot, axis) -> float:

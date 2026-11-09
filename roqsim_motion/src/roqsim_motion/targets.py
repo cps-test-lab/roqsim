@@ -80,7 +80,12 @@ def make_target(model, entities, spec, offset=None) -> Target:
             pos, rot = parse_pose(spec)
         except PoseError as exc:
             raise TargetError(f"target {spec!r}: {exc}") from exc
-        p = np.array([0.0 if v is None else float(v) for v in pos])
+        if pos[2] is None:
+            raise TargetError(
+                f"target {spec!r}: a world pose for a hand states its height, 'position.z'; "
+                "there is no resting height for a hand to fall back on"
+            )
+        p = np.array([float(v) for v in pos])
         r = np.array(rot, float)
         return Target(str(spec), "world", -1, p + Q.rotate(r, off_pos), Q.mul(r, off_rot))
     if isinstance(spec, (tuple, list)) and len(spec) == 2:
