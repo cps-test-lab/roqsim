@@ -241,12 +241,3 @@ def find_clip(clip: str, dirs: list[str], where: str) -> str:
             f"{', '.join(known) or 'none'} (or give a path to a .npz)"
         )
     return found
-
-
-def resolve_clip(walker: str, clip: str, motion=None, base_dir: str | None = None) -> str:
-    """The file of the clip ``clip`` for walker blueprint ``walker`` (with the world's ``motion:``):
-    a ``.npz`` path as given, or a clip's name looked up in the walker's anim set and then the shared
-    one (``anims/<set>/<clip>.npz`` in every ``roqsim.models`` provider). Raises
-    :class:`BlueprintError` for one it cannot find."""
-    spec = resolve_walker(walker, motion=motion, base_dir=base_dir)
-    return find_clip(clip, spec["clip_dirs"], f"walker {walker}")

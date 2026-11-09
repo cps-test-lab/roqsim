@@ -163,9 +163,9 @@ door handle:
 
 ```python
 handle.reach(left=left_point, right=right_point)  # re-set it every step as the points move
-handle.reach(right=right_point)  # one hand: the left goes back to the walk
-left, right = handle.hands()  # where the wrists are now
-handle.reach()  # let go with both
+handle.reach(right=right_point)                   # one hand: the left goes back to the walk
+left, right = handle.hands()                      # where the wrists are now
+handle.reach()                                    # let go with both
 ```
 
 Each point is three finite numbers (x, y, z, world); anything else raises `ValueError` at the
@@ -233,8 +233,8 @@ OpenSCENARIO); a move never decides what comes next.
 
 ```python
 worker = ctx.blackboard.get("humanoid:worker")
-seq = worker.grasp("both", "tote_1")  # = worker.start("grasp", hand="both", target="tote_1")
-status = worker.status()  # MachineStatus(seq, program, finished, error)
+seq = worker.grasp("both", "tote_1")             # = worker.start("grasp", hand="both", target="tote_1")
+status = worker.status()                         # MachineStatus(seq, program, finished, error)
 ```
 
 A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its
@@ -395,7 +395,8 @@ T-pose or an A-pose) is matched to the walker's arms-down rest bone by bone, so 
 walker's limbs as it moves its own, whatever the proportions. Bones are found by the Mixamo, CMU and
 common game-rig names; one not found is an error naming the capture's bones, and `--map joint=Bone`
 names it. `--up` and `--forward` read a capture in other axes; `--loop` marks a cycle, whose stride
-is measured from its travel. The capture's travel and heading are dropped; its height is kept.
+is measured from its travel. The capture's travel is dropped, and its heading at the first frame
+(its later turns are kept); its height is kept.
 `python -m pydoc roqsim_walker.cli.import_clip` has the details.
 
 ## Tests

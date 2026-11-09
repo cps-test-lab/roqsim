@@ -167,7 +167,7 @@ def smoothstep(x, lo, hi) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
-# -- procedural bootstrap clips (same format; replaced by real mocap) --------------------------
+# -- procedural clips, for tests and as examples of the format ---------------------------------
 def procedural_walk(frames=30, fps=30.0, stride_len=0.75) -> Clip:
     """A simple forward alternating gait. Sign conventions in our X-forward, Z-up frame: flexing a
     downward limb *forward* is a NEGATIVE pitch about +Y; a knee flexes the shin *backward*

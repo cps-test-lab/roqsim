@@ -13,7 +13,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 from roqsim_motion import quat as Q
-from roqsim_walker.blueprint import BlueprintError, resolve_clip, resolve_walker
+from roqsim_walker.blueprint import BlueprintError, find_clip, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, joints_of, quat_rotate
 from roqsim_walker.motion import Clip, ClipError
 
@@ -103,9 +103,10 @@ def test_a_clip_that_cannot_be_read_says_why(tmp_path):
 
 
 def test_a_clip_is_found_by_name_in_the_walkers_set_or_refused_naming_those_there():
-    assert resolve_clip("MaleVisitorWalk", "walk").endswith("anims/adult/walk.npz")
+    dirs = resolve_walker("MaleVisitorWalk")["clip_dirs"]
+    assert find_clip("walk", dirs, "here").endswith("anims/adult/walk.npz")
     with pytest.raises(BlueprintError, match=r"no clip 'wave'.*the clips there are .*walk"):
-        resolve_clip("MaleVisitorWalk", "wave")
+        find_clip("wave", dirs, "here")
 
 
 def test_a_locomotion_clip_the_world_names_must_exist(tmp_path):
