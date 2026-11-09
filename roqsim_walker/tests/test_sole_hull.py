@@ -104,3 +104,47 @@ def test_a_shoe_skinned_off_its_leg_is_refused():
     w[:, COL["wrist_l"]] += 0.5
     with pytest.raises(SystemExit, match="off its leg"):
         import_actor.measure_hull(verts, w / w.sum(axis=1, keepdims=True))
+
+
+def _rocker_shoes(n=600):
+    """Two shoes whose soles curve up to the heel and the toe (a rocker sole), so the lowest point
+    of each joint's part lies inside the sole, at neither end: the ankle's 3 cm in front of the
+    heel, the toe's at the toe part's rear edge."""
+    rest = _rest()
+    rng = np.random.default_rng(4)
+    pts, w = [], []
+    for s in ("l", "r"):
+        ankle, toe = rest[f"ankle_{s}"][0], rest[f"toe_{s}"][0]
+        heel_x, tip_x, split_x = ankle[0] - 0.06, toe[0] + 0.06, toe[0] - 0.02
+        low_x = heel_x + 0.03
+        x = rng.uniform(heel_x, tip_x, n)
+        y = ankle[1] + rng.uniform(-0.04, 0.04, n)
+        bottom = 4.0 * (x - low_x) ** 2  # 4 cm up at 10 cm from the lowest point
+        z = bottom + np.where(rng.random(n) < 0.5, 0.0, rng.uniform(0.0, 0.08, n))
+        wi = np.zeros((n, len(JOINT_NAMES)))
+        wi[x < split_x, COL[f"ankle_{s}"]] = 1.0
+        wi[x >= split_x, COL[f"toe_{s}"]] = 1.0
+        pts.append(np.stack([x, y, z], axis=1))
+        w.append(wi)
+    verts = np.vstack(pts)
+    return verts - [0.0, 0.0, verts[:, 2].min()], np.vstack(w), rest
+
+
+def test_the_sole_points_are_the_lowest_of_each_joints_part_of_the_shoe():
+    """Without a hull, a walker stands on its heel and toe points: they are the lowest points of
+    the vertices the ankle and the toe carry, not the ends of the shoe's lowest centimetre."""
+    verts, w, rest = _rocker_shoes()
+    bind = {n: pq[0] for n, pq in rest.items()}
+    sole, tip = import_actor.measure_sole(verts, w, bind)
+    dom = w.argmax(axis=1)
+    for s in ("l", "r"):
+        ankle_part = verts[dom == COL[f"ankle_{s}"]]
+        toe_part = verts[dom == COL[f"toe_{s}"]]
+        heel = bind[f"ankle_{s}"] + sole[s]["heel"]
+        toe = bind[f"toe_{s}"] + sole[s]["toe"]
+        assert heel[2] == pytest.approx(ankle_part[:, 2].min(), abs=1e-4)
+        assert toe[2] == pytest.approx(toe_part[:, 2].min(), abs=1e-4)
+        assert heel[0] > ankle_part[:, 0].min() + 0.02  # inside the sole, not at the heel
+    # standing, the grounding finds the shoes' lowest point, which is on the floor
+    st = SimpleNamespace(sole=sole, sole_hull=None, skeleton=DEFAULT_SKELETON)
+    assert animation._lowest_sole(rest, st) == pytest.approx(0.0, abs=1e-4)

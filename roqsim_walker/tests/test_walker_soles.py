@@ -23,7 +23,7 @@ SOLE_TOLERANCE = 0.001
 CAPSULE_TOLERANCE = 0.001
 
 #: The blueprints whose soles are measured to the bar above.
-WALKERS = ["WorkerHiVisWalk"]
+WALKERS = ["FemaleVisitorWalk", "MaleVisitorWalk"]
 
 
 class _Skinned:
