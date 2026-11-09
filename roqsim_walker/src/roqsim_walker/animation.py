@@ -112,9 +112,9 @@ def _foot_rest(skel):
 
 
 def _foot_ground(poses, st, dt=0.0):
-    """Vertical-only foot grounding: shift the whole body so the **lowest shoe-sole point** -- the
-    measured heel/toe of either foot -- sits exactly on the floor. Tracking the real sole (not the
-    ankle/toe joint, which is several cm above it) removes the residual hover.
+    """Vertical-only foot grounding: shift the whole body so the **lowest shoe-sole point** of either
+    foot (:func:`_lowest_sole`) sits exactly on the floor. Tracking the real sole (not the ankle/toe
+    joint, which is several cm above it) removes the residual hover.
 
     With ``st.body_lag`` set the shift follows that as a spring of ``_GROUND_TAU`` over ``dt``: the
     lowest point changes from one foot to the other as a toe lifts, and the body would drop the
@@ -131,14 +131,68 @@ def _foot_ground(poses, st, dt=0.0):
     return poses
 
 
+def _sole_hull(spec_sole, skel):
+    """Per foot, a shoe's hull points ready to skin: ``(joints, weights (K, J), offsets (J, K, 3))``.
+
+    ``spec_sole[s]["hull"]`` (written by the blueprint tools) gives each point's bind position in
+    the walker's frame (``at``) and its skin weights over that leg's ``joints``. The skin binds the
+    legs at the rest pose (a T-pose only turns the shoulders), so each point's offset from each of
+    its joints is taken at the rest pose of this walker's skeleton, in that joint's frame. ``None``
+    when the blueprint has no hull."""
+    if not spec_sole or not all("hull" in (spec_sole.get(s) or {}) for s in ("l", "r")):
+        return None
+    ident = {n: np.array([1.0, 0.0, 0.0, 0.0]) for n in JOINT_NAMES}
+    rest = forward_kinematics([0.0, 0.0, skel.root_height], 0.0, ident, skeleton=skel)
+    out = {}
+    for s in ("l", "r"):
+        hull = spec_sole[s]["hull"]
+        joints = list(hull["joints"])
+        at = np.asarray(hull["at"], float)
+        w = np.asarray(hull["w"], float)
+        if at.ndim != 2 or at.shape[1] != 3 or w.shape != (len(at), len(joints)):
+            raise ValueError(f"sole.{s}.hull: 'at' must be (K, 3) and 'w' (K, {len(joints)})")
+        offsets = np.stack(
+            [_rotate_rows(_conj(rest[j][1]), at - rest[j][0]) for j in joints]
+        )  # (J, K, 3)
+        out[s] = (joints, w, offsets)
+    return out
+
+
+def _conj(q) -> np.ndarray:
+    return np.array([q[0], -q[1], -q[2], -q[3]])
+
+
+def _rotate_rows(q, v) -> np.ndarray:
+    """Rotate each row of ``v`` (n, 3) by quaternion ``q`` (w, x, y, z)."""
+    u = np.asarray(q[1:], float)
+    return v + 2.0 * np.cross(u, np.cross(u, v) + q[0] * v)
+
+
 def _lowest_sole(poses, st) -> float:
-    """Height of the lowest shoe-sole point of ``poses`` above the floor."""
+    """Height of the lowest shoe-sole point of ``poses`` above the floor.
+
+    With a hull (:func:`_sole_hull`) every hull point is skinned as the mesh is -- its joints' poses
+    blended by its weights -- so the lowest is the skin's own, whichever way the foot is turned.
+    Without one, the measured heel and toe sole points, each riding one joint; failing those, the
+    ankle and toe-tip joints against their rest heights."""
+    if st.sole_hull:
+        low = np.inf
+        for joints, w, offsets in st.sole_hull.values():
+            z = np.stack(
+                [
+                    poses[j][0][2] + _rotate_rows(poses[j][1], offsets[k])[:, 2]
+                    for k, j in enumerate(joints)
+                ],
+                axis=1,
+            )  # (K, J)
+            low = min(low, float((w * z).sum(axis=1).min()))
+        return low
     tip = np.array(st.skeleton.foot_tip)
     lows = []
     for s in ("l", "r"):
         ap, aq = poses[f"ankle_{s}"]
         tp, tq = poses[f"toe_{s}"]
-        if st.sole:  # exact: measured sole offsets
+        if st.sole:  # measured sole offsets
             heel = float((ap + quat_rotate(aq, np.array(st.sole[s]["heel"])))[2])
             toe = float((tp + quat_rotate(tq, np.array(st.sole[s]["toe"])))[2])
             lows.append(min(heel, toe))
@@ -408,7 +462,8 @@ class AnimState:
     walk_r: Clip = None  # optional -- inert when the clips are absent
     walk_back: Clip = None
     foot_rest: dict = None  # per-foot rest heel/toe-tip z (grounding fallback)
-    sole: dict = None  # per-foot measured shoe-sole offsets -> exact grounding
+    sole: dict = None  # per-foot measured shoe-sole offsets (heel, toe; and the hull)
+    sole_hull: dict = None  # per-foot hull points ready to skin (:func:`_sole_hull`)
     # -- runtime ---------------------------------------------------------------------------------
     pos: np.ndarray = field(default=None)
     yaw: float = 0.0
@@ -453,6 +508,7 @@ def make_anim_state(model, spec) -> AnimState:
         skeleton=skel,
         foot_rest=_foot_rest(skel),
         sole=spec.get("sole"),
+        sole_hull=_sole_hull(spec.get("sole"), skel),
         start=start,
         body_lag=float(spec.get("body_lag", 0.0)),
     )
