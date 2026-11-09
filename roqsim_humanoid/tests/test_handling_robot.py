@@ -98,3 +98,26 @@ def test_scene_4_the_box_swap_by_a_humanoid_robot_physical_in_both_forms():
         assert _timeline(osc) == expected
     finally:
         osc.shutdown()
+
+
+def test_the_robots_legs_walk_while_its_navigator_moves_it():
+    """The gait plays all the while the navigator moves the robot, not only on the body's updates
+    that follow one of the navigator's: each hip swings forward and back by a stride."""
+    engine = Engine(load_config(WORLDS / "handling_box_swap_g1.yaml"))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        hips = {s: m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"g1_{s}_hip_pitch_joint")]
+                for s in ("left", "right")}
+        seen = {s: [] for s in hips}
+        while engine.ctx.sim_time < 3.4:  # walking to the cell's drawer
+            engine.step()
+            if engine.ctx.sim_time > 1.0:
+                for s, a in hips.items():
+                    seen[s].append(float(d.qpos[a]))
+        for s, q in seen.items():
+            assert min(q) < -0.08 and max(q) > 0.2, f"the {s} hip swings only {min(q):.2f}..{max(q):.2f} rad"
+    finally:
+        engine.shutdown()

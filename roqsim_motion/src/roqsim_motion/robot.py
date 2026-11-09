@@ -309,7 +309,9 @@ class HumanoidRobotPlugin(Plugin):
         self.accum = 0.0
         self.weight = {s: 0.0 for s in SIDES}
         self.trim = {s: np.zeros(3) for s in SIDES}
-        self._moving = False  # whether the navigator moved the root this update (the gait plays)
+        # whether the navigator is moving the root (the gait plays): set at the navigator's rate and
+        # held until it says otherwise, not cleared at the body's own faster update
+        self._moving = False
 
     def on_reset(self, ctx) -> None:
         self.body.reset()
@@ -382,7 +384,6 @@ class HumanoidRobotPlugin(Plugin):
                 self.target[hips[0]] = -HIP_SWING * s if moving else 0.0
             if knees:
                 self.target[knees[0]] = KNEE_LIFT * max(0.0, s) if moving else 0.0
-        self._moving = False
         # arms and waist: each hand with a goal, solved on the actual pose
         goals = {s: self.body.goal[s] for s in SIDES if self.body.goal[s] is not None and s in self.grip_site}
         for s in SIDES:
@@ -469,9 +470,10 @@ class HumanoidOutput(NavOutput):
 
     def hold(self, ctx, dt, facing) -> None:
         self.robot.walk(np.zeros(2), dt)
+        self.robot._moving = False
 
     def stop(self, ctx) -> None:
-        pass
+        self.robot._moving = False
 
     def pose(self, ctx):
         x, y, yaw = self.robot.root
