@@ -455,7 +455,7 @@ class Look:
     w: float = 0.0
     rot: np.ndarray | None = None
     settled: bool = False  # the head is on the point, within a degree
-    desc: object = None  # the walker's description for the head's limits (made on first use)
+    desc: object = None  # the walker's description, for the head's limits (set with the layers)
 
 
 #: How fast a look turns the head (rad/s), and fades in and out over the gait's (1/s).
@@ -487,10 +487,6 @@ def _look(st, q, root, dt) -> None:
 
         from roqsim_motion import quat as Q
 
-        if lk.desc is None:
-            from roqsim_walker.handling import description_for
-
-            lk.desc = description_for(st.skeleton)
         poses = forward_kinematics(
             root,
             st.yaw,

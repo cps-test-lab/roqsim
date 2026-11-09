@@ -236,3 +236,31 @@ def test_the_walker_handle_is_the_body_and_routes_go_to_the_navigator(sim):
     handle = sim.ctx.blackboard.get("walker:ped")
     assert not hasattr(handle, "send_route")
     assert sim.ctx.blackboard.get("nav:ped:handle") is not None
+
+
+def test_a_required_clip_the_blueprint_lacks_is_taken_from_motion(tmp_path, monkeypatch):
+    """A blueprint whose anim set has no ``short`` is refused, naming ``motion:``, and the world that
+    gives it there loads, its layers looked up in the walker's own set."""
+    from roqsim_walker import blueprint as bp
+    from roqsim_walker.plugins.walker import WalkerPlugin
+
+    shipped = bp.resolve_walker("MaleVisitorWalk")
+    people = tmp_path / "people"
+    people.mkdir()
+    (people / "MaleVisitorWalk").symlink_to(
+        bp.os.path.dirname(shipped["mesh"]), target_is_directory=True
+    )
+    anims = tmp_path / "anims" / "adult"
+    anims.mkdir(parents=True)
+    for kind in ("idle", "walk", "run"):
+        (anims / f"{kind}.npz").symlink_to(shipped["motion"][kind])
+    monkeypatch.setattr(bp, "_asset_roots", lambda base_dir=None: [str(tmp_path)])
+    with pytest.raises(BlueprintError, match=r"no short clip .* give it with motion: \{short:"):
+        bp.resolve_walker("MaleVisitorWalk")
+    config = {"walker": "MaleVisitorWalk", "motion": {"short": "walk"}, "layers": [{"clip": "run"}]}
+    assert WalkerPlugin(config, name="ped").validate_config(config) == []
+    assert "no short clip" in " ".join(
+        WalkerPlugin({"walker": "MaleVisitorWalk"}, name="ped").validate_config(
+            {"walker": "MaleVisitorWalk"}
+        )
+    )

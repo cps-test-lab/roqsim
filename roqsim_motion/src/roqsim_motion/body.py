@@ -5,8 +5,10 @@ A body -- the walker's mocap skeleton (``roqsim_walker.handling.WalkerBody``) or
 joints (:class:`roqsim_motion.robot.RobotBody`) -- is published on the blackboard as
 ``humanoid_body:<entity>`` and offers the moves (:mod:`roqsim_motion.moves`) one interface: each
 hand's goal (a world pose its grip frame goes to, eased in and out), its pose (``open``, ``power``,
-...), the posture and the gaze, where its grip frame is now, and how far its arm reaches. Every
-method runs on the physics thread; the body solves and writes at its own update.
+...), the posture, where its grip frame is now, and how far its arm reaches. A body may also turn
+its head toward a target and play clips over its own motion (the walker's does; a robot's raises
+``NotImplementedError`` for them, which a move reports as its failure). Every method runs on the
+physics thread; the body solves and writes at its own update.
 """
 
 from __future__ import annotations

@@ -129,7 +129,7 @@ walker.look_at([2.0, 1.0, 1.6])  # or a world point; look_at(None) turns it back
 
 | key | | |
 |---|---|---|
-| `clip` | required | a clip of the walker's anim set by name (`anims/<set>/<clip>.npz` in any `roqsim.models` provider, the walker's set before the shared one), or a path to a `.npz` |
+| `clip` | required | a clip of the walker's anim set by name (`anims/<set>/<clip>.npz` in any `roqsim.models` provider, the walker's set before the shared one), or a path to a `.npz` (a relative one from the working directory) |
 | `joints` | `[all]` | groups -- `all`, `upper` (spine, head, arms), `arms`, `arm_l`, `arm_r`, `head`, `spine`, `pelvis`, `legs`, `leg_l`, `leg_r` -- and joint names, mixed |
 | `weight` | 1.0 | 0..1: how much of the pose under it the clip takes |
 | `loop` | `false` (`true` under `layers:`) | round and round until stopped, or once |
@@ -208,8 +208,9 @@ world keeps its look and its timing unedited.
   posed on the drawn index fingertip while a move presses and parked below the floor otherwise;
 - its posing through the motion core, published as `humanoid_body:<name>`: each hand's goal (a pose
   with a rotation, or a point), the posture -- turning toward a target, crouching for a low one,
-  bending forward as `reach` does with hands off, leaning for one to the side -- and gaze, blended over the
-  gait by each hand's weight. A nested `humanoid` component (`roqsim_motion`) starts the moves on it.
+  bending forward as `reach` does with hands off, leaning for one to the side -- blended over the
+  gait by each hand's weight. Where it looks is the walker's look, as with hands off (below). A
+  nested `humanoid` component (`roqsim_motion`) starts the moves on it.
 
 `reach` keeps working with hands on; the core places the wrist on its point as the two-bone reach
 does with them off.
@@ -249,7 +250,7 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 | `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
 | `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
 | `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
-| `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, `played` | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
+| `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
 | `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
 | `look_at` | `target` (a site, body or entity; empty: back) | `looking` | `unknown target …` |
 

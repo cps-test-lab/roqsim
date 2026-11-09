@@ -18,7 +18,7 @@ import numbers
 import numpy as np
 
 from roqsim_walker.animation import MotionLayer, load_layer_clip
-from roqsim_walker.blueprint import BlueprintError, resolve_clip
+from roqsim_walker.blueprint import BlueprintError, find_clip
 from roqsim_walker.humanoid import JOINT_NAMES, joints_of
 from roqsim_walker.motion import ClipError
 
@@ -26,9 +26,13 @@ from roqsim_walker.motion import ClipError
 class Layers:
     """One walker's clip player and look (published on its handle, ``walker:<name>``)."""
 
-    def __init__(self, st, blueprint: str, ctx=None):
+    def __init__(self, st, blueprint: str, clip_dirs: list[str], ctx=None):
         self.st = st
         self.blueprint = blueprint
+        self.clip_dirs = clip_dirs  # where its clips are looked up by name (resolved once)
+        from roqsim_walker.handling import description_for
+
+        st.look.desc = description_for(st.skeleton)
         self.ctx = ctx  # the running world, for a target looked at by name
         self._ids = itertools.count(1)
         self._clips: dict[str, object] = {}
@@ -37,7 +41,7 @@ class Layers:
         """The clip ``clip`` names (a clip of the walker's anim set by name, or a ``.npz`` path),
         grounded on this walker's feet; loaded once."""
         try:
-            path = resolve_clip(self.blueprint, clip)
+            path = find_clip(clip, self.clip_dirs, f"walker {self.blueprint}")
         except BlueprintError as exc:
             raise ValueError(str(exc)) from exc
         if path not in self._clips:

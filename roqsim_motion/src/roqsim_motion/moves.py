@@ -1230,8 +1230,8 @@ class HumanoidPlugin(MachinePlugin):
         speed: float = 1.0,
     ):
         """Play a clip over the body's own motion on some joints (groups and joint names; all by
-        default): once, ending when it has faded out; or with ``loop``, ending once it has faded in
-        and playing on until ``stop_clip``. A play cancelled or failed fades its clip out. Hands and
+        default): once, ending when it has faded out (``played``); or with ``loop``, ending once it
+        has faded in (``looping``) and playing on until ``stop_clip``. A play cancelled or failed fades its clip out. Hands and
         moves come over it."""
         layer = self._body_call(
             "play",
@@ -1253,7 +1253,7 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             if not done:
                 self.body.stop_clip(layer)
-        self.step("played", clip=clip, layer=layer)
+        self.step("looping" if loop else "played", clip=clip, layer=layer)
 
     @program
     def stop_clip(self, clip: str = ""):

@@ -260,6 +260,9 @@ PAYLOADS: dict[str, Any] = {
     "navigate_through_poses": [(0.5, 0.0, 0.0), (0.8, 0.4, 0.0)],
     "start_route": None,
     "cancel_route": None,
+    "play": ("walk", ["arm_r"]),
+    "stop_clip": ("walk",),
+    "look_at": lambda _engine, endpoint: (f"{endpoint.owner}/toe_l",),
     "cmd_pos": ([0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0]),
     "motor_cmd": _motor_command,
     "speed": 0.2,
@@ -784,6 +787,9 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
     },
+    # The clips a walker has read, by file: a cache of files that do not change during a run.
+    "walker": {"motion._clips": "the clips read so far, by file, which a reset does not change"},
+    "humanoid": {"body.motion._clips": "the walker's clips read so far, by file (as for walker)"},
     "navigator": {
         "_radius": _MEASURED_ONCE,
         "_caution._radius": _MEASURED_ONCE,

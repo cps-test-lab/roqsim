@@ -63,7 +63,7 @@ from roqsim_walker.animation import HandReach, make_anim_state, write_pose
 from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.blueprint import BlueprintError, resolve_clip, resolve_walker
+from roqsim_walker.blueprint import BlueprintError, find_clip, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.layers import Layers, check
 from roqsim_walker.motion import Clip
@@ -206,9 +206,13 @@ class WalkerPlugin(Plugin):
             errors.append("'walker' is required (a blueprint folder under models/people/)")
         else:
             try:
-                resolve_walker(config["walker"], outfit=config.get("outfit"))
+                blueprint = resolve_walker(
+                    config["walker"], outfit=config.get("outfit"), motion=config.get("motion")
+                )
             except BlueprintError as exc:
                 errors.append(str(exc))
+            else:
+                errors += self._layer_errors(config, blueprint["clip_dirs"])
         for key, there in self.NAVIGATION_KEYS.items():
             if key in config:
                 errors.append(
@@ -228,7 +232,6 @@ class WalkerPlugin(Plugin):
             errors.append(f"walker: {exc}")
         if not isinstance(config.get("hands", False), bool):
             errors.append(f"walker: 'hands' is true or false, not {config['hands']!r}")
-        errors += self._layer_errors(config)
         lag = config.get("body_lag", 0.0)
         if (
             not isinstance(lag, (int, float))
@@ -244,7 +247,7 @@ class WalkerPlugin(Plugin):
     #: The keys of one ``layers:`` entry, and what ``play`` takes them as.
     LAYER_KEYS = ("clip", "joints", "weight", "loop", "fade", "speed")
 
-    def _layer_errors(self, config: dict) -> list[str]:
+    def _layer_errors(self, config: dict, clip_dirs: list[str]) -> list[str]:
         """What is wrong with ``layers:``: each a mapping with a ``clip`` the walker has and can
         read, joints it has, and numbers in range."""
         layers = config.get("layers", [])
@@ -264,7 +267,7 @@ class WalkerPlugin(Plugin):
                 )
                 continue
             try:
-                Clip.load(resolve_clip(config.get("walker", ""), entry["clip"]))
+                Clip.load(find_clip(entry["clip"], clip_dirs, f"walker {config['walker']}"))
                 check(**{k: v for k, v in entry.items() if k != "clip"})
             except (BlueprintError, ValueError) as exc:
                 errors.append(f"{where}: {exc}")
@@ -317,6 +320,7 @@ class WalkerPlugin(Plugin):
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
+            "clip_dirs": blueprint["clip_dirs"],
             "body_lag": float(cfg.get("body_lag", 0.0)),
         }
 
@@ -330,7 +334,7 @@ class WalkerPlugin(Plugin):
         """
         self._ctx = ctx
         self._anim = make_anim_state(ctx.model, self._spec)
-        self.motion = Layers(self._anim, self.blueprint, ctx)
+        self.motion = Layers(self._anim, self.blueprint, self._spec["clip_dirs"], ctx)
         self.body = None
         if self._layouts is not None:
             from roqsim_walker.handling import WalkerBody

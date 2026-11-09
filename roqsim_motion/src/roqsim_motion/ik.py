@@ -164,7 +164,8 @@ def solve(
     ``root_xyz`` turned by ``heading`` (world). ``layouts`` holds each hand's
     :class:`~roqsim_motion.hands.HandLayout` (where its grip frame is on the wrist). A goal without a
     rotation places the wrist, as ``WalkerHandle.reach`` does. ``gaze`` is a world point the
-    head turns to."""
+    head turns to at once, inside its limits; no body passes one -- a walker turns its head itself,
+    at a bounded rate, with :func:`head_toward`, and a robot body turns none."""
     posture = posture or Posture()
     root = np.asarray(root_xyz, float)
     heading = np.asarray(heading, float)

@@ -176,7 +176,7 @@ def resolve_walker(name: str, outfit=None, motion=None, base_dir: str | None = N
                 f"walker {name}: 'motion' names {kind!r}, which is no locomotion clip: the clips "
                 f"are {', '.join(CLIP_KINDS)}"
             )
-        clips[kind] = _clip_path(path, spec["clip_dirs"], f"walker {name}: motion.{kind}")
+        clips[kind] = find_clip(path, spec["clip_dirs"], f"walker {name}: motion.{kind}")
     for kind in CLIP_KINDS:
         if kind not in clips:
             found = _find_clip(kind, spec["clip_dirs"])
@@ -215,8 +215,10 @@ def _find_clip(clip: str, dirs: list[str]) -> str | None:
     return None
 
 
-def _clip_path(clip: str, dirs: list[str], where: str) -> str:
-    """``clip`` as a file: a path to a ``.npz`` as given, or a clip's name looked up in ``dirs``."""
+def find_clip(clip: str, dirs: list[str], where: str) -> str:
+    """``clip`` as a file: a path to a ``.npz`` as given (a relative one from the working directory),
+    or a clip's name looked up in ``dirs`` (a walker's ``clip_dirs``). Raises :class:`BlueprintError`
+    naming ``where`` for one it cannot find."""
     clip = str(clip)
     if clip.endswith(".npz") or os.sep in clip:
         path = os.path.expanduser(clip)
@@ -241,10 +243,10 @@ def _clip_path(clip: str, dirs: list[str], where: str) -> str:
     return found
 
 
-def resolve_clip(walker: str, clip: str, base_dir: str | None = None) -> str:
-    """The file of the clip ``clip`` for walker blueprint ``walker``: a ``.npz`` path as given, or
-    a clip's name looked up in the walker's anim set and then the shared one (``anims/<set>/<clip>
-    .npz`` in every ``roqsim.models`` provider). Raises :class:`BlueprintError` for one it cannot
-    find."""
-    spec = resolve_walker(walker, base_dir=base_dir)
-    return _clip_path(clip, spec["clip_dirs"], f"walker {walker}")
+def resolve_clip(walker: str, clip: str, motion=None, base_dir: str | None = None) -> str:
+    """The file of the clip ``clip`` for walker blueprint ``walker`` (with the world's ``motion:``):
+    a ``.npz`` path as given, or a clip's name looked up in the walker's anim set and then the shared
+    one (``anims/<set>/<clip>.npz`` in every ``roqsim.models`` provider). Raises
+    :class:`BlueprintError` for one it cannot find."""
+    spec = resolve_walker(walker, motion=motion, base_dir=base_dir)
+    return find_clip(clip, spec["clip_dirs"], f"walker {walker}")
