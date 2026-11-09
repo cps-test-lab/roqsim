@@ -74,7 +74,8 @@ an export of every world ``roqsim_scenes`` ships to no error and no warning:
 
 scenario-execution is ``scenario_execution_roqsim``'s ``[osc]`` extra, so ``make venv`` leaves it
 out and ``make test`` skips every test that needs it. ``make test-osc`` runs those tests -- the OSC
-actions and library, a world running a scenario, the reset test's ``scenario`` case -- in a venv
+actions and library, a world running a scenario, the reset test's ``scenario`` case, the handling
+scenes' OpenSCENARIO twins against their Python forms -- in a venv
 that has the extra, and fails rather than skips when it is missing; the CI job ``osc`` runs it:
 
 .. code-block:: bash
@@ -204,7 +205,8 @@ many?" (user docs: :doc:`coverage`). Design worth knowing when extending it:
   module dependent on ``SensorFov`` alone.
 * **Engine.** ``coverage/engine.py`` gates each point range → angular FOV (numpy) → line of sight
   (one batched :func:`roqsim.raycast.cast` per sensor — the same seam every raycaster in the tree
-  uses). The raycast ``geomgroup`` mask **excludes group 4**, so an absent entity cannot occlude;
+  uses). The raycast ``geomgroup`` mask **excludes group 4**, so an absent entity cannot occlude
+  (and group 5, a sensor's window, which is drawn and passed through);
   that is the seam's default, so it holds without each call site remembering it. A model's FOV-visualisation mesh is kept
   out by a different axis — it is alpha 0, and ``mj_ray`` skips a geom exactly when its resolved alpha
   is 0, whatever the mask says (its group is 2, not 4/5). Masking by group is still required, because

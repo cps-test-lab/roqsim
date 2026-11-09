@@ -3086,6 +3086,8 @@ outcome, so it moves from one to the other line by line:
      - OpenSCENARIO
    * - ``yield from self.run(press, "stroke")``
      - ``machine_run(machine: 'press', program: 'stroke')``
+   * - ``yield from self.run(worker, "grasp", hand="both", target="tote_1")``
+     - ``humanoid_grasp(humanoid: 'worker', hand: 'both', target: 'tote_1')``
    * - ``self.start(...)``, ``self.spawn(...)``, ``self.join(...)``
      - ``parallel:``
    * - ``self.first(...)``
@@ -3198,6 +3200,31 @@ entity or the ridden body is absent the zone reports no one -- a zone that only 
 entity's body still counts that entity. ``point: com`` reads the root body's centre of mass, which a
 ``part_state`` state that names an inertia moves; ``point: origin`` reads its frame, for a mocap
 body.
+
+What a hand works: buttons, drawers, totes
+------------------------------------------
+
+Three props in ``roqsim_assets`` are moved by whatever pushes or holds them, never by a controller,
+so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by contact:
+
+* ``push_button``: a sprung button on a housing, facing the housing's +x. It reports itself -- pressed
+  past ``threshold`` of its ``stroke`` and released back under ``release`` of it (a snap action, so a
+  button ringing as a finger lets go is pressed once), the events ``pressed`` and ``released``, the ``pressed``
+  endpoint, a handle under ``button:<name>`` -- and decides nothing: a machine starting because it
+  was pressed is a scenario's. Its front face carries the site ``<name>/button``.
+* ``drawer_cabinet``: drawers on slide joints with friction and an end stop, each an entity
+  (``<name>/drawer_<i>``) with a grip site on its handle, ``<name>/drawer_<i>/grip``.
+* ``tote``: a free box with a grip site at each end, ``<name>/grip_l`` and ``<name>/grip_r``, and
+  with ``contents: true`` the ``look_full``/``look_empty`` bodies a ``part_state`` shows and hides.
+
+A grip site states the frame a hand holds it in (``roqsim_motion.hands``): +x from the palm toward
+the object, +z along the fingers. A hold is a weld between the hand and the object, added when the
+world is built and switched on with the object where it is in the hand (``roqsim_motion.contact``).
+
+**A pressable's housing must not collide with its button.** A child body of a body welded to the
+world is not filtered from that body's geoms, so a button sunk into its housing is held there by
+contact. ``push_button`` excludes the pair (``<contact><exclude>``); a button modelled otherwise needs
+the same.
 
 Writing your own
 ----------------

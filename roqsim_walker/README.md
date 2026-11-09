@@ -127,6 +127,146 @@ from there. Whatever is in the hands is the caller's to move: a controller that 
 drives the box and puts the hands on its handles (`roqsim_walker.reach`). Call `reach` on the
 physics thread.
 
+## Hands
+
+A walker's hands are one switch, off by default:
+
+```yaml
+- walker: {walker: MaleVisitorWalk, hands: true}
+```
+
+**Off**, a walker is the seventeen-body walker described above, byte for byte: the same bodies,
+geoms and skin (a test holds a digest of them), and nothing new computed per step. Every existing
+world keeps its look and its timing unedited.
+
+**On**, a walker gets what handling things needs, from the motion core (`roqsim_motion`):
+
+- wrists that turn (three rotations each) and five fingers of three bones a hand, mocap bodies
+  **with no geom**, so neither a ray nor a contact pays for them;
+- named hand poses, eased: `open`, `power`, `pinch`, `flat`, `point`; a grip closes finger by
+  finger, the thumb over them, until each meets what it holds;
+- a `grip_l`/`grip_r` site on each wrist, at the hand's grip frame: a handle's radius in front of
+  the palm across the knuckles, +x out of the palm, +z along the fingers, the frame an object's grip site states so that holding makes the two one;
+- a press proxy per hand: a fingertip sphere that pushes what has a degree of freedom (a button),
+  posed on the drawn index fingertip while a move presses and parked below the floor otherwise;
+- its posing through the motion core, published as `humanoid_body:<name>`: each hand's goal (a pose
+  with a rotation, or a point), the posture -- turning toward a target, crouching for a low one,
+  bending forward as `reach` does with hands off, leaning for one to the side -- and gaze, blended over the
+  gait by each hand's weight. A nested `humanoid` component (`roqsim_motion`) starts the moves on it.
+
+`reach` keeps working with hands on; the core places the wrist on its point as the two-bone reach
+does with them off.
+
+### Moves
+
+A walker with hands takes moves from a `humanoid` component (`roqsim_motion`): each is one
+program on the machine contract -- `start(move, **args)` returns a sequence number, `status()`
+says when that start finished and with what error, `busy`, `cancel` -- and each step of it is an
+event. Which moves a worker makes, in which order and for what, is a scenario's (Python or
+OpenSCENARIO); a move never decides what comes next.
+
+```yaml
+- walker: {walker: MaleVisitorWalk, hands: true, pose: {position: {x: 0.0, y: 0.0}}}
+  name: worker
+  components:
+    - navigator: {output: walker, speed: 1.0, arrival_radius: 0.05, avoidance: {steer: none, stop: false}}
+    - humanoid: {graspable: [cabinet, tote_*]}   # what its hands may hold
+```
+
+```python
+worker = ctx.blackboard.get("humanoid:worker")
+seq = worker.grasp("both", "tote_1")             # = worker.start("grasp", hand="both", target="tote_1")
+status = worker.status()                         # MachineStatus(seq, program, finished, error)
+```
+
+A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its
+`name:` (its body), or a world pose; a hand is `left`, `right` or `both`.
+
+| move | parameters | events | fails with |
+|---|---|---|---|
+| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands) | `walking`, `arrived` | `unknown target`, `no route to …`, `cannot face …` |
+| `reach` | `hand`, `target`, `offset` (x, y, z[, r, p, y] in its frame), `orient` true, `pose` `open`, `speed` 0.8 m/s | `reached` | `out of reach: … approach first` |
+| `press` | `hand`, `target` (a site on the button's face), `max_force`, `travel`, `pose` `point` | `contact`, `pressed`, `released` | `button did not move: … at … N`, out of reach |
+| `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |
+| `release` | `hand` `both` | `opened` | `not holding anything` |
+| `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
+| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
+| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
+
+`approach` to something a hand takes by its handles (a grip site, a tote) stands its `standoff` from
+the handles, then steps back until nothing solid is within the body's clearance in front of it,
+foot to knee (a walker keeps 0.3 m, as a crouch brings its knees forward): a tote in the middle of a
+rack is reached over the rack, not from inside it. An approach to a surface stands where its
+`standoff` says.
+
+`grasp` of something it will carry (a free object, its handles above the knees) takes each
+handle with the hand turned on it, fingers forward and down along the forearm that will carry it
+(`carry_turn`, 50 degrees for a walker): the hold keeps the hand so, and the wrists stay straight
+while it carries. A handle off the floor is taken as its frame says.
+
+`pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
+servo under the load) goes on past it until the object has, by at most half the distance; a lagging
+hand's stroke that would leave a drawer within a hand's width of its stop pushes it to the stop, and
+at a stop a posed hand's goal comes back onto it while a lagging hand's stays, so neither pulls the
+drawer back.
+
+**Scenes.** Three worlds show a worker handling things, each with its scenario in Python
+(`roqsim_motion.scenes`, which the robot's box swap in `roqsim_humanoid` runs too) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
+timeline:
+
+| world | the scene |
+|---|---|
+| `handling_start_machine` | walks to a machine, presses its start button, and the machine runs |
+| `handling_drawer_to_bench` | opens a drawer, takes a tote out by its handles, carries it to a bench and sets it down |
+| `handling_box_swap` | at a cell's drawer, swaps the full tote for an empty one once the cell reports a tote in its drawer |
+
+`walker_pedestrians` is ten walkers with hands off beside a robot and its lidar: the world
+`bench-hands` measures.
+
+**Contact.** A press pushes with the hand's press proxy, so a button moves because it is pushed. The
+hand is turned so its pointing index lies along the button's axis, its palm turned no more than that needs (a hand at rest points thumb up), and the proxy's front is
+the drawn fingertip, its contact stiff enough not to sink into the button: what pushes the button is
+the finger a viewer sees. The press stops at the button's travel or at `max_force`, since a kinematic hand would push through
+a joint's stop. A hold is a weld between the hand and the object, one per hand and `graspable` grip
+site, added when the world is built and switched on and off while it runs; it carries a tote and
+pulls a drawer by the physics. Switched on, it welds the object at the pose it has in the hand at
+that moment, not grip site onto grip site: it keeps the object as it was in the hand when taken, so a hand a
+few degrees off a handle does not turn it; a free object is held whole, one on a joint (a drawer) by
+its position only. Two hands on one object: one hold carries it, the other hand rides on its own
+handle (two holds would squeeze it between hands posed at the walker's own rate). A hold that pulls past `hold.max_force` or slips past
+`hold.slip` (each low-passed over 0.15 s, as the walker poses its hands at its own rate) lets go,
+and the move fails `lost hold`. What the walker may hold does not collide with its own body. A
+cancelled move stops where it is: a hold stays held. A reset drops the move and every hold.
+
+The fingers do not collide. A grip closes finger by finger until a ray from each fingertip finds what
+it holds within a few millimetres, so the hand takes the shape of a handle; contact between the
+fingers and what they hold is not modelled, and the hold carries the object. Kinematic fingers
+squeezing a free body would push it with unbounded force, so that is left for a measured step of its
+own.
+
+**The skin.** Where a blueprint has finger weights (`<obj>.fingers.npz`), its hands deform with the
+fingers, and the hand's bones are measured on its mesh (`roqsim_walker.skin.fit_hands`): each finger's
+knuckle, joints, line and tip where the mesh has them, the palm's surface and the grip frame in front
+of it. The bones then turn the skin about its own knuckles, the index tip a press aims and the proxy
+sits on is the drawn one, and the hand keeps the size the character was modelled with (a generic hand
+on another mesh's fingers sweeps the skin about the wrong pivots: a fist deeper than the palm is
+broad, a fingertip centimetres off the one drawn). The bundled characters' source rigs weight a thumb
+chain and *one* chain for the four fingers, so the thumb follows its bones and the four fingers' chain
+is split along the palm's breadth, each vertex to the finger whose bones it is nearest.
+`roqsim walker import-actor` writes the sidecar with the blueprint, and `--fingers-only` adds it to
+an existing blueprint from its source. A
+blueprint without one binds each hand to its wrist as one rigid part, with the default hand's
+geometry: its hand follows the wrist, and its fingers are not drawn from weights it does not have.
+
+**What hands on costs.** With hands off a walker is the walker without hands, so it adds nothing a
+step. With hands on, the posing in Python, which is what a walker world pays most for, grows by
+about a tenth while the hands hold their pose: the fingers' frames are recomputed only when a pose
+changes. A hand on a moving goal (`moving`) runs the solver on every update. The lidar scan and the
+camera frame are unchanged, since the fingers carry nothing a ray hits and the skin is the same
+vertices split over more bones: 17 skin bones a walker with hands off, 46 with them on.
+`roqsim walker bench-hands` measures a machine's own numbers (a robot with its 360-ray lidar and 1
+or 10 walkers patrolling; `off`, `on` idle, and `moving`: both hands on goals that move every step).
+
 ## Assets
 
 `models/people/<Walker>/` is a **blueprint**: a textured OBJ, a `*.walker.json` sidecar (materials +
@@ -176,6 +316,11 @@ pip install 'roqsim_walker[import]'   # pycollada
 roqsim walker import-actor <actor.dae> --name NurseFemaleWalk --anim-set female \
     --credits-source <fuel-url> --credits-licence "CC-BY 4.0" --credits-author "..."
 ```
+
+## Tools
+
+`roqsim walker import-actor` (above) and `roqsim walker bench-hands`, which measures what hands on
+costs (`--smoke --robot none` for a quick run).
 
 ## Tests
 

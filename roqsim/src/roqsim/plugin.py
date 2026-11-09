@@ -536,6 +536,15 @@ class Plugin:
         Runs once at setup, before ``spec.compile()``. ``ctx.model``/``ctx.data`` do not exist yet.
         """
 
+    def build_late(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        """Pre-compile, after every plugin's ``build``: link what other plugins built.
+
+        Runs once at setup, in the plugins' order, after the last ``build`` and before
+        ``spec.compile()``. It is for a plugin that relates its own model to another entity's -- an
+        equality between a hand and a handle -- which needs both in the spec wherever the world lists
+        them. A plugin adding only its own model does that in :meth:`build`.
+        """
+
     def configure(self, ctx: SimContext) -> None:
         """Post-compile: resolve ids/handles, allocate resources, advertise services.
 

@@ -476,7 +476,10 @@ written, so the base camera keeps it. That is what lets an ``azimuth``-only path
 while the robot's own turning still counts: under ``follow_heading`` the path animates the angle
 behind the robot, not a bearing. A keyframe may instead say where to stand and where to look, in
 metres -- ``{t: 0, eye: [9, -6, 5], target: [4, 2, 0.5]}`` -- which converts to the orbit keys at
-load. Azimuth takes the shortest arc between keyframes unless ``wrap: false``.
+load. Azimuth takes the shortest arc between keyframes unless ``wrap: false``. ``near: 0.02`` draws
+the path with its own near clip plane, for a camera closer than the model's (``visual/map znear``
+times the world's extent, which a body parked far below the floor stretches to a metre): a close
+shot of a hand.
 
 **Checking a path costs a still, not a clip.** ``--at`` with ``--camera-path`` draws the frame the
 clip would have at that moment, ``--check`` prints the resolved keyframes without drawing, and

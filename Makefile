@@ -180,13 +180,15 @@ test-gltf:  ## Khronos glTF Validator over an `export gltf` of every bundled wor
 		roqsim/tests/test_export_gltf.py roqsim_scenes/tests/test_worlds_export_gltf.py
 
 # The tests gated on scenario-execution, run where it is installed: every action and the in-process
-# runner (scenario_execution_roqsim/tests) and the reset test's `scenario` case. `make test` runs them
+# runner (scenario_execution_roqsim/tests), the reset test's `scenario` case, and the handling scenes'
+# OpenSCENARIO twins compared with their Python forms. `make test` runs them
 # too, and skips them where scenario-execution is absent -- which is every venv `make venv` makes, since
 # it is the `[osc]` extra. This target is for a venv that has it (`$(PIP) install -e
 # "scenario_execution_roqsim[osc]"`), and fails rather than skips: first it imports every
 # scenario-execution module the tests import, so a broken install is an ImportError here and not a
 # quiet importorskip; then it fails if any skip still names scenario-execution.
-OSC_TESTS  := scenario_execution_roqsim/tests roqsim/tests/test_reset_restores_configured_state.py
+OSC_TESTS  := scenario_execution_roqsim/tests roqsim/tests/test_reset_restores_configured_state.py \
+	roqsim_walker/tests/test_scenes.py roqsim_humanoid/tests/test_handling_robot.py
 OSC_IMPORTS := scenario_execution.actions.base_action scenario_execution.get_osc_library \
 	scenario_execution.model.model_to_py_tree scenario_execution.model.osc2_parser \
 	scenario_execution.model.types scenario_execution.scenario_execution_base \

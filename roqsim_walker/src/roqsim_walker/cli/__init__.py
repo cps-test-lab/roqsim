@@ -19,3 +19,4 @@ def walker() -> None:
 
 
 walker.add_command(tool("roqsim_walker.cli.import_actor"))
+walker.add_command(tool("roqsim_walker.cli.bench_hands"))

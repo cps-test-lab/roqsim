@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Convert a rigged COLLADA character (a Gazebo/Open-RMF <actor> skin) into a walker blueprint.
 
-Writes a ``people/<Name>/`` folder -- OBJ + MTL + textures, ``<name>.walker.json`` and the authored
-``<name>.weights.npz`` -- from a ``.dae`` that carries a skin controller. Only the *skin* is taken:
+Writes a ``people/<Name>/`` folder -- OBJ + MTL + textures, ``<name>.walker.json``, the authored
+``<name>.weights.npz`` and, where the rig has finger bones, ``<name>.fingers.npz`` -- from a ``.dae``
+that carries a skin controller. Only the *skin* is taken:
 locomotion comes from this package's clips (``models/anims/``), so the source's ``<animation>`` tracks
 are ignored. This is the counterpart to the CARLA character export pipeline.
 
@@ -185,6 +186,87 @@ def fold_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
     return out / (out.sum(axis=1, keepdims=True) + 1e-9)
 
 
+#: The source rigs' hand chains, per side: a thumb and ONE chain for the four fingers, three bones
+#: each. An import keeps their weights apart in ``<stem>.fingers.npz``.
+FINGER_CHAINS = [
+    (chain, side, k) for side in ("l", "r") for chain in ("thumb", "fingers") for k in (1, 2, 3)
+]
+
+
+def _finger_bone(chain: str, side: str, k: int) -> str:
+    return f"{'Thumb' if chain == 'thumb' else 'Fingers'}{k}_{side.upper()}"
+
+
+def has_fingers(names: list[str]) -> bool:
+    """Whether the source rig has its hands' chains (:data:`FINGER_CHAINS`). Refuses one that has
+    some of their bones and not all: a hand weighted to half its fingers is a rig this import does
+    not know."""
+    present = [_finger_bone(*c) in names for c in FINGER_CHAINS]
+    if any(present) and not all(present):
+        missing = [_finger_bone(*c) for c, p in zip(FINGER_CHAINS, present, strict=True) if not p]
+        raise SystemExit(
+            f"the source has some of its finger bones and not {missing}, so no finger weights"
+        )
+    return all(present)
+
+
+def finger_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
+    """(nvert, 12): each vertex's share of its whole weight on each source finger bone, in
+    :data:`FINGER_CHAINS` order. The shares are the same ones ``fold_weights`` folds into the wrist,
+    so ``wrist - sum(shares)`` is what stays on the wrist."""
+    total = W.sum(axis=1, keepdims=True) + 1e-9
+    col = {n: i for i, n in enumerate(names)}
+    out = np.zeros((W.shape[0], len(FINGER_CHAINS)))
+    for j, chain in enumerate(FINGER_CHAINS):
+        src = _finger_bone(*chain)
+        if src not in col:
+            raise SystemExit(f"the source has no {src!r} bone, so no finger weights")
+        out[:, j] = W[:, col[src]] / total[:, 0]
+    return out
+
+
+def save_fingers(path: str, verts: np.ndarray, W: np.ndarray, names: list[str]) -> str:
+    """Write the finger weights (``<stem>.fingers.npz``) of the source's ``verts``, as the blueprint's
+    weights are written: by position, in the frame the skin sees."""
+    np.savez_compressed(
+        path,
+        positions=verts,
+        weights=finger_weights(W, names),
+        chains=np.array([f"{c}_{s}_{k}" for c, s, k in FINGER_CHAINS]),
+    )
+    return path
+
+
+def write_fingers(dae: str, wdir: str, stem: str) -> str:
+    """Write ``<stem>.fingers.npz`` beside an existing blueprint's weights, from the same source rig,
+    and add their sentence to its ``CREDITS.txt``.
+
+    Refuses a source whose vertices are not the blueprint's: the shares are matched to the mesh by
+    position, as its weights are, and a mesh from another source would match nothing."""
+    weights = os.path.join(wdir, f"{stem}.weights.npz")
+    if not os.path.isfile(weights):
+        raise SystemExit(
+            f"--fingers-only: no blueprint weights at {weights}; import the actor first"
+        )
+    credits = os.path.join(wdir, "CREDITS.txt")
+    if not os.path.isfile(credits):
+        raise SystemExit(f"--fingers-only: no {credits}; import the actor first")
+    _, ctrl, names, _, W, _, _ = load_skin(dae)
+    verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
+    verts[:, 2] -= verts[:, 2].min()
+    known = np.load(weights)["positions"]
+    if known.shape != verts.shape or np.abs(known - verts).max() > 1e-6:
+        raise SystemExit(f"--fingers-only: {dae} is not the source of {wdir} (its vertices differ)")
+    if not has_fingers(names):
+        raise SystemExit(f"--fingers-only: {dae} has no finger bones, so no finger weights")
+    path = save_fingers(os.path.join(wdir, f"{stem}.fingers.npz"), verts, W, names)
+    with open(credits) as f:
+        text = f.read()
+    with open(credits, "w") as f:
+        f.write(with_fingers_credit(text))
+    return path
+
+
 def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict:
     """joint -> capsule radius (m): the spread of the vertices this joint dominates, measured off
     its bone axis. Mirrors what a CARLA Phys asset gives, but derived from geometry.
@@ -359,8 +441,25 @@ def write_mtl(path: str, materials: dict) -> None:
             )
 
 
-def credits_text(name: str, source: str, licence: str, author: str) -> str:
-    """The ``CREDITS.txt`` an imported blueprint carries: its own terms, and the clips' CARLA ones."""
+#: The sentence of a blueprint's ``CREDITS.txt`` that says where its finger weights come from.
+FINGERS_CREDIT = (
+    "The finger weights (*.fingers.npz) are the same source's, kept apart from\n"
+    "the wrist by the import; a walker with `hands: true` binds its fingers\n"
+    "with them.\n"
+)
+
+
+def with_fingers_credit(text: str) -> str:
+    """``CREDITS.txt``'s ``text`` with :data:`FINGERS_CREDIT` as its last paragraph, in place of one
+    of another wording (a paragraph that begins as it does)."""
+    head = FINGERS_CREDIT.split()[:4]
+    paragraphs = [p for p in text.rstrip("\n").split("\n\n") if p.split()[:4] != head]
+    return "\n\n".join(paragraphs) + "\n\n" + FINGERS_CREDIT
+
+
+def credits_text(name: str, source: str, licence: str, author: str, fingers: bool = False) -> str:
+    """The ``CREDITS.txt`` an imported blueprint carries: its own terms, the clips' CARLA ones, and
+    with ``fingers`` the sentence on its finger weights (:data:`FINGERS_CREDIT`)."""
     return (
         f"{name}\n\nSource:  {source}\n"
         f"Licence: {licence}\n"
@@ -373,6 +472,7 @@ def credits_text(name: str, source: str, licence: str, author: str) -> str:
         "skeleton, skin weights) is the source's. Locomotion comes from this\n"
         "package's models/anims/, which are CARLA retargets under CC-BY 4.0 --\n"
         "so this walker carries CARLA attribution too; see THIRD_PARTY.md.\n"
+        + (f"\n{FINGERS_CREDIT}" if fingers else "")
     )
 
 
@@ -401,21 +501,39 @@ def main(argv: list | None = None) -> None:
         metavar="NAME",
         help="drop this material group (a held prop like a handbag); repeatable",
     )
-    # Required: a blueprint is committed with the CREDITS.txt written here or not at all, and one
-    # written without its source, licence or author is an asset with no recorded licence.
-    ap.add_argument("--credits-source", required=True, help="where the actor came from (URL)")
-    ap.add_argument("--credits-licence", required=True, help='its licence, e.g. "CC-BY 4.0"')
-    ap.add_argument("--credits-author", required=True, help="its author, as the source names them")
+    ap.add_argument(
+        "--fingers-only",
+        action="store_true",
+        help="add the source's finger weights (<stem>.fingers.npz) to an existing blueprint of the "
+        "same source, and their sentence to its CREDITS.txt; nothing else is written (a full import "
+        "writes them too)",
+    )
+    # Required for an import: a blueprint is committed with the CREDITS.txt written here or not at
+    # all, and one written without its source, licence or author is an asset with no recorded licence.
+    ap.add_argument("--credits-source", help="where the actor came from (URL)")
+    ap.add_argument("--credits-licence", help='its licence, e.g. "CC-BY 4.0"')
+    ap.add_argument("--credits-author", help="its author, as the source names them")
     args = ap.parse_args(argv)
+    out_root = args.out or os.path.join(models_dir(), "people")
+    if args.fingers_only:
+        wdir = os.path.join(out_root, args.name)
+        print(f"wrote {write_fingers(args.dae, wdir, args.name[0].lower() + args.name[1:])}")
+        return
+    missing = [
+        f"--credits-{k}"
+        for k in ("source", "licence", "author")
+        if not getattr(args, f"credits_{k}")
+    ]
+    if missing:
+        ap.error(f"an import needs {', '.join(missing)}")
 
     # Default to the same people/ the loader reads, so an import is visible to `resolve_walker`
     # without a path argument. Asking blueprint rather than recomputing it keeps one definition.
-    out_root = args.out or os.path.join(models_dir(), "people")
     wdir = os.path.join(out_root, args.name)
-    os.makedirs(wdir, exist_ok=True)
     stem = args.name[0].lower() + args.name[1:]
 
     doc, ctrl, names, bind, W, parts, materials = load_skin(args.dae)
+    fingers = has_fingers(names)  # refused, as every refusal below, before anything is written
     offsets, root_height = skeleton_from_bind(bind)
     w17 = fold_weights(W, names)
 
@@ -429,6 +547,7 @@ def main(argv: list | None = None) -> None:
             )
         parts = [p for p in parts if p.material not in drop]
         materials = {m: i for m, i in materials.items() if m not in drop}
+    os.makedirs(wdir, exist_ok=True)
 
     # Mesh in the frame skin.add_skin will see: soles dropped to z=0 (its _aligner does the same).
     verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
@@ -460,6 +579,8 @@ def main(argv: list | None = None) -> None:
         weights=w17,
         joints=np.array(JOINT_NAMES),
     )
+    if fingers:
+        save_fingers(os.path.join(wdir, f"{stem}.fingers.npz"), verts, W, names)
 
     meta = {
         "obj": f"{stem}.obj",
@@ -482,13 +603,22 @@ def main(argv: list | None = None) -> None:
 
     with open(os.path.join(wdir, "CREDITS.txt"), "w") as f:
         f.write(
-            credits_text(args.name, args.credits_source, args.credits_licence, args.credits_author)
+            credits_text(
+                args.name,
+                args.credits_source,
+                args.credits_licence,
+                args.credits_author,
+                fingers=fingers,
+            )
         )
 
     print(f"wrote {wdir}")
     print(f"  height {height:.3f} m | root_height {root_height:.3f} m | {len(verts)} verts")
     print(f"  materials: {', '.join(materials)}")
     print(f"  collision radii: {len(collision)} joints | anim_set: {args.anim_set or 'inferred'}")
+    print(
+        f"  finger weights: {'written' if fingers else 'none, the source has no finger bones: its hands bind rigidly'}"
+    )
 
 
 if __name__ == "__main__":

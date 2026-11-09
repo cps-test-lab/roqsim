@@ -1,0 +1,79 @@
+# Scene 4: the box swap of roqsim_walker's handling_box_swap, by a humanoid robot through the same
+# moves -- a Unitree G1 with Dex1 grippers, physical: its joints tracked by position servos, its base
+# hung on an anchor the navigator moves (roqsim_motion.robot; no locomotion or balance controller,
+# balance not simulated). It pulls the cell's drawer, takes the full tote to the trolley, brings the
+# empty one from the rack, sets it in the drawer and pushes the drawer shut, by contact and its holds.
+# The cabinet is taller than the walker's, its drawer at the robot's height and its walls low, and
+# the totes shallower: the robot carries lower than a walker. The scenario is the walker's, its
+# handle renamed (`needs:`) and its stand-offs the robot's.
+#
+#   roqsim sim roqsim_humanoid/src/roqsim_humanoid/worlds/handling_box_swap_g1.yaml
+#
+# The same scene in OpenSCENARIO: handling_box_swap_g1_osc.yaml.
+# smoke-steps: 60000
+
+sim:
+  pacing: realtime
+  timestep: 0.002
+
+components:
+  - spawn_model:
+      model: unitree_g1_dex1
+      prefix: g1_
+      motion: static           # the model has its own free base; spawn_model adds no joint
+      pose: {position: {x: 0.0, y: 0.0}}
+    name: g1
+    components:
+      - humanoid_robot: {drive: physical}
+      - navigator: {output: humanoid, speed: 0.5, arrival_radius: 0.05, avoidance: {steer: none, stop: false}}
+      - humanoid: {graspable: [cell, tote_*], hold: {solref: [0.05, 1.0], max_force: 600.0}}
+
+  - drawer_cabinet:
+      pose: {position: {x: 2.0, y: -1.0}, orientation: {yaw: 3.14159265}}
+      size: [0.6, 0.7, 1.2]
+      drawers: 2
+      wall: 0.06               # low drawer walls, for a robot that carries lower than a walker
+    name: cell
+
+  - tote:
+      pose: {position: {x: 2.28, y: -1.0, z: 0.647}, orientation: {yaw: 1.57079633}}
+      size: [0.4, 0.3, 0.15]
+      contents: true
+    name: tote_full
+
+  - box:
+      prefix: trolley_
+      pose: {position: {x: -1.2, y: 1.0}}
+      size: [0.6, 0.8, 0.7]
+      motion: static
+    name: trolley
+
+  - box:
+      prefix: rack_
+      pose: {position: {x: -1.0, y: -1.0}}   # the tote at its near edge: the robot, unlike a walker, stands clear of it
+      size: [0.6, 0.8, 0.7]
+      motion: static
+    name: rack
+
+  - tote:
+      pose: {position: {x: -1.2, y: -1.0, z: 0.701}, orientation: {yaw: 1.57079633}}
+      size: [0.4, 0.3, 0.15]
+      contents: true
+    name: tote_empty
+
+  - part_state:
+      shown: {tote_full: [full], tote_empty: [empty]}
+      exclusive: {"tote_*": [[full, empty]]}
+
+  - zone_trigger:
+      pose: {position: {x: 2.28, y: -1.0, z: 0.75}}
+      size: [0.5, 0.6, 0.3]
+    name: drawer_zone
+
+  - "roqsim_motion.scenes:BoxSwap":
+      needs: {worker: "humanoid:g1"}
+      standoffs: {drawer: 0.5, push: 0.5, tote: 0.3, place: 0.4}
+      pull: 0.45
+      strokes: 5
+      stop_at_end: true
+    name: scene

@@ -1,0 +1,24 @@
+# The LimX Oli mapped onto roqsim_motion's canonical humanoid (see unitree_g1_dex1.retarget.yaml).
+# It has no hand: a hand's grip frame is its wrist link's end, and it holds by the hold alone.
+humanoid: oli
+base: {body: base_link, height: 0.92}
+joints:
+  spine: [z: waist_yaw_joint, x: waist_roll_joint, y: waist_pitch_joint]
+  head: [z: head_yaw_joint, y: head_pitch_joint]
+  shoulder_l: [y: left_shoulder_pitch_joint, x: left_shoulder_roll_joint, z: left_shoulder_yaw_joint]
+  elbow_l: [y: left_elbow_joint]
+  wrist_l: [z: left_wrist_yaw_joint, y: left_wrist_pitch_joint, x: left_wrist_roll_joint]
+  shoulder_r: [y: right_shoulder_pitch_joint, x: right_shoulder_roll_joint, z: right_shoulder_yaw_joint]
+  elbow_r: [y: right_elbow_joint]
+  wrist_r: [z: right_wrist_yaw_joint, y: right_wrist_pitch_joint, x: right_wrist_roll_joint]
+  hip_l: [y: left_hip_pitch_joint, x: left_hip_roll_joint, z: left_hip_yaw_joint]
+  knee_l: [y: left_knee_joint]
+  ankle_l: [y: left_ankle_pitch_joint, x: left_ankle_roll_joint]
+  hip_r: [y: right_hip_pitch_joint, x: right_hip_roll_joint, z: right_hip_yaw_joint]
+  knee_r: [y: right_knee_joint]
+  ankle_r: [y: right_ankle_pitch_joint, x: right_ankle_roll_joint]
+# A grip frame at the palm of each wrist's end: fingers down (+z), out of the palm toward the body (+x).
+hands:
+  l: {body: left_wrist_roll_link, pos: [0.0, -0.03, -0.12], rpy: [3.1415927, 0.0, -1.5707963]}
+  r: {body: right_wrist_roll_link, pos: [0.0, 0.03, -0.12], rpy: [3.1415927, 0.0, 1.5707963]}
+physical: {servos: own, kp: 300.0, kv: 15.0}

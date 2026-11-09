@@ -23,6 +23,7 @@
     <mesh name="torso_link_rev_1_0" file="torso_link_rev_1_0.STL" />
     <mesh name="logo_link" file="logo_link.STL" />
     <mesh name="head_link" file="head_link_mid360_window.STL" />
+    <mesh name="head_link_whole" file="head_link.STL" />
     <mesh name="left_shoulder_pitch_link" file="left_shoulder_pitch_link.STL" />
     <mesh name="left_shoulder_roll_link" file="left_shoulder_roll_link.STL" />
     <mesh name="left_shoulder_yaw_link" file="left_shoulder_yaw_link.STL" />
@@ -146,8 +147,8 @@
             </body>
             <body name="head_link" pos="0.0039635 0 -0.044">
               <inertial pos="0.005267 0.000299 0.449869" quat="0.698214 0.0103452 0.0112083 0.715727" mass="1.036" diaginertia="0.00418528 0.00408711 0.00180579" />
-              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.2 0.2 0.2 1" mesh="head_link" />
-              <geom type="mesh" rgba="0.2 0.2 0.2 1" mesh="head_link" />
+              <geom type="mesh" contype="0" conaffinity="0" group="5" density="0" rgba="0.2 0.2 0.2 1" mesh="head_link_whole" />
+              <geom type="mesh" rgba="0.2 0.2 0.2 1" mesh="head_link" group="3" />
             </body>
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778" quat="0.990264 0.139201 1.38722e-05 -9.86868e-05">
               <inertial pos="0 0.035892 -0.011628" quat="0.654152 0.0130458 -0.326267 0.68225" mass="0.718" diaginertia="0.000465864 0.000432842 0.000406394" />

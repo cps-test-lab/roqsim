@@ -212,3 +212,17 @@ def test_apply_animates_the_offset_under_follow_heading():
     tracking = _Tracking()
     _path([{"t": 0, "azimuth": 180}]).apply(cam, 0, tracking=tracking)
     assert tracking.azimuth_offset == 180.0 and cam.azimuth == 45.0
+
+
+def test_a_path_may_state_its_near_clip_plane():
+    from roqsim.camera_path import CameraPath, CameraPathError
+    from roqsim.render import _clip_planes
+
+    doc = {"near": 0.02, "keyframes": [{"t": "onset", "distance": 0.4}]}
+    path = CameraPath.from_doc(doc)
+    assert path.near == 0.02 and path.anchor({"onset": 1.0}).near == 0.02
+    assert path.describe()["near"] == 0.02
+    assert _clip_planes(path) == {"near": 0.02} and _clip_planes(None) == {}
+    assert CameraPath.from_doc({"keyframes": [{"t": 0, "distance": 1}]}).near is None
+    with pytest.raises(CameraPathError, match="not a distance"):
+        CameraPath.from_doc({"near": 0, "keyframes": [{"t": 0, "distance": 1}]})

@@ -28,7 +28,8 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - `roqsim_aerial/` — aerial vehicles, flight control, wind, PX4 SITL (`[px4]`). `roqsim`, `roqsim_sensors`.
 - `roqsim_nav/` — shared 2D navigation and the `navigator`; no geometry, so any family may use it. `roqsim`.
   Embodiments and local planners plug in via `roqsim_nav.outputs` / `roqsim_nav.avoidance`; nothing branches on their names.
-- `roqsim_walker/` — kinematic pedestrians, a `roqsim_nav` output. `roqsim`, `roqsim_nav`; no robot package depends on it.
+- `roqsim_motion/` — the humanoid motion core (whole-body IK, hands, retargeting tables) and the moves a humanoid's handle starts; no geometry. `roqsim`, `roqsim_nav`.
+- `roqsim_walker/` — kinematic pedestrians, a `roqsim_nav` output. `roqsim`, `roqsim_nav`, `roqsim_motion`; no robot package depends on it.
   Licences differ per character (`CREDITS.txt` beside each) and the clips are CC-BY: `roqsim_walker/THIRD_PARTY.md`.
 - `roqsim_mcp/`, `roqsim_scene_builder/` — MCP servers (introspection; scene windows and renders). `roqsim`.
 - `scenario_execution_roqsim/` — the OSC vocabulary (`import osc.roqsim`). `roqsim`; `scenario_execution` via `[osc]`.
@@ -41,7 +42,7 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
   outside input goes through `ctx.post(cmd)`. Architecture §7.
 - **No mid-run recompile.** Change the `MjSpec` only in `build()`; at runtime write mocap/qpos or use the
   entity pool. Architecture §7, anti-patterns.
-- A plugin implements any subset of `build`, `configure`, `on_reset`, `pre_step`, `post_step`, `shutdown`
+- A plugin implements any subset of `build`, `build_late`, `configure`, `on_reset`, `pre_step`, `post_step`, `shutdown`
   and validates its own config in `validate_config`. Architecture §2–3.
 - **A capability is declared by the plugin, never listed in the core.** Consumers ask a class attribute
   (`transport_only`, `provides_world`, `parallel_safe`); a name list in core would silently serve only

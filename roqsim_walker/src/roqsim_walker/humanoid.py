@@ -22,6 +22,9 @@ import numpy as np
 
 from roqsim.pose import yaw_to_quat
 
+#: The radius of a hand's press proxy (m): a fingertip; and its contact's (timeconst, dampratio).
+PRESS_RADIUS = 0.009
+PRESS_SOLREF = (0.006, 1.0)
 # Pelvis standing height (m): with the leg offsets below the feet rest near z=0.
 ROOT_HEIGHT = 0.93
 # Nav collision proxy (r, half-height) -- the silhouette a lidar sees.
@@ -143,9 +146,16 @@ def build_humanoid(
     skeleton=None,
     collision=None,
     flip=None,
+    hands=None,
+    finger_weights=None,
 ) -> list[str]:
     """Inject one mocap body per skeleton joint, each carrying a **per-limb collision capsule**
     (the robot's lidar/contact silhouette -- a thick torso, thinner limbs; arms sensing-only).
+
+    ``hands`` (a walker with ``hands: true``) maps each side to its
+    :class:`~roqsim_motion.hands.HandLayout`: each hand gets fifteen finger bones -- mocap bodies
+    with no geom, so neither the solver nor a ray pays for them -- and a ``grip_<side>`` site on its
+    wrist at the hand's grip frame. Without it the walker is the seventeen bodies above, unchanged.
 
     The visual is either capsule bones (``mesh=None`` fallback) or a deformable ``<skin>``.
     ``skeleton`` is the per-walker bone table; ``collision`` maps joint -> capsule radius (m, from
@@ -163,13 +173,48 @@ def build_humanoid(
             if term:
                 _add_terminal(b, term, rgba)
         _add_collision(b, j, skel, collision)  # per-limb hit-box (always)
+        if hands and j.name in ("wrist_l", "wrist_r"):
+            lay = hands[j.name[-1]]
+            b.add_site(
+                name=f"{name}/grip_{j.name[-1]}", pos=list(lay.grip_pos), quat=list(lay.grip_quat)
+            )
+    bones = list(JOINT_NAMES)
+    if hands:
+        from roqsim_motion.hands import bone_names
+
+        for side in ("l", "r"):
+            for bone in bone_names(side):
+                spec.worldbody.add_body(name=f"{name}/{bone}", pos=list(park), mocap=True)
+                bones.append(bone)
+            # The hand's press proxy: a fingertip that pushes what has a degree of freedom (a
+            # button, a switch), posed while a move presses and parked below the floor otherwise.
+            proxy = spec.worldbody.add_body(name=f"{name}/press_{side}", pos=list(park), mocap=True)
+            g = proxy.add_geom()
+            g.type = mujoco.mjtGeom.mjGEOM_SPHERE
+            g.size = [PRESS_RADIUS, 0.0, 0.0]
+            _collision_flags(g, physical=True)
+            # A fingertip that does not sink into what it presses: its own stiff contact wins
+            # (priority) over the softer default of a button, so the button goes in where the drawn
+            # fingertip is. MuJoCo raises a time constant under twice a world's timestep to that.
+            g.priority = 1
+            g.solref = list(PRESS_SOLREF)
+            g.solimp = [0.95, 0.99, 0.001, 0.5, 2.0]
     if mesh is not None:  # deformable character skin
         from roqsim_walker import skin
 
         skin.add_skin(
-            spec, name, mesh, materials=materials, rgba=rgba, tpose=tpose, skeleton=skel, flip=flip
+            spec,
+            name,
+            mesh,
+            materials=materials,
+            rgba=rgba,
+            tpose=tpose,
+            skeleton=skel,
+            flip=flip,
+            hands=hands,
+            finger_weights=finger_weights,
         )
-    return list(JOINT_NAMES)
+    return bones
 
 
 def _collision_flags(g, physical: bool) -> None:

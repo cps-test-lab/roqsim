@@ -1,0 +1,9 @@
+# Scene 1: a worker walks to a machine, presses its start button, and the machine runs.
+# press_1 is roqsim_assets' example press; `stroke` is the one name the scene knows of it.
+import osc.roqsim
+
+scenario start_machine:
+    do serial:
+        humanoid_approach(humanoid: 'worker', target: 'start/button', standoff: 0.5)
+        humanoid_press(humanoid: 'worker', hand: 'right', target: 'start/button')
+        machine_run(machine: 'press_1', program: 'stroke')

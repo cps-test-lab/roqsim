@@ -116,7 +116,7 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.endpoint import Unit
-from roqsim.presence import ABSENT_GEOM_GROUP, subtree_body_ids
+from roqsim.presence import ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP, subtree_body_ids
 from roqsim.types import Image
 
 from .camera_common import CameraPlugin, join_topic
@@ -250,6 +250,7 @@ class SegmentationCameraPlugin(CameraPlugin):
         self._seg_opt = mujoco.MjvOption()
         # The one line that makes absence mean absence in an id pass; see the module docstring.
         self._seg_opt.geomgroup[ABSENT_GEOM_GROUP] = 0
+        self._seg_opt.geomgroup[WINDOW_GEOM_GROUP] = 1  # a window is seen, as by every render
 
     # A full frame on the wire, like the colour image.
     @endpoint.out(

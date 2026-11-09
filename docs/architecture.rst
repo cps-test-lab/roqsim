@@ -37,12 +37,15 @@ Non-goals: roqsim is not a general game engine or a physics fork; it orchestrate
 2. Lifecycle reference
 ----------------------
 
-A plugin (``roqsim.plugin.Plugin``) implements any subset of six hooks. The engine only calls hooks a plugin actually overrides (an un-overridden hook costs nothing and is absent from the timing table).
+A plugin (``roqsim.plugin.Plugin``) implements any subset of seven hooks. The engine only calls hooks a plugin actually overrides (an un-overridden hook costs nothing and is absent from the timing table).
 
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | Hook                 | When                                | May touch                                       | Typical use                                                                                    |
 +======================+=====================================+=================================================+================================================================================================+
 | ``build(spec, ctx)`` | once, pre-compile                   | ``spec`` only (``model``/``data`` are ``None``) | add bodies/geoms/sensors/assets                                                                |
++----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
+| ``build_late(spec,`` | once, after every ``build``,        | ``spec`` only                                   | link its own model to another plugin's (an equality between two entities), wherever the world  |
+| ``ctx)``             | pre-compile                         |                                                 | lists them                                                                                     |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | ``configure(ctx)``   | once, post-compile                  | ``model``, ``data``, ids                        | resolve body/site ids, open resources, advertise services, register ``RobotHandle``/``Entity`` |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
@@ -620,6 +623,12 @@ either as OpenSCENARIO run by scenario-execution, or in Python.
    * - a part shows its hole when the ram reaches the bottom
      - ✔ (through the part's handle)
      -
+   * - a worker grips a drawer's handle and pulls it 0.3 m
+     - ✔ (the humanoid's move)
+     -
+   * - a worker pulls the drawer because the robot reported the box full
+     -
+     - ✔
 
 The test when in doubt: **would the machine do it standing alone in an empty world?** Then it is the
 machine's. If it needs another entity's state to decide, it is a scenario's. A world places a machine
@@ -701,6 +710,16 @@ a world the cell ``extends``), not in the model's manifest.
 own lamp on -- each look with its own inertia where the model names one, through one handle
 (``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
 that handle: the part's state is the part's, and the machine only asks for it to change.
+
+**A humanoid's moves are one entity's procedures, as a machine's programs are.** ``approach``,
+``reach``, ``press``, ``grasp``, ``release``, ``pull``, ``push``, ``carry`` and ``place`` are what a
+humanoid does by itself: the ``humanoid`` plugin (``roqsim_motion``), nested under a walker with
+``hands: true`` or a humanoid robot, is a ``MachinePlugin`` whose programs are its moves, so a move
+is started through the same handle (``machine:<name>``, and ``humanoid:<name>`` with a method per
+move), waited on by the same status and recorded as the same events. Which moves a worker makes, in
+which order and for what -- swap a box when it is empty, press the button when the press is ready --
+is a scenario's. A move never decides what comes next; one that cannot be done fails with the
+reason in its status, and the humanoid stands where it left off, a hold still held.
 
 **Presence is reported, never acted on.** ``zone_trigger`` is a box in the world or riding on a
 body that reports the entities entering, dwelling for a time and leaving, filtered by name pattern:
@@ -960,6 +979,10 @@ go through it. Three things live there because they must be decided once:
    including :data:`roqsim.presence.ABSENT_GEOM_GROUP`, so a caller who omits the mask sees entities
    that have been made absent — an absent entity reported as a return, with nothing downstream able
    to tell. Making the mask the default turns "forgot the mask" into an explicit ``geomgroup=None``.
+   The mask also leaves out :data:`roqsim.presence.WINDOW_GEOM_GROUP` (5): a sensor's window, which
+   every render (``rendering._vopt``) and every viewer window (``viewer.show_windows``) draw and no
+   ray meets. A head with its lidar's opening cut
+   into its collision mesh is drawn whole there, so it looks like the robot and still scans out.
 -  **It is single-threaded on purpose, and that is measured.** Splitting a batch across threads looks
    free — rays are independent, ``mj_multiRay`` releases the GIL, and the output is bit-identical
    (1.5x at 360 rays, 3.1x at 20160). It is not: ``mj_multiRay`` **allocates from ``mjData``'s

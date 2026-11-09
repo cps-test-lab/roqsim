@@ -12,6 +12,9 @@ Config::
       namespace: ""            # transport scope of the walker's endpoints and its navigator's
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals instead of the character mesh
+      hands: false             # true -> wrists that turn, five fingers a hand, grip poses, and
+                               # the moves of a nested `humanoid` (roqsim_motion); false is the
+                               # seventeen-body walker, with nothing of the hands built or computed
       rgba: [r, g, b, a]       # colour of the capsule visuals (default: the humanoid's own)
       pose:                    # where the walker stands at the start and after every reset:
         position: {x: 0.0, y: 0.0}  #   a world pose as SpawnEntity states one, with no z -- a
@@ -150,6 +153,8 @@ class WalkerPlugin(Plugin):
         self._ctx: SimContext | None = None
         self._seq = itertools.count(1)  # route sequence numbers (1, 2, 3, ...)
         self._seq_lock = threading.Lock()
+        self._layouts = None  # each hand's layout, with `hands: true` (set in build)
+        self.body = None  # the motion core's body, with `hands: true` (set in configure)
 
     # -- expansion -----------------------------------------------------------------------------
     #: The navigator a walker gets when the world nests none: goal-driven only, its own disc, and
@@ -220,6 +225,8 @@ class WalkerPlugin(Plugin):
             start_of(config)
         except PoseError as exc:
             errors.append(f"walker: {exc}")
+        if not isinstance(config.get("hands", False), bool):
+            errors.append(f"walker: 'hands' is true or false, not {config['hands']!r}")
         lag = config.get("body_lag", 0.0)
         if (
             not isinstance(lag, (int, float))
@@ -243,6 +250,22 @@ class WalkerPlugin(Plugin):
         kw = {}
         if cfg.get("rgba") is not None:
             kw["rgba"] = tuple(cfg["rgba"])
+        self._layouts = None
+        fingers = blueprint["hand_weights"] if use_skin else None
+        if cfg.get("hands", False):
+            from roqsim_walker.handling import layouts_for
+            from roqsim_walker.humanoid import to_skeleton
+
+            self._layouts = layouts_for(
+                to_skeleton(blueprint["skeleton"]),
+                blueprint["hands"],
+                mesh=blueprint["mesh"] if fingers else None,
+                tpose=blueprint["tpose"],
+                flip=blueprint["flip"],
+                finger_weights=fingers,
+            )
+            kw["hands"] = self._layouts
+            kw["finger_weights"] = fingers
         build_humanoid(
             spec,
             name=self.walker_name,
@@ -276,6 +299,14 @@ class WalkerPlugin(Plugin):
         """
         self._ctx = ctx
         self._anim = make_anim_state(ctx.model, self._spec)
+        self.body = None
+        if self._layouts is not None:
+            from roqsim_walker.handling import WalkerBody
+
+            self.body = WalkerBody(self.walker_name, self._anim, ctx.model, self._layouts)
+            self.body._data = ctx.data
+            self._anim.rig = self.body
+            ctx.blackboard.set(f"humanoid_body:{self.walker_name}", self.body)
         states = ctx.blackboard.get(STATE_KEY) or {}
         states[self.walker_name] = self._anim
         ctx.blackboard.set(STATE_KEY, states)
@@ -285,7 +316,11 @@ class WalkerPlugin(Plugin):
                 name=self.walker_name,
                 kind="pedestrian",
                 body=f"{self.walker_name}/pelvis",
-                meta={"walker": self.blueprint, "namespace": ns},
+                meta={
+                    "walker": self.blueprint,
+                    "namespace": ns,
+                    **({"hands": True} if self.body is not None else {}),
+                },
             )
         )
         ctx.blackboard.set(
@@ -353,6 +388,8 @@ class WalkerPlugin(Plugin):
         st.reach_need = (frozenset(), 0.0)
         st.disp_speed = 0.0
         st.pref_vel = np.zeros(2)
+        if self.body is not None:
+            self.body.reset()
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
         # animation frame here would advance the idle clock and settle the body a couple of
         # millimetres off the pose every previous episode started from.
@@ -364,6 +401,8 @@ class WalkerPlugin(Plugin):
             skeleton=st.skeleton,
         )
         write_pose(ctx.data, st, foot_ground(poses, st))
+        if self.body is not None:
+            self.body.write_fingers(ctx.data)
 
     def _next_seq(self) -> int:
         with self._seq_lock:
@@ -392,7 +431,14 @@ class WalkerPlugin(Plugin):
         changes."""
         targets = {"l": _point("left", left), "r": _point("right", right)}
         for side, target in targets.items():
-            self._anim.reach[side].target = target
+            if self.body is not None:
+                # Hands on: the motion core places the wrist, as the two-bone reach does with them off.
+                if target is None:
+                    self.body.free_hand(side)
+                else:
+                    self.body.set_hand(side, target, frame="wrist")
+            else:
+                self._anim.reach[side].target = target
 
     def hands(self) -> tuple:
         d = self._ctx.data

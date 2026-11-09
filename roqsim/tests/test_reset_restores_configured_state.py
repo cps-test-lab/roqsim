@@ -232,9 +232,15 @@ def _motor_command(engine: Engine, endpoint) -> list[float]:
 
 
 def _machine_start(engine: Engine, endpoint) -> tuple:
-    """A program of the machine that changes what it is doing: open a door, run a belt faster."""
+    """A program of the machine that changes what it is doing: open a door, run a belt faster, put a
+    humanoid's hand on the tote its case places."""
     handle = engine.ctx.blackboard.get(f"machine:{endpoint.owner}")
-    for program, args in (("open", {}), ("close_guard", {}), ("run", {"speed": 0.3})):
+    for program, args in (
+        ("open", {}),
+        ("close_guard", {}),
+        ("run", {"speed": 0.3}),
+        ("reach", {"hand": "right", "target": "tote", "orient": False}),
+    ):
         if program in handle.programs:
             return (program, args)
     raise AssertionError(f"no program to start on {endpoint.owner}: {handle.programs}")
@@ -518,6 +524,37 @@ CASES: dict[str, Case] = {
             ],
         }
     ),
+    "humanoid": _static(
+        {
+            "walker": {"walker": "MaleVisitorWalk", "hands": True, "skin": False},
+            "name": "worker",
+            "components": [
+                {"navigator": {"output": "walker", "speed": 1.0, "arrival_radius": 0.05}},
+                {"humanoid": {"graspable": ["tote"]}},
+            ],
+        },
+        {"tote": {"pose": {"position": {"x": 0.6, "y": 0.0}}}, "name": "tote"},
+    ),
+    "humanoid_robot": Case(
+        lambda _: _world(
+            {
+                "spawn_model": {"model": "unitree_g1_dex1", "prefix": "g1_", "motion": "static"},
+                "name": "g1",
+                "components": [
+                    {"humanoid_robot": {"drive": "physical"}},
+                    {
+                        "navigator": {
+                            "output": "humanoid",
+                            "speed": 0.5,
+                            "arrival_radius": 0.05,
+                            "goals": [[0.5, 0.0]],
+                        }
+                    },
+                ],
+            },
+            timestep=0.002,
+        )
+    ),
     # manipulation
     "spawn_arm": Case(lambda _: _arm()),
     "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
@@ -678,6 +715,13 @@ CASES: dict[str, Case] = {
     "window": _static({"window": {}, "name": "window"}),
     "shelf": _static({"shelf": {}, "name": "shelf"}),
     "workbench": _static({"workbench": {}, "name": "bench"}),
+    "push_button": _static(
+        {"push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}}, "name": "button"}
+    ),
+    "drawer_cabinet": _static(
+        {"drawer_cabinet": {"pose": {"position": {"x": 1.0, "y": 1.0}}}, "name": "cabinet"}
+    ),
+    "tote": _static({"tote": {"pose": {"position": {"x": 1.0, "y": -1.0}}}, "name": "tote"}),
     "palm_tree": _static({"palm_tree": {}, "name": "palm"}),
     "duct": _static({"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [3.0, 1.0], "z": 3.2}}),
     "strip_light": _static(
