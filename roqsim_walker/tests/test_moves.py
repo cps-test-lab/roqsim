@@ -210,6 +210,31 @@ def test_a_carry_whose_first_via_point_is_where_it_stands_sets_off_toward_the_ne
     assert st.error == "" and nearest < 0.1
 
 
+def test_a_carry_along_a_way_turns_at_its_corners_so_the_load_stays_over_the_way(sim):
+    """Carrying, the body turns at a carrying pace; along a way it stops and turns at each point,
+    so the tote in front of it stays over the way's legs instead of swinging out at a corner."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, _ = sim.body.root()
+    corner = (x, y + 1.6)  # straight north, then a right angle east toward the bench's side
+    seq = sim.h.carry(
+        "bench", standoff=0.55, facing=math.pi / 2, via=[list(corner), [-0.2, corner[1]]]
+    )
+    tote = sim.m.body("tote_1").id
+    off = 0.0
+    while True:
+        sim.e.step()
+        p = sim.d.xpos[tote]
+        if y + 0.6 < p[1] < corner[1] - 0.1 and p[0] < x + 0.3:  # along the first leg: over it
+            off = max(off, abs(p[0] - x))
+        elif p[1] > corner[1] - 0.1:  # past the corner: over the second leg
+            off = max(off, abs(p[1] - corner[1]) if x + 0.6 < p[0] < -0.5 else 0.0)
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            break
+    assert st.error == "" and off < 0.12, off
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")

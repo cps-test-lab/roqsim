@@ -258,7 +258,9 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 A move that walks (`approach`, `carry`) goes straight to its stand-off on the navigator, planned
 round the walls by its planner if it has one; `via` sends it through floor points of the scene's
 first, in order -- a way laid out round a fence or a bench, for a navigator that walks its points as
-given (`route_mode: exact`). The turn before a carry faces the first of them.
+given (`route_mode: exact`). The turn before a carry faces the first of them, and a carry walks
+them leg by leg, turning on the spot at its carrying pace at each, so what it carries in front
+stays over the way and does not swing out of it at a corner.
 
 `approach` to something a hand takes by its handles (a grip site, a tote) stands its `standoff` from
 the handles, then steps back until nothing solid is within the body's clearance in front of it,

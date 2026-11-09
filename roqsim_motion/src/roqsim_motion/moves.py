@@ -543,17 +543,32 @@ class HumanoidPlugin(MachinePlugin):
         x, y, _ = self.body.root()
         return next((p for p in points if math.hypot(p[0] - x, p[1] - y) > 0.05), points[-1])
 
-    def _walk(self, stand, yaw, what: str, while_walking=None, via=()):
-        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
-        if nav is None:
-            self.fail(f"{self.entity} has no navigator to walk to {what} with")
+    def _leg(self, nav, stand, what: str, while_walking=None, via=()):
+        """Walk through ``via`` to ``stand``, facing where it walks; carrying (``while_walking``),
+        it turns at a carrying pace."""
         self.body.face(None)  # it faces where it walks until it arrives
-        # carrying, it turns at a carrying pace all the way
         self.body.limit_turn(CARRY_TURN if while_walking is not None else None)
         try:
             yield from self._route(nav, stand, what, while_walking, via)
         finally:
             self.body.limit_turn(None)
+
+    def _walk(self, stand, yaw, what: str, while_walking=None, via=()):
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if nav is None:
+            self.fail(f"{self.entity} has no navigator to walk to {what} with")
+        if while_walking is not None and via:
+            # Carrying along a way: leg by leg, turning on the spot at a carrying pace between them,
+            # so what it carries in front stays over the way it walks rather than swinging out of
+            # it round a corner the body turns at a carrying pace while walking on.
+            legs = [*via, (float(stand[0]), float(stand[1]))]
+            for i, point in enumerate(legs):
+                x, y, _ = self.body.root()
+                if i and math.hypot(point[0] - x, point[1] - y) > 0.05:
+                    yield from self._turn(math.atan2(point[1] - y, point[0] - x), while_walking)
+                yield from self._leg(nav, point, what, while_walking)
+        else:
+            yield from self._leg(nav, stand, what, while_walking, via)
         if while_walking is not None:
             # carrying: turn at a carrying pace
             yield from self._turn(yaw, while_walking)
