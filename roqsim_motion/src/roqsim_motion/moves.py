@@ -89,8 +89,16 @@ FORCE_TAU = 0.15
 
 HOLD = {
     "max_force": Field(float, default=300.0, minimum=1.0, unit="N", doc="a hold lets go past this"),
-    "slip": Field(float, default=0.06, minimum=0.001, unit="m", doc="a hold lets go when its frames part this far"),
-    "solref": Field(list, default=list(HOLD_SOLREF), length=2, doc="the hold's (timeconst, dampratio)"),
+    "slip": Field(
+        float,
+        default=0.06,
+        minimum=0.001,
+        unit="m",
+        doc="a hold lets go when its frames part this far",
+    ),
+    "solref": Field(
+        list, default=list(HOLD_SOLREF), length=2, doc="the hold's (timeconst, dampratio)"
+    ),
 }
 
 
@@ -136,10 +144,16 @@ class HumanoidPlugin(MachinePlugin):
     requires_owner = True
     ENTITY_KIND = "humanoid"
     CONFIG_SCHEMA = {
-        "graspable": Field(list, default=[], doc="entities whose grip sites the hands may hold (fnmatch)"),
+        "graspable": Field(
+            list, default=[], doc="entities whose grip sites the hands may hold (fnmatch)"
+        ),
         "hold": Field(dict, schema=HOLD, doc="how hard a hold may pull and how far it may slip"),
-        "press_force": Field(float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"),
-        "on_error": Field(str, default="raise", choices=["raise", "report"], doc="a defect in a move"),
+        "press_force": Field(
+            float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"
+        ),
+        "on_error": Field(
+            str, default="raise", choices=["raise", "report"], doc="a defect in a move"
+        ),
         "home": Field(dict, doc="(a machine's; a humanoid drives no actuator)"),
     }
 
@@ -150,14 +164,20 @@ class HumanoidPlugin(MachinePlugin):
         self._force = {s: 0.0 for s in SIDES}
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}  # a second hand riding on what the first holds
-        self._turns = {s: 0.0 for s in SIDES}  # how far each hand turned on the handle it took (rad)
+        self._turns = {
+            s: 0.0 for s in SIDES
+        }  # how far each hand turned on the handle it took (rad)
         self._holds: dict = {}
 
     # -- load and build -----------------------------------------------------------------------
     @classmethod
     def expand(cls, spec, world, base_dir):
         owner = next((w for w in world if w.address == spec.entity), None)
-        if owner is not None and owner.ref == "walker" and not (owner.config or {}).get("hands", False):
+        if (
+            owner is not None
+            and owner.ref == "walker"
+            and not (owner.config or {}).get("hands", False)
+        ):
             raise ValueError(
                 f"humanoid {spec.address}: its moves need hands -- set 'hands: true' on walker "
                 f"{owner.address}"
@@ -174,8 +194,10 @@ class HumanoidPlugin(MachinePlugin):
                     f"approach may stop that far from where it works; set 'arrival_radius' to at most "
                     f"{ARRIVAL} (0.05 stands within a hand's width)"
                 )
-        for sibling in (owner.children if owner is not None else []):
-            if sibling.ref == "navigator" and ((sibling.config or {}).get("goals") or (sibling.config or {}).get("loop")):
+        for sibling in owner.children if owner is not None else []:
+            if sibling.ref == "navigator" and (
+                (sibling.config or {}).get("goals") or (sibling.config or {}).get("loop")
+            ):
                 raise ValueError(
                     f"humanoid {spec.address}: its navigator has a patrol ('goals'/'loop'), which "
                     f"would walk it back onto its route after a move; drop the patrol and send it "
@@ -198,7 +220,9 @@ class HumanoidPlugin(MachinePlugin):
             raise MachineError(f"humanoid {self.address}: {error}")
         objects = []
         for pattern in self.settings.graspable:
-            found = [n for n in names if _graspable(n, pattern) and not n.startswith(f"{self.entity}/")]
+            found = [
+                n for n in names if _graspable(n, pattern) and not n.startswith(f"{self.entity}/")
+            ]
             if not found:
                 raise MachineError(
                     f"humanoid {self.address}: graspable {pattern!r} matches no grip site (a site "
@@ -285,7 +309,9 @@ class HumanoidPlugin(MachinePlugin):
                     out[side] = name
                     break
             else:
-                self.fail(f"{target} has no grip site for the {_side_word(side)} hand ({target}/grip_{side} or {target}/grip)")
+                self.fail(
+                    f"{target} has no grip site for the {_side_word(side)} hand ({target}/grip_{side} or {target}/grip)"
+                )
         if len(sides) > 1 and len(set(out.values())) < len(out):
             self.fail(f"{target} has one grip site; one hand holds it")
         return out
@@ -294,9 +320,13 @@ class HumanoidPlugin(MachinePlugin):
         x, y, _ = self.body.root()
         d = math.hypot(pos[0] - x, pos[1] - y)
         if d > FAR:
-            self.fail(f"out of reach: the target is {d:.2f} m from where it stands -- approach first")
+            self.fail(
+                f"out of reach: the target is {d:.2f} m from where it stands -- approach first"
+            )
 
-    def _move_hands(self, goals, speed: float, what: str, rot_tol: float = ARRIVED_ROT, pos_tol: float = ARRIVED):
+    def _move_hands(
+        self, goals, speed: float, what: str, rot_tol: float = ARRIVED_ROT, pos_tol: float = ARRIVED
+    ):
         """Move each side's grip frame to ``goals[side]()`` -- a callable giving ``(pos, quat)`` now,
         re-read every step so a hand follows a moving target -- at ``speed`` m/s, then wait for the
         body to arrive. Fails naming how far a hand was left, when it cannot get there."""
@@ -325,8 +355,13 @@ class HumanoidPlugin(MachinePlugin):
                 gp, gq = goal()
                 self.body.set_hand(s, gp, gq)
                 p, q = self.body.grip(d, s)
-                errs[s] = (float(np.linalg.norm(p - gp)), 0.0 if gq is None else Q.angle_between(q, gq))
-            if all(e[0] < pos_tol and e[1] < rot_tol and self.body.settled(s) for s, e in errs.items()):
+                errs[s] = (
+                    float(np.linalg.norm(p - gp)),
+                    0.0 if gq is None else Q.angle_between(q, gq),
+                )
+            if all(
+                e[0] < pos_tol and e[1] < rot_tol and self.body.settled(s) for s, e in errs.items()
+            ):
                 return
             if self._ctx.sim_time - t1 > SETTLE:
                 side, (e, a) = max(errs.items(), key=lambda kv: kv[1][0])
@@ -362,7 +397,9 @@ class HumanoidPlugin(MachinePlugin):
         """Keep a hand that rides on what the other holds on its own grip site."""
         for side, h in self.holding.items():
             if h is not None and self._riding[side]:
-                self.body.set_hand(side, *self._site_goal(h.obj_site, turn=self._turns.get(side, 0.0))())
+                self.body.set_hand(
+                    side, *self._site_goal(h.obj_site, turn=self._turns.get(side, 0.0))()
+                )
 
     def _check_holds(self) -> None:
         """Let go of a hold, and fail, once it has pulled past ``max_force`` for a while (its force
@@ -376,7 +413,9 @@ class HumanoidPlugin(MachinePlugin):
                 continue
             if self._riding[side]:
                 continue
-            self._force[side] += a * (h.force(self._d, h.slide_axis(self._m, self._d)) - self._force[side])
+            self._force[side] += a * (
+                h.force(self._d, h.slide_axis(self._m, self._d)) - self._force[side]
+            )
             self._apart[side] += a * (h.separation(self._d) - self._apart[side])
             force, apart = self._force[side], self._apart[side]
             if force > hold.max_force or apart > hold.slip:
@@ -393,7 +432,9 @@ class HumanoidPlugin(MachinePlugin):
     def _held(self, hand: str):
         sides = [s for s in self._sides(hand) if self.holding[s] is not None]
         if not sides:
-            self.fail(f"not holding with the {hand} hand" if hand != "both" else "not holding anything")
+            self.fail(
+                f"not holding with the {hand} hand" if hand != "both" else "not holding anything"
+            )
         return sides
 
     def _stand_for(self, target: str, standoff: float, facing):
@@ -414,7 +455,9 @@ class HumanoidPlugin(MachinePlugin):
             x = d.site_xmat[site].reshape(3, 3)[:, 0]
             name = target.rsplit("/", 1)[-1]
             # a grip site's +x runs from the palm to the object; any other site faces out along it
-            direction = np.array([x[0], x[1]]) if name.startswith("grip") else -np.array([x[0], x[1]])
+            direction = (
+                np.array([x[0], x[1]]) if name.startswith("grip") else -np.array([x[0], x[1]])
+            )
             if name.startswith("grip"):
                 handle = int(m.site_bodyid[site])
         else:
@@ -484,11 +527,15 @@ class HumanoidPlugin(MachinePlugin):
             yield from self._turn(yaw, while_walking)
         self.body.face(yaw)
         t0 = self._ctx.sim_time
-        while abs(math.atan2(math.sin(self.body.root()[2] - yaw), math.cos(self.body.root()[2] - yaw))) > math.radians(3):
+        while abs(
+            math.atan2(math.sin(self.body.root()[2] - yaw), math.cos(self.body.root()[2] - yaw))
+        ) > math.radians(3):
             if while_walking is not None:
                 while_walking()
             if self._ctx.sim_time - t0 > 5.0:
-                self.fail(f"cannot face {what}: it turned to {math.degrees(self.body.root()[2]):.0f} deg of {math.degrees(yaw):.0f}")
+                self.fail(
+                    f"cannot face {what}: it turned to {math.degrees(self.body.root()[2]):.0f} deg of {math.degrees(yaw):.0f}"
+                )
             yield
         self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
 
@@ -528,26 +575,48 @@ class HumanoidPlugin(MachinePlugin):
             carried = self._carried()
             x, y, _ = self.body.root()
             if math.hypot(stand[0] - x, stand[1] - y) > 0.05:
-                yield from self._turn(math.atan2(stand[1] - y, stand[0] - x), lambda: self._hold_carried(carried))
-            yield from self._walk(stand, yaw, target, while_walking=lambda: self._hold_carried(carried))
+                yield from self._turn(
+                    math.atan2(stand[1] - y, stand[0] - x), lambda: self._hold_carried(carried)
+                )
+            yield from self._walk(
+                stand, yaw, target, while_walking=lambda: self._hold_carried(carried)
+            )
         else:
             yield from self._walk(stand, yaw, target)
 
     @program
-    def reach(self, hand: str, target: str, offset: list | None = None, orient: bool = True, pose: str = "open",
-              speed: float = 0.8):
+    def reach(
+        self,
+        hand: str,
+        target: str,
+        offset: list | None = None,
+        orient: bool = True,
+        pose: str = "open",
+        speed: float = 0.8,
+    ):
         """Put a hand, or both, on a target (a grip site's frame, or a pose with an offset in its
         frame); the hand stays there until another move moves it or ``release`` frees it."""
         sides = self._sides(hand)
-        if self._site_id(target) < 0 and offset is None and all(
-            self._site_id(f"{target}/grip_{s}") >= 0 or self._site_id(f"{target}/grip") >= 0 for s in sides
+        if (
+            self._site_id(target) < 0
+            and offset is None
+            and all(
+                self._site_id(f"{target}/grip_{s}") >= 0 or self._site_id(f"{target}/grip") >= 0
+                for s in sides
+            )
         ):
             sites = self._grip_sites(target, sides)
             goals = {s: self._site_goal(self._site_id(sites[s])) for s in sides}
         else:
             t = self._target(target, offset)
-            goals = {s: (lambda t=t: (lambda pq: (pq[0], pq[1] if orient else None))(t.resolve(self._m, self._d)))
-                     for s in sides}
+            goals = {
+                s: (
+                    lambda t=t: (lambda pq: (pq[0], pq[1] if orient else None))(
+                        t.resolve(self._m, self._d)
+                    )
+                )
+                for s in sides
+            }
         for s in sides:
             self._far(goals[s]()[0])
             self.body.set_pose(s, pose)
@@ -555,8 +624,14 @@ class HumanoidPlugin(MachinePlugin):
         self.step("reached", hand=hand, target=target)
 
     @program
-    def press(self, hand: str, target: str, max_force: float | None = None, travel: float | None = None,
-              pose: str = "point"):
+    def press(
+        self,
+        hand: str,
+        target: str,
+        max_force: float | None = None,
+        travel: float | None = None,
+        pose: str = "point",
+    ):
         """Press a button (or anything on a joint) with a fingertip until it has travelled its press,
         then let go: in from the front of its face along the face's -x, the hand turned so the
         pressing finger points along that axis (a hand with fingers; :meth:`HumanoidBody.press_aim`),
@@ -564,7 +639,9 @@ class HumanoidPlugin(MachinePlugin):
         (side,) = self._sides(hand) if hand != "both" else self.fail("a press is one hand's")
         site = self._site_id(target)
         if site < 0:
-            self.fail(f"press {target}: a press needs a site on the button's face (e.g. '<button>/button')")
+            self.fail(
+                f"press {target}: a press needs a site on the button's face (e.g. '<button>/button')"
+            )
         m, d = self._m, self._d
         body_id = int(m.site_bodyid[site])
         jnt = int(m.body_jntadr[body_id])
@@ -585,6 +662,7 @@ class HumanoidPlugin(MachinePlugin):
                 aim = d.site_xpos[site] + normal * (0.0 - depth)
                 offset = self.body.grip(d, side)[0] - self.body.tip(d, side)
                 return aim + offset, aim_q
+
             return goal
 
         # judged by the fingertip's place: the tip goal follows the hand as it turns, and a hand its
@@ -593,7 +671,9 @@ class HumanoidPlugin(MachinePlugin):
         t0 = self._ctx.sim_time
         while not self.body.hand_done(side):  # the finger points before it goes in
             if self._ctx.sim_time - t0 > SETTLE:
-                self.fail(f"press {target}: the {_side_word(side)} hand's {pose!r} pose did not form in {SETTLE} s")
+                self.fail(
+                    f"press {target}: the {_side_word(side)} hand's {pose!r} pose did not form in {SETTLE} s"
+                )
             self.body.set_hand(side, *tip_goal(-PRE)())
             yield
         self.body.press_proxy(d, side, True)
@@ -635,7 +715,11 @@ class HumanoidPlugin(MachinePlugin):
         # the palm turned as little as aiming the finger needs: from where it faces now (a hand at
         # rest faces the thigh, so it points thumb up), else down, else toward the body's front
         now = Q.to_matrix(self.body.grip(self._d, side)[1])[:, 0]
-        for palm in (now, np.array([0.0, 0.0, -1.0]), np.array([math.cos(yaw), math.sin(yaw), 0.0])):
+        for palm in (
+            now,
+            np.array([0.0, 0.0, -1.0]),
+            np.array([math.cos(yaw), math.sin(yaw), 0.0]),
+        ):
             palm = palm - np.dot(palm, into) * into
             if np.linalg.norm(palm) > 0.3:
                 break
@@ -653,16 +737,20 @@ class HumanoidPlugin(MachinePlugin):
         """Take a target's grip site(s) in a hand or both: in from the front of the grip, close the
         fingers to its shape, and hold it -- a weld, so the physics carries what is held."""
         sides = self._sides(hand)
-        if self._site_id(target) < 0 and not any(
-            self._site_id(f"{target}/{n}") >= 0 for n in ("grip", "grip_l", "grip_r")
-        ) and self._ctx.entities.get(target) is None:
+        if (
+            self._site_id(target) < 0
+            and not any(self._site_id(f"{target}/{n}") >= 0 for n in ("grip", "grip_l", "grip_r"))
+            and self._ctx.entities.get(target) is None
+        ):
             self.fail(f"nothing to grasp: unknown target {target!r}")
         sites = self._grip_sites(target, sides)
         holds = {}
         for s in sides:
             h = self._holds.get((s, sites[s]))
             if h is None:
-                self.fail(f"nothing to grasp: {target} is not graspable (graspable: {list(self.settings.graspable)})")
+                self.fail(
+                    f"nothing to grasp: {target} is not graspable (graspable: {list(self.settings.graspable)})"
+                )
             if self.holding[s] is not None:
                 self.fail(f"the {_side_word(s)} hand is holding already; release it first")
             holds[s] = h
@@ -677,12 +765,17 @@ class HumanoidPlugin(MachinePlugin):
         # down to a handle below the knees comes onto it fingers down, as its frame says.
         low = min(float(self._d.site_xpos[ids[s]][2]) for s in sides) < CARRY_TURN_ABOVE
         turn = self.body.carry_turn if all(holds[s].whole for s in sides) and not low else 0.0
-        goal = {s: (lambda back=0.0, s=s: self._site_goal(ids[s], back=back, turn=turn)) for s in sides}
-        yield from self._move_hands({s: goal[s](PRE) for s in sides}, 0.8, target, rot_tol=tol, pos_tol=0.03)
+        goal = {
+            s: (lambda back=0.0, s=s: self._site_goal(ids[s], back=back, turn=turn)) for s in sides
+        }
+        yield from self._move_hands(
+            {s: goal[s](PRE) for s in sides}, 0.8, target, rot_tol=tol, pos_tol=0.03
+        )
         # judged by position: the hold makes the frames one, turning a free object to the hand
         # within what a hold takes up as it is made (see below)
-        yield from self._move_hands({s: goal[s]() for s in sides}, 0.3, target, rot_tol=tol,
-                                    pos_tol=HOLD_REACH)
+        yield from self._move_hands(
+            {s: goal[s]() for s in sides}, 0.3, target, rot_tol=tol, pos_tol=HOLD_REACH
+        )
         self.step("closing", hand=hand, target=target)
         d = self._d
         for s in sides:
@@ -697,7 +790,9 @@ class HumanoidPlugin(MachinePlugin):
         for s in sides:
             apart = holds[s].separation(d)
             if apart > HOLD_REACH:
-                self.fail(f"hold not made: the {_side_word(s)} hand is {apart:.3f} m from {sites[s]}")
+                self.fail(
+                    f"hold not made: the {_side_word(s)} hand is {apart:.3f} m from {sites[s]}"
+                )
         ride = self.body.two_hands == "ride"
         for i, s in enumerate(sides):
             # Each hand holds the object as it is in that hand now. Of two hands on one rigid object
@@ -745,8 +840,11 @@ class HumanoidPlugin(MachinePlugin):
 
     def _along(self, sides, distance: float, axis, speed: float, sign: float, what: str):
         d = self._d
-        h0 = next(self.holding[s] for s in sides if not self._riding[s]) if any(
-            not self._riding[s] for s in sides) else self.holding[sides[0]]
+        h0 = (
+            next(self.holding[s] for s in sides if not self._riding[s])
+            if any(not self._riding[s] for s in sides)
+            else self.holding[sides[0]]
+        )
         obj0 = d.site_xpos[h0.obj_site].copy()
         if axis is None:
             body = h0.obj_body
@@ -762,12 +860,16 @@ class HumanoidPlugin(MachinePlugin):
             axis = sign * np.asarray(axis, float)
         axis = np.asarray(axis, float) / np.linalg.norm(axis)
         starts = {s: self.body.grip(d, s) for s in sides}
-        self.step("moving", hand="both" if len(sides) > 1 else _side_word(sides[0]), distance=distance)
+        self.step(
+            "moving", hand="both" if len(sides) > 1 else _side_word(sides[0]), distance=distance
+        )
         at_stop = self._stop_check(h0.obj_body, axis)
         # a lagging hand's stroke that would leave a slide short of its stop by less than a hand's
         # width goes to it: a drawer pushed nearly shut is pushed shut, not left open by the lag
         left = self._to_stop(h0.obj_body, axis)
-        to_stop = not self.body.hands_track_goals and left is not None and left - distance < ALONG_STOP
+        to_stop = (
+            not self.body.hands_track_goals and left is not None and left - distance < ALONG_STOP
+        )
         duration = abs(distance) / max(speed, 1e-3)
         t0 = self._ctx.sim_time
         while True:
@@ -911,10 +1013,14 @@ class HumanoidPlugin(MachinePlugin):
             # in front of the body, at the carrying height, the hands as far apart as they are
             ahead = float(np.dot(p - [x, y, 0.0], heading))
             pull_in = max(0.0, ahead - 0.42)
-            rel[s] = (lambda p=p, q=q, pull_in=pull_in: (
-                np.array([p[0], p[1], height]) - pull_in * heading, q))
+            rel[s] = lambda p=p, q=q, pull_in=pull_in: (
+                np.array([p[0], p[1], height]) - pull_in * heading,
+                q,
+            )
         # what is held turns with the hands, so the lift is judged by where they are
-        yield from self._move_hands(rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05)
+        yield from self._move_hands(
+            rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
+        )
         self._check_holds()
         self.step("lifted", height=height)
         carried = self._carried()
@@ -935,10 +1041,14 @@ class HumanoidPlugin(MachinePlugin):
         try:
             while True:
                 heading = self.body.root()[2]
-                if abs(math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))) < math.radians(3):
+                if abs(math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))) < math.radians(
+                    3
+                ):
                     return
                 if self._ctx.sim_time - t0 > 2 * math.pi / CARRY_TURN + 2.0:
-                    self.fail(f"cannot turn to {math.degrees(yaw):.0f} deg: it stays at {math.degrees(heading):.0f}")
+                    self.fail(
+                        f"cannot turn to {math.degrees(yaw):.0f} deg: it stays at {math.degrees(heading):.0f}"
+                    )
                 if each is not None:
                     each()
                 yield
@@ -961,7 +1071,12 @@ class HumanoidPlugin(MachinePlugin):
             body = int(m.geom_bodyid[g])
             solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
             part_of_held = int(m.body_weldid[body]) == int(m.body_weldid[held])
-            if solid and not part_of_held and not self.body.owns(m, body) and (accept is None or accept(body)):
+            if (
+                solid
+                and not part_of_held
+                and not self.body.owns(m, body)
+                and (accept is None or accept(body))
+            ):
                 return np.array([point[0], point[1], hit[2]]), body
             start = hit - [0.0, 0.0, 1e-4]
 
@@ -982,7 +1097,9 @@ class HumanoidPlugin(MachinePlugin):
             return [np.zeros(3)]
         pts = np.array(pts)
         lo, hi = pts[:, :2].min(axis=0) + 0.01, pts[:, :2].max(axis=0) - 0.01
-        return [np.zeros(3)] + [np.array([x, y, 0.0]) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])]
+        return [np.zeros(3)] + [
+            np.array([x, y, 0.0]) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+        ]
 
     def _on(self, target):
         """A test for a body being the target's, or under it in the tree: what is set down on a
@@ -1036,14 +1153,21 @@ class HumanoidPlugin(MachinePlugin):
                 shift *= max(0.0, 1.0 - (out - reach) / max(float(np.linalg.norm(shift)), 1e-9))
         where = low()[:2] + shift
         surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj)
-        if target.kind != "world" and under >= 0 and int(m.body_rootid[under]) != int(m.body_rootid[target.body]):
+        if (
+            target.kind != "world"
+            and under >= 0
+            and int(m.body_rootid[under]) != int(m.body_rootid[target.body])
+        ):
             name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, under) or "the floor"
             self.fail(
                 f"out of reach: under the hands' reach is {name}, not {at} -- approach {at} closer "
                 f"(a smaller standoff, facing it)"
             )
         origin = d.xpos[obj][:2] + shift
-        top = max(float(surface[2]), self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)))
+        top = max(
+            float(surface[2]),
+            self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)),
+        )
         over = np.array([shift[0], shift[1], top + CLEAR - low()[2]])
         goals = {s: (lambda s=s: (starts[s][0] + over, starts[s][1])) for s in sides}
         yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)

@@ -126,7 +126,12 @@ class CameraPath:
     """Keyframes, and the camera they give at any time between them."""
 
     def __init__(
-        self, keyframes: list[Keyframe], *, ease: str = "linear", wrap: bool = True, near: float | None = None
+        self,
+        keyframes: list[Keyframe],
+        *,
+        ease: str = "linear",
+        wrap: bool = True,
+        near: float | None = None,
     ):
         if not keyframes:
             raise CameraPathError("a camera path needs at least one keyframe")
@@ -135,7 +140,9 @@ class CameraPath:
         self.keyframes = list(keyframes)
         self.ease = ease
         self.wrap = bool(wrap)
-        if near is not None and (isinstance(near, bool) or not isinstance(near, (int, float)) or near <= 0):
+        if near is not None and (
+            isinstance(near, bool) or not isinstance(near, (int, float)) or near <= 0
+        ):
             raise CameraPathError(f"near {near!r} is not a distance: give metres, more than 0")
         self.near = None if near is None else float(near)
         self._tracks: dict[str, list[tuple[float, object]]] | None = None
@@ -164,7 +171,10 @@ class CameraPath:
             raise CameraPathError("camera path: 'keyframes' must be a non-empty list")
         frames = [_keyframe(entry, i) for i, entry in enumerate(raw)]
         return cls(
-            frames, ease=str(doc.get("ease", "linear")), wrap=bool(doc.get("wrap", True)), near=doc.get("near")
+            frames,
+            ease=str(doc.get("ease", "linear")),
+            wrap=bool(doc.get("wrap", True)),
+            near=doc.get("near"),
         )
 
     @classmethod

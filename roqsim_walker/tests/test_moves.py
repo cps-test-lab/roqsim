@@ -13,27 +13,56 @@ from roqsim.engine import Engine
 from roqsim.machine import MachineError
 from roqsim.plugin import PluginError
 
-NAV = {"output": "walker", "speed": 1.0, "arrival_radius": 0.05, "avoidance": {"steer": "none", "stop": False}}
+NAV = {
+    "output": "walker",
+    "speed": 1.0,
+    "arrival_radius": 0.05,
+    "avoidance": {"steer": "none", "stop": False},
+}
 
 
 def _world(humanoid=None, hands=True, navigator=NAV):
     worker = {
-        "walker": {"walker": "MaleVisitorWalk", "hands": hands, "skin": False,
-                   "pose": {"position": {"x": 0.0, "y": 0.0}}},
+        "walker": {
+            "walker": "MaleVisitorWalk",
+            "hands": hands,
+            "skin": False,
+            "pose": {"position": {"x": 0.0, "y": 0.0}},
+        },
         "name": "worker",
-        "components": [{"navigator": navigator}, {"humanoid": humanoid or {"graspable": ["cab", "tote_1"]}}],
+        "components": [
+            {"navigator": navigator},
+            {"humanoid": humanoid or {"graspable": ["cab", "tote_1"]}},
+        ],
     }
     return {
         "sim": {"pacing": "asap"},
         "components": [
             worker,
-            {"push_button": {"pose": {"position": {"x": 2.0, "y": 1.0, "z": 1.1}, "orientation": {"yaw": math.pi}}},
-             "name": "start"},
-            {"drawer_cabinet": {"pose": {"position": {"x": 2.0, "y": -1.0}, "orientation": {"yaw": math.pi}}},
-             "name": "cab"},
+            {
+                "push_button": {
+                    "pose": {
+                        "position": {"x": 2.0, "y": 1.0, "z": 1.1},
+                        "orientation": {"yaw": math.pi},
+                    }
+                },
+                "name": "start",
+            },
+            {
+                "drawer_cabinet": {
+                    "pose": {"position": {"x": 2.0, "y": -1.0}, "orientation": {"yaw": math.pi}}
+                },
+                "name": "cab",
+            },
             {"tote": {"pose": {"position": {"x": -1.5, "y": 0.0}}}, "name": "tote_1"},
-            {"box": {"pose": {"position": {"x": 0.0, "y": 2.5}}, "size": [0.8, 0.6, 0.75], "motion": "static"},
-             "name": "bench"},
+            {
+                "box": {
+                    "pose": {"position": {"x": 0.0, "y": 2.5}},
+                    "size": [0.8, 0.6, 0.75],
+                    "motion": "static",
+                },
+                "name": "bench",
+            },
         ],
     }
 
@@ -75,10 +104,18 @@ class Sim:
         return st
 
     def events(self, since=0.0):
-        return [ev["event"] for ev in self.e.ctx.events.all() if ev["source"].startswith("worker") and ev["t"] >= since]
+        return [
+            ev["event"]
+            for ev in self.e.ctx.events.all()
+            if ev["source"].startswith("worker") and ev["t"] >= since
+        ]
 
     def qpos(self, joint):
-        return float(self.d.qpos[self.m.jnt_qposadr[mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_JOINT, joint)]])
+        return float(
+            self.d.qpos[
+                self.m.jnt_qposadr[mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_JOINT, joint)]
+            ]
+        )
 
 
 @pytest.fixture
@@ -163,7 +200,9 @@ def test_pulling_what_does_not_move_is_stuck():
 
 def test_grasp_what_is_not_graspable_or_has_no_grip_fails(sim):
     sim.ok("approach", target="start/button", standoff=0.5)
-    assert sim.run("grasp", hand="right", target="start/button").error.startswith("nothing to grasp")
+    assert sim.run("grasp", hand="right", target="start/button").error.startswith(
+        "nothing to grasp"
+    )
     assert "has no grip site" in sim.run("grasp", hand="right", target="bench").error
 
 
@@ -178,7 +217,9 @@ def test_both_hands_carry_a_tote_and_place_it_on_a_bench(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
     for s in "lr":
-        assert np.linalg.norm(sim.body.grip(sim.d, s)[0] - sim.d.site(f"tote_1/grip_{s}").xpos) < 0.03
+        assert (
+            np.linalg.norm(sim.body.grip(sim.d, s)[0] - sim.d.site(f"tote_1/grip_{s}").xpos) < 0.03
+        )
     sim.ok("carry", to="bench", standoff=0.55)
     assert sim.d.body("tote_1").xpos[2] > 0.5  # carried at the hands' height, by the hold
     sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
@@ -232,7 +273,9 @@ def test_a_cancelled_approach_stops_where_it_is(sim):
     for _ in range(500):
         sim.e.step()
     x2, y2, _ = sim.body.root()
-    assert math.hypot(x2 - x1, y2 - y1) < 0.05, "the walker walked on after its approach was cancelled"
+    assert math.hypot(x2 - x1, y2 - y1) < 0.05, (
+        "the walker walked on after its approach was cancelled"
+    )
 
 
 def test_a_defect_in_a_move_stops_the_run_unless_it_reports(sim, monkeypatch):
@@ -283,9 +326,15 @@ def test_moves_need_hands_and_no_patrol_and_a_graspable_that_exists():
     with pytest.raises(PluginError, match="set 'hands: true' on walker worker"):
         Engine(load_config_from_dict(_world(hands=False)))
     with pytest.raises(PluginError, match="arrival_radius is 0.25 m"):
-        Engine(load_config_from_dict(_world(navigator={k: v for k, v in NAV.items() if k != "arrival_radius"})))
+        Engine(
+            load_config_from_dict(
+                _world(navigator={k: v for k, v in NAV.items() if k != "arrival_radius"})
+            )
+        )
     with pytest.raises(PluginError, match="patrol"):
-        Engine(load_config_from_dict(_world(navigator={**NAV, "goals": [[1.0, 0.0]], "loop": True})))
+        Engine(
+            load_config_from_dict(_world(navigator={**NAV, "goals": [[1.0, 0.0]], "loop": True}))
+        )
     engine = Engine(load_config_from_dict(_world({"graspable": ["crate_*"]})))
     engine.ctx.seed = 1
     with pytest.raises(Exception, match="graspable 'crate_\\*' matches no grip site"):

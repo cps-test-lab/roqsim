@@ -374,7 +374,10 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
     # render draws it, no ray sees it); what collides and what a ray meets is the cut head, in the
     # collision-only group. Drawn cut, the head's top floats above its torso across the opening.
     asset = root.find("asset")
-    asset.insert(list(asset).index(head) + 1, ET.Element("mesh", {"name": HEAD_WHOLE_MESH, "file": f"{HEAD_MESH}.STL"}))
+    asset.insert(
+        list(asset).index(head) + 1,
+        ET.Element("mesh", {"name": HEAD_WHOLE_MESH, "file": f"{HEAD_MESH}.STL"}),
+    )
     for geom in find_body(root, "head_link").findall("geom"):
         if geom.get("mesh") != HEAD_MESH:
             continue

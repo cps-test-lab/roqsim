@@ -7,12 +7,12 @@ import numpy as np
 import pytest
 import yaml
 from minimal_humanoid import TABLE, mjcf
+from roqsim_motion.retarget import TableError
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 from roqsim_motion import quat as Q
-from roqsim_motion.retarget import TableError
 
 
 @pytest.fixture
@@ -20,8 +20,15 @@ def files(tmp_path):
     model = tmp_path / "minimal_humanoid.xml"
     model.write_text(mjcf())
     table = tmp_path / "minimal_humanoid.retarget.yaml"
-    table.write_text(yaml.safe_dump({**TABLE, "hands": {
-        "l": {"frame": "left_grasp"}, "r": {"frame": "right_grasp"}}, "rest": {"left_elbow_joint": -1.2, "right_elbow_joint": -1.2}}))
+    table.write_text(
+        yaml.safe_dump(
+            {
+                **TABLE,
+                "hands": {"l": {"frame": "left_grasp"}, "r": {"frame": "right_grasp"}},
+                "rest": {"left_elbow_joint": -1.2, "right_elbow_joint": -1.2},
+            }
+        )
+    )
     return model, table
 
 
@@ -29,13 +36,22 @@ def _engine(model, table, drive, spawn="spawn_model"):
     world = {
         "sim": {"pacing": "asap", "timestep": 0.002},
         "components": [
-            {spawn: {"model": str(model), "prefix": "r_", "motion": "static"}, "name": "bot",
-             "components": [
-                 {"humanoid_robot": {"table": str(table), "drive": drive}},
-                 {"navigator": {"output": "humanoid", "speed": 0.5, "arrival_radius": 0.05,
-                                "avoidance": {"steer": "none", "stop": False}}},
-                 {"humanoid": {}},
-             ]},
+            {
+                spawn: {"model": str(model), "prefix": "r_", "motion": "static"},
+                "name": "bot",
+                "components": [
+                    {"humanoid_robot": {"table": str(table), "drive": drive}},
+                    {
+                        "navigator": {
+                            "output": "humanoid",
+                            "speed": 0.5,
+                            "arrival_radius": 0.05,
+                            "avoidance": {"steer": "none", "stop": False},
+                        }
+                    },
+                    {"humanoid": {}},
+                ],
+            },
         ],
     }
     engine = Engine(load_config_from_dict(world))

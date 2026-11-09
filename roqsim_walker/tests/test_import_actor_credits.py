@@ -48,7 +48,12 @@ def test_each_bundled_blueprint_credits_the_clips_it_walks_with(folder):
 
 
 def test_an_import_with_finger_bones_writes_their_weights_and_credits_them():
-    from roqsim_walker.cli.import_actor import FINGER_CHAINS, FINGERS_CREDIT, _finger_bone, has_fingers
+    from roqsim_walker.cli.import_actor import (
+        FINGER_CHAINS,
+        FINGERS_CREDIT,
+        _finger_bone,
+        has_fingers,
+    )
 
     bones = [_finger_bone(*c) for c in FINGER_CHAINS]
     assert has_fingers(["Hips", *bones]) and not has_fingers(["Hips"])

@@ -17,15 +17,41 @@ from roqsim_walker.skin import hand_weights
 
 #: The two bundled walkers with hands off: the counts and a digest over their bodies, geoms and
 #: skins, as the walker builds them without the hands code. Hands off keeps them, byte for byte.
-HANDS_OFF = {"nbody": 35, "ngeom": 47, "nmocap": 34, "nsite": 0, "nskin": 2, "nskinbone": 34,
-             "sha256": "3e048fda946c33276898288ea9e6021ca4a3af3b40428f28e4524f266fec5337"}
-FIELDS = ("body_pos", "body_quat", "body_mocapid", "geom_type", "geom_size", "geom_pos", "geom_quat",
-          "geom_contype", "geom_conaffinity", "geom_group", "skin_vertnum", "skin_bonenum", "skin_bonebindpos",
-          "skin_bonebindquat", "skin_bonebodyid", "skin_bonevertid", "skin_bonevertweight")
+HANDS_OFF = {
+    "nbody": 35,
+    "ngeom": 47,
+    "nmocap": 34,
+    "nsite": 0,
+    "nskin": 2,
+    "nskinbone": 34,
+    "sha256": "3e048fda946c33276898288ea9e6021ca4a3af3b40428f28e4524f266fec5337",
+}
+FIELDS = (
+    "body_pos",
+    "body_quat",
+    "body_mocapid",
+    "geom_type",
+    "geom_size",
+    "geom_pos",
+    "geom_quat",
+    "geom_contype",
+    "geom_conaffinity",
+    "geom_group",
+    "skin_vertnum",
+    "skin_bonenum",
+    "skin_bonebindpos",
+    "skin_bonebindquat",
+    "skin_bonebodyid",
+    "skin_bonevertid",
+    "skin_bonevertweight",
+)
 
 
 def _engine(components, preview=False):
-    engine = Engine(load_config_from_dict({"sim": {"pacing": "asap"}, "components": components}), preview=preview)
+    engine = Engine(
+        load_config_from_dict({"sim": {"pacing": "asap"}, "components": components}),
+        preview=preview,
+    )
     if not preview:
         engine.ctx.seed = 1
     engine.setup()
@@ -35,7 +61,10 @@ def _engine(components, preview=False):
 def _walkers(hands=None):
     extra = {} if hands is None else {"hands": hands}
     return [
-        {"walker": {"walker": w, **extra, "pose": {"position": {"x": 0.0, "y": float(i)}}}, "name": f"w{i}"}
+        {
+            "walker": {"walker": w, **extra, "pose": {"position": {"x": 0.0, "y": float(i)}}},
+            "name": f"w{i}",
+        }
         for i, w in enumerate(["MaleVisitorWalk", "FemaleVisitorWalk"])
     ]
 
@@ -48,7 +77,10 @@ def test_hands_off_adds_nothing_to_the_walkers_model(hands):
         digest = hashlib.sha256()
         for field in FIELDS:
             digest.update(np.ascontiguousarray(np.asarray(getattr(m, field))).tobytes())
-        got = {k: int(getattr(m, k)) for k in ("nbody", "ngeom", "nmocap", "nsite", "nskin", "nskinbone")}
+        got = {
+            k: int(getattr(m, k))
+            for k in ("nbody", "ngeom", "nmocap", "nsite", "nskin", "nskinbone")
+        }
         assert {**got, "sha256": digest.hexdigest()} == HANDS_OFF
         assert engine.ctx.blackboard.get("humanoid_body:w0") is None
     finally:
@@ -57,8 +89,18 @@ def test_hands_off_adds_nothing_to_the_walkers_model(hands):
 
 @pytest.fixture(scope="module")
 def worker():
-    engine = _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": True,
-                                   "pose": {"position": {"x": 0.0, "y": 0.0}}}, "name": "worker"}])
+    engine = _engine(
+        [
+            {
+                "walker": {
+                    "walker": "MaleVisitorWalk",
+                    "hands": True,
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
+                },
+                "name": "worker",
+            }
+        ]
+    )
     yield engine
     engine.shutdown()
 
@@ -177,7 +219,9 @@ def test_finger_shares_move_from_the_wrist_to_their_bones():
     w = hand_weights(w17, verts, shares, poses)
     col = {b: 17 + 15 + k for k, b in enumerate(bones)}  # the right hand's bones follow the left's
     assert np.isclose(w[0, col[bones[3 * 1 + 1]]], 0.6) and np.isclose(w[0, wrist], 0.4)
-    assert np.isclose(w[1, col[bones[3 * 4 + 1]]], 0.6) and np.isclose(w[1, col[bones[3 * 1 + 1]]], 0.0)
+    assert np.isclose(w[1, col[bones[3 * 4 + 1]]], 0.6) and np.isclose(
+        w[1, col[bones[3 * 1 + 1]]], 0.0
+    )
     assert np.isclose(w[2, col[bones[0]]], 0.4) and np.isclose(w[2, wrist], 0.6)
     assert np.allclose(w[:, 17:32], 0.0)  # nothing on the left hand
     assert np.allclose(w.sum(axis=1), 1.0)
@@ -203,14 +247,20 @@ def test_the_blueprints_hand_weights_decide_the_fingers_skin(monkeypatch):
         m = engine.ctx.model
         return int(m.nskinbone)
 
-    on = _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": True}, "name": "w"}], preview=True)
+    on = _engine(
+        [{"walker": {"walker": "MaleVisitorWalk", "hands": True}, "name": "w"}], preview=True
+    )
     try:
         with_weights = counts(on)
     finally:
         on.shutdown()
     real = walker_plugin.resolve_walker
-    monkeypatch.setattr(walker_plugin, "resolve_walker", lambda *a, **k: {**real(*a, **k), "hand_weights": None})
-    rigid = _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": True}, "name": "w"}], preview=True)
+    monkeypatch.setattr(
+        walker_plugin, "resolve_walker", lambda *a, **k: {**real(*a, **k), "hand_weights": None}
+    )
+    rigid = _engine(
+        [{"walker": {"walker": "MaleVisitorWalk", "hands": True}, "name": "w"}], preview=True
+    )
     try:
         assert counts(rigid) < with_weights
     finally:
@@ -219,7 +269,9 @@ def test_the_blueprints_hand_weights_decide_the_fingers_skin(monkeypatch):
 
 def test_hands_is_true_or_false():
     with pytest.raises(Exception, match="'hands' is true or false"):
-        _engine([{"walker": {"walker": "MaleVisitorWalk", "hands": "yes"}, "name": "w"}], preview=True)
+        _engine(
+            [{"walker": {"walker": "MaleVisitorWalk", "hands": "yes"}, "name": "w"}], preview=True
+        )
 
 
 def test_bench_hands_runs_and_hands_off_costs_nothing_new():

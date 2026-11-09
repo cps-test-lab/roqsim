@@ -36,14 +36,22 @@ LEG = """
 def mjcf() -> str:
     # The grip frames follow roqsim_motion.hands: +x out of the palm (toward the body), +z along the
     # fingers (the forearm's -z): for the left hand x=-y_w, z=-z_w; for the right x=+y_w, z=-z_w.
-    arms = ARM.format(s="left", y=0.18, rlo=-0.5, rhi=2.5, gy=-0.02, gq="0 0.7071068 0.7071068 0") + ARM.format(
-        s="right", y=-0.18, rlo=-2.5, rhi=0.5, gy=0.02, gq="0 0.7071068 -0.7071068 0"
-    )
+    arms = ARM.format(
+        s="left", y=0.18, rlo=-0.5, rhi=2.5, gy=-0.02, gq="0 0.7071068 0.7071068 0"
+    ) + ARM.format(s="right", y=-0.18, rlo=-2.5, rhi=0.5, gy=0.02, gq="0 0.7071068 -0.7071068 0")
     legs = LEG.format(s="left", y=0.1) + LEG.format(s="right", y=-0.1)
     servos = "".join(
         f'<position name="{s}_{j}" joint="{s}_{j}_joint" kp="80" kv="4"/>'
         for s in ("left", "right")
-        for j in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_roll", "wrist_pitch", "wrist_yaw")
+        for j in (
+            "shoulder_pitch",
+            "shoulder_roll",
+            "shoulder_yaw",
+            "elbow",
+            "wrist_roll",
+            "wrist_pitch",
+            "wrist_yaw",
+        )
     )
     return f"""<mujoco model="minimal_humanoid">
   <compiler angle="radian" boundmass="0.05" boundinertia="0.0001"/>
@@ -70,23 +78,35 @@ TABLE = {
     "joints": {
         "spine": [{"z": "waist_yaw_joint"}, {"x": "waist_roll_joint"}, {"y": "waist_pitch_joint"}],
         **{
-            f"shoulder_{c}": [{"y": f"{s}_shoulder_pitch_joint"}, {"x": f"{s}_shoulder_roll_joint"},
-                              {"z": f"{s}_shoulder_yaw_joint"}]
+            f"shoulder_{c}": [
+                {"y": f"{s}_shoulder_pitch_joint"},
+                {"x": f"{s}_shoulder_roll_joint"},
+                {"z": f"{s}_shoulder_yaw_joint"},
+            ]
             for c, s in (("l", "left"), ("r", "right"))
         },
         **{f"elbow_{c}": [{"y": f"{s}_elbow_joint"}] for c, s in (("l", "left"), ("r", "right"))},
         **{
-            f"wrist_{c}": [{"z": f"{s}_wrist_roll_joint"}, {"y": f"{s}_wrist_pitch_joint"},
-                           {"x": f"{s}_wrist_yaw_joint"}]
+            f"wrist_{c}": [
+                {"z": f"{s}_wrist_roll_joint"},
+                {"y": f"{s}_wrist_pitch_joint"},
+                {"x": f"{s}_wrist_yaw_joint"},
+            ]
             for c, s in (("l", "left"), ("r", "right"))
         },
         **{
-            f"hip_{c}": [{"y": f"{s}_hip_pitch_joint"}, {"x": f"{s}_hip_roll_joint"}, {"z": f"{s}_hip_yaw_joint"}]
+            f"hip_{c}": [
+                {"y": f"{s}_hip_pitch_joint"},
+                {"x": f"{s}_hip_roll_joint"},
+                {"z": f"{s}_hip_yaw_joint"},
+            ]
             for c, s in (("l", "left"), ("r", "right"))
         },
         **{f"knee_{c}": [{"y": f"{s}_knee_joint"}] for c, s in (("l", "left"), ("r", "right"))},
-        **{f"ankle_{c}": [{"y": f"{s}_ankle_pitch_joint"}, {"x": f"{s}_ankle_roll_joint"}]
-           for c, s in (("l", "left"), ("r", "right"))},
+        **{
+            f"ankle_{c}": [{"y": f"{s}_ankle_pitch_joint"}, {"x": f"{s}_ankle_roll_joint"}]
+            for c, s in (("l", "left"), ("r", "right"))
+        },
         "head": "none",
     },
     "hands": {"l": {"frame": "left_grasp"}, "r": {"frame": "right_grasp"}},

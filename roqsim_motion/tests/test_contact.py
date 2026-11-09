@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import mujoco
 import numpy as np
-
 from roqsim_motion.contact import Hold, add_holds, check_solref, contact_force, touching
 
 MJCF = """<mujoco><option timestep="0.002"/>

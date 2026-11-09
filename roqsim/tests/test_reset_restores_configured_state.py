@@ -542,8 +542,14 @@ CASES: dict[str, Case] = {
                 "name": "g1",
                 "components": [
                     {"humanoid_robot": {"drive": "physical"}},
-                    {"navigator": {"output": "humanoid", "speed": 0.5, "arrival_radius": 0.05,
-                                   "goals": [[0.5, 0.0]]}},
+                    {
+                        "navigator": {
+                            "output": "humanoid",
+                            "speed": 0.5,
+                            "arrival_radius": 0.05,
+                            "goals": [[0.5, 0.0]],
+                        }
+                    },
                 ],
             },
             timestep=0.002,

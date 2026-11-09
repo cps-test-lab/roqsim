@@ -87,6 +87,7 @@ class Table:
 
     def check(self, model, prefix: str = "") -> None:
         """Refuse a table that names a body, joint, site or actuator ``model`` lacks."""
+
         def has(kind, name):
             return mujoco.mj_name2id(model, kind, prefix + name) >= 0
 
@@ -143,17 +144,23 @@ def parse_table(doc: dict, source: str = "") -> Table:
     known = {"humanoid", "base", "joints", "hands", "gaze", "physical", "rest"}
     extra = sorted(set(doc) - known)
     if extra:
-        raise TableError(f"retargeting table {source}: unknown key(s) {extra}; the keys are {sorted(known)}")
+        raise TableError(
+            f"retargeting table {source}: unknown key(s) {extra}; the keys are {sorted(known)}"
+        )
     try:
         name = str(doc["humanoid"])
         base = doc["base"]
         base_body, height = str(base["body"]), float(base["height"])
     except (KeyError, TypeError) as exc:
-        raise TableError(f"retargeting table {source}: needs 'humanoid' and 'base: {{body, height}}'") from exc
+        raise TableError(
+            f"retargeting table {source}: needs 'humanoid' and 'base: {{body, height}}'"
+        ) from exc
     joints = {}
     for joint, dofs in (doc.get("joints") or {}).items():
         if joint not in JOINTS:
-            raise TableError(f"retargeting table {source}: {joint!r} is no canonical joint ({', '.join(JOINTS)})")
+            raise TableError(
+                f"retargeting table {source}: {joint!r} is no canonical joint ({', '.join(JOINTS)})"
+            )
         if dofs in (None, "none"):
             continue
         out = []
@@ -162,7 +169,14 @@ def parse_table(doc: dict, source: str = "") -> Table:
             if axis not in ("x", "y", "z"):
                 raise TableError(f"retargeting table {source}: {joint}: axis {axis!r} is x, y or z")
             if isinstance(value, dict):
-                out.append(Dof(axis, str(value["joint"]), float(value.get("sign", 1.0)), float(value.get("offset", 0.0))))
+                out.append(
+                    Dof(
+                        axis,
+                        str(value["joint"]),
+                        float(value.get("sign", 1.0)),
+                        float(value.get("offset", 0.0)),
+                    )
+                )
             else:
                 out.append(Dof(axis, str(value)))
         joints[joint] = out
@@ -171,7 +185,9 @@ def parse_table(doc: dict, source: str = "") -> Table:
         if side not in ("l", "r"):
             raise TableError(f"retargeting table {source}: hands are 'l' and 'r', not {side!r}")
         if ("frame" in hand) == ("body" in hand):
-            raise TableError(f"retargeting table {source}: hands.{side} names a 'frame' (a site) or a 'body', one of them")
+            raise TableError(
+                f"retargeting table {source}: hands.{side} names a 'frame' (a site) or a 'body', one of them"
+            )
         hands[side] = {"grip": dict(hand.get("grip") or {})}
         if "frame" in hand:
             hands[side]["frame"] = str(hand["frame"])
@@ -184,9 +200,20 @@ def parse_table(doc: dict, source: str = "") -> Table:
     mapped = {d.joint for dofs in joints.values() for d in dofs}
     unmapped = sorted(set(rest) - mapped)
     if unmapped:
-        raise TableError(f"retargeting table {source}: rest names {unmapped}, which no canonical joint maps")
-    return Table(name, base_body, height, joints, hands, str(doc.get("gaze", "head")),
-                 dict(doc.get("physical") or {}), source, rest)
+        raise TableError(
+            f"retargeting table {source}: rest names {unmapped}, which no canonical joint maps"
+        )
+    return Table(
+        name,
+        base_body,
+        height,
+        joints,
+        hands,
+        str(doc.get("gaze", "head")),
+        dict(doc.get("physical") or {}),
+        source,
+        rest,
+    )
 
 
 def find_table(model_name: str) -> Table:

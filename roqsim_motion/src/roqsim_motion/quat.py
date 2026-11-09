@@ -10,7 +10,11 @@ import numpy as np
 from roqsim.pose import rpy_to_quat
 
 IDENTITY = np.array([1.0, 0.0, 0.0, 0.0])
-AXES = {"x": np.array([1.0, 0.0, 0.0]), "y": np.array([0.0, 1.0, 0.0]), "z": np.array([0.0, 0.0, 1.0])}
+AXES = {
+    "x": np.array([1.0, 0.0, 0.0]),
+    "y": np.array([0.0, 1.0, 0.0]),
+    "z": np.array([0.0, 0.0, 1.0]),
+}
 
 
 def mul(a, b) -> np.ndarray:

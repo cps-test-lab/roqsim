@@ -290,7 +290,9 @@ def _turn(st, target, dt) -> float:
     if st.body_lag <= 0.0 or dt <= 0.0:
         return _approach_angle(st.yaw, target, rate * dt)
     err = math.atan2(math.sin(target - st.yaw), math.cos(target - st.yaw))
-    yaw, st.yaw_rate = _slew(st.yaw, st.yaw_rate, st.yaw + err, rate, rate / (2.0 * st.body_lag), dt)
+    yaw, st.yaw_rate = _slew(
+        st.yaw, st.yaw_rate, st.yaw + err, rate, rate / (2.0 * st.body_lag), dt
+    )
     return yaw
 
 

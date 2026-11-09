@@ -30,10 +30,18 @@ class TotePlugin(Plugin):
 
     CONFIG_SCHEMA = {
         "pose": Field(dict, required=True, doc="where it stands; omit z to stand it on the floor"),
-        "size": Field(list, default=[0.4, 0.3, 0.2], length=3, unit="m", doc="length (between the handles), width, height"),
+        "size": Field(
+            list,
+            default=[0.4, 0.3, 0.2],
+            length=3,
+            unit="m",
+            doc="length (between the handles), width, height",
+        ),
         "mass": Field(float, default=1.5, minimum=0.05, unit="kg", doc="the empty tote's mass"),
         "color": Field(list, default=[0.15, 0.35, 0.7, 1.0], length=4, doc="its colour"),
-        "contents": Field(bool, default=False, doc="add look_full / look_empty bodies for a part_state"),
+        "contents": Field(
+            bool, default=False, doc="add look_full / look_empty bodies for a part_state"
+        ),
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -67,25 +75,48 @@ class TotePlugin(Plugin):
         # Where a hand holds it: a grip frame outside each end wall, palm toward the tote, fingers
         # down; a handle's radius out from the wall, so the palm lies on it.
         hz = H - 0.03
-        body.add_site(name=f"{n}/grip_l", pos=[L / 2 + GRIP_OUT, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
-        body.add_site(name=f"{n}/grip_r", pos=[-L / 2 - GRIP_OUT, 0.0, hz], quat=[0.0, 1.0, 0.0, 0.0])
+        body.add_site(
+            name=f"{n}/grip_l", pos=[L / 2 + GRIP_OUT, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0]
+        )
+        body.add_site(
+            name=f"{n}/grip_r", pos=[-L / 2 - GRIP_OUT, 0.0, hz], quat=[0.0, 1.0, 0.0, 0.0]
+        )
         body.add_site(name=f"{n}/bottom", pos=[0.0, 0.0, 0.0])
         if s.contents:
             full = body.add_body(name=f"{n}/look_full")
-            full.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[L / 2 - 0.03, W / 2 - 0.03, H / 3],
-                          pos=[0.0, 0.0, H / 3 + t], rgba=[0.75, 0.6, 0.3, 1.0], contype=0, conaffinity=0,
-                          mass=0.0)
+            full.add_geom(
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[L / 2 - 0.03, W / 2 - 0.03, H / 3],
+                pos=[0.0, 0.0, H / 3 + t],
+                rgba=[0.75, 0.6, 0.3, 1.0],
+                contype=0,
+                conaffinity=0,
+                mass=0.0,
+            )
             empty = body.add_body(name=f"{n}/look_empty")
-            empty.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.01, 0.01, 0.001], pos=[0.0, 0.0, t],
-                           rgba=list(s.color), contype=0, conaffinity=0, mass=0.0)
+            empty.add_geom(
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[0.01, 0.01, 0.001],
+                pos=[0.0, 0.0, t],
+                rgba=list(s.color),
+                contype=0,
+                conaffinity=0,
+                mass=0.0,
+            )
 
     def configure(self, ctx: SimContext) -> None:
         m = ctx.model
         jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{self.address}/free")
         adr = int(m.jnt_qposadr[jid])
         self._qpos = (adr, m.qpos0[adr : adr + 7].copy(), int(m.jnt_dofadr[jid]))
-        ctx.entities.add(Entity(name=self.address, kind="prop", body=self.address,
-                                meta={"base_joint": f"{self.address}/free", "prefix": f"{self.address}/"}))
+        ctx.entities.add(
+            Entity(
+                name=self.address,
+                kind="prop",
+                body=self.address,
+                meta={"base_joint": f"{self.address}/free", "prefix": f"{self.address}/"},
+            )
+        )
 
     def on_reset(self, ctx: SimContext) -> None:
         adr, q0, dof = self._qpos

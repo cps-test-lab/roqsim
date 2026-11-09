@@ -138,7 +138,11 @@ def test_the_raycast_mask_excludes_the_absent_group():
     mask = visible_geomgroup_mask()
     assert mask[ABSENT_GEOM_GROUP] == 0
     assert mask[WINDOW_GEOM_GROUP] == 0  # a sensor's window: drawn, and passed through by every ray
-    assert all(mask[g] == 1 for g in range(mujoco.mjNGROUP) if g not in (ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP))
+    assert all(
+        mask[g] == 1
+        for g in range(mujoco.mjNGROUP)
+        if g not in (ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP)
+    )
 
 
 def test_the_absent_group_does_not_collide_with_the_ones_in_use():

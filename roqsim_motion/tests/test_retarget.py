@@ -7,15 +7,22 @@ import math
 import mujoco
 import pytest
 from minimal_humanoid import TABLE, mjcf
+from roqsim_motion.retarget import TableError, parse_table
 
 from roqsim_motion import quat as Q
-from roqsim_motion.retarget import TableError, parse_table
 
 
 def test_a_table_maps_canonical_rotations_onto_the_models_joints_and_back():
     table = parse_table(TABLE)
-    angles = {"spine": [0.3, -0.1, 0.4], "shoulder_l": [-0.8, 0.4, 0.2], "elbow_l": [-1.1], "wrist_r": [0.5, -0.3, 0.2]}
-    local = {j: Q.from_euler("".join(d.axis for d in table.joints[j]), a) for j, a in angles.items()}
+    angles = {
+        "spine": [0.3, -0.1, 0.4],
+        "shoulder_l": [-0.8, 0.4, 0.2],
+        "elbow_l": [-1.1],
+        "wrist_r": [0.5, -0.3, 0.2],
+    }
+    local = {
+        j: Q.from_euler("".join(d.axis for d in table.joints[j]), a) for j, a in angles.items()
+    }
     out = table.angles(local)
     for joint, values in angles.items():
         for dof, value in zip(table.joints[joint], values, strict=True):

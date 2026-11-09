@@ -55,17 +55,34 @@ def _opt(value, unset):
 class HumanoidApproach(HumanoidMove):
     MOVE = "approach"
 
-    def execute(self, humanoid: str, target: str, standoff: float = 0.6, facing: float = 1000.0,
-                check: bool = True):
-        self._begin(humanoid, {"target": target, "standoff": float(standoff),
-                               "facing": _opt(float(facing), 1000.0)}, check)
+    def execute(
+        self,
+        humanoid: str,
+        target: str,
+        standoff: float = 0.6,
+        facing: float = 1000.0,
+        check: bool = True,
+    ):
+        self._begin(
+            humanoid,
+            {"target": target, "standoff": float(standoff), "facing": _opt(float(facing), 1000.0)},
+            check,
+        )
 
 
 class HumanoidReach(HumanoidMove):
     MOVE = "reach"
 
-    def execute(self, humanoid: str, hand: str, target: str, relative: str = "", orient: bool = True,
-                pose: str = "open", check: bool = True):
+    def execute(
+        self,
+        humanoid: str,
+        hand: str,
+        target: str,
+        relative: str = "",
+        orient: bool = True,
+        pose: str = "open",
+        check: bool = True,
+    ):
         # `relative`, as `offset` is a word of OpenSCENARIO's own
         try:
             values = [float(v) for v in str(relative or "").split(",") if v.strip()]
@@ -77,21 +94,38 @@ class HumanoidReach(HumanoidMove):
                 action=self,
             )
         offset = values or None
-        self._begin(humanoid, {"hand": hand, "target": target, "offset": offset, "orient": bool(orient),
-                               "pose": pose}, check)
+        self._begin(
+            humanoid,
+            {
+                "hand": hand,
+                "target": target,
+                "offset": offset,
+                "orient": bool(orient),
+                "pose": pose,
+            },
+            check,
+        )
 
 
 class HumanoidPress(HumanoidMove):
     MOVE = "press"
 
-    def execute(self, humanoid: str, hand: str, target: str, max_force: float = 0.0, check: bool = True):
-        self._begin(humanoid, {"hand": hand, "target": target, "max_force": _opt(float(max_force), 0.0)}, check)
+    def execute(
+        self, humanoid: str, hand: str, target: str, max_force: float = 0.0, check: bool = True
+    ):
+        self._begin(
+            humanoid,
+            {"hand": hand, "target": target, "max_force": _opt(float(max_force), 0.0)},
+            check,
+        )
 
 
 class HumanoidGrasp(HumanoidMove):
     MOVE = "grasp"
 
-    def execute(self, humanoid: str, hand: str, target: str, grip: str = "power", check: bool = True):
+    def execute(
+        self, humanoid: str, hand: str, target: str, grip: str = "power", check: bool = True
+    ):
         self._begin(humanoid, {"hand": hand, "target": target, "grip": grip}, check)
 
 
@@ -105,8 +139,12 @@ class HumanoidRelease(HumanoidMove):
 class HumanoidPull(HumanoidMove):
     MOVE = "pull"
 
-    def execute(self, humanoid: str, hand: str, distance: float, speed: float = 0.2, check: bool = True):
-        self._begin(humanoid, {"hand": hand, "distance": float(distance), "speed": float(speed)}, check)
+    def execute(
+        self, humanoid: str, hand: str, distance: float, speed: float = 0.2, check: bool = True
+    ):
+        self._begin(
+            humanoid, {"hand": hand, "distance": float(distance), "speed": float(speed)}, check
+        )
 
 
 class HumanoidPush(HumanoidPull):

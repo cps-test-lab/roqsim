@@ -15,16 +15,15 @@ from __future__ import annotations
 
 import math
 
-
 import mujoco
 import numpy as np
+from roqsim_motion.body import HumanoidBody
+from roqsim_motion.description import Description
+from roqsim_motion.ik import HandGoal, Posture, solve
 
 from roqsim.pose import yaw_to_quat
 from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
-from roqsim_motion.body import HumanoidBody
-from roqsim_motion.description import Description
-from roqsim_motion.ik import HandGoal, Posture, solve
 from roqsim_walker.humanoid import JOINT_NAMES, PRESS_RADIUS
 from roqsim_walker.motion import blend_quats
 
@@ -35,23 +34,35 @@ POSTURE_RATE = {"turn": 1.5, "lean": 1.0, "crouch": 0.4, "bend": 1.5}
 _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
 
 
-def layouts_for(skeleton, block: dict | None = None, mesh: str | None = None, tpose: bool = False,
-                flip=None, finger_weights: str | None = None) -> dict:
+def layouts_for(
+    skeleton,
+    block: dict | None = None,
+    mesh: str | None = None,
+    tpose: bool = False,
+    flip=None,
+    finger_weights: str | None = None,
+) -> dict:
     """Each hand's layout for a walker's skeleton: measured on its character ``mesh`` with its
     ``finger_weights`` (:func:`roqsim_walker.skin.fit_hands`), so the bones turn the skin about its
     own knuckles; else, given neither, the default hand scaled to its forearm. A side the blueprint's ``hands`` block
     states is the default hand with its overrides."""
     if bool(mesh) != bool(finger_weights):
-        raise ValueError("a hand is measured on a mesh with its finger weights: give both or neither")
+        raise ValueError(
+            "a hand is measured on a mesh with its finger weights: give both or neither"
+        )
     fitted = _fitted(mesh, finger_weights, tpose, skeleton, flip) if mesh else None
     if mesh and fitted is None:
-        raise ValueError(f"{mesh}: its finger weights do not show a thumb and four fingers to measure the hands on")
+        raise ValueError(
+            f"{mesh}: its finger weights do not show a thumb and four fingers to measure the hands on"
+        )
     out = {}
     for side in ("l", "r"):
         stated = (block or {}).get(side)
         if fitted is not None and not stated:
             f = fitted[side]
-            out[side] = H.make_layout(side, f["bases"], f["lengths"], f["directions"], f["palm"], f["grip"])
+            out[side] = H.make_layout(
+                side, f["bases"], f["lengths"], f["directions"], f["palm"], f["grip"]
+            )
             continue
         forearm = float(np.linalg.norm(skeleton.offset(f"wrist_{side}")))
         out[side] = H.layout(side, scale=forearm / 0.24, block=stated)
@@ -68,9 +79,16 @@ def _fitted(mesh, finger_weights, tpose, skeleton, flip):
 
     from roqsim_walker.skin import fit_hands
 
-    key = (os.path.abspath(mesh), os.path.getmtime(mesh), os.path.abspath(finger_weights),
-           os.path.getmtime(finger_weights), bool(tpose), flip,
-           tuple(sorted((skeleton.offsets or {}).items())), skeleton.root_height)
+    key = (
+        os.path.abspath(mesh),
+        os.path.getmtime(mesh),
+        os.path.abspath(finger_weights),
+        os.path.getmtime(finger_weights),
+        bool(tpose),
+        flip,
+        tuple(sorted((skeleton.offsets or {}).items())),
+        skeleton.root_height,
+    )
     if key not in _FITS:
         _FITS[key] = fit_hands(mesh, finger_weights, tpose=tpose, skeleton=skeleton, flip=flip)
     return _FITS[key]
@@ -79,7 +97,9 @@ def _fitted(mesh, finger_weights, tpose, skeleton, flip):
 def description_for(skeleton) -> Description:
     from roqsim_walker.humanoid import SKELETON
 
-    return Description({j.name: tuple(skeleton.offset(j.name)) for j in SKELETON}, skeleton.root_height)
+    return Description(
+        {j.name: tuple(skeleton.offset(j.name)) for j in SKELETON}, skeleton.root_height
+    )
 
 
 class WalkerBody(HumanoidBody):
@@ -87,21 +107,28 @@ class WalkerBody(HumanoidBody):
 
     has_proxies = True
     stand_clear = 0.3  # a crouch brings the knees forward
-    carry_turn = math.radians(50.0)  # fingers forward and down, along a forearm carrying at the hips
+    carry_turn = math.radians(
+        50.0
+    )  # fingers forward and down, along a forearm carrying at the hips
 
     def __init__(self, name: str, st, model, layouts: dict):
         self.st = st
         self.layouts = layouts
         self.desc = description_for(st.skeleton)
         self._fingers = {
-            side: np.array([int(model.body_mocapid[_body(model, f"{name}/{b}")]) for b in H.bone_names(side)])
+            side: np.array(
+                [int(model.body_mocapid[_body(model, f"{name}/{b}")]) for b in H.bone_names(side)]
+            )
             for side in ("l", "r")
         }
         self._wrist = {side: st.mocap[f"wrist_{side}"] for side in ("l", "r")}
         self._grip = {side: _site(model, f"{name}/grip_{side}") for side in ("l", "r")}
         self._frames = {side: H.FingerFrames(layouts[side]) for side in ("l", "r")}
         self._data = None  # the run's data, set by the plugin at configure
-        self._proxy = {side: int(model.body_mocapid[_body(model, f"{name}/press_{side}")]) for side in ("l", "r")}
+        self._proxy = {
+            side: int(model.body_mocapid[_body(model, f"{name}/press_{side}")])
+            for side in ("l", "r")
+        }
         super().__init__(name)
 
     # -- HumanoidBody ---------------------------------------------------------------------------
@@ -126,7 +153,9 @@ class WalkerBody(HumanoidBody):
         return data.mocap_pos[self.st.mocap[f"shoulder_{side}"]].copy()
 
     def arm_reach(self, side: str) -> float:
-        return 0.97 * self.desc.arm_length(side) + float(np.linalg.norm(self.layouts[side].grip_pos))
+        return 0.97 * self.desc.arm_length(side) + float(
+            np.linalg.norm(self.layouts[side].grip_pos)
+        )
 
     def root(self):
         return float(self.st.pos[0]), float(self.st.pos[1]), float(self.st.yaw)
@@ -142,14 +171,20 @@ class WalkerBody(HumanoidBody):
 
     def tip(self, data, side: str):
         wid = self._wrist[side]
-        return self._frames[side].tip(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+        return self._frames[side].tip(
+            data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls
+        )
 
     def fingertips(self, data, side: str):
         wid = self._wrist[side]
-        return np.array([
-            self._frames[side].tip(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls, finger=f)
-            for f in range(5)
-        ])
+        return np.array(
+            [
+                self._frames[side].tip(
+                    data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls, finger=f
+                )
+                for f in range(5)
+            ]
+        )
 
     def press_aim(self, side: str, pose: str):
         lay = self.layouts[side]
@@ -182,7 +217,10 @@ class WalkerBody(HumanoidBody):
         return self.goal[side] is None or self.weight[side] > 0.999
 
     def wrist_poses(self, data) -> dict:
-        return {s: (data.mocap_pos[self._wrist[s]].copy(), data.mocap_quat[self._wrist[s]].copy()) for s in "lr"}
+        return {
+            s: (data.mocap_pos[self._wrist[s]].copy(), data.mocap_quat[self._wrist[s]].copy())
+            for s in "lr"
+        }
 
     # -- the animation's hooks ------------------------------------------------------------------
     def pose(self, st, q, body, root_z, dt) -> float:
@@ -195,7 +233,10 @@ class WalkerBody(HumanoidBody):
             if dt > 0.0:
                 aim = 1.0 if self.goal[side] is not None else 0.0
                 step = WEIGHT_RATE * dt
-                self.weight[side] = min(max(self.weight[side] + max(-step, min(step, aim - self.weight[side])), 0.0), 1.0)
+                self.weight[side] = min(
+                    max(self.weight[side] + max(-step, min(step, aim - self.weight[side])), 0.0),
+                    1.0,
+                )
             if self.goal[side] is None and self.weight[side] < 1e-3:
                 self.last[side] = None
         weight = max(self.weight.values())
@@ -231,7 +272,10 @@ class WalkerBody(HumanoidBody):
         self.residual.update(sol.residual)
         for side in ("l", "r"):
             if self.goal[side] is not None:
-                self.last[side] = {f"{j}_{side}": sol.rotations[f"{j}_{side}"] for j in ("shoulder", "elbow", "wrist")}
+                self.last[side] = {
+                    f"{j}_{side}": sol.rotations[f"{j}_{side}"]
+                    for j in ("shoulder", "elbow", "wrist")
+                }
         over = []
         trunk_w = max(weight, 1.0 if self.posture is not None else 0.0)
         for name in _TRUNK:
@@ -266,7 +310,9 @@ class WalkerBody(HumanoidBody):
         """Pose the thirty finger bones on the wrists as the animation left them."""
         for side in ("l", "r"):
             wid = self._wrist[side]
-            pos, rot = self._frames[side].world(data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls)
+            pos, rot = self._frames[side].world(
+                data.mocap_pos[wid], data.mocap_quat[wid], self.hand[side].curls
+            )
             ids = self._fingers[side]
             data.mocap_pos[ids] = pos
             data.mocap_quat[ids] = rot
@@ -277,14 +323,18 @@ class WalkerBody(HumanoidBody):
 def _body(model, name: str) -> int:
     bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
     if bid < 0:
-        raise ValueError(f"hand bone {name} not in the model (was the walker built with hands: true?)")
+        raise ValueError(
+            f"hand bone {name} not in the model (was the walker built with hands: true?)"
+        )
     return bid
 
 
 def _site(model, name: str) -> int:
     sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
     if sid < 0:
-        raise ValueError(f"grip site {name} not in the model (was the walker built with hands: true?)")
+        raise ValueError(
+            f"grip site {name} not in the model (was the walker built with hands: true?)"
+        )
     return sid
 
 
@@ -292,5 +342,3 @@ def _mat_quat(mat) -> np.ndarray:
     q = np.zeros(4)
     mujoco.mju_mat2Quat(q, np.asarray(mat, float).reshape(9))
     return q
-
-

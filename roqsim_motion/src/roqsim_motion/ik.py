@@ -74,13 +74,19 @@ class Solution:
 
 def _trunk(desc: Description, root, heading, local, turn, lean, bend):
     turn_p = Q.axis_angle("z", TURN_AT_PELVIS * turn)
-    hips = Q.mul(turn_p, Q.mul(Q.axis_angle("x", -AT_HIPS * lean), Q.axis_angle("y", AT_HIPS * bend)))
+    hips = Q.mul(
+        turn_p, Q.mul(Q.axis_angle("x", -AT_HIPS * lean), Q.axis_angle("y", AT_HIPS * bend))
+    )
     pelvis = Q.mul(local["pelvis"], hips)
     pelvis_w = Q.mul(heading, pelvis)
     spine = Q.mul(
         local["spine"],
-        Q.mul(Q.axis_angle("z", (1 - TURN_AT_PELVIS) * turn),
-              Q.mul(Q.axis_angle("x", -(1 - AT_HIPS) * lean), Q.axis_angle("y", (1 - AT_HIPS) * bend))),
+        Q.mul(
+            Q.axis_angle("z", (1 - TURN_AT_PELVIS) * turn),
+            Q.mul(
+                Q.axis_angle("x", -(1 - AT_HIPS) * lean), Q.axis_angle("y", (1 - AT_HIPS) * bend)
+            ),
+        ),
     )
     spine_pos = root + Q.rotate(pelvis_w, desc.offset("spine"))
     spine_w = Q.mul(pelvis_w, spine)
@@ -107,7 +113,11 @@ def _bend_for(desc, root, heading, local, wrists, turn, lean) -> tuple[float, bo
     lo, hi = 0.0, MAX_BEND
     while hi - lo > BEND_TOLERANCE:
         mid = (lo + hi) / 2
-        lo, hi = (lo, mid) if _reaches(desc, root, heading, local, wrists, turn, lean, mid) else (mid, hi)
+        lo, hi = (
+            (lo, mid)
+            if _reaches(desc, root, heading, local, wrists, turn, lean, mid)
+            else (mid, hi)
+        )
     return hi, True
 
 
@@ -196,7 +206,12 @@ def solve(
     else:
         bend, ok = _bend_for(desc, lowered, heading, local, wrists, turn, lean)
         low_target = bool(wrists) and min(p[2] for p in wrists.values()) < root[2]
-        if not ok and posture.crouch is None and low_target and crouch < MAX_CROUCH * desc.root_height:
+        if (
+            not ok
+            and posture.crouch is None
+            and low_target
+            and crouch < MAX_CROUCH * desc.root_height
+        ):
             # Bent over as far as it goes and still short: crouch deeper first.
             crouch = MAX_CROUCH * desc.root_height
             lowered = root - np.array([0.0, 0.0, crouch])
@@ -214,7 +229,9 @@ def solve(
             else:
                 lean = sign * MAX_LEAN
                 bend, _ = _bend_for(desc, lowered, heading, local, wrists, turn, lean)
-    pelvis, hips, spine, pelvis_w, spine_pos, spine_w = _trunk(desc, lowered, heading, local, turn, lean, bend)
+    pelvis, hips, spine, pelvis_w, spine_pos, spine_w = _trunk(
+        desc, lowered, heading, local, turn, lean, bend
+    )
     out = {
         "pelvis": pelvis,
         "spine": spine,
@@ -228,7 +245,9 @@ def solve(
         for s in SIDES:
             hip_pos = lowered + Q.rotate(pelvis_w, desc.offset(f"hip_{s}"))
             ankle_pos, ankle_w = stand[f"ankle_{s}"]
-            hip_l, knee_l, _, knee_w = _limb(desc, f"hip_{s}", f"knee_{s}", pelvis_w, hip_pos, ankle_pos, hx)
+            hip_l, knee_l, _, knee_w = _limb(
+                desc, f"hip_{s}", f"knee_{s}", pelvis_w, hip_pos, ankle_pos, hx
+            )
             out[f"hip_{s}"] = hip_l
             out[f"knee_{s}"] = knee_l
             out[f"ankle_{s}"] = Q.mul(Q.inv(knee_w), ankle_w)
@@ -242,13 +261,17 @@ def solve(
         # A wrist clamped short of the goal's rotation holds the grip elsewhere than the goal
         # assumed: the wrist's own goal is moved by what the clamp left, and the arm solved again.
         for _ in range(4 if wq is not None else 1):
-            sh_l, el_l, _, el_w = _limb(desc, f"shoulder_{s}", f"elbow_{s}", spine_w, shoulder, target, pole)
+            sh_l, el_l, _, el_w = _limb(
+                desc, f"shoulder_{s}", f"elbow_{s}", spine_w, shoulder, target, pole
+            )
             if wq is None:
                 break
             # The forearm turns with the hand: part of the twist the wrist's rotation asks for is the
             # forearm's, about its own line (which leaves the wrist where it is), so a hand turned
             # palm down twists the forearm along its length, not the skin at the wrist alone.
-            pronation = _twist_part(Q.mul(Q.inv(el_w), wq), desc.offset(f"wrist_{s}"), FOREARM_TWIST)
+            pronation = _twist_part(
+                Q.mul(Q.inv(el_w), wq), desc.offset(f"wrist_{s}"), FOREARM_TWIST
+            )
             el_l, el_w = Q.mul(el_l, pronation), Q.mul(el_w, pronation)
             wrist_l = desc.clamp(f"wrist_{s}", Q.mul(Q.inv(el_w), wq))
             reached = Q.mul(el_w, wrist_l)

@@ -98,7 +98,9 @@ class BoxSwap(ScenarioPlugin):
         yield from self.run(w, "approach", target="tote_empty", standoff=st["tote"])
         yield from self.run(w, "grasp", hand="both", target="tote_empty")
         yield from self.run(w, "carry", to="cell/drawer_1/inside", standoff=0.9)
-        yield from self.run(w, "approach", target="cell/drawer_1/inside", standoff=st["place"] - 0.05, facing=0.0)
+        yield from self.run(
+            w, "approach", target="cell/drawer_1/inside", standoff=st["place"] - 0.05, facing=0.0
+        )
         yield from self.run(w, "place", at="cell/drawer_1/inside")
         # A drawer pushed shut from where it was pulled open: in strokes, stepping up between.
         pushes = max(2, strokes)

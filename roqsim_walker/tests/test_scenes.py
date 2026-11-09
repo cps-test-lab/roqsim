@@ -56,7 +56,9 @@ def _both(world: str, seconds: float, watch=None):
     try:
         import scenario_execution  # noqa: F401 -- the OSC twin runs on it (scenario_execution_roqsim[osc])
     except ImportError:
-        pytest.skip(f"{world}: scenario_execution is not installed, so the OSC twin's timeline is not compared")
+        pytest.skip(
+            f"{world}: scenario_execution is not installed, so the OSC twin's timeline is not compared"
+        )
     osc = _run(f"{world}_osc", seconds)
     try:
         assert _timeline(osc) == expected
@@ -67,7 +69,9 @@ def _both(world: str, seconds: float, watch=None):
 
 def _q(engine, joint: str) -> float:
     m = engine.ctx.model
-    return float(engine.ctx.data.qpos[m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, joint)]])
+    return float(
+        engine.ctx.data.qpos[m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, joint)]]
+    )
 
 
 def test_scene_1_a_worker_presses_a_machines_start_button_and_it_runs():
@@ -78,7 +82,9 @@ def test_scene_1_a_worker_presses_a_machines_start_button_and_it_runs():
         assert events.index(("start", "pressed")) < events.index(("press_1", "program_start"))
         steps = [e for (src, e) in events if src == "press_1"]
         assert steps.index("door_close") < steps.index("power") < steps.index("door_open")
-        assert all(not e.get("error") for e in engine.ctx.events.all() if e["event"] == "program_end")
+        assert all(
+            not e.get("error") for e in engine.ctx.events.all() if e["event"] == "program_end"
+        )
 
 
 def test_scene_2_a_drawer_opened_a_tote_carried_to_a_bench_and_set_down():
@@ -94,8 +100,10 @@ def test_scene_2_a_drawer_opened_a_tote_carried_to_a_bench_and_set_down():
             d = engine.ctx.data
             body = engine.ctx.blackboard.get("humanoid_body:worker")
             for side in "lr":
-                local = Q.mul(Q.inv(d.mocap_quat[body.st.mocap[f"elbow_{side}"]]),
-                              d.mocap_quat[body.st.mocap[f"wrist_{side}"]])
+                local = Q.mul(
+                    Q.inv(d.mocap_quat[body.st.mocap[f"elbow_{side}"]]),
+                    d.mocap_quat[body.st.mocap[f"wrist_{side}"]],
+                )
                 twist = np.array([local[0], 0.0, 0.0, local[3]]) / np.hypot(local[0], local[3])
                 bends.append(np.degrees(Q.angle_between(Q.mul(local, Q.inv(twist)), Q.IDENTITY)))
 
@@ -120,13 +128,23 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
         # (> 0: inside, by that much)
         events = [e for e in engine.ctx.events.all() if e["source"] == "worker"]
         at_rack = [i for i, e in enumerate(events) if e["event"] == "arrived" and e["at"][0] < -1.0]
-        if not at_rack or any(e["event"] == "lifted" for e in events[at_rack[0]:]):
+        if not at_rack or any(e["event"] == "lifted" for e in events[at_rack[0] :]):
             return
         m, d = engine.ctx.model, engine.ctx.data
         rack = d.geom("rack_box")
         size = m.geom_size[rack.id]
         rot = rack.xmat.reshape(3, 3)
-        for joint in ("pelvis", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r", "toe_l", "toe_r"):
+        for joint in (
+            "pelvis",
+            "hip_l",
+            "hip_r",
+            "knee_l",
+            "knee_r",
+            "ankle_l",
+            "ankle_r",
+            "toe_l",
+            "toe_r",
+        ):
             p = rot.T @ (d.body(f"worker/{joint}").xpos - rack.xpos)
             deepest.append(float(np.min(size - np.abs(p))))
 
@@ -134,7 +152,9 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
         assert deepest and max(deepest) < 0.0, f"a leg is {max(deepest):.3f} m inside the rack"
         d = engine.ctx.data
         full, empty = d.body("tote_full").xpos, d.body("tote_empty").xpos
-        assert abs(full[2] - 0.70) < 0.02 and np.hypot(full[0] + 1.2, full[1] - 1.0) < 0.45  # on the trolley
+        assert (
+            abs(full[2] - 0.70) < 0.02 and np.hypot(full[0] + 1.2, full[1] - 1.0) < 0.45
+        )  # on the trolley
         assert abs(empty[2] - 0.495) < 0.02  # in the drawer
         assert _q(engine, "cell/drawer_1/slide") < 0.03  # the drawer pushed shut
         assert np.hypot(empty[0] - 2.28, empty[1] + 1.0) < 0.1  # inside the closed drawer

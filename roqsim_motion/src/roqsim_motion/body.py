@@ -60,7 +60,10 @@ class HumanoidBody:
         """Put ``side``'s grip frame on a world pose (``quat`` ``None``: the position only, the hand
         turned as it is). ``frame="wrist"`` places the wrist instead, as ``WalkerHandle.reach``
         does."""
-        self.goal[side] = (np.asarray(pos, float), None if quat is None else np.asarray(quat, float))
+        self.goal[side] = (
+            np.asarray(pos, float),
+            None if quat is None else np.asarray(quat, float),
+        )
         self.goal_frame[side] = frame
 
     def free_hand(self, side: str) -> None:

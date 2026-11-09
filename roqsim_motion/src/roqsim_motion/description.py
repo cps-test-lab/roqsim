@@ -105,7 +105,10 @@ class Description:
         order, bounds = self.limits[name]
         angles = Q.euler(rot, order)
         clamped = [
-            min(max(a, bounds.get(ax, (-math.inf, math.inf))[0]), bounds.get(ax, (-math.inf, math.inf))[1])
+            min(
+                max(a, bounds.get(ax, (-math.inf, math.inf))[0]),
+                bounds.get(ax, (-math.inf, math.inf))[1],
+            )
             for ax, a in zip(order, angles, strict=True)
         ]
         return Q.from_euler(order, clamped)
@@ -115,6 +118,8 @@ class Description:
             return True
         order, bounds = self.limits[name]
         return all(
-            bounds.get(ax, (-math.inf, math.inf))[0] - tol <= a <= bounds.get(ax, (-math.inf, math.inf))[1] + tol
+            bounds.get(ax, (-math.inf, math.inf))[0] - tol
+            <= a
+            <= bounds.get(ax, (-math.inf, math.inf))[1] + tol
             for ax, a in zip(order, Q.euler(rot, order), strict=True)
         )

@@ -336,8 +336,12 @@ def _bounds(t: np.ndarray, shares: np.ndarray) -> list:
     vertex. A joint the mesh does not show (a bone no vertex follows) divides the span around it as
     :data:`_PHALANGES` do."""
     dominant = np.argmax(shares, axis=1)
-    spans = [(float(t[dominant == g].min()), float(t[dominant == g].max())) if np.any(dominant == g) else None
-             for g in range(4)]
+    spans = [
+        (float(t[dominant == g].min()), float(t[dominant == g].max()))
+        if np.any(dominant == g)
+        else None
+        for g in range(4)
+    ]
     tip = float(t.max())
     first = next(g for g in (1, 2, 3) if spans[g] is not None)
 
@@ -359,7 +363,9 @@ def _bounds(t: np.ndarray, shares: np.ndarray) -> list:
             hi = next(j for j in range(k + 1, 4) if out[j] is not None)
             lo = k - 1
             share = np.cumsum((0.0,) + _PHALANGES)
-            out[k] = out[lo] + (out[hi] - out[lo]) * (share[k] - share[lo]) / (share[hi] - share[lo])
+            out[k] = out[lo] + (out[hi] - out[lo]) * (share[k] - share[lo]) / (
+                share[hi] - share[lo]
+            )
     for k in range(1, 4):
         out[k] = max(out[k], out[k - 1] + 0.005)
     return out
@@ -386,7 +392,9 @@ def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) 
     parts = _load_parts(mesh_path)
     raw = np.vstack([v for _, v, _, _ in parts])
     raw = np.unique(np.round(raw, 6), axis=0)
-    verts = _aligner(np.vstack([v for _, v, _, _ in parts]), flip=tpose if flip is None else bool(flip))(raw)
+    verts = _aligner(
+        np.vstack([v for _, v, _, _ in parts]), flip=tpose if flip is None else bool(flip)
+    )(raw)
     shares, w17 = fingers(raw), weights(raw)
     poses = _bind_bones(tpose=tpose, skeleton=skeleton)
     col = {n: i for i, n in enumerate(JOINT_NAMES)}
@@ -407,8 +415,12 @@ def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) 
             return None
         c, d = _line(local[on], local[on].mean(axis=0))
         t = (local - c) @ d
-        sel = (thumb.sum(1) > 0.1) | ((wrist > 0.5) & (np.linalg.norm(local - c - np.outer(t, d), axis=1) < 0.012)
-                                       & (t > t[on].min() - 0.03) & (t < t[on].min()))
+        sel = (thumb.sum(1) > 0.1) | (
+            (wrist > 0.5)
+            & (np.linalg.norm(local - c - np.outer(t, d), axis=1) < 0.012)
+            & (t > t[on].min() - 0.03)
+            & (t < t[on].min())
+        )
         b = _bounds(t[sel], np.column_stack([wrist[sel], thumb[sel]]))
         lines = [(c, d, b)]
         # the four fingers along the palm's breadth (x)
@@ -417,7 +429,9 @@ def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) 
         centres = np.quantile(x, [0.125, 0.375, 0.625, 0.875])
         for _ in range(50):
             label = np.argmin(np.abs(x[:, None] - centres[None]), axis=1)
-            new = np.array([x[label == k].mean() if np.any(label == k) else centres[k] for k in range(4)])
+            new = np.array(
+                [x[label == k].mean() if np.any(label == k) else centres[k] for k in range(4)]
+            )
             if np.allclose(new, centres):
                 break
             centres = new
@@ -429,8 +443,10 @@ def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) 
             c, d = _line(local[core], local[core].mean(axis=0))
             t = (local - c) @ d
             # the finger's vertices, and the palm's just behind its knuckle
-            mine = (nearest == k) & ((chain.sum(1) > 0.1) | ((wrist > 0.5) & (t > t[core].min() - 0.03)
-                                                               & (t < t[core].min())))
+            mine = (nearest == k) & (
+                (chain.sum(1) > 0.1)
+                | ((wrist > 0.5) & (t > t[core].min() - 0.03) & (t < t[core].min()))
+            )
             b = _bounds(t[mine], np.column_stack([wrist[mine], chain[mine]]))
             lines.append((c, d, b))
         bases = np.array([c + d * b[0] for c, d, b in lines])
@@ -440,10 +456,20 @@ def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) 
         knuckles = bases[1:]
         across = (local[:, 0] > knuckles[:, 0].min()) & (local[:, 0] < knuckles[:, 0].max())
         under = (local[:, 2] < 0.0) & (local[:, 2] > knuckles[:, 2].max()) & across & (wrist > 0.5)
-        surface = float(np.max(local[under] @ palm)) if under.any() else float(knuckles.mean(axis=0) @ palm)
+        surface = (
+            float(np.max(local[under] @ palm))
+            if under.any()
+            else float(knuckles.mean(axis=0) @ palm)
+        )
         grip = knuckles.mean(axis=0)
         grip = grip + (surface + GRIP_DEPTH - float(grip @ palm)) * palm
-        out[side] = {"bases": bases, "lengths": lengths, "directions": directions, "palm": palm, "grip": grip}
+        out[side] = {
+            "bases": bases,
+            "lengths": lengths,
+            "directions": directions,
+            "palm": palm,
+            "grip": grip,
+        }
     return out
 
 
@@ -466,7 +492,9 @@ def hand_weights(w17: np.ndarray, verts: np.ndarray, shares, poses: dict) -> np.
         base = len(JOINT_NAMES) + 15 * s_i
         wrist = col[f"wrist_{side}"]
         # the four fingers' chain goes to the finger whose bones the vertex is nearest
-        lines = np.array([[poses[bones[3 * f + k]][0] for k in range(3)] for f in range(1, 5)])  # (4, 3, 3)
+        lines = np.array(
+            [[poses[bones[3 * f + k]][0] for k in range(3)] for f in range(1, 5)]
+        )  # (4, 3, 3)
         ends = lines[:, 2] + (lines[:, 2] - lines[:, 1])  # past the last joint by a bone
         segs = np.concatenate([lines, ends[:, None]], axis=1)  # (4, 4, 3): knuckle .. past the tip
         dist = np.full((n, 4), np.inf)
@@ -475,7 +503,9 @@ def hand_weights(w17: np.ndarray, verts: np.ndarray, shares, poses: dict) -> np.
                 a, b = segs[f, j], segs[f, j + 1]
                 ab = b - a
                 t = np.clip((verts - a) @ ab / (ab @ ab + 1e-12), 0.0, 1.0)
-                dist[:, f] = np.minimum(dist[:, f], np.linalg.norm(verts - (a + t[:, None] * ab), axis=1))
+                dist[:, f] = np.minimum(
+                    dist[:, f], np.linalg.norm(verts - (a + t[:, None] * ab), axis=1)
+                )
         nearest = np.argmin(dist, axis=1)
         for k in range(3):
             thumb = shares[:, 6 * s_i + k]
@@ -490,7 +520,9 @@ def hand_weights(w17: np.ndarray, verts: np.ndarray, shares, poses: dict) -> np.
     return out / (out.sum(axis=1, keepdims=True) + 1e-9)
 
 
-def _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile=None, bones=None) -> None:
+def _emit_part(
+    spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile=None, bones=None
+) -> None:
     bones = bones or JOINT_NAMES
     used = [bi for bi in range(len(bones)) if np.any(w[:, bi] > 1e-3)]
     if not used:

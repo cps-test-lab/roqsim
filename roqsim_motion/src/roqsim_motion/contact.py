@@ -43,7 +43,9 @@ def _jointed(spec: mujoco.MjSpec, site: str) -> bool:
     return bool(joints) and all(j.type != mujoco.mjtJoint.mjJNT_FREE for j in joints)
 
 
-def add_holds(spec: mujoco.MjSpec, hand_sites: list[str], object_sites: list[str], solref=HOLD_SOLREF) -> list[str]:
+def add_holds(
+    spec: mujoco.MjSpec, hand_sites: list[str], object_sites: list[str], solref=HOLD_SOLREF
+) -> list[str]:
     """One inactive weld per (hand site, object site) between their bodies, named by
     :func:`hold_name`; the names.
 
@@ -97,13 +99,22 @@ class Hold:
 
     @classmethod
     def find(cls, model, hand_site: str, object_site: str) -> Hold | None:
-        eq = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY, hold_name(hand_site, object_site))
+        eq = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_EQUALITY, hold_name(hand_site, object_site)
+        )
         if eq < 0:
             return None
         o = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, object_site)
         h = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, hand_site)
-        return cls(eq, o, h, int(model.site_bodyid[o]), int(model.site_bodyid[h]),
-                   bool(model.eq_data[eq][10] > 0.0), model)
+        return cls(
+            eq,
+            o,
+            h,
+            int(model.site_bodyid[o]),
+            int(model.site_bodyid[h]),
+            bool(model.eq_data[eq][10] > 0.0),
+            model,
+        )
 
     def active(self, data) -> bool:
         return bool(data.eq_active[self.eq])
@@ -132,7 +143,9 @@ class Hold:
         return float(np.linalg.norm(data.site_xpos[self.obj_site] - data.site_xpos[self.hand_site]))
 
     def _rows(self, data):
-        return np.nonzero((data.efc_type == mujoco.mjtConstraint.mjCNSTR_EQUALITY) & (data.efc_id == self.eq))[0]
+        return np.nonzero(
+            (data.efc_type == mujoco.mjtConstraint.mjCNSTR_EQUALITY) & (data.efc_id == self.eq)
+        )[0]
 
     def separation(self, data) -> float:
         """How far the held object has slipped from where it was taken (m): the weld's position

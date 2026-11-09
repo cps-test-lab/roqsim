@@ -31,9 +31,19 @@ TOLERANCE = 0.25
 def worker():
     engine = Engine(
         load_config_from_dict(
-            {"sim": {"pacing": "asap"},
-             "components": [{"walker": {"walker": "MaleVisitorWalk", "hands": True,
-                                        "pose": {"position": {"x": 0.0, "y": 0.0}}}, "name": "worker"}]}
+            {
+                "sim": {"pacing": "asap"},
+                "components": [
+                    {
+                        "walker": {
+                            "walker": "MaleVisitorWalk",
+                            "hands": True,
+                            "pose": {"position": {"x": 0.0, "y": 0.0}},
+                        },
+                        "name": "worker",
+                    }
+                ],
+            }
         )
     )
     engine.ctx.seed = 1
@@ -49,8 +59,15 @@ class Drawn:
     def __init__(self, engine):
         m, d = engine.ctx.model, engine.ctx.data
         scn = mujoco.MjvScene(m, maxgeom=20000)
-        mujoco.mjv_updateScene(m, d, mujoco.MjvOption(), mujoco.MjvPerturb(), mujoco.MjvCamera(),
-                               mujoco.mjtCatBit.mjCAT_ALL, scn)
+        mujoco.mjv_updateScene(
+            m,
+            d,
+            mujoco.MjvOption(),
+            mujoco.MjvPerturb(),
+            mujoco.MjvCamera(),
+            mujoco.mjtCatBit.mjCAT_ALL,
+            scn,
+        )
         names = ["wrist_r"] + H.bone_names("r")
         ids = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"worker/{n}") for n in names]
         wrist = d.body("worker/wrist_r")
@@ -64,7 +81,11 @@ class Drawn:
                 body = int(m.skin_bonebodyid[b])
                 if body in ids:
                     a, k = m.skin_bonevertadr[b], m.skin_bonevertnum[b]
-                    np.add.at(w[:, ids.index(body)], m.skin_bonevertid[a : a + k], m.skin_bonevertweight[a : a + k])
+                    np.add.at(
+                        w[:, ids.index(body)],
+                        m.skin_bonevertid[a : a + k],
+                        m.skin_bonevertweight[a : a + k],
+                    )
             hand = w.sum(1) > 0.5
             verts.append((v[hand] - wrist.xpos) @ rot)
             owner.append(np.argmax(w[hand], axis=1))  # 0 the wrist, 1 + 3 * finger + bone
@@ -104,7 +125,9 @@ def test_the_drawn_hand_has_an_adult_hands_size_for_its_body_in_every_pose(worke
     got_length = -float(flat.v[:, 2].min())  # from the wrist's crease (its joint) down the fingers
     got_breadth = float(np.ptp(fingers[:, 0]))
     assert abs(got_length / length - 1.0) < TOLERANCE, f"length {got_length:.3f} m of {length:.3f}"
-    assert abs(got_breadth / breadth - 1.0) < TOLERANCE, f"breadth {got_breadth:.3f} m of {breadth:.3f}"
+    assert abs(got_breadth / breadth - 1.0) < TOLERANCE, (
+        f"breadth {got_breadth:.3f} m of {breadth:.3f}"
+    )
     for pose in H.POSES:
         drawn = _posed(worker, pose)
         thick = float(np.ptp(drawn.v @ drawn.palm))
@@ -133,7 +156,9 @@ def test_the_index_fingertip_the_moves_aim_is_the_drawn_one(worker, pose):
 
 
 def _angle(a, b) -> float:
-    return math.degrees(math.acos(np.clip(np.dot(a, b) / np.linalg.norm(a) / np.linalg.norm(b), -1, 1)))
+    return math.degrees(
+        math.acos(np.clip(np.dot(a, b) / np.linalg.norm(a) / np.linalg.norm(b), -1, 1))
+    )
 
 
 def _reach(drawn: Drawn, finger: int) -> float:
@@ -164,12 +189,18 @@ def test_each_pose_reads_as_its_name(worker):
     point = _posed(worker, "point")
     assert folded(point, 1) > 0.97
     assert all(folded(point, f) < 0.75 for f in (2, 3, 4))
-    assert np.linalg.norm(point.tip(0) - point.bone(2, 1).mean(axis=0)) < 0.035, "point: the thumb is not over the fingers"
+    assert np.linalg.norm(point.tip(0) - point.bone(2, 1).mean(axis=0)) < 0.035, (
+        "point: the thumb is not over the fingers"
+    )
 
     power = _posed(worker, "power")
     assert all(folded(power, f) < 0.75 for f in range(1, 5))
-    assert np.dot(power.tip(0) - power.origin[4], power.palm) > 0.0, "power: the thumb is not opposed"
-    assert np.linalg.norm(power.tip(0) - power.bone(1, 1).mean(axis=0)) < 0.035, "power: the thumb is not over the fingers"
+    assert np.dot(power.tip(0) - power.origin[4], power.palm) > 0.0, (
+        "power: the thumb is not opposed"
+    )
+    assert np.linalg.norm(power.tip(0) - power.bone(1, 1).mean(axis=0)) < 0.035, (
+        "power: the thumb is not over the fingers"
+    )
 
     pinch = _posed(worker, "pinch")
     assert np.linalg.norm(pinch.tip(0) - pinch.tip(1)) < 0.02, "pinch: thumb and index do not meet"
@@ -180,8 +211,15 @@ def _drawn_index(engine, name: str = "worker", side: str = "r"):
     way the finger points (its middle bone's centre to its last's)."""
     m, d = engine.ctx.model, engine.ctx.data
     scn = mujoco.MjvScene(m, maxgeom=20000)
-    mujoco.mjv_updateScene(m, d, mujoco.MjvOption(), mujoco.MjvPerturb(), mujoco.MjvCamera(),
-                           mujoco.mjtCatBit.mjCAT_ALL, scn)
+    mujoco.mjv_updateScene(
+        m,
+        d,
+        mujoco.MjvOption(),
+        mujoco.MjvPerturb(),
+        mujoco.MjvCamera(),
+        mujoco.mjtCatBit.mjCAT_ALL,
+        scn,
+    )
     out = []
     for k in (2, 3):
         bone = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{name}/f_{side}_index_{k}")
@@ -192,7 +230,9 @@ def _drawn_index(engine, name: str = "worker", side: str = "r"):
             for b in range(m.skin_boneadr[s], m.skin_boneadr[s] + m.skin_bonenum[s]):
                 if m.skin_bonebodyid[b] == bone:
                     a, c = m.skin_bonevertadr[b], m.skin_bonevertnum[b]
-                    pts.append(v[m.skin_bonevertid[a : a + c][m.skin_bonevertweight[a : a + c] > 0.5]])
+                    pts.append(
+                        v[m.skin_bonevertid[a : a + c][m.skin_bonevertweight[a : a + c] > 0.5]]
+                    )
         out.append(np.vstack(pts))
     along = out[1].mean(axis=0) - out[0].mean(axis=0)
     return out[1], along / np.linalg.norm(along)
@@ -203,7 +243,13 @@ def test_a_press_puts_the_drawn_fingertip_on_the_button_along_its_axis():
 
     from roqsim.config import load_config
 
-    world = Path(__file__).resolve().parents[1] / "src" / "roqsim_walker" / "worlds" / "handling_start_machine.yaml"
+    world = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "roqsim_walker"
+        / "worlds"
+        / "handling_start_machine.yaml"
+    )
     engine = Engine(load_config(world))
     engine.ctx.seed = 1
     engine.setup()
@@ -219,8 +265,12 @@ def test_a_press_puts_the_drawn_fingertip_on_the_button_along_its_axis():
         last, along = _drawn_index(engine)
         tip = last[np.argmax(last @ -normal)]  # the drawn finger's front, toward the button
         off = tip - site.xpos
-        assert abs(float(off @ normal)) < 0.005, f"the drawn fingertip is {float(off @ normal):+.3f} m off the face"
-        assert np.linalg.norm(off - (off @ normal) * normal) < 0.02, "the drawn fingertip is beside the button"
+        assert abs(float(off @ normal)) < 0.005, (
+            f"the drawn fingertip is {float(off @ normal):+.3f} m off the face"
+        )
+        assert np.linalg.norm(off - (off @ normal) * normal) < 0.02, (
+            "the drawn fingertip is beside the button"
+        )
         assert _angle(along, -normal) < 20, "the finger does not point along the button's axis"
         # the hand is turned no further than aiming the finger needs, and the forearm turns with it:
         # what the wrist itself twists about the forearm's line stays small

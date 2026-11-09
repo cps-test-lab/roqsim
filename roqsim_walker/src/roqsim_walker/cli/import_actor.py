@@ -188,7 +188,9 @@ def fold_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
 
 #: The source rigs' hand chains, per side: a thumb and ONE chain for the four fingers, three bones
 #: each. An import keeps their weights apart in ``<stem>.fingers.npz``.
-FINGER_CHAINS = [(chain, side, k) for side in ("l", "r") for chain in ("thumb", "fingers") for k in (1, 2, 3)]
+FINGER_CHAINS = [
+    (chain, side, k) for side in ("l", "r") for chain in ("thumb", "fingers") for k in (1, 2, 3)
+]
 
 
 def _finger_bone(chain: str, side: str, k: int) -> str:
@@ -202,7 +204,9 @@ def has_fingers(names: list[str]) -> bool:
     present = [_finger_bone(*c) in names for c in FINGER_CHAINS]
     if any(present) and not all(present):
         missing = [_finger_bone(*c) for c, p in zip(FINGER_CHAINS, present, strict=True) if not p]
-        raise SystemExit(f"the source has some of its finger bones and not {missing}, so no finger weights")
+        raise SystemExit(
+            f"the source has some of its finger bones and not {missing}, so no finger weights"
+        )
     return all(present)
 
 
@@ -241,7 +245,9 @@ def write_fingers(dae: str, wdir: str, stem: str) -> str:
     position, as its weights are, and a mesh from another source would match nothing."""
     weights = os.path.join(wdir, f"{stem}.weights.npz")
     if not os.path.isfile(weights):
-        raise SystemExit(f"--fingers-only: no blueprint weights at {weights}; import the actor first")
+        raise SystemExit(
+            f"--fingers-only: no blueprint weights at {weights}; import the actor first"
+        )
     credits = os.path.join(wdir, "CREDITS.txt")
     if not os.path.isfile(credits):
         raise SystemExit(f"--fingers-only: no {credits}; import the actor first")
@@ -506,7 +512,11 @@ def main(argv: list | None = None) -> None:
         wdir = os.path.join(out_root, args.name)
         print(f"wrote {write_fingers(args.dae, wdir, args.name[0].lower() + args.name[1:])}")
         return
-    missing = [f"--credits-{k}" for k in ("source", "licence", "author") if not getattr(args, f"credits_{k}")]
+    missing = [
+        f"--credits-{k}"
+        for k in ("source", "licence", "author")
+        if not getattr(args, f"credits_{k}")
+    ]
     if missing:
         ap.error(f"an import needs {', '.join(missing)}")
 
@@ -587,7 +597,11 @@ def main(argv: list | None = None) -> None:
     with open(os.path.join(wdir, "CREDITS.txt"), "w") as f:
         f.write(
             credits_text(
-                args.name, args.credits_source, args.credits_licence, args.credits_author, fingers=fingers
+                args.name,
+                args.credits_source,
+                args.credits_licence,
+                args.credits_author,
+                fingers=fingers,
             )
         )
 
@@ -595,7 +609,9 @@ def main(argv: list | None = None) -> None:
     print(f"  height {height:.3f} m | root_height {root_height:.3f} m | {len(verts)} verts")
     print(f"  materials: {', '.join(materials)}")
     print(f"  collision radii: {len(collision)} joints | anim_set: {args.anim_set or 'inferred'}")
-    print(f"  finger weights: {'written' if fingers else 'none, the source has no finger bones: its hands bind rigidly'}")
+    print(
+        f"  finger weights: {'written' if fingers else 'none, the source has no finger bones: its hands bind rigidly'}"
+    )
 
 
 if __name__ == "__main__":

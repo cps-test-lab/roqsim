@@ -51,12 +51,18 @@ def test_the_drawn_head_sits_on_its_torso_with_no_gap(g1):
     body = m.body(head).id
     geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == body]
     # the head's drawn geometry, from its lowest to its highest point, in 5 mm steps
-    hm = [g for g in geoms if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH
-          and "head" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, m.geom_dataid[g]) or "")]
+    hm = [
+        g
+        for g in geoms
+        if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH
+        and "head" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, m.geom_dataid[g]) or "")
+    ]
     assert hm, f"{name}: no head mesh on {head}"
     bins = _drawn_heights(m, d, hm, d.xpos[body], d.xmat[body].reshape(3, 3))
     missing = [b for b in range(min(bins), max(bins) + 1) if b not in bins]
-    assert not missing, f"{name}: the drawn head has nothing between {missing[0] * 5} and {missing[-1] * 5 + 5} mm"
+    assert not missing, (
+        f"{name}: the drawn head has nothing between {missing[0] * 5} and {missing[-1] * 5 + 5} mm"
+    )
 
 
 def test_a_ray_from_inside_the_head_leaves_it_through_the_window(g1):
@@ -66,8 +72,13 @@ def test_a_ray_from_inside_the_head_leaves_it_through_the_window(g1):
     window = [g for g in range(m.ngeom) if m.geom_bodyid[g] == body and m.geom_group[g] == 5]
     assert window, f"{name}: the head has no window geom"
     # the opening's height: where the cut head (what rays meet) has no surface
-    cut = [g for g in range(m.ngeom) if m.geom_bodyid[g] == body and m.geom_group[g] == 3
-           and "head" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, m.geom_dataid[g]) or "")]
+    cut = [
+        g
+        for g in range(m.ngeom)
+        if m.geom_bodyid[g] == body
+        and m.geom_group[g] == 3
+        and "head" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, m.geom_dataid[g]) or "")
+    ]
     rot = d.xmat[body].reshape(3, 3)
     mid = m.geom_dataid[cut[0]]
     v = m.mesh_vert[m.mesh_vertadr[mid] : m.mesh_vertadr[mid] + m.mesh_vertnum[mid]]

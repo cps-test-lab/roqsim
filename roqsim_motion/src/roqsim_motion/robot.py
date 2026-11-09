@@ -75,7 +75,7 @@ class RobotBody(HumanoidBody):
     def hands_track_goals(self) -> bool:  # servo-driven hands lag their goals
         return self.p.config["drive"] == "kinematic"
 
-    def __init__(self, plugin: "HumanoidRobotPlugin"):
+    def __init__(self, plugin: HumanoidRobotPlugin):
         self.p = plugin
         super().__init__(plugin.entity)
 
@@ -132,7 +132,10 @@ class RobotBody(HumanoidBody):
         if self.p.ctx.model.actuator_trntype[aid] != mujoco.mjtTrn.mjTRN_JOINT:
             return self.p.ctx.sim_time - self.p.gripper_since[side] > 0.5
         dof = int(self.p.ctx.model.jnt_dofadr[jnt])
-        return abs(float(self.p.ctx.data.qvel[dof])) < 0.01 and self.p.ctx.sim_time - self.p.gripper_since[side] > 0.3
+        return (
+            abs(float(self.p.ctx.data.qvel[dof])) < 0.01
+            and self.p.ctx.sim_time - self.p.gripper_since[side] > 0.3
+        )
 
     def owns(self, model, body: int) -> bool:
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) or ""
@@ -144,8 +147,17 @@ class HumanoidRobotPlugin(Plugin):
 
     requires_owner = True
     CONFIG_SCHEMA = {
-        "table": Field(str, default="", doc="the retargeting table: a model's name (default: the spawned model's) or a YAML path"),
-        "drive": Field(str, default="physical", choices=["kinematic", "physical"], doc="joints set, or tracked by servos"),
+        "table": Field(
+            str,
+            default="",
+            doc="the retargeting table: a model's name (default: the spawned model's) or a YAML path",
+        ),
+        "drive": Field(
+            str,
+            default="physical",
+            choices=["kinematic", "physical"],
+            doc="joints set, or tracked by servos",
+        ),
     }
 
     @classmethod
@@ -190,7 +202,11 @@ class HumanoidRobotPlugin(Plugin):
                         f"humanoid_robot {self.address}: the table's hands.{side}.frame "
                         f"{hand['frame']!r} is no site of the model (prefix {self.prefix!r})"
                     )
-                parent, pos, q = frame.parent, list(frame.pos), Q.mul(np.array(frame.quat, float), rot)
+                parent, pos, q = (
+                    frame.parent,
+                    list(frame.pos),
+                    Q.mul(np.array(frame.quat, float), rot),
+                )
             else:
                 try:
                     parent = spec.body(self._name(hand["body"]))
@@ -227,7 +243,9 @@ class HumanoidRobotPlugin(Plugin):
                     a.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
                 self._added.append(a.name)
             # the base hangs on an anchor the navigator moves
-            anchor = spec.worldbody.add_body(name=f"{self.entity}/anchor", pos=[0.0, 0.0, -50.0], mocap=True)
+            anchor = spec.worldbody.add_body(
+                name=f"{self.entity}/anchor", pos=[0.0, 0.0, -50.0], mocap=True
+            )
             anchor.add_site(name=f"{self.entity}/anchor")
             base = spec.body(self._name(t.base_body))
             base.add_site(name=f"{self.entity}/base")
@@ -243,7 +261,10 @@ class HumanoidRobotPlugin(Plugin):
     def _is_servo(spec, joint: str) -> bool:
         for a in spec.actuators:
             if a.target == joint:
-                return a.biastype == mujoco.mjtBias.mjBIAS_AFFINE and a.gaintype == mujoco.mjtGain.mjGAIN_FIXED
+                return (
+                    a.biastype == mujoco.mjtBias.mjBIAS_AFFINE
+                    and a.gaintype == mujoco.mjtGain.mjGAIN_FIXED
+                )
         return False
 
     # -- configure ------------------------------------------------------------------------------
@@ -252,30 +273,65 @@ class HumanoidRobotPlugin(Plugin):
         m = ctx.model
         t = self.table
         t.check(m, self.prefix)
-        self.joint_ids = {j: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, self._name(j)) for j in t.model_joints()}
+        self.joint_ids = {
+            j: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, self._name(j))
+            for j in t.model_joints()
+        }
         self.qadr = {j: int(m.jnt_qposadr[i]) for j, i in self.joint_ids.items()}
         self.dadr = {j: int(m.jnt_dofadr[i]) for j, i in self.joint_ids.items()}
-        self.range = {j: (float(m.jnt_range[i][0]), float(m.jnt_range[i][1])) if m.jnt_limited[i] else (-math.pi, math.pi)
-                      for j, i in self.joint_ids.items()}
+        self.range = {
+            j: (float(m.jnt_range[i][0]), float(m.jnt_range[i][1]))
+            if m.jnt_limited[i]
+            else (-math.pi, math.pi)
+            for j, i in self.joint_ids.items()
+        }
         self.servo = {}  # joint -> every position servo on it (the model's and the added one)
         names = {self._name(j): j for j in t.model_joints()}
         for i in range(m.nu):
-            if m.actuator_trntype[i] == mujoco.mjtTrn.mjTRN_JOINT and m.actuator_biastype[i] == mujoco.mjtBias.mjBIAS_AFFINE:
-                jname = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, int(m.actuator_trnid[i][0])) or ""
+            if (
+                m.actuator_trntype[i] == mujoco.mjtTrn.mjTRN_JOINT
+                and m.actuator_biastype[i] == mujoco.mjtBias.mjBIAS_AFFINE
+            ):
+                jname = (
+                    mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, int(m.actuator_trnid[i][0]))
+                    or ""
+                )
                 if jname in names:
                     self.servo.setdefault(names[jname], []).append(i)
-        self.grip_site = {s: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"{self.entity}/grip_{s}") for s in t.hands}
+        self.grip_site = {
+            s: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"{self.entity}/grip_{s}")
+            for s in t.hands
+        }
         self.gripper_act = {
-            s: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, self._name((h.get("grip") or {}).get("actuator", "")))
-            if (h.get("grip") or {}).get("actuator") else -1
+            s: mujoco.mj_name2id(
+                m,
+                mujoco.mjtObj.mjOBJ_ACTUATOR,
+                self._name((h.get("grip") or {}).get("actuator", "")),
+            )
+            if (h.get("grip") or {}).get("actuator")
+            else -1
             for s, h in t.hands.items()
         }
-        self.gripper_ctrl = {s: float((h.get("grip") or {}).get("open", 0.0)) for s, h in t.hands.items()}
+        self.gripper_ctrl = {
+            s: float((h.get("grip") or {}).get("open", 0.0)) for s, h in t.hands.items()
+        }
         self.gripper_since = {s: 0.0 for s in t.hands}
-        self.arms = {s: [d.joint for d in t.joints.get(f"shoulder_{s}", []) + t.joints.get(f"elbow_{s}", [])
-                         + t.joints.get(f"wrist_{s}", [])] for s in SIDES}
+        self.arms = {
+            s: [
+                d.joint
+                for d in t.joints.get(f"shoulder_{s}", [])
+                + t.joints.get(f"elbow_{s}", [])
+                + t.joints.get(f"wrist_{s}", [])
+            ]
+            for s in SIDES
+        }
         self.waist = [d.joint for d in t.joints.get("spine", [])]
-        self.legs = {s: {k: [d.joint for d in t.joints.get(f"{k}_{s}", [])] for k in ("hip", "knee", "ankle")} for s in SIDES}
+        self.legs = {
+            s: {
+                k: [d.joint for d in t.joints.get(f"{k}_{s}", [])] for k in ("hip", "knee", "ankle")
+            }
+            for s in SIDES
+        }
         self.shoulder_body = {s: int(m.jnt_bodyid[self.joint_ids[self.arms[s][0]]]) for s in SIDES}
         self.reach = {}
         base_jnt = None
@@ -284,15 +340,29 @@ class HumanoidRobotPlugin(Plugin):
             if int(m.jnt_bodyid[j]) == bid and m.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
                 base_jnt = j
         if base_jnt is None:
-            raise TableError(f"humanoid_robot {self.address}: base {t.base_body!r} has no free joint")
+            raise TableError(
+                f"humanoid_robot {self.address}: base {t.base_body!r} has no free joint"
+            )
         self.base_q = int(m.jnt_qposadr[base_jnt])
         self.base_d = int(m.jnt_dofadr[base_jnt])
-        self.anchor = int(m.body_mocapid[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{self.entity}/anchor")]) \
-            if self.config["drive"] == "physical" else -1
+        self.anchor = (
+            int(
+                m.body_mocapid[
+                    mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{self.entity}/anchor")
+                ]
+            )
+            if self.config["drive"] == "physical"
+            else -1
+        )
         self.scratch = mujoco.MjData(m)
         q0 = m.qpos0
-        self.start = np.array([float(q0[self.base_q]), float(q0[self.base_q + 1]),
-                               Q.yaw_of(q0[self.base_q + 3 : self.base_q + 7])])
+        self.start = np.array(
+            [
+                float(q0[self.base_q]),
+                float(q0[self.base_q + 1]),
+                Q.yaw_of(q0[self.base_q + 3 : self.base_q + 7]),
+            ]
+        )
         self.body = RobotBody(self)
         self._reset_targets()
         self.reach = self._arm_reach(m)
@@ -309,7 +379,9 @@ class HumanoidRobotPlugin(Plugin):
         for s in SIDES:
             points = [d.xanchor[self.joint_ids[j]].copy() for j in self.arms[s]]
             points.append(d.site_xpos[self.grip_site[s]].copy())
-            out[s] = float(sum(np.linalg.norm(b - a) for a, b in zip(points, points[1:], strict=False)))
+            out[s] = float(
+                sum(np.linalg.norm(b - a) for a, b in zip(points, points[1:], strict=False))
+            )
         return out
 
     def _reset_targets(self) -> None:
@@ -327,7 +399,9 @@ class HumanoidRobotPlugin(Plugin):
     def on_reset(self, ctx) -> None:
         self.body.reset()
         self._reset_targets()
-        self.gripper_ctrl = {s: float((h.get("grip") or {}).get("open", 0.0)) for s, h in self.table.hands.items()}
+        self.gripper_ctrl = {
+            s: float((h.get("grip") or {}).get("open", 0.0)) for s, h in self.table.hands.items()
+        }
         self._place_base(ctx.data)
         self._apply(ctx.data)
 
@@ -396,15 +470,26 @@ class HumanoidRobotPlugin(Plugin):
             if knees:
                 self.target[knees[0]] = KNEE_LIFT * max(0.0, s) if moving else 0.0
         # arms and waist: each hand with a goal, solved on the actual pose
-        goals = {s: self.body.goal[s] for s in SIDES if self.body.goal[s] is not None and s in self.grip_site}
+        goals = {
+            s: self.body.goal[s]
+            for s in SIDES
+            if self.body.goal[s] is not None and s in self.grip_site
+        }
         for s in SIDES:
             aim = 1.0 if s in goals else 0.0
             self.weight[s] += max(-2.0 * dt, min(2.0 * dt, aim - self.weight[s]))
             if s not in goals:
                 self.trim[s] = np.zeros(3)
                 for j in self.arms[s]:
-                    self.target[j] += max(-MAX_STEP, min(MAX_STEP, self.weight[s] * (self.target[j] - self.rest[j])
-                                                         + self.rest[j] - self.target[j]))
+                    self.target[j] += max(
+                        -MAX_STEP,
+                        min(
+                            MAX_STEP,
+                            self.weight[s] * (self.target[j] - self.rest[j])
+                            + self.rest[j]
+                            - self.target[j],
+                        ),
+                    )
         if not goals:
             return
         sd = self.scratch
@@ -458,7 +543,9 @@ class HumanoidRobotPlugin(Plugin):
             self.target[j] = float(sd.qpos[self.qadr[j]])
         for s in goals:
             self.body.residual = getattr(self.body, "residual", {})
-            self.body.residual[s] = float(np.linalg.norm(aims[s][0] - sd.site_xpos[self.grip_site[s]]))
+            self.body.residual[s] = float(
+                np.linalg.norm(aims[s][0] - sd.site_xpos[self.grip_site[s]])
+            )
 
 
 class HumanoidOutput(NavOutput):

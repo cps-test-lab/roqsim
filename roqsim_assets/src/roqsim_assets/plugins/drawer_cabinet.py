@@ -27,19 +27,37 @@ class DrawerCabinetPlugin(Plugin):
     provides_entity = True
 
     CONFIG_SCHEMA = {
-        "pose": Field(dict, required=True, doc="the cabinet's front-bottom centre on the floor; its front faces +x"),
-        "size": Field(list, default=[0.6, 0.7, 0.9], length=3, unit="m", doc="the carcass: depth, width, height"),
+        "pose": Field(
+            dict,
+            required=True,
+            doc="the cabinet's front-bottom centre on the floor; its front faces +x",
+        ),
+        "size": Field(
+            list,
+            default=[0.6, 0.7, 0.9],
+            length=3,
+            unit="m",
+            doc="the carcass: depth, width, height",
+        ),
         "drawers": Field(int, default=2, minimum=1, maximum=6, doc="how many drawers, stacked"),
-        "travel": Field(float, default=0.45, minimum=0.05, unit="m", doc="how far a drawer comes out"),
-        "friction": Field(float, default=8.0, minimum=0.0, unit="N", doc="a drawer's sliding friction"),
-        "wall": Field(float, default=0.12, minimum=0.02, unit="m", doc="the height of a drawer's walls"),
+        "travel": Field(
+            float, default=0.45, minimum=0.05, unit="m", doc="how far a drawer comes out"
+        ),
+        "friction": Field(
+            float, default=8.0, minimum=0.0, unit="N", doc="a drawer's sliding friction"
+        ),
+        "wall": Field(
+            float, default=0.12, minimum=0.02, unit="m", doc="the height of a drawer's walls"
+        ),
     }
 
     def validate_config(self, config: dict) -> list[str]:
         errors = config_pose_errors(config, f"drawer_cabinet {self.address}")
         s = self.settings_for(config)
         if s.travel >= s.size[0]:
-            errors.append(f"drawer_cabinet {self.address}: 'travel' must be under the depth {s.size[0]} m")
+            errors.append(
+                f"drawer_cabinet {self.address}: 'travel' must be under the depth {s.size[0]} m"
+            )
         return errors
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -65,7 +83,9 @@ class DrawerCabinetPlugin(Plugin):
             ((depth / 2, width / 2, wall / 2), (-depth / 2, 0.0, height - wall / 2)),
             ((depth / 2, width / 2, 0.04), (-depth / 2, 0.0, 0.04)),
         ):
-            carcass.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size), pos=list(at), rgba=_GREY)
+            carcass.add_geom(
+                type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size), pos=list(at), rgba=_GREY
+            )
         slot = (height - 0.08 - wall) / s.drawers
         inner_w = width - 2 * wall - 0.01
         inner_d = depth - wall - 0.02
@@ -73,7 +93,11 @@ class DrawerCabinetPlugin(Plugin):
             z0 = 0.08 + i * slot
             tray_h = min(slot - 0.02, s.wall)
             d = carcass.add_body(name=self.drawer(i), pos=[-inner_d / 2, 0.0, z0 + 0.005])
-            j = d.add_joint(name=f"{self.drawer(i)}/slide", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=[1.0, 0.0, 0.0])
+            j = d.add_joint(
+                name=f"{self.drawer(i)}/slide",
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                axis=[1.0, 0.0, 0.0],
+            )
             j.range = [0.0, s.travel]
             j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
             j.frictionloss = s.friction
@@ -86,21 +110,45 @@ class DrawerCabinetPlugin(Plugin):
                 ((inner_d / 2, t / 2, tray_h / 2), (0.0, inner_w / 2 - t / 2, tray_h / 2)),
                 ((inner_d / 2, t / 2, tray_h / 2), (0.0, -inner_w / 2 + t / 2, tray_h / 2)),
             ):
-                d.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size), pos=list(at), rgba=_GREY, mass=0.6)
+                d.add_geom(
+                    type=mujoco.mjtGeom.mjGEOM_BOX,
+                    size=list(size),
+                    pos=list(at),
+                    rgba=_GREY,
+                    mass=0.6,
+                )
             hx = inner_d / 2 + 0.035
             hz = tray_h * 0.6
-            d.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, fromto=[hx, -0.12, hz, hx, 0.12, hz], size=[0.012, 0, 0],
-                       rgba=_DARK, mass=0.1)
+            d.add_geom(
+                type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                fromto=[hx, -0.12, hz, hx, 0.12, hz],
+                size=[0.012, 0, 0],
+                rgba=_DARK,
+                mass=0.1,
+            )
             for y in (-0.12, 0.12):
-                d.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, fromto=[inner_d / 2, y, hz, hx, y, hz],
-                           size=[0.008, 0, 0], rgba=_DARK, mass=0.02)
+                d.add_geom(
+                    type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                    fromto=[inner_d / 2, y, hz, hx, y, hz],
+                    size=[0.008, 0, 0],
+                    rgba=_DARK,
+                    mass=0.02,
+                )
             # the grip frame on the bar's axis, where a hand holds it: +x toward the cabinet (the hand's
             # palm faces it), +z down along the fingers
             d.add_site(name=f"{self.drawer(i)}/grip", pos=[hx, 0.0, hz], quat=[0.0, 0.0, 1.0, 0.0])
             d.add_site(name=f"{self.drawer(i)}/inside", pos=[0.0, 0.0, t])
 
     def configure(self, ctx: SimContext) -> None:
-        ctx.entities.add(Entity(name=self.address, kind="prop", body=f"{self.address}/carcass", meta={}))
+        ctx.entities.add(
+            Entity(name=self.address, kind="prop", body=f"{self.address}/carcass", meta={})
+        )
         for i in range(self.settings.drawers):
-            ctx.entities.add(Entity(name=self.drawer(i), kind="prop", body=self.drawer(i),
-                                    meta={"slide_joint": f"{self.drawer(i)}/slide"}))
+            ctx.entities.add(
+                Entity(
+                    name=self.drawer(i),
+                    kind="prop",
+                    body=self.drawer(i),
+                    meta={"slide_joint": f"{self.drawer(i)}/slide"},
+                )
+            )

@@ -175,7 +175,9 @@ def build_humanoid(
         _add_collision(b, j, skel, collision)  # per-limb hit-box (always)
         if hands and j.name in ("wrist_l", "wrist_r"):
             lay = hands[j.name[-1]]
-            b.add_site(name=f"{name}/grip_{j.name[-1]}", pos=list(lay.grip_pos), quat=list(lay.grip_quat))
+            b.add_site(
+                name=f"{name}/grip_{j.name[-1]}", pos=list(lay.grip_pos), quat=list(lay.grip_quat)
+            )
     bones = list(JOINT_NAMES)
     if hands:
         from roqsim_motion.hands import bone_names

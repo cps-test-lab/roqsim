@@ -31,6 +31,8 @@ from . import quat as Q
 
 FINGERS = ("thumb", "index", "middle", "ring", "little")
 BONES = 3
+
+
 #: The bone names of one hand, in the order :func:`finger_fk` returns them.
 def bone_names(side: str) -> list[str]:
     return [f"f_{side}_{finger}_{k + 1}" for finger in FINGERS for k in range(BONES)]
@@ -43,14 +45,29 @@ def bone_names(side: str) -> list[str]:
 #: curled under the thumb.
 _C = math.radians
 POSES = {
-    "open": [[_C(35), _C(10), _C(5)], [_C(8), _C(12), _C(8)], [_C(10), _C(14), _C(9)],
-             [_C(12), _C(16), _C(10)], [_C(14), _C(18), _C(12)]],
+    "open": [
+        [_C(35), _C(10), _C(5)],
+        [_C(8), _C(12), _C(8)],
+        [_C(10), _C(14), _C(9)],
+        [_C(12), _C(16), _C(10)],
+        [_C(14), _C(18), _C(12)],
+    ],
     "power": [[_C(65), _C(15), _C(10)]] + [[_C(75), _C(95), _C(55)]] * 4,
-    "pinch": [[_C(70), _C(20), _C(5)], [_C(40), _C(50), _C(25)], [_C(45), _C(60), _C(35)],
-              [_C(50), _C(65), _C(40)], [_C(55), _C(70), _C(45)]],
+    "pinch": [
+        [_C(70), _C(20), _C(5)],
+        [_C(40), _C(50), _C(25)],
+        [_C(45), _C(60), _C(35)],
+        [_C(50), _C(65), _C(40)],
+        [_C(55), _C(70), _C(45)],
+    ],
     "flat": [[_C(10), _C(0), _C(0)]] + [[_C(0), _C(0), _C(0)]] * 4,
-    "point": [[_C(75), _C(15), _C(10)], [_C(0), _C(0), _C(0)], [_C(80), _C(100), _C(60)],
-              [_C(85), _C(100), _C(60)], [_C(85), _C(100), _C(60)]],
+    "point": [
+        [_C(75), _C(15), _C(10)],
+        [_C(0), _C(0), _C(0)],
+        [_C(80), _C(100), _C(60)],
+        [_C(85), _C(100), _C(60)],
+        [_C(85), _C(100), _C(60)],
+    ],
 }
 #: How fast a hand changes pose: rad/s of angle per bone, at most.
 CURL_RATE = 6.0
@@ -108,7 +125,9 @@ def make_layout(side: str, bases, lengths, directions, palm, grip_pos) -> HandLa
     x = n
     y = np.cross(z, x)
     grip_quat = Q.from_matrix(np.column_stack([x, y, z]))
-    return HandLayout(side, bases, lengths, directions, axes, np.asarray(grip_pos, float), grip_quat, n)
+    return HandLayout(
+        side, bases, lengths, directions, axes, np.asarray(grip_pos, float), grip_quat, n
+    )
 
 
 def layout(side: str, scale: float = 1.0, block: dict | None = None) -> HandLayout:
@@ -121,19 +140,34 @@ def layout(side: str, scale: float = 1.0, block: dict | None = None) -> HandLayo
     bases = np.array(
         block.get(
             "bases",
-            [[0.030, palm * 0.020, -0.035], [0.028, 0.0, -0.095], [0.008, 0.0, -0.100],
-             [-0.012, 0.0, -0.095], [-0.030, 0.0, -0.085]],
+            [
+                [0.030, palm * 0.020, -0.035],
+                [0.028, 0.0, -0.095],
+                [0.008, 0.0, -0.100],
+                [-0.012, 0.0, -0.095],
+                [-0.030, 0.0, -0.085],
+            ],
         ),
         float,
     ) * (1.0 if "bases" in block else scale)
     lengths = np.array(
-        block.get("lengths", [[0.035, 0.030, 0.025], [0.042, 0.026, 0.020], [0.046, 0.028, 0.021],
-                              [0.043, 0.026, 0.020], [0.034, 0.020, 0.018]]),
+        block.get(
+            "lengths",
+            [
+                [0.035, 0.030, 0.025],
+                [0.042, 0.026, 0.020],
+                [0.046, 0.028, 0.021],
+                [0.043, 0.026, 0.020],
+                [0.034, 0.020, 0.018],
+            ],
+        ),
         float,
     ) * (1.0 if "lengths" in block else scale)
     # the thumb beside the palm, spread from the fingers in the palm's plane
     directions = np.array([[0.6, 0.0, -0.8]] + [[0.0, 0.0, -1.0]] * 4)
-    grip = np.array(block.get("grip", [0.0, palm * 0.035, -0.09]), float) * (1.0 if "grip" in block else scale)
+    grip = np.array(block.get("grip", [0.0, palm * 0.035, -0.09]), float) * (
+        1.0 if "grip" in block else scale
+    )
     return make_layout(side, bases, lengths, directions, [0.0, palm, 0.0], grip)
 
 
@@ -146,8 +180,13 @@ def _qmul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     aw, ax, ay, az = a.T
     bw, bx, by, bz = b.T
     return np.stack(
-        [aw * bw - ax * bx - ay * by - az * bz, aw * bx + ax * bw + ay * bz - az * by,
-         aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw], axis=1
+        [
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        ],
+        axis=1,
     )
 
 
@@ -207,7 +246,9 @@ class FingerFrames:
     def tip(self, wrist_pos, wrist_quat, curls: np.ndarray, finger: int = 1) -> np.ndarray:
         """One fingertip's world position (the index, by default)."""
         self._update(curls)
-        return _matrix(np.asarray(wrist_quat, float)) @ self._tips[finger] + np.asarray(wrist_pos, float)
+        return _matrix(np.asarray(wrist_quat, float)) @ self._tips[finger] + np.asarray(
+            wrist_pos, float
+        )
 
     def world(self, wrist_pos, wrist_quat, curls: np.ndarray):
         self._update(curls)

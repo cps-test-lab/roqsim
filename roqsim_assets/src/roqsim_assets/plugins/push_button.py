@@ -54,14 +54,31 @@ class PushButtonPlugin(Plugin):
     provides_entity = True
 
     CONFIG_SCHEMA = {
-        "pose": Field(dict, required=True, doc="the housing's centre, as SpawnEntity states a pose; the button faces its +x"),
-        "housing": Field(list, default=[0.06, 0.16, 0.16], length=3, unit="m", doc="the housing's full extents"),
+        "pose": Field(
+            dict,
+            required=True,
+            doc="the housing's centre, as SpawnEntity states a pose; the button faces its +x",
+        ),
+        "housing": Field(
+            list, default=[0.06, 0.16, 0.16], length=3, unit="m", doc="the housing's full extents"
+        ),
         "radius": Field(float, default=0.02, minimum=0.005, unit="m", doc="the button's radius"),
-        "stroke": Field(float, default=0.012, minimum=0.002, unit="m", doc="how far the button goes in"),
-        "threshold": Field(float, default=0.6, minimum=0.05, maximum=1.0, doc="share of the stroke that is pressed"),
-        "release": Field(float, default=0.4, minimum=0.0, maximum=1.0,
-                         doc="share of the stroke it must come back under to be released (below threshold)"),
-        "stiffness": Field(float, default=300.0, minimum=1.0, unit="N/m", doc="the spring that pushes it back"),
+        "stroke": Field(
+            float, default=0.012, minimum=0.002, unit="m", doc="how far the button goes in"
+        ),
+        "threshold": Field(
+            float, default=0.6, minimum=0.05, maximum=1.0, doc="share of the stroke that is pressed"
+        ),
+        "release": Field(
+            float,
+            default=0.4,
+            minimum=0.0,
+            maximum=1.0,
+            doc="share of the stroke it must come back under to be released (below threshold)",
+        ),
+        "stiffness": Field(
+            float, default=300.0, minimum=1.0, unit="N/m", doc="the spring that pushes it back"
+        ),
         "color": Field(list, default=[0.8, 0.1, 0.1, 1.0], length=4, doc="the button's colour"),
     }
 
@@ -77,7 +94,11 @@ class PushButtonPlugin(Plugin):
         errors = config_pose_errors(config, f"push_button {self.address}")
         threshold = config.get("threshold", self.CONFIG_SCHEMA["threshold"].default)
         release = config.get("release", self.CONFIG_SCHEMA["release"].default)
-        if isinstance(threshold, (int, float)) and isinstance(release, (int, float)) and release >= threshold:
+        if (
+            isinstance(threshold, (int, float))
+            and isinstance(release, (int, float))
+            and release >= threshold
+        ):
             errors.append(
                 f"push_button {self.address}: 'release' ({release}) is where a pressed button comes back "
                 f"to, so it lies below 'threshold' ({threshold})"
@@ -88,12 +109,18 @@ class PushButtonPlugin(Plugin):
         s = self.settings
         n = self.address
         hx, hy, hz = (v / 2 for v in s.housing)
-        housing = spec.worldbody.add_body(name=f"{n}/housing", pos=list(self.pos), quat=list(self.quat))
-        g = housing.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[hx, hy, hz], rgba=[0.75, 0.75, 0.72, 1.0])
+        housing = spec.worldbody.add_body(
+            name=f"{n}/housing", pos=list(self.pos), quat=list(self.quat)
+        )
+        g = housing.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX, size=[hx, hy, hz], rgba=[0.75, 0.75, 0.72, 1.0]
+        )
         g.name = f"{n}/housing"
         depth = 0.012
         button = housing.add_body(name=f"{n}/button", pos=[hx + depth / 2, 0.0, 0.0])
-        j = button.add_joint(name=f"{n}/stroke", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=[-1.0, 0.0, 0.0])
+        j = button.add_joint(
+            name=f"{n}/stroke", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=[-1.0, 0.0, 0.0]
+        )
         j.range = [0.0, s.stroke]
         j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
         j.stiffness = [s.stiffness, 0.0, 0.0]
@@ -116,8 +143,14 @@ class PushButtonPlugin(Plugin):
         m = ctx.model
         jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{self.address}/stroke")
         self._qadr = int(m.jnt_qposadr[jid])
-        ctx.entities.add(Entity(name=self.address, kind="prop", body=f"{self.address}/housing",
-                                meta={"stroke_joint": f"{self.address}/stroke"}))
+        ctx.entities.add(
+            Entity(
+                name=self.address,
+                kind="prop",
+                body=f"{self.address}/housing",
+                meta={"stroke_joint": f"{self.address}/stroke"},
+            )
+        )
         ctx.blackboard.set(f"button:{self.address}", self.handle)
         self._ctx = ctx
 
@@ -139,7 +172,9 @@ class PushButtonPlugin(Plugin):
             self.is_pressed = pressed
             if pressed:
                 self.count += 1
-            ctx.events.emit(self.address, "pressed" if pressed else "released", travel=self.travel_now)
+            ctx.events.emit(
+                self.address, "pressed" if pressed else "released", travel=self.travel_now
+            )
 
     @endpoint.out(rate=30.0, ros2=None)
     def pressed(self) -> bool:

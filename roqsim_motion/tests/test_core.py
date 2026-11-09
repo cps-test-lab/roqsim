@@ -7,12 +7,12 @@ import math
 import mujoco
 import numpy as np
 import pytest
-
-from roqsim_motion import hands as H
-from roqsim_motion import quat as Q
 from roqsim_motion.description import JOINTS, Description
 from roqsim_motion.ik import HandGoal, Posture, solve
 from roqsim_motion.targets import TargetError, make_target
+
+from roqsim_motion import hands as H
+from roqsim_motion import quat as Q
 
 DESC = Description()
 REST = {j: Q.IDENTITY.copy() for j in JOINTS}
@@ -22,11 +22,21 @@ ROOT = np.array([0.0, 0.0, DESC.root_height])
 
 def _random_reachable(rng, side):
     """A grip pose the arm can take: a random arm pose's grip frame, the trunk upright."""
-    sh = Q.from_euler("yxz", [rng.uniform(-1.8, 0.3), rng.uniform(-0.3, 0.6) * (1 if side == "l" else -1),
-                              rng.uniform(-0.5, 0.5)])
+    sh = Q.from_euler(
+        "yxz",
+        [
+            rng.uniform(-1.8, 0.3),
+            rng.uniform(-0.3, 0.6) * (1 if side == "l" else -1),
+            rng.uniform(-0.5, 0.5),
+        ],
+    )
     el = Q.axis_angle("y", -rng.uniform(0.3, 1.8))
-    wr = Q.from_euler("zyx", [rng.uniform(-1.0, 1.0), rng.uniform(-0.8, 0.8), rng.uniform(-0.4, 0.4)])
-    poses = DESC.fk(ROOT, Q.IDENTITY, {**REST, f"shoulder_{side}": sh, f"elbow_{side}": el, f"wrist_{side}": wr})
+    wr = Q.from_euler(
+        "zyx", [rng.uniform(-1.0, 1.0), rng.uniform(-0.8, 0.8), rng.uniform(-0.4, 0.4)]
+    )
+    poses = DESC.fk(
+        ROOT, Q.IDENTITY, {**REST, f"shoulder_{side}": sh, f"elbow_{side}": el, f"wrist_{side}": wr}
+    )
     wp, wq = poses[f"wrist_{side}"]
     lay = LAYOUTS[side]
     return wp + Q.rotate(wq, lay.grip_pos), Q.mul(wq, lay.grip_quat)
@@ -38,8 +48,15 @@ def test_a_reachable_grip_pose_is_reached_within_5_mm_and_5_degrees(side):
     misses = 0
     for _ in range(200):
         pos, rot = _random_reachable(rng, side)
-        sol = solve(DESC, ROOT, Q.IDENTITY, REST, {side: HandGoal(pos, rot)}, LAYOUTS,
-                    Posture(turn=0.0, lean=0.0, crouch=0.0))
+        sol = solve(
+            DESC,
+            ROOT,
+            Q.IDENTITY,
+            REST,
+            {side: HandGoal(pos, rot)},
+            LAYOUTS,
+            Posture(turn=0.0, lean=0.0, crouch=0.0),
+        )
         merged = {**REST, **sol.rotations}
         poses = DESC.fk(ROOT - [0, 0, sol.root_drop], Q.IDENTITY, merged)
         wp, wq = poses[f"wrist_{side}"]
@@ -65,8 +82,15 @@ def test_a_wrist_clamped_short_of_its_rotation_still_puts_the_grip_on_the_goal(s
     for _ in range(60):
         pos, rot = _random_reachable(rng, side)
         rot = Q.mul(rot, Q.axis_angle("y", math.radians(150)))  # past the wrist's limits
-        sol = solve(DESC, ROOT, Q.IDENTITY, REST, {side: HandGoal(pos, rot)}, LAYOUTS,
-                    Posture(turn=0.0, lean=0.0, crouch=0.0))
+        sol = solve(
+            DESC,
+            ROOT,
+            Q.IDENTITY,
+            REST,
+            {side: HandGoal(pos, rot)},
+            LAYOUTS,
+            Posture(turn=0.0, lean=0.0, crouch=0.0),
+        )
         poses = DESC.fk(ROOT - [0, 0, sol.root_drop], Q.IDENTITY, {**REST, **sol.rotations})
         wp, wq = poses[f"wrist_{side}"]
         assert DESC.within(f"wrist_{side}", sol.rotations[f"wrist_{side}"])
@@ -112,8 +136,15 @@ def test_a_low_target_crouches_with_the_feet_where_they_stood():
 def test_a_target_beside_the_body_turns_it_and_one_far_to_the_side_leans_it():
     side = solve(DESC, ROOT, Q.IDENTITY, REST, {"l": HandGoal(np.array([0.3, 0.5, 1.0]))}, LAYOUTS)
     assert side.posture.turn > 0.3
-    far = solve(DESC, ROOT, Q.IDENTITY, REST, {"l": HandGoal(np.array([0.0, 0.72, 1.15]))}, LAYOUTS,
-                Posture(turn=0.0))
+    far = solve(
+        DESC,
+        ROOT,
+        Q.IDENTITY,
+        REST,
+        {"l": HandGoal(np.array([0.0, 0.72, 1.15]))},
+        LAYOUTS,
+        Posture(turn=0.0),
+    )
     assert far.posture.lean > 0.0
     assert far.residual["l"] < 0.01
 
@@ -206,7 +237,9 @@ def test_targets_resolve_sites_bodies_entities_and_world_poses():
     assert np.allclose(p, [1, 0.1, 0.6])
     p, _ = make_target(m, _Entities(), "tote", offset=(0, 0, 0.2)).resolve(m, d)
     assert np.allclose(p, [1, 0, 0.7])
-    p, r = make_target(m, None, {"position": {"x": 1, "y": 2, "z": 3}, "orientation": {"yaw": 1.0}}).resolve(m, d)
+    p, r = make_target(
+        m, None, {"position": {"x": 1, "y": 2, "z": 3}, "orientation": {"yaw": 1.0}}
+    ).resolve(m, d)
     assert np.allclose(p, [1, 2, 3]) and math.isclose(Q.yaw_of(r), 1.0)
     with pytest.raises(TargetError, match="unknown target 'nowhere'"):
         make_target(m, _Entities(), "nowhere")
@@ -249,6 +282,10 @@ def test_a_hand_turned_about_the_forearm_turns_the_forearm_too(side, turn, monke
     assert sol.residual[side] < 0.005
     shared = _twist(sol.rotations[f"wrist_{side}"], DESC.offset(f"wrist_{side}"))
     monkeypatch.setattr(ik, "FOREARM_TWIST", 0.0, raising=False)
-    alone = _twist(solve(DESC, ROOT, Q.IDENTITY, arm, goals, LAYOUTS).rotations[f"wrist_{side}"],
-                   DESC.offset(f"wrist_{side}"))
-    assert abs(shared) < 0.6 * abs(alone), f"the wrist keeps {shared:.0f} deg; alone it would {alone:.0f}"
+    alone = _twist(
+        solve(DESC, ROOT, Q.IDENTITY, arm, goals, LAYOUTS).rotations[f"wrist_{side}"],
+        DESC.offset(f"wrist_{side}"),
+    )
+    assert abs(shared) < 0.6 * abs(alone), (
+        f"the wrist keeps {shared:.0f} deg; alone it would {alone:.0f}"
+    )

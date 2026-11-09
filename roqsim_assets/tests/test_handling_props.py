@@ -22,12 +22,27 @@ def _engine(components):
 def props():
     engine = _engine(
         [
-            {"push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}}, "name": "start"},
-            {"drawer_cabinet": {"pose": {"position": {"x": 0.0, "y": 2.0}}, "drawers": 2}, "name": "cab"},
-            {"tote": {"pose": {"position": {"x": -1.0, "y": 0.0}}, "contents": True}, "name": "tote_1"},
+            {
+                "push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}},
+                "name": "start",
+            },
+            {
+                "drawer_cabinet": {"pose": {"position": {"x": 0.0, "y": 2.0}}, "drawers": 2},
+                "name": "cab",
+            },
+            {
+                "tote": {"pose": {"position": {"x": -1.0, "y": 0.0}}, "contents": True},
+                "name": "tote_1",
+            },
             # a kinematic pusher, as a hand's press proxy is
-            {"box": {"pose": {"position": {"x": 1.2, "y": 0.0, "z": 1.0}}, "size": [0.02, 0.02, 0.02], "motion": "driven"},
-             "name": "finger"},
+            {
+                "box": {
+                    "pose": {"position": {"x": 1.2, "y": 0.0, "z": 1.0}},
+                    "size": [0.02, 0.02, 0.02],
+                    "motion": "driven",
+                },
+                "name": "finger",
+            },
         ]
     )
     yield engine
@@ -37,7 +52,11 @@ def props():
 def test_a_button_is_pressed_by_what_pushes_it_and_springs_back(props):
     m, d = props.ctx.model, props.ctx.data
     handle = props.ctx.blackboard.get("button:start")
-    finger = int(m.body_mocapid[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, props.ctx.entities.get("finger").body)])
+    finger = int(
+        m.body_mocapid[
+            mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, props.ctx.entities.get("finger").body)
+        ]
+    )
     site = d.site("start/button").xpos.copy()
     for k in range(600):
         d.mocap_pos[finger] = site + [0.03 - min(k, 400) * 0.0001, 0.0, 0.0]
@@ -68,12 +87,17 @@ def test_a_button_ringing_between_its_release_and_its_threshold_is_pressed_once(
 
 
 def test_the_button_is_not_held_by_its_housing():
-    engine = _engine([{"push_button": {"pose": {"position": {"x": 0.0, "y": 0.0, "z": 1.0}}}, "name": "b"}])
+    engine = _engine(
+        [{"push_button": {"pose": {"position": {"x": 0.0, "y": 0.0, "z": 1.0}}}, "name": "b"}]
+    )
     try:
         m = engine.ctx.model
         h = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "b/housing")
         b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "b/button")
-        pairs = {(int(m.exclude_signature[i] >> 16), int(m.exclude_signature[i] & 0xFFFF)) for i in range(m.nexclude)}
+        pairs = {
+            (int(m.exclude_signature[i] >> 16), int(m.exclude_signature[i] & 0xFFFF))
+            for i in range(m.nexclude)
+        }
         assert (h, b) in pairs or (b, h) in pairs
     finally:
         engine.shutdown()
@@ -111,5 +135,14 @@ def test_a_tote_stands_on_the_floor_with_two_handle_sites_facing_it(props):
 
 def test_a_release_point_at_or_above_the_threshold_is_refused():
     with pytest.raises(Exception, match=r"'release' \(0.7\).*below 'threshold' \(0.6\)"):
-        _engine([{"push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}, "release": 0.7},
-                  "name": "start"}])
+        _engine(
+            [
+                {
+                    "push_button": {
+                        "pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}},
+                        "release": 0.7,
+                    },
+                    "name": "start",
+                }
+            ]
+        )
