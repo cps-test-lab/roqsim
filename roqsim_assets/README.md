@@ -22,9 +22,9 @@ Robots, sensors and pedestrians are *not* here — they are robot-family package
 A machine is one entity's own procedures, offered through one handle under `machine:<name>`
 (`roqsim.machine`; the line between a machine and a scenario is `docs/architecture.rst`, "Machines
 and scenarios"): `start(program, **args)` returns a sequence number and is refused while busy,
-`status()` says how that start ended, plus `busy`, `ready`, `cancel()` and `value(name)`. Every
-program is an event timeline (`program_start`, its steps, `program_end`). `roqsim plugins describe
-<name>` lists each machine's programs.
+`status()` says how that start ended, plus `busy`, `ready`, `cancel()`, `value(name)` and
+`goal(name)`. Every program is an event timeline (`program_start`, its steps, `program_end`).
+`roqsim plugins describe <name>` lists each machine's programs.
 
 | machine | programs | ramps | events besides start/end |
 |---|---|---|---|
@@ -44,11 +44,13 @@ stand-alone worlds in `src/roqsim_assets/worlds/`, each running one cycle of a s
   once. `open_guard()` returns the ram home before it opens the guard.
 - **`sliding_door_demo.yaml`** — a sliding door and a `zone_trigger` before it, and a box driven past
   it (`moving_box`, named `robot_1`). `DoorForWhoComes` opens the door when the box comes near and
-  closes it two seconds after it has gone -- later if someone came back meanwhile.
+  closes it two seconds after it has gone -- later if someone came back meanwhile. Someone entering
+  the zone while it closes, or the leaf stalling, cancels the close and opens the door again; it
+  closes once the zone is empty, so the scene ends with the door shut.
 - **`light_barrier_demo.yaml`** — a `zone_trigger` across the conveyor near its discharge end, between
   two posts. `StopAtBarrier` stops the belt while a package is in it; playing the worker, it takes
-  the package off a second later, and the belt runs again. The barrier is not a machine: it reports,
-  and the scene decides.
+  the package off a second later, and the belt runs again at the speed it had when it stopped, read
+  at each stop. The barrier is not a machine: it reports, and the scene decides.
 
 ## Layout
 
@@ -213,6 +215,12 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   topics + a `control_msgs/GripperCommand` action, and it pushes only gently — stalling on an
   obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
   door held off its target gives way after `stall_timeout`, so a robot can push through it.
+  The action reports `reached_goal` within the same 0.02 the programs end in, so ROS and the door's
+  `status()` agree, and aborts a goal still moving after a full swing at `speed`, `stall_timeout`
+  and 5 s; the door states both in the action's hints (`reach_tolerance`, `on_timeout`), where an
+  arm's gripper keeps 0.005 and comes back succeeded. A `cmd` equal to the openness last commanded
+  — by a port, or by a handle `start` the physics thread has not applied yet — changes nothing
+  while the door moves there or stands there; after a stall or a cancel it is a retry.
   `machine:<name>:openness` reads any door's measured openness. `color` / `frame_color` repaint the leaf and its casing, so a world can put
   its doors in its own trim colour without a recoloured copy of the model — only the leaf's *colliding*
   geometry is painted, leaving non-colliding decoration (the chrome handle) its own finish, and a glazed

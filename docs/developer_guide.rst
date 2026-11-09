@@ -72,6 +72,16 @@ an export of every world ``roqsim_scenes`` ships to no error and no warning:
 
    make test-gltf             # needs node and npm on PATH
 
+scenario-execution is ``scenario_execution_roqsim``'s ``[osc]`` extra, so ``make venv`` leaves it
+out and ``make test`` skips every test that needs it. ``make test-osc`` runs those tests -- the OSC
+actions and library, a world running a scenario, the reset test's ``scenario`` case -- in a venv
+that has the extra, and fails rather than skips when it is missing; the CI job ``osc`` runs it:
+
+.. code-block:: bash
+
+   .venv/bin/pip install -e "scenario_execution_roqsim[osc]"
+   make test-osc
+
 ``make smoke`` runs every world a package or ``ros2_ws`` ships, headless, for ``SMOKE_STEPS``
 (200) steps (``tools/smoke.py``, tested by ``make test``). A world passes when ``roqsim sim`` exits
 ``0`` on it, so its MJCF compiles, its plugins load and its assets resolve. A world with a scene (a
@@ -87,6 +97,8 @@ which the world loader ignores and only smoke reads:
 
 The budget is a comment rather than a world key because a world refuses keys it does not know, and
 the number is smoke's alone; it sits beside the scene it budgets, so changing one shows the other.
+To smoke a few worlds rather than all of them, name them:
+``python3 tools/smoke.py --roqsim roqsim --steps 200 <world.yaml>...``.
 A world that needs an asset ``make external-resources`` generates, or a CUDA GPU the machine does
 not have, is reported as skipped.
 

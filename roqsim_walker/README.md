@@ -286,13 +286,24 @@ skin vertex, so its normals are smooth wherever its UV map has no seam (MuJoCo s
 normal from that vertex's faces only). Locomotion clips live in `models/anims/<set>/` and are picked by body type +
 gender, falling back to `adult`.
 
+Every tick the body is lowered onto its lowest shoe-sole point. A blueprint whose sole carries a
+`hull` per shoe (the convex-hull corners of the shoe's vertices, each with its bind position and its
+skin weights) is grounded on those points, skinned as the mesh, so its skin touches the floor
+whichever way a foot is turned; `import-actor` writes it, and every bundled blueprint has one. One
+without is grounded on a heel and a toe point -- the lowest of the shoe's vertices the ankle carries
+and of those the toe carries, each riding its joint -- which stand it on the floor, but a foot turned
+far, as at toe-off, can put another part of the shoe under the floor.
+
+Everything `walker.json` says of the mesh's shape (height, collision radii, sole points and hull) is
+measured against the bones MuJoCo poses the skin with (`skin._bind_bones`), not the source rig's
+own, which the walker's straight limbs do not keep.
+
 Bundled blueprints (a blueprint can also come from any other installed `roqsim.models` provider):
 
 | blueprint | source | licence | notes |
 |---|---|---|---|
 | `FemaleVisitorWalk` | [Open-RMF (Fuel: Luca)](https://fuel.gazebosim.org/1.0/Luca/models/FemaleVisitorWalk) | CC-BY 4.0 | handbag group dropped at import; T-posed, +X-facing (`flip: false`) |
 | `MaleVisitorWalk` | [Open-RMF (Fuel: OpenRobotics)](https://fuel.gazebosim.org/1.0/OpenRobotics/models/Male%20visitor) | CC0 1.0 | purple shirt; single-texture |
-| `WorkerHiVisWalk` | [Open-RMF (Fuel: Luca), *OpScrubsWalk*](https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk), derived | CC-BY 4.0 | an industrial worker: high-visibility vest (a texture region), work shirt and trousers, safety shoes; `roqsim walker derive-hivis-worker` |
 
 Each carries its licence + attribution in a `CREDITS.txt` beside the files (CC0 / CC-BY / CC-BY-SA
 only — the same bar as `roqsim_assets`). **The locomotion clips are CARLA-derived as well** — both
