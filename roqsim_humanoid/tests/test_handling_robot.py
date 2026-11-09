@@ -93,6 +93,11 @@ def test_scene_4_the_box_swap_by_a_humanoid_robot_physical_in_both_forms():
         expected = _timeline(python)
     finally:
         python.shutdown()
+    try:
+        import scenario_execution  # noqa: F401 -- the OSC twin runs on it (scenario_execution_roqsim[osc])
+    except ImportError:
+        pytest.skip("handling_box_swap_g1: scenario_execution is not installed, so the OSC twin's timeline "
+                    "is not compared")
     osc = _run("handling_box_swap_g1_osc")
     try:
         assert _timeline(osc) == expected

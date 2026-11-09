@@ -141,10 +141,12 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
         assert engine.ctx.blackboard.get("part_state").is_shown("tote_full", "full")
 
 
-def test_the_pedestrian_world_walks_as_it_did_before_hands():
-    """Hands off costs the walk nothing: each walker's pelvis, every 100 steps of a 5 s run, as the
-    world walked before hands existed (``data/walker_pedestrians_walk.npz``; the walk is
-    deterministic to the bit, ``test_walker_golden``)."""
+def test_the_pedestrian_world_walks_its_recorded_walk_hands_off():
+    """The pedestrian world walks its recorded walk: each walker's pelvis, every 100 steps of a 5 s
+    run, against ``data/walker_pedestrians_walk.npz``, a recording of the walkers as their bundled
+    blueprints walk with hands off. The walk is deterministic to the bit (``test_walker_golden``), so
+    anything the hands add to a walker with hands off shows here; a change to a blueprint takes the
+    recording again."""
     want = np.load(Path(__file__).parent / "data" / "walker_pedestrians_walk.npz")["mocap_pos"]
     engine = Engine(load_config(WORLDS / "walker_pedestrians.yaml"))
     engine.ctx.seed = 1
@@ -161,7 +163,9 @@ def test_the_pedestrian_world_walks_as_it_did_before_hands():
         engine.shutdown()
 
 
-def test_the_pedestrian_world_is_the_walker_as_it_was():
+def test_the_pedestrian_world_has_no_hands():
+    """Its ten walkers have hands off: seventeen mocap bodies each, no finger bones, no press
+    proxies, no humanoid body."""
     engine = Engine(load_config(WORLDS / "walker_pedestrians.yaml"), preview=True)
     engine.setup()
     try:

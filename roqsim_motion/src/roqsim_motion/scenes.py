@@ -57,24 +57,26 @@ class DrawerToBench(ScenarioPlugin):
 
 class BoxSwap(ScenarioPlugin):
     """Scenario 3: at a robot cell's drawer, a worker swaps the full tote for an empty one, its
-    hands on the totes' handles, once the cell's tote shows full.
+    hands on the totes' handles, once a tote is in the drawer.
 
-    The cell's side is what the cell reports: a ``zone_trigger`` on the drawer (a tote is in it) and
-    the tote's ``part_state`` (``full``). The robot that fills it is not part of the scene. The same
-    scene drives a humanoid robot (rename the handle with ``needs:``), with its own stand-offs.
+    The cell's side is what the cell reports: a ``zone_trigger`` on the drawer (a tote is in it).
+    The robot that fills the tote is not part of the scene, and the scene does not wait on what the
+    tote shows; its OpenSCENARIO twin waits on the same. The same scene drives a humanoid robot
+    (rename the handle with ``needs:``), with its own stand-offs.
 
     Config::
 
         standoffs:               # how far in front of what it works the humanoid stands (m)
           drawer: 0.75           #   to pull the drawer open
-          push: 0.35             #   to push it shut, in two strokes
+          push: 0.35             #   to push it shut
           tote: 0.45             #   to take a tote by its handles
           place: 0.55            #   to set a tote down on the trolley or in the drawer
         pull: 0.44               # how far the drawer is pulled out (m)
-        strokes: 1               # in how many strokes it is pulled out (and pushed shut, two at least)
+        strokes: 1               # in how many strokes it is pulled out; it is pushed shut in as many,
+                                 #   and in two at least
     """
 
-    NEEDS = {"worker": "humanoid:worker", "states": "part_state", "drawer": "zone:drawer_zone"}
+    NEEDS = {"worker": "humanoid:worker", "drawer": "zone:drawer_zone"}
     STANDOFFS = {"drawer": 0.75, "push": 0.35, "tote": 0.45, "place": 0.55}
 
     def program(self):
@@ -82,7 +84,6 @@ class BoxSwap(ScenarioPlugin):
         st = {**self.STANDOFFS, **(self.config.get("standoffs") or {})}
         pull = float(self.config.get("pull", 0.44))
         yield from self.entered(self.drawer, "tote_*")
-        yield from self.until(lambda: self.states.is_shown("tote_full", "full"), what="the cell's tote is full")
         strokes = int(self.config.get("strokes", 1))
         for _ in range(strokes):
             yield from self.run(w, "approach", target="cell/drawer_1/grip", standoff=st["drawer"])

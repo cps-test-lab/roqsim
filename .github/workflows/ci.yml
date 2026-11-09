@@ -101,7 +101,8 @@ jobs:
   # scenario-execution is the `[osc]` extra of scenario_execution_roqsim, so `make venv` leaves it out
   # and in `core` and `ros` every test that needs it skips -- which is what those jobs must keep
   # showing. This job is `make venv` plus the extra, from PyPI, and runs those tests: the actions and
-  # the in-process runner (scenario_execution_roqsim/tests) and the reset test's `scenario` case.
+  # the in-process runner (scenario_execution_roqsim/tests), the reset test's `scenario` case and the
+  # handling scenes' OpenSCENARIO twins.
   # `make test-osc` fails rather than skips when scenario-execution is missing or broken.
   osc:
     name: osc (tests that need scenario-execution)

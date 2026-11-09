@@ -1,7 +1,8 @@
 # Scene 3: at a robot cell's drawer, a worker swaps the full tote for an empty one, hands on the
 # totes' handles: pull the drawer, take the full tote to the trolley, bring the empty one from the
-# rack, set it in the drawer, push the drawer shut. It goes once the cell reports: a tote in its
-# drawer (drawer_zone) that shows full (part_state). The robot that fills it is not modelled.
+# rack, set it in the drawer, push the drawer shut. It goes once the cell reports a tote in its
+# drawer (drawer_zone); the totes show full and empty (part_state), which the scene does not wait on.
+# The robot that fills the tote is not modelled.
 #
 #   roqsim sim roqsim_walker/src/roqsim_walker/worlds/handling_box_swap.yaml
 #

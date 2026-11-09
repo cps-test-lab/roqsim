@@ -74,7 +74,8 @@ an export of every world ``roqsim_scenes`` ships to no error and no warning:
 
 scenario-execution is ``scenario_execution_roqsim``'s ``[osc]`` extra, so ``make venv`` leaves it
 out and ``make test`` skips every test that needs it. ``make test-osc`` runs those tests -- the OSC
-actions and library, a world running a scenario, the reset test's ``scenario`` case -- in a venv
+actions and library, a world running a scenario, the reset test's ``scenario`` case, the handling
+scenes' OpenSCENARIO twins against their Python forms -- in a venv
 that has the extra, and fails rather than skips when it is missing; the CI job ``osc`` runs it:
 
 .. code-block:: bash
