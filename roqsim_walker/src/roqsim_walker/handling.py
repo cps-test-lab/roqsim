@@ -52,9 +52,17 @@ def layouts_for(
         )
     fitted = _fitted(mesh, finger_weights, tpose, skeleton, flip) if mesh else None
     if mesh and fitted is None:
+        import os
+
+        weights = os.path.splitext(mesh)[0] + ".weights.npz"
+        if not os.path.isfile(weights):
+            raise ValueError(
+                f"{mesh}: it has no skin weights ({weights}) to measure its hands against its finger "
+                f"weights on; import it with `roqsim walker import-actor`"
+            )
         raise ValueError(
-            f"{mesh}: it has no skin weights (<obj>.weights.npz) to measure its hands against its "
-            f"finger weights ({finger_weights}) on; import it with `roqsim walker import-actor`"
+            f"{finger_weights}: these finger weights do not show a thumb and four fingers "
+            f"to measure the hands on"
         )
     out = {}
     for side in ("l", "r"):

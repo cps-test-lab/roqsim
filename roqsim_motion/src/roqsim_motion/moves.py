@@ -561,7 +561,8 @@ class HumanoidPlugin(MachinePlugin):
                     self.fail(f"the route to {what} was replaced by another")
                 yield
         finally:
-            # a route another sender sent since the last poll is theirs: only this one is cancelled
+            # a route another sender's the navigator has applied since the last poll is theirs and
+            # left running; one sent and not yet applied is not seen here, and is cancelled too
             if not ended and nav.status()[0] <= seq:
                 nav.cancel()
 

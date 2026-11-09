@@ -533,8 +533,7 @@ def main(argv: list | None = None) -> None:
     stem = args.name[0].lower() + args.name[1:]
 
     doc, ctrl, names, bind, W, parts, materials = load_skin(args.dae)
-    fingers = has_fingers(names)  # refused before anything is written
-    os.makedirs(wdir, exist_ok=True)
+    fingers = has_fingers(names)  # refused, as every refusal below, before anything is written
     offsets, root_height = skeleton_from_bind(bind)
     w17 = fold_weights(W, names)
 
@@ -548,6 +547,7 @@ def main(argv: list | None = None) -> None:
             )
         parts = [p for p in parts if p.material not in drop]
         materials = {m: i for m, i in materials.items() if m not in drop}
+    os.makedirs(wdir, exist_ok=True)
 
     # Mesh in the frame skin.add_skin will see: soles dropped to z=0 (its _aligner does the same).
     verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
