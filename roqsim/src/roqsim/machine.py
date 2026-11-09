@@ -271,8 +271,15 @@ class MachinePlugin(Plugin):
         self.handle: MachineHandle | None = None
 
     #: Whether the subclass registers its own entity (a machine that builds its model); a controller
-    #: under a spawned model sets this False and speaks for its owner.
+    #: under a spawned model sets this False and speaks for its owner. :attr:`provides_entity`
+    #: follows it, so a machine that registers none takes no ``present:`` and owns no
+    #: ``components:``, unless the subclass states ``provides_entity`` itself.
     registers_entity = True
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "provides_entity" not in vars(cls):
+            cls.provides_entity = cls.registers_entity
 
     # -- declaration --------------------------------------------------------------------------
     @classmethod

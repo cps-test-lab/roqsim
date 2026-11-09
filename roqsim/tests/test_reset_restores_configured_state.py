@@ -232,9 +232,15 @@ def _motor_command(engine: Engine, endpoint) -> list[float]:
 
 
 def _machine_start(engine: Engine, endpoint) -> tuple:
-    """A program of the machine that changes what it is doing: open a door, run a belt faster."""
+    """A program of the machine that changes what it is doing: open a door, run a belt faster, put a
+    humanoid's hand on the tote its case places."""
     handle = engine.ctx.blackboard.get(f"machine:{endpoint.owner}")
-    for program, args in (("open", {}), ("close_guard", {}), ("run", {"speed": 0.3})):
+    for program, args in (
+        ("open", {}),
+        ("close_guard", {}),
+        ("run", {"speed": 0.3}),
+        ("reach", {"hand": "right", "target": "tote", "orient": False}),
+    ):
         if program in handle.programs:
             return (program, args)
     raise AssertionError(f"no program to start on {endpoint.owner}: {handle.programs}")
@@ -267,9 +273,6 @@ PAYLOADS: dict[str, Any] = {
     "tare": None,
     "zero_ftsensor": None,
     "set_speed_slider": 0.5,
-    # a machine's program (the humanoid's moves): a move started and cancelled in the trial
-    "start": ("reach", {"hand": "right", "target": "tote", "orient": False}),
-    "cancel": (0, ""),
     **{
         f"{name}/target_frame": ([0.3, 0.2, 0.4], [1.0, 0.0, 0.0, 0.0])
         for name in ("cartesian_motion_controller", "cartesian_compliance_controller")
@@ -774,10 +777,6 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     **{
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
-    },
-    "humanoid": {
-        "_seq": "a machine's start numbers keep counting across a reset, so a number from the last "
-        "episode never matches a start of this one (docs/architecture.rst, Machines and scenarios)",
     },
     "navigator": {
         "_radius": _MEASURED_ONCE,

@@ -218,6 +218,53 @@ def test_a_start_while_busy_is_refused_and_a_cancel_keeps_a_hold(sim):
     assert plugin.holding["r"] is None and not sim.d.eq_active.any()
 
 
+def test_a_cancelled_approach_stops_where_it_is(sim):
+    seq = sim.h.start("approach", target="start/button", standoff=0.5)
+    for _ in range(300):
+        sim.e.step()
+    x0, y0, _ = sim.body.root()
+    assert math.hypot(x0, y0) > 0.1, "the approach did not start walking"
+    sim.h.cancel(seq)
+    for _ in range(5):
+        sim.e.step()
+    assert sim.h.status().error == "cancelled"
+    x1, y1, _ = sim.body.root()
+    for _ in range(500):
+        sim.e.step()
+    x2, y2, _ = sim.body.root()
+    assert math.hypot(x2 - x1, y2 - y1) < 0.05, "the walker walked on after its approach was cancelled"
+
+
+def test_a_defect_in_a_move_stops_the_run_unless_it_reports(sim, monkeypatch):
+    plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+    assert plugin.on_error == "raise"
+
+    def broken(*_a, **_k):
+        raise ZeroDivisionError("a defect")
+
+    monkeypatch.setattr(plugin, "_stand_for", broken)
+    sim.h.start("approach", target="start/button")
+    with pytest.raises(RuntimeError, match="program 'approach'.*a defect"):
+        for _ in range(5):
+            sim.e.step()
+    plugin.on_error = "report"
+    try:
+        sim.e.reset()
+        st = sim.run("approach", target="start/button")
+        assert "ZeroDivisionError: a defect" in st.error
+    finally:
+        plugin.on_error = "raise"
+
+
+def test_a_humanoid_registers_no_entity_so_takes_no_present_and_owns_no_components():
+    with pytest.raises(PluginError, match="HumanoidPlugin registers none"):
+        Engine(load_config_from_dict(_world({"graspable": ["cab"], "present": False})))
+    world = _world()
+    world["components"][0]["components"][1]["components"] = [{"navigator": NAV}]
+    with pytest.raises(Exception, match="humanoid"):
+        load_config_from_dict(world)
+
+
 def test_a_hold_pulled_past_its_force_lets_go_and_fails():
     engine = _engine(_world({"graspable": ["cab"], "hold": {"max_force": 5.0}}))
     try:

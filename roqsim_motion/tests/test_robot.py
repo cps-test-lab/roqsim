@@ -66,6 +66,17 @@ def test_a_hand_is_put_on_a_pose_by_the_robots_own_joints(files, drive):
         engine.shutdown()
 
 
+def test_an_arms_reach_is_its_chain_straightened(files):
+    """Shoulder to elbow, elbow to wrist and wrist to grip site, as the minimal humanoid builds them."""
+    engine = _engine(*files, "kinematic")
+    try:
+        body = engine.ctx.blackboard.get("humanoid_body:bot")
+        for side in "lr":
+            assert abs(body.arm_reach(side) - (0.24 + 0.22 + float(np.hypot(0.02, 0.09)))) < 1e-6
+    finally:
+        engine.shutdown()
+
+
 def test_the_physical_robots_base_hangs_on_an_anchor_the_navigator_moves(files):
     engine = _engine(*files, "physical")
     try:

@@ -295,11 +295,22 @@ class HumanoidRobotPlugin(Plugin):
                                Q.yaw_of(q0[self.base_q + 3 : self.base_q + 7])])
         self.body = RobotBody(self)
         self._reset_targets()
-        # reach: shoulder to grip at rest, plus the arm straightened
-        for s in SIDES:
-            self.reach[s] = 0.6
+        self.reach = self._arm_reach(m)
         ctx.blackboard.set(f"humanoid_body:{self.entity}", self.body)
         ctx.blackboard.set(f"humanoid_robot:{self.entity}", self)
+
+    def _arm_reach(self, m) -> dict:
+        """How far each grip frame reaches from its shoulder with the arm straightened (m): the
+        distances from each arm joint's axis to the next, shoulder to wrist, and from the last to
+        the grip site, measured on the model at rest -- the longest the chain can be."""
+        d = self.scratch
+        mujoco.mj_forward(m, d)
+        out = {}
+        for s in SIDES:
+            points = [d.xanchor[self.joint_ids[j]].copy() for j in self.arms[s]]
+            points.append(d.site_xpos[self.grip_site[s]].copy())
+            out[s] = float(sum(np.linalg.norm(b - a) for a, b in zip(points, points[1:], strict=False)))
+        return out
 
     def _reset_targets(self) -> None:
         self.rest = {j: float(self.table.rest.get(j, 0.0)) for j in self.qadr}
@@ -445,7 +456,7 @@ class HumanoidRobotPlugin(Plugin):
             mujoco.mj_kinematics(m, sd)
         for j in cols:
             self.target[j] = float(sd.qpos[self.qadr[j]])
-        for s, (gp, _) in goals.items():
+        for s in goals:
             self.body.residual = getattr(self.body, "residual", {})
             self.body.residual[s] = float(np.linalg.norm(aims[s][0] - sd.site_xpos[self.grip_site[s]]))
 

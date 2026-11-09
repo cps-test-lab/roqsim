@@ -139,12 +139,11 @@ class HumanoidPlugin(MachinePlugin):
         "graspable": Field(list, default=[], doc="entities whose grip sites the hands may hold (fnmatch)"),
         "hold": Field(dict, schema=HOLD, doc="how hard a hold may pull and how far it may slip"),
         "press_force": Field(float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"),
-        "on_error": Field(str, default="report", choices=["raise", "report"], doc="a defect in a move"),
+        "on_error": Field(str, default="raise", choices=["raise", "report"], doc="a defect in a move"),
         "home": Field(dict, doc="(a machine's; a humanoid drives no actuator)"),
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
-        config = {"on_error": "report", **(config or {})}
         super().__init__(config, name=name, entity=entity, label=label)
         self.body: HumanoidBody | None = None
         self.holding: dict[str, Hold | None] = {s: None for s in SIDES}
@@ -494,19 +493,29 @@ class HumanoidPlugin(MachinePlugin):
         self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
 
     def _route(self, nav, stand, what: str, while_walking):
+        """Walk the navigator to ``stand``. A move that ends before the route does -- cancelled, or
+        failed while walking -- cancels the route, so the body stops where it is rather than walking
+        on without the move; a route another sender replaced is theirs and left running."""
         seq = nav.send_goals([(float(stand[0]), float(stand[1]))])
-        self.step("walking", to=[float(stand[0]), float(stand[1])])
-        while True:
-            if while_walking is not None:
-                while_walking()
-            status = nav.status()
-            if status[0] == seq and status[1]:
-                if status[4]:
-                    self.fail(f"no route to {what}: {status[4]}")
-                break
-            if status[0] > seq:
-                self.fail(f"the route to {what} was replaced by another")
-            yield
+        ended = False
+        try:
+            self.step("walking", to=[float(stand[0]), float(stand[1])])
+            while True:
+                if while_walking is not None:
+                    while_walking()
+                status = nav.status()
+                if status[0] == seq and status[1]:
+                    ended = True
+                    if status[4]:
+                        self.fail(f"no route to {what}: {status[4]}")
+                    break
+                if status[0] > seq:
+                    ended = True
+                    self.fail(f"the route to {what} was replaced by another")
+                yield
+        finally:
+            if not ended:
+                nav.cancel()
 
     # -- the moves ----------------------------------------------------------------------------
     @program
@@ -581,7 +590,10 @@ class HumanoidPlugin(MachinePlugin):
         # judged by the fingertip's place: the tip goal follows the hand as it turns, and a hand its
         # wrist cannot turn all the way still presses with the finger where it is
         yield from self._move_hands({side: tip_goal(-PRE)}, 0.8, target, rot_tol=math.pi)
+        t0 = self._ctx.sim_time
         while not self.body.hand_done(side):  # the finger points before it goes in
+            if self._ctx.sim_time - t0 > SETTLE:
+                self.fail(f"press {target}: the {_side_word(side)} hand's {pose!r} pose did not form in {SETTLE} s")
             self.body.set_hand(side, *tip_goal(-PRE)())
             yield
         self.body.press_proxy(d, side, True)
@@ -672,7 +684,7 @@ class HumanoidPlugin(MachinePlugin):
         yield from self._move_hands({s: goal[s]() for s in sides}, 0.3, target, rot_tol=tol,
                                     pos_tol=HOLD_REACH)
         self.step("closing", hand=hand, target=target)
-        m, d = self._m, self._d
+        d = self._d
         for s in sides:
             obj = holds[s].obj_body
             self.body.set_pose(s, grip, touching=self._touching(s, obj, ids[s]))
