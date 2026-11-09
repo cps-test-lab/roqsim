@@ -1023,12 +1023,14 @@ class HumanoidPlugin(MachinePlugin):
         standoff: float = 0.6,
         height: float | None = None,
         via: list | None = None,
+        facing: float | None = None,
     ):
         """Carry what the hands hold to a target: lift it to a carrying height in front of the body
         (``height``: the hands' height, m; default a hand's breadth under the pelvis, or high enough
         for what is held to clear the surface the target is on by :data:`CLEAR`), turn toward
         the way it leaves, walk to a stand-off in front of the target holding it there -- through
-        the floor points ``via`` first, in order, as ``approach`` does -- and face the target."""
+        the floor points ``via`` first, in order, as ``approach`` does -- and face the target, or the
+        world yaw ``facing``, as ``approach`` faces it."""
         points = self._via(via)
         sides = self._held("both")
         d = self._d
@@ -1066,7 +1068,7 @@ class HumanoidPlugin(MachinePlugin):
         self._check_holds()
         self.step("lifted", height=height)
         carried = self._carried()
-        stand, yaw = self._stand_for(to, standoff, None)
+        stand, yaw = self._stand_for(to, standoff, facing)
         # Turn toward the way it leaves at a carrying pace first: a body turning on the spot at its
         # walking rate swings what it holds faster than a hold follows.
         x, y, heading = self.body.root()

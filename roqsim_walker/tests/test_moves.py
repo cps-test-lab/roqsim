@@ -160,6 +160,17 @@ def test_approach_and_carry_walk_through_their_via_points_first(sim):
     assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
 
 
+def test_a_carry_stands_facing_the_way_it_is_given(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    x, y, yaw = sim.body.root()
+    assert abs(math.atan2(math.sin(yaw - math.pi / 2), math.cos(yaw - math.pi / 2))) < math.radians(
+        4
+    )
+    assert math.hypot(x - 0.0, y - (2.5 - 0.55)) < 0.1
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")

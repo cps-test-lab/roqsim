@@ -185,10 +185,23 @@ class HumanoidCarry(HumanoidMove):
     MOVE = "carry"
 
     def execute(
-        self, humanoid: str, to: str, standoff: float = 0.6, via: str = "", check: bool = True
+        self,
+        humanoid: str,
+        to: str,
+        standoff: float = 0.6,
+        facing: float = 1000.0,
+        via: str = "",
+        check: bool = True,
     ):
         self._begin(
-            humanoid, {"to": to, "standoff": float(standoff), "via": _via_of(self, via)}, check
+            humanoid,
+            {
+                "to": to,
+                "standoff": float(standoff),
+                "facing": _opt(float(facing), 1000.0),
+                "via": _via_of(self, via),
+            },
+            check,
         )
 
 

@@ -162,7 +162,7 @@ scenario test_every_action:
             humanoid_release(humanoid: 'worker', hand: 'both', check: false)
             humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
             humanoid_push(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
-            humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, via: '1.0, 0.0',
+            humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, facing: 1.5, via: '1.0, 0.0',
                            check: false)
             humanoid_place(humanoid: 'worker', at: 'bench', release: true, check: false)
             humanoid_play(humanoid: 'worker', clip: 'wave', joints: 'arm_r, head', weight: 0.5,

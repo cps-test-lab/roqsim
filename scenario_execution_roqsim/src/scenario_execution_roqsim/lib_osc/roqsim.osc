@@ -340,6 +340,7 @@ action humanoid_carry:
     humanoid: string
     to: string
     standoff: float = 0.6
+    facing: float = 1000.0                            # world yaw (rad) to face; unset: the target as seen
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
     check: bool = true
 
