@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion and where it is, read what its plugins report and send any command they declare, in-process or over the simulator's control socket."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 # NOTE the absentee: `scenario_execution` is NOT here, although every action imports it.
 #
 # Where scenario-execution is a colcon package (a sourced ROS workspace), a pip-installed copy beside

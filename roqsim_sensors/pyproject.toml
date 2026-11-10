@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Generic (robot-family-agnostic) sensor plugins for roqsim (2D lidar, Livox Mid-360 3D lidar, Seyond Robin W1G solid-state lidar, OAK-D, RealSense D435/D415/D455, Zivid 3 XL250)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "roqsim",
     "mujoco>=3.14,<3.15",

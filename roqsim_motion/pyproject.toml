@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "One motion core for roqsim's humanoids: whole-body IK, hands, retargeting, and moves started through a handle."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "roqsim",
     "roqsim_nav",   # a humanoid robot is moved by the navigator, through this package's `humanoid` output

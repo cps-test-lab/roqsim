@@ -279,11 +279,7 @@ class ScenarioPlugin(Plugin):
         if isinstance(exc, ScenarioError):
             raise ScenarioError(f"scenario {self.address}: {exc}") from exc
         # The program's own exception, of its own type, with the scenario named beside it.
-        note = f"raised in scenario {self.address}'s program"
-        if hasattr(exc, "add_note"):  # Python 3.11+
-            exc.add_note(note)
-        else:
-            self._ctx.logger.error("%s: %s", note, exc)
+        exc.add_note(f"raised in scenario {self.address}'s program")
         raise exc
 
     @endpoint.out(rate=10.0)
