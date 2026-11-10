@@ -250,7 +250,7 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 | `release` | `hand` `both` | `opened` | `not holding anything` |
 | `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
 | `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
-| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `nothing under it` |
+| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `nothing under it` |
 | `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
 | `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
 | `look_at` | `target` (a site, body or entity; empty: back) | `looking` | `unknown target …` |

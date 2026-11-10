@@ -82,6 +82,9 @@ FAR = 1.4
 CLEAR = 0.05
 #: How near a humanoid's navigator must bring it to where it stands to work (m): its arrival_radius.
 ARRIVAL = 0.1
+#: How far apart (m) the surfaces under the corners of what is set down may be: more, and it would
+#: stand on two things, or half off one -- a drawer's wall and its deck, a bench's edge and the floor.
+LEVEL = 0.015
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: The time constant (s) a hold's force is judged over.
@@ -1255,7 +1258,7 @@ class HumanoidPlugin(MachinePlugin):
         sides = [s for s in held if not self._riding[s]]
         starts = {s: self.body.grip(d, s) for s in sides}
         # Toward the target, as far as the hands reach in front of the body: set down on the near
-        # part of a surface, as a worker does, not stretched out to its middle.
+        # part of a surface (a body, an entity), as a worker does, not stretched out to its middle.
         x, y, _ = self.body.root()
         shift = np.array([point[0], point[1]]) - low()[:2]
         for s in sides:
@@ -1281,6 +1284,21 @@ class HumanoidPlugin(MachinePlugin):
             float(surface[2]),
             self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)),
         )
+        # What it is set down on is under all of it: the surfaces under its corners where it goes
+        # are one, or it would stand on a drawer's wall and its deck, or half off a bench's edge.
+        under_corners = [
+            self._surface(np.array([origin[0] + off[0], origin[1] + off[1], point[2]]), obj)
+            for off in self._footprint(obj)
+        ]
+        heights = [float(p[2]) for p, _ in under_corners]
+        if max(heights) - min(heights) > LEVEL:
+            hi = max(under_corners, key=lambda pb: pb[0][2])[1]
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, hi) if hi > 0 else "the floor"
+            self.fail(
+                f"out of reach: set down where the hands reach, it would stand on {name} at "
+                f"{max(heights):.2f} m and {min(heights):.2f} m, not on {at} -- approach {at} "
+                f"closer (a smaller standoff, facing it)"
+            )
         # Over it, clear of the highest thing it passes over on the way there (a drawer's front, a
         # rim the target's footprint does not cover): straight up first where that is higher than
         # it is carried, then across, so it never cuts down through one.

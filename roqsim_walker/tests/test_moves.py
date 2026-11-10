@@ -401,6 +401,22 @@ def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
         engine.shutdown()
 
 
+def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
+    """What is set down stands on one thing, level: set down where the hands reach, a tote half
+    over the bench's edge is refused, and one wholly on it is set down."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)  # the tote over the edge
+    st = sim.run("place", at="bench")
+    assert st.error.startswith("out of reach") and "closer" in st.error, st.error
+    assert sim.d.body("tote_1").xpos[2] > 0.7  # still held
+    sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
+    sim.ok("place", at="bench")
+    for _ in range(300):
+        sim.e.step()
+    assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
+
+
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
