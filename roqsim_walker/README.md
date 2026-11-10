@@ -273,6 +273,16 @@ handle with the hand turned on it, fingers forward and down along the forearm th
 (`carry_turn`, 50 degrees for a walker): the hold keeps the hand so, and the wrists stay straight
 while it carries. A handle off the floor is taken as its frame says.
 
+`carry` lifts what the hands hold straight up off what it stood on first (6 cm), then in toward
+the body; carrying, the body turns on the spot the way its load sweeps clear of what stands round
+it, and fails naming what is in the way if neither way is. `place` takes the load over the highest
+thing between where it is and the place -- read on a grid under its footprint, past what rides in
+it -- then leads it on until it is within millimetres of the place, square to the place's heading
+(a site's, a body's, or a world pose that states one; at most 20 degrees), and lowers it until it
+rests at the place's height. It fails, holding the load, where the hands cannot bring it there,
+where it would stand half off a surface or on a rim, and where something holds it up above the
+place.
+
 `pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
 servo under the load) goes on past it until the object has, by at most half the distance; a lagging
 hand's stroke that would leave a drawer within a hand's width of its stop pushes it to the stop, and
