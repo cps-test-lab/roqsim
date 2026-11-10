@@ -464,6 +464,10 @@ def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
         assert top[2] < 0.01 and under == 0
         here = sim.d.xpos[tote][:2].copy()
         assert plugin._path_top(here, here, tote, 0.0) < 0.01
+        # set down, it comes down onto the bench, not let go where the part touches it
+        sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
+        sim.ok("place", at="bench", release=False)
+        assert abs(sim.d.xpos[tote][2] - 0.75) < 0.02  # on the bench, still in the hands
     finally:
         engine.shutdown()
 

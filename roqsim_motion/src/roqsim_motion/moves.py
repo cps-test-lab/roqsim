@@ -1444,14 +1444,15 @@ class HumanoidPlugin(MachinePlugin):
         self.step("lowering", at=at)
         starts = {s: self.body.grip(d, s) for s in sides}
         down = 0.0
-
-        def ignore():
-            return {obj} | {b for b in range(m.nbody) if self.body.owns(m, b)}
-
-        skip = ignore()
+        start_low = float(low()[2])
+        # what it touches that is not the surface: itself, the humanoid, what rides in it
+        inside = self._contents(obj)
+        skip = {obj} | {
+            b for b in range(m.nbody) if self.body.owns(m, b) or int(m.body_rootid[b]) in inside
+        }
         while not touching(m, d, obj, skip):
             down += speed * self._ctx.dt
-            if down > top - float(surface[2]) + CLEAR + 0.2:
+            if down > start_low - float(surface[2]) + 0.2:
                 self.fail(f"nothing under it at {at}: lowered {down:.2f} m and touched nothing")
             for s in sides:
                 self.body.set_hand(s, starts[s][0] - [0.0, 0.0, down], starts[s][1])
