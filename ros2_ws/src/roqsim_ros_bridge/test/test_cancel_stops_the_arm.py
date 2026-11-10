@@ -456,11 +456,11 @@ def test_reached_goal_is_graded_on_the_producers_own_reach_tolerance(hints, reac
     ctx, endpoint, on_payload = _wire(
         fingers.read_state,
         lambda position: fingers.set_gripper(position),
-        name="door",
+        name="openness_goal",
         state_key="gripper:ur5e",
         backend={
             "action": "control_msgs.action.GripperCommand",
-            "name": "door",
+            "name": "openness_goal",
             "state_key": "gripper:ur5e",
             **hints,
         },

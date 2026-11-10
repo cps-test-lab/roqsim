@@ -411,7 +411,7 @@ def _machine_run(seconds):
 
     action = MachineRun()
     action.setup(clock=_HostClock())
-    action.execute(machine="press", program="stroke", args=f"seconds={seconds}")
+    action.execute(machine="press", program="stroke", args=f'{{"seconds": {seconds}}}')
     deadline = time.monotonic() + 10
     while action._start is None:
         assert time.monotonic() < deadline, action.feedback_message
@@ -428,7 +428,7 @@ def _in_flight(press, seconds):
 
     action = MachineRun()
     action.setup(clock=_HostClock())
-    action.execute(machine="press", program="stroke", args=f"seconds={seconds}")
+    action.execute(machine="press", program="stroke", args=f'{{"seconds": {seconds}}}')
     _until(action._access.ready, "the action never reached the simulator")
     with press.served.held():
         while action._start is None:
@@ -475,7 +475,7 @@ def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds
     for _ in range(10):
         following = MachineRun()
         following.setup(clock=_HostClock())
-        following.execute(machine="press", program="stroke", args="seconds=1000.0")
+        following.execute(machine="press", program="stroke", args='{"seconds": 1000.0}')
         abandoned = None
         try:
             _until(following._access.ready, "the second action never reached the simulator")

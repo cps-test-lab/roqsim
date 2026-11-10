@@ -1125,3 +1125,30 @@ def test_a_machine_publishes_the_handle_its_class_names_once():
         assert _run_until_done(engine, handle, handle.stroke()).error == ""
     finally:
         engine.shutdown()
+
+
+def test_a_machine_names_its_start_state_in_its_own_quantity():
+    """A machine with HOME_KEYS takes ``home:`` in them and maps them onto what it drives."""
+    engine = _engine(
+        [{"machine_fixtures:FractionLift": {"home": {"raised": 0.75}}, "name": "lift"}]
+    )
+    try:
+        assert _joint(engine, "z_joint") == pytest.approx(0.25)
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    "config, said",
+    [
+        (
+            {"home": {"z": 0.1}},
+            r"home names 'z', which it does not take \(its home names \['raised'\]\)",
+        ),
+        ({"start_raised": 1.0}, r"'start_raised' is not read -- .* 'home': home: \{raised"),
+    ],
+    ids=["an-actuator-in-home", "a-start-key"],
+)
+def test_a_start_state_outside_the_machines_home_keys_is_refused(config, said):
+    with pytest.raises(Exception, match=said):
+        _engine([{"machine_fixtures:FractionLift": config, "name": "lift"}])

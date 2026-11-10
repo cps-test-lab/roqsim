@@ -26,7 +26,7 @@ WORLD = [
     {
         "zone_trigger": {
             "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
-            "size": [0.2, 0.3, 0.2],
+            "size": [0.4, 0.6, 0.4],
         },
         "name": "gate",
     },
@@ -36,7 +36,7 @@ import osc.roqsim
 scenario good:
     do serial:
         zone_entered(zone: 'gate')
-        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.1')
+        machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 0.1}')
 """
 BAD = """
 import osc.roqsim

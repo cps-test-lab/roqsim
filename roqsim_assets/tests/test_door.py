@@ -60,7 +60,7 @@ def test_leaf_sized_to_opening(tmp_path):
 
 
 def test_command_opens_the_door(tmp_path):
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.0}})
     assert abs(_hinge_angle(engine)) < math.radians(2)  # starts closed
     engine.ctx.blackboard.require("machine:door").start("open")
     for _ in range(3000):
@@ -87,7 +87,7 @@ def test_hinge_side_places_leaf(tmp_path):
 
 def test_passive_door_holds_open_angle(tmp_path):
     # A half-open passive door: no ROS surface, and it stays put around its target.
-    engine = _built(tmp_path, {"controllable": False, "open": 0.5, "max_angle": 90})
+    engine = _built(tmp_path, {"controllable": False, "home": {"openness": 0.5}, "max_angle": 90})
     for _ in range(2000):
         engine.step()
     assert 40 < math.degrees(_hinge_angle(engine)) < 50
@@ -104,10 +104,10 @@ def test_passive_door_holds_open_angle(tmp_path):
 def test_controllable_declares_endpoints(tmp_path):
     engine = _built(tmp_path, {"controllable": True, "namespace": "foyer"})
     eps = {e.name: e for e in _plugin_endpoints(engine)}
-    assert set(eps) == {"cmd", "state", "door", "start", "status", "cancel"}
-    assert eps["cmd"].backend["ros2"]["type"] == "std_msgs.msg.Float64"
-    assert eps["state"].direction == "out"
-    action = eps["door"].backend["ros2"]
+    assert set(eps) == {"openness", "openness_state", "openness_goal", "start", "status", "cancel"}
+    assert eps["openness"].backend["ros2"]["type"] == "std_msgs.msg.Float64"
+    assert eps["openness_state"].direction == "out"
+    action = eps["openness_goal"].backend["ros2"]
     assert action["action"] == "control_msgs.action.GripperCommand"
     # The action handler reads the door's own state, not a gripper's.
     assert action["state_key"] == "machine:door:openness"
@@ -118,7 +118,7 @@ def test_the_door_action_gives_a_slow_door_time_for_its_swing(tmp_path):
     """The action handler aborts a goal still moving when its time runs out; a door at 0.3 rad/s
     takes 7 s for its 120 degrees, so it states its own bound: the swing, a stall, and 5 s."""
     engine = _built(tmp_path, {"speed": 0.3, "stall_timeout": 3.0})
-    action = engine.ctx.interface.find("door", "door").backend["ros2"]
+    action = engine.ctx.interface.find("door", "openness_goal").backend["ros2"]
     assert action["timeout"] == pytest.approx(math.radians(120) / 0.3 + 3.0 + 5.0)
 
 
@@ -127,7 +127,7 @@ def test_the_door_action_states_the_doors_arrival_band_and_an_abort_at_its_timeo
     so ROS and the door's status agree, and an abort past the door's own bound, where an arm's
     gripper keeps its result."""
     engine = _built(tmp_path, {"speed": 0.3})
-    action = engine.ctx.interface.find("door", "door").backend["ros2"]
+    action = engine.ctx.interface.find("door", "openness_goal").backend["ros2"]
     assert action["reach_tolerance"] == 0.02
     assert action["on_timeout"] == "abort"
     # The band is the one its programs end in (test_a_leaf_stopped_just_short_of_its_openness_...).
@@ -318,7 +318,7 @@ def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
 def test_validate_config_flags_bad_input(tmp_path):
     from roqsim_assets.plugins.door import DoorPlugin
 
-    bad = {"width": -1, "open": 2.0, "hinge_side": "up", "swing": 0}
+    bad = {"width": -1, "home": {"openness": 2.0}, "hinge_side": "up", "swing": 0}
     errors = DoorPlugin(bad).validate_config(bad)
     assert any("width" in e for e in errors)
     assert any("open" in e for e in errors)
@@ -363,14 +363,14 @@ def test_a_start_while_it_moves_is_refused_and_the_command_port_takes_over(tmp_p
         engine.step()
     with pytest.raises(Exception, match="busy running 'open'"):
         door.start("close")
-    cmd = engine.ctx.interface.find("door", "cmd")
-    cmd.write({"data": 0.0})
+    cmd = engine.ctx.interface.find("door", "openness")
+    cmd.write({"openness": 0.0})
     engine.step()
     assert door.status().seq == first + 1 and door.status().program == "move_to"
     ends = [e for e in engine.ctx.events.all() if e["event"] == "program_end"]
     assert ends[-1]["seq"] == first and ends[-1]["error"] == "cancelled"
     # The same value again changes nothing: no new start.
-    cmd.write({"data": 0.0})
+    cmd.write({"openness": 0.0})
     engine.step()
     assert door.status().seq == first + 1
     assert _finish(engine, door, first + 1).error == ""
@@ -378,7 +378,7 @@ def test_a_start_while_it_moves_is_refused_and_the_command_port_takes_over(tmp_p
 
 
 def test_an_idle_door_returns_from_a_push_shorter_than_its_stall_timeout(tmp_path):
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.5}})
     door = engine.ctx.blackboard.require("machine:door")
     m, d = engine.ctx.model, engine.ctx.data
     dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
@@ -407,7 +407,7 @@ def test_an_idle_door_held_off_its_target_longer_than_its_stall_timeout_gives_wa
     """A robot holding an automatic door open past its target: after stall_timeout the door takes
     where it stands as its target and stops pressing back, rather than pushing at max_torque for as
     long as it is held. Held back for less, it returns (the test above)."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.5}, "stall_timeout": 1.0})
     door = engine.ctx.blackboard.require("machine:door")
     m, d = engine.ctx.model, engine.ctx.data
     jid = _id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")
@@ -476,24 +476,22 @@ def test_a_repeated_command_retries_after_a_stall(tmp_path):
     stall it is a retry."""
     engine = _door_with_a_post(tmp_path, 40.0)
     door = engine.ctx.blackboard.require("machine:door")
-    cmd = engine.ctx.interface.find("door", "cmd")
-    cmd.write({"data": 1.0})
+    cmd = engine.ctx.interface.find("door", "openness")
+    cmd.write({"openness": 1.0})
     engine.step()
     first = door.status().seq
     assert _finish(engine, door, first).error.startswith("stalled")
-    cmd.write({"data": 1.0})
+    cmd.write({"openness": 1.0})
     engine.step()
     assert door.status().seq == first + 1 and door.busy, "the stalled move is tried again"
 
 
-def test_the_command_port_reads_a_door_homed_by_hinge_target(tmp_path):
-    """``home: {hinge_pos: ...}`` puts the door open; the first command to close it is a new target."""
-    engine = _built(
-        tmp_path, {"max_angle": 90, "open": 0.0, "home": {"hinge_pos": math.radians(90)}}
-    )
+def test_the_command_port_reads_a_door_homed_open(tmp_path):
+    """``home: {openness: 1}`` puts the door open; the first command to close it is a new target."""
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 1.0}})
     door = engine.ctx.blackboard.require("machine:door")
     assert math.degrees(_hinge_angle(engine)) == pytest.approx(90, abs=1)
-    engine.ctx.interface.find("door", "cmd").write({"data": 0.0})
+    engine.ctx.interface.find("door", "openness").write({"openness": 0.0})
     engine.step()
     assert door.busy, "closing is not the door's home, so it moves"
     assert _finish(engine, door, door.status().seq).error == ""
@@ -513,11 +511,11 @@ def _hold(engine, degrees, steps):
 
 def test_a_door_that_gave_way_returns_when_commanded_back_to_where_it_was(tmp_path):
     """Giving way makes where it stands the door's target, so the old target is a new one again."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.5}, "stall_timeout": 1.0})
     door = engine.ctx.blackboard.require("machine:door")
     _hold(engine, 60, 1500)
     assert [e["event"] for e in engine.ctx.events.all() if e["event"] == "gave_way"] == ["gave_way"]
-    engine.ctx.interface.find("door", "cmd").write({"data": 0.5})
+    engine.ctx.interface.find("door", "openness").write({"openness": 0.5})
     engine.step()
     assert door.busy
     assert _finish(engine, door, door.status().seq).error == ""
@@ -526,7 +524,7 @@ def test_a_door_that_gave_way_returns_when_commanded_back_to_where_it_was(tmp_pa
 
 def test_a_door_held_while_it_runs_a_program_stalls_and_does_not_give_way(tmp_path):
     """Giving way is for an idle door: a program counts its own stall, from its own start."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.5}, "stall_timeout": 1.0})
     door = engine.ctx.blackboard.require("machine:door")
     # Held while idle until it has been held back for about 0.6 s of its 1 s.
     _hold(engine, 60, 1150)
@@ -545,7 +543,7 @@ def test_a_door_held_while_it_runs_a_program_stalls_and_does_not_give_way(tmp_pa
 def test_a_door_under_manual_control_does_not_give_way(tmp_path):
     """Under manual control something else drives the hinge: the door does not take where it is
     held as its own target."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0, "stall_timeout": 1.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.0}, "stall_timeout": 1.0})
     engine.ctx.manual_control = True
     _hold(engine, 60, 2500)  # 5 s, where an idle door gives way within 3
     assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
@@ -584,7 +582,7 @@ def test_a_move_ends_only_once_its_ramp_has_reached_the_target(tmp_path):
 
 def test_short_pushes_do_not_add_up_to_a_give_way(tmp_path):
     """Each push shorter than stall_timeout, together longer: the door returns after each."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.5}, "stall_timeout": 1.0})
     for _ in range(3):
         _hold(engine, 60, 1150)  # held back for about 0.6 s of the 1 s
         for _ in range(1500):
@@ -599,16 +597,16 @@ def _door_plugin(engine):
 
 @pytest.mark.parametrize("start", [("open", {}), ("move_to", {"openness": 0.7})])
 def test_a_command_back_right_after_a_handle_start_is_not_taken_for_a_repeat(tmp_path, start):
-    """A handle's start is applied a step after it is made, and the door compares a ``cmd`` with what
+    """A handle's start is applied a step after it is made, and the door compares an ``openness`` with what
     it was commanded last: commanded open, then back to closed before the start was applied, it
     closes, rather than dropping the ``0.0`` as the target it stood at and opening."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.0}})
     door = engine.ctx.blackboard.require("machine:door")
     program, args = start
     first = door.start(program, **args)
-    # The stream's value, applied on the physics thread before the posted start is: what a cmd
+    # The stream's value, applied on the physics thread before the posted start is: what an openness
     # arriving between the start and its step does.
-    _door_plugin(engine).cmd(0.0)
+    _door_plugin(engine).openness(0.0)
     engine.step()
     assert door.status().seq > first and door.status().program == "move_to"
     started = [e["seq"] for e in engine.ctx.events.all() if e["event"] == "program_start"]
@@ -620,11 +618,11 @@ def test_a_command_back_right_after_a_handle_start_is_not_taken_for_a_repeat(tmp
 
 
 def test_a_repeated_command_after_a_handle_start_is_still_a_repeat(tmp_path):
-    """Recorded at acceptance, the handle's target is what a ``cmd`` of the same value repeats."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    """Recorded at acceptance, the handle's target is what an ``openness`` of the same value repeats."""
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.0}})
     door = engine.ctx.blackboard.require("machine:door")
     first = door.start("open")
-    _door_plugin(engine).cmd(1.0)
+    _door_plugin(engine).openness(1.0)
     engine.step()
     assert door.status().seq == first and door.status().program == "open"
     assert _finish(engine, door, first).error == ""
@@ -632,9 +630,9 @@ def test_a_repeated_command_after_a_handle_start_is_still_a_repeat(tmp_path):
 
 def test_a_start_accepted_while_the_door_gives_way_keeps_its_target(tmp_path):
     """A handle start accepted from another thread between the give-way's busy check and its new
-    target: the start's target stands, so a ``cmd`` of the openness the door gave way at is not
+    target: the start's target stands, so an ``openness`` of the openness the door gave way at is not
     dropped as a repeat."""
-    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    engine = _built(tmp_path, {"max_angle": 90, "home": {"openness": 0.5}, "stall_timeout": 1.0})
     door = engine.ctx.blackboard.require("machine:door")
     plugin = _door_plugin(engine)
     m, d = engine.ctx.model, engine.ctx.data
@@ -657,3 +655,17 @@ def test_a_start_accepted_while_the_door_gives_way_keeps_its_target(tmp_path):
     d.qfrc_applied[dof] = 0.0
     assert started and [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
     assert plugin._goal == 1.0, "the accepted start's target, not where the door gave way"
+
+
+@pytest.mark.parametrize(
+    ("old", "named"),
+    [({"open": 0.5}, "home: {openness"), ({"home": {"hinge_pos": 0.5}}, "'openness'")],
+    ids=["open", "home-hinge_pos"],
+)
+def test_an_old_start_state_is_refused_naming_home_openness(old, named):
+    """A door's start openness is ``home: {openness: ...}``; ``open:`` and a hinge target are
+    refused when the world loads, naming it."""
+    from roqsim_assets.plugins.door import DoorPlugin
+
+    errors = DoorPlugin(old).validate_config(old)
+    assert any(named in e for e in errors), errors

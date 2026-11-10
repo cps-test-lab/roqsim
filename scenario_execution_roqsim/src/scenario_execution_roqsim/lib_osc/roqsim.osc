@@ -9,6 +9,12 @@
 
 import osc.types  # pose_3d / velocity_6d, for set_entity_state
 
+# Alike across the actions: one that waits for an outcome takes `check` (true: fail the trial on its
+# error); a value of several fields is JSON in a string (`entity_call.value`, `machine_run.args`, a
+# quote in it written \"); and
+# an optional number with no default of its own is declared WITHOUT a default -- left out, it is unset
+# (scenario-execution passes the action None), never a magic number standing for "unset".
+
 # How a displacement is reduced to one number.
 #
 # `distance` and `planar` are MAGNITUDES (planar ignores z, which is what a driving robot wants).
@@ -174,6 +180,8 @@ action entity_navigate:
                                           #   union type, the same rule the rest of this file follows
     success_on_acceptance: bool = false   # true -> succeed once the route is accepted, without
                                           #   waiting for arrival (fire-and-forget traffic)
+    check: bool = true                    # fail on a route that does not arrive; false: succeed
+                                          #   whatever its outcome
 
 action entity_navigate_start:
     # Run the route the entity was CONFIGURED with, and succeed when it finishes.
@@ -190,6 +198,7 @@ action entity_navigate_start:
     # early is the scenario's, as for any action: `until`, `one_of` or `timeout` cancel the route.
     entity: string
     success_on_acceptance: bool = false
+    check: bool = true                    # fail on a route that does not arrive
 
 action spawn_entity:
     # Make an entity the world DECLARED perceivable, at the pose it appears at. Activation, not
@@ -258,7 +267,7 @@ action entity_call:
     # refuses, or one with no outcome in time, fails with the producer's own text.
     entity: string                                    # the owning entity, or the declaring component
     command: string                                   # the command's name, e.g. 'override'
-    value: string = ''                                # JSON: 'true', '{"vx": 0.2}'; empty = none.
+    value: string = ''                                # JSON: 'true', '{\"vx\": 0.2}'; empty = none.
                                                       # A command with typed parameters takes a
                                                       # mapping of them, or a bare value for its
                                                       # only one
@@ -269,10 +278,12 @@ action machine_run:
     # `run`. A branch abandoned while it waits (`one_of`, `timeout`) cancels this start, and no
     # start another client made.
     #
-    #     machine_run(machine: 'press', program: 'stroke', args: 'show=hole')
+    #     machine_run(machine: 'press', program: 'stroke', args: '{\"show\": \"hole\"}')
+    # (A quote inside an OpenSCENARIO string is written \", as in every JSON value here.)
     machine: string                                   # the machine's name in the world
     program: string                                   # the program to run
-    args: string = ''                                 # its arguments, as 'name=value, name=value'
+    args: string = ''                                 # JSON, as entity_call's value: an object of
+                                                      # its arguments; empty = none
     check: bool = true                                # fail on its error, or on a later start
 
 action humanoid_approach:
@@ -283,7 +294,7 @@ action humanoid_approach:
     humanoid: string                                  # the walker or robot's name in the world
     target: string                                    # a site, body or entity by name
     standoff: float = 0.6                             # metres in front of the target
-    facing: float = 1000.0                            # world yaw (rad) to face; unset: the target's front
+    facing: float                                     # world yaw (rad) to face; left out: the target's front
     check: bool = true
 
 action humanoid_reach:
@@ -301,7 +312,8 @@ action humanoid_press:
     humanoid: string
     hand: string                                      # left | right
     target: string                                    # a site on the button's face, e.g. 'start/button'
-    max_force: float = 0.0                            # N at most; 0: the humanoid's own press_force
+    max_force: float                                  # N at most; left out: the humanoid's own
+                                                      # press: {max_force}
     check: bool = true
 
 action humanoid_grasp:
@@ -379,7 +391,7 @@ action zone_entered:
     # It reads who is inside now; with `since`, an entity that came and went since then counts too.
     zone: string                                      # the zone's address in the world
     pattern: string = '*'                             # an fnmatch of entity names
-    since: float = -1.0                               # sim time (s); negative: who is inside now
+    since: float                                      # sim time (s); left out: who is inside now
 
 action zone_left:
     # Wait until no entity is inside a `zone_trigger`: the form of a Python scenario's `left`. It
@@ -392,4 +404,4 @@ action zone_dwelled:
     # scenario's `dwelled`. A zone whose `dwell` is 0 is refused.
     zone: string                                      # the zone's address in the world
     pattern: string = '*'                             # an fnmatch of entity names
-    since: float = -1.0                               # sim time (s); negative: who dwells now
+    since: float                                      # sim time (s); left out: who dwells now

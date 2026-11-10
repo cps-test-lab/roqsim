@@ -6,11 +6,12 @@
 The OpenSCENARIO form of :meth:`roqsim.scenario.ScenarioPlugin.run`, with the same outcome::
 
     machine_run(machine: 'press', program: 'stroke')
-    machine_run(machine: 'press', program: 'stroke', args: 'show=hole')
+    machine_run(machine: 'press', program: 'stroke', args: '{\\"show\\": \\"hole\\"}')
 
-``args`` is ``name=value`` pairs, each value JSON or a bare word, since an OpenSCENARIO string cannot
-hold the double quotes a JSON mapping needs; a list of numbers is one value. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
-for this one. With ``check`` the machine's error, or another start following this one before it
+``args`` is a JSON object of the program's arguments, as ``entity_call``'s ``value`` is JSON; empty
+is none. A quote inside an OpenSCENARIO string is written ``\\"``. The ``name=value`` form is
+refused, naming this one. It waits on the start's own number, through the machine's ``status``, so
+a later start is not taken for this one. With ``check`` the machine's error, or another start following this one before it
 ended, fails the trial; without it the action succeeds whatever the program did. A branch abandoned
 while it waits (a ``one_of``, a ``timeout``) cancels this start, so the machine is free for the next
 start and a start another client made is left alone: each start carries a token of this action's
@@ -23,12 +24,13 @@ unknown program or argument) is a FAILURE. See :mod:`scenario_execution_roqsim.b
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import py_trees
 from scenario_execution.actions.base_action import ActionError
 
-from ..access import AccessError, parse_value
+from ..access import AccessError
 from ..base import SimAction
 
 
@@ -53,14 +55,7 @@ class MachineRun(SimAction):
                 "the world and the program to run. `roqsim plugins describe <machine>` lists them.",
                 action=self,
             )
-        self._args = {}
-        for pair in self._pairs(str(args or "")):
-            key, equals, value = pair.partition("=")
-            if not equals or not key.strip():
-                raise ActionError(
-                    f"machine_run: `args` is name=value pairs, and {pair!r} is not one", action=self
-                )
-            self._args[key.strip()] = parse_value(value.strip())
+        self._args = self._parse_args(str(args or ""))
         self._check = bool(check)
         #: Cleared here, not in __init__: `execute` runs each time the action becomes active, so an
         #: action reached twice in one run starts the program twice.
@@ -68,19 +63,22 @@ class MachineRun(SimAction):
         self._token = uuid.uuid4().hex
         self._ended = False
 
-    def _pairs(self, args: str) -> list[str]:
-        """``args`` split at the commas outside any brackets, so a list is one value."""
-        pairs, current, depth = [], "", 0
-        for char in args:
-            depth += (char in "[{") - (char in "]}")
-            if char == "," and depth == 0:
-                pairs.append(current)
-                current = ""
-            else:
-                current += char
-        if depth != 0:
-            raise ActionError(f"machine_run: `args` {args!r} has unbalanced brackets", action=self)
-        return [pair.strip() for pair in [*pairs, current] if pair.strip()]
+    def _parse_args(self, args: str) -> dict:
+        """``args`` as the program's arguments: a JSON object, empty for none."""
+        if not args.strip():
+            return {}
+        try:
+            parsed = json.loads(args)
+        except ValueError:
+            parsed = None
+        if not isinstance(parsed, dict):
+            raise ActionError(
+                "machine_run: `args` is a JSON object of the program's arguments, as "
+                'entity_call\'s `value` is JSON -- \'{\\"show\\": \\"hole\\"}\' in a .osc, where a quote '
+                f'is written \\" -- not {args!r}',
+                action=self,
+            )
+        return parsed
 
     def update(self) -> py_trees.common.Status:
         if not self._access.ready():

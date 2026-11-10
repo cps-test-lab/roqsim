@@ -397,3 +397,13 @@ class PressHandle(MachineHandle):
 
 class HandledPress(Press):
     HANDLE_CLASS = PressHandle
+
+
+class FractionLift(Lift):
+    """Machine: the lift, its start state named as a fraction of its stroke (``home: {raised:}``)."""
+
+    HOME_KEYS = {"raised": "fraction"}
+    START_KEYS = {"start_raised": "home: {raised: <0..1>}"}
+
+    def home_targets(self, home):
+        return {"z": -0.5 + home["raised"]} if "raised" in home else {}
