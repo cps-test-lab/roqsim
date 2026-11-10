@@ -166,6 +166,18 @@ def test_read_describe_and_array_frames_round_trip(uri):
         assert (level["rate_hz"], level["rate_from"]) == (100.0, "level_rate_hz")
 
 
+def test_a_forgotten_request_keeps_no_reply(uri):
+    with Sim(uri), Client(uri) as sim:
+        dropped = sim.send("read", path="box/tank/level")
+        sim.forget(dropped)
+        kept = sim.send("read", path="box/tank/level")
+        deadline = time.monotonic() + 10
+        while not sim.poll(kept)[0]:
+            assert time.monotonic() < deadline
+        sim.forget(dropped)  # forgetting twice, or after its reply came, is harmless
+        assert dropped not in sim._replies and dropped not in sim._late
+
+
 def test_describe_gives_the_payload_type_its_units_and_the_key_it_is_present_by(uri):
     with Sim(uri) as run, Client(uri) as sim:
         stir = sim.describe("box/tank/stir")
