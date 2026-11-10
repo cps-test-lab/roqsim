@@ -367,6 +367,40 @@ def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
     assert abs(across - 0.75) < 0.01 and beside < 0.01
 
 
+def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
+    world = _world()
+    world["components"].append(
+        {
+            "box": {
+                "pose": {"position": {"x": -1.5, "y": 0.0, "z": 0.06}},
+                "size": [0.1, 0.1, 0.1],
+                "motion": "physics",
+                "prefix": "part_",
+            },
+            "name": "part",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        for _ in range(200):  # the part settles in the tote
+            sim.e.step()
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=1.3)  # over the floor, short of the bench
+        plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+        tote = sim.m.body("tote_1").id
+        part = sim.d.xpos[sim.m.body("part_box").id].copy()
+        assert part[2] > 0.5  # carried in the tote
+        top, under = plugin._surface(np.array([part[0], part[1], 0.0]), tote)
+        assert top[2] < 0.01 and under == 0  # the floor, under the tote and the part in it
+        here = sim.d.xpos[tote][:2].copy()
+        assert plugin._path_top(here, here, tote, 0.0) < 0.01
+    finally:
+        engine.shutdown()
+
+
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")

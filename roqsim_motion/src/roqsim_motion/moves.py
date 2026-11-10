@@ -1128,11 +1128,13 @@ class HumanoidPlugin(MachinePlugin):
 
     def _surface(self, point, held: int, accept=None):
         """The top of whatever is under ``point``, and its body: a ray cast down from 1.5 m above
-        it, past what is held (and what is welded to it), the humanoid's own bodies, anything
-        that collides with nothing, and with ``accept`` every body it refuses."""
+        it, past what is held (and what is welded to it), what rides in or on it
+        (:meth:`_contents`), the humanoid's own bodies, anything that collides with nothing, and
+        with ``accept`` every body it refuses."""
         m, d = self._m, self._d
         start = np.array([point[0], point[1], point[2] + 1.5])
         geomid = np.zeros(1, np.int32)
+        inside = self._contents(held)
         while True:
             dist = mujoco.mj_ray(m, d, start, np.array([0.0, 0.0, -1.0]), None, 1, held, geomid)
             if dist < 0:
@@ -1145,11 +1147,42 @@ class HumanoidPlugin(MachinePlugin):
             if (
                 solid
                 and not part_of_held
+                and int(m.body_rootid[body]) not in inside
                 and not self.body.owns(m, body)
                 and (accept is None or accept(body))
             ):
                 return np.array([point[0], point[1], hit[2]]), body
             start = hit - [0.0, 0.0, 1e-4]
+
+    def _contents(self, held: int) -> set:
+        """What rides in or on the held object: the free bodies (by their root) touching it, or
+        touching one that does, standing on it -- above its origin, which is its underside or its
+        middle. The parts in a box are not a surface it is set down on."""
+        m, d = self._m, self._d
+        base = float(d.xpos[held][2])
+        held_root = int(m.body_rootid[held])
+
+        def free(root: int) -> bool:
+            j = int(m.body_jntadr[root])
+            return j >= 0 and m.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE
+
+        touching_ = {}
+        for i in range(d.ncon):
+            c = d.contact[i]
+            a = int(m.body_rootid[m.geom_bodyid[c.geom1]])
+            b = int(m.body_rootid[m.geom_bodyid[c.geom2]])
+            touching_.setdefault(a, set()).add(b)
+            touching_.setdefault(b, set()).add(a)
+        found, todo = set(), [held_root]
+        while todo:
+            for other in touching_.get(todo.pop(), ()):
+                if other in found or other == held_root or not free(other):
+                    continue
+                if float(d.xpos[other][2]) <= base:
+                    continue
+                found.add(other)
+                todo.append(other)
+        return found
 
     def _footprint(self, held: int) -> list:
         """The held object's horizontal extent around its origin, as it is turned now: the corners
