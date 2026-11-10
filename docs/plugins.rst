@@ -604,7 +604,8 @@ differ:
   machine refuses a start while busy;
 - ``start_route`` releases the configured route of a navigator with ``autostart: false``, once: once
   it ran, or once any route was sent (a cancel does not undo either), it starts nothing until a
-  reset and returns the number last applied; with ``autostart`` on, it never starts anything;
+  reset and returns the number last applied; with ``autostart`` on, it never starts anything. A sent
+  route that finishes hands back to the configured route, held or not;
 - ``cancel_route`` takes no argument: it stops whatever runs and returns a number of its own, latched
   finished with no error, and the cancelled route's number never finishes, so its caller learns of
   the cancel from a larger number. A machine's ``cancel`` can name the start it cancels (by its number

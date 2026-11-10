@@ -33,8 +33,8 @@ class NavHandle:
 
     Read like a machine handle (:class:`roqsim.machine.MachineHandle`): ``send_goals`` returns a
     sequence number and ``status`` latches ``finished`` under it. Where the two differ (a send
-    overtakes, ``start`` releases a held configured route once, ``cancel`` takes no argument and
-    returns a number of its own) is in ``docs/plugins.rst``, "The goal interface".
+    overtakes and, when it finishes, hands back to the configured route; ``start`` releases a held
+    configured route once; ``cancel`` takes no argument and returns a number of its own) is in ``docs/plugins.rst``, "The goal interface".
 
     Only the list form exists. ``send_goals([p])`` is a single goal, and the OpenSCENARIO vocabulary
     already states the rule for exactly this case: one object is a one-element list. Two functions
