@@ -156,7 +156,7 @@ build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
 
 .PHONY: test
 test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
-	$(PYTEST) $(PKGS) tools/tests -q $(XDIST)
+	$(PYTEST) $(PKGS) tools/tests -q -rs $(XDIST)
 	@if [ -n "$$ROS_DISTRO" ]; then \
 		echo "ROS sourced -> building ros2_ws and running its tests"; \
 		$(MAKE) build-ros; \
@@ -207,10 +207,11 @@ test-osc:  ## The scenario-execution tests, in a venv with the [osc] extra; noth
 
 # One package's tests, e.g. `make test-roqsim_sensors`. Not just a convenience: the full set in one
 # process is the memory peak described above, so this is how to bisect an OOM -- and how to re-run
-# only what you are editing without paying for the rest.
+# only what you are editing without paying for the rest. --confcutdir loads the root conftest.py for one
+# package as for all: a package installed without what it declares fails naming it.
 .PHONY: test-%
 test-%:
-	$(PYTEST) $* -q
+	$(PYTEST) $* -q --confcutdir=$(CURDIR)
 
 .PHONY: smoke
 smoke:  ## Headless-run every shipped world; a world with a scene must finish it (tools/smoke.py)

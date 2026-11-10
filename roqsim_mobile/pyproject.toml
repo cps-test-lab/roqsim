@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Wheeled-base plugins and models for roqsim (floorplan, diff-drive, omni-drive, ackermann and tricycle drives)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # Wheeled BASES only. A robot that is also an arm (frankie, tiago_pro) lives in the sibling package
 # `roqsim_mobile_manipulation`, which is the one that may depend on both this and `roqsim_manipulation`.
 #

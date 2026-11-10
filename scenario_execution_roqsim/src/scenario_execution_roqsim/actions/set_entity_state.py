@@ -9,10 +9,10 @@ A **full** pose, and not this action's own reading of one: ``pose`` is parsed by
 quaternion and means the same thing here as everywhere else. What a body cannot do -- a weld with no
 free joint -- is refused by the simulator, which knows; a floor is not this action's to assume.
 
-The counterpart of ``spawn_robot.pos``/``.yaw`` for a factor a MuJoCo compile cannot express: a
+The counterpart of a spawned entity's ``pose:`` for a factor a MuJoCo compile cannot express: a
 per-RUN pose (a campaign's randomly generated start pose) rather than a per-CONFIGURATION one. A
 world's own YAML is resolved once per configuration, before any run of it starts, so it can carry
-`sim: plugins.spawn_robot.pos` overrides that vary by configuration -- but nothing before compile
+overrides of that ``pose:`` that vary by configuration -- but nothing before compile
 knows a value that is drawn once per repetition, and the substrate does not recompile mid-run
 (architecture.rst). This action is the other half: it moves an already-spawned entity, over either
 transport, through :func:`roqsim.entity_control.set_state` -- and takes the name and shape of

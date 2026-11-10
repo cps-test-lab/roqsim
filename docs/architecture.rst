@@ -632,7 +632,8 @@ either as OpenSCENARIO run by scenario-execution, or in Python.
 
 The test when in doubt: **would the machine do it standing alone in an empty world?** Then it is the
 machine's. If it needs another entity's state to decide, it is a scenario's. A world places a machine
-and sets its parameters (speeds, ``home``, sizes); it carries no machine programs, since a machine's
+and sets its parameters (rates, ``home`` -- where it stands at the start, the only place that is
+stated --, sizes); it carries no machine programs, since a machine's
 behaviour is its package's code.
 
 **A machine** subclasses :class:`roqsim.machine.MachinePlugin`. It declares the position actuators
@@ -645,7 +646,9 @@ have reached their targets or stopped on them (what an interlock waits for), or 
 Programs advance in ``post_step``, ramps in ``pre_step``.
 
 **Every machine has one handle**, a :class:`~roqsim.machine.MachineHandle` under
-``machine:<name>``, and it is the contract for everything that starts something and is waited on:
+``machine:<name>`` (a subclass of it, with a method per program, where the machine's
+``HANDLE_CLASS`` names one), and it is the contract for everything that starts something and is
+waited on:
 
 -  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
    machine that is busy, raises naming the machine -- stamped with the next sequence number, and
@@ -792,7 +795,7 @@ The incoming codebase is monolithic MuJoCo scripts. Rework them into plugins as 
 -  **External transport (ROS/other):** a transport plugin — ``configure`` spins the client thread, callbacks ``ctx.post(...)``, ``post_step`` publishes from ``data``, ``shutdown`` stops the client.
 -  **Moving part (conveyor):** ``build`` adds an invisible belt body on a slide joint; ``pre_step`` forces its velocity and wraps position; a contact pair tunes belt↔object friction. Its speed is a machine's setpoint (:ref:`machines-and-scenarios`): the ``run(speed)`` and ``stop()`` programs ramp it, and stopping for a part is a scenario's.
 -  **Injected fault (model_override):** a plugin that in ``configure`` resolves a *named* selection of geoms/bodies/actuators, saves their current values and publishes a handle plus a ``std_srvs/SetBool`` service endpoint; ``set_active`` writes the target rows and ``on_reset`` writes them back. No ``pre_step`` at all -- the change rides on the service's ``override`` command, which runs on the physics thread, and ``post_step`` runs only on the step after a change, to check the fault actually landed (§9.2).
--  **Articulated + commandable prop (door):** the ``door`` plugin (``roqsim_assets``) is a machine (:ref:`machines-and-scenarios`) — ``build`` hangs a leaf on a hinge joint with a force-limited position actuator; its programs ``open``, ``close`` and ``move_to(openness)`` move the target, ramped at ``speed`` where a world states one, end when the leaf first comes within 0.02 of the openness (it may still settle by a few hundredths after that), and end with an error when the leaf stays blocked behind its target (a gentle automatic door that gives up), and an idle door held off its target gives way after ``stall_timeout``; ``configure`` registers ``Entity(kind="door")``, its ``machine:<name>`` handle and its openness reader ``machine:<name>:openness``, and — when ``controllable`` — ``std_msgs/Float64`` ``cmd``/``state`` endpoints plus a ``control_msgs/GripperCommand`` action (reusing the generic 1-DOF handler via its ``state_key`` hint, ``machine:<name>:openness``; its ``reach_tolerance`` hint, the 0.02 its programs end in, grades ``reached_goal``, and ``on_timeout: abort`` aborts a goal still moving past the door's own ``timeout``, where a gripper's comes back succeeded). The natural home for a door in a floorplan world is the opening the generator already cut (``floorplan_to_world.py --doors-map``).
+-  **Articulated + commandable prop (door):** the ``door`` plugin (``roqsim_assets``) is a machine (:ref:`machines-and-scenarios`) — ``build`` hangs a leaf on a hinge joint with a force-limited position actuator; its programs ``open``, ``close`` and ``move_to(openness)`` move the target, ramped at ``speed`` where a world states one, end when the leaf first comes within 0.02 of the openness (it may still settle by a few hundredths after that), and end with an error when the leaf stays blocked behind its target (a gentle automatic door that gives up), and an idle door held off its target gives way after ``stall_timeout``; ``configure`` registers ``Entity(kind="door")``, its ``machine:<name>`` handle and its openness reader ``machine:<name>:openness``, and — when ``controllable`` — ``std_msgs/Float64`` ``openness``/``openness_state`` endpoints plus a ``control_msgs/GripperCommand`` action ``openness_goal`` (reusing the generic 1-DOF handler via its ``state_key`` hint, ``machine:<name>:openness``; its ``reach_tolerance`` hint, the 0.02 its programs end in, grades ``reached_goal``, and ``on_timeout: abort`` aborts a goal still moving past the door's own ``timeout``, where a gripper's comes back succeeded). The natural home for a door in a floorplan world is the opening the generator already cut (``floorplan_to_world.py --doors-map``).
 
 .. _63-decomposition-guidance:
 

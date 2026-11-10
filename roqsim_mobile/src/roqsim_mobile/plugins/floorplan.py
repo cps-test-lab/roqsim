@@ -251,12 +251,17 @@ class FloorplanPlugin(Plugin):
         elif not os.path.exists(mesh):
             errors.append(f"'mesh' file does not exist: {mesh}")
         else:
-            from roqsim.floorplan_collision import wall_colliders
+            from roqsim.floorplan_collision import WallDataError, wall_colliders
 
-            if not wall_colliders(mesh):
-                errors.append(
-                    f"'mesh' has no json-ld wall colliders next to it (expected <env>/json-ld/): {mesh}"
-                )
+            try:
+                found = wall_colliders(mesh)
+            except WallDataError as exc:
+                errors.append(f"'mesh' has no wall colliders: {exc}")
+            else:
+                if not found:
+                    errors.append(
+                        f"'mesh' has no wall colliders: its json-ld names no walls: {mesh}"
+                    )
             scale = config.get("mesh_scale", 1.0)
             values = scale if isinstance(scale, (list, tuple)) else [scale]
             if len(values) not in (1, 3) or any(float(v) <= 0 for v in values):

@@ -14,7 +14,11 @@ own, waits on that start's number through ``status``, fails the trial on the mov
     humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.35)
 
 The same scene in Python is ``yield from self.run(worker, "grasp", hand="right", target=...)``.
-An optional parameter left at its default is not sent, so the move's own default applies.
+An optional parameter left out is not sent, so the move's own default applies: one with a default
+is sent only when it differs from it, and one declared without a default (``facing``,
+``max_force``) is ``None`` when a scenario leaves it out -- scenario-execution resolves a parameter
+the invocation does not give and the action does not default to ``None``, as its own ``log(msg)``
+relies on -- so unset is unset, never a magic number.
 """
 
 from __future__ import annotations
@@ -47,9 +51,16 @@ class HumanoidMove(MachineRun):
         self._ended = False
 
 
-def _opt(value, unset):
-    """``None`` for a parameter left at its declared default, so the move's own default applies."""
-    return None if value == unset else value
+def _unset_or(value, what: str, action, check) -> float | None:
+    """A parameter declared without a default: ``None`` when left out, else the number, refused
+    where *check* says why."""
+    if value is None:
+        return None
+    value = float(value)
+    reason = check(value)
+    if reason:
+        raise ActionError(f"{what} is {value:g}: {reason}", action=action)
+    return value
 
 
 def _via(via: str):
@@ -84,16 +95,26 @@ class HumanoidApproach(HumanoidMove):
         humanoid: str,
         target: str,
         standoff: float = 0.6,
-        facing: float = 1000.0,
+        facing: float | None = None,
         via: str = "",
         check: bool = True,
     ):
+        facing = _unset_or(
+            facing,
+            "humanoid_approach: `facing`",
+            self,
+            lambda v: (
+                "1000 meant unset; leave `facing` out to face the target's front"
+                if v == 1000.0
+                else ""
+            ),
+        )
         self._begin(
             humanoid,
             {
                 "target": target,
                 "standoff": float(standoff),
-                "facing": _opt(float(facing), 1000.0),
+                "facing": facing,
                 "via": _via_of(self, via),
             },
             check,
@@ -141,13 +162,25 @@ class HumanoidPress(HumanoidMove):
     MOVE = "press"
 
     def execute(
-        self, humanoid: str, hand: str, target: str, max_force: float = 0.0, check: bool = True
+        self,
+        humanoid: str,
+        hand: str,
+        target: str,
+        max_force: float | None = None,
+        check: bool = True,
     ):
-        self._begin(
-            humanoid,
-            {"hand": hand, "target": target, "max_force": _opt(float(max_force), 0.0)},
-            check,
+        max_force = _unset_or(
+            max_force,
+            "humanoid_press: `max_force`",
+            self,
+            lambda v: (
+                "a cap is above 0; leave `max_force` out for the humanoid's own "
+                "`press: {max_force}`"
+                if v <= 0.0
+                else ""
+            ),
         )
+        self._begin(humanoid, {"hand": hand, "target": target, "max_force": max_force}, check)
 
 
 class HumanoidGrasp(HumanoidMove):
@@ -189,16 +222,26 @@ class HumanoidCarry(HumanoidMove):
         humanoid: str,
         to: str,
         standoff: float = 0.6,
-        facing: float = 1000.0,
+        facing: float | None = None,
         via: str = "",
         check: bool = True,
     ):
+        facing = _unset_or(
+            facing,
+            "humanoid_carry: `facing`",
+            self,
+            lambda v: (
+                "1000 meant unset; leave `facing` out to face the target as seen"
+                if v == 1000.0
+                else ""
+            ),
+        )
         self._begin(
             humanoid,
             {
                 "to": to,
                 "standoff": float(standoff),
-                "facing": _opt(float(facing), 1000.0),
+                "facing": facing,
                 "via": _via_of(self, via),
             },
             check,

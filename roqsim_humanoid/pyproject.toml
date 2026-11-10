@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Humanoid plugins and assets for roqsim (Unitree G1 + LimX Oli + RL locomotion)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "roqsim",
     "roqsim_sensors",

@@ -228,7 +228,7 @@ def test_a_camera_asking_for_segmentation_is_refused_at_load(tmp_path):
 
 
 def test_without_a_gpu_it_refuses_to_open_and_names_why(tmp_path, monkeypatch):
-    torch = pytest.importorskip("torch")
+    import torch
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     renderer = SplatRenderer({"splat": {"file": "room.ply"}})
     model = mujoco.MjModel.from_xml_string(XML)
