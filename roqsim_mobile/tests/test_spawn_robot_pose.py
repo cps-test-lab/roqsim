@@ -19,7 +19,6 @@ import pytest
 from roqsim.config import instantiate_plugins, load_config_from_dict
 from roqsim.engine import Engine
 
-pytest.importorskip("roqsim_mobile", reason="spawn_robot lives in roqsim_mobile")
 
 SPAWN_ROBOT = "roqsim_mobile.plugins.spawn_robot:SpawnRobotPlugin"
 

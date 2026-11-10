@@ -31,8 +31,6 @@ from roqsim_sensors.coverage.swept import SweptError, swept_coverage
 from roqsim import exit_status
 from roqsim.recording import open_recording
 
-pytest.importorskip("mcap", reason="a recording is an mcap file")
-
 _WORLD = """
 <mujoco>
   <option timestep="0.01"/>

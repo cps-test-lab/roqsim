@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every plugin's reset returns it to the state it was configured in.
 
-For each plugin registered under ``roqsim.plugins``, in the smallest world it configures in:
+For each plugin this repository registers under ``roqsim.plugins``, in the smallest world it
+configures in:
 
 A. set up, reset, record the per-trial state;
 B. use it -- write every ``in`` endpoint of the world, step, call the case's setters (a
@@ -25,7 +26,7 @@ either whole or by attribute path. A plugin with no world it can configure in he
 :data:`SKIPPED`. A case whose plugin has a known open defect names it (``defect=``) and is a strict
 expected failure, so the fix that makes it pass has to remove it.
 
-Every registered plugin must appear in exactly one of :data:`CASES`, :data:`EXEMPT` (whole) or
+Every plugin this repository registers must appear in exactly one of :data:`CASES`, :data:`EXEMPT` (whole) or
 :data:`SKIPPED`, so a new plugin cannot go unchecked by being left out.
 """
 
@@ -46,7 +47,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from installed_requirements import not_installed_with_its_requirements
+from installed_requirements import not_installed_with_its_requirements, ours
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
@@ -967,7 +968,12 @@ def _entry_point(name: str):
 
 @functools.cache
 def _registered() -> list[str]:
-    return sorted({ep.name for ep in entry_points(group="roqsim.plugins")})
+    """The plugins of the distributions this repository ships (its packages and its ROS packages,
+    ``installed_requirements.repository_distributions``): a plugin another repository registers in
+    the same environment is that repository's to check."""
+    registered = sorted({ep.name for ep in entry_points(group="roqsim.plugins") if ours(ep)})
+    assert registered, "no plugin of this repository's distributions is installed"
+    return registered
 
 
 def test_every_registered_plugin_is_checked_exempted_or_skipped():
@@ -992,8 +998,7 @@ def _params():
 @pytest.mark.parametrize("name", list(_params()))
 def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
     case = CASES[name]
-    if reason := not_installed_with_its_requirements(_entry_point(name)):
-        pytest.skip(reason)
+    assert not (reason := not_installed_with_its_requirements(_entry_point(name))), reason
     if reason := case.unavailable():
         pytest.skip(reason)
     engine = Engine(load_config_from_dict(case.world(tmp_path), base_dir=tmp_path))

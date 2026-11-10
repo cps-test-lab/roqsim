@@ -696,10 +696,11 @@ class CameraPlugin(Plugin):
         Drawn from ``ctx.rng_for`` keyed on this camera instance (:meth:`draw_key`), so a frame's
         noise is a function of the world (seed, sim time, sensor) and a replay reproduces it.
         """
-        import cv2
-
         out = frame
         if self._blur_sigma > 0:
+            # OpenCV is an extra and only the blur needs it; validate_config refuses a blur without.
+            import cv2
+
             out = cv2.GaussianBlur(out, (0, 0), self._blur_sigma)
         if self._noise_sigma > 0:
             # Keyed on the frame's own stamp, the snapshot it was drawn from.

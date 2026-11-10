@@ -19,7 +19,6 @@ import time
 import numpy as np
 import pytest
 
-pytest.importorskip("zmq")
 pytest.importorskip("roqsim_nav")
 
 from roqsim import endpoint, runner  # noqa: E402

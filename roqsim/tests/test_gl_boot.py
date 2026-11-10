@@ -68,6 +68,24 @@ def _run(code: str, **env) -> str:
     return done.stdout.strip()
 
 
+def _no_backend_to_select() -> str:
+    """Why nothing the selection may pick can load here, or ``""``: it picks ``egl`` for a render
+    node and ``osmesa`` without one, so a node with neither a render node nor libOSMesa (a CPU-only
+    container whose EGL runs without a node) has no backend for it to bind."""
+    import ctypes.util
+    from pathlib import Path
+
+    if Path("/dev/dri").is_dir() and any(Path("/dev/dri").glob("renderD*")):
+        return ""
+    if ctypes.util.find_library("OSMesa"):
+        return ""
+    return "no DRI render node and no libOSMesa: the selection has no backend to bind here"
+
+
+needs_a_backend = pytest.mark.skipif(bool(_no_backend_to_select()), reason=_no_backend_to_select())
+
+
+@needs_a_backend
 @pytest.mark.parametrize("display", [":0", None])
 def test_import_roqsim_binds_an_offscreen_backend(display):
     """Never glfw, and never left unset -- with or without a DISPLAY.
@@ -199,8 +217,9 @@ def test_a_discrete_card_numbered_past_128_is_a_render_node(monkeypatch):
     """
     from roqsim import gl
 
-    _fake_devices(monkeypatch, nvidiactl=True, render_node=True,
-                  names=["by-path", "card1", "renderD129"])
+    _fake_devices(
+        monkeypatch, nvidiactl=True, render_node=True, names=["by-path", "card1", "renderD129"]
+    )
     assert gl.render_node() == "/dev/dri/renderD129"
     assert gl.gpu_without_render_node() is False
 
@@ -221,8 +240,9 @@ def test_no_dri_directory_at_all_is_the_cpu_only_answer(monkeypatch):
     from roqsim import gl
 
     _fake_devices(monkeypatch, nvidiactl=False, render_node=False, names=None)
-    monkeypatch.setattr(gl.os, "listdir", lambda path: (_ for _ in ()).throw(
-        FileNotFoundError(path)))
+    monkeypatch.setattr(
+        gl.os, "listdir", lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
+    )
     assert gl.render_node() is None
     assert gl.gpu_without_render_node() is False
 
@@ -282,6 +302,7 @@ def test_an_explicit_osmesa_request_is_honoured(monkeypatch):
     rendering.check_gl_backend()  # must not raise
 
 
+@needs_a_backend
 def test_the_gl_device_is_reported_next_to_the_backend():
     """`egl` alone cannot answer "did this use the GPU": it is what any machine with a working
     hardware GL stack reports, and which device it binds is the ICD's decision. So the device
