@@ -3,7 +3,8 @@
 The GripperCommand handler sends a goal's ``position`` to whatever drives one position, and a
 producer names its parameter for its own quantity -- a door's command is ``openness_goal(openness)``
 -- so the value goes under that name, and under ``position`` only where the producer declares
-several parameters or none.
+several parameters, one of them ``position``, or none. Several and none of them ``position`` is
+refused when the bridge starts.
 """
 
 from __future__ import annotations
@@ -57,3 +58,25 @@ def test_a_producer_with_several_parameters_takes_it_by_the_goals_name():
 
 def test_an_untyped_producer_takes_the_bare_value():
     assert payload_for(_Untyped(), one_value(_Untyped(), "position", 0.4)) == 0.4
+
+
+class _Unnamed(Plugin):
+    @endpoint.command
+    def grip(self, width: float, force: float) -> None:
+        """Grip.
+
+        Args:
+            width: how far open
+            force: how hard
+        """
+
+
+def test_several_parameters_none_named_for_the_goal_are_refused_naming_the_producer():
+    import pytest
+
+    from roqsim_ros_bridge.params import one_value_name
+
+    with pytest.raises(ValueError, match=r"takes width, force: .* named 'position'"):
+        one_value_name(_endpoint(_Unnamed()), "position")
+    assert one_value_name(_endpoint(_Two()), "position") == "position"
+    assert one_value_name(_endpoint(_Door()), "position") == "openness"

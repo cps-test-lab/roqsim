@@ -47,7 +47,7 @@ from roqsim.endpoint import ParameterError, bind
 
 from .extensions import EXTENSION_GROUP, load_extensions
 from .gripper_policy import ABORT, GripperPolicy
-from .params import one_value, payload_for
+from .params import one_value, one_value_name, payload_for
 from .trajectory_policy import (
     CURRENT_GOALS,
     PATH_VIOLATED,
@@ -88,6 +88,21 @@ def goal_rejection(type_path: str, goal_request, endpoint) -> str | None:
     """Why the goal is rejected before it executes (a ``GoalResponse.REJECT``), or ``None``."""
     check = GOAL_CHECKS.get(type_path)
     return check(goal_request, endpoint) if check is not None else None
+
+
+#: What an endpoint served by an action type must be, checked when the bridge starts: a callable of
+#: the endpoint that raises :class:`ValueError` saying what is wrong.
+_ACTION_CHECKS: dict[str, Callable[[Any], None]] = {
+    # A goal carries one position, which has to go to one parameter of the producer.
+    "control_msgs.action.GripperCommand": lambda endpoint: one_value_name(endpoint, "position"),
+}
+
+
+def check_action_endpoint(type_path: str, endpoint) -> None:
+    """Refuse *endpoint* for *type_path*'s goals, with the reason, where that type's check fails."""
+    check = _ACTION_CHECKS.get(type_path)
+    if check is not None:
+        check(endpoint)
 
 
 def get_action_handler(type_path: str) -> Callable[[Any, Any, Callable[[Any], None], Any], Any]:
@@ -563,7 +578,10 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     except ValueError as exc:
         refusal = f"{getattr(endpoint, 'owner', '?')}/{getattr(endpoint, 'name', '?')}: {exc}"
     else:
-        refusal = _refused(endpoint, **one_value(endpoint, "position", target))
+        try:
+            refusal = _refused(endpoint, **one_value(endpoint, "position", target))
+        except ValueError as exc:  # several parameters, none the goal's: refused at start as well
+            refusal = str(exc)
     if refusal is not None:
         # GripperCommand's result has no error field: the goal is aborted, and the reason logged.
         logger.error("gripper goal refused: %s", refusal)
