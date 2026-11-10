@@ -20,6 +20,7 @@ from __future__ import annotations
 import functools
 import gc
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -58,12 +59,20 @@ def _missing(package_dir: Path) -> str:
     )
 
 
+#: Set (to anything) where every declared requirement must be installed -- roqsim's CI: there a
+#: package installed without one fails its collection instead of being skipped.
+REQUIRE_ALL = "ROQSIM_TESTS_REQUIRE_ALL"
+
+
 class _NotInstalledWhole(pytest.Module):
-    """A test module of a package installed without what it declares: skipped, naming it."""
+    """A test module of a package installed without what it declares: skipped, naming it, or a
+    failure where :data:`REQUIRE_ALL` is set."""
 
     reason = ""
 
     def collect(self):
+        if os.environ.get(REQUIRE_ALL):
+            pytest.fail(f"{self.reason}, and {REQUIRE_ALL} is set", pytrace=False)
         pytest.skip(self.reason, allow_module_level=True)
 
 

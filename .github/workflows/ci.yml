@@ -12,6 +12,11 @@ on:
     branches: [main]
   pull_request:
 
+# Every declared requirement is installed here, so a test module of a package installed without one
+# fails instead of being skipped (the root conftest.py).
+env:
+  ROQSIM_TESTS_REQUIRE_ALL: "1"
+
 jobs:
   # The whole of `make ci` on the runner image GitHub calls latest; on Ubuntu 24.04, whose Python roqsim
   # keeps supporting, the packages install and every shipped world runs (`make smoke`) -- what an
