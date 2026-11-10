@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Whether an installed distribution has what it declares: for the tests that walk every installed one.
 
-A test that loads every ``roqsim.plugins`` entry or every ``roqsim`` command group meets each
-installed package, and a package installed without its declared requirements (``pip install
+A test that loads every ``roqsim.plugins`` entry or every ``roqsim`` command group of this repository
+meets each of its packages, and a package installed without its declared requirements (``pip install
 --no-deps``, a partial image) fails its import for a reason that is the installation's, not the
-code's. Those tests skip such a package and name the requirement it lacks, so the skip is read in
-``-rs`` and nothing is hidden. Only a requirement the distribution itself (or one it requires, in
-turn) **declares** counts: an import that fails for any other reason is a defect and still fails.
+code's. Those tests fail naming the requirement it lacks, so the fix is the one the message asks
+for; none of them skips it, so a run never ends green having checked less. Only a requirement the
+distribution itself (or one it requires, in turn) **declares** counts: an import that fails for any
+other reason fails as it does. Another repository's packages, installed beside this one's, are that
+repository's to check (:func:`ours`).
 """
 
 from __future__ import annotations
@@ -96,3 +98,19 @@ def repository_distributions(root: Path) -> frozenset[str]:
         if found:
             names.add(canonicalize_name(found.group(1)))
     return frozenset(n for n in names if n)
+
+
+#: This repository's root: the directory above ``roqsim/tests``.
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@functools.cache
+def _ours() -> frozenset[str]:
+    return repository_distributions(ROOT)
+
+
+def ours(ep) -> bool:
+    """Whether entry point *ep* belongs to one of this repository's distributions; one with no
+    distribution (registered by hand) counts as this repository's."""
+    dist = getattr(ep, "dist", None)
+    return dist is None or canonicalize_name(dist.name) in _ours()

@@ -26,7 +26,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points
 
 import pytest
-from installed_requirements import not_installed_with_its_requirements
+from installed_requirements import not_installed_with_its_requirements, ours
 
 from roqsim.introspection import _config_keys_read, published_keys, undeclared_config_reads
 from roqsim.plugin import Plugin
@@ -71,11 +71,14 @@ def _plugins() -> tuple[list[tuple[str, type]], dict[str, str], dict[str, str]]:
     A failure is recorded rather than raised: raised here, at collection, one plugin whose
     dependencies are missing would abort every test in this package. A plugin that does not load
     for any other reason fails the guard, loudly and by name, in
-    :func:`test_every_plugin_entry_loads`; an incompletely installed one is skipped, named
-    (:mod:`installed_requirements`).
+    :func:`test_every_plugin_entry_loads`; an incompletely installed one fails, named, in
+    :func:`test_no_plugin_package_is_installed_without_its_requirements`
+    (:mod:`installed_requirements`). Another repository's plugins are that repository's to check.
     """
     loaded, failed, incomplete = [], {}, {}
     for ep in entry_points(group=ENTRY_POINT_GROUP):
+        if not ours(ep):
+            continue
         try:
             loaded.append((ep.name, ep.load()))
         except Exception as err:  # noqa: BLE001 - reported per plugin by the test below
@@ -109,12 +112,11 @@ def test_every_plugin_entry_loads():
 
 
 def test_no_plugin_package_is_installed_without_its_requirements():
-    """Said rather than failed: a package installed with --no-deps is the installation's doing."""
-    if INCOMPLETE:
-        pytest.skip(
-            "not checked, installed without what they declare: "
-            + "; ".join(f"{name}: {why}" for name, why in sorted(INCOMPLETE.items()))
-        )
+    """A package installed with --no-deps is the installation's doing, and its plugins go unchecked
+    until what it declares is installed: a failure naming it, never a skip."""
+    assert not INCOMPLETE, "not checked, installed without what they declare: " + "; ".join(
+        f"{name}: {why}" for name, why in sorted(INCOMPLETE.items())
+    )
 
 
 @pytest.mark.parametrize(
@@ -169,8 +171,7 @@ def test_a_plugin_with_a_schema_writes_no_config_block_of_its_own(name, cls):
 @pytest.mark.parametrize(("name", "key"), sorted(REFUSED))
 def test_a_key_read_to_be_refused_is_refused(name, key):
     """An exemption that outlives its refusal would hide a key read as a setting."""
-    if name in INCOMPLETE:
-        pytest.skip(INCOMPLETE[name])
+    assert name not in INCOMPLETE, INCOMPLETE.get(name)
     cls = dict(PLUGINS)[name]
     errors = cls({}).config_errors({key: 1})
     assert any(f"'{key}'" in e for e in errors), (name, key, errors)
@@ -187,8 +188,7 @@ def test_every_exemption_names_an_installed_plugin_and_a_key_it_reads():
         assert key in _config_keys_read(plugins[name]), (
             f"{name} no longer reads {key!r}; drop its exemption"
         )
-    if unchecked:
-        pytest.skip("the rest hold; not checked: " + "; ".join(sorted(set(unchecked))))
+    assert not unchecked, "the rest hold; not checked: " + "; ".join(sorted(set(unchecked)))
 
 
 # -- the reader itself ------------------------------------------------------------------------------

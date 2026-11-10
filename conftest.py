@@ -30,8 +30,8 @@ _ROOT = Path(__file__).resolve().parent
 
 @functools.cache
 def _requirements_check():
-    """``roqsim/tests/installed_requirements.py``, the rule the tests over every installed package
-    already follow, loaded by path: this file is no package's."""
+    """``roqsim/tests/installed_requirements.py``, the rule the tests over this repository's
+    installed packages follow too, loaded by path: this file is no package's."""
     spec = importlib.util.spec_from_file_location(
         "_roqsim_installed_requirements", _ROOT / "roqsim" / "tests" / "installed_requirements.py"
     )
@@ -48,7 +48,7 @@ def _missing(package_dir: Path) -> str:
         return ""
     name = _requirements_check().project_name(pyproject)
     if name is None:
-        return ""
+        raise ValueError(f"{pyproject}: no [project] name could be read")
     missing = _requirements_check().missing_requirements(name)
     if not missing:
         return ""

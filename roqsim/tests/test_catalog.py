@@ -22,7 +22,7 @@ from importlib import import_module, metadata
 from pathlib import Path
 
 import pytest
-from installed_requirements import not_installed_with_its_requirements
+from installed_requirements import not_installed_with_its_requirements, ours
 
 from roqsim import exit_status
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
@@ -102,6 +102,8 @@ def test_a_world_is_listed_exactly_when_its_package_offers_it_as_an_interface():
 
     providers, incomplete = {}, []
     for ep in _world_entry_points():
+        if not ours(ep):
+            continue  # another repository's worlds are its to check
         if reason := not_installed_with_its_requirements(ep):
             incomplete.append(f"{ep.name}: {reason}")
             continue
@@ -116,8 +118,7 @@ def test_a_world_is_listed_exactly_when_its_package_offers_it_as_an_interface():
             f"provider {provider!r} registered its worlds, so every YAML it ships must be in the "
             f"catalog and nothing else may be"
         )
-    if incomplete:
-        pytest.skip("the rest agree; not checked: " + "; ".join(incomplete))
+    assert not incomplete, "the rest agree; not checked: " + "; ".join(incomplete)
 
 
 def test_an_unregistered_packages_worlds_are_absent_by_design():

@@ -46,7 +46,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from installed_requirements import not_installed_with_its_requirements
+from installed_requirements import not_installed_with_its_requirements, ours
 
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
@@ -970,18 +970,8 @@ def _registered() -> list[str]:
     """The plugins of the distributions this repository ships (its packages and its ROS packages,
     ``installed_requirements.repository_distributions``): a plugin another repository registers in
     the same environment is that repository's to check."""
-    from installed_requirements import repository_distributions
-    from packaging.utils import canonicalize_name
-
-    own = repository_distributions(Path(__file__).resolve().parents[2])
-    registered = sorted(
-        {
-            ep.name
-            for ep in entry_points(group="roqsim.plugins")
-            if ep.dist is None or canonicalize_name(ep.dist.name) in own
-        }
-    )
-    assert registered, f"no plugin of this repository's distributions is installed ({sorted(own)})"
+    registered = sorted({ep.name for ep in entry_points(group="roqsim.plugins") if ours(ep)})
+    assert registered, "no plugin of this repository's distributions is installed"
     return registered
 
 
@@ -1007,8 +997,7 @@ def _params():
 @pytest.mark.parametrize("name", list(_params()))
 def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
     case = CASES[name]
-    if reason := not_installed_with_its_requirements(_entry_point(name)):
-        pytest.skip(reason)
+    assert not (reason := not_installed_with_its_requirements(_entry_point(name))), reason
     if reason := case.unavailable():
         pytest.skip(reason)
     engine = Engine(load_config_from_dict(case.world(tmp_path), base_dir=tmp_path))
