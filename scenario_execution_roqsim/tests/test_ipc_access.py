@@ -993,9 +993,8 @@ NOT_READY_ARGS = {
 
 
 def _registered_actions() -> dict[str, str]:
-    from pathlib import Path
-
     import tomllib
+    from pathlib import Path
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     return project["project"]["entry-points"]["scenario_execution.actions"]
 
