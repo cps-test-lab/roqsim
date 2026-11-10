@@ -60,8 +60,6 @@ VARIABLES: dict[str, str] = {
     "ROQSIM_SCENE_EXPORT_DIR": "the scenario adapter exports the built world here, as scene.glb",
     "ROQSIM_SEED": "the scenario adapter's noise seed",
     "ROQSIM_SIM_CONTROL": "the scenario adapter also serves the simulation_interfaces control plane",
-    "ROQSIM_TESTS_REQUIRE_ALL": "set where every declared requirement is installed (CI): a package's "
-    "tests fail, not skip, when one is missing",
     "ROQSIM_TF_NAMESPACE": "the scenario adapter publishes TF under this namespace",
     "ROQSIM_WORLD": "the world the scenario adapter runs",
     "ROQSIM_WORLD_OVERRIDES": "a world-overrides YAML the scenario adapter applies",
