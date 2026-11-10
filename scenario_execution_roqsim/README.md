@@ -202,8 +202,8 @@ One consequence, stated rather than hidden:
 
 - Over the socket a pose is a round-trip, so a threshold crossing is resolved at the **tick period**,
   not at the physics step. A dwell shorter than one tick means "the first tick past the threshold"
-  either way. Each entity's pose is the last one answered, at most a round trip old, and every
-  condition reading it gets it: one that needs several entities' poses has them all in one tick.
+  either way. A condition's pose of an entity is the last one answered since it started, at most a
+  round trip old while it ticks, so one that needs several entities' poses has them all in one tick.
 
 ## Things that will bite
 

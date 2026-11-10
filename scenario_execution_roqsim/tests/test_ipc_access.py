@@ -16,6 +16,7 @@ import math
 import threading
 import time
 
+import numpy as np
 import pytest
 
 pytest.importorskip("zmq")
@@ -164,6 +165,7 @@ class Served:
     @contextlib.contextmanager
     def held(self):
         """No tick while inside: the simulator applies nothing, and answers no command."""
+        self._idle.clear()
         self._running.clear()
         assert self._idle.wait(10), "the simulator did not stop ticking"
         try:
@@ -313,20 +315,43 @@ def test_poses_reports_and_placement_over_the_socket(routes):
             pass
 
 
-def test_every_reader_of_a_pose_gets_one_however_many_read_it_over_the_socket(routes):
-    """Three readers of one entity's pose, each wanting two poses in one tick: every one of them
-    gets both, each tick after the first answers, rather than one taking the answer the others
-    wait for."""
-    _local, socket = routes
+def _both(socket, *names):
     deadline = time.monotonic() + 10
-    while socket.ground_truth_pose("cart") is None or socket.ground_truth_pose("prop") is None:
+    while True:
+        poses = [socket.ground_truth_pose(n) for n in names]
+        if all(p is not None for p in poses):
+            return poses
         assert time.monotonic() < deadline, "no pose ever answered"
         time.sleep(0.005)
-    for _ in range(50):
-        for _reader in range(3):
-            assert socket.ground_truth_pose("cart") is not None
-            assert socket.ground_truth_pose("prop") is not None
+
+
+def test_an_action_reading_two_entities_has_both_poses_every_tick_over_the_socket(routes):
+    """Once each has answered, both poses are there on every tick, whichever answered last: the
+    action does not wait for two answers to land between the same two of its ticks."""
+    _local, socket = routes
+    _both(socket, "cart", "prop")
+    for _ in range(100):
+        assert socket.ground_truth_pose("cart") is not None
+        assert socket.ground_truth_pose("prop") is not None
         time.sleep(0.001)
+
+
+def test_an_action_started_again_reads_the_pose_afresh_over_the_socket(routes, tmp_path):
+    """What an earlier activation read is not this one's: an entity moved in between is read where
+    it is now."""
+    _local, socket = routes
+    (before,) = _both(socket, "cart")
+    other = IpcAccess("ipc://" + str(tmp_path / "c.sock"))
+    try:
+        _until(other.ready, "the other client never reached the simulator")
+        moved = _settle_socket(other.set_entity_state("cart", [1.0, 1.0, 0.1], [1, 0, 0, 0]))
+        assert moved.ok, moved.detail
+    finally:
+        other.teardown()
+    socket.restart_reads()  # the action starts again
+    (after,) = _both(socket, "cart")
+    assert np.allclose(before.pos[:2], [4.0, 4.0], atol=0.05)
+    assert np.allclose(after.pos[:2], [1.0, 1.0], atol=1e-6)
 
 
 def test_a_route_is_followed_to_its_end_over_the_socket(routes):

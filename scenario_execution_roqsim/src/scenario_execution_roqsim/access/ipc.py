@@ -316,10 +316,10 @@ class IpcAccess(WorldAccess):
         return {row["path"] for row in self._require_rows()}
 
     def ground_truth_pose(self, name: str) -> Pose | None:
-        """*name*'s pose as last answered, at most one round trip old; ``None`` before the first
-        answer. One read per entity is in flight at a time, shared by every action that asks, and
-        each answer stays the entity's pose until the next one: an action that needs several poses
-        at once gets them all, however many others read the same entities."""
+        """*name*'s pose as last answered since the action started (:meth:`restart_reads`), at most
+        one round trip old while it ticks; ``None`` before the first answer. One read per entity is
+        in flight at a time, and each answer stays the entity's pose until the next: an action that
+        needs several entities' poses in one tick has them all, whichever answered last."""
         path = POSE_PATH.format(name=name)
         if path not in self._paths():
             raise no_entity(self._rows, name)
@@ -405,6 +405,10 @@ class IpcAccess(WorldAccess):
             value["orientation"] = quat
         return _IpcPlacement(self, self._entity_command(_SET_PRESENCE), value, SpawnOutcome)
 
+    def restart_reads(self) -> None:
+        for name in list(self._poses) + list(self._latest):
+            self._forget_pose(name)
+
     def _forget_pose(self, name: str) -> None:
         """Drop *name*'s last pose and the read in flight, which may predate a change."""
         self._latest.pop(name, None)
@@ -414,6 +418,7 @@ class IpcAccess(WorldAccess):
 
     def teardown(self) -> None:
         if self._client is not None:
+            self.restart_reads()  # no pose read left in flight on the shared connection
             # A cancel sent as an action was abandoned is answered before the connection goes.
             self.report_unattended(wait=self._client.timeout + _GRACE_S)
             _release(self._client)
