@@ -833,6 +833,7 @@ def test_blur_smooths_edges():
 
 
 def test_noise_config_is_checked():
+    pytest.importorskip("cv2", reason="a blur needs OpenCV, roqsim_sensors' test extra")
     plugin = RealsenseD435Plugin({})
     assert any("noise" in e for e in plugin.validate_config({"noise": {"sigma": 1}}))
     assert any("noise" in e for e in plugin.validate_config({"noise": {"gaussian_sigma": -1}}))
