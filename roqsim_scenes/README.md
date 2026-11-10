@@ -236,10 +236,10 @@ The bake lights every scene the same way, and the scene sets nothing for it:
   the light a ceiling throws back, which makes a wall brighter towards the ceiling than at the floor.
 - the headlight's ambient **fill**, `light.fill` (default `[0.3, 0.3, 0.3]`).
 
-It replaces a single lamp at the plan's centre, which lit the walls with a light that casts: MuJoCo
-culls front faces when it draws a shadow map, so a wall whose faces are wound inward shadowed itself
-in a hard dark band, and every shadow fell away from the lamp across the floor rather than under what
-cast it. Two lights, because MuJoCo's renderer draws eight a frame, the headlight among them,
+Why not one casting lamp at the plan's centre: it lights the walls with a light that casts. MuJoCo
+culls front faces when it draws a shadow map, so a wall whose faces are wound inward shadows itself
+in a hard dark band, and every shadow falls away from the lamp across the floor rather than under what
+casts it. Two lights, because MuJoCo's renderer draws eight a frame, the headlight among them,
 in index order (`roqsim.lights`), and a baked scene's come first.
 
 One setting changes it. A world whose own fixtures light the room — `strip_light` with `emit: true`
@@ -250,7 +250,8 @@ light:
   fixtures: true
 ```
 
-The former lamp's `height`, `diffuse` and `cutoff` are refused with that pointer.
+A lamp's `height`, `diffuse` and `cutoff` are not settings of the bake, and are refused with that
+pointer.
 
 ## Importing another USD
 

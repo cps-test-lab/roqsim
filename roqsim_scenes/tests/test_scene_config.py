@@ -41,10 +41,9 @@ def test_floor_and_light_blocks_are_checked():
 
 
 @pytest.mark.parametrize("key", ["height", "diffuse", "cutoff"])
-def test_the_former_lamps_keys_are_refused_with_what_replaces_them(key):
-    """A config written for the single lamp was right then; it is told what changed, not that its
-    key is unknown."""
-    with pytest.raises(ValueError, match=rf"light: '{key}' no longer set.*'fixtures: true'"):
+def test_a_lamps_keys_are_refused_with_the_one_setting_there_is(key):
+    """A config that sets a lamp is told the setting there is, not that its key is unknown."""
+    with pytest.raises(ValueError, match=rf"light: '{key}': not a setting.*'fixtures: true'"):
         scene_to_mjcf.check_config({"light": {key: 1.0}}, "scene.yaml")
 
 

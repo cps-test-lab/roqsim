@@ -74,9 +74,9 @@ CONFIG_KEYS = frozenset(
 )
 FLOOR_KEYS = frozenset({"texture", "rgb1", "rgb2", "reflectance", "physical_size", "rgba"})
 LIGHT_KEYS = frozenset({"fixtures", "fill"})
-#: Keys of the single overhead lamp the bake placed before it found the ceiling itself. Refused with
-#: what replaces them, rather than as unknown: a config that set them was right when it was written.
-_RETIRED_LIGHT_KEYS = frozenset({"height", "diffuse", "cutoff"})
+#: A single overhead lamp's keys. The bake places its lights itself, so they are refused with the one
+#: setting there is, rather than as unknown keys with a spelling suggestion.
+_LAMP_KEYS = frozenset({"height", "diffuse", "cutoff"})
 MATERIAL_KEYS = frozenset({"match", "texture", "rgba", "reflectance", "emission", "physical_size"})
 
 
@@ -99,10 +99,10 @@ def check_config(config: dict, where: str) -> None:
     refuse_unknown_keys(config, CONFIG_KEYS, where)
     refuse_unknown_keys(config.get("floor") or {}, FLOOR_KEYS, f"{where}: floor")
     light = config.get("light") or {}
-    retired = sorted(_RETIRED_LIGHT_KEYS & set(light) if isinstance(light, dict) else ())
-    if retired:
+    lamp = sorted(_LAMP_KEYS & set(light) if isinstance(light, dict) else ())
+    if lamp:
         raise ValueError(
-            f"{where}: light: {', '.join(map(repr, retired))} no longer set(s) anything. The bake "
+            f"{where}: light: {', '.join(map(repr, lamp))}: not a setting. The bake "
             f"finds the ceiling itself and lights every room the same way (see `roqsim scenes "
             f"scene-to-mjcf --help`); the one choice a scene makes is 'fixtures: true', when the "
             f"world's own fixtures (strip_light with emit) light it. Remove the key(s)."
@@ -234,15 +234,10 @@ def _add_ground_plane(
     if not config.get("ground_plane", True):
         return
     lo, hi = _bounds(manifest, origin)
-    # Precedence: explicit scene.yaml override -> the ground height the SOURCE world stated (importers
-    # record it from the <plane> they skip) -> the scene's lowest point. That last one is only a guess,
-    # and it is wrong for any scene with geometry below its walkable floor (an outdoor apron, a drain,
-    # a loading dock): the floor lands low and everything standing on it appears sunk into it.
-    ground_z = config.get("ground_z")
-    if ground_z is None:
-        ground_z = manifest.get("ground_z")
-        if ground_z is not None:
-            ground_z = float(ground_z) + origin[2]
+    # The scene's lowest point is only a guess at the ground, and it is wrong for any scene with
+    # geometry below its walkable floor (an outdoor apron, a drain, a loading dock): the floor lands low
+    # and everything standing on it appears sunk into it.
+    ground_z = _stated_ground_z(manifest, origin, config)
     stated = ground_z is not None
     z = float(ground_z) if stated else lo[2]
     centre = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2]
@@ -393,8 +388,7 @@ def find_ceiling(
 def _add_lights(spec: mujoco.MjSpec, manifest: dict, origin: list[float], config: dict) -> None:
     """Light the room: a directional light straight down that casts, and an uplight that does not.
 
-    Why not one lamp at the plan's centre, as the bake once did: it lights the walls with a light
-    that casts. MuJoCo culls front faces when it draws a shadow map, so a wall whose faces are wound
+    Why not one casting lamp at the plan's centre: it lights the walls with a light that casts. MuJoCo culls front faces when it draws a shadow map, so a wall whose faces are wound
     inward -- as an importer or a hand-written tool may write one -- draws its own room-facing side
     into the map and shadows itself in a hard band; and a lamp at the centre throws every shadow away
     from it, across the floor, instead of under what casts it. MuJoCo offers no shadow bias, and the
@@ -453,15 +447,20 @@ def _add_lights(spec: mujoco.MjSpec, manifest: dict, origin: list[float], config
     print(f"  lights: down light {where}, uplight at the plan's centre")
 
 
+def _stated_ground_z(manifest: dict, origin: list[float], config: dict) -> float | None:
+    """The ground height a scene states: the config's ``ground_z``, else the one the SOURCE world
+    stated (importers record it from the <plane> they skip), else None."""
+    if config.get("ground_z") is not None:
+        return float(config["ground_z"])
+    if manifest.get("ground_z") is not None:
+        return float(manifest["ground_z"]) + origin[2]
+    return None
+
+
 def _ground_z(manifest: dict, origin: list[float], config: dict) -> float:
-    """The ground height as the ground plane takes it: stated in the config or by the importer, else
-    the scene's lowest point."""
-    ground_z = config.get("ground_z")
-    if ground_z is None and manifest.get("ground_z") is not None:
-        ground_z = float(manifest["ground_z"]) + origin[2]
-    if ground_z is None:
-        ground_z = _bounds(manifest, origin)[0][2]
-    return float(ground_z)
+    """The ground height as the ground plane takes it: the stated one, else the scene's lowest point."""
+    stated = _stated_ground_z(manifest, origin, config)
+    return stated if stated is not None else float(_bounds(manifest, origin)[0][2])
 
 
 def _obj_footprint(path: str) -> tuple[float, float, float]:
@@ -629,7 +628,7 @@ lighting:
                           # the room: the bake adds only the down light, for the shadows
       fill: [0.3, 0.3, 0.3]   # the headlight's ambient (default shown)
 
-  The keys height, diffuse and cutoff of the former single lamp are refused.
+  A lamp's keys height, diffuse and cutoff are refused.
 """
 
 

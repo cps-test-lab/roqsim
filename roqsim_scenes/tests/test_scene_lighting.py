@@ -8,7 +8,7 @@ maps alone do to a pixel, and depth places the pixel in the room.
   way the walls' faces are wound. MuJoCo culls front faces when it draws a shadow map, so a wall
   wound inward (as an importer or a hand-written tool may write one) draws its own room-facing side
   into the map of a light that reaches it, and shadows itself in a band. A control bakes such a room
-  under the single hemispherical lamp the bake used before and finds the band there, so the measure
+  under a single casting hemispherical lamp at its centre and finds the band there, so the measure
   is shown to see one; the bake's lights find none, since the one that casts never lights a wall.
 - A contact shadow: the floor under the table is darker, relative to the open floor, with the shadows
   than without them.
@@ -216,7 +216,7 @@ def _contact(model):
 
 
 def _with_the_single_lamp(xml):
-    """The baked room under the bake's former light: one 90-degree casting spot at the centre."""
+    """The baked room under a single lamp: one 90-degree casting spot at the centre."""
     spec = mujoco.MjSpec.from_file(str(xml))
     for light in list(spec.lights):
         spec.delete(light)
@@ -235,7 +235,7 @@ def test_the_walls_carry_no_band(tmp_path, inward):
 
 
 def test_the_measure_finds_the_band_the_single_lamp_drew(tmp_path):
-    """The control: inward walls under the bake's former lamp band, so a zero above is a finding."""
+    """The control: inward walls under a single casting lamp band, so a zero above is a finding."""
     assert _band(_with_the_single_lamp(_bake(tmp_path, inward=True))) > 0.1
 
 
