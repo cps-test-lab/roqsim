@@ -227,7 +227,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   leaf should therefore set `frame_color` alone. `leaf: false` makes it a **cased opening** — a
   *Türblatt*-less door: the casing is welded, nothing hangs in it, and no hinge/actuator/ROS surface is
   created, so a wall gap reads as a doorway instead of a hole while staying a `door` in the floorplan (the
-  room loops it belongs to are unchanged) and still registering as a `door` entity. The floorplan generator
+  room loops it belongs to are unchanged) and still registering as a `door` entity; `controllable: true`
+  on it is refused, as there is no leaf to command. The floorplan generator
   auto-places one per door opening (`floorplan_to_world.py --doors-map`, which carries these colours,
   forwards `leaf`, and takes `skip: true` for an opening something else fills — a **window**).
 - **`window`** — a **parametric** fixed window (glazed pane in a slim frame, boxes not meshes) for an

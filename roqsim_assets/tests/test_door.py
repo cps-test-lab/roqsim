@@ -259,6 +259,15 @@ def test_leafless_without_frame_is_refused(tmp_path):
     assert any("place nothing" in e for e in DoorPlugin(bad).validate_config(bad))
 
 
+def test_a_leafless_door_asked_to_be_controllable_is_refused():
+    from roqsim_assets.plugins.door import DoorPlugin
+
+    bad = {"leaf": False, "controllable": True}
+    assert any("no leaf to command" in e for e in DoorPlugin(bad).validate_config(bad))
+    fine = {"leaf": False}
+    assert not any("controllable" in e for e in DoorPlugin(fine).validate_config(fine))
+
+
 def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
     # A 30 kg box parked in the swing arc: the door must never exceed its torque cap, and after
     # stalling it gives up (stops pressing) short of open.

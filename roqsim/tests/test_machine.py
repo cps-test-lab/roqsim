@@ -1112,3 +1112,16 @@ def _steps(engine, count):
     for _ in range(count):
         engine.step()
         yield
+
+
+def test_a_machine_publishes_the_handle_its_class_names_once():
+    engine = _engine(
+        [{"machine_fixtures:HandledPress": {"prefix": "p1_"}, "name": "press"}], gravity=False
+    )
+    try:
+        handle = engine.ctx.blackboard.get("machine:press")
+        plugin = next(p for p in engine.plugins if p.address == "press")
+        assert type(handle).__name__ == "PressHandle" and plugin.handle is handle
+        assert _run_until_done(engine, handle, handle.stroke()).error == ""
+    finally:
+        engine.shutdown()

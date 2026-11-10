@@ -43,7 +43,7 @@ import math
 import mujoco
 import numpy as np
 
-from roqsim.machine import MachineError, MachineHandle, MachinePlugin, program
+from roqsim.machine import MACHINE_SCHEMA, MachineError, MachineHandle, MachinePlugin, program
 from roqsim.schema import Field
 
 from . import quat as Q
@@ -152,7 +152,9 @@ class HumanoidPlugin(MachinePlugin):
     registers_entity = False
     requires_owner = True
     ENTITY_KIND = "humanoid"
+    HANDLE_CLASS = HumanoidHandle
     CONFIG_SCHEMA = {
+        **MACHINE_SCHEMA,
         "graspable": Field(
             list, default=[], doc="entities whose grip sites the hands may hold (fnmatch)"
         ),
@@ -160,10 +162,6 @@ class HumanoidPlugin(MachinePlugin):
         "press_force": Field(
             float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"
         ),
-        "on_error": Field(
-            str, default="raise", choices=["raise", "report"], doc="a defect in a move"
-        ),
-        "home": Field(dict, doc="(a machine's; a humanoid drives no actuator)"),
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -257,8 +255,6 @@ class HumanoidPlugin(MachinePlugin):
 
     def configure(self, ctx) -> None:
         super().configure(ctx)
-        self.handle = HumanoidHandle(self)
-        ctx.blackboard.set(f"machine:{self.machine_entity}", self.handle)
         ctx.blackboard.set(f"humanoid:{self.machine_entity}", self.handle)
         m = ctx.model
         self._holds = {

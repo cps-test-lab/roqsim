@@ -645,7 +645,9 @@ have reached their targets or stopped on them (what an interlock waits for), or 
 Programs advance in ``post_step``, ramps in ``pre_step``.
 
 **Every machine has one handle**, a :class:`~roqsim.machine.MachineHandle` under
-``machine:<name>``, and it is the contract for everything that starts something and is waited on:
+``machine:<name>`` (a subclass of it, with a method per program, where the machine's
+``HANDLE_CLASS`` names one), and it is the contract for everything that starts something and is
+waited on:
 
 -  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
    machine that is busy, raises naming the machine -- stamped with the next sequence number, and

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 @dataclass
 class NavHandle:
-    """Published on the blackboard under ``nav:<entity>``.
+    """Published on the blackboard under ``nav:<entity>:handle``.
 
     ``send_goals`` is thread-safe: it stamps the route, marshals the change onto the physics thread
     via :meth:`~roqsim.context.SimContext.post`, and returns the sequence number synchronously --

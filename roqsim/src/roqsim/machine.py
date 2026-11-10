@@ -77,6 +77,7 @@ import mujoco
 from . import endpoint
 from .context import Entity, SimContext
 from .plugin import Plugin
+from .schema import Field
 
 #: How near a joint is to its target, its servo's standing offset allowed for, when it has reached it
 #: (the joint's unit).
@@ -205,6 +206,24 @@ class _Run:
     token: str = ""
 
 
+#: The keys every machine takes, for a machine that declares a ``CONFIG_SCHEMA`` of its own and
+#: extends this one (``{**MACHINE_SCHEMA, ...}``); one without a schema documents them through the
+#: base's ``Config::`` block.
+MACHINE_SCHEMA = {
+    "home": Field(
+        dict,
+        doc="where an actuator or setpoint stands at the start of an episode and after a reset, "
+        "over the class's HOME",
+    ),
+    "on_error": Field(
+        str,
+        default="raise",
+        choices=list(ON_ERROR),
+        doc="a program that raises: raise (stop the run, naming it) or report (its error in status())",
+    ),
+}
+
+
 class MachinePlugin(Plugin):
     """Base of a machine's plugin: actuators, programs, waits, events and the standard handle.
 
@@ -239,6 +258,9 @@ class MachinePlugin(Plugin):
     NEEDS: dict[str, str] = {}
     #: The kind of the entity a machine registers when it registers one itself.
     ENTITY_KIND = "machine"
+    #: The handle published under ``machine:<name>``: a subclass with methods of its own on it (a
+    #: method per program) names its subclass of :class:`MachineHandle` here.
+    HANDLE_CLASS: type = MachineHandle
     #: How near and how still a joint is when it has reached and stopped on its target.
     REACHED: float = REACHED
     STOPPED_SPEED: float = STOPPED_SPEED
@@ -405,7 +427,7 @@ class MachinePlugin(Plugin):
             )
         self._resolve_actuators(ctx)
         self._resolve_home(ctx)
-        self.handle = MachineHandle(self)
+        self.handle = self.HANDLE_CLASS(self)
         ctx.blackboard.set(f"machine:{self.machine_entity}", self.handle)
 
     def register_entity(
