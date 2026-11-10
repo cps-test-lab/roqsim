@@ -322,8 +322,8 @@ def _free_body_poses(model: mujoco.MjModel, data: mujoco.MjData) -> dict[int, tu
 def _mocap_body_poses(model: mujoco.MjModel, data: mujoco.MjData) -> dict[int, tuple[list, list]]:
     """Map each mocap body -> its world (pos, quat) from ``data.xpos``/``data.xquat``.
 
-    A mocap body's ``body_pos``/``body_quat`` is a static placeholder (the walker parks its bones at
-    z=-50 until the first pose is written); its real placement is written each step to
+    A mocap body's ``body_pos``/``body_quat`` is a static placeholder (the walker parks its bones below
+    the floor until the first pose is written); its real placement is written each step to
     ``data.mocap_pos``/``mocap_quat`` and propagated into ``data.xpos``/``xquat`` by ``mj_forward``.
     Reading the world transform seats the exported pose at the configured stance instead of the park
     pose. Mocap bodies are world children, so the world transform is also the local one.
