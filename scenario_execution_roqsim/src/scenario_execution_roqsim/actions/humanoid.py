@@ -63,6 +63,30 @@ def _unset_or(value, what: str, action, check) -> float | None:
     return value
 
 
+def _via(via: str):
+    """``'x, y; x, y'`` -> the move's ``via``, ``[[x, y], ...]``; ``None`` for none. Raises
+    ``ValueError`` for anything else."""
+    points = []
+    for part in str(via or "").split(";"):
+        if not part.strip():
+            continue
+        try:
+            point = [float(v) for v in part.split(",")]
+        except ValueError:
+            point = []
+        if len(point) != 2:
+            raise ValueError(f"`via` is floor points 'x, y; x, y', not {via!r}")
+        points.append(point)
+    return points or None
+
+
+def _via_of(action, via: str):
+    try:
+        return _via(via)
+    except ValueError as exc:
+        raise ActionError(f"humanoid_{action.MOVE}: {exc}", action=action) from exc
+
+
 class HumanoidApproach(HumanoidMove):
     MOVE = "approach"
 
@@ -72,6 +96,7 @@ class HumanoidApproach(HumanoidMove):
         target: str,
         standoff: float = 0.6,
         facing: float | None = None,
+        via: str = "",
         check: bool = True,
     ):
         facing = _unset_or(
@@ -85,7 +110,14 @@ class HumanoidApproach(HumanoidMove):
             ),
         )
         self._begin(
-            humanoid, {"target": target, "standoff": float(standoff), "facing": facing}, check
+            humanoid,
+            {
+                "target": target,
+                "standoff": float(standoff),
+                "facing": facing,
+                "via": _via_of(self, via),
+            },
+            check,
         )
 
 
@@ -185,8 +217,35 @@ class HumanoidPush(HumanoidPull):
 class HumanoidCarry(HumanoidMove):
     MOVE = "carry"
 
-    def execute(self, humanoid: str, to: str, standoff: float = 0.6, check: bool = True):
-        self._begin(humanoid, {"to": to, "standoff": float(standoff)}, check)
+    def execute(
+        self,
+        humanoid: str,
+        to: str,
+        standoff: float = 0.6,
+        facing: float | None = None,
+        via: str = "",
+        check: bool = True,
+    ):
+        facing = _unset_or(
+            facing,
+            "humanoid_carry: `facing`",
+            self,
+            lambda v: (
+                "1000 meant unset; leave `facing` out to face the target as seen"
+                if v == 1000.0
+                else ""
+            ),
+        )
+        self._begin(
+            humanoid,
+            {
+                "to": to,
+                "standoff": float(standoff),
+                "facing": facing,
+                "via": _via_of(self, via),
+            },
+            check,
+        )
 
 
 class HumanoidPlace(HumanoidMove):

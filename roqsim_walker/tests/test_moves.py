@@ -64,6 +64,15 @@ def _world(humanoid=None, hands=True, navigator=NAV):
                 },
                 "name": "bench",
             },
+            {
+                "box": {
+                    "prefix": "wall_",
+                    "pose": {"position": {"x": 0.0, "y": -3.0}},
+                    "size": [2.0, 0.02, 0.9],
+                    "motion": "static",
+                },
+                "name": "wall",
+            },
         ],
     }
 
@@ -135,6 +144,325 @@ def test_approach_walks_to_a_standoff_and_faces_the_target(sim):
     assert {"walking", "arrived"} <= set(sim.events())
 
 
+def _nearest_on_the_way(sim, seq, point, limit=30.0):
+    """Step until the move ``seq`` ends; how near the body's root came to ``point`` on the way."""
+    nearest, t0 = math.inf, sim.e.ctx.sim_time
+    while True:
+        sim.e.step()
+        x, y, _ = sim.body.root()
+        nearest = min(nearest, math.hypot(x - point[0], y - point[1]))
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            return st, nearest
+        assert sim.e.ctx.sim_time - t0 < limit
+
+
+def test_approach_and_carry_walk_through_their_via_points_first(sim):
+    # The straight way to the button passes nowhere near (-0.5, 1.5); the via makes it.
+    seq = sim.h.approach("start/button", standoff=0.5, via=[[-0.5, 1.5]])
+    st, nearest = _nearest_on_the_way(sim, seq, (-0.5, 1.5))
+    assert st.error == "" and nearest < 0.1
+    x, y, _ = sim.body.root()
+    assert math.hypot(x - 1.5, y - 1.0) < 0.3
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    seq = sim.h.carry("bench", standoff=0.55, via=[[-1.4, 1.6]])
+    st, nearest = _nearest_on_the_way(sim, seq, (-1.4, 1.6))
+    assert st.error == "" and nearest < 0.1
+    assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
+
+
+def test_a_carry_stands_facing_the_way_it_is_given(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    x, y, yaw = sim.body.root()
+    assert abs(math.atan2(math.sin(yaw - math.pi / 2), math.cos(yaw - math.pi / 2))) < math.radians(
+        4
+    )
+    assert math.hypot(x - 0.0, y - (2.5 - 0.55)) < 0.1
+
+
+def test_with_a_body_lag_a_carried_tote_stays_in_front_of_the_drawn_body():
+    """A walker drawn behind its nav root carries a tote in front of the body drawn, not of the nav
+    root: the hands start and stop with the body, so the tote neither runs ahead of it nor is
+    jerked by a root that starts at once."""
+    world = _world()
+    world["components"][0]["walker"]["body_lag"] = 0.15
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)  # walks some 3 m
+        pelvis = sim.m.body("worker/pelvis").id
+        tote = sim.m.body("tote_1").id
+        ahead = []
+        seq = sim.h.approach("start/button", standoff=0.6)
+        while True:
+            sim.e.step()
+            d = sim.d.xpos[tote][:2] - sim.d.xpos[pelvis][:2]
+            ahead.append(float(np.linalg.norm(d)))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == ""
+        assert max(ahead) - min(ahead) < 0.12, (min(ahead), max(ahead))
+        # and a walk ends once the drawn body has come to rest, not when its root arrives
+        st = sim.body.st
+        assert np.hypot(*(np.asarray(st.body_pos[:2]) - np.asarray(st.pos[:2]))) < 0.006
+    finally:
+        engine.shutdown()
+
+
+def test_a_carry_whose_first_via_point_is_where_it_stands_sets_off_toward_the_next(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, _ = sim.body.root()
+    seq = sim.h.carry("bench", standoff=0.55, via=[[x + 0.01, y], [-1.4, 1.6]])
+    st, nearest = _nearest_on_the_way(sim, seq, (-1.4, 1.6))
+    assert st.error == "" and nearest < 0.1
+
+
+def test_a_carry_along_a_way_turns_at_its_corners_so_the_load_stays_over_the_way(sim):
+    """Carrying, the body turns at a carrying pace; along a way it stops and turns at each point,
+    so the tote in front of it stays over the way's legs instead of swinging out at a corner."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, _ = sim.body.root()
+    corner = (x, y + 1.6)  # straight north, then a right angle east toward the bench's side
+    seq = sim.h.carry(
+        "bench", standoff=0.55, facing=math.pi / 2, via=[list(corner), [-0.2, corner[1]]]
+    )
+    tote = sim.m.body("tote_1").id
+    off = 0.0
+    while True:
+        sim.e.step()
+        p = sim.d.xpos[tote]
+        if y + 0.6 < p[1] < corner[1] - 0.1 and p[0] < x + 0.3:  # along the first leg: over it
+            off = max(off, abs(p[0] - x))
+        elif p[1] > corner[1] - 0.1:  # past the corner: over the second leg
+            off = max(off, abs(p[1] - corner[1]) if x + 0.6 < p[0] < -0.5 else 0.0)
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            break
+    assert st.error == "" and off < 0.12, off
+
+
+def test_carrying_it_turns_the_way_its_load_sweeps_clear():
+    """A post stands where the short way round would swing the tote: the body turns the long way,
+    and the tote never meets the post."""
+    world = _world()
+    world["components"][0]["walker"]["pose"] = {
+        "position": {"x": 0.0, "y": 0.0},
+        "orientation": {"yaw": 0.0},
+    }
+    world["components"] = [c for c in world["components"] if c.get("name") != "tote_1"] + [
+        {
+            "tote": {"pose": {"position": {"x": 0.6, "y": 0.0}, "orientation": {"yaw": 1.5708}}},
+            "name": "tote_1",
+        },
+        {
+            "box": {
+                "prefix": "post_",
+                "pose": {"position": {"x": 0.1, "y": 0.6}},
+                "size": [0.1, 0.1, 1.8],
+                "motion": "static",
+            },
+            "name": "post",
+        },
+    ]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        x, y, _ = sim.body.root()
+        to = {"position": {"x": x - 1.6, "y": y + 0.9, "z": 0.0}}
+        seq = sim.h.carry(to, standoff=0.6)
+        post = sim.m.body("post_box").id
+        tote = sim.m.body("tote_1").id
+        nearest = math.inf
+        while True:
+            sim.e.step()
+            nearest = min(
+                nearest, float(np.linalg.norm(sim.d.xpos[tote][:2] - sim.d.xpos[post][:2]))
+            )
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert nearest > 0.3, nearest
+    finally:
+        engine.shutdown()
+
+
+def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
+    """Off what it stood on, the load goes straight up first: drawn in at once, a box would drag
+    what it stands in (a drawer's stops) along with it."""
+    sim.ok("approach", target="tote_1", standoff=0.6)
+    sim.ok("grasp", hand="both", target="tote_1")
+    tote = sim.m.body("tote_1").id
+    start = sim.d.xpos[tote].copy()
+    seq = sim.h.carry("bench", standoff=0.55)
+    drift = 0.0
+    while sim.d.xpos[tote][2] < start[2] + 0.04:
+        sim.e.step()
+        drift = max(drift, float(np.linalg.norm(sim.d.xpos[tote][:2] - start[:2])))
+        assert not (sim.h.status().seq == seq and sim.h.status().finished)
+    assert drift < 0.005, drift
+
+
+def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
+    """The hold is a spring: the load comes over the place a moment after the hands. It is lowered
+    once it is there, so it does not come down on a rim beside the place; and it is set down only
+    once it rests at the place's height."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    seq = sim.h.place({"position": {"x": 0.1, "y": 2.45, "z": 0.75}}, release=False)
+    tote = sim.m.body("tote_1").id
+    seen = 0
+    at_lowering = at_set_down = None
+    while True:
+        sim.e.step()
+        events = [e for e in sim.e.ctx.events.all()[sim._first :] if e["source"] == "worker"]
+        for e in events[seen:]:
+            if e["event"] == "lowering":
+                at_lowering = sim.d.xpos[tote].copy()
+            if e["event"] == "set_down":
+                at_set_down = sim.d.xpos[tote].copy()
+        seen = len(events)
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            break
+    assert st.error == ""
+    assert np.linalg.norm(at_lowering[:2] - [0.1, 2.45]) < 0.015, at_lowering
+    assert abs(at_set_down[2] - 0.75) < 0.02, at_set_down
+
+
+def test_a_place_beyond_reach_sets_the_load_down_as_far_forward_as_the_hands_reach(sim):
+    """A load held by its ends has its hands to the sides: a place past its reach sets it down with
+    the hands as far in front of the body as they reach, not short of that by their spread."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    x, y, yaw = sim.body.root()
+    ahead = np.array([math.cos(yaw), math.sin(yaw)])
+    seq = sim.h.place({"position": {"x": x, "y": 2.75, "z": 0.75}}, release=False)
+    out = None
+    while True:
+        sim.e.step()
+        if "lowering" in sim.events() and out is None:
+            out = max(float((sim.body.grip(sim.d, s)[0][:2] - [x, y]) @ ahead) for s in "lr")
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            break
+    assert st.error == "", st.error
+    assert out > sim.body.place_reach() - 0.015, out
+
+
+def test_a_place_the_hands_cannot_bring_the_load_over_fails_holding_it(sim, monkeypatch):
+    """Hands that stop short of the place -- an arm at its full stretch -- leave the load short of
+    it: the place fails, saying how near it came, and keeps holding it rather than lowering it
+    beside the place."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    tote = sim.m.body("tote_1").id
+    # each hand stops 2 cm before it would bring the load over the place
+    limit = {
+        s: 2.45 - 0.02 + float(sim.body.grip(sim.d, s)[0][1] - sim.d.xpos[tote][1]) for s in "lr"
+    }
+    set_hand = sim.body.set_hand
+
+    def short(side, pos, quat=None, frame="grip"):
+        pos = np.array(pos, float)
+        pos[1] = min(pos[1], limit[side])
+        set_hand(side, pos, quat, frame)
+
+    monkeypatch.setattr(sim.body, "set_hand", short)
+    st = sim.run("place", at={"position": {"x": 0.0, "y": 2.45, "z": 0.75}})
+    assert "and no nearer" in st.error, st.error
+    assert "lowering" not in sim.events()
+    assert not {"set_down", "released"} & set(sim.events())  # still held
+
+
+def test_a_place_whose_load_comes_down_on_something_above_the_place_fails_caught_on_it():
+    """A load that comes to rest on something above the place's surface fails, caught on it, and
+    is held: let go there, it would fall."""
+    world = _world()
+    world["components"].append(
+        {
+            "box": {
+                "prefix": "stop_",
+                "pose": {"position": {"x": 5.0, "y": 5.0, "z": 0.05}},
+                "size": [0.1, 0.1, 0.1],
+                "motion": "driven",
+            },
+            "name": "stop",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+        tote = sim.m.body("tote_1").id
+        stop = int(sim.m.body_mocapid[sim.m.body("stop_box").id])
+        seq = sim.h.place({"position": {"x": 0.0, "y": 2.45, "z": 0.75}})
+        slipped = False
+        while True:
+            sim.e.step()
+            if not slipped and "lowering" in sim.events():
+                # a block slips in under it, its top 5 cm above the place
+                slipped = True
+                p = sim.d.xpos[tote]
+                sim.d.mocap_pos[stop] = [p[0], p[1], p[2] - 0.055]
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error.startswith("caught on stop_box"), st.error
+        assert not {"set_down", "released"} & set(sim.events())  # still held
+    finally:
+        engine.shutdown()
+
+
+def test_a_walk_whose_body_does_not_come_to_rest_fails(sim, monkeypatch):
+    """A body that does not come to rest where it was walked to fails the move rather than
+    starting the next one from where it is still moving."""
+    monkeypatch.setattr(sim.body, "at_rest", lambda: False)
+    st = sim.run("approach", target="tote_1", standoff=0.6)
+    assert st.error.startswith("cannot stand at tote_1: the body did not come to rest"), st.error
+
+
+def test_a_place_with_a_heading_sets_the_load_down_square_to_it(sim):
+    """A place with a frame -- a site's, or a world pose with a heading -- takes the load square to
+    it, to the nearest quarter turn: the hold keeps a load as it was taken, a few degrees off."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    at = {"position": {"x": 0.0, "y": 2.45, "z": 0.75}, "orientation": {"yaw": 0.25}}
+    sim.ok("place", at=at)
+    for _ in range(300):
+        sim.e.step()
+    rot = sim.d.body("tote_1").xmat.reshape(3, 3)
+    yaw = math.atan2(rot[1, 0], rot[0, 0])
+    off = (yaw - 0.25 + math.pi / 4) % (math.pi / 2) - math.pi / 4
+    assert abs(math.degrees(off)) < 2.0, math.degrees(yaw)
+
+
+def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
+    st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
+    assert st.error.startswith("via: a point is [x, y]")
+    st = sim.run("approach", target="start/button", via=[[1.0, 2.0, 3.0]])
+    assert st.error.startswith("via: a point is [x, y]")
+
+
 def test_approach_to_nothing_fails_naming_it(sim):
     st = sim.run("approach", target="nowhere")
     assert "unknown target 'nowhere'" in st.error
@@ -182,7 +510,7 @@ def test_a_drawer_pulled_to_its_stop_is_out_and_one_held_shut_is_stuck(sim):
     sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
     sim.ok("pull", hand="right", distance=0.6)  # more than its travel: it ends at the stop
     assert abs(sim.qpos("cab/drawer_1/slide") - 0.45) < 0.01
-    pulled = [e for e in sim.e.ctx.events.all() if e["event"] == "pulled"][-1]
+    pulled = [e for e in sim.e.ctx.events.all()[sim._first :] if e["event"] == "pulled"][-1]
     assert pulled["distance"] < 0.5
 
 
@@ -232,6 +560,112 @@ def test_both_hands_carry_a_tote_and_place_it_on_a_bench(sim):
     tote = sim.d.body("tote_1").xpos
     assert abs(tote[2] - 0.75) < 0.02 and abs(tote[1] - 2.5) < 0.3  # resting on the bench top
     assert sim.h.status().error == ""
+
+
+def test_a_tote_is_carried_to_and_placed_at_a_world_pose_looking_at_a_world_point(sim):
+    top = {"position": {"x": 0.0, "y": 2.5, "z": 0.75}}
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to=top, standoff=0.55, facing=math.pi / 2)
+    sim.ok("look_at", target=[0.0, 2.5, 0.75])
+    sim.ok("place", at=top)
+    for _ in range(300):
+        sim.e.step()
+    tote = sim.d.body("tote_1").xpos
+    assert abs(tote[2] - 0.75) < 0.02 and abs(tote[1] - 2.5) < 0.3
+
+
+def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
+    """What is set down is moved over the highest thing between where it is and where it goes,
+    not only over the target's own surface: a way across the bench (0.75 m) passes over it, one
+    beside it does not."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+    tote = sim.m.body("tote_1").id
+    across = plugin._path_top([-1.5, 2.5], [1.5, 2.5], tote, 0.0)
+    beside = plugin._path_top([-1.5, 1.5], [1.5, 1.5], tote, 0.0)
+    assert abs(across - 0.75) < 0.01 and beside < 0.01
+    # a wall 2 cm thick, thinner than the tote, is found under it on the way across
+    assert abs(plugin._top([0.0, -3.07, 0.0], tote) - 0.9) < 0.01
+    assert abs(plugin._path_top([0.0, -2.6], [0.0, -3.4], tote, 0.0) - 0.9) < 0.01
+
+
+def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
+    world = _world()
+    world["components"].append(
+        {
+            "box": {
+                "pose": {"position": {"x": -1.5, "y": 0.0, "z": 0.06}},
+                "size": [0.1, 0.1, 0.1],
+                "motion": "physics",
+                "prefix": "part_",
+            },
+            "name": "part",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        for _ in range(200):  # the part settles in the tote
+            sim.e.step()
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=1.3)  # over the floor, short of the bench
+        plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+        tote = sim.m.body("tote_1").id
+        part = sim.d.xpos[sim.m.body("part_box").id].copy()
+        assert part[2] > 0.5  # carried in the tote
+        top, under = plugin._surface(np.array([part[0], part[1], 0.0]), tote)
+        assert top[2] < 0.01 and under == 0  # the floor, under the tote and the part in it
+        # jolted off the tote's floor by the walk, touching nothing, it still rides in it
+        free = sim.m.jnt_qposadr[sim.m.body("part_box").jntadr[0]]
+        sim.d.qpos[free + 2] += 0.03
+        mujoco.mj_forward(sim.m, sim.d)
+        top, under = plugin._surface(np.array([part[0], part[1], 0.0]), tote)
+        assert top[2] < 0.01 and under == 0
+        here = sim.d.xpos[tote][:2].copy()
+        assert plugin._path_top(here, here, tote, 0.0) < 0.01
+        # set down, it comes down onto the bench, not let go where the part touches it
+        sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
+        sim.ok("place", at="bench", release=False)
+        assert abs(sim.d.xpos[tote][2] - 0.75) < 0.02  # on the bench, still in the hands
+    finally:
+        engine.shutdown()
+
+
+def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
+    """What is set down stands on one thing, level: set down where the hands reach, a tote half
+    over the bench's edge is refused, and one wholly on it is set down."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)  # the tote over the edge
+    st = sim.run("place", at="bench")
+    assert st.error.startswith("out of reach") and "closer" in st.error, st.error
+    assert sim.d.body("tote_1").xpos[2] > 0.7  # still held
+    sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
+    sim.ok("place", at="bench")
+    for _ in range(300):
+        sim.e.step()
+    assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
+
+
+def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
+    """A floor drawn but colliding with nothing (a hall's) is nothing to stand on: a corner over it
+    is a corner over nothing."""
+    floor = [g for g in range(sim.m.ngeom) if sim.m.geom_bodyid[g] == 0]
+    saved = sim.m.geom_contype[floor].copy(), sim.m.geom_conaffinity[floor].copy()
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
+    try:
+        sim.m.geom_contype[floor] = 0
+        sim.m.geom_conaffinity[floor] = 0
+        st = sim.run("place", at={"position": {"x": 0.0, "y": 2.5, "z": 0.75}})
+        assert st.error.startswith("out of reach") and "closer" in st.error, st.error
+    finally:
+        sim.m.geom_contype[floor], sim.m.geom_conaffinity[floor] = saved
 
 
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):

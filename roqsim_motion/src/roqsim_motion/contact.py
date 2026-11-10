@@ -195,9 +195,14 @@ def contact_force(model, data, body: int, exclude: set | None = None) -> float:
 
 def touching(model, data, body: int, ignore: set) -> bool:
     """Whether ``body`` touches any body not in ``ignore``."""
+    return touching_body(model, data, body, ignore) >= 0
+
+
+def touching_body(model, data, body: int, ignore: set) -> int:
+    """A body ``body`` touches that is not in ``ignore``, or -1."""
     for i in range(data.ncon):
         c = data.contact[i]
         b1, b2 = int(model.geom_bodyid[c.geom1]), int(model.geom_bodyid[c.geom2])
         if body in (b1, b2) and (b2 if b1 == body else b1) not in ignore:
-            return True
-    return False
+            return b2 if b1 == body else b1
+    return -1

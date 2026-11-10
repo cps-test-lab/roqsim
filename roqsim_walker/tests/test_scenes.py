@@ -150,6 +150,9 @@ def test_scene_3_a_full_tote_swapped_for_an_empty_one_at_a_cells_drawer():
 
     for engine in _both("handling_box_swap", 150.0, watch):
         assert deepest and max(deepest) < 0.0, f"a leg is {max(deepest):.3f} m inside the rack"
+        m, d = engine.ctx.model, engine.ctx.data
+        shut = float(d.qpos[m.jnt_qposadr[m.joint("cell/drawer_1/slide").id]])
+        assert shut < 0.005, f"the drawer is left {shut:.3f} m open"
         d = engine.ctx.data
         full, empty = d.body("tote_full").xpos, d.body("tote_empty").xpos
         assert (

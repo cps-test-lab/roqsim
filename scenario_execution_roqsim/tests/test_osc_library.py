@@ -76,6 +76,7 @@ def _registered_actions() -> dict[str, str]:
     """``name -> module:Class``, as this package's ``pyproject.toml`` registers them -- read from
     the source rather than from an installed copy, whose metadata may be another checkout's."""
     import tomllib
+
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     return project["project"]["entry-points"]["scenario_execution.actions"]
 
@@ -153,7 +154,7 @@ scenario test_every_action:
             zone_dwelled(zone: 'gate', pattern: 'box_*', since: 0.0)
             zone_left(zone: 'gate', pattern: 'box_*')
             humanoid_approach(humanoid: 'worker', target: 'press/button', standoff: 0.5, facing: 1.5,
-                              check: false)
+                              via: '0.5, 1.0; 1.0, 1.0', check: false)
             humanoid_reach(humanoid: 'worker', hand: 'right', target: 'press/button',
                            relative: '0.1, 0, 0', orient: false, pose: 'point', check: false)
             humanoid_press(humanoid: 'worker', hand: 'right', target: 'press/button', max_force: 30.0,
@@ -162,7 +163,8 @@ scenario test_every_action:
             humanoid_release(humanoid: 'worker', hand: 'both', check: false)
             humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
             humanoid_push(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
-            humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, check: false)
+            humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, facing: 1.5, via: '1.0, 0.0',
+                           check: false)
             humanoid_place(humanoid: 'worker', at: 'bench', release: true, check: false)
             humanoid_play(humanoid: 'worker', clip: 'wave', joints: 'arm_r, head', weight: 0.5,
                           loop: true, fade: 0.2, speed: 1.5, check: false)
@@ -438,6 +440,16 @@ def test_the_where_conditions_parse_and_hand_over_positions_in_metres():
         node.execute(**_args(node))
 
 
+def test_a_humanoid_via_is_floor_points_and_anything_else_is_refused():
+    from scenario_execution_roqsim.actions.humanoid import _via
+
+    assert _via("") is None
+    assert _via("0.5, 1.0; 1.0, -2") == [[0.5, 1.0], [1.0, -2.0]]
+    for bad in ("1.0", "1, 2, 3", "1, north"):
+        with pytest.raises(ValueError, match="floor points"):
+            _via(bad)
+
+
 def _executed(text: str, cls):
     """The single *cls* node of *text*, executed with what the parser resolves for it."""
     tree = _build("import osc.roqsim\nscenario test_one:\n    do serial:\n        " + text + "\n")
@@ -453,6 +465,7 @@ def _executed(text: str, cls):
     ("text", "cls", "param"),
     [
         ("humanoid_approach(humanoid: 'w', target: 'bench')", "HumanoidApproach", "facing"),
+        ("humanoid_carry(humanoid: 'w', to: 'bench')", "HumanoidCarry", "facing"),
         (
             "humanoid_press(humanoid: 'w', hand: 'right', target: 'b/button')",
             "HumanoidPress",
@@ -480,18 +493,23 @@ def test_an_optional_number_left_out_is_unset_not_a_magic_number(text, cls, para
             "leave `facing` out",
         ),
         (
+            "humanoid_carry(humanoid: 'w', to: 'bench', facing: 1000.0)",
+            "leave `facing` out",
+        ),
+        (
             "humanoid_press(humanoid: 'w', hand: 'right', target: 'b/button', max_force: 0.0)",
             "leave `max_force` out",
         ),
         ("zone_entered(zone: 'gate', since: -1.0)", "leave `since` out"),
         ("machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1')", "JSON object"),
     ],
-    ids=["facing-1000", "max_force-0", "since-negative", "args-pairs"],
+    ids=["facing-1000", "carry-facing-1000", "max_force-0", "since-negative", "args-pairs"],
 )
 def test_an_old_form_is_refused_naming_the_new_one(text, said):
     from scenario_execution.actions.base_action import ActionError
 
     cls = {"humanoid_approach": "HumanoidApproach", "humanoid_press": "HumanoidPress"}
+    cls["humanoid_carry"] = "HumanoidCarry"
     cls |= {"zone_entered": "ZoneEntered", "machine_run": "MachineRun"}
     name = cls[text.split("(")[0]]
     with pytest.raises(ActionError, match=said):
