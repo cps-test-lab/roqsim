@@ -1510,6 +1510,12 @@ class HumanoidPlugin(MachinePlugin):
                 self.body.set_hand(s, p + lead, q)
             self._check_holds()
             yield
+        missing = float(np.linalg.norm(low()[:2] - where))
+        if missing > 2 * OVER_AT:
+            self.fail(
+                f"out of reach: the hands bring it to {missing:.3f} m of {at} and no nearer -- "
+                f"approach {at} closer (a smaller standoff)"
+            )
         self.step("lowering", at=at)
         starts = {s: (goals[s]()[0] + lead, goals[s]()[1]) for s in sides}
         lead = np.zeros(3)
