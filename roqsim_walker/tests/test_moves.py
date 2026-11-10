@@ -63,6 +63,15 @@ def _world(humanoid=None, hands=True, navigator=NAV):
                 },
                 "name": "bench",
             },
+            {
+                "box": {
+                    "prefix": "wall_",
+                    "pose": {"position": {"x": 0.0, "y": -3.0}},
+                    "size": [2.0, 0.02, 0.9],
+                    "motion": "static",
+                },
+                "name": "wall",
+            },
         ],
     }
 
@@ -365,6 +374,9 @@ def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
     across = plugin._path_top([-1.5, 2.5], [1.5, 2.5], tote, 0.0)
     beside = plugin._path_top([-1.5, 1.5], [1.5, 1.5], tote, 0.0)
     assert abs(across - 0.75) < 0.01 and beside < 0.01
+    # a wall 2 cm thick, thinner than the tote, is found under it on the way across
+    assert abs(plugin._top([0.0, -3.07, 0.0], tote) - 0.9) < 0.01
+    assert abs(plugin._path_top([0.0, -2.6], [0.0, -3.4], tote, 0.0) - 0.9) < 0.01
 
 
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():

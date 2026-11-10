@@ -1129,7 +1129,7 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _surface(self, point, held: int, accept=None):
+    def _surface(self, point, held: int, accept=None, inside=None):
         """The top of whatever is under ``point``, and its body: a ray cast down from 1.5 m above
         it, past what is held (and what is welded to it), what rides in or on it
         (:meth:`_contents`), the humanoid's own bodies, anything that collides with nothing, and
@@ -1137,7 +1137,7 @@ class HumanoidPlugin(MachinePlugin):
         m, d = self._m, self._d
         start = np.array([point[0], point[1], point[2] + 1.5])
         geomid = np.zeros(1, np.int32)
-        inside = self._contents(held)
+        inside = self._contents(held) if inside is None else inside
         while True:
             dist = mujoco.mj_ray(m, d, start, np.array([0.0, 0.0, -1.0]), None, 1, held, geomid)
             if dist < 0:
@@ -1187,9 +1187,10 @@ class HumanoidPlugin(MachinePlugin):
                 todo.append(other)
         return found
 
-    def _footprint(self, held: int) -> list:
+    def _footprint(self, held: int, spacing: float | None = None) -> list:
         """The held object's horizontal extent around its origin, as it is turned now: the corners
-        of its geoms' boxes, inset by a centimetre, and its origin."""
+        of its geoms' boxes, inset by a centimetre, and its origin; with ``spacing`` (m), a grid
+        over that extent as well, so a wall thinner than the object is found under it."""
         m, d = self._m, self._d
         pts = []
         for g in range(m.ngeom):
@@ -1204,9 +1205,12 @@ class HumanoidPlugin(MachinePlugin):
             return [np.zeros(3)]
         pts = np.array(pts)
         lo, hi = pts[:, :2].min(axis=0) + 0.01, pts[:, :2].max(axis=0) - 0.01
-        return [np.zeros(3)] + [
-            np.array([x, y, 0.0]) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
-        ]
+        if spacing:
+            xs = np.linspace(lo[0], hi[0], max(2, int(math.ceil((hi[0] - lo[0]) / spacing)) + 1))
+            ys = np.linspace(lo[1], hi[1], max(2, int(math.ceil((hi[1] - lo[1]) / spacing)) + 1))
+        else:
+            xs, ys = (lo[0], hi[0]), (lo[1], hi[1])
+        return [np.zeros(3)] + [np.array([x, y, 0.0]) for x in xs for y in ys]
 
     def _on(self, target):
         """A test for a body being the target's, or under it in the tree: what is set down on a
@@ -1225,21 +1229,24 @@ class HumanoidPlugin(MachinePlugin):
 
         return accept
 
-    def _top(self, point, held: int, accept=None) -> float:
-        """The highest surface under the held object's footprint (:meth:`_footprint`) if it stood
-        with its origin over ``point``; with ``accept``, of the bodies it accepts."""
+    def _top(self, point, held: int, accept=None, spacing: float | None = 0.04) -> float:
+        """The highest surface under the held object's footprint (:meth:`_footprint`, a grid at
+        ``spacing``) if it stood with its origin over ``point``; with ``accept``, of the bodies it
+        accepts."""
         tops = []
-        for off in self._footprint(held):
-            p, under = self._surface(np.asarray(point, float) + off, held, accept)
+        inside = self._contents(held)
+        for off in self._footprint(held, spacing):
+            p, under = self._surface(np.asarray(point, float) + off, held, accept, inside)
             if under >= 0:
                 tops.append(float(p[2]))
         return max(tops) if tops else float(point[2])
 
     def _path_top(self, a, b, held: int, z: float) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`) with its
-        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to."""
+        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to: in
+        steps finer than the footprint's grid, so that together they pass over a wall 2 cm thick."""
         a, b = np.asarray(a, float), np.asarray(b, float)
-        steps = max(2, int(math.ceil(float(np.linalg.norm(b - a)) / 0.05)))
+        steps = max(2, int(math.ceil(float(np.linalg.norm(b - a)) / 0.015)))
         return max(
             self._top(np.array([*(a + k / steps * (b - a)), z]), held) for k in range(steps + 1)
         )
