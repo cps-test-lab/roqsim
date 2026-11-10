@@ -130,6 +130,11 @@ class Client:
             )
         return True, result
 
+    def forget(self, rid: int) -> None:
+        """Stop waiting for request *rid*: its reply, kept or still to come, is dropped."""
+        self._late.discard(rid)
+        self._replies.pop(rid, None)
+
     def hello(self) -> dict:
         """Who is serving: pid, world, URIs, run state and the number of endpoints."""
         info = self.request("hello")

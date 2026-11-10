@@ -55,6 +55,12 @@ class SimAction(BaseAction):
                 action=self,
             )
 
+    def initialise(self):
+        """Each activation starts its reads afresh (:meth:`~.access.WorldAccess.restart_reads`)."""
+        if self._access is not None:
+            self._access.restart_reads()
+        super().initialise()
+
     def shutdown(self):
         if self._access is not None:
             self._access.teardown()
