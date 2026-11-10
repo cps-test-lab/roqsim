@@ -966,8 +966,28 @@ def _entry_point(name: str):
 
 
 @functools.cache
+def _own_distributions() -> set[str]:
+    """The distributions this repository ships, by the ``name`` of each package's pyproject: a
+    plugin another repository registers in the same environment is that repository's to check."""
+    import tomllib
+
+    root = Path(__file__).resolve().parents[2]
+    return {
+        tomllib.loads(path.read_text())["project"]["name"].replace("-", "_").lower()
+        for path in root.glob("*/pyproject.toml")
+    }
+
+
+@functools.cache
 def _registered() -> list[str]:
-    return sorted({ep.name for ep in entry_points(group="roqsim.plugins")})
+    own = _own_distributions()
+    return sorted(
+        {
+            ep.name
+            for ep in entry_points(group="roqsim.plugins")
+            if ep.dist is None or ep.dist.name.replace("-", "_").lower() in own
+        }
+    )
 
 
 def test_every_registered_plugin_is_checked_exempted_or_skipped():
