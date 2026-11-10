@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Mobile-manipulator robot models for roqsim: composite platforms that are a mobile base plus an arm (Panda-on-Omron-LD-60 'Frankie', PAL TIAGo Pro)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # A mobile manipulator belongs to NEITHER of the two family packages it is made of, and this package
 # exists to say so. `roqsim_mobile` is wheeled bases; `roqsim_manipulation` is arms. A robot that is both,
 # kept in `roqsim_mobile`, would force that package to declare `roqsim_manipulation` -- inverting its own

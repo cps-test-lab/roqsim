@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A Gaussian-splat renderer for roqsim: a captured room as every camera sees it, the robots drawn into it by depth."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "roqsim",
     "numpy>=1.24",

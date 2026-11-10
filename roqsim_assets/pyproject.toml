@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Shared, reusable assets for roqsim scenes: surface textures (roqsim_assets:<Name>), placeable props (spawn_model), and the machines `conveyor` and `door` with their models."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # The conveyor plugin drives a MuJoCo belt, so this package carries a light runtime dependency on
 # the core simulator + mujoco (the texture/prop assets themselves remain code-free data).
 dependencies = [

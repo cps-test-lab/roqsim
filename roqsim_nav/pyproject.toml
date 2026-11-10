@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "2D navigation for roqsim: A* over a grid read off the compiled model, a behaviour tree that follows it, and the `navigator` plugin that moves an entity along it."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # `roqsim` and nothing else from this tree. The `navigator` plugin builds no geometry and imports no
 # sibling: it moves an entity another plugin provided, reached through `ctx.entities` and the
 # blackboard. That is what lets a robot family depend on this package -- `roqsim_walker` does -- and

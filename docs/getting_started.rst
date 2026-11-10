@@ -6,7 +6,7 @@ The shortest path from zero to a running simulation. No ROS, no concepts — jus
 Prerequisites
 -------------
 
-* Linux with Python 3.10+ and ``git`` (MuJoCo is installed automatically into the venv).
+* Linux with Python 3.11+ and ``git`` (MuJoCo is installed automatically into the venv).
 
 Three steps
 -----------

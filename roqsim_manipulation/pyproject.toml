@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Manipulator PLUGINS for roqsim: spawn_arm, arm_controller, cartesian_admittance. Ships no geometry and no experiment logic; arm and gripper models live in roqsim_manipulation_assets."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "roqsim",
     "mujoco>=3.14,<3.15",

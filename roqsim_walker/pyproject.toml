@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Kinematic pedestrian walkers for roqsim: a skinned humanoid on mocap bodies, navigated by roqsim_nav."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "roqsim",
     "roqsim_nav",   # the shared navigator: plan, follow, avoid; this package supplies the body
