@@ -133,8 +133,15 @@ def test_a_roofed_building_is_lit_from_under_its_slab(tmp_path):
     for roofed in (True, False):
         out = tmp_path / ("roofed" if roofed else "open")
         world = fw.generate(
-            square, out / "scene", "t", out / "t.yaml", {}, ceiling_h=3.0, wall_thickness=0.15,
-            opening_h=2.0, ceiling=roofed,
+            square,
+            out / "scene",
+            "t",
+            out / "t.yaml",
+            {},
+            ceiling_h=3.0,
+            wall_thickness=0.15,
+            opening_h=2.0,
+            ceiling=roofed,
         )
         model = mujoco.MjModel.from_xml_path(str(world.parent / "t" / "t.xml"))
         down = model.light("scene_down")

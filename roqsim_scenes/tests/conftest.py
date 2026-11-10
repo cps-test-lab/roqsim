@@ -8,8 +8,8 @@ Two kinds, each a marker:
   ``make test-gltf`` installs it and sets ``ROQSIM_GLTF_VALIDATOR=required``, and the test then fails
   when the validator is missing rather than skipping.
 
-Where one is missing its tests are deselected, not skipped: the run's header says which and why, and
-the summary counts them, so a run without them reads as what it is rather than as a skipped check.
+Where one is missing its tests are deselected, not skipped: the run's summary says which and why, and
+counts them, so a run without them reads as what it is rather than as a skipped check.
 """
 
 from __future__ import annotations
@@ -49,5 +49,7 @@ def pytest_collection_modifyitems(config, items):
         items[:] = keep
 
 
-def pytest_report_header(config):
-    return [f"roqsim_scenes: '{m}' tests deselected: {why}" for m, why in _missing().items()]
+def pytest_terminal_summary(terminalreporter):
+    """Named in the summary, which ``-q`` (as ``make test`` runs) still prints; the header it drops."""
+    for m, why in _missing().items():
+        terminalreporter.write_line(f"roqsim_scenes: '{m}' tests deselected: {why}")

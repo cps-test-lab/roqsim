@@ -24,5 +24,6 @@ materials:               # texture objects by name glob (first match wins); rgba
     rgba: [1.3, 1.3, 1.3, 1.0]
     physical_size: 2.4
 
-light:                   # the bake places its lights itself (scene-to-mjcf --help); this is the
-  fill: [0.3, 0.3, 0.3]  # headlight's ambient fill
+# The bake places its lights itself (scene-to-mjcf --help); a scene sets the headlight's fill.
+light:
+  fill: [0.3, 0.3, 0.3]

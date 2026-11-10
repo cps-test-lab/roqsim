@@ -1,7 +1,7 @@
 """Every bundled world exports as a glTF file the Khronos glTF Validator finds nothing wrong with.
 
 Run by `make test-gltf`, which installs the pinned validator (tools/gltf_validator) and requires it.
-Under `make test` it is deselected, and the run's header says so (conftest.py): exporting the
+Under `make test` it is deselected, and the run's summary says so (conftest.py): exporting the
 building-sized worlds is slow, and the validator is a Node.js program `make test` does not require.
 """
 

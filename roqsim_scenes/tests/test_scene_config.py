@@ -34,7 +34,9 @@ def test_a_material_entry_key_is_refused_where_it_sits():
 
 
 def test_floor_and_light_blocks_are_checked():
-    with pytest.raises(ValueError, match=r"light: unknown key\(s\) 'fixturs' \(did you mean 'fixtures'"):
+    with pytest.raises(
+        ValueError, match=r"light: unknown key\(s\) 'fixturs' \(did you mean 'fixtures'"
+    ):
         scene_to_mjcf.check_config({"light": {"fixturs": True}}, "scene.yaml")
     with pytest.raises(ValueError, match=r"floor: unknown key\(s\) 'colour'"):
         scene_to_mjcf.check_config({"floor": {"colour": [1, 1, 1]}}, "scene.yaml")

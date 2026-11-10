@@ -185,7 +185,9 @@ def test_batten_rejects_a_castshadow_that_is_not_a_boolean():
     from roqsim_assets.plugins.strip_light import StripLightPlugin
 
     cfg = {"pose": _AT_2_3, "castshadow": "yes"}
-    assert any("'castshadow' must be a boolean" in e for e in StripLightPlugin(cfg).validate_config(cfg))
+    assert any(
+        "'castshadow' must be a boolean" in e for e in StripLightPlugin(cfg).validate_config(cfg)
+    )
 
 
 def test_batten_rejects_a_position_without_a_height(tmp_path):

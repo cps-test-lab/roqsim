@@ -19,9 +19,9 @@ from __future__ import annotations
 import json
 import math
 
-import roqsim  # noqa: F401  -- selects the offscreen GL backend before mujoco binds one
+import roqsim  # noqa: F401, I001  -- selects the offscreen GL backend before mujoco binds one
 
-import mujoco  # noqa: I001
+import mujoco
 import numpy as np
 import pytest
 
