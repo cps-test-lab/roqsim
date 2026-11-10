@@ -85,7 +85,12 @@ def project_name(pyproject: Path) -> str | None:
 def repository_distributions(root: Path) -> frozenset[str]:
     """The distributions a repository ships, canonical: each top-level package's ``pyproject.toml``
     and each ROS package's ``package.xml`` under ``ros2_ws/src``."""
-    names = {project_name(p) for p in root.glob("*/pyproject.toml")}
+    names = set()
+    for pyproject in root.glob("*/pyproject.toml"):
+        name = project_name(pyproject)
+        if name is None:
+            raise ValueError(f"{pyproject}: no [project] name could be read")
+        names.add(name)
     for xml in root.glob("ros2_ws/src/*/package.xml"):
         found = re.search(r"<name>\s*([^<\s]+)\s*</name>", xml.read_text())
         if found:

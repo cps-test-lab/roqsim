@@ -974,14 +974,15 @@ def _registered() -> list[str]:
     from packaging.utils import canonicalize_name
 
     own = repository_distributions(Path(__file__).resolve().parents[2])
-    assert own, "found none of this repository's distributions to check"
-    return sorted(
+    registered = sorted(
         {
             ep.name
             for ep in entry_points(group="roqsim.plugins")
             if ep.dist is None or canonicalize_name(ep.dist.name) in own
         }
     )
+    assert registered, f"no plugin of this repository's distributions is installed ({sorted(own)})"
+    return registered
 
 
 def test_every_registered_plugin_is_checked_exempted_or_skipped():
