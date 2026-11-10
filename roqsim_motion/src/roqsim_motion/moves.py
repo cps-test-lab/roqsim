@@ -85,6 +85,9 @@ ARRIVAL = 0.1
 #: How far apart (m) the surfaces under the corners of what is set down may be: more, and it would
 #: stand on two things, or half off one -- a drawer's wall and its deck, a bench's edge and the floor.
 LEVEL = 0.015
+#: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
+#: drawer's stops, a comb's teeth, a lip round what it stood on.
+LIFT_FREE = 0.06
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: The time constant (s) a hold's force is judged over.
@@ -1087,6 +1090,15 @@ class HumanoidPlugin(MachinePlugin):
             rel[s] = lambda p=p, q=q, pull_in=pull_in: (
                 np.array([p[0], p[1], height]) - pull_in * heading,
                 q,
+            )
+        # Straight up off what it stood on first, by LIFT_FREE at most, before it comes in toward the
+        # body: drawn in at once, it would drag what it stands in (a drawer's stops) along with it.
+        low_z = min(float(self.body.grip(d, s)[0][2]) for s in rel)
+        free = min(LIFT_FREE, max(0.0, height - low_z))
+        if free > 0.005:
+            up = {s: (lambda p=self.body.grip(d, s): (p[0] + [0.0, 0.0, free], p[1])) for s in rel}
+            yield from self._move_hands(
+                up, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
             )
         # what is held turns with the hands, so the lift is judged by where they are
         yield from self._move_hands(

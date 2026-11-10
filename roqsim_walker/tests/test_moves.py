@@ -293,6 +293,22 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
         engine.shutdown()
 
 
+def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
+    """Off what it stood on, the load goes straight up first: drawn in at once, a box would drag
+    what it stands in (a drawer's stops) along with it."""
+    sim.ok("approach", target="tote_1", standoff=0.6)
+    sim.ok("grasp", hand="both", target="tote_1")
+    tote = sim.m.body("tote_1").id
+    start = sim.d.xpos[tote].copy()
+    seq = sim.h.carry("bench", standoff=0.55)
+    drift = 0.0
+    while sim.d.xpos[tote][2] < start[2] + 0.04:
+        sim.e.step()
+        drift = max(drift, float(np.linalg.norm(sim.d.xpos[tote][:2] - start[:2])))
+        assert not (sim.h.status().seq == seq and sim.h.status().finished)
+    assert drift < 0.005, drift
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")
