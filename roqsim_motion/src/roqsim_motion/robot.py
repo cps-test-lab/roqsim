@@ -39,7 +39,7 @@ from roqsim.schema import Field
 from roqsim_nav.outputs import NavOutput, OutputUnavailable
 
 from . import quat as Q
-from .body import SIDES, HumanoidBody
+from .body import PARK, SIDES, HumanoidBody
 from .retarget import Table, TableError, find_table, load_table
 
 #: How often the body solves and sets its targets (Hz), and the solver's damping and iterations.
@@ -244,7 +244,7 @@ class HumanoidRobotPlugin(Plugin):
                 self._added.append(a.name)
             # the base hangs on an anchor the navigator moves
             anchor = spec.worldbody.add_body(
-                name=f"{self.entity}/anchor", pos=[0.0, 0.0, -50.0], mocap=True
+                name=f"{self.entity}/anchor", pos=list(PARK), mocap=True
             )
             anchor.add_site(name=f"{self.entity}/anchor")
             base = spec.body(self._name(t.base_body))
