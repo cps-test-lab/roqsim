@@ -9,10 +9,8 @@ import pytest
 
 def _cuda() -> str | None:
     """Why the GPU tests cannot run here, or ``None`` when they can."""
-    try:
-        import torch
-    except ImportError as err:  # pragma: no cover - torch is a dependency
-        return f"torch is not importable: {err}"
+    import torch  # a declared requirement: missing, it fails here, by name
+
     if not torch.cuda.is_available():
         return "needs a CUDA GPU: torch.cuda.is_available() is false on this machine"
     return None
