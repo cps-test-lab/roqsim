@@ -417,6 +417,23 @@ def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
     assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
 
 
+def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
+    """A floor drawn but colliding with nothing (a hall's) is nothing to stand on: a corner over it
+    is a corner over nothing."""
+    floor = [g for g in range(sim.m.ngeom) if sim.m.geom_bodyid[g] == 0]
+    saved = sim.m.geom_contype[floor].copy(), sim.m.geom_conaffinity[floor].copy()
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
+    try:
+        sim.m.geom_contype[floor] = 0
+        sim.m.geom_conaffinity[floor] = 0
+        st = sim.run("place", at={"position": {"x": 0.0, "y": 2.5, "z": 0.75}})
+        assert st.error.startswith("out of reach") and "closer" in st.error, st.error
+    finally:
+        sim.m.geom_contype[floor], sim.m.geom_conaffinity[floor] = saved
+
+
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")

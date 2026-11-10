@@ -1290,14 +1290,15 @@ class HumanoidPlugin(MachinePlugin):
             self._surface(np.array([origin[0] + off[0], origin[1] + off[1], point[2]]), obj)
             for off in self._footprint(obj)
         ]
-        heights = [float(p[2]) for p, _ in under_corners]
+        # a corner over nothing solid (a floor that collides with nothing) stands on nothing
+        heights = [float(p[2]) if b >= 0 else -math.inf for p, b in under_corners]
         if max(heights) - min(heights) > LEVEL:
             hi = max(under_corners, key=lambda pb: pb[0][2])[1]
             name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, hi) if hi > 0 else "the floor"
             self.fail(
                 f"out of reach: set down where the hands reach, it would stand on {name} at "
-                f"{max(heights):.2f} m and {min(heights):.2f} m, not on {at} -- approach {at} "
-                f"closer (a smaller standoff, facing it)"
+                f"{max(heights):.2f} m and on {min(heights):.2f} m, not on {at} -- approach "
+                f"{at} closer (a smaller standoff, facing it)"
             )
         # Over it, clear of the highest thing it passes over on the way there (a drawer's front, a
         # rim the target's footprint does not cover): straight up first where that is higher than
