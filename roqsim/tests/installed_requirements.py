@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import re
+import tomllib
 from importlib import metadata
 from pathlib import Path
 
@@ -81,11 +82,9 @@ def not_installed_with_its_requirements(ep) -> str | None:
 
 
 def project_name(pyproject: Path) -> str | None:
-    """The ``[project]`` table's ``name`` of *pyproject*, canonical; ``None`` without one. Read by
-    pattern, not ``tomllib``, which Python 3.10 lacks."""
-    table = re.search(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", pyproject.read_text(), re.M | re.S)
-    found = table and re.search(r"^name\s*=\s*[\"']([^\"']+)[\"']", table.group(1), re.M)
-    return canonicalize_name(found.group(1)) if found else None
+    """The ``[project]`` table's ``name`` of *pyproject*, canonical; ``None`` without one."""
+    name = tomllib.loads(pyproject.read_text()).get("project", {}).get("name")
+    return canonicalize_name(name) if name else None
 
 
 def repository_distributions(root: Path) -> frozenset[str]:
