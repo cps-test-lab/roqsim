@@ -160,7 +160,8 @@ class HumanoidBody:
         raise NotImplementedError
 
     def root(self) -> tuple[float, float, float]:
-        """The nav root ``(x, y, yaw)``."""
+        """Where the body stands and its heading, ``(x, y, yaw)``: the nav root, or for a body drawn
+        behind it, the point that is drawn."""
         raise NotImplementedError
 
     def limit_turn(self, rate) -> None:

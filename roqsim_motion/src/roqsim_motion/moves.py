@@ -590,6 +590,7 @@ class HumanoidPlugin(MachinePlugin):
             for i, point in enumerate(legs):
                 x, y, _ = self.body.root()
                 if i and math.hypot(point[0] - x, point[1] - y) > 0.05:
+                    yield from self._come_to_rest(what, while_walking)
                     yield from self._turn(math.atan2(point[1] - y, point[0] - x), while_walking)
                 yield from self._leg(nav, point, what, while_walking)
         else:
@@ -609,14 +610,20 @@ class HumanoidPlugin(MachinePlugin):
                     f"cannot face {what}: it turned to {math.degrees(self.body.root()[2]):.0f} deg of {math.degrees(yaw):.0f}"
                 )
             yield
-        # A body drawn behind its root comes to rest a moment after it: until then what it carries
-        # goes along with it, and its hands are not where a move that follows would start them.
+        yield from self._come_to_rest(what, while_walking)
+        self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
+
+    def _come_to_rest(self, what: str, while_walking):
+        """Wait for a body drawn behind its root to come to rest: until then what it carries goes
+        along with it, swinging out round a corner it turns at, and its hands are not where a move
+        that follows would start them."""
         t0 = self._ctx.sim_time
-        while not self.body.at_rest() and self._ctx.sim_time - t0 < 3.0:
+        while not self.body.at_rest():
+            if self._ctx.sim_time - t0 > 3.0:
+                self.fail(f"cannot stand at {what}: the body did not come to rest in 3 s")
             if while_walking is not None:
                 while_walking()
             yield
-        self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
 
     def _route(self, nav, stand, what: str, while_walking, via=()):
         """Walk the navigator through ``via`` to ``stand``. A move that ends before the route does --
@@ -1099,8 +1106,7 @@ class HumanoidPlugin(MachinePlugin):
             dest = self._target(to)
             point, _ = dest.resolve(m, d)
             top = self._top(point, obj, self._on(dest))
-            bottom = self._site_id(f"{mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, obj)}/bottom")
-            low = d.site_xpos[bottom][2] if bottom >= 0 else d.xpos[obj][2]
+            low = self._bottom(obj)[2]
             below = self.body.grip(d, lead)[0][2] - low
             height = max(height, top + below + CLEAR)
             # and never down into what it was lifted from
@@ -1231,6 +1237,17 @@ class HumanoidPlugin(MachinePlugin):
             p = d.xpos[held].copy()
             return p, p
         return np.min(corners, axis=0), np.max(corners, axis=0)
+
+    def _bottom(self, held: int) -> np.ndarray:
+        """Where the held object stands on: its ``/bottom`` site, or under its origin at the bottom
+        of its solid geoms (:meth:`_extent`), wherever its origin is."""
+        m, d = self._m, self._d
+        site = self._site_id(f"{mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, held)}/bottom")
+        if site >= 0:
+            return d.site_xpos[site].copy()
+        p = d.xpos[held].copy()
+        p[2] = float(self._extent(held)[0][2])
+        return p
 
     def _turn(self, yaw: float, each=None):
         """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
@@ -1400,7 +1417,7 @@ class HumanoidPlugin(MachinePlugin):
         """How far to turn the held object about the vertical (rad) to stand square to ``target``'s
         frame -- the nearest quarter turn of its heading; 0 for a world pose with no heading
         stated, or a turn of more than SQUARE_MAX, which is not a matter of squaring."""
-        if target.kind == "world" and not getattr(target, "name", "").count("orientation"):
+        if not target.heading:
             return 0.0
         _, tq = target.resolve(self._m, self._d)
         tm = Q.to_matrix(tq)
@@ -1429,8 +1446,10 @@ class HumanoidPlugin(MachinePlugin):
         obj = self.holding[held[0]].obj_body
         target = self._target(at)
         point, _ = target.resolve(m, d)
-        bottom = self._site_id(f"{mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, obj)}/bottom")
-        low = (lambda: d.site_xpos[bottom].copy()) if bottom >= 0 else (lambda: d.xpos[obj].copy())
+
+        def low():
+            return self._bottom(obj)
+
         sides = [s for s in held if not self._riding[s]]
         starts = {s: self.body.grip(d, s) for s in sides}
         # Toward the target, as far as the hands reach in front of the body: set down on the near

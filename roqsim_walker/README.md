@@ -243,17 +243,17 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 
 | move | parameters | events | fails with |
 |---|---|---|---|
-| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first) | `walking`, `arrived` | `unknown target`, `no route to …`, `cannot face …` |
+| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first) | `walking`, `arrived` | `unknown target`, `no route to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …` |
 | `reach` | `hand`, `target`, `offset` (x, y, z[, r, p, y] in its frame), `orient` true, `pose` `open`, `speed` 0.8 m/s | `reached` | `out of reach: … approach first` |
 | `press` | `hand`, `target` (a site on the button's face), `max_force`, `travel`, `pose` `point` | `contact`, `pressed`, `released` | `button did not move: … at … N`, out of reach |
 | `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |
 | `release` | `hand` `both` | `opened` | `not holding anything` |
 | `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
-| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route` |
-| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `nothing under it` |
+| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route`, `cannot turn to …`, `cannot stand at …`, `via: a point is [x, y] …` |
+| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `out of reach: the hands bring it to … and no nearer`, `caught on …` (held up above the place), `nothing under it` |
 | `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
 | `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
-| `look_at` | `target` (a site, body or entity; empty: back) | `looking` | `unknown target …` |
+| `look_at` | `target` (a site, body or entity, or a world point `[x, y, z]`; empty: back) | `looking` | `unknown target …` |
 
 A move that walks (`approach`, `carry`) goes straight to its stand-off on the navigator, planned
 round the walls by its planner if it has one; `via` sends it through floor points of the scene's

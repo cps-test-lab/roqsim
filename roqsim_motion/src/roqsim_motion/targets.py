@@ -57,6 +57,9 @@ class Target:
         return -1 if self.kind == "world" else self._body
 
     _body: int = -1
+    #: Whether the target states a heading: a site's or a body's frame, or a world pose given with
+    #: a rotation; a world pose with only a position has none.
+    heading: bool = True
 
 
 def _offset(offset) -> tuple[np.ndarray, np.ndarray]:
@@ -87,7 +90,14 @@ def make_target(model, entities, spec, offset=None) -> Target:
             )
         p = np.array([float(v) for v in pos])
         r = np.array(rot, float)
-        return Target(str(spec), "world", -1, p + Q.rotate(r, off_pos), Q.mul(r, off_rot))
+        return Target(
+            str(spec),
+            "world",
+            -1,
+            p + Q.rotate(r, off_pos),
+            Q.mul(r, off_rot),
+            heading="orientation" in spec,
+        )
     if isinstance(spec, (tuple, list)) and len(spec) == 2:
         p, r = np.asarray(spec[0], float), np.asarray(spec[1], float)
         if r.shape == (3,):
