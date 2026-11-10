@@ -244,6 +244,55 @@ def test_a_carry_along_a_way_turns_at_its_corners_so_the_load_stays_over_the_way
     assert st.error == "" and off < 0.12, off
 
 
+def test_carrying_it_turns_the_way_its_load_sweeps_clear():
+    """A post stands where the short way round would swing the tote: the body turns the long way,
+    and the tote never meets the post."""
+    world = _world()
+    world["components"][0]["walker"]["pose"] = {
+        "position": {"x": 0.0, "y": 0.0},
+        "orientation": {"yaw": 0.0},
+    }
+    world["components"] = [c for c in world["components"] if c.get("name") != "tote_1"] + [
+        {
+            "tote": {"pose": {"position": {"x": 0.6, "y": 0.0}, "orientation": {"yaw": 1.5708}}},
+            "name": "tote_1",
+        },
+        {
+            "box": {
+                "prefix": "post_",
+                "pose": {"position": {"x": 0.1, "y": 0.6}},
+                "size": [0.1, 0.1, 1.8],
+                "motion": "static",
+            },
+            "name": "post",
+        },
+    ]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        x, y, _ = sim.body.root()
+        to = {"position": {"x": x - 1.6, "y": y + 0.9, "z": 0.0}}
+        seq = sim.h.carry(to, standoff=0.6)
+        post = sim.m.body("post_box").id
+        tote = sim.m.body("tote_1").id
+        nearest = math.inf
+        while True:
+            sim.e.step()
+            nearest = min(
+                nearest, float(np.linalg.norm(sim.d.xpos[tote][:2] - sim.d.xpos[post][:2]))
+            )
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert nearest > 0.3, nearest
+    finally:
+        engine.shutdown()
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")

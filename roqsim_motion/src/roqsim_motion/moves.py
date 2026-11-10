@@ -1106,18 +1106,114 @@ class HumanoidPlugin(MachinePlugin):
             stand, yaw, to, while_walking=lambda: self._hold_carried(carried), via=points
         )
 
+    def _turn_way(self, yaw: float) -> float:
+        """How far to turn (rad, signed) from the heading to ``yaw``: the short way, unless what the
+        hands hold would sweep through something on it and the long way is clear; failing if
+        neither is."""
+        heading = self.body.root()[2]
+        short = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
+        held = next(
+            (h.obj_body for s, h in self.holding.items() if h is not None and not self._riding[s]),
+            None,
+        )
+        if held is None or abs(short) < math.radians(20):
+            return short
+        long = short - math.copysign(2 * math.pi, short)
+        blocked = {}
+        for way in (short, long):
+            blocked[way] = self._swept(held, way)
+            if blocked[way] is None:
+                return way
+        self.fail(
+            f"cannot turn to {math.degrees(yaw):.0f} deg: what it holds would sweep through "
+            f"{blocked[short]} one way and {blocked[long]} the other"
+        )
+
+    def _swept(self, held: int, turn: float) -> str | None:
+        """What the held object would sweep through if the body turned on the spot by ``turn``
+        (rad): the name of the first body a point of its footprint meets on the way, at its
+        underside, its middle or its top -- or ``None``. Rays along the arc each point sweeps, so a
+        shelf above it or a surface below it is not in the way, and a post or a wall is."""
+        m, d = self._m, self._d
+        x, y, _ = self.body.root()
+        lo, hi = self._extent(held)
+        origin = d.xpos[held][:2] - [x, y]
+        offsets = self._footprint(held, 0.04)
+        inside = self._contents(held)
+        skip = {int(m.body_weldid[held])} | {int(m.body_weldid[r]) for r in inside}
+        steps = max(2, int(math.ceil(abs(turn) / math.radians(5))))
+        geomid = np.zeros(1, np.int32)
+        for z in (lo[2] + 0.02, 0.5 * (lo[2] + hi[2]), hi[2] - 0.02):
+            for off in offsets:
+                rel = origin + off[:2]
+                prev = np.array([x, y]) + rel
+                for k in range(1, steps + 1):
+                    a = turn * k / steps
+                    c, s = math.cos(a), math.sin(a)
+                    nxt = np.array([x, y]) + np.array([[c, -s], [s, c]]) @ rel
+                    chord = nxt - prev
+                    length = float(np.linalg.norm(chord))
+                    start = np.array([prev[0], prev[1], z])
+                    vec = np.array([chord[0] / length, chord[1] / length, 0.0])
+                    gone = 0.0
+                    while gone < length:
+                        dist = mujoco.mj_ray(m, d, start, vec, None, 1, held, geomid)
+                        if dist < 0 or gone + dist > length:
+                            break
+                        g = int(geomid[0])
+                        body = int(m.geom_bodyid[g])
+                        solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
+                        if (
+                            solid
+                            and int(m.body_weldid[body]) not in skip
+                            and not self.body.owns(m, body)
+                        ):
+                            return (
+                                mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, body) or "the world"
+                            )
+                        gone += dist + 1e-4
+                        start = start + (dist + 1e-4) * vec
+                    prev = nxt
+        return None
+
+    def _extent(self, held: int):
+        """The held object's world box now: its lowest and highest corners, of its solid geoms."""
+        m, d = self._m, self._d
+        corners = []
+        for g in range(m.ngeom):
+            if int(m.geom_bodyid[g]) != held or not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            c, h = m.geom_aabb[g][:3], m.geom_aabb[g][3:]
+            rot = d.geom_xmat[g].reshape(3, 3)
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    for sz in (-1, 1):
+                        corners.append(d.geom_xpos[g] + rot @ (c + h * [sx, sy, sz]))
+        if not corners:
+            p = d.xpos[held].copy()
+            return p, p
+        return np.min(corners, axis=0), np.max(corners, axis=0)
+
     def _turn(self, yaw: float, each=None):
         """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
-        does), calling ``each`` every step."""
+        does), calling ``each`` every step; holding something, the way its load sweeps clear
+        (:meth:`_turn_way`), a quarter turn at a time."""
+        heading0 = self.body.root()[2]
+        way = self._turn_way(yaw)
+        legs = max(1, int(math.ceil(abs(way) / (math.pi / 2))))
+        for k in range(1, legs + 1):
+            # on through each quarter but the last, not stopping at it
+            tol = math.radians(3 if k == legs else 25)
+            yield from self._turn_to(heading0 + way * k / legs, each, tol)
+
+    def _turn_to(self, yaw: float, each=None, tol: float = math.radians(3)):
         self.body.limit_turn(CARRY_TURN)
         self.body.face(yaw)
         t0 = self._ctx.sim_time
         try:
             while True:
                 heading = self.body.root()[2]
-                if abs(math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))) < math.radians(
-                    3
-                ):
+                if abs(math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))) < tol:
                     return
                 if self._ctx.sim_time - t0 > 2 * math.pi / CARRY_TURN + 2.0:
                     self.fail(
@@ -1129,13 +1225,13 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _surface(self, point, held: int, accept=None, inside=None):
-        """The top of whatever is under ``point``, and its body: a ray cast down from 1.5 m above
-        it, past what is held (and what is welded to it), what rides in or on it
+    def _surface(self, point, held: int, accept=None, inside=None, above: float = 1.5):
+        """The top of whatever is under ``point``, and its body: a ray cast down from ``above`` m
+        over it (a ray starting inside something does not see it), past what is held (and what is welded to it), what rides in or on it
         (:meth:`_contents`), the humanoid's own bodies, anything that collides with nothing, and
         with ``accept`` every body it refuses."""
         m, d = self._m, self._d
-        start = np.array([point[0], point[1], point[2] + 1.5])
+        start = np.array([point[0], point[1], point[2] + above])
         geomid = np.zeros(1, np.int32)
         inside = self._contents(held) if inside is None else inside
         while True:
