@@ -1300,8 +1300,9 @@ class HumanoidPlugin(MachinePlugin):
             name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, hi) if hi > 0 else "the floor"
             self.fail(
                 f"out of reach: set down where the hands reach, it would stand on {name} at "
-                f"{max(heights):.2f} m and on {min(heights):.2f} m, not on {at} -- approach "
-                f"{at} closer (a smaller standoff, facing it)"
+                f"{max(heights):.2f} m and "
+                + (f"on {min(heights):.2f} m" if math.isfinite(min(heights)) else "over nothing")
+                + f", not on {at} -- approach {at} closer (a smaller standoff, facing it)"
             )
         # Over it, clear of the highest thing it passes over on the way there (a drawer's front, a
         # rim the target's footprint does not cover): straight up first where that is higher than
