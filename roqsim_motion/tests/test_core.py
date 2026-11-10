@@ -289,3 +289,19 @@ def test_a_hand_turned_about_the_forearm_turns_the_forearm_too(side, turn, monke
     assert abs(shared) < 0.6 * abs(alone), (
         f"the wrist keeps {shared:.0f} deg; alone it would {alone:.0f}"
     )
+
+
+def test_a_target_just_beyond_the_bend_crouches_only_as_deep_as_it_takes():
+    """A hand a few centimetres short of a target bending over reaches by bending the knees a
+    little, not by the deepest crouch: a worker takes a box's handles bent over it, not kneeling."""
+    from roqsim_motion.ik import MAX_CROUCH
+
+    z = 0.6 * DESC.root_height + 0.02  # above where a crouch would begin for its height alone
+    for x in np.arange(0.3, 1.0, 0.01):
+        sol = solve(DESC, ROOT, Q.IDENTITY, REST, {"r": HandGoal(np.array([x, -0.2, z]))}, LAYOUTS)
+        if sol.root_drop > 0.0:
+            break
+    else:
+        pytest.fail("no target in front needed a crouch")
+    assert sol.root_drop < 0.5 * MAX_CROUCH * DESC.root_height, sol.root_drop
+    assert sol.residual["r"] < 0.005
