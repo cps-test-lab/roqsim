@@ -506,7 +506,8 @@ timing (``entity_navigate_start``).
 driven along a straight leg through the wall the planner could not get round. A goal given up on
 after ``recovery.max_recovery`` attempts is skipped, and the route reports that when it ends. Either
 way ``route_status`` carries an ``error`` naming the goal, a nav2 action aborts, and
-``entity_navigate`` fails -- a route that did not reach its goals is never reported as an arrival.
+``entity_navigate`` fails the trial (with ``check: false`` it succeeds, saying the route did not
+arrive) -- a route that did not reach its goals is never reported as an arrival.
 
 **One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
 three independent capabilities, each one question with one answer:

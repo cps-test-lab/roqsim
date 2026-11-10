@@ -16,6 +16,10 @@ the scenario's traffic arrived on cue.
 ``entity_navigate_start()`` is its sibling: it **starts the route the entity was configured with**
 rather than sending a new one. That is what lets a world own an opponent's trajectory -- identical in
 every repetition, and visible in a campaign's config diff -- while the scenario owns only its timing.
+
+Both wait for an outcome and take ``check``, as ``machine_run`` and the ``humanoid_*`` actions do: a
+route that does not reach its goals fails the trial, and with ``check: false`` the action succeeds
+whatever the route's outcome, saying it. ``success_on_acceptance`` is the start-only form.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ class EntityNavigate(SimAction):
         self._entity = ""
         self._poses: list[tuple[float, float]] = []
         self._wait = True
+        self._check = True
         self._call = None
 
     def execute(  # noqa: D102 - the OSC signature is documented in roqsim.osc
@@ -40,11 +45,13 @@ class EntityNavigate(SimAction):
         entity: str,
         goal_poses=None,
         success_on_acceptance: bool = False,
+        check: bool = True,
     ) -> None:
         if not entity:
             raise ActionError("entity_navigate: `entity` is required", action=self)
         self._entity = entity
         self._wait = not bool(success_on_acceptance)
+        self._check = bool(check)
         self._poses = []
         for i, pose in enumerate(goal_poses or []):
             position = (pose or {}).get("position") or {}
@@ -96,6 +103,8 @@ class EntityNavigate(SimAction):
             )
 
         if not outcome.ok:
+            if not self._check:
+                return self.satisfied(f"{self._entity!r} did not arrive: {outcome.detail}")
             return self.failed(f"{self._entity!r} did not arrive: {outcome.detail}")
         return self.satisfied(f"{self._entity!r} {outcome.detail}")
 
@@ -124,9 +133,11 @@ class EntityNavigateStart(EntityNavigate):
     """
 
     def execute(  # noqa: D102 - the OSC signature is documented in roqsim.osc
-        self, entity: str, success_on_acceptance: bool = False
+        self, entity: str, success_on_acceptance: bool = False, check: bool = True
     ) -> None:
-        super().execute(entity, goal_poses=None, success_on_acceptance=success_on_acceptance)
+        super().execute(
+            entity, goal_poses=None, success_on_acceptance=success_on_acceptance, check=check
+        )
 
     def _send(self):
         return self._access.start_route(self._entity, wait=self._wait)

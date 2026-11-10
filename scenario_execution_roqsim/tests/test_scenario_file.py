@@ -36,7 +36,7 @@ import osc.roqsim
 scenario good:
     do serial:
         zone_entered(zone: 'gate')
-        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.1')
+        machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 0.1}')
 """
 BAD = """
 import osc.roqsim
