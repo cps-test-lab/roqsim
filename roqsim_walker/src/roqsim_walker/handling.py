@@ -240,7 +240,7 @@ class WalkerBody(HumanoidBody):
             along = (tip - last) / max(float(np.linalg.norm(tip - last)), 1e-9)
             data.mocap_pos[pid] = tip - PRESS_RADIUS * along
         else:
-            data.mocap_pos[pid] = (0.0, 0.0, -50.0)
+            data.mocap_pos[pid] = (0.0, 0.0, -1.0)  # below the floor, as the walker is built
 
     def settled(self, side: str) -> bool:
         return self.goal[side] is None or self.weight[side] > 0.999

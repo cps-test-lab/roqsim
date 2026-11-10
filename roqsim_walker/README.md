@@ -163,9 +163,9 @@ door handle:
 
 ```python
 handle.reach(left=left_point, right=right_point)  # re-set it every step as the points move
-handle.reach(right=right_point)                   # one hand: the left goes back to the walk
-left, right = handle.hands()                      # where the wrists are now
-handle.reach()                                    # let go with both
+handle.reach(right=right_point)  # one hand: the left goes back to the walk
+left, right = handle.hands()  # where the wrists are now
+handle.reach()  # let go with both
 ```
 
 Each point is three finite numbers (x, y, z, world); anything else raises `ValueError` at the
@@ -233,8 +233,8 @@ OpenSCENARIO); a move never decides what comes next.
 
 ```python
 worker = ctx.blackboard.get("humanoid:worker")
-seq = worker.grasp("both", "tote_1")             # = worker.start("grasp", hand="both", target="tote_1")
-status = worker.status()                         # MachineStatus(seq, program, finished, error)
+seq = worker.grasp("both", "tote_1")  # = worker.start("grasp", hand="both", target="tote_1")
+status = worker.status()  # MachineStatus(seq, program, finished, error)
 ```
 
 A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its

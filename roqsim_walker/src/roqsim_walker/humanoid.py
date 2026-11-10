@@ -211,7 +211,10 @@ def build_humanoid(
     :func:`roqsim_walker.skin.add_skin`). Returns the joint names (body suffixes).
     """
     skel = to_skeleton(skeleton)
-    park = [0.0, 0.0, -50.0]  # parked below the floor until the first pose is written
+    # Parked just below the floor until the first pose is written: deep enough for nothing to see,
+    # shallow enough not to stretch the model's extent, from which a camera's near clip plane is
+    # taken -- a body parked far below would push that plane out and cut what a close camera sees.
+    park = [0.0, 0.0, -1.0]
     for j in SKELETON:
         b = spec.worldbody.add_body(name=f"{name}/{j.name}", pos=list(park), mocap=True)
         if mesh is None:  # capsule visuals (fallback)
