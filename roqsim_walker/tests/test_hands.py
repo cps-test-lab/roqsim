@@ -11,6 +11,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.presence import PARKED_BELOW_Z
 from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
 from roqsim_walker.skin import hand_weights
@@ -24,7 +25,7 @@ HANDS_OFF = {
     "nsite": 0,
     "nskin": 2,
     "nskinbone": 34,
-    "sha256": "3e048fda946c33276898288ea9e6021ca4a3af3b40428f28e4524f266fec5337",
+    "sha256": "ade22214445e35fe61a2c82b72f7fc58d80fdbf41605c2575616e61bc4bc5576",
 }
 FIELDS = (
     "body_pos",
@@ -267,6 +268,28 @@ def test_the_blueprints_hand_weights_decide_the_fingers_skin(monkeypatch):
         rigid.shutdown()
 
 
+def test_a_walker_parks_its_bodies_where_they_do_not_stretch_the_models_extent():
+    """Its bodies are parked below the floor until posed; the model's extent, which a camera's near
+    clip plane is taken from, stays the room's, with hands on or off."""
+    empty = _engine([], preview=True)
+    try:
+        room = float(empty.ctx.model.stat.extent)
+    finally:
+        empty.shutdown()
+    for hands in (False, True):
+        engine = _engine(
+            [{"walker": {"walker": "MaleVisitorWalk", "hands": hands}, "name": "w"}], preview=True
+        )
+        try:
+            assert engine.ctx.model.stat.extent < 1.1 * room, (
+                hands,
+                room,
+                engine.ctx.model.stat.extent,
+            )
+        finally:
+            engine.shutdown()
+
+
 def test_hands_is_true_or_false():
     with pytest.raises(Exception, match="'hands' is true or false"):
         _engine(
@@ -297,11 +320,11 @@ def test_a_press_proxy_is_parked_until_a_move_presses_then_rides_the_index_finge
     d = sim.ctx.data
     body = sim.ctx.blackboard.get("humanoid_body:worker")
     pid = body._proxy["r"]
-    assert d.mocap_pos[pid][2] < -40
+    assert d.mocap_pos[pid][2] < -0.5  # below the floor
     body.press_proxy(d, "r", True)
     for _ in range(30):
         sim.step()
     wrist = d.mocap_pos[body._wrist["r"]]
     assert 0.08 < np.linalg.norm(d.mocap_pos[pid] - wrist) < 0.25
     body.press_proxy(d, "r", False)
-    assert d.mocap_pos[pid][2] < -40
+    assert d.mocap_pos[pid][2] < PARKED_BELOW_Z  # where no camera frames it

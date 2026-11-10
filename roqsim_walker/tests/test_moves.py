@@ -12,6 +12,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.machine import MachineError
 from roqsim.plugin import PluginError
+from roqsim.presence import PARKED_BELOW_Z
 
 NAV = {
     "output": "walker",
@@ -87,6 +88,8 @@ class Sim:
         self.h = engine.ctx.blackboard.get("humanoid:worker")
         self.body = engine.ctx.blackboard.get("humanoid_body:worker")
         self.m, self.d = engine.ctx.model, engine.ctx.data
+        # the shared engine's events of the tests before this one are not this test's
+        self._first = len(engine.ctx.events.all())
 
     def run(self, move, limit=60.0, **args):
         seq = self.h.start(move, **args)
@@ -106,7 +109,7 @@ class Sim:
     def events(self, since=0.0):
         return [
             ev["event"]
-            for ev in self.e.ctx.events.all()
+            for ev in self.e.ctx.events.all()[self._first :]
             if ev["source"].startswith("worker") and ev["t"] >= since
         ]
 
@@ -154,7 +157,7 @@ def test_press_pushes_a_button_by_contact_and_lets_go(sim):
     assert button.presses == 1 and not button.pressed
     steps = [ev for ev in sim.events(t) if ev in ("contact", "pressed", "released")]
     assert steps == ["contact", "pressed", "released"]
-    assert sim.d.mocap_pos[sim.body._proxy["r"]][2] < -40  # parked again
+    assert sim.d.mocap_pos[sim.body._proxy["r"]][2] < PARKED_BELOW_Z  # parked again
 
 
 def test_press_on_something_that_cannot_move_fails(sim):

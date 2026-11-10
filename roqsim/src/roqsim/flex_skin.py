@@ -3,8 +3,9 @@
 A flex has no mesh of its own that a viewer could animate. MuJoCo computes each vertex position
 (``flexvert_xpos``) from bodies every step, and those bodies' poses are all a replay needs. This
 module states that dependency in the one form a viewer already animates -- linear-blend skinning
-over named bodies, at most four per vertex -- so :mod:`roqsim.export_gltf` can ship a flex as an
-ordinary skin, and a replay deforms it from the bodies' pose tracks alone.
+over named bodies, at most four per vertex, the one set of bones every viewer reads -- so
+:mod:`roqsim.export_gltf` can ship a flex as an ordinary skin, and a replay deforms it from the
+bodies' pose tracks alone.
 
 Where a vertex's position comes from depends on how the flex was declared:
 
@@ -21,10 +22,11 @@ A skin blends each bone's *rigid* motion since the bind pose, which reproduces a
 exactly when the weights sum to one and reproduce the vertex's own position from the bones' --
 provided the node bodies share one frame orientation, as MuJoCo's node bodies (siblings on slide
 joints) do. Trilinear gives a surface vertex at most four non-zero weights, so it is exact.
-Quadratic gives one on a face nine, past the four a viewer's skinning accepts; :func:`rig` then
-keeps the four largest and corrects them minimally so they still reproduce the vertex's rest position
-and sum to one. That keeps the rest pose, every rigid motion and every affine deformation exact, and
-leaves only curvature between the nodes approximate; the vertices it touched are reported.
+Quadratic gives one on a face nine. glTF could carry them in further sets, but a viewer that reads
+only the first would then draw a truncated basis; :func:`rig` instead keeps the four largest and
+corrects them minimally so they still reproduce the vertex's rest position and sum to one. That
+keeps the rest pose, every rigid motion and every affine deformation exact, and leaves only
+curvature between the nodes approximate; the vertices it touched are reported.
 
 :func:`owned_bodies` answers the other half: which bodies exist only to carry a flex. They are one per
 vertex or node, so a recording's ``poses`` channel of named bodies leaves them out (its ``state``
@@ -38,7 +40,8 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-#: Bones per vertex a viewer's skinning takes (three.js ``SkinnedMesh``, and the skin export's cap).
+#: Bones per vertex of a flex skin: one set, the one every viewer's skinning reads (three.js
+#: ``SkinnedMesh`` reads only ``JOINTS_0``).
 MAX_INFLUENCES = 4
 
 #: A measured weight below this is a zero: the finite difference is exact for a linear map, so the

@@ -997,10 +997,15 @@ def _skin(doc: _Document, skin: Skin, i: int, body_node: list[int], materials: _
     attributes = {
         "POSITION": doc.accessor(zup_to_yup(verts), "VEC3", minmax=True, step="position"),
         "NORMAL": doc.accessor(zup_to_yup(normals), "VEC3", step=NORMAL_STEP),
-        "JOINTS_0": doc.raw_accessor(joints, _USHORT, "VEC4", _ARRAY_BUFFER),
-        # Not filtered: glTF wants each row to sum to 1, which a rounded weight would not.
-        "WEIGHTS_0": doc.accessor(weights, "VEC4"),
     }
+    # Four bones a set; a vertex on more has its further bones in JOINTS_1, WEIGHTS_1, ...
+    for k in range(joints.shape[1] // 4):
+        cols = slice(4 * k, 4 * k + 4)
+        attributes[f"JOINTS_{k}"] = doc.raw_accessor(
+            np.ascontiguousarray(joints[:, cols]), _USHORT, "VEC4", _ARRAY_BUFFER
+        )
+        # Not filtered: glTF wants each row to sum to 1, which a rounded weight would not.
+        attributes[f"WEIGHTS_{k}"] = doc.accessor(np.ascontiguousarray(weights[:, cols]), "VEC4")
     textured = uv is not None and materials.texture(skin.matid) is not None
     if textured:
         rep = materials.model.mat_texrepeat[skin.matid]
@@ -1041,16 +1046,18 @@ def _skin(doc: _Document, skin: Skin, i: int, body_node: list[int], materials: _
 
 
 def skin_attributes(index, weight) -> tuple[np.ndarray, np.ndarray, int]:
-    """``JOINTS_0`` and ``WEIGHTS_0`` as glTF requires them, and how many negative weights it dropped.
+    """``JOINTS_n`` and ``WEIGHTS_n``, side by side in sets of four, as glTF requires them, and how
+    many negative weights it dropped.
 
     glTF wants each weight in [0, 1], each row summing to 1 in float32, and no joint named by a zero
     weight. A flex with ``dof="quadratic"`` has truly negative weights (its basis functions dip
     below zero) and float noise leaves others a hair below zero; both are set to 0 and the row
     renormalised. That keeps the rest shape exact -- at the bind pose any weights summing to 1 give
-    back the vertex -- and makes a deformation approximate, as the four-bone cap already does.
+    back the vertex -- and makes a deformation approximate.
     """
-    joints = np.asarray(index, np.int64).reshape(-1, 4).copy()
-    w = np.asarray(weight, np.float64).reshape(-1, 4).copy()
+    width = np.asarray(index).shape[-1] if np.ndim(index) == 2 else 4
+    joints = np.asarray(index, np.int64).reshape(-1, width).copy()
+    w = np.asarray(weight, np.float64).reshape(-1, width).copy()
     dropped = int((w < -1e-6).sum())
     w[w < 0] = 0.0
     total = w.sum(axis=1, keepdims=True)

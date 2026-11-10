@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from roqsim_motion.body import PARK
 
 from roqsim.pose import yaw_to_quat
 
@@ -211,7 +212,7 @@ def build_humanoid(
     :func:`roqsim_walker.skin.add_skin`). Returns the joint names (body suffixes).
     """
     skel = to_skeleton(skeleton)
-    park = [0.0, 0.0, -50.0]  # parked below the floor until the first pose is written
+    park = list(PARK)  # until the first pose is written
     for j in SKELETON:
         b = spec.worldbody.add_body(name=f"{name}/{j.name}", pos=list(park), mocap=True)
         if mesh is None:  # capsule visuals (fallback)

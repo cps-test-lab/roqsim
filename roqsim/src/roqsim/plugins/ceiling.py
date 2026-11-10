@@ -81,10 +81,11 @@ class CeilingPlugin(Plugin):
         if self.settings.keep:
             return  # keep the ceiling: no-op
 
-        # Measure world-space geom heights on a throwaway compile (the only reliable source of mesh
-        # bounds before the real compile). MjSpec is built for edit-then-recompile, so compiling to
-        # measure, deleting, and letting the engine recompile is safe.
-        model = spec.compile()
+        # Measure world-space geom heights on a throwaway compile of a copy (the only reliable source
+        # of mesh bounds before the real compile). A copy, as every plugin that measures mid-build
+        # compiles one: compiling the spec itself freezes its name lookup, so `spec.body` and
+        # `spec.site` would miss what later plugins add.
+        model = spec.copy().compile()
         data = mujoco.MjData(model)
         mujoco.mj_forward(model, data)
 
