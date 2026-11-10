@@ -1259,14 +1259,17 @@ class HumanoidPlugin(MachinePlugin):
         starts = {s: self.body.grip(d, s) for s in sides}
         # Toward the target, as far as the hands reach in front of the body: set down on the near
         # part of a surface (a body, an entity), as a worker does, not stretched out to its middle.
-        x, y, _ = self.body.root()
+        x, y, yaw = self.body.root()
+        ahead = np.array([math.cos(yaw), math.sin(yaw)])
         shift = np.array([point[0], point[1]]) - low()[:2]
+        reach = self.body.place_reach()
         for s in sides:
-            g = starts[s][0][:2] + shift
-            out = float(np.linalg.norm(g - [x, y]))
-            reach = self.body.place_reach()
-            if out > reach:
-                shift *= max(0.0, 1.0 - (out - reach) / max(float(np.linalg.norm(shift)), 1e-9))
+            # how far in front of the body the hand would be: a box held by its ends has its hands
+            # to the sides as well, which is no further to reach forward
+            out = float((starts[s][0][:2] + shift - [x, y]) @ ahead)
+            forward = float(shift @ ahead)
+            if out > reach and forward > 1e-9:
+                shift *= max(0.0, 1.0 - (out - reach) / forward)
         where = low()[:2] + shift
         surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj)
         if (

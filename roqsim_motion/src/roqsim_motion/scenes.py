@@ -68,7 +68,7 @@ class BoxSwap(ScenarioPlugin):
 
         standoffs:               # how far in front of what it works the humanoid stands (m)
           drawer: 0.75           #   to pull the drawer open
-          push: 0.35             #   to push it shut
+          push: 0.3              #   to push it shut
           tote: 0.45             #   to take a tote by its handles
           place: 0.55            #   to set a tote down on the trolley or in the drawer
         pull: 0.44               # how far the drawer is pulled out (m)
@@ -77,7 +77,7 @@ class BoxSwap(ScenarioPlugin):
     """
 
     NEEDS = {"worker": "humanoid:worker", "drawer": "zone:drawer_zone"}
-    STANDOFFS = {"drawer": 0.75, "push": 0.35, "tote": 0.45, "place": 0.55}
+    STANDOFFS = {"drawer": 0.75, "push": 0.3, "tote": 0.45, "place": 0.55}
 
     def program(self):
         w = self.worker
