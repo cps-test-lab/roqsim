@@ -58,8 +58,11 @@ class CeilingPanelsPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
+        # Read as validate_config has checked it; a malformed one is refused there, not replaced here.
         area = self.config.get("area", [0.0, 0.0, 1.0, 1.0])
-        self.area = [float(v) for v in area] if len(area) == 4 else [0.0, 0.0, 1.0, 1.0]
+        self.area = (
+            [float(v) for v in area] if len(area) == 4 and all(map(_is_number, area)) else area
+        )
         self.z = self._float(self.config.get("z"), 3.5)
         self.drop = self._float(self.config.get("drop"), 0.04)
         self.thickness = self._float(self.config.get("thickness"), 0.04)
@@ -101,13 +104,13 @@ class CeilingPanelsPlugin(Plugin):
         errors: list[str] = []
         if "area" not in config:
             errors.append("'area' is required: [x0, y0, x1, y1] of the rectangle to cover")
-        elif len(config["area"]) != 4:
-            errors.append("'area' must be [x0, y0, x1, y1]")
+        elif len(config["area"]) != 4 or not all(_is_number(v) for v in config["area"]):
+            errors.append("'area' must be [x0, y0, x1, y1] numbers")
         else:
-            x0, y0, x1, y1 = (self._float(v, 0.0) for v in config["area"])
+            x0, y0, x1, y1 = (float(v) for v in config["area"])
             if x1 <= x0 or y1 <= y0:
                 errors.append("'area' must have x1 > x0 and y1 > y0")
-        for key in ("z", "drop", "thickness"):
+        for key in ("z", "drop", "thickness", "yaw"):
             if key in config:
                 try:
                     float(config[key])
@@ -202,3 +205,11 @@ class CeilingPanelsPlugin(Plugin):
                 meta={"prefix": self.prefix, "panels": getattr(self, "count", 0), "z": self.z},
             )
         )
+
+
+def _is_number(value) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return not isinstance(value, bool)

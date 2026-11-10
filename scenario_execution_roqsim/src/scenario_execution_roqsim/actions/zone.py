@@ -12,7 +12,8 @@ under an entity), and ``pattern`` an fnmatch of entity names::
     zone_left(zone: 'gate')
 
 They read who is inside now, so ``zone_left`` succeeds at once on an empty zone. With ``since`` (s, sim
-time, not negative) ``zone_entered`` and ``zone_dwelled`` also count an entity that has come and gone
+time, not negative; declared without a default, so a scenario that leaves it out passes ``None``)
+``zone_entered`` and ``zone_dwelled`` also count an entity that has come and gone
 since then, so a scene that was busy cannot miss one passing through. ``zone_dwelled`` on a zone whose
 ``dwell`` is 0, which reports no dwelling, raises, as an authoring error.
 """
@@ -33,17 +34,24 @@ class _ZoneWait(SimAction):
         super().__init__()
         self._zone = ""
         self._pattern = "*"
-        self._since = -1.0
+        self._since: float | None = None
         self._call = None
 
-    def _configure(self, zone: str, pattern: str, since: float) -> None:
+    def _configure(self, zone: str, pattern: str, since: float | None) -> None:
         self._zone = str(zone or "")
         if not self._zone:
             raise ActionError(
                 f"{type(self).__name__}: `zone` is required -- the zone's address in the world",
                 action=self,
             )
-        self._pattern, self._since = str(pattern or "*"), float(since)
+        if since is not None and float(since) < 0.0:
+            raise ActionError(
+                f"{type(self).__name__}: `since` is {float(since):g}, a sim time before the run; leave "
+                "`since` out for who is inside now",
+                action=self,
+            )
+        self._pattern = str(pattern or "*")
+        self._since = None if since is None else float(since)
         self._call = None
 
     def _matching(self, names) -> list[str]:
@@ -67,12 +75,14 @@ class _ZoneWait(SimAction):
 
     def _since_then(self, names, times) -> list[str]:
         return [
-            n for n, t in zip(names, times, strict=True) if self._since >= 0.0 and t >= self._since
+            n
+            for n, t in zip(names, times, strict=True)
+            if self._since is not None and t >= self._since
         ]
 
 
 class ZoneEntered(_ZoneWait):
-    def execute(self, zone: str, pattern: str = "*", since: float = -1.0):
+    def execute(self, zone: str, pattern: str = "*", since: float | None = None):
         self._configure(zone, pattern, since)
 
     def _decide(self, occupancy: dict) -> py_trees.common.Status:
@@ -85,7 +95,7 @@ class ZoneEntered(_ZoneWait):
 
 class ZoneLeft(_ZoneWait):
     def execute(self, zone: str, pattern: str = "*"):
-        self._configure(zone, pattern, -1.0)
+        self._configure(zone, pattern, None)
 
     def _decide(self, occupancy: dict) -> py_trees.common.Status:
         found = self._matching(occupancy["inside"])
@@ -95,7 +105,7 @@ class ZoneLeft(_ZoneWait):
 
 
 class ZoneDwelled(_ZoneWait):
-    def execute(self, zone: str, pattern: str = "*", since: float = -1.0):
+    def execute(self, zone: str, pattern: str = "*", since: float | None = None):
         self._configure(zone, pattern, since)
 
     def _decide(self, occupancy: dict) -> py_trees.common.Status:

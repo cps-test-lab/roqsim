@@ -107,7 +107,7 @@ def test_robot_folder_ships_manifest_and_licence(name):
 
 
 def test_package_data_globs_cover_every_shipped_file():
-    tomllib = pytest.importorskip("tomllib")  # stdlib from 3.11; package supports 3.10
+    import tomllib
     root = Path(__file__).resolve().parents[1]
     data = tomllib.loads((root / "pyproject.toml").read_text())
     globs = data["tool"]["setuptools"]["package-data"]["roqsim_mobile"]

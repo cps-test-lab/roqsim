@@ -102,13 +102,29 @@ class _PlainHand(_TypedHand):
         self.fingers.set_gripper(position)
 
 
-class _MisnamedHand(_TypedHand):
+class _OpennessHand(_TypedHand):
+    """A producer naming its one parameter for its own quantity, as a door does (``openness``)."""
+
     @endpoint.command(ros2=GRIPPER_HINTS)
     def gripper_cmd(self, openness: float) -> None:
         """The finger position.
 
         Args:
             openness: 0 closed, 1 open
+        """
+        self.fingers.set_gripper(openness)
+
+
+class _MisnamedHand(_TypedHand):
+    """Two parameters, neither ``position``: the goal's position fits none of them."""
+
+    @endpoint.command(ros2=GRIPPER_HINTS)
+    def gripper_cmd(self, openness: float, force: float) -> None:
+        """The finger position.
+
+        Args:
+            openness: 0 closed, 1 open
+            force: how hard
         """
         self.fingers.set_gripper(openness)
 
@@ -184,6 +200,17 @@ def test_a_typed_hand_without_hints_is_watched_at_the_default_key():
     fingers = _Fingers(0.0, converge=0.5)
     ctx, ep, on_payload = _served(_PlainHand(fingers), "gripper:ur5e", fingers.read_state)
     assert "ros2" not in ep.backend
+    handle = _GoalHandle(_gripper_goal(0.4), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, ep)
+
+    assert handle.status == "succeeded" and result.reached_goal is True
+
+
+def test_a_typed_hand_takes_the_position_as_its_one_parameter_whatever_its_name():
+    fingers = _Fingers(0.0)
+    ctx, ep, on_payload = _served(_OpennessHand(fingers), "gripper:ur5e", fingers.read_state)
     handle = _GoalHandle(_gripper_goal(0.4), ctx)
 
     with _Physics(ctx, fingers):

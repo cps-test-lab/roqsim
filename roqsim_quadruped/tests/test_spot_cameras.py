@@ -423,7 +423,7 @@ def test_a_marker_renders_where_tf_and_camera_info_project_it(station):
 def test_rotating_by_the_sdk_angle_stands_a_pole_upright(station):
     """A vertical pole on the station's line of sight, after the raw image is rotated by
     ROTATION_ANGLE, runs up and down the picture: the image arrives rotated as the real one does."""
-    pil = pytest.importorskip("PIL.Image")
+    import PIL.Image as pil
     probe = _spot()
     pos, rot = _in_body(_static_tf(probe), f"{station}_fisheye")
     probe.shutdown()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a BVH motion capture into a walker clip (``.npz``) that a walker plays.
+"""Convert a BVH motion capture into a clip a walker plays.
 
     roqsim walker import-clip wave.bvh --out my_anims/adult/wave.npz
     roqsim walker import-clip walk.bvh --out walk.npz --loop --map spine=Chest

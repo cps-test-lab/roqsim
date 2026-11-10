@@ -26,12 +26,12 @@ and scenarios"): `start(program, **args)` returns a sequence number and is refus
 `goal(name)`. Every program is an event timeline (`program_start`, its steps, `program_end`).
 `roqsim plugins describe <name>` lists each machine's programs.
 
-| machine | programs | ramps | events besides start/end |
-|---|---|---|---|
-| `door` | `open()`, `close()`, `move_to(openness)` | `speed` (rad/s at the hinge) | `stalled`, `gave_way` |
-| `conveyor` | `run(speed)`, `stop()` | `ramp` (m/s²) | `started`, `stopped` |
-| `press` | `stroke(show, hide)`, `close_guard()`, `open_guard()` | its door and ram speeds (m/s) | `door_close`, `approach`, `power`, `bottom`, `return`, `door_open` |
-| `sliding_door` | `open()`, `close()` | `speed` (m/s) | `stalled` |
+| machine | programs | start state (`home:`) | ramps | events besides start/end |
+|---|---|---|---|---|
+| `door` | `open()`, `close()`, `move_to(openness)` | `openness` (0..1) | `speed` (rad/s at the hinge) | `stalled`, `gave_way` |
+| `conveyor` | `run(speed)`, `stop()` | `speed` (m/s, 0.1 unless stated) | `ramp` (m/s²) | `started`, `stopped` |
+| `press` | `stroke(show, hide)`, `close_guard()`, `open_guard()` | `door`, `ram` (m) | its door and ram speeds (m/s) | `door_close`, `approach`, `power`, `bottom`, `return`, `door_open` |
+| `sliding_door` | `open()`, `close()` | `leaf` (m) | `speed` (m/s) | `stalled` |
 
 `press` and `sliding_door` are the examples of a machine package: generated models, used by three
 stand-alone worlds in `src/roqsim_assets/worlds/`, each running one cycle of a scenario from
@@ -210,15 +210,16 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   `door_frame` casing, with a force-limited position actuator, placed by opening centre + `hinge_side`.
   A machine (see [Machines](#machines)) with `open`, `close` and `move_to(openness)`, ramped at
   `speed` (rad/s) where a world states one; a program ends when the leaf first comes within 0.02
-  of its openness, and the leaf may still settle by a few hundredths after that. Passive (holds its
-  `open` angle) or, when `controllable`, an **automatic door**: `std_msgs/Float64` `cmd`/`state`
-  topics + a `control_msgs/GripperCommand` action, and it pushes only gently — stalling on an
+  of its openness, and the leaf may still settle by a few hundredths after that. It starts at
+  `home: {openness: …}` (closed unless stated). Passive (holds its home openness) or, when
+  `controllable`, an **automatic door**: `std_msgs/Float64` `openness`/`openness_state` topics + a
+  `control_msgs/GripperCommand` action `openness_goal`, and it pushes only gently — stalling on an
   obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
   door held off its target gives way after `stall_timeout`, so a robot can push through it.
   The action reports `reached_goal` within the same 0.02 the programs end in, so ROS and the door's
   `status()` agree, and aborts a goal still moving after a full swing at `speed`, `stall_timeout`
   and 5 s; the door states both in the action's hints (`reach_tolerance`, `on_timeout`), where an
-  arm's gripper keeps 0.005 and comes back succeeded. A `cmd` equal to the openness last commanded
+  arm's gripper keeps 0.005 and comes back succeeded. An `openness` equal to the openness last commanded
   — by a port, or by a handle `start` the physics thread has not applied yet — changes nothing
   while the door moves there or stands there; after a stall or a cancel it is a retry.
   `machine:<name>:openness` reads any door's measured openness. `color` / `frame_color` repaint the leaf and its casing, so a world can put
@@ -227,7 +228,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   leaf should therefore set `frame_color` alone. `leaf: false` makes it a **cased opening** — a
   *Türblatt*-less door: the casing is welded, nothing hangs in it, and no hinge/actuator/ROS surface is
   created, so a wall gap reads as a doorway instead of a hole while staying a `door` in the floorplan (the
-  room loops it belongs to are unchanged) and still registering as a `door` entity. The floorplan generator
+  room loops it belongs to are unchanged) and still registering as a `door` entity; `controllable: true`
+  on it is refused, as there is no leaf to command. The floorplan generator
   auto-places one per door opening (`floorplan_to_world.py --doors-map`, which carries these colours,
   forwards `leaf`, and takes `skip: true` for an opening something else fills — a **window**).
 - **`window`** — a **parametric** fixed window (glazed pane in a slim frame, boxes not meshes) for an

@@ -53,20 +53,20 @@ def test_the_package_pose_is_the_packages_own_transform():
         engine.shutdown()
 
 
-def test_door_cmd_is_a_stream_and_door_a_command():
+def test_door_openness_is_a_stream_and_openness_goal_a_command():
     engine = _engine({"door": {}, "name": "door"})
     try:
         eps = _endpoints(engine)
         door = engine.ctx.blackboard.get("machine:door")
         span = math.radians(120)  # the default max_angle
-        eps[("door", "cmd")].write({"data": 0.4})
+        eps[("door", "openness")].write({"openness": 0.4})
         engine.step()
         assert door.value("hinge_pos") == pytest.approx(0.4 * span)
-        future = eps[("door", "door")].write({"position": 1.5})
+        future = eps[("door", "openness_goal")].write({"openness": 1.5})
         engine.step()
         assert future.result(0) is None
         assert door.value("hinge_pos") == pytest.approx(span), "clamped to fully open"
-        assert isinstance(eps[("door", "state")].read(), float)
+        assert isinstance(eps[("door", "openness_state")].read(), float)
     finally:
         engine.shutdown()
 
@@ -75,7 +75,11 @@ def test_door_cmd_is_a_stream_and_door_a_command():
 def test_a_passive_or_leafless_door_declares_no_endpoints(config):
     engine = _engine({"door": config, "name": "door"})
     try:
-        assert not {n for (o, n) in _endpoints(engine) if o == "door"} & {"cmd", "state", "door"}
+        assert not {n for (o, n) in _endpoints(engine) if o == "door"} & {
+            "openness",
+            "openness_state",
+            "openness_goal",
+        }
     finally:
         engine.shutdown()
 
@@ -118,7 +122,9 @@ def test_a_door_and_a_conveyor_run_by_their_start_status_and_cancel_endpoints():
             status = eps[("door", "status")].read()
             if status.seq == seq and status.finished:
                 break
-        assert status.error == "" and eps[("door", "state")].read() == pytest.approx(0.5, abs=0.03)
+        assert status.error == "" and eps[("door", "openness_state")].read() == pytest.approx(
+            0.5, abs=0.03
+        )
         future = eps[("belt", "start")].write(
             {"program": "run", "args": {"speed": 0.4}, "token": "t2"}
         )
