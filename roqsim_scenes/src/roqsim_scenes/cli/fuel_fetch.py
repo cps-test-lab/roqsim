@@ -38,7 +38,7 @@ import sys
 import urllib.parse
 import zipfile
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from roqsim import env, exit_status
@@ -162,7 +162,7 @@ def fetch(uri: str, cache: Path = _DEFAULT_CACHE, force: bool = False) -> Asset:
         sha256=sha,
         licence=meta.get("license_name"),
         licence_url=meta.get("license_url"),
-        fetched_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        fetched_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         local=dest.name,
     )
 
@@ -193,7 +193,7 @@ def write_lock(path: Path, assets: list[Asset], world: str | None = None) -> Non
     payload = {
         "world": world,
         "registry": f"https://{_CANONICAL_HOST}",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "note": (
             "Pinned third-party assets. The world file referenced these by URI and contained no "
             "geometry of its own; this lock is what makes the port reproducible. Re-fetching without "

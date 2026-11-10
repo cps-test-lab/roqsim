@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Quadruped plugins and assets for roqsim (Boston Dynamics Spot + RL locomotion controller)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "roqsim",
     "roqsim_sensors",  # lidar

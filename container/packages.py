@@ -10,7 +10,7 @@ Usage (from the repository root, or the directory the sources were copied to)::
     python3 container/packages.py torch              # the package directories that require torch
     python3 container/packages.py lean|ros --check   # exit 1 unless exactly those are installed
 
-Standard library only (3.11+, for tomllib): it runs in the image before anything of ours is installed.
+Standard library only: it runs in the image before anything of ours is installed.
 """
 
 from __future__ import annotations

@@ -75,7 +75,7 @@ def _entry_points(group):
 def _registered_actions() -> dict[str, str]:
     """``name -> module:Class``, as this package's ``pyproject.toml`` registers them -- read from
     the source rather than from an installed copy, whose metadata may be another checkout's."""
-    tomllib = pytest.importorskip("tomllib", reason="the standard library's from Python 3.11")
+    import tomllib
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     return project["project"]["entry-points"]["scenario_execution.actions"]
 
