@@ -1158,9 +1158,10 @@ class HumanoidPlugin(MachinePlugin):
             start = hit - [0.0, 0.0, 1e-4]
 
     def _contents(self, held: int) -> set:
-        """What rides in or on the held object: the free bodies (by their root) touching it, or
-        touching one that does, standing on it -- above its origin, which is its underside or its
-        middle. The parts in a box are not a surface it is set down on."""
+        """What rides in or on the held object: the free bodies (by their root) inside its extent,
+        and those touching it, or touching one that does, standing on it -- above its origin, which
+        is its underside or its middle. The parts in a box are not a surface it is set down on,
+        whether they rest on its floor at the moment or are jolted off it by the walk."""
         m, d = self._m, self._d
         base = float(d.xpos[held][2])
         held_root = int(m.body_rootid[held])
@@ -1177,6 +1178,26 @@ class HumanoidPlugin(MachinePlugin):
             touching_.setdefault(a, set()).add(b)
             touching_.setdefault(b, set()).add(a)
         found, todo = set(), [held_root]
+        # inside the held object's extent: its geoms' world boxes, as the footprint reads them
+        corners = []
+        for g in range(m.ngeom):
+            if int(m.geom_bodyid[g]) != held or not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            c, h = m.geom_aabb[g][:3], m.geom_aabb[g][3:]
+            rot = d.geom_xmat[g].reshape(3, 3)
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    for sz in (-1, 1):
+                        corners.append(d.geom_xpos[g] + rot @ (c + h * [sx, sy, sz]))
+        if corners:
+            lo, hi = np.min(corners, axis=0), np.max(corners, axis=0)
+            for root in set(int(r) for r in m.body_rootid):
+                if root in (0, held_root) or not free(root) or self.body.owns(m, root):
+                    continue
+                p = d.xpos[root]
+                if (lo[:2] <= p[:2]).all() and (p[:2] <= hi[:2]).all() and base < p[2] <= hi[2]:
+                    found.add(root)
+                    todo.append(root)
         while todo:
             for other in touching_.get(todo.pop(), ()):
                 if other in found or other == held_root or not free(other):
