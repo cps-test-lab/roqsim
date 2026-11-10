@@ -86,7 +86,7 @@ def test_the_recording_is_readable_while_the_recorder_is_still_open(tmp_path, mo
     `mcap_format.CHUNK_SECONDS`, and asserted from outside here because this tool deliberately
     changes nothing in the simulation runtime.
     """
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
     from roqsim import capture
     from roqsim.capture import StateRecorder, snap_fps
 
@@ -956,7 +956,7 @@ def test_the_recorder_writes_the_roster_and_follows_a_change(tmp_path, monkeypat
     A roster written once at the first sample would describe the world the trial started in; a run
     that spawns an obstacle mid-trial is the normal case, not the exotic one.
     """
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
     from roqsim import capture
     from roqsim.capture import StateRecorder, snap_fps
     from roqsim.context import Entity, EntityRegistry
@@ -1000,7 +1000,7 @@ def test_the_recorder_writes_the_roster_and_follows_a_change(tmp_path, monkeypat
 def test_the_recorder_needs_no_registry(tmp_path, monkeypatch):
     """A driver that keeps no registry still records; the roster is simply absent, which the
     reader reports as a reason. Nothing about the recording depends on it."""
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
     from roqsim import capture
     from roqsim.capture import StateRecorder, snap_fps
 

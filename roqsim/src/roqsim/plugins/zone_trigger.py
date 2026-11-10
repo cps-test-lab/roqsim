@@ -10,9 +10,9 @@ presence leads to -- a belt stopping, a door opening -- is a scenario's (``docs/
 "Machines and scenarios"); a machine that works on what is in its tool reads the zone nested under
 it.
 
-**The box.** ``size`` gives its half-extents, ``pose`` its centre and orientation: in the world, or,
-with ``body``, in that body's frame, so the zone rides on it (a barrier on a moving carriage, a die
-zone on a press). Nested under an entity, ``body`` is named after that entity's prefix. An entity is
+**The box.** ``size`` gives its full extents, as a ``box``'s, a conveyor's and a door's do;
+``pose`` its centre and orientation: in the world, or, with ``body``, in that body's frame, so the
+zone rides on it (a barrier on a moving carriage, a die zone on a press). Nested under an entity, ``body`` is named after that entity's prefix. An entity is
 inside when its ``point`` is: ``com`` (default) the centre of mass of its root body; ``origin`` the
 root body's frame, for a body whose mass is not where it stands (a walker's mocap pelvis).
 
@@ -37,7 +37,7 @@ Config::
       pose:                     # the box's centre (roqsim.pose), world or `body` frame
         position: {x: 1.2, y: 0.0, z: 0.95}
         orientation: {yaw: 0.0}
-      size: [0.02, 0.3, 0.1]    # half-extents (m)
+      size: [0.04, 0.6, 0.2]    # full extents (m), as a box's
       entities: [box_1]         # entity name patterns that count (fnmatch, e.g. box_*); default all
       point: com                # com: the root body's centre of mass | origin: its frame
       dwell: 1.0                # seconds inside before `dwelled` (0: never)
@@ -150,7 +150,7 @@ class ZoneTriggerPlugin(Plugin):
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.pos, self.quat = config_pose(self.config)
-        self.half = np.asarray(self.config.get("size") or [0.0, 0.0, 0.0], dtype=float)
+        self.half = np.asarray(self.config.get("size") or [0.0, 0.0, 0.0], dtype=float) / 2.0
         self.patterns = list(self.config.get("entities") or [])
         self.point = str(self.config.get("point", "com"))
         self.dwell = float(self.config.get("dwell", 0.0) or 0.0)
@@ -177,7 +177,7 @@ class ZoneTriggerPlugin(Plugin):
                 isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in size
             )
         ):
-            errors.append("zone_trigger: 'size' is three positive half-extents (m)")
+            errors.append("zone_trigger: 'size' is three positive full extents (m), as a box's")
         if str(config.get("point", "com")) not in ("com", "origin"):
             errors.append("zone_trigger: 'point' is com or origin")
         if not isinstance(config.get("body", ""), str):

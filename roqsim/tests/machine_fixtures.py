@@ -13,7 +13,7 @@ from __future__ import annotations
 import mujoco
 
 from roqsim.context import Entity
-from roqsim.machine import MachinePlugin, program
+from roqsim.machine import MachineHandle, MachinePlugin, program
 from roqsim.plugin import Plugin
 
 #: A press: a guard door and a ram on slide joints, each a position servo, and a site at the die.
@@ -386,3 +386,24 @@ class HomeClash(Press):
     """Machine: a handle named like the machine's own ``home``."""
 
     NEEDS = {"home": "machine:feeder"}
+
+
+class PressHandle(MachineHandle):
+    """A press's handle with a method of its own: what a machine's HANDLE_CLASS names."""
+
+    def stroke(self, **kw) -> int:
+        return self.start("stroke", **kw)
+
+
+class HandledPress(Press):
+    HANDLE_CLASS = PressHandle
+
+
+class FractionLift(Lift):
+    """Machine: the lift, its start state named as a fraction of its stroke (``home: {raised:}``)."""
+
+    HOME_KEYS = {"raised": "fraction"}
+    START_KEYS = {"start_raised": "home: {raised: <0..1>}"}
+
+    def home_targets(self, home):
+        return {"z": -0.5 + home["raised"]} if "raised" in home else {}

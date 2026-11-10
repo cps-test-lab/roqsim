@@ -10,14 +10,15 @@ backend. Every refusal a scenario can meet is run through both and must read the
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import math
 import threading
 import time
 
+import numpy as np
 import pytest
 
-pytest.importorskip("zmq")
 pytest.importorskip("roqsim_nav")
 
 from roqsim import endpoint, runner  # noqa: E402
@@ -119,9 +120,14 @@ class _Sim:
 
 
 class Served:
-    """The world as `roqsim sim` runs it: its own thread, its control socket, as fast as it goes."""
+    """The world as `roqsim sim` runs it: its own thread, its control socket, as fast as it goes, or
+    paced at ``factor`` times real time.
 
-    def __init__(self, tmp_path, uri, *extra):
+    :meth:`held` stops its ticks for a while: a command sent meanwhile is not applied, so its reply
+    cannot come -- what a test of a call still in flight needs, where a free-running simulator
+    answers before the test can look."""
+
+    def __init__(self, tmp_path, uri, *extra, factor=None):
         self.engine = _engine(
             tmp_path,
             *extra,
@@ -129,18 +135,42 @@ class Served:
             EntityControlPlugin({}, entity="sim", label="entities"),
             IpcBridge({"uri": uri}),
         )
+        self.factor = factor
         self._stop = threading.Event()
         self._ready = threading.Event()
+        self._running = threading.Event()
+        self._running.set()
+        self._idle = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
         with self.engine:
             self.engine.reset()
-            pacer = Pacer(self.engine.dt, realtime=False)
+            if self.factor is None:
+                pacer = Pacer(self.engine.dt, realtime=False)
+            else:
+                pacer = Pacer(self.engine.dt, factor=self.factor, realtime=True)
             self._ready.set()
             while not self._stop.is_set():
+                if not self._running.is_set():
+                    self._idle.set()
+                    self._running.wait(0.05)
+                    continue
+                self._idle.clear()
                 runner._tick(self.engine, pacer)
-                time.sleep(0.0005)
+                if self.factor is None:
+                    time.sleep(0.0005)
+
+    @contextlib.contextmanager
+    def held(self):
+        """No tick while inside: the simulator applies nothing, and answers no command."""
+        self._idle.clear()
+        self._running.clear()
+        assert self._idle.wait(10), "the simulator did not stop ticking"
+        try:
+            yield
+        finally:
+            self._running.set()
 
     def __enter__(self):
         self.thread.start()
@@ -153,13 +183,14 @@ class Served:
 
 
 @pytest.fixture
-def routes(tmp_path, monkeypatch):
-    """``(in-process access and its engine, socket access)``, over the same world."""
+def routes(tmp_path, monkeypatch, request):
+    """``(in-process access and its engine, socket access)``, over the same world; the served one
+    paced at the factor a test parametrizes it with (``indirect``), else as fast as it goes."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     uri = "ipc://" + str(tmp_path / "c.sock")
     (tmp_path / "local").mkdir()
     local = _engine(tmp_path / "local")
-    with Served(tmp_path, uri), local:
+    with Served(tmp_path, uri, factor=getattr(request, "param", None)), local:
         local.reset()
         access = IpcAccess(uri)
         deadline = time.monotonic() + 10
@@ -283,6 +314,70 @@ def test_poses_reports_and_placement_over_the_socket(routes):
             pass
 
 
+def _both(socket, *names):
+    deadline = time.monotonic() + 10
+    while True:
+        poses = [socket.ground_truth_pose(n) for n in names]
+        if all(p is not None for p in poses):
+            return poses
+        assert time.monotonic() < deadline, "no pose ever answered"
+        time.sleep(0.005)
+
+
+def test_an_action_reading_two_entities_has_both_poses_every_tick_over_the_socket(routes):
+    """Once each has answered, both poses are there on every tick, whichever answered last: the
+    action does not wait for two answers to land between the same two of its ticks."""
+    _local, socket = routes
+    _both(socket, "cart", "prop")
+    for _ in range(100):
+        assert socket.ground_truth_pose("cart") is not None
+        assert socket.ground_truth_pose("prop") is not None
+        time.sleep(0.001)
+
+
+def test_every_activation_of_an_action_restarts_its_reads(monkeypatch):
+    """SimAction.initialise asks its access to restart its reads before the action's own start."""
+    pytest.importorskip("scenario_execution")
+    from scenario_execution.actions.base_action import BaseAction
+
+    from scenario_execution_roqsim.base import SimAction
+
+    calls = []
+
+    class Access:
+        def restart_reads(self):
+            calls.append("restart")
+
+    class Reader(SimAction):
+        def update(self):
+            raise AssertionError("not ticked here")
+
+    monkeypatch.setattr(BaseAction, "initialise", lambda self: calls.append("execute"))
+    action = Reader()
+    action._access = Access()
+    action.initialise()
+    action.initialise()
+    assert calls == ["restart", "execute", "restart", "execute"]
+
+
+def test_an_action_started_again_reads_the_pose_afresh_over_the_socket(routes, tmp_path):
+    """What an earlier activation read is not this one's: an entity moved in between is read where
+    it is now."""
+    _local, socket = routes
+    (before,) = _both(socket, "cart")
+    other = IpcAccess("ipc://" + str(tmp_path / "c.sock"))
+    try:
+        _until(other.ready, "the other client never reached the simulator")
+        moved = _settle_socket(other.set_entity_state("cart", [1.0, 1.0, 0.1], [1, 0, 0, 0]))
+        assert moved.ok, moved.detail
+    finally:
+        other.teardown()
+    socket.restart_reads()  # the action starts again
+    (after,) = _both(socket, "cart")
+    assert np.allclose(before.pos[:2], [4.0, 4.0], atol=0.05)
+    assert np.allclose(after.pos[:2], [1.0, 1.0], atol=1e-6)
+
+
 def test_a_route_is_followed_to_its_end_over_the_socket(routes):
     _local, socket = routes
     outcome = _settle_socket(socket.navigate("cart", [(4.2, 4.0)], wait=True))
@@ -299,7 +394,9 @@ def press(tmp_path, monkeypatch):
     uri = "ipc://" + str(tmp_path / "c.sock")
     monkeypatch.setenv("ROQSIM_CONTROL", uri)
     with Served(tmp_path, uri, Press({}, name="press")) as served:
-        yield served.engine.ctx.blackboard.require("machine:press")
+        handle = served.engine.ctx.blackboard.require("machine:press")
+        handle.served = served
+        yield handle
 
 
 #: The machine_run action imports scenario_execution; the access routes are tested without it.
@@ -314,13 +411,31 @@ def _machine_run(seconds):
 
     action = MachineRun()
     action.setup(clock=_HostClock())
-    action.execute(machine="press", program="stroke", args=f"seconds={seconds}")
+    action.execute(machine="press", program="stroke", args=f'{{"seconds": {seconds}}}')
     deadline = time.monotonic() + 10
     while action._start is None:
         assert time.monotonic() < deadline, action.feedback_message
         assert action.update().name == "RUNNING"
         time.sleep(0.005)
     return action
+
+
+@contextlib.contextmanager
+def _in_flight(press, seconds):
+    """A ``machine_run`` whose start is sent and not answered: sent while the simulator is held, so
+    no reply can come before the block ends, whatever the machine's load."""
+    from scenario_execution_roqsim.actions.machine_run import MachineRun
+
+    action = MachineRun()
+    action.setup(clock=_HostClock())
+    action.execute(machine="press", program="stroke", args=f'{{"seconds": {seconds}}}')
+    _until(action._access.ready, "the action never reached the simulator")
+    with press.served.held():
+        while action._start is None:
+            assert action.update().name == "RUNNING", action.feedback_message
+            time.sleep(0.005)
+        assert action._seq is None, "its start is still in flight"
+        yield action
 
 
 def _until(cond, what):
@@ -334,15 +449,14 @@ def _until(cond, what):
 def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_socket(press):
     import py_trees
 
-    action = _machine_run(1000.0)
-    assert action._seq is None, "its start is still in flight"
-    action.terminate(py_trees.common.Status.INVALID)
+    with _in_flight(press, 1000.0) as action:
+        action.terminate(py_trees.common.Status.INVALID)
     _until(lambda: press.status().error == "cancelled", f"its start runs on: {press.status()}")
     action.shutdown()
     other = press.start("stroke", seconds=1000.0)
     _until(lambda: press.status().seq == other, "the other client's start never ran")
-    action = _machine_run(0.1)  # refused: the machine is busy
-    action.terminate(py_trees.common.Status.INVALID)
+    with _in_flight(press, 0.1) as action:  # refused once it lands: the machine is busy
+        action.terminate(py_trees.common.Status.INVALID)
     action.shutdown()  # reads its cancel's answer
     assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
 
@@ -361,13 +475,14 @@ def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds
     for _ in range(10):
         following = MachineRun()
         following.setup(clock=_HostClock())
-        following.execute(machine="press", program="stroke", args="seconds=1000.0")
+        following.execute(machine="press", program="stroke", args='{"seconds": 1000.0}')
         abandoned = None
         try:
             _until(following._access.ready, "the second action never reached the simulator")
-            abandoned = _machine_run(1000.0)
-            assert abandoned._seq is None, "its start is still in flight"
-            abandoned.terminate(py_trees.common.Status.INVALID)
+            with _in_flight(press, 1000.0) as abandoned:
+                abandoned.terminate(py_trees.common.Status.INVALID)
+                # the second start leaves before the first start's reply can come
+                assert following.update().name == "RUNNING", following.feedback_message
             _until(
                 lambda f=following: f.update().name != "RUNNING" or f._seq is not None,
                 "the second start got no reply",
@@ -730,7 +845,7 @@ def test_a_condition_resumes_when_the_absent_entity_is_spawned(routes, tmp_path,
 
 
 #: The cart drives past the welded prop into a box. The keep-out rule on that box holds only until
-#: the cart has come within 1 m of the prop, which it does before it can reach the box.
+#: the cart has come within 1.3 m of the prop, which it does before it can reach the box.
 WHERE_SCENARIO = """
 import osc.helpers
 import osc.roqsim
@@ -741,7 +856,7 @@ scenario cart_arrives:
     do parallel:
         entity_navigate(entity: 'cart', goal_poses: [pose_3d(position: position_3d(x: 3.3m, y: 3.3m))])
         serial:
-            entity_near(entity: 'cart', target: 'prop', distance: 1.0)
+            entity_near(entity: 'cart', target: 'prop', distance: 1.3)
             emit approached
             entity_in_region(entity: 'cart', region: [position_3d(x: 3.0m, y: 3.0m),
                                                       position_3d(x: 3.6m, y: 3.6m)])
@@ -821,6 +936,10 @@ def test_a_scenario_of_where_conditions_runs_stepped(routes, tmp_path):
     assert math.hypot(x - 3.3, y - 3.3) <= 0.3
 
 
+# Paced at real time: between `approached` (1.3 m from the prop) and the keep-out region the cart
+# drives about 0.45 m, which a simulator running as fast as it goes can cover between two of the
+# scenario's ticks on a busy machine; at real time that is about half a second of ticks.
+@pytest.mark.parametrize("routes", [1.0], indirect=True)
 def test_the_same_scenario_runs_over_the_socket(routes, tmp_path, monkeypatch):
     pytest.importorskip("scenario_execution")
     run = _where_scenario(tmp_path, until=True)
@@ -874,9 +993,8 @@ NOT_READY_ARGS = {
 
 
 def _registered_actions() -> dict[str, str]:
+    import tomllib
     from pathlib import Path
-
-    tomllib = pytest.importorskip("tomllib", reason="the standard library's from Python 3.11")
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     return project["project"]["entry-points"]["scenario_execution.actions"]
 

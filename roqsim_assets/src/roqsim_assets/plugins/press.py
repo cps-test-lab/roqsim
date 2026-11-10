@@ -108,7 +108,7 @@ class PressPlugin(MachinePlugin):
         zone = {
             "body": "press",
             "pose": {"position": {"x": 0.0, "y": 0.0, "z": table + 0.03 + _DIE_ZONE[2]}},
-            "size": list(_DIE_ZONE),
+            "size": [2 * v for v in _DIE_ZONE],  # a zone's size is its full extents
         }
         return [
             PluginSpec(

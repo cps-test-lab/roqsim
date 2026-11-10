@@ -75,7 +75,7 @@ def _entry_points(group):
 def _registered_actions() -> dict[str, str]:
     """``name -> module:Class``, as this package's ``pyproject.toml`` registers them -- read from
     the source rather than from an installed copy, whose metadata may be another checkout's."""
-    tomllib = pytest.importorskip("tomllib", reason="the standard library's from Python 3.11")
+    import tomllib
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     return project["project"]["entry-points"]["scenario_execution.actions"]
 
@@ -140,15 +140,15 @@ scenario test_every_action:
             entity_in_region(entity: 'robot', region: [position_3d(x: 0m), position_3d(x: 1m, y: 1m)],
                              outside: true)
             entity_navigate(entity: 'cart', goal_poses: [pose_3d(position: position_3d(x: 2.0))],
-                            success_on_acceptance: true)
-            entity_navigate_start(entity: 'cart', success_on_acceptance: true)
+                            success_on_acceptance: true, check: false)
+            entity_navigate_start(entity: 'cart', success_on_acceptance: true, check: false)
             spawn_entity(entity: 'crate', pose: pose_3d(position: position_3d(x: 1.0, z: 0.2)))
             set_entity_state(entity: 'crate', pose: pose_3d(position: position_3d(x: 2.0)),
                              twist: velocity_6d(translational: translational_velocity_3d(x: 0.1mps)))
             delete_entity(entity: 'crate')
             entity_call(entity: 'grip_fault', command: 'override', value: 'true',
                         require_verified: false)
-            machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1', check: false)
+            machine_run(machine: 'press', program: 'stroke', args: '{\\"depth\\": 0.1}', check: false)
             zone_entered(zone: 'gate', pattern: 'box_*', since: 0.0)
             zone_dwelled(zone: 'gate', pattern: 'box_*', since: 0.0)
             zone_left(zone: 'gate', pattern: 'box_*')
@@ -436,3 +436,83 @@ def test_the_where_conditions_parse_and_hand_over_positions_in_metres():
     assert [_args(n)["outside"] for n in regions] == [False, True]
     for node in [*near, point, *regions]:
         node.execute(**_args(node))
+
+
+def _executed(text: str, cls):
+    """The single *cls* node of *text*, executed with what the parser resolves for it."""
+    tree = _build("import osc.roqsim\nscenario test_one:\n    do serial:\n        " + text + "\n")
+    (node,) = [n for n in tree.iterate() if type(n).__name__ == cls]
+    resolved = node._model.get_resolved_value(
+        node.get_blackboard_client(), skip_keys=node.execute_skip_args
+    )
+    node.execute(**resolved)
+    return node, resolved
+
+
+@pytest.mark.parametrize(
+    ("text", "cls", "param"),
+    [
+        ("humanoid_approach(humanoid: 'w', target: 'bench')", "HumanoidApproach", "facing"),
+        (
+            "humanoid_press(humanoid: 'w', hand: 'right', target: 'b/button')",
+            "HumanoidPress",
+            "max_force",
+        ),
+        ("zone_entered(zone: 'gate')", "ZoneEntered", "since"),
+        ("zone_dwelled(zone: 'gate')", "ZoneDwelled", "since"),
+    ],
+)
+def test_an_optional_number_left_out_is_unset_not_a_magic_number(text, cls, param):
+    """Declared without a default, a parameter left out arrives as None and nothing stands for it."""
+    node, resolved = _executed(text, cls)
+    assert resolved[param] is None
+    if cls.startswith("Humanoid"):
+        assert param not in node._args, "the move's own default applies"
+    else:
+        assert node._since is None
+
+
+@pytest.mark.parametrize(
+    ("text", "said"),
+    [
+        (
+            "humanoid_approach(humanoid: 'w', target: 'bench', facing: 1000.0)",
+            "leave `facing` out",
+        ),
+        (
+            "humanoid_press(humanoid: 'w', hand: 'right', target: 'b/button', max_force: 0.0)",
+            "leave `max_force` out",
+        ),
+        ("zone_entered(zone: 'gate', since: -1.0)", "leave `since` out"),
+        ("machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1')", "JSON object"),
+    ],
+    ids=["facing-1000", "max_force-0", "since-negative", "args-pairs"],
+)
+def test_an_old_form_is_refused_naming_the_new_one(text, said):
+    from scenario_execution.actions.base_action import ActionError
+
+    cls = {"humanoid_approach": "HumanoidApproach", "humanoid_press": "HumanoidPress"}
+    cls |= {"zone_entered": "ZoneEntered", "machine_run": "MachineRun"}
+    name = cls[text.split("(")[0]]
+    with pytest.raises(ActionError, match=said):
+        _executed(text, name)
+
+
+def test_machine_run_args_are_json_as_entity_calls_value():
+    node, _ = _executed(
+        """machine_run(machine: 'press', program: 'stroke', args: '{\\"depth\\": 0.1, \\"show\\": \\"hole\\"}')""",
+        "MachineRun",
+    )
+    assert node._args == {"depth": 0.1, "show": "hole"}
+
+
+@pytest.mark.parametrize("action", ["entity_navigate", "entity_navigate_start"])
+def test_entity_navigate_takes_check_as_every_action_that_waits_for_an_outcome(action):
+    poses = (
+        ", goal_poses: [pose_3d(position: position_3d(x: 2.0))]"
+        if action == "entity_navigate"
+        else ""
+    )
+    cls = "EntityNavigate" if action == "entity_navigate" else "EntityNavigateStart"
+    assert _executed(f"{action}(entity: 'cart'{poses})", cls)[0]._check is True
+    assert _executed(f"{action}(entity: 'cart'{poses}, check: false)", cls)[0]._check is False

@@ -19,7 +19,6 @@ from roqsim.config import instantiate_plugins, load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.presence import ABSENT_GEOM_GROUP, entity_geom_ids, set_present
 
-pytest.importorskip("roqsim_mobile", reason="spawn_robot lives in roqsim_mobile")
 
 SPAWN_ROBOT = "roqsim_mobile.plugins.spawn_robot:SpawnRobotPlugin"
 

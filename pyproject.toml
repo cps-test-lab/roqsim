@@ -1,9 +1,9 @@
-# Root config for developer tooling only (ruff). Each installable package is a sibling directory
+# Root config for developer tooling only (ruff, pytest). Each installable package is a sibling directory
 # with its own pyproject.toml. This file is NOT a Python package.
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 # external/sources holds pinned upstream checkouts fetched by external/convert/sources.py -- linting
 # third-party code we do not own only produces noise (and one of them ships a Jupyter notebook).
 extend-exclude = [
@@ -50,3 +50,10 @@ known-first-party = [
     "roqsim_walker",
     "scenario_execution_roqsim",
 ]
+
+[tool.pytest.ini_options]
+# xdist is loaded by name where it is wanted: the Makefile's `-p xdist` (autoload off), or
+# `-p xdist.plugin` by its module. With autoload on, the entry point would register that module a
+# second time under the name `xdist`, and pytest stops before collecting. Blocking the entry point
+# here leaves both forms working: `-p xdist` unblocks it, `-p xdist.plugin` never meets it.
+addopts = "-p no:xdist"
