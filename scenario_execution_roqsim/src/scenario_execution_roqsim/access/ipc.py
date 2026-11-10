@@ -33,6 +33,7 @@ from . import (
     AccessError,
     CommandCall,
     CommandOutcome,
+    EntityAbsent,
     NavCall,
     NavOutcome,
     Pose,
@@ -151,9 +152,12 @@ class _IpcCommand(CommandCall):
 
 
 class _IpcPlacement(TeleportCall, SpawnCall):
-    """A placement or presence flip: an ``entity_control`` command, its refusal a result."""
+    """A placement or presence flip: an ``entity_control`` command, its refusal a result. Once it is
+    answered, the entity's last pose is forgotten: the next read is one sent after it landed."""
 
     def __init__(self, access: IpcAccess, path: str, value, outcome):
+        self._access = access
+        self._entity = value["entity"]
         self._request = _Request(access, "call", value, path=path)
         self._outcome = outcome
 
@@ -161,6 +165,7 @@ class _IpcPlacement(TeleportCall, SpawnCall):
         request = self._request
         if not request.poll():
             return None
+        self._access._forget_pose(self._entity)
         if request.error is not None:
             authoring, message = _refusal(request.error)
             if authoring:
@@ -264,6 +269,7 @@ class IpcAccess(WorldAccess):
         self._unreachable: str | None = None
         self._asked_at: float | None = None
         self._poses: dict[str, _Request] = {}
+        self._latest: dict[str, Pose] = {}
 
     # -- the world ------------------------------------------------------------------------------
     def ready(self) -> bool:
@@ -310,18 +316,28 @@ class IpcAccess(WorldAccess):
         return {row["path"] for row in self._require_rows()}
 
     def ground_truth_pose(self, name: str) -> Pose | None:
+        """*name*'s pose as last answered, at most one round trip old; ``None`` before the first
+        answer. One read per entity is in flight at a time, shared by every action that asks, and
+        each answer stays the entity's pose until the next one: an action that needs several poses
+        at once gets them all, however many others read the same entities."""
         path = POSE_PATH.format(name=name)
         if path not in self._paths():
             raise no_entity(self._rows, name)
         request = self._poses.get(name)
         if request is None:
             request = self._poses[name] = _Request(self, "read", path=path)
-        if not request.poll():
-            return None
-        del self._poses[name]
-        if request.error is not None:
-            raise AccessError(str(request.error))
-        return pose_reading(name, request.value)
+        if request.poll():
+            del self._poses[name]
+            if request.error is not None:
+                self._latest.pop(name, None)
+                raise AccessError(str(request.error))
+            try:
+                self._latest[name] = pose_reading(name, request.value)
+            except EntityAbsent:
+                self._latest.pop(name, None)  # absent now: no pose, not the last one it had
+                raise
+            self._poses[name] = _Request(self, "read", path=path)
+        return self._latest.get(name)
 
     # -- commands -------------------------------------------------------------------------------
     def call_endpoint(self, entity: str, endpoint: str, value=None) -> CommandCall:
@@ -388,6 +404,13 @@ class IpcAccess(WorldAccess):
         if quat is not None:
             value["orientation"] = quat
         return _IpcPlacement(self, self._entity_command(_SET_PRESENCE), value, SpawnOutcome)
+
+    def _forget_pose(self, name: str) -> None:
+        """Drop *name*'s last pose and the read in flight, which may predate a change."""
+        self._latest.pop(name, None)
+        request = self._poses.pop(name, None)
+        if request is not None and not request.done:
+            self._client.forget(request._rid)
 
     def teardown(self) -> None:
         if self._client is not None:

@@ -10,6 +10,7 @@ backend. Every refusal a scenario can meet is run through both and must read the
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import math
 import threading
@@ -119,9 +120,14 @@ class _Sim:
 
 
 class Served:
-    """The world as `roqsim sim` runs it: its own thread, its control socket, as fast as it goes."""
+    """The world as `roqsim sim` runs it: its own thread, its control socket, as fast as it goes, or
+    paced at ``factor`` times real time.
 
-    def __init__(self, tmp_path, uri, *extra):
+    :meth:`held` stops its ticks for a while: a command sent meanwhile is not applied, so its reply
+    cannot come -- what a test of a call still in flight needs, where a free-running simulator
+    answers before the test can look."""
+
+    def __init__(self, tmp_path, uri, *extra, factor=None):
         self.engine = _engine(
             tmp_path,
             *extra,
@@ -129,18 +135,41 @@ class Served:
             EntityControlPlugin({}, entity="sim", label="entities"),
             IpcBridge({"uri": uri}),
         )
+        self.factor = factor
         self._stop = threading.Event()
         self._ready = threading.Event()
+        self._running = threading.Event()
+        self._running.set()
+        self._idle = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
         with self.engine:
             self.engine.reset()
-            pacer = Pacer(self.engine.dt, realtime=False)
+            if self.factor is None:
+                pacer = Pacer(self.engine.dt, realtime=False)
+            else:
+                pacer = Pacer(self.engine.dt, factor=self.factor, realtime=True)
             self._ready.set()
             while not self._stop.is_set():
+                if not self._running.is_set():
+                    self._idle.set()
+                    self._running.wait(0.05)
+                    continue
+                self._idle.clear()
                 runner._tick(self.engine, pacer)
-                time.sleep(0.0005)
+                if self.factor is None:
+                    time.sleep(0.0005)
+
+    @contextlib.contextmanager
+    def held(self):
+        """No tick while inside: the simulator applies nothing, and answers no command."""
+        self._running.clear()
+        assert self._idle.wait(10), "the simulator did not stop ticking"
+        try:
+            yield
+        finally:
+            self._running.set()
 
     def __enter__(self):
         self.thread.start()
@@ -153,13 +182,14 @@ class Served:
 
 
 @pytest.fixture
-def routes(tmp_path, monkeypatch):
-    """``(in-process access and its engine, socket access)``, over the same world."""
+def routes(tmp_path, monkeypatch, request):
+    """``(in-process access and its engine, socket access)``, over the same world; the served one
+    paced at the factor a test parametrizes it with (``indirect``), else as fast as it goes."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     uri = "ipc://" + str(tmp_path / "c.sock")
     (tmp_path / "local").mkdir()
     local = _engine(tmp_path / "local")
-    with Served(tmp_path, uri), local:
+    with Served(tmp_path, uri, factor=getattr(request, "param", None)), local:
         local.reset()
         access = IpcAccess(uri)
         deadline = time.monotonic() + 10
@@ -283,6 +313,22 @@ def test_poses_reports_and_placement_over_the_socket(routes):
             pass
 
 
+def test_every_reader_of_a_pose_gets_one_however_many_read_it_over_the_socket(routes):
+    """Three readers of one entity's pose, each wanting two poses in one tick: every one of them
+    gets both, each tick after the first answers, rather than one taking the answer the others
+    wait for."""
+    _local, socket = routes
+    deadline = time.monotonic() + 10
+    while socket.ground_truth_pose("cart") is None or socket.ground_truth_pose("prop") is None:
+        assert time.monotonic() < deadline, "no pose ever answered"
+        time.sleep(0.005)
+    for _ in range(50):
+        for _reader in range(3):
+            assert socket.ground_truth_pose("cart") is not None
+            assert socket.ground_truth_pose("prop") is not None
+        time.sleep(0.001)
+
+
 def test_a_route_is_followed_to_its_end_over_the_socket(routes):
     _local, socket = routes
     outcome = _settle_socket(socket.navigate("cart", [(4.2, 4.0)], wait=True))
@@ -299,7 +345,9 @@ def press(tmp_path, monkeypatch):
     uri = "ipc://" + str(tmp_path / "c.sock")
     monkeypatch.setenv("ROQSIM_CONTROL", uri)
     with Served(tmp_path, uri, Press({}, name="press")) as served:
-        yield served.engine.ctx.blackboard.require("machine:press")
+        handle = served.engine.ctx.blackboard.require("machine:press")
+        handle.served = served
+        yield handle
 
 
 #: The machine_run action imports scenario_execution; the access routes are tested without it.
@@ -323,6 +371,24 @@ def _machine_run(seconds):
     return action
 
 
+@contextlib.contextmanager
+def _in_flight(press, seconds):
+    """A ``machine_run`` whose start is sent and not answered: sent while the simulator is held, so
+    no reply can come before the block ends, whatever the machine's load."""
+    from scenario_execution_roqsim.actions.machine_run import MachineRun
+
+    action = MachineRun()
+    action.setup(clock=_HostClock())
+    action.execute(machine="press", program="stroke", args=f"seconds={seconds}")
+    _until(action._access.ready, "the action never reached the simulator")
+    with press.served.held():
+        while action._start is None:
+            assert action.update().name == "RUNNING", action.feedback_message
+            time.sleep(0.005)
+        assert action._seq is None, "its start is still in flight"
+        yield action
+
+
 def _until(cond, what):
     deadline = time.monotonic() + 10
     while not cond():
@@ -334,15 +400,14 @@ def _until(cond, what):
 def test_a_machine_run_abandoned_in_flight_cancels_only_its_own_start_over_the_socket(press):
     import py_trees
 
-    action = _machine_run(1000.0)
-    assert action._seq is None, "its start is still in flight"
-    action.terminate(py_trees.common.Status.INVALID)
+    with _in_flight(press, 1000.0) as action:
+        action.terminate(py_trees.common.Status.INVALID)
     _until(lambda: press.status().error == "cancelled", f"its start runs on: {press.status()}")
     action.shutdown()
     other = press.start("stroke", seconds=1000.0)
     _until(lambda: press.status().seq == other, "the other client's start never ran")
-    action = _machine_run(0.1)  # refused: the machine is busy
-    action.terminate(py_trees.common.Status.INVALID)
+    with _in_flight(press, 0.1) as action:  # refused once it lands: the machine is busy
+        action.terminate(py_trees.common.Status.INVALID)
     action.shutdown()  # reads its cancel's answer
     assert press.busy and press.status() == MachineStatus(other, "stroke", False, "")
 
@@ -365,9 +430,10 @@ def test_the_next_machine_run_ticked_at_once_after_one_abandoned_in_flight_finds
         abandoned = None
         try:
             _until(following._access.ready, "the second action never reached the simulator")
-            abandoned = _machine_run(1000.0)
-            assert abandoned._seq is None, "its start is still in flight"
-            abandoned.terminate(py_trees.common.Status.INVALID)
+            with _in_flight(press, 1000.0) as abandoned:
+                abandoned.terminate(py_trees.common.Status.INVALID)
+                # the second start leaves before the first start's reply can come
+                assert following.update().name == "RUNNING", following.feedback_message
             _until(
                 lambda f=following: f.update().name != "RUNNING" or f._seq is not None,
                 "the second start got no reply",
@@ -741,7 +807,7 @@ scenario cart_arrives:
     do parallel:
         entity_navigate(entity: 'cart', goal_poses: [pose_3d(position: position_3d(x: 3.3m, y: 3.3m))])
         serial:
-            entity_near(entity: 'cart', target: 'prop', distance: 1.0)
+            entity_near(entity: 'cart', target: 'prop', distance: 1.3)
             emit approached
             entity_in_region(entity: 'cart', region: [position_3d(x: 3.0m, y: 3.0m),
                                                       position_3d(x: 3.6m, y: 3.6m)])
@@ -821,6 +887,10 @@ def test_a_scenario_of_where_conditions_runs_stepped(routes, tmp_path):
     assert math.hypot(x - 3.3, y - 3.3) <= 0.3
 
 
+# Paced at real time: between `approached` (1.3 m from the prop) and the keep-out region the cart
+# drives about 0.45 m, which a simulator running as fast as it goes can cover between two of the
+# scenario's ticks on a busy machine; at real time that is about half a second of ticks.
+@pytest.mark.parametrize("routes", [1.0], indirect=True)
 def test_the_same_scenario_runs_over_the_socket(routes, tmp_path, monkeypatch):
     pytest.importorskip("scenario_execution")
     run = _where_scenario(tmp_path, until=True)

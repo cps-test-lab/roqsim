@@ -44,7 +44,9 @@ action takes the clock it is handed and never knows which.
 
 What DOES differ, and is stated rather than hidden: over the socket a read is a round-trip, so the
 instant a threshold is crossed is resolved at the tick period rather than at the physics step. A
-dwell shorter than one tick means "the first tick past the threshold" on both paths.
+dwell shorter than one tick means "the first tick past the threshold" on both paths. An entity's pose
+over the socket is the last one answered, at most a round trip old, shared by every action that
+reads it.
 """
 
 from __future__ import annotations
