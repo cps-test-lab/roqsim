@@ -594,7 +594,12 @@ mover answers and under what name, in the owner's ``namespace``. nav2's ``naviga
 ``navigate_through_poses`` send a route; ``start_route`` (``roqsim_nav_interfaces/StartRoute``) runs
 the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
 number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
-not on ROS.
+not on ROS. They follow a machine's ``start``, ``status`` and ``cancel``: a sequence number per send,
+and a status that latches ``finished`` for that route. Two things differ: a new route overtakes the
+running one, where a machine refuses a start while busy, and ``cancel_route`` stamps a sequence number
+of its own, where a machine's ``cancel`` returns the one it cancelled. They are named for the route
+because an entity that a navigator moves may also run a machine -- a walker with hands, its
+``humanoid`` -- and under one owner the two then stay apart without the component named.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
