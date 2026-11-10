@@ -447,7 +447,8 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
     bone indices and weights: every bone of a vertex, in as many sets of four as its vertex with the
     most bones needs (a GPU skinning attribute holds four; glTF carries further sets as
     ``JOINTS_1``, ``WEIGHTS_1``, ...), heaviest first, so a hand whose vertices hang on a finger's
-    bones as well as the wrist's is carried exactly. It carries the bone body names and each bone's world bind pose.
+    bones as well as the wrist's is carried exactly. It carries the bone body names and each bone's
+    world bind pose.
     """
     skins: list[Skin] = []
     for i in range(model.nskin):
