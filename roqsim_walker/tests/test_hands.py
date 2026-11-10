@@ -11,6 +11,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.presence import PARKED_BELOW_Z
 from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
 from roqsim_walker.skin import hand_weights
@@ -326,4 +327,4 @@ def test_a_press_proxy_is_parked_until_a_move_presses_then_rides_the_index_finge
     wrist = d.mocap_pos[body._wrist["r"]]
     assert 0.08 < np.linalg.norm(d.mocap_pos[pid] - wrist) < 0.25
     body.press_proxy(d, "r", False)
-    assert d.mocap_pos[pid][2] < -0.5  # below the floor
+    assert d.mocap_pos[pid][2] < PARKED_BELOW_Z  # where no camera frames it

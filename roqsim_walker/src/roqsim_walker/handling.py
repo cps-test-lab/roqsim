@@ -18,11 +18,12 @@ import math
 
 import mujoco
 import numpy as np
-from roqsim_motion.body import PARK, HumanoidBody
+from roqsim_motion.body import HumanoidBody
 from roqsim_motion.description import Description
 from roqsim_motion.ik import HandGoal, Posture, solve
 
 from roqsim.pose import yaw_to_quat
+from roqsim.presence import PARK_Z
 from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
 from roqsim_walker.humanoid import JOINT_NAMES, PRESS_RADIUS
@@ -240,7 +241,8 @@ class WalkerBody(HumanoidBody):
             along = (tip - last) / max(float(np.linalg.norm(tip - last)), 1e-9)
             data.mocap_pos[pid] = tip - PRESS_RADIUS * along
         else:
-            data.mocap_pos[pid] = PARK
+            # parked where no camera frames it while unused
+            data.mocap_pos[pid] = (0.0, 0.0, PARK_Z)
 
     def settled(self, side: str) -> bool:
         return self.goal[side] is None or self.weight[side] > 0.999
