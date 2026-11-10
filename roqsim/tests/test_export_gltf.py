@@ -520,13 +520,16 @@ def _glb_skinned(glb, n, joint_matrix):
     prim = glb.primitive(n)
     skin = glb.json["skins"][glb.nodes[n]["skin"]]
     verts = glb.accessor(prim["attributes"]["POSITION"]).astype(float)
-    joints = glb.accessor(prim["attributes"]["JOINTS_0"]).astype(int)
-    weights = glb.accessor(prim["attributes"]["WEIGHTS_0"]).astype(float)
+    sets = range(sum(1 for a in prim["attributes"] if a.startswith("JOINTS_")))
+    joints = np.hstack([glb.accessor(prim["attributes"][f"JOINTS_{k}"]).astype(int) for k in sets])
+    weights = np.hstack(
+        [glb.accessor(prim["attributes"][f"WEIGHTS_{k}"]).astype(float) for k in sets]
+    )
     ibm = glb.accessor(skin["inverseBindMatrices"]).reshape(-1, 4, 4).transpose(0, 2, 1)
     motion = np.array([joint_matrix(j) @ ibm[k] for k, j in enumerate(skin["joints"])])
     homo = np.c_[verts, np.ones(len(verts))]
     out = np.zeros_like(verts)
-    for k in range(4):
+    for k in range(joints.shape[1]):
         out += weights[:, k : k + 1] * np.einsum("vij,vj->vi", motion[joints[:, k]], homo)[:, :3]
     return out
 
@@ -569,6 +572,64 @@ def test_a_skin_is_a_skinned_mesh_over_its_bone_bodies(tmp_path):
     moved = _glb_skinned(glb, n, _posed(glb, model, data))
     lift = (moved - rest) @ _W[:3, :3]  # back to world axes
     np.testing.assert_allclose(lift[:, 2], [0.0, 0.4, 0.2, 0.2], atol=1e-6)
+
+
+_SKIN5 = (
+    """
+<mujoco>
+  <worldbody>
+"""
+    + "".join(
+        f'    <body name="b{k}" pos="{k} 0 1"><freejoint/><geom type="sphere" size=".01"/></body>\n'
+        for k in range(5)
+    )
+    + """  </worldbody>
+  <deformable>
+    <skin name="s" rgba="0.8 0.2 0.2 1" vertex="0 0 1  4 0 1  2 1 1" face="0 1 2">
+"""
+    + "".join(
+        f'      <bone body="b{k}" bindpos="{k} 0 1" bindquat="1 0 0 0" vertid="{0 if k < 4 else 1} 2" '
+        f'vertweight="{0.25 if k < 4 else 1} 0.2"/>\n'
+        for k in range(5)
+    )
+    + """    </skin>
+  </deformable>
+</mujoco>
+"""
+)
+
+
+def test_a_skin_vertex_on_more_than_four_bones_keeps_them_all(tmp_path):
+    """A vertex on five bones (a hand's, on a finger's bones and the wrist's) is carried with all
+    five, its fifth in JOINTS_1: each bone moves it by its own weight."""
+    model, data = _compile(_SKIN5)
+    glb = _export(model, data, tmp_path)
+    (n,) = _skin_nodes(glb)
+    assert {"JOINTS_0", "JOINTS_1", "WEIGHTS_0", "WEIGHTS_1"} <= set(glb.primitive(n)["attributes"])
+    rest = _glb_skinned(glb, n, glb.globals().__getitem__)
+    np.testing.assert_allclose(rest, _yup(model.skin_vert.reshape(-1, 3)), atol=1e-6)
+    free = model.jnt_qposadr[model.body("b4").jntadr[0]]
+    data.qpos[free : free + 3] += [0.0, 0.0, 0.5]
+    mujoco.mj_forward(model, data)
+    lift = (_glb_skinned(glb, n, _posed(glb, model, data)) - rest) @ _W[:3, :3]
+    np.testing.assert_allclose(lift[:, 2], [0.0, 0.5, 0.1], atol=1e-6)
+
+
+def test_a_skin_vertex_s_first_set_holds_its_four_heaviest_bones(tmp_path):
+    """A viewer that reads only JOINTS_0 draws a vertex on five bones by its four heaviest: the
+    heaviest bone, last in the skin's order, comes first."""
+    xml = _SKIN5.replace('vertid="0 2" vertweight="0.25 0.2"', 'vertid="0 2" vertweight="0.25 0.1"')
+    xml = xml.replace('vertid="1 2" vertweight="1 0.2"', 'vertid="1 2" vertweight="1 0.6"')
+    model, data = _compile(xml)
+    glb = _export(model, data, tmp_path)
+    (n,) = _skin_nodes(glb)
+    attributes = glb.primitive(n)["attributes"]
+    weights = glb.accessor(attributes["WEIGHTS_0"]).astype(float)
+    joints = glb.accessor(attributes["JOINTS_0"]).astype(int)
+    names = [glb.nodes[j]["name"] for j in glb.json["skins"][glb.nodes[n]["skin"]]["joints"]]
+    assert names[joints[2, 0]].endswith("b4")
+    np.testing.assert_allclose(weights[2], [0.6, 0.1, 0.1, 0.1], atol=1e-6)
+    assert np.all(np.diff(weights, axis=1) <= 0.0)
 
 
 @pytest.mark.parametrize(
