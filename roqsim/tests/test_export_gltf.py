@@ -615,6 +615,23 @@ def test_a_skin_vertex_on_more_than_four_bones_keeps_them_all(tmp_path):
     np.testing.assert_allclose(lift[:, 2], [0.0, 0.5, 0.1], atol=1e-6)
 
 
+def test_a_skin_vertex_s_first_set_holds_its_four_heaviest_bones(tmp_path):
+    """A viewer that reads only JOINTS_0 draws a vertex on five bones by its four heaviest: the
+    heaviest bone, last in the skin's order, comes first."""
+    xml = _SKIN5.replace('vertid="0 2" vertweight="0.25 0.2"', 'vertid="0 2" vertweight="0.25 0.1"')
+    xml = xml.replace('vertid="1 2" vertweight="1 0.2"', 'vertid="1 2" vertweight="1 0.6"')
+    model, data = _compile(xml)
+    glb = _export(model, data, tmp_path)
+    (n,) = _skin_nodes(glb)
+    attributes = glb.primitive(n)["attributes"]
+    weights = glb.accessor(attributes["WEIGHTS_0"]).astype(float)
+    joints = glb.accessor(attributes["JOINTS_0"]).astype(int)
+    names = [glb.nodes[j]["name"] for j in glb.json["skins"][glb.nodes[n]["skin"]]["joints"]]
+    assert names[joints[2, 0]].endswith("b4")
+    np.testing.assert_allclose(weights[2], [0.6, 0.1, 0.1, 0.1], atol=1e-6)
+    assert np.all(np.diff(weights, axis=1) <= 0.0)
+
+
 @pytest.mark.parametrize(
     ("flexcomp", "name"),
     [(_GRID3, "blk"), (_PINNED3, "blk"), (_TRILINEAR, "blk"), (_SHEET, "cloth"), (_CABLE, "cable")],

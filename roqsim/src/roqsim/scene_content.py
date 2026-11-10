@@ -446,8 +446,8 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
     The bind block transposes MuJoCo's per-bone vertex lists (``skin_bonevert*``) into per-vertex
     bone indices and weights: every bone of a vertex, in as many sets of four as its vertex with the
     most bones needs (a GPU skinning attribute holds four; glTF carries further sets as
-    ``JOINTS_1``, ``WEIGHTS_1``, ...), so a hand whose vertices hang on a finger's bones as well as
-    the wrist's is carried exactly. It carries the bone body names and each bone's world bind pose.
+    ``JOINTS_1``, ``WEIGHTS_1``, ...), heaviest first, so a hand whose vertices hang on a finger's
+    bones as well as the wrist's is carried exactly. It carries the bone body names and each bone's world bind pose.
     """
     skins: list[Skin] = []
     for i in range(model.nskin):
@@ -488,6 +488,11 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
         wsum = skin_weight.sum(axis=1, keepdims=True)
         wsum[wsum == 0] = 1.0
         skin_weight /= wsum
+        # Heaviest first: a viewer that reads only the first set draws each vertex by its four
+        # heaviest bones.
+        order = np.argsort(-skin_weight, axis=1, kind="stable")
+        skin_index = np.take_along_axis(skin_index, order, axis=1)
+        skin_weight = np.take_along_axis(skin_weight, order, axis=1)
         skins.append(
             Skin(
                 mesh,
