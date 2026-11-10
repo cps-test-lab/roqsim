@@ -432,6 +432,14 @@ def test_a_place_whose_load_comes_down_on_something_above_the_place_fails_caught
         engine.shutdown()
 
 
+def test_a_walk_whose_body_does_not_come_to_rest_fails(sim, monkeypatch):
+    """A body that does not come to rest where it was walked to fails the move rather than
+    starting the next one from where it is still moving."""
+    monkeypatch.setattr(sim.body, "at_rest", lambda: False)
+    st = sim.run("approach", target="tote_1", standoff=0.6)
+    assert st.error.startswith("cannot stand at tote_1: the body did not come to rest"), st.error
+
+
 def test_a_place_with_a_heading_sets_the_load_down_square_to_it(sim):
     """A place with a frame -- a site's, or a world pose with a heading -- takes the load square to
     it, to the nearest quarter turn: the hold keeps a load as it was taken, a few degrees off."""

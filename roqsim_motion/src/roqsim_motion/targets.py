@@ -96,7 +96,7 @@ def make_target(model, entities, spec, offset=None) -> Target:
             -1,
             p + Q.rotate(r, off_pos),
             Q.mul(r, off_rot),
-            heading="orientation" in spec,
+            heading="orientation" in (spec["pose"] if isinstance(spec.get("pose"), dict) else spec),
         )
     if isinstance(spec, (tuple, list)) and len(spec) == 2:
         p, r = np.asarray(spec[0], float), np.asarray(spec[1], float)
