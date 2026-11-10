@@ -309,6 +309,34 @@ def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
     assert drift < 0.005, drift
 
 
+def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
+    """The hold is a spring: the load comes over the place a moment after the hands. It is lowered
+    once it is there, so it does not come down on a rim beside the place; and it is set down only
+    once it rests at the place's height."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    seq = sim.h.place({"position": {"x": 0.1, "y": 2.45, "z": 0.75}}, release=False)
+    tote = sim.m.body("tote_1").id
+    seen = 0
+    at_lowering = at_set_down = None
+    while True:
+        sim.e.step()
+        events = [e for e in sim.e.ctx.events.all() if e["source"] == "worker"]
+        for e in events[seen:]:
+            if e["event"] == "lowering":
+                at_lowering = sim.d.xpos[tote].copy()
+            if e["event"] == "set_down":
+                at_set_down = sim.d.xpos[tote].copy()
+        seen = len(events)
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            break
+    assert st.error == ""
+    assert np.linalg.norm(at_lowering[:2] - [0.1, 2.45]) < 0.015, at_lowering
+    assert abs(at_set_down[2] - 0.75) < 0.02, at_set_down
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")

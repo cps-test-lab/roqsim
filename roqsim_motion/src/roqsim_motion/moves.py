@@ -48,7 +48,14 @@ from roqsim.schema import Field
 
 from . import quat as Q
 from .body import SIDES, HumanoidBody
-from .contact import HOLD_SOLREF, Hold, add_holds, check_solref, contact_force, touching
+from .contact import (
+    HOLD_SOLREF,
+    Hold,
+    add_holds,
+    check_solref,
+    contact_force,
+    touching_body,
+)
 from .targets import TargetError, make_target
 
 HANDS = {"left": ("l",), "right": ("r",), "both": ("l", "r")}
@@ -88,6 +95,8 @@ LEVEL = 0.015
 #: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
 #: drawer's stops, a comb's teeth, a lip round what it stood on.
 LIFT_FREE = 0.06
+#: How near the place (m) what is set down comes over it before it is lowered.
+OVER_AT = 0.01
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: The time constant (s) a hold's force is judged over.
@@ -1453,6 +1462,20 @@ class HumanoidPlugin(MachinePlugin):
         over = np.array([shift[0], shift[1], rise])
         goals = {s: (lambda s=s: (starts[s][0] + over, starts[s][1])) for s in sides}
         yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
+        # The hold is a spring: what it holds comes over the place a moment after the hands do, and
+        # lowered before it has, it would come down on a rim beside the place.
+        # Nor do the hands always come all the way to their goals: they are led on by what is
+        # still missing, until it is over the place.
+        t0 = self._ctx.sim_time
+        lead = np.zeros(3)
+        while float(np.linalg.norm(low()[:2] - where)) > OVER_AT and self._ctx.sim_time - t0 < 1.5:
+            miss = where - low()[:2]
+            lead[:2] += min(1.0, self._ctx.dt / 0.1) * miss
+            for s in sides:
+                p, q = goals[s]()
+                self.body.set_hand(s, p + lead, q)
+            self._check_holds()
+            yield
         self.step("lowering", at=at)
         starts = {s: self.body.grip(d, s) for s in sides}
         down = 0.0
@@ -1462,7 +1485,17 @@ class HumanoidPlugin(MachinePlugin):
         skip = {obj} | {
             b for b in range(m.nbody) if self.body.owns(m, b) or int(m.body_rootid[b]) in inside
         }
-        while not touching(m, d, obj, skip):
+        while True:
+            hit = touching_body(m, d, obj, skip)
+            if hit >= 0:
+                if float(low()[2]) <= top + LEVEL:
+                    break
+                # touching something above the place: a rim or a wall it came down on
+                name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, hit) or "the world"
+                self.fail(
+                    f"caught on {name}: {float(low()[2]) - top:.3f} m above {at} it touched it -- "
+                    f"approach {at} square to it"
+                )
             down += speed * self._ctx.dt
             if down > start_low - float(surface[2]) + 0.2:
                 self.fail(f"nothing under it at {at}: lowered {down:.2f} m and touched nothing")
