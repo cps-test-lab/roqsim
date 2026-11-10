@@ -541,6 +541,9 @@ class Plugin:
         """Pre-compile: mutate the ``MjSpec`` (add bodies/geoms/sensors/assets).
 
         Runs once at setup, before ``spec.compile()``. ``ctx.model``/``ctx.data`` do not exist yet.
+        A plugin that measures the model while it is built compiles a copy
+        (``spec.copy().compile()``), never the spec itself: compiling the spec freezes its name
+        lookup, so ``spec.body`` and ``spec.site`` would miss what the plugins after it add.
         """
 
     def build_late(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
