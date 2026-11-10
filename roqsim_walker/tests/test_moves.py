@@ -206,6 +206,9 @@ def test_with_a_body_lag_a_carried_tote_stays_in_front_of_the_drawn_body():
                 break
         assert st.error == ""
         assert max(ahead) - min(ahead) < 0.12, (min(ahead), max(ahead))
+        # and a walk ends once the drawn body has come to rest, not when its root arrives
+        st = sim.body.st
+        assert np.hypot(*(np.asarray(st.body_pos[:2]) - np.asarray(st.pos[:2]))) < 0.006
     finally:
         engine.shutdown()
 

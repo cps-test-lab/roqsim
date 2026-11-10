@@ -605,6 +605,13 @@ class HumanoidPlugin(MachinePlugin):
                     f"cannot face {what}: it turned to {math.degrees(self.body.root()[2]):.0f} deg of {math.degrees(yaw):.0f}"
                 )
             yield
+        # A body drawn behind its root comes to rest a moment after it: until then what it carries
+        # goes along with it, and its hands are not where a move that follows would start them.
+        t0 = self._ctx.sim_time
+        while not self.body.at_rest() and self._ctx.sim_time - t0 < 3.0:
+            if while_walking is not None:
+                while_walking()
+            yield
         self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
 
     def _route(self, nav, stand, what: str, while_walking, via=()):

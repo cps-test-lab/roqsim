@@ -174,3 +174,8 @@ class HumanoidBody:
     def settled(self, side: str) -> bool:
         """``side``'s goal has fully taken over from the gait (or it has none)."""
         raise NotImplementedError
+
+    def at_rest(self) -> bool:
+        """Whether the body has come to rest where it was walked to: a body drawn behind its nav
+        root (a walker's ``body_lag``) is still on its way for a moment after the root arrives."""
+        return True

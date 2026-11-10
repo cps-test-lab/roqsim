@@ -198,6 +198,13 @@ class WalkerBody(HumanoidBody):
     def carry_height(self) -> float:
         return self.desc.root_height - 0.1
 
+    def at_rest(self) -> bool:
+        st = self.st
+        if st.body_lag <= 0.0 or st.body_pos is None:
+            return True
+        apart = float(np.hypot(*(np.asarray(st.body_pos[:2]) - np.asarray(st.pos[:2]))))
+        return apart < 0.005 and float(np.hypot(*st.body_vel[:2])) < 0.01
+
     def limit_turn(self, rate):
         self.st.turn_rate = None if rate is None else float(rate)
 
