@@ -95,8 +95,14 @@ LEVEL = 0.015
 #: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
 #: drawer's stops, a comb's teeth, a lip round what it stood on.
 LIFT_FREE = 0.06
-#: How near the place (m) what is set down comes over it before it is lowered.
-OVER_AT = 0.01
+#: How near the place (m) what is set down comes over it before it is lowered: a drawer's deck
+#: holds a box in stops with millimetres to spare, a centimetre from the fence over it.
+OVER_AT = 0.004
+#: How far (m) what is lowered may stay above where the hands lower it before it counts as resting
+#: on what it touches.
+CAUGHT = 0.03
+#: The most a place turns what it sets down to stand square to the place (rad).
+SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: The time constant (s) a hold's force is judged over.
@@ -1379,6 +1385,20 @@ class HumanoidPlugin(MachinePlugin):
                 tops.append(float(p[2]))
         return max(tops) if tops else float(point[2])
 
+    def _square_to(self, target, held: int) -> float:
+        """How far to turn the held object about the vertical (rad) to stand square to ``target``'s
+        frame -- the nearest quarter turn of its heading; 0 for a world pose with no heading
+        stated, or a turn of more than SQUARE_MAX, which is not a matter of squaring."""
+        if target.kind == "world" and not getattr(target, "name", "").count("orientation"):
+            return 0.0
+        _, tq = target.resolve(self._m, self._d)
+        tm = Q.to_matrix(tq)
+        om = self._d.xmat[held].reshape(3, 3)
+        rel = math.atan2(om[1, 0], om[0, 0]) - math.atan2(tm[1, 0], tm[0, 0])
+        rel = math.atan2(math.sin(rel), math.cos(rel))
+        off = rel - round(rel / (math.pi / 2)) * (math.pi / 2)
+        return -off if abs(off) <= SQUARE_MAX else 0.0
+
     def _path_top(self, a, b, held: int, z: float) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`) with its
         origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to: in
@@ -1460,7 +1480,21 @@ class HumanoidPlugin(MachinePlugin):
             goals = {s: (lambda s=s: (starts[s][0] + up, starts[s][1])) for s in sides}
             yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
         over = np.array([shift[0], shift[1], rise])
-        goals = {s: (lambda s=s: (starts[s][0] + over, starts[s][1])) for s in sides}
+        # Square to a place that has a frame (a site's, a body's): turned on the way, about its own
+        # origin, to the nearest quarter turn of the place's heading -- the hold keeps a load as it
+        # was taken, and a box a few degrees off a drawer's nest stands on its stops.
+        turn = self._square_to(target, obj)
+        spin = Q.axis_angle("z", turn)
+        centre = d.xpos[obj].copy()
+        goals = {
+            s: (
+                lambda s=s: (
+                    centre + Q.rotate(spin, starts[s][0] - centre) + over,
+                    Q.mul(spin, starts[s][1]),
+                )
+            )
+            for s in sides
+        }
         yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
         # The hold is a spring: what it holds comes over the place a moment after the hands do, and
         # lowered before it has, it would come down on a rim beside the place.
@@ -1477,7 +1511,8 @@ class HumanoidPlugin(MachinePlugin):
             self._check_holds()
             yield
         self.step("lowering", at=at)
-        starts = {s: self.body.grip(d, s) for s in sides}
+        starts = {s: (goals[s]()[0] + lead, goals[s]()[1]) for s in sides}
+        lead = np.zeros(3)
         down = 0.0
         start_low = float(low()[2])
         # what it touches that is not the surface: itself, the humanoid, what rides in it
@@ -1487,20 +1522,23 @@ class HumanoidPlugin(MachinePlugin):
         }
         while True:
             hit = touching_body(m, d, obj, skip)
-            if hit >= 0:
-                if float(low()[2]) <= top + LEVEL:
-                    break
-                # touching something above the place: a rim or a wall it came down on
+            if hit >= 0 and float(low()[2]) <= top + LEVEL:
+                break
+            if hit >= 0 and float(low()[2]) > start_low - down + CAUGHT:
+                # held up above the place by what it touches -- a rim or a wall it came down on,
+                # not one it grazes on the way down: it would be let go on it
                 name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, hit) or "the world"
                 self.fail(
-                    f"caught on {name}: {float(low()[2]) - top:.3f} m above {at} it touched it -- "
-                    f"approach {at} square to it"
+                    f"caught on {name}: {float(low()[2]) - top:.3f} m above {at} it rests on it "
+                    f"-- approach {at} square to it"
                 )
             down += speed * self._ctx.dt
             if down > start_low - float(surface[2]) + 0.2:
                 self.fail(f"nothing under it at {at}: lowered {down:.2f} m and touched nothing")
+            # led on over the place as it goes down, as it was led onto it
+            lead[:2] += min(1.0, self._ctx.dt / 0.1) * (where - low()[:2])
             for s in sides:
-                self.body.set_hand(s, starts[s][0] - [0.0, 0.0, down], starts[s][1])
+                self.body.set_hand(s, starts[s][0] - [0.0, 0.0, down] + lead, starts[s][1])
             self._check_holds()
             yield
         yield from self.wait(0.2)

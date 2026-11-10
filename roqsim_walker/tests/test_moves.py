@@ -337,6 +337,22 @@ def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
     assert abs(at_set_down[2] - 0.75) < 0.02, at_set_down
 
 
+def test_a_place_with_a_heading_sets_the_load_down_square_to_it(sim):
+    """A place with a frame -- a site's, or a world pose with a heading -- takes the load square to
+    it, to the nearest quarter turn: the hold keeps a load as it was taken, a few degrees off."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    at = {"position": {"x": 0.0, "y": 2.45, "z": 0.75}, "orientation": {"yaw": 0.25}}
+    sim.ok("place", at=at)
+    for _ in range(300):
+        sim.e.step()
+    rot = sim.d.body("tote_1").xmat.reshape(3, 3)
+    yaw = math.atan2(rot[1, 0], rot[0, 0])
+    off = (yaw - 0.25 + math.pi / 4) % (math.pi / 2) - math.pi / 4
+    assert abs(math.degrees(off)) < 2.0, math.degrees(yaw)
+
+
 def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     st = sim.run("approach", target="start/button", via=[[1.0, "north"]])
     assert st.error.startswith("via: a point is [x, y]")
