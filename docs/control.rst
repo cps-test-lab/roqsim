@@ -128,8 +128,7 @@ pose is the core's ``sim/entities/<name>/pose``, and ``sim/entities/set_state`` 
 ``sim/entities/set_presence`` place an entity and make it present or absent (what a scenario's
 ``set_entity_state``, ``spawn_entity`` and ``delete_entity`` do). A navigator's route is
 ``<entity>/<navigator>/navigate_through_poses``, followed by ``route_status`` and stopped by
-``cancel_route``: named for the route, so that an entity with a navigator and a machine (a walker
-with hands) answers both ``cancel`` and ``cancel_route`` without the component named. Two endpoints that would share a path are refused
+``cancel_route``. Two endpoints that would share a path are refused
 when the simulation starts, naming both.
 
 Every endpoint is served, carrying its payload as it is, unless it opts out with ``ipc=None`` on its
