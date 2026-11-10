@@ -58,6 +58,11 @@ class Plugin:
     #: Off only with an :data:`OPEN_KEYS` reason.
     STRICT_KEYS: bool = True
 
+    #: With a schema, words a world may write meaning a key the schema names otherwise, word -> what
+    #: to write instead (``{"press_force": "press: {max_force: <N>}"}``): such a key is refused as
+    #: any unknown one is, with this hint in place of the nearest-name suggestion. Never read.
+    CONFIG_HINTS: dict[str, str] = {}
+
     #: Why a plugin with a schema accepts keys it does not list -- the one way to leave
     #: :data:`STRICT_KEYS` off. A schema that stays open without saying why is refused by the guard
     #: test over every shipped plugin, because an open schema publishes a contract a typo passes.
@@ -315,7 +320,9 @@ class Plugin:
             return []
         from .schema import validate
 
-        return validate(cls.CONFIG_SCHEMA, config, strict_keys=cls.STRICT_KEYS)
+        return validate(
+            cls.CONFIG_SCHEMA, config, strict_keys=cls.STRICT_KEYS, hints=cls.CONFIG_HINTS or None
+        )
 
     def config_errors(self, config: dict) -> list[str]:
         """Every error for *config*: the declared schema's, then this plugin's own.
