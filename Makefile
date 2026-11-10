@@ -156,7 +156,7 @@ build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
 
 .PHONY: test
 test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
-	$(PYTEST) $(PKGS) tools/tests -q $(XDIST)
+	$(PYTEST) $(PKGS) tools/tests -q -rs $(XDIST)
 	@if [ -n "$$ROS_DISTRO" ]; then \
 		echo "ROS sourced -> building ros2_ws and running its tests"; \
 		$(MAKE) build-ros; \

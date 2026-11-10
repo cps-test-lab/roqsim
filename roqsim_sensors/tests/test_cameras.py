@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 
 import mujoco
 import numpy as np
@@ -833,11 +834,21 @@ def test_blur_smooths_edges():
 
 
 def test_noise_config_is_checked():
-    pytest.importorskip("cv2", reason="a blur needs OpenCV, roqsim_sensors' test extra")
     plugin = RealsenseD435Plugin({})
     assert any("noise" in e for e in plugin.validate_config({"noise": {"sigma": 1}}))
     assert any("noise" in e for e in plugin.validate_config({"noise": {"gaussian_sigma": -1}}))
-    assert not plugin.validate_config({"noise": {"gaussian_sigma": 2.0, "blur_sigma": 0.5}})
+    blurred = plugin.validate_config({"noise": {"gaussian_sigma": 2.0, "blur_sigma": 0.5}})
+    if _cv2_import_error() is None:
+        assert not blurred
+    else:  # a blur needs OpenCV, roqsim_sensors' test extra, and is refused without it
+        assert any("blur" in e for e in blurred)
+
+
+def test_noise_without_a_blur_needs_no_opencv(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", None)  # `import cv2` raises ImportError
+    clean = _frame().astype(float)
+    noisy = _frame({"gaussian_sigma": 8.0}).astype(float)
+    assert np.abs(noisy - clean).mean() > 1.0
 
 
 def test_on_demand_renders_only_for_a_consumer_that_asks():

@@ -43,12 +43,12 @@ def _requirements_check():
 @functools.cache
 def _missing(package_dir: Path) -> str:
     """Why *package_dir*'s distribution is installed without what it declares, or ``""``."""
-    import tomllib
-
     pyproject = package_dir / "pyproject.toml"
     if not pyproject.is_file():
         return ""
-    name = tomllib.loads(pyproject.read_text())["project"]["name"]
+    name = _requirements_check().project_name(pyproject)
+    if name is None:
+        return ""
     missing = _requirements_check().missing_requirements(name)
     if not missing:
         return ""

@@ -966,26 +966,20 @@ def _entry_point(name: str):
 
 
 @functools.cache
-def _own_distributions() -> set[str]:
-    """The distributions this repository ships, by the ``name`` of each package's pyproject: a
-    plugin another repository registers in the same environment is that repository's to check."""
-    import tomllib
-
-    root = Path(__file__).resolve().parents[2]
-    return {
-        tomllib.loads(path.read_text())["project"]["name"].replace("-", "_").lower()
-        for path in root.glob("*/pyproject.toml")
-    }
-
-
-@functools.cache
 def _registered() -> list[str]:
-    own = _own_distributions()
+    """The plugins of the distributions this repository ships (its packages and its ROS packages,
+    ``installed_requirements.repository_distributions``): a plugin another repository registers in
+    the same environment is that repository's to check."""
+    from installed_requirements import repository_distributions
+    from packaging.utils import canonicalize_name
+
+    own = repository_distributions(Path(__file__).resolve().parents[2])
+    assert own, "found none of this repository's distributions to check"
     return sorted(
         {
             ep.name
             for ep in entry_points(group="roqsim.plugins")
-            if ep.dist is None or ep.dist.name.replace("-", "_").lower() in own
+            if ep.dist is None or canonicalize_name(ep.dist.name) in own
         }
     )
 
