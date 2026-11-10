@@ -428,7 +428,7 @@ def _in_flight(press, seconds):
 
     action = MachineRun()
     action.setup(clock=_HostClock())
-    action.execute(machine="press", program="stroke", args=f"seconds={seconds}")
+    action.execute(machine="press", program="stroke", args=f'{{"seconds": {seconds}}}')
     _until(action._access.ready, "the action never reached the simulator")
     with press.served.held():
         while action._start is None:
