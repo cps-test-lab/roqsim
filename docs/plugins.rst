@@ -1748,7 +1748,8 @@ type ``motor`` where a choice says ``effort`` -- is declared as a ``hint`` on th
 it: ``Field(dict, schema=GAINS, hints={"kp": "use 'p'"})`` for a key of a block,
 ``Field(str, choices=..., hints={"motor": "use effort"})`` for a value. It is refused like any other
 unknown key or value, in one error that carries the hint in place of the nearest-name suggestion,
-and nothing reads it.
+and nothing reads it. A word at the top level -- a key the plugin no longer reads, under its new
+name -- goes into the class's ``CONFIG_HINTS``: ``{"press_force": "press: {max_force: <N>}"}``.
 
 A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
 (``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
