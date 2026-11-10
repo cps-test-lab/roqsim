@@ -21,7 +21,6 @@ DOCKERFILES = {"Dockerfile": "lean", "Dockerfile.ros": "ros"}
 
 @pytest.fixture(scope="module")
 def packages():
-    pytest.importorskip("tomllib")  # stdlib from 3.11; the images run 3.12
     spec = importlib.util.spec_from_file_location("image_packages", REPO / "container/packages.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
