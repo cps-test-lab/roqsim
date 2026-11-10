@@ -36,21 +36,9 @@ def hold_name(hand_site: str, object_site: str) -> str:
     return f"hold:{hand_site}->{object_site}"
 
 
-def spec_site(spec: mujoco.MjSpec, name: str):
-    """The site ``name`` of ``spec``. ``MjSpec.site`` looks names up in a map the last compile
-    built, so it misses a site added after a compile made while the world was built (a plugin that
-    compiles to measure the world, as the ceiling's removal does); this walks the sites instead."""
-    site = spec.site(name)
-    if site is None:
-        site = next((s for s in spec.sites if s.name == name), None)
-    if site is None:
-        raise KeyError(f"no site {name!r}")
-    return site
-
-
 def _jointed(spec: mujoco.MjSpec, site: str) -> bool:
     """Whether the body ``site`` is on moves on a joint other than a free one (a drawer's slide)."""
-    body = spec_site(spec, site).parent
+    body = spec.site(site).parent
     joints = list(body.joints)
     return bool(joints) and all(j.type != mujoco.mjtJoint.mjJNT_FREE for j in joints)
 
@@ -71,10 +59,8 @@ def add_holds(
             eq.name = hold_name(hand, obj)
             eq.type = mujoco.mjtEq.mjEQ_WELD
             eq.objtype = mujoco.mjtObj.mjOBJ_BODY
-            eq.name1 = spec_site(
-                spec, obj
-            ).parent.name  # the object first: the weld keeps it on the hand
-            eq.name2 = spec_site(spec, hand).parent.name
+            eq.name1 = spec.site(obj).parent.name  # the object first: the weld keeps it on the hand
+            eq.name2 = spec.site(hand).parent.name
             eq.active = False
             eq.solref = list(solref)
             eq.solimp = list(HOLD_SOLIMP)
