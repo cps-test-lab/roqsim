@@ -47,7 +47,7 @@ from roqsim.endpoint import ParameterError, bind
 
 from .extensions import EXTENSION_GROUP, load_extensions
 from .gripper_policy import ABORT, GripperPolicy
-from .params import payload_for
+from .params import one_value, payload_for
 from .trajectory_policy import (
     CURRENT_GOALS,
     PATH_VIOLATED,
@@ -516,8 +516,10 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     gripper (controller ``type: GripperCommand``), but the policy is generic -- any producer with a
     single commandable position and a state reader reuses it (e.g. an automatic ``door``). The
     commanded ``position`` is sent to the producer (e.g. ``ArmControllerPlugin.set_gripper``, or a
-    ``door``, whose ``move_to`` program it starts) as the parameter ``position``; a typed producer
-    that would refuse it aborts the goal. We then watch the producer's state -- a ``() -> (position, velocity)``
+    ``door``, whose ``move_to`` program it starts) as its one parameter, named for its own quantity
+    (a door's ``openness``), or as ``position`` to one that declares several
+    (:func:`~roqsim_ros_bridge.params.one_value`); a typed producer that would refuse it aborts the
+    goal. We then watch the producer's state -- a ``() -> (position, velocity)``
     reader on the blackboard -- and succeed once it reaches the target or stops moving short of it
     (a gripper closed on an object, a door met an obstruction). As ros2_control's gripper action
     controller reports them, ``reached_goal`` is the measured position within tolerance of the
@@ -561,7 +563,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     except ValueError as exc:
         refusal = f"{getattr(endpoint, 'owner', '?')}/{getattr(endpoint, 'name', '?')}: {exc}"
     else:
-        refusal = _refused(endpoint, position=target)
+        refusal = _refused(endpoint, **one_value(endpoint, "position", target))
     if refusal is not None:
         # GripperCommand's result has no error field: the goal is aborted, and the reason logged.
         logger.error("gripper goal refused: %s", refusal)
@@ -571,7 +573,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     effort = ctx.blackboard.get(effort_key) if effort_key else None
     if effort is not None:
         ctx.post(lambda _ctx, value=max_effort: effort.set_max_effort(value))
-    _send(on_payload, endpoint, position=target)
+    _send(on_payload, endpoint, **one_value(endpoint, "position", target))
 
     reader = None
     if endpoint is not None:
@@ -595,7 +597,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             # where it is. Without a reader nothing measures the fingers, and the command stands.
             if reader is not None:
                 position, _velocity = reader()
-                _send(on_payload, endpoint, position=position)
+                _send(on_payload, endpoint, **one_value(endpoint, "position", position))
                 reached = policy.reached(position, target)
             else:
                 logger.warning(

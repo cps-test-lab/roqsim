@@ -18,3 +18,13 @@ def payload_for(endpoint, params: Mapping[str, Any]) -> Any:
         return dict(params)
     values = tuple(params.values())
     return values[0] if len(values) == 1 else values
+
+
+def one_value(endpoint, name: str, value: Any) -> dict[str, Any]:
+    """*value* as the parameters of an endpoint that takes one value: under the endpoint's own
+    parameter where it declares exactly one (a door's ``openness``), else under *name* (a
+    goal's field, ``position``), so a producer names its parameter for its own quantity."""
+    params = getattr(endpoint, "params", None)
+    if params is not None and len(params) == 1:
+        name = params[0].name
+    return {name: value}

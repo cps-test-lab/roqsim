@@ -23,7 +23,7 @@ components:
     name: table
 
   - conveyor:
-      speed: 0.2
+      home: {speed: 0.2}
       ramp: 0.5
       package_pose: {position: {x: -0.5, y: 0.6, z: 0.996}}   # the belt's frame: 0.4 m before the barrier
     name: belt

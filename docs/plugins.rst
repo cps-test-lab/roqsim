@@ -2031,8 +2031,8 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
        ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
        ``walker`` (``play``, ``stop_clip``, ``look_at``;
        ``body_poses``, ``clips``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
-       ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``cmd``, ``door``, ``start``,
-       ``cancel``; ``state``, ``status``), ``prop_trajectory``
+       ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``openness``, ``openness_goal``, ``start``,
+       ``cancel``; ``openness_state``, ``status``), ``prop_trajectory``
        (``stage_progress``)
      - families: ``navigator`` (one command per configured route endpoint); owner: ``conveyor``,
        ``door``, ``prop_trajectory``, ``walker`` (the entity each registers), and ``conveyor``'s
@@ -2940,8 +2940,10 @@ closes: someone entering it, or the close ending in a stall, cancels the close a
 again, and it closes once the zone is empty. ``StopAtBarrier`` reads the belt's speed each time it
 stops the belt and runs it again at that speed once the part is gone.
 
-A controllable ``door`` is driven over ROS too: its ``cmd`` topic and its ``door`` action
-(``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``. A ``cmd``
+A controllable ``door`` is driven over ROS too: its ``openness`` topic and its ``openness_goal``
+action (``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``, and
+``openness_state`` publishes where it stands; every endpoint of a door is named for its openness, as
+a conveyor's ``speed`` stream is for its speed. An ``openness``
 equal to the openness last commanded -- through a port, or through a handle's ``start`` the physics
 thread has not applied yet -- changes nothing while the door moves there or stands there. The action
 is the bridge's generic 1-DOF handler (``roqsim_ros_bridge.actions.gripper_command``), which asks
@@ -3018,13 +3020,20 @@ nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``regis
 it drives the spawned model's actuators under the spawn's prefix and publishes its handle as
 ``machine:<spawned entity>`` (:ref:`machines-and-scenarios`).
 
-Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
+Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. ``home:`` is
+the only place a world states where a machine stands at the start: a belt's start speed is
+``home: {speed: 0.2}``, a door's start openness ``home: {openness: 0.5}``; a ``speed`` key is only
+ever a rate (a door's hinge speed, a sliding door's leaf speed). A machine whose start state is a
+quantity of its own rather than an actuator declares it in ``HOME_KEYS = {"openness":
+"fraction"}`` and maps it onto what it drives in ``home_targets(home)``; its ``home:`` then names
+only those. A key that stated a start state outside ``home:`` goes into ``START_KEYS`` (old key ->
+new form), and the world is refused when it loads, naming the new form. A transport
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
 A machine that compares such a command with what it was commanded last records each start in
 ``start_accepted(program, args)``: the base calls it, with its lock held, when a start is accepted,
 on the thread that made it, a step before the physics thread applies a handle's start. It touches
-neither the model nor the handle. The ``door`` records its target there, so a ``cmd`` back to where
+neither the model nor the handle. The ``door`` records its target there, so an ``openness`` back to where
 it stood, sent right after a handle's ``start("open")``, is not taken for a repeat.
 
 Writing a scenario
