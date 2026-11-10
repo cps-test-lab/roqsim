@@ -336,6 +336,31 @@ def test_an_action_reading_two_entities_has_both_poses_every_tick_over_the_socke
         time.sleep(0.001)
 
 
+def test_every_activation_of_an_action_restarts_its_reads(monkeypatch):
+    """SimAction.initialise asks its access to restart its reads before the action's own start."""
+    pytest.importorskip("scenario_execution")
+    from scenario_execution.actions.base_action import BaseAction
+
+    from scenario_execution_roqsim.base import SimAction
+
+    calls = []
+
+    class Access:
+        def restart_reads(self):
+            calls.append("restart")
+
+    class Reader(SimAction):
+        def update(self):
+            raise AssertionError("not ticked here")
+
+    monkeypatch.setattr(BaseAction, "initialise", lambda self: calls.append("execute"))
+    action = Reader()
+    action._access = Access()
+    action.initialise()
+    action.initialise()
+    assert calls == ["restart", "execute", "restart", "execute"]
+
+
 def test_an_action_started_again_reads_the_pose_afresh_over_the_socket(routes, tmp_path):
     """What an earlier activation read is not this one's: an entity moved in between is read where
     it is now."""
@@ -821,7 +846,7 @@ def test_a_condition_resumes_when_the_absent_entity_is_spawned(routes, tmp_path,
 
 
 #: The cart drives past the welded prop into a box. The keep-out rule on that box holds only until
-#: the cart has come within 1 m of the prop, which it does before it can reach the box.
+#: the cart has come within 1.3 m of the prop, which it does before it can reach the box.
 WHERE_SCENARIO = """
 import osc.helpers
 import osc.roqsim
