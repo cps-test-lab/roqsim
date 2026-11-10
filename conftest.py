@@ -30,8 +30,8 @@ _ROOT = Path(__file__).resolve().parent
 
 @functools.cache
 def _requirements_check():
-    """``roqsim/tests/installed_requirements.py``, the rule the tests over every installed package
-    already follow, loaded by path: this file is no package's."""
+    """``roqsim/tests/installed_requirements.py``, the rule the tests over this repository's
+    installed packages follow too, loaded by path: this file is no package's."""
     spec = importlib.util.spec_from_file_location(
         "_roqsim_installed_requirements", _ROOT / "roqsim" / "tests" / "installed_requirements.py"
     )
@@ -43,12 +43,12 @@ def _requirements_check():
 @functools.cache
 def _missing(package_dir: Path) -> str:
     """Why *package_dir*'s distribution is installed without what it declares, or ``""``."""
-    import tomllib
-
     pyproject = package_dir / "pyproject.toml"
     if not pyproject.is_file():
         return ""
-    name = tomllib.loads(pyproject.read_text())["project"]["name"]
+    name = _requirements_check().project_name(pyproject)
+    if name is None:
+        raise ValueError(f"{pyproject}: no [project] name could be read")
     missing = _requirements_check().missing_requirements(name)
     if not missing:
         return ""
@@ -59,20 +59,21 @@ def _missing(package_dir: Path) -> str:
 
 
 class _NotInstalledWhole(pytest.Module):
-    """A test module of a package installed without what it declares: skipped, naming it."""
+    """A test module of a package installed without what it declares: a collection failure naming
+    the requirement, where the import error it would meet says nothing of the installation."""
 
     reason = ""
 
     def collect(self):
-        pytest.skip(self.reason, allow_module_level=True)
+        pytest.fail(self.reason, pytrace=False)
 
 
 def pytest_pycollect_makemodule(module_path, parent):
     """A package installed without a requirement it declares (``pip install --no-deps``, a partial
-    image) fails its tests for a reason that is the installation's, not the code's; its test modules
-    are skipped with the requirement named, read in ``-rs``, as the tests over every installed
-    package skip it (``roqsim/tests/installed_requirements.py``). A requirement behind an extra does
-    not count, and an import that fails for any other reason still fails."""
+    image) fails its tests for a reason that is the installation's, deep inside an import; its test
+    modules fail at collection instead, naming the requirement, so the fix -- install it -- is the
+    one the message asks for. A requirement behind an extra does not count, and an import that fails
+    for any other reason fails as it does."""
     path = Path(module_path).resolve()
     try:
         package = _ROOT / path.relative_to(_ROOT).parts[0]

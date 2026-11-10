@@ -595,12 +595,26 @@ mover answers and under what name, in the owner's ``namespace``. nav2's ``naviga
 ``navigate_through_poses`` send a route; ``start_route`` (``roqsim_nav_interfaces/StartRoute``) runs
 the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
 number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
-not on ROS. They follow a machine's ``start``, ``status`` and ``cancel``: a sequence number per send,
-and a status that latches ``finished`` for that route. Two things differ: a new route overtakes the
-running one, where a machine refuses a start while busy, and ``cancel_route`` stamps a sequence number
-of its own, where a machine's ``cancel`` returns the one it cancelled. They are named for the route
-because an entity that a navigator moves may also run a machine -- a walker with hands, its
-``humanoid`` -- and under one owner the two then stay apart without the component named.
+not on ROS.
+
+The route endpoints are read as a machine's ``start``, ``status`` and ``cancel`` are: a route sent
+gets a sequence number, and ``route_status`` latches ``finished`` and the error under it. Where they
+differ:
+
+- a route sent (``navigate_to_pose``, ``navigate_through_poses``) overtakes the running one, where a
+  machine refuses a start while busy;
+- ``start_route`` releases the configured route of a navigator with ``autostart: false``, once: once
+  it ran, or once any route was sent (a cancel does not undo either), it starts nothing until a
+  reset and returns the number last applied; with ``autostart`` on, it never starts anything. A sent
+  route that finishes hands back to the configured route, held or not;
+- ``cancel_route`` takes no argument: it stops whatever runs and returns a number of its own, latched
+  finished with no error, and the cancelled route's number never finishes, so its caller learns of
+  the cancel from a larger number. A machine's ``cancel`` can name the start it cancels (by its number
+  or a token), and finishes that start with the error ``cancelled``.
+
+Carrying the route in their names, the navigator's commands stay apart from a machine's ``start`` and
+``cancel`` on an entity that has both -- a walker with hands, moved by its navigator and running its
+``humanoid`` -- so a scenario's ``entity_call`` names either by the entity alone.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
