@@ -96,6 +96,8 @@ class Sim:
         self.h = engine.ctx.blackboard.get("humanoid:worker")
         self.body = engine.ctx.blackboard.get("humanoid_body:worker")
         self.m, self.d = engine.ctx.model, engine.ctx.data
+        # the shared engine's events of the tests before this one are not this test's
+        self._first = len(engine.ctx.events.all())
 
     def run(self, move, limit=60.0, **args):
         seq = self.h.start(move, **args)
@@ -115,7 +117,7 @@ class Sim:
     def events(self, since=0.0):
         return [
             ev["event"]
-            for ev in self.e.ctx.events.all()
+            for ev in self.e.ctx.events.all()[self._first :]
             if ev["source"].startswith("worker") and ev["t"] >= since
         ]
 
@@ -325,7 +327,7 @@ def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
     at_lowering = at_set_down = None
     while True:
         sim.e.step()
-        events = [e for e in sim.e.ctx.events.all() if e["source"] == "worker"]
+        events = [e for e in sim.e.ctx.events.all()[sim._first :] if e["source"] == "worker"]
         for e in events[seen:]:
             if e["event"] == "lowering":
                 at_lowering = sim.d.xpos[tote].copy()
@@ -338,6 +340,95 @@ def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
     assert st.error == ""
     assert np.linalg.norm(at_lowering[:2] - [0.1, 2.45]) < 0.015, at_lowering
     assert abs(at_set_down[2] - 0.75) < 0.02, at_set_down
+
+
+def test_a_place_beyond_reach_sets_the_load_down_as_far_forward_as_the_hands_reach(sim):
+    """A load held by its ends has its hands to the sides: a place past its reach sets it down with
+    the hands as far in front of the body as they reach, not short of that by their spread."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    x, y, yaw = sim.body.root()
+    ahead = np.array([math.cos(yaw), math.sin(yaw)])
+    seq = sim.h.place({"position": {"x": x, "y": 2.75, "z": 0.75}}, release=False)
+    out = None
+    while True:
+        sim.e.step()
+        if "lowering" in sim.events() and out is None:
+            out = max(float((sim.body.grip(sim.d, s)[0][:2] - [x, y]) @ ahead) for s in "lr")
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            break
+    assert st.error == "", st.error
+    assert out > sim.body.place_reach() - 0.015, out
+
+
+def test_a_place_the_hands_cannot_bring_the_load_over_fails_holding_it(sim, monkeypatch):
+    """Hands that stop short of the place -- an arm at its full stretch -- leave the load short of
+    it: the place fails, saying how near it came, and keeps holding it rather than lowering it
+    beside the place."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    tote = sim.m.body("tote_1").id
+    # each hand stops 2 cm before it would bring the load over the place
+    limit = {
+        s: 2.45 - 0.02 + float(sim.body.grip(sim.d, s)[0][1] - sim.d.xpos[tote][1]) for s in "lr"
+    }
+    set_hand = sim.body.set_hand
+
+    def short(side, pos, quat=None, frame="grip"):
+        pos = np.array(pos, float)
+        pos[1] = min(pos[1], limit[side])
+        set_hand(side, pos, quat, frame)
+
+    monkeypatch.setattr(sim.body, "set_hand", short)
+    st = sim.run("place", at={"position": {"x": 0.0, "y": 2.45, "z": 0.75}})
+    assert "and no nearer" in st.error, st.error
+    assert "lowering" not in sim.events()
+    assert not {"set_down", "released"} & set(sim.events())  # still held
+
+
+def test_a_place_whose_load_comes_down_on_something_above_the_place_fails_caught_on_it():
+    """A load that comes to rest on something above the place's surface fails, caught on it, and
+    is held: let go there, it would fall."""
+    world = _world()
+    world["components"].append(
+        {
+            "box": {
+                "prefix": "stop_",
+                "pose": {"position": {"x": 5.0, "y": 5.0, "z": 0.05}},
+                "size": [0.1, 0.1, 0.1],
+                "motion": "driven",
+            },
+            "name": "stop",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+        tote = sim.m.body("tote_1").id
+        stop = int(sim.m.body_mocapid[sim.m.body("stop_box").id])
+        seq = sim.h.place({"position": {"x": 0.0, "y": 2.45, "z": 0.75}})
+        slipped = False
+        while True:
+            sim.e.step()
+            if not slipped and "lowering" in sim.events():
+                # a block slips in under it, its top 5 cm above the place
+                slipped = True
+                p = sim.d.xpos[tote]
+                sim.d.mocap_pos[stop] = [p[0], p[1], p[2] - 0.055]
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error.startswith("caught on stop_box"), st.error
+        assert not {"set_down", "released"} & set(sim.events())  # still held
+    finally:
+        engine.shutdown()
 
 
 def test_a_place_with_a_heading_sets_the_load_down_square_to_it(sim):
@@ -410,7 +501,7 @@ def test_a_drawer_pulled_to_its_stop_is_out_and_one_held_shut_is_stuck(sim):
     sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
     sim.ok("pull", hand="right", distance=0.6)  # more than its travel: it ends at the stop
     assert abs(sim.qpos("cab/drawer_1/slide") - 0.45) < 0.01
-    pulled = [e for e in sim.e.ctx.events.all() if e["event"] == "pulled"][-1]
+    pulled = [e for e in sim.e.ctx.events.all()[sim._first :] if e["event"] == "pulled"][-1]
     assert pulled["distance"] < 0.5
 
 
