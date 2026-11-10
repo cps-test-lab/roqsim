@@ -138,11 +138,11 @@ def compile_world(
     normally inject at run time.
 
     ``setup()`` alone never runs ``on_reset``, so a mocap-driven walker's bones stay at their park
-    pose (z=-50) and free bodies keep only their configure-time seating. We ``reset()`` (which runs
-    every plugin's ``on_reset`` -- re-posing the walker's mocap and re-seating robot bases) then a
-    second ``mj_forward`` to propagate the re-posed mocap into ``data.xpos``/``xquat`` (reset()'s own
-    forward runs *before* the walker re-poses). ``settle_steps`` optionally steps physics a little
-    further (e.g. to let a dropped free body settle) before the state is captured.
+    pose (below the floor) and free bodies keep only their configure-time seating. We ``reset()``
+    (which runs every plugin's ``on_reset`` -- re-posing the walker's mocap and re-seating robot
+    bases) then a second ``mj_forward`` to propagate the re-posed mocap into ``data.xpos``/``xquat``
+    (reset()'s own forward runs *before* the walker re-poses). ``settle_steps`` optionally steps
+    physics a little further (e.g. to let a dropped free body settle) before the state is captured.
 
     The sensor cameras are asked of the plugins while they are configured, so a camera's id and
     its intrinsics are the ones the run renders with.

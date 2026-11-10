@@ -37,8 +37,10 @@ ELBOW_POLE = (-0.3, 0.5, -1.0)
 TURN_AT_PELVIS = 0.4
 MAX_TURN = math.radians(60.0)
 MAX_LEAN = math.radians(25.0)
-#: A crouch lowers the pelvis by at most this share of its standing height.
+#: A crouch lowers the pelvis by at most this share of its standing height, tried in this many steps
+#: where bending over does not reach.
 MAX_CROUCH = 0.45
+CROUCH_STEPS = 8
 #: The share of a hand's twist about the forearm's line the forearm takes (pronation and supination
 #: turn the forearm's bones along it); the wrist keeps the rest.
 FOREARM_TWIST = 0.5
@@ -213,10 +215,16 @@ def solve(
             and low_target
             and crouch < MAX_CROUCH * desc.root_height
         ):
-            # Bent over as far as it goes and still short: crouch deeper first.
-            crouch = MAX_CROUCH * desc.root_height
-            lowered = root - np.array([0.0, 0.0, crouch])
-            bend, ok = _bend_for(desc, lowered, heading, local, wrists, turn, lean)
+            # Bent over as far as it goes and still short: crouch deeper first, no deeper than it
+            # takes -- a hand a few centimetres short of a handle is no reason to kneel.
+            deepest = MAX_CROUCH * desc.root_height
+            for k in range(1, CROUCH_STEPS + 1):
+                crouch_k = crouch + (deepest - crouch) * k / CROUCH_STEPS
+                lowered_k = root - np.array([0.0, 0.0, crouch_k])
+                bend_k, ok = _bend_for(desc, lowered_k, heading, local, wrists, turn, lean)
+                if ok or k == CROUCH_STEPS:
+                    crouch, lowered, bend = crouch_k, lowered_k, bend_k
+                    break
         if not ok and posture.lean is None and wrists:
             # One to the side: lean toward it, as little as reaches.
             far = max(wrists.items(), key=lambda kv: abs(float(np.dot(kv[1] - root, hy))))

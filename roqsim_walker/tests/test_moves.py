@@ -12,6 +12,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.machine import MachineError
 from roqsim.plugin import PluginError
+from roqsim.presence import PARKED_BELOW_Z
 
 NAV = {
     "output": "walker",
@@ -476,7 +477,7 @@ def test_press_pushes_a_button_by_contact_and_lets_go(sim):
     assert button.presses == 1 and not button.pressed
     steps = [ev for ev in sim.events(t) if ev in ("contact", "pressed", "released")]
     assert steps == ["contact", "pressed", "released"]
-    assert sim.d.mocap_pos[sim.body._proxy["r"]][2] < -40  # parked again
+    assert sim.d.mocap_pos[sim.body._proxy["r"]][2] < PARKED_BELOW_Z  # parked again
 
 
 def test_press_on_something_that_cannot_move_fails(sim):

@@ -21,6 +21,12 @@ from .ik import Posture
 
 SIDES = ("l", "r")
 
+#: Where a body's mocap parts wait until their first pose is written: just below the floor, deep
+#: enough for nothing to see, shallow enough not to stretch the model's extent, from which a
+#: camera's near clip plane is taken -- a body parked far below would push that plane out and cut
+#: what a close camera sees.
+PARK = (0.0, 0.0, -1.0)
+
 
 class HumanoidBody:
     """The state every body shares; a body implements the methods that raise here."""

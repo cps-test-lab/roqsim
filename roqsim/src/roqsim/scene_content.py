@@ -127,8 +127,8 @@ class Skin:
     bone_ids: list[int]
     bindpos: list  # per bone, world frame
     bindquat: list  # per bone, wxyz
-    skin_index: np.ndarray  # (n, 4) uint16, into bones
-    skin_weight: np.ndarray  # (n, 4) float32, rows sum to 1
+    skin_index: np.ndarray  # (n, 4 k) uint16, into bones: every bone of a vertex, in sets of four
+    skin_weight: np.ndarray  # (n, 4 k) float32, rows sum to 1
     matid: int
     rgba: list
     flex: str | None = None  # the flex this skin draws, if it draws one
@@ -322,8 +322,8 @@ def _free_body_poses(model: mujoco.MjModel, data: mujoco.MjData) -> dict[int, tu
 def _mocap_body_poses(model: mujoco.MjModel, data: mujoco.MjData) -> dict[int, tuple[list, list]]:
     """Map each mocap body -> its world (pos, quat) from ``data.xpos``/``data.xquat``.
 
-    A mocap body's ``body_pos``/``body_quat`` is a static placeholder (the walker parks its bones at
-    z=-50 until the first pose is written); its real placement is written each step to
+    A mocap body's ``body_pos``/``body_quat`` is a static placeholder (the walker parks its bones below
+    the floor until the first pose is written); its real placement is written each step to
     ``data.mocap_pos``/``mocap_quat`` and propagated into ``data.xpos``/``xquat`` by ``mj_forward``.
     Reading the world transform seats the exported pose at the configured stance instead of the park
     pose. Mocap bodies are world children, so the world transform is also the local one.
@@ -444,11 +444,13 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
     """Every drawn MuJoCo ``<skin>``: bind-pose geometry plus a per-vertex bone block.
 
     The bind block transposes MuJoCo's per-bone vertex lists (``skin_bonevert*``) into per-vertex
-    bone indices and weights, at most four per vertex (the cap of a GPU skinning attribute), and
-    renormalised; it carries the bone body names and each bone's world bind pose.
+    bone indices and weights: every bone of a vertex, in as many sets of four as its vertex with the
+    most bones needs (a GPU skinning attribute holds four; glTF carries further sets as
+    ``JOINTS_1``, ``WEIGHTS_1``, ...), heaviest first, so a hand whose vertices hang on a finger's
+    bones as well as the wrist's is carried exactly. It carries the bone body names and each bone's
+    world bind pose.
     """
     skins: list[Skin] = []
-    over_cap = 0
     for i in range(model.nskin):
         if not drawn_group(model.skin_group[i]):
             continue
@@ -460,8 +462,13 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
 
         ba, bn = int(model.skin_boneadr[i]), int(model.skin_bonenum[i])
         bones, bone_ids, bindpos, bindquat = [], [], [], []
-        skin_index = np.zeros((vn, 4), np.uint16)
-        skin_weight = np.zeros((vn, 4), np.float32)
+        count = np.zeros(vn, np.int32)
+        for j in range(ba, ba + bn):
+            bva, bvn = int(model.skin_bonevertadr[j]), int(model.skin_bonevertnum[j])
+            np.add.at(count, model.skin_bonevertid[bva : bva + bvn], 1)
+        width = 4 * max(1, -(-int(count.max(initial=0)) // 4))
+        skin_index = np.zeros((vn, width), np.uint16)
+        skin_weight = np.zeros((vn, width), np.float32)
         slot = np.zeros(vn, np.int32)  # next free (index, weight) slot per vertex
         for j in range(bn):
             bid = int(model.skin_bonebodyid[ba + j])
@@ -475,16 +482,18 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
             wts = model.skin_bonevertweight[bva : bva + bvn]
             for vid, w in zip(vids.tolist(), wts.tolist(), strict=True):
                 s = int(slot[vid])
-                if s < 4:
-                    skin_index[vid, s] = j
-                    skin_weight[vid, s] = w
-                    slot[vid] = s + 1
-                else:
-                    over_cap += 1
-        # Renormalise (MuJoCo weights already sum to ~1; re-normalising guards the >4-bone drop).
+                skin_index[vid, s] = j
+                skin_weight[vid, s] = w
+                slot[vid] = s + 1
+        # Renormalise (MuJoCo weights already sum to ~1).
         wsum = skin_weight.sum(axis=1, keepdims=True)
         wsum[wsum == 0] = 1.0
         skin_weight /= wsum
+        # Heaviest first: a viewer that reads only the first set draws each vertex by its four
+        # heaviest bones.
+        order = np.argsort(-skin_weight, axis=1, kind="stable")
+        skin_index = np.take_along_axis(skin_index, order, axis=1)
+        skin_weight = np.take_along_axis(skin_weight, order, axis=1)
         skins.append(
             Skin(
                 mesh,
@@ -497,12 +506,6 @@ def _skins(model: mujoco.MjModel, logger: logging.Logger) -> list[Skin]:
                 int(model.skin_matid[i]),
                 model.skin_rgba[i].tolist(),
             )
-        )
-    if over_cap:
-        logger.warning(
-            "skin export: %d bone-weight entries past the 4-bones/vertex cap were dropped "
-            "(weights renormalised)",
-            over_cap,
         )
     return skins
 
