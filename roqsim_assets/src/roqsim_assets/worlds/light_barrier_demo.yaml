@@ -48,7 +48,7 @@ components:
 
   - zone_trigger:
       pose: {position: {x: -0.9, y: 0.6, z: 1.0}}
-      size: [0.12, 0.2, 0.08]   # as deep as a package: a part that broke the beam is in it while the belt stops
+      size: [0.24, 0.4, 0.16]   # as deep as a package: a part that broke the beam is in it while the belt stops
       entities: [package]
     name: belt_end
 

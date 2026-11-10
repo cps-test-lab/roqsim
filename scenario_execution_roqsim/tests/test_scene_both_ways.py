@@ -25,7 +25,7 @@ from scenario_execution_roqsim.actions.zone import (  # noqa: E402
 GATE = {
     "zone_trigger": {
         "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
-        "size": [0.2, 0.3, 0.2],
+        "size": [0.4, 0.6, 0.4],
         "dwell": 0.1,
     },
     "name": "gate",

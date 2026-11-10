@@ -3198,7 +3198,7 @@ presence leads to is a scenario's::
 
    - zone_trigger:
        pose: {position: {x: -0.9, y: 0.6, z: 1.0}}   # the box's centre, world or `body` frame
-       size: [0.12, 0.2, 0.08]                        # half-extents (m)
+       size: [0.24, 0.4, 0.16]                        # full extents (m), as a box's
        entities: [package]                            # name patterns that count; default all
        point: com                                     # com (default) | origin
        dwell: 1.0                                     # s inside before `dwelled`; 0 never
