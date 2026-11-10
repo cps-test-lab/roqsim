@@ -31,11 +31,13 @@ class NavHandle:
     before the route has been applied. That is deliberate: an off-thread caller can hold the number
     it must poll for without ever touching ``data``.
 
-    As a machine handle (:class:`roqsim.machine.MachineHandle`) it numbers each send and latches
-    ``finished`` in ``status`` for that number. Unlike one, a send overtakes the running route (a
-    machine refuses a start while busy), and ``cancel`` stamps a number of its own (a machine's
-    returns the one it cancelled). Its endpoints carry the route in their names (``start_route``,
-    ``route_status``, ``cancel_route``), so an entity that also runs a machine keeps the two apart.
+    Read like a machine handle (:class:`roqsim.machine.MachineHandle`): ``send_goals`` returns a
+    sequence number and ``status`` latches ``finished`` under it. Unlike one, a send overtakes the
+    running route (a machine refuses a start while busy), ``start`` returns the running route's number
+    without starting anything while it runs, and ``cancel`` returns a number of its own and leaves the
+    cancelled one unfinished (a machine's names the start it cancels and finishes it ``cancelled``).
+    The navigator's endpoints for the same (``start_route``, ``route_status``, ``cancel_route``) are
+    described in ``docs/plugins.rst``, "The goal interface".
 
     Only the list form exists. ``send_goals([p])`` is a single goal, and the OpenSCENARIO vocabulary
     already states the rule for exactly this case: one object is a one-element list. Two functions
