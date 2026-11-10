@@ -6,7 +6,7 @@
 The OpenSCENARIO form of :meth:`roqsim.scenario.ScenarioPlugin.run`, with the same outcome::
 
     machine_run(machine: 'press', program: 'stroke')
-    machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
+    machine_run(machine: 'press', program: 'stroke', args: 'show=hole')
 
 ``args`` is ``name=value`` pairs, each value JSON or a bare word, since an OpenSCENARIO string cannot
 hold the double quotes a JSON mapping needs; a list of numbers is one value. It waits on the start's own number, through the machine's ``status``, so a later start is not taken

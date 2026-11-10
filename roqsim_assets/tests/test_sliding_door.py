@@ -193,6 +193,174 @@ def test_the_door_stays_open_for_someone_who_came_back_before_it_closed():
         engine.shutdown()
 
 
+def _door_starts(engine):
+    return [
+        (e["t"], e["program"])
+        for e in engine.ctx.events.all()
+        if e["source"] == "door_1" and e["event"] == "program_start"
+    ]
+
+
+def test_the_door_reopens_for_someone_who_comes_back_while_it_closes():
+    # robot_1 is in the approach from 2.5 s to 5.5 s, so the door closes from 7.5 s for two
+    # seconds; robot_2, 5.5 m behind it, enters at 8.0 s, while the leaf is still closing.
+    late = _mover("robot_2")
+    late["moving_box"] = {**late["moving_box"], "pose": {"position": {"x": -9.5, "y": 0.0}}}
+    engine = _engine(DOOR, APPROACH, _mover("robot_1"), late, {**SCENE, "name": "doorman"})
+    try:
+        _run(engine, 8.5)
+        assert [p for _, p in _door_starts(engine)] == ["open", "close", "open"], "it reopened"
+        assert 0.3 < _leaf(engine) < 1.2, "from where the close had brought it"
+        _run(engine, 8.0)
+        events = engine.ctx.events.all()
+        zone = [e for e in events if e["source"] == "door_approach"]
+        entered = [e["t"] for e in zone if e["event"] == "entered"]
+        lefts = [e["t"] for e in zone if e["event"] == "left"]
+        starts = _door_starts(engine)
+        assert [p for _, p in starts] == ["open", "close", "open", "close"]
+        assert starts[2][0] == pytest.approx(entered[1], abs=0.01), "as robot_2 entered"
+        assert starts[3][0] == pytest.approx(lefts[-1] + 2.0, abs=0.01), "closed after it left"
+        reopened = [e for e in events if e["event"] == "reopened"]
+        assert [e.get("who") for e in reopened] == ["robot_2"]
+        closes = [e for e in events if e["source"] == "door_1" and e["event"] == "program_end"]
+        assert closes[-1]["program"] == "close" and closes[-1]["error"] == ""
+        assert _leaf(engine) == pytest.approx(0.0, abs=0.003)
+        assert any(e["event"] == "scenario_end" for e in events), "one cycle, then the end"
+    finally:
+        engine.shutdown()
+
+
+def test_a_close_that_stalls_reopens_the_door_and_closes_once_the_way_is_clear():
+    from roqsim.entity_control import set_state
+
+    # A box the zone does not count, put in the doorway once the door is open: the close stalls on
+    # it, and the door reopens.
+    block = {
+        "box": {
+            "prefix": "obs_",
+            "pose": {"position": {"x": -0.2, "y": 3.0, "z": 0.3}},
+            "size": [0.2, 0.2, 0.6],
+            "motion": "driven",
+        },
+        "name": "obstacle",
+    }
+    engine = _engine(DOOR, APPROACH, _mover("robot_1"), block, {**SCENE, "name": "doorman"})
+    try:
+
+        def reopened():
+            return [e for e in engine.ctx.events.all() if e["event"] == "reopened"]
+
+        _run(engine, 5.0)
+        assert _leaf(engine) == pytest.approx(1.2, abs=0.01)
+        set_state(engine.ctx, "obstacle", [-0.2, 1.08, 0.3], [1.0, 0.0, 0.0, 0.0])
+        while not reopened():
+            assert engine.ctx.sim_time < 15.0, _door_starts(engine)
+            engine.step()
+        assert reopened()[0]["error"].startswith("stalled at")
+        assert "who" not in reopened()[0]
+        _run(engine, 2.5)
+        assert _leaf(engine) == pytest.approx(1.2, abs=0.01), "open again"
+        set_state(engine.ctx, "obstacle", [-0.2, 3.0, 0.3], [1.0, 0.0, 0.0, 0.0])
+        end = engine.ctx.sim_time + 20.0
+        while not any(e["event"] == "scenario_end" for e in engine.ctx.events.all()):
+            assert engine.ctx.sim_time < end, _door_starts(engine)
+            engine.step()
+        assert _leaf(engine) == pytest.approx(0.0, abs=0.003)
+        programs = [p for _, p in _door_starts(engine)]
+        assert programs[:3] == ["open", "close", "open"] and programs[-1] == "close"
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_that_keeps_failing_to_close_with_nobody_there_says_blocked_once_and_keeps_trying():
+    from roqsim.entity_control import set_state
+
+    # A box the zone does not count, left in the doorway: every close stalls on it.
+    block = {
+        "box": {
+            "prefix": "obs_",
+            "pose": {"position": {"x": -0.2, "y": 3.0, "z": 0.3}},
+            "size": [0.2, 0.2, 0.6],
+            "motion": "driven",
+        },
+        "name": "obstacle",
+    }
+    scene = {**SCENE, "name": "doorman"}
+    engine = _engine(DOOR, APPROACH, _mover("robot_1"), block, scene)
+    try:
+
+        def events(kind):
+            return [e for e in engine.ctx.events.all() if e["event"] == kind]
+
+        _run(engine, 5.0)
+        set_state(engine.ctx, "obstacle", [-0.2, 1.08, 0.3], [1.0, 0.0, 0.0, 0.0])
+        while len(events("reopened")) < 4:
+            assert engine.ctx.sim_time < 90.0, _door_starts(engine)
+            engine.step()
+        blocked = events("blocked")
+        assert len(blocked) == 1 and blocked[0]["closes"] == 3
+        assert blocked[0]["t"] > events("reopened")[2]["t"] - 1e-9, "said at the third failed close"
+        assert not any(e["event"] == "scenario_end" for e in engine.ctx.events.all()), (
+            "it keeps trying"
+        )
+    finally:
+        engine.shutdown()
+
+
+def test_someone_entering_during_a_close_starts_the_count_to_blocked_again():
+    from roqsim.entity_control import set_state
+
+    def box(name, y):
+        return {
+            "box": {
+                "prefix": f"{name}_",
+                "pose": {"position": {"x": -0.2, "y": y, "z": 0.3}},
+                "size": [0.2, 0.2, 0.6],
+                "motion": "driven",
+            },
+            "name": name,
+        }
+
+    scene = {**SCENE, "name": "doorman"}
+    scene[next(iter(SCENE))] = {"close_delay": 2.0, "blocked_after": 2}
+    # `obstacle` is not counted by the zone and stalls the leaf; `robot_2` is counted.
+    engine = _engine(
+        DOOR, APPROACH, _mover("robot_1"), box("obstacle", 3.0), box("robot_2", 4.0), scene
+    )
+    try:
+
+        def events(kind):
+            return [e for e in engine.ctx.events.all() if e["event"] == kind]
+
+        def closes():
+            return [p for _, p in _door_starts(engine) if p == "close"]
+
+        def until(cond, what):
+            while not cond():
+                assert engine.ctx.sim_time < 120.0, what
+                engine.step()
+
+        _run(engine, 5.0)
+        set_state(engine.ctx, "obstacle", [-0.2, 1.08, 0.3], [1.0, 0.0, 0.0, 0.0])
+        until(lambda: len(events("reopened")) == 1, "a first failed close")
+        until(lambda: len(closes()) == 2, "a second close")
+        set_state(engine.ctx, "robot_2", [0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0])  # into the zone
+        until(lambda: len(events("reopened")) == 2, "someone entered")
+        assert events("reopened")[1].get("who") == "robot_2"
+        set_state(engine.ctx, "robot_2", [0.0, 4.0, 0.3], [1.0, 0.0, 0.0, 0.0])  # gone again
+        until(lambda: len(events("reopened")) == 3, "another failed close")
+        assert not events("blocked"), "failed, someone, failed: not two failures in a row"
+        until(lambda: len(events("reopened")) == 4, "a second failed close in a row")
+        assert len(events("blocked")) == 1
+    finally:
+        engine.shutdown()
+
+
+def test_blocked_after_is_a_whole_number_of_closes():
+    with pytest.raises(Exception, match="blocked_after"):
+        _engine(DOOR, APPROACH, {next(iter(SCENE)): {"blocked_after": 0}, "name": "doorman"})
+
+
 def test_the_demo_world_opens_the_door_for_its_robot_closes_it_and_ends():
     from pathlib import Path
 

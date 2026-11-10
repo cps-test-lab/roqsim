@@ -44,14 +44,17 @@ imported here). Openness is a fraction in ``[0, 1]`` on every port, and a comman
 port replaces what the door was doing (``move_to``, preempting):
 
 * ``in``  ``<ns>/cmd``   -- ``std_msgs/Float64`` set-openness (fire-and-forget; the path an ``.osc``
-  ``topic_publish`` drives). A repeated value changes nothing while the door moves there or stands
-  there; after a stall or a cancel it starts the move again.
+  ``topic_publish`` drives). A repeated value -- the openness last commanded, by a port or by a
+  handle ``start`` not applied yet -- changes nothing while the door moves there or stands there;
+  after a stall or a cancel it starts the move again.
 * ``out`` ``<ns>/state`` -- ``std_msgs/Float64`` current openness, ~10 Hz.
 * ``in``  action ``<ns>/door`` -- ``control_msgs/action/GripperCommand`` for open/close *with feedback*
   (``goal.command.position`` is the target fraction; the handler reports reached/stalled by watching
   the ``machine:<name>:openness`` state reader on the blackboard -- see ``roqsim_ros_bridge.actions``).
-  A goal is given a full swing at ``speed``, plus ``stall_timeout``, plus 5 s; one still moving then
-  is aborted.
+  The door states its own policy in the action's hints: ``reached_goal`` within its arrival band of
+  0.02 (``reach_tolerance``), the one its programs end in, so ROS and ``status()`` agree; a goal is
+  given a full swing at ``speed``, plus ``stall_timeout``, plus 5 s (``timeout``), and one still
+  moving then is aborted (``on_timeout: abort``) -- where an arm's gripper comes back succeeded.
 
 Config::
 
@@ -104,7 +107,7 @@ Leafless openings. ``leaf: false`` welds the casing but hangs **no leaf** -- a c
 wall opening should read as a doorway rather than a hole, while staying a ``door`` in the floorplan so the
 room loops it belongs to are unchanged. It is still registered as a ``door`` entity (on the casing body),
 so anything enumerating the building's doors still finds it. ``leaf: false`` with ``frame: false`` would
-place nothing at all and is refused.
+place nothing at all and is refused, as is ``controllable: true``, which would have no leaf to command.
 
 Colour. ``color`` repaints the leaf and (unless ``frame_color`` overrides it) the casing, so a world can
 match its doors to the rest of its trim without a recoloured copy of the model. Only the leaf's
@@ -207,7 +210,8 @@ class DoorPlugin(MachinePlugin):
         # Signed fully-open angle (rad); openness fraction maps linearly onto [0, _span].
         self._span = self.swing * self.max_angle
         self.HOME = {self._ACTUATOR: self.open0 * self._span}
-        self._goal = self.open0  # the openness the last move went for; home's from the first reset
+        # The openness the last accepted start went for (start_accepted); home's from the first reset.
+        self._goal = self.open0
         self._pushed = 0.0  # seconds an idle door has been held off its target
         self._reach_tol = 0.02  # openness within this of the target counts as reached
         # resolved in configure()
@@ -288,6 +292,10 @@ class DoorPlugin(MachinePlugin):
                 errors.append(f"'{key}' must be [r, g, b] or [r, g, b, a] numbers")
         if not bool(config.get("leaf", True)) and not bool(config.get("frame", True)):
             errors.append("'leaf: false' with 'frame: false' would place nothing; keep the casing")
+        if not bool(config.get("leaf", True)) and config.get("controllable"):
+            errors.append(
+                "'controllable' on a door with 'leaf: false': there is no leaf to command"
+            )
         if "hinge_side" in config and str(config["hinge_side"]).lower() not in ("left", "right"):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
@@ -452,13 +460,6 @@ class DoorPlugin(MachinePlugin):
                     meta={"prefix": p, "leaf": False, "width": self.width, "height": self.height},
                 )
             )
-            # Only complain when a world explicitly asked for it -- `controllable` defaults to true, and
-            # a leafless entry that never mentions it has nothing to be warned about.
-            if self.config.get("controllable"):
-                logger.warning(
-                    "door %r: 'controllable' is ignored on a leafless door (nothing to command)",
-                    self.door_name,
-                )
             return
         self._jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, p + self._JOINT)
         self._aid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, p + self._ACTUATOR)
@@ -502,7 +503,6 @@ class DoorPlugin(MachinePlugin):
             openness: 0 closed to 1 fully open; clamped
         """
         target = min(max(float(openness), 0.0), 1.0)
-        self._goal = target
         angle = target * self._span
         if self.speed:
             self.ramp(self._ACTUATOR, angle, self.speed)
@@ -545,13 +545,16 @@ class DoorPlugin(MachinePlugin):
         return self.read_state()[0]
 
     # Served by the GripperCommand action, which reports reached or stalled by watching the door's
-    # own state reader (`state_key`) rather than a gripper's.
+    # own state reader (`state_key`) rather than a gripper's, grades `reached_goal` on the door's own
+    # arrival band, and aborts a goal still moving past the door's own bound.
     @endpoint.command(
         when="commandable",
         ros2=lambda self: {
             "action": "control_msgs.action.GripperCommand",
             "state_key": f"machine:{self.door_name}:openness",
             "timeout": self.action_timeout(),
+            "reach_tolerance": self._reach_tol,
+            "on_timeout": "abort",
         },
     )
     def door(self, position: float) -> None:
@@ -567,11 +570,23 @@ class DoorPlugin(MachinePlugin):
         swing = abs(self.max_angle) / self.speed if self.speed else 0.0
         return swing + self.stall_timeout + 5.0
 
+    def start_accepted(self, program_name: str, args: dict) -> None:
+        """Record the openness a start goes for once it is accepted -- a handle's ``start`` as well
+        as a port's command -- so a repeated command is compared with what was commanded last, even
+        while a handle's start is still waiting for the physics thread to apply it."""
+        if program_name == "open":
+            self._goal = 1.0
+        elif program_name == "close":
+            self._goal = 0.0
+        elif program_name == "move_to":
+            self._goal = min(max(float(args["openness"]), 0.0), 1.0)
+
     def set_openness(self, openness: float) -> None:
         """Make ``openness`` the target now, replacing whatever the door was doing (``move_to``).
 
         For the transport ports, where a command means "this is the target now". A repeated value
-        changes nothing while the last move to it runs or ended without error, so a publisher at
+        -- the openness of the last start accepted, from a port or the handle, applied or not yet --
+        changes nothing while that move is pending, runs or ended without error, so a publisher at
         10 Hz does not restart the move ten times a second; after a stall or a cancel it retries."""
         openness = min(max(float(openness), 0.0), 1.0)
         if openness == self._goal and self.status_now.error == "":
@@ -597,7 +612,11 @@ class DoorPlugin(MachinePlugin):
             self._pushed = 0.0
             now = min(max(now, 0.0), 1.0)
             self.set(self._ACTUATOR, now * self._span)
-            self._goal = now
+            with self._lock:
+                # A start accepted since the busy check above has recorded its own target, and is
+                # applied on the next step.
+                if not self._busy():
+                    self._goal = now
             self.step("gave_way", openness=now)
 
     def read_state(self) -> tuple[float, float]:

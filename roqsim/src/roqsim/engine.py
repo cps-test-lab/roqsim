@@ -5,7 +5,8 @@ scenario-execution adapter) calls :meth:`setup`, :meth:`reset`, :meth:`step`, :m
 
 Lifecycle::
 
-    setup()   -> build phase: plugin.build(spec) for all; spec.compile(); make data;
+    setup()   -> build phase: plugin.build(spec) for all, then plugin.build_late(spec) for all;
+                 spec.compile(); make data;
                  plugin.configure(ctx)
     reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
@@ -307,6 +308,9 @@ class Engine:
 
         for plugin in self.plugins:
             self._timed(plugin, "build", plugin.build, spec, self.ctx)
+        # Every model is in the spec now, so a plugin can link its own to another's.
+        for plugin in self.plugins:
+            self._timed(plugin, "build_late", plugin.build_late, spec, self.ctx)
 
         # Merge byte-identical file-backed assets that attach duplicated per instance (e.g. 240
         # copies of one prop's mesh + texture). On by default; ``sim.dedup_assets: false`` opts out

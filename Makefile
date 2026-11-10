@@ -179,6 +179,32 @@ test-gltf:  ## Khronos glTF Validator over an `export gltf` of every bundled wor
 	ROQSIM_GLTF_VALIDATOR=required $(PYTEST) -q -k khronos \
 		roqsim/tests/test_export_gltf.py roqsim_scenes/tests/test_worlds_export_gltf.py
 
+# The tests gated on scenario-execution, run where it is installed: every action and the in-process
+# runner (scenario_execution_roqsim/tests), the reset test's `scenario` case, and the handling scenes'
+# OpenSCENARIO twins compared with their Python forms. `make test` runs them
+# too, and skips them where scenario-execution is absent -- which is every venv `make venv` makes, since
+# it is the `[osc]` extra. This target is for a venv that has it (`$(PIP) install -e
+# "scenario_execution_roqsim[osc]"`), and fails rather than skips: first it imports every
+# scenario-execution module the tests import, so a broken install is an ImportError here and not a
+# quiet importorskip; then it fails if any skip still names scenario-execution.
+OSC_TESTS  := scenario_execution_roqsim/tests roqsim/tests/test_reset_restores_configured_state.py \
+	roqsim_walker/tests/test_scenes.py roqsim_humanoid/tests/test_handling_robot.py
+OSC_IMPORTS := scenario_execution.actions.base_action scenario_execution.get_osc_library \
+	scenario_execution.model.model_to_py_tree scenario_execution.model.osc2_parser \
+	scenario_execution.model.types scenario_execution.scenario_execution_base \
+	scenario_execution.simulation scenario_execution.utils.logging
+OSC_LOG    := build/test-osc.log
+
+.PHONY: test-osc
+test-osc:  ## The scenario-execution tests, in a venv with the [osc] extra; nothing may skip for want of it
+	$(PY) -c "import importlib, sys; [importlib.import_module(m) for m in sys.argv[1:]]" $(OSC_IMPORTS)
+	@mkdir -p $(dir $(OSC_LOG))
+	@$(PYTEST) $(OSC_TESTS) -q -rs $(XDIST) > $(OSC_LOG) 2>&1; status=$$?; cat $(OSC_LOG); \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
+	if grep -E '^SKIPPED \[[0-9]+\] [^ ]+:[0-9]+: .*scenario.execution' $(OSC_LOG); then \
+		echo "test-osc: the tests above skipped for want of scenario-execution"; exit 1; \
+	fi
+
 # One package's tests, e.g. `make test-roqsim_sensors`. Not just a convenience: the full set in one
 # process is the memory peak described above, so this is how to bisect an OOM -- and how to re-run
 # only what you are editing without paying for the rest.

@@ -66,7 +66,7 @@ class Concurrent(ScenarioPlugin):
 class Walk(ScenarioPlugin):
     """Scenario: send a walker along two points and wait for it."""
 
-    NEEDS = {"walker": "walker:worker"}
+    NEEDS = {"walker": "nav:worker:handle"}
 
     def program(self):
         status = yield from self.navigate(self.walker, [(1.0, 0.0), (1.0, 1.0)], check=False)
@@ -74,7 +74,7 @@ class Walk(ScenarioPlugin):
 
 
 class FakeWalker(Plugin):
-    """A stand-in for a walker's handle: a route takes ``route_s`` and ends with ``error``.
+    """A stand-in for a walker's navigator handle: a route takes ``route_s`` and ends with ``error``.
 
     Config::
 
@@ -86,17 +86,17 @@ class FakeWalker(Plugin):
         self._ctx = ctx
         self.seq, self.finished, self.until = 0, False, None
         self.cancels = 0
-        ctx.blackboard.set("walker:worker", self)
+        ctx.blackboard.set("nav:worker:handle", self)
         self.name = "worker"
 
-    def send_route(self, poses):
+    def send_goals(self, poses):
         self.seq += 1
         self.finished = False
         self.until = self._ctx.sim_time + float(self.config.get("route_s", 0.5))
         self.poses = poses
         return self.seq
 
-    def cancel_route(self):
+    def cancel(self):
         self.cancels += 1
         self.finished, self.until = True, None
         return self.seq
@@ -407,7 +407,7 @@ class SharedDeadline(ScenarioPlugin):
 class RouteLosesToATimer(ScenarioPlugin):
     """Scenario: a timeout race a timer wins over a route."""
 
-    NEEDS = {"walker": "walker:worker"}
+    NEEDS = {"walker": "nav:worker:handle"}
 
     def program(self):
         timer = self.spawn(self.wait(0.05), name="timer")
@@ -426,13 +426,13 @@ class UntilNaN(ScenarioPlugin):
 class Overtaken(ScenarioPlugin):
     """Scenario: send a route that another overtakes, without checking."""
 
-    NEEDS = {"walker": "walker:worker"}
+    NEEDS = {"walker": "nav:worker:handle"}
 
     def program(self):
         route = self.spawn(self.navigate(self.walker, [(1.0, 0.0)], check=False), name="route")
         yield  # the route task sends its route (seq 1) in the next step
         yield
-        self.walker.send_route([(2.0, 0.0)])  # seq 2 overtakes it
+        self.walker.send_goals([(2.0, 0.0)])  # seq 2 overtakes it
         yield from self.join(route)
         self.event("overtaken", seq=route.result[0])
 

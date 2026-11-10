@@ -37,12 +37,15 @@ Non-goals: roqsim is not a general game engine or a physics fork; it orchestrate
 2. Lifecycle reference
 ----------------------
 
-A plugin (``roqsim.plugin.Plugin``) implements any subset of six hooks. The engine only calls hooks a plugin actually overrides (an un-overridden hook costs nothing and is absent from the timing table).
+A plugin (``roqsim.plugin.Plugin``) implements any subset of seven hooks. The engine only calls hooks a plugin actually overrides (an un-overridden hook costs nothing and is absent from the timing table).
 
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | Hook                 | When                                | May touch                                       | Typical use                                                                                    |
 +======================+=====================================+=================================================+================================================================================================+
 | ``build(spec, ctx)`` | once, pre-compile                   | ``spec`` only (``model``/``data`` are ``None``) | add bodies/geoms/sensors/assets                                                                |
++----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
+| ``build_late(spec,`` | once, after every ``build``,        | ``spec`` only                                   | link its own model to another plugin's (an equality between two entities), wherever the world  |
+| ``ctx)``             | pre-compile                         |                                                 | lists them                                                                                     |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
 | ``configure(ctx)``   | once, post-compile                  | ``model``, ``data``, ids                        | resolve body/site ids, open resources, advertise services, register ``RobotHandle``/``Entity`` |
 +----------------------+-------------------------------------+-------------------------------------------------+------------------------------------------------------------------------------------------------+
@@ -620,6 +623,12 @@ either as OpenSCENARIO run by scenario-execution, or in Python.
    * - a part shows its hole when the ram reaches the bottom
      - ✔ (through the part's handle)
      -
+   * - a worker grips a drawer's handle and pulls it 0.3 m
+     - ✔ (the humanoid's move)
+     -
+   * - a worker pulls the drawer because the robot reported the box full
+     -
+     - ✔
 
 The test when in doubt: **would the machine do it standing alone in an empty world?** Then it is the
 machine's. If it needs another entity's state to decide, it is a scenario's. A world places a machine
@@ -636,7 +645,9 @@ have reached their targets or stopped on them (what an interlock waits for), or 
 Programs advance in ``post_step``, ramps in ``pre_step``.
 
 **Every machine has one handle**, a :class:`~roqsim.machine.MachineHandle` under
-``machine:<name>``, and it is the contract for everything that starts something and is waited on:
+``machine:<name>`` (a subclass of it, with a method per program, where the machine's
+``HANDLE_CLASS`` names one), and it is the contract for everything that starts something and is
+waited on:
 
 -  ``start(program, **args) -> seq``: checked at the call -- an unknown program or argument, or a
    machine that is busy, raises naming the machine -- stamped with the next sequence number, and
@@ -653,10 +664,11 @@ Programs advance in ``post_step``, ramps in ``pre_step``.
    neither ends whatever is pending or runs. Cancels are posted in order with the starts, so a
    cancel by token sent right behind its start reaches it.
 -  ``busy`` (a start pending or a program running), ``ready`` (not busy, and the machine's own
-   precondition), ``value(name)`` (an actuator's or setpoint's current target).
+   precondition), ``value(name)`` (an actuator's or setpoint's current target), ``goal(name)``
+   (where it is going: the end of its ramp, else its current target).
 
-It is the walker's ``send_route``/``status`` made general: the navigator's sequence numbers
-(``roqsim_nav.handle``) are the special case of it. A reset drops any program and puts the machine at
+The navigator's route handle (``roqsim_nav.handle``: ``send_goals``, ``cancel``, ``status``) is the
+special case of it. A reset drops any program and puts the machine at
 ``home``; sequence numbers keep counting, so a stale one never matches.
 
 **Every step is an event** on ``ctx.events``: ``program_start`` (program, seq, args), each step a
@@ -701,6 +713,16 @@ own lamp on -- each look with its own inertia where the model names one, through
 (``part_state``), with an event per change. A press shows the hole at its stroke's bottom through
 that handle: the part's state is the part's, and the machine only asks for it to change.
 
+**A humanoid's moves are one entity's procedures, as a machine's programs are.** ``approach``,
+``reach``, ``press``, ``grasp``, ``release``, ``pull``, ``push``, ``carry`` and ``place`` are what a
+humanoid does by itself: the ``humanoid`` plugin (``roqsim_motion``), nested under a walker with
+``hands: true`` or a humanoid robot, is a ``MachinePlugin`` whose programs are its moves, so a move
+is started through the same handle (``machine:<name>``, and ``humanoid:<name>`` with a method per
+move), waited on by the same status and recorded as the same events. Which moves a worker makes, in
+which order and for what -- swap a box when it is empty, press the button when the press is ready --
+is a scenario's. A move never decides what comes next; one that cannot be done fails with the
+reason in its status, and the humanoid stands where it left off, a hold still held.
+
 **Presence is reported, never acted on.** ``zone_trigger`` is a box in the world or riding on a
 body that reports the entities entering, dwelling for a time and leaving, filtered by name pattern:
 as events, on a handle (``zone:<address>``) and as an ``occupied`` endpoint. It decides nothing; a
@@ -715,7 +737,8 @@ a program and waits for *that* start, raising with the machine's error; ``self.s
 ``self.spawn(gen)`` run tasks beside the program, ``join`` and ``first`` wait on them, and a
 start's error reaches whoever joins it, where a ``try`` catches it as around ``run`` (one nobody
 joined stops the run when the scene ends, and the scene does not end before a task has, unless it was spawned as ``background``);
-``self.navigate(walker, poses)`` sends a walker or a navigator and waits on its route's number;
+``self.navigate(nav, poses)`` sends a mover through its navigator's handle (``nav:<name>:handle``, a
+walker's as a robot's) and waits on its route's number;
 ``until``, ``wait`` and ``event`` do what they say, and ``set_entity_state`` puts an entity at a pose as a
 world file writes one (a missing ``z`` is the floor), refusing anything else by name. Tasks advance
 in the order they were created, so a scene is as deterministic as the machines it drives. A world declares a scenario after
@@ -771,7 +794,7 @@ The incoming codebase is monolithic MuJoCo scripts. Rework them into plugins as 
 -  **External transport (ROS/other):** a transport plugin — ``configure`` spins the client thread, callbacks ``ctx.post(...)``, ``post_step`` publishes from ``data``, ``shutdown`` stops the client.
 -  **Moving part (conveyor):** ``build`` adds an invisible belt body on a slide joint; ``pre_step`` forces its velocity and wraps position; a contact pair tunes belt↔object friction. Its speed is a machine's setpoint (:ref:`machines-and-scenarios`): the ``run(speed)`` and ``stop()`` programs ramp it, and stopping for a part is a scenario's.
 -  **Injected fault (model_override):** a plugin that in ``configure`` resolves a *named* selection of geoms/bodies/actuators, saves their current values and publishes a handle plus a ``std_srvs/SetBool`` service endpoint; ``set_active`` writes the target rows and ``on_reset`` writes them back. No ``pre_step`` at all -- the change rides on the service's ``override`` command, which runs on the physics thread, and ``post_step`` runs only on the step after a change, to check the fault actually landed (§9.2).
--  **Articulated + commandable prop (door):** the ``door`` plugin (``roqsim_assets``) is a machine (:ref:`machines-and-scenarios`) — ``build`` hangs a leaf on a hinge joint with a force-limited position actuator; its programs ``open``, ``close`` and ``move_to(openness)`` move the target, ramped at ``speed`` where a world states one, end when the leaf first comes within 0.02 of the openness (it may still settle by a few hundredths after that), and end with an error when the leaf stays blocked behind its target (a gentle automatic door that gives up), and an idle door held off its target gives way after ``stall_timeout``; ``configure`` registers ``Entity(kind="door")``, its ``machine:<name>`` handle and its openness reader ``machine:<name>:openness``, and — when ``controllable`` — ``std_msgs/Float64`` ``cmd``/``state`` endpoints plus a ``control_msgs/GripperCommand`` action (reusing the generic 1-DOF handler via its ``state_key`` hint, ``machine:<name>:openness``). The natural home for a door in a floorplan world is the opening the generator already cut (``floorplan_to_world.py --doors-map``).
+-  **Articulated + commandable prop (door):** the ``door`` plugin (``roqsim_assets``) is a machine (:ref:`machines-and-scenarios`) — ``build`` hangs a leaf on a hinge joint with a force-limited position actuator; its programs ``open``, ``close`` and ``move_to(openness)`` move the target, ramped at ``speed`` where a world states one, end when the leaf first comes within 0.02 of the openness (it may still settle by a few hundredths after that), and end with an error when the leaf stays blocked behind its target (a gentle automatic door that gives up), and an idle door held off its target gives way after ``stall_timeout``; ``configure`` registers ``Entity(kind="door")``, its ``machine:<name>`` handle and its openness reader ``machine:<name>:openness``, and — when ``controllable`` — ``std_msgs/Float64`` ``cmd``/``state`` endpoints plus a ``control_msgs/GripperCommand`` action (reusing the generic 1-DOF handler via its ``state_key`` hint, ``machine:<name>:openness``; its ``reach_tolerance`` hint, the 0.02 its programs end in, grades ``reached_goal``, and ``on_timeout: abort`` aborts a goal still moving past the door's own ``timeout``, where a gripper's comes back succeeded). The natural home for a door in a floorplan world is the opening the generator already cut (``floorplan_to_world.py --doors-map``).
 
 .. _63-decomposition-guidance:
 
@@ -959,6 +982,10 @@ go through it. Three things live there because they must be decided once:
    including :data:`roqsim.presence.ABSENT_GEOM_GROUP`, so a caller who omits the mask sees entities
    that have been made absent — an absent entity reported as a return, with nothing downstream able
    to tell. Making the mask the default turns "forgot the mask" into an explicit ``geomgroup=None``.
+   The mask also leaves out :data:`roqsim.presence.WINDOW_GEOM_GROUP` (5): a sensor's window, which
+   every render (``rendering._vopt``) and every viewer window (``viewer.show_windows``) draw and no
+   ray meets. A head with its lidar's opening cut
+   into its collision mesh is drawn whole there, so it looks like the robot and still scans out.
 -  **It is single-threaded on purpose, and that is measured.** Splitting a batch across threads looks
    free — rays are independent, ``mj_multiRay`` releases the GIL, and the output is bit-identical
    (1.5x at 360 rays, 3.1x at 20160). It is not: ``mj_multiRay`` **allocates from ``mjData``'s

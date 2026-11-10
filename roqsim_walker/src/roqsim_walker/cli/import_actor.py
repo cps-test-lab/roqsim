@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Convert a rigged COLLADA character (a Gazebo/Open-RMF <actor> skin) into a walker blueprint.
 
-Writes a ``people/<Name>/`` folder -- OBJ + MTL + textures, ``<name>.walker.json`` and the authored
-``<name>.weights.npz`` -- from a ``.dae`` that carries a skin controller. Only the *skin* is taken:
+Writes a ``people/<Name>/`` folder -- OBJ + MTL + textures, ``<name>.walker.json``, the authored
+``<name>.weights.npz`` and, where the rig has finger bones, ``<name>.fingers.npz`` -- from a ``.dae``
+that carries a skin controller. Only the *skin* is taken:
 locomotion comes from this package's clips (``models/anims/``), so the source's ``<animation>`` tracks
 are ignored. This is the counterpart to the CARLA character export pipeline.
 
@@ -185,13 +186,96 @@ def fold_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
     return out / (out.sum(axis=1, keepdims=True) + 1e-9)
 
 
+#: The source rigs' hand chains, per side: a thumb and ONE chain for the four fingers, three bones
+#: each. An import keeps their weights apart in ``<stem>.fingers.npz``.
+FINGER_CHAINS = [
+    (chain, side, k) for side in ("l", "r") for chain in ("thumb", "fingers") for k in (1, 2, 3)
+]
+
+
+def _finger_bone(chain: str, side: str, k: int) -> str:
+    return f"{'Thumb' if chain == 'thumb' else 'Fingers'}{k}_{side.upper()}"
+
+
+def has_fingers(names: list[str]) -> bool:
+    """Whether the source rig has its hands' chains (:data:`FINGER_CHAINS`). Refuses one that has
+    some of their bones and not all: a hand weighted to half its fingers is a rig this import does
+    not know."""
+    present = [_finger_bone(*c) in names for c in FINGER_CHAINS]
+    if any(present) and not all(present):
+        missing = [_finger_bone(*c) for c, p in zip(FINGER_CHAINS, present, strict=True) if not p]
+        raise SystemExit(
+            f"the source has some of its finger bones and not {missing}, so no finger weights"
+        )
+    return all(present)
+
+
+def finger_weights(W: np.ndarray, names: list[str]) -> np.ndarray:
+    """(nvert, 12): each vertex's share of its whole weight on each source finger bone, in
+    :data:`FINGER_CHAINS` order. The shares are the same ones ``fold_weights`` folds into the wrist,
+    so ``wrist - sum(shares)`` is what stays on the wrist."""
+    total = W.sum(axis=1, keepdims=True) + 1e-9
+    col = {n: i for i, n in enumerate(names)}
+    out = np.zeros((W.shape[0], len(FINGER_CHAINS)))
+    for j, chain in enumerate(FINGER_CHAINS):
+        src = _finger_bone(*chain)
+        if src not in col:
+            raise SystemExit(f"the source has no {src!r} bone, so no finger weights")
+        out[:, j] = W[:, col[src]] / total[:, 0]
+    return out
+
+
+def save_fingers(path: str, verts: np.ndarray, W: np.ndarray, names: list[str]) -> str:
+    """Write the finger weights (``<stem>.fingers.npz``) of the source's ``verts``, as the blueprint's
+    weights are written: by position, in the frame the skin sees."""
+    np.savez_compressed(
+        path,
+        positions=verts,
+        weights=finger_weights(W, names),
+        chains=np.array([f"{c}_{s}_{k}" for c, s, k in FINGER_CHAINS]),
+    )
+    return path
+
+
+def write_fingers(dae: str, wdir: str, stem: str) -> str:
+    """Write ``<stem>.fingers.npz`` beside an existing blueprint's weights, from the same source rig,
+    and add their sentence to its ``CREDITS.txt``.
+
+    Refuses a source whose vertices are not the blueprint's: the shares are matched to the mesh by
+    position, as its weights are, and a mesh from another source would match nothing."""
+    weights = os.path.join(wdir, f"{stem}.weights.npz")
+    if not os.path.isfile(weights):
+        raise SystemExit(
+            f"--fingers-only: no blueprint weights at {weights}; import the actor first"
+        )
+    credits = os.path.join(wdir, "CREDITS.txt")
+    if not os.path.isfile(credits):
+        raise SystemExit(f"--fingers-only: no {credits}; import the actor first")
+    _, ctrl, names, _, W, _, _ = load_skin(dae)
+    verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
+    verts[:, 2] -= verts[:, 2].min()
+    known = np.load(weights)["positions"]
+    if known.shape != verts.shape or np.abs(known - verts).max() > 1e-6:
+        raise SystemExit(f"--fingers-only: {dae} is not the source of {wdir} (its vertices differ)")
+    if not has_fingers(names):
+        raise SystemExit(f"--fingers-only: {dae} has no finger bones, so no finger weights")
+    path = save_fingers(os.path.join(wdir, f"{stem}.fingers.npz"), verts, W, names)
+    with open(credits) as f:
+        text = f.read()
+    with open(credits, "w") as f:
+        f.write(with_fingers_credit(text))
+    return path
+
+
 def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict:
     """joint -> capsule radius (m): the spread of the vertices this joint dominates, measured off
     its bone axis. Mirrors what a CARLA Phys asset gives, but derived from geometry.
 
-    Measured against ``bind_ours`` -- the source joints in the mesh's own (T-)pose, NOT the arms-down
-    rest pose. Using the rest pose here would place the arm bones vertically while the mesh arms
-    stick out sideways, inflating the arm radii to garbage.
+    Measured against ``bind_ours``, the bones the skin is bound to at runtime in the mesh's own
+    (T-)pose (:func:`measure` takes them from ``skin._bind_bones``), which are what each capsule
+    rides. Not the arms-down rest pose, which would place the arm bones vertically while the mesh's
+    arms stick out sideways; and not the source rig's own bones, which the walker's straight limbs
+    do not keep.
     """
     dom = np.argmax(w, axis=1)
     out = {}
@@ -211,29 +295,109 @@ def measure_collision(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> dict
     return out
 
 
+def _lowest(points: np.ndarray, rear: bool, what: str) -> np.ndarray:
+    """The lowest of ``points``; of several as low (to 0.02 mm), the rearmost or the foremost."""
+    if not len(points):
+        raise SystemExit(f"no vertex follows {what}; cannot measure its sole")
+    low = points[points[:, 2] <= points[:, 2].min() + 2e-5]
+    return low[np.argmin(low[:, 0])] if rear else low[np.argmax(low[:, 0])]
+
+
 def measure_sole(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> tuple[dict, list]:
     """``(sole, foot_tip)``: where each shoe actually touches the floor.
 
-    ``sole[s]['heel'|'toe']`` are offsets from the **ankle**/**toe** joints to the lowest sole
-    points, which is how ``animation._foot_ground`` reads them (``joint + rotate(q, offset)``);
-    at rest our joint frames are world-aligned, so a plain world-space delta is what it wants. Legs
-    are identical between the T-pose and rest (only the shoulders rotate), so ``bind_ours`` is the
-    right frame here too.
+    ``sole[s]['heel']`` is the lowest point of the vertices the **ankle** carries, as an offset from
+    the ankle; ``sole[s]['toe']`` the lowest of those the **toe** carries, from the toe -- which is
+    how ``animation._lowest_sole`` reads them (``joint + rotate(q, offset)``), each riding its
+    joint. Taking the lowest point (ties to the rearmost and foremost) puts the standing walker's
+    lowest point exactly on the floor whatever the sole's shape; a point merely low on the shoe
+    (the rearmost of its lowest centimetre) can stand above it and let the shoe sink.
+
+    ``bind_ours`` are the bones the skin is bound to at runtime (:func:`measure` takes them from
+    ``skin._bind_bones``); at rest their frames are world-aligned, so a plain world-space delta is
+    what the grounding wants.
     """
     dom = np.argmax(w, axis=1)
     col = {n: i for i, n in enumerate(JOINT_NAMES)}
     sole, tips = {}, []
     for s in ("l", "r"):
-        foot = verts[(dom == col[f"ankle_{s}"]) | (dom == col[f"toe_{s}"])]
-        lo = foot[foot[:, 2] < foot[:, 2].min() + 0.01]  # the sole: lowest 1 cm of the shoe
-        heel_pt = lo[np.argmin(lo[:, 0])]  # rearmost sole point
-        toe_pt = lo[np.argmax(lo[:, 0])]  # foremost sole point
+        heel_pt = _lowest(verts[dom == col[f"ankle_{s}"]], rear=True, what=f"ankle_{s}")
+        toe_pt = _lowest(verts[dom == col[f"toe_{s}"]], rear=False, what=f"toe_{s}")
         sole[s] = {
             "heel": [round(float(v), 4) for v in (heel_pt - bind_ours[f"ankle_{s}"])],
             "toe": [round(float(v), 4) for v in (toe_pt - bind_ours[f"toe_{s}"])],
         }
         tips.append(toe_pt - bind_ours[f"toe_{s}"])
     return sole, [round(float(v), 4) for v in np.mean(tips, axis=0)]
+
+
+def measure_hull(verts: np.ndarray, w: np.ndarray) -> dict:
+    """``side -> {"joints", "at", "w"}``: the points of each shoe its foot grounding is taken on.
+
+    The lowest point of a body turned any way lies on its convex hull, so each shoe is sampled by
+    the hull's corners -- one hull per joint the shoe's vertices follow (ankle, toe), since the toe
+    bends against the foot. Each point keeps its bind position in the walker's frame (``at``) and
+    its skin weights over that leg's joints (``w``, columns ``joints``), so the runtime skins it
+    exactly as the mesh (``animation._lowest_sole``) and the shoe can turn no point of its skin
+    under the floor unseen -- as the toe cap at toe-off, which a heel and a toe point miss.
+    """
+    from scipy.spatial import ConvexHull
+
+    dom = np.argmax(w, axis=1)
+    col = {n: i for i, n in enumerate(JOINT_NAMES)}
+    out = {}
+    for s in ("l", "r"):
+        leg = [f"hip_{s}", f"knee_{s}", f"ankle_{s}", f"toe_{s}"]
+        idx = []
+        for j in (f"ankle_{s}", f"toe_{s}"):
+            group = np.flatnonzero(dom == col[j])
+            if len(group) < 4:
+                raise SystemExit(f"the {j} shoe has {len(group)} vertices; cannot take its hull")
+            idx.extend(group[ConvexHull(verts[group]).vertices])
+        idx = np.unique(idx)
+        wl = w[idx][:, [col[j] for j in leg]]
+        off_leg = 1.0 - wl.sum(axis=1)
+        if off_leg.max() > 1e-3:
+            raise SystemExit(
+                f"a {s} shoe vertex is {off_leg.max():.3f} skinned off its leg; refusing to drop it"
+            )
+        used = wl.max(axis=0) > 1e-3
+        wl = wl[:, used] / wl[:, used].sum(axis=1, keepdims=True)
+        out[s] = {
+            "joints": [j for j, u in zip(leg, used, strict=True) if u],
+            "at": np.round(verts[idx], 4).tolist(),
+            "w": np.round(wl, 4).tolist(),
+        }
+    return out
+
+
+def measure(verts: np.ndarray, w: np.ndarray, skeleton: dict, tpose: bool, flip: bool) -> dict:
+    """What a blueprint's ``walker.json`` says of its mesh's shape, measured on the mesh as MuJoCo
+    poses it: ``{"height", "foot_tip", "collision", "sole"}``, the sole with each shoe's ``hull``.
+
+    ``verts`` (soles on z = 0) and their skin weights ``w`` are turned as the skin turns them
+    (``skin._aligner``) and measured against the bones the skin is bound to at runtime -- ``skin._bind_bones``
+    of ``skeleton`` (a ``walker.json`` skeleton dict) and ``tpose`` -- which are what the foot
+    grounding adds a sole offset to and what a capsule rides. The source rig's own bones are not
+    those: the walker's limbs are straight where the rig's bend, which puts the runtime ankle
+    centimetres from the rig's. Anything that derives a blueprint from an import measures here too.
+    """
+    from roqsim_walker import skin
+    from roqsim_walker.humanoid import to_skeleton
+
+    verts = skin._aligner(verts, flip=flip)(np.asarray(verts, float))
+    poses = skin._bind_bones(tpose=tpose, skeleton=to_skeleton(skeleton))
+    bind = {name: pos for name, (pos, _) in poses.items()}
+    collision = measure_collision(verts, w, bind)
+    sole, foot_tip = measure_sole(verts, w, bind)
+    for side, hull in measure_hull(verts, w).items():
+        sole[side]["hull"] = hull
+    return {
+        "height": round(float(verts[:, 2].max()), 4),
+        "foot_tip": foot_tip,
+        "collision": collision,
+        "sole": sole,
+    }
 
 
 def write_obj(path: str, parts, verts: np.ndarray, mtl_name: str) -> None:
@@ -277,16 +441,38 @@ def write_mtl(path: str, materials: dict) -> None:
             )
 
 
-def credits_text(name: str, source: str, licence: str, author: str) -> str:
-    """The ``CREDITS.txt`` an imported blueprint carries: its own terms, and the clips' CARLA ones."""
+#: The sentence of a blueprint's ``CREDITS.txt`` that says where its finger weights come from.
+FINGERS_CREDIT = (
+    "The finger weights (*.fingers.npz) are the same source's, kept apart from\n"
+    "the wrist by the import; a walker with `hands: true` binds its fingers\n"
+    "with them.\n"
+)
+
+
+def with_fingers_credit(text: str) -> str:
+    """``CREDITS.txt``'s ``text`` with :data:`FINGERS_CREDIT` as its last paragraph, in place of one
+    of another wording (a paragraph that begins as it does)."""
+    head = FINGERS_CREDIT.split()[:4]
+    paragraphs = [p for p in text.rstrip("\n").split("\n\n") if p.split()[:4] != head]
+    return "\n\n".join(paragraphs) + "\n\n" + FINGERS_CREDIT
+
+
+def credits_text(name: str, source: str, licence: str, author: str, fingers: bool = False) -> str:
+    """The ``CREDITS.txt`` an imported blueprint carries: its own terms, the clips' CARLA ones, and
+    with ``fingers`` the sentence on its finger weights (:data:`FINGERS_CREDIT`)."""
     return (
         f"{name}\n\nSource:  {source}\n"
         f"Licence: {licence}\n"
         f"Author:  {author}\n\n"
+        "Every file here is regenerated from that source by the import below;\n"
+        "none is edited by hand. Its walker.json is measured on the mesh against\n"
+        "the bones the walker's skin is posed on at runtime, and grounds each\n"
+        "shoe on its hull.\n\n"
         "Imported with `roqsim walker import-actor`: the skin (mesh, textures,\n"
         "skeleton, skin weights) is the source's. Locomotion comes from this\n"
         "package's models/anims/, which are CARLA retargets under CC-BY 4.0 --\n"
         "so this walker carries CARLA attribution too; see THIRD_PARTY.md.\n"
+        + (f"\n{FINGERS_CREDIT}" if fingers else "")
     )
 
 
@@ -315,21 +501,39 @@ def main(argv: list | None = None) -> None:
         metavar="NAME",
         help="drop this material group (a held prop like a handbag); repeatable",
     )
-    # Required: a blueprint is committed with the CREDITS.txt written here or not at all, and one
-    # written without its source, licence or author is an asset with no recorded licence.
-    ap.add_argument("--credits-source", required=True, help="where the actor came from (URL)")
-    ap.add_argument("--credits-licence", required=True, help='its licence, e.g. "CC-BY 4.0"')
-    ap.add_argument("--credits-author", required=True, help="its author, as the source names them")
+    ap.add_argument(
+        "--fingers-only",
+        action="store_true",
+        help="add the source's finger weights (<stem>.fingers.npz) to an existing blueprint of the "
+        "same source, and their sentence to its CREDITS.txt; nothing else is written (a full import "
+        "writes them too)",
+    )
+    # Required for an import: a blueprint is committed with the CREDITS.txt written here or not at
+    # all, and one written without its source, licence or author is an asset with no recorded licence.
+    ap.add_argument("--credits-source", help="where the actor came from (URL)")
+    ap.add_argument("--credits-licence", help='its licence, e.g. "CC-BY 4.0"')
+    ap.add_argument("--credits-author", help="its author, as the source names them")
     args = ap.parse_args(argv)
+    out_root = args.out or os.path.join(models_dir(), "people")
+    if args.fingers_only:
+        wdir = os.path.join(out_root, args.name)
+        print(f"wrote {write_fingers(args.dae, wdir, args.name[0].lower() + args.name[1:])}")
+        return
+    missing = [
+        f"--credits-{k}"
+        for k in ("source", "licence", "author")
+        if not getattr(args, f"credits_{k}")
+    ]
+    if missing:
+        ap.error(f"an import needs {', '.join(missing)}")
 
     # Default to the same people/ the loader reads, so an import is visible to `resolve_walker`
     # without a path argument. Asking blueprint rather than recomputing it keeps one definition.
-    out_root = args.out or os.path.join(models_dir(), "people")
     wdir = os.path.join(out_root, args.name)
-    os.makedirs(wdir, exist_ok=True)
     stem = args.name[0].lower() + args.name[1:]
 
     doc, ctrl, names, bind, W, parts, materials = load_skin(args.dae)
+    fingers = has_fingers(names)  # refused, as every refusal below, before anything is written
     offsets, root_height = skeleton_from_bind(bind)
     w17 = fold_weights(W, names)
 
@@ -343,25 +547,26 @@ def main(argv: list | None = None) -> None:
             )
         parts = [p for p in parts if p.material not in drop]
         materials = {m: i for m, i in materials.items() if m not in drop}
+    os.makedirs(wdir, exist_ok=True)
 
     # Mesh in the frame skin.add_skin will see: soles dropped to z=0 (its _aligner does the same).
     verts = np.asarray(ctrl.geometry.primitives[0].vertex, dtype=float).copy()
     zshift = verts[:, 2].min()
     verts[:, 2] -= zshift
-    height = float(verts[:, 2].max())
 
     # Only the vertices the KEPT groups reference feed the geometry measurements -- so a dropped bag
     # skinned to the hand does not inflate the wrist's collision radius.
     kept = np.unique(
         np.concatenate([np.asarray(p.triangleset().vertex_index).ravel() for p in parts])
     )
-
-    # Source joints in the mesh's own (T-)pose, z-shifted to match the dropped mesh. This is the
-    # frame the vertices live in, so it is what the geometric measurements below must use.
-    bind_ours = {ours: bind[src][:3, 3] - [0, 0, zshift] for ours, src in JOINT_MAP.items()}
-
-    collision = measure_collision(verts[kept], w17[kept], bind_ours)
-    sole, foot_tip = measure_sole(verts[kept], w17[kept], bind_ours)
+    shape = measure(
+        verts[kept],
+        w17[kept],
+        {"root_height": root_height, "offsets": offsets},
+        tpose=True,
+        flip=args.flip,
+    )
+    height, collision, sole = shape["height"], shape["collision"], shape["sole"]
 
     write_obj(os.path.join(wdir, f"{stem}.obj"), parts, verts, f"{stem}.mtl")
     write_mtl(os.path.join(wdir, f"{stem}.mtl"), materials)
@@ -374,6 +579,8 @@ def main(argv: list | None = None) -> None:
         weights=w17,
         joints=np.array(JOINT_NAMES),
     )
+    if fingers:
+        save_fingers(os.path.join(wdir, f"{stem}.fingers.npz"), verts, W, names)
 
     meta = {
         "obj": f"{stem}.obj",
@@ -382,8 +589,8 @@ def main(argv: list | None = None) -> None:
         "materials": {m: {"texture": i["texture"], "normal": None} for m, i in materials.items()},
         "skeleton": {
             "root_height": root_height,
-            "height": round(height, 4),
-            "foot_tip": foot_tip,
+            "height": height,
+            "foot_tip": shape["foot_tip"],
             "offsets": offsets,
         },
         "collision": collision,
@@ -396,13 +603,22 @@ def main(argv: list | None = None) -> None:
 
     with open(os.path.join(wdir, "CREDITS.txt"), "w") as f:
         f.write(
-            credits_text(args.name, args.credits_source, args.credits_licence, args.credits_author)
+            credits_text(
+                args.name,
+                args.credits_source,
+                args.credits_licence,
+                args.credits_author,
+                fingers=fingers,
+            )
         )
 
     print(f"wrote {wdir}")
     print(f"  height {height:.3f} m | root_height {root_height:.3f} m | {len(verts)} verts")
     print(f"  materials: {', '.join(materials)}")
     print(f"  collision radii: {len(collision)} joints | anim_set: {args.anim_set or 'inferred'}")
+    print(
+        f"  finger weights: {'written' if fingers else 'none, the source has no finger bones: its hands bind rigidly'}"
+    )
 
 
 if __name__ == "__main__":

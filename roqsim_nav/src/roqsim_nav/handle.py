@@ -24,12 +24,18 @@ from dataclasses import dataclass
 
 @dataclass
 class NavHandle:
-    """Published on the blackboard under ``nav:<entity>``.
+    """Published on the blackboard under ``nav:<entity>:handle``.
 
     ``send_goals`` is thread-safe: it stamps the route, marshals the change onto the physics thread
     via :meth:`~roqsim.context.SimContext.post`, and returns the sequence number synchronously --
     before the route has been applied. That is deliberate: an off-thread caller can hold the number
     it must poll for without ever touching ``data``.
+
+    As a machine handle (:class:`roqsim.machine.MachineHandle`) it numbers each send and latches
+    ``finished`` in ``status`` for that number. Unlike one, a send overtakes the running route (a
+    machine refuses a start while busy), and ``cancel`` stamps a number of its own (a machine's
+    returns the one it cancelled). Its endpoints carry the route in their names (``start_route``,
+    ``route_status``, ``cancel_route``), so an entity that also runs a machine keeps the two apart.
 
     Only the list form exists. ``send_goals([p])`` is a single goal, and the OpenSCENARIO vocabulary
     already states the rule for exactly this case: one object is a one-element list. Two functions

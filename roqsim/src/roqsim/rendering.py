@@ -35,7 +35,7 @@ import numpy as np
 from . import raycast
 from .exit_status import NO_GL
 from .plugin import PluginError
-from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, subtree_body_ids
+from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, WINDOW_GEOM_GROUP, subtree_body_ids
 from .render_api import (
     BODIES,
     CAMERA_MODELS,
@@ -788,6 +788,8 @@ def _vopt(geomgroup) -> mujoco.MjvOption:
     # excluding the group is what makes absence one decision rather than several that could
     # drift -- and it is the same group every raycast mask excludes.
     vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
+    # A window is drawn: it is what a camera sees of a sensor's opening (presence.WINDOW_GEOM_GROUP).
+    vopt.geomgroup[WINDOW_GEOM_GROUP] = 1
     if geomgroup is not None:
         # Draw only the named groups. A model separates what it SHOWS from what it COLLIDES --
         # group 2 for visual meshes, group 3 for the primitives physics uses -- and a picture of

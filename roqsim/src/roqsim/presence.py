@@ -101,6 +101,14 @@ _log = logging.getLogger(__name__)
 #: ``[1,1,1,0,0,0]``, so no renderer draws it without being told to.
 ABSENT_GEOM_GROUP = 4
 
+#: Geom group of what a camera sees and no ray does: a sensor's window, such as the band of a
+#: robot's head its lidar scans out through. Every raycast mask leaves it out
+#: (:func:`visible_geomgroup_mask`) and every roqsim render and viewer window draws it
+#: (:func:`roqsim.viewer.show_windows`), so a head can look whole while
+#: its lidar sees through the band. A geom here collides with nothing (``contype``/``conaffinity``
+#: 0): it is a picture, not a part.
+WINDOW_GEOM_GROUP = 5
+
 #: Height at which a visual-only mocap body waits while unused (see "Parking a visual-only body").
 PARK_Z = -100.0
 
@@ -364,7 +372,8 @@ def _restore(ctx, entity) -> None:
 
 
 def visible_geomgroup_mask(include_absent: bool = False):
-    """A ``mj_multiRay`` ``geomgroup`` mask that excludes absent entities.
+    """A ``mj_multiRay`` ``geomgroup`` mask that excludes absent entities and windows
+    (:data:`WINDOW_GEOM_GROUP`).
 
     Raycasting sensors pass this instead of ``None``. ``None`` means "every group", and an absent
     entity is still a return under it.
@@ -386,4 +395,5 @@ def visible_geomgroup_mask(include_absent: bool = False):
     mask = np.ones(mujoco.mjNGROUP, dtype=np.uint8)
     if not include_absent:
         mask[ABSENT_GEOM_GROUP] = 0
+    mask[WINDOW_GEOM_GROUP] = 0  # a window: what a ray passes through
     return mask

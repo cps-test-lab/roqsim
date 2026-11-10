@@ -423,6 +423,26 @@ def test_a_setpoint_ramps_at_its_rate_and_the_plugin_applies_it():
         engine.shutdown()
 
 
+def test_goal_is_where_a_ramp_ends_and_otherwise_the_current_target():
+    engine = _engine([{"machine_fixtures:Spinner": {"ramp": 0.5}, "name": "spin"}])
+    try:
+        spin = engine.ctx.blackboard.require("machine:spin")
+        assert spin.goal("speed") == spin.value("speed") == pytest.approx(0.1)
+        seq = spin.start("run", speed=0.6)
+        for _ in range(20):
+            engine.step()
+        assert spin.goal("speed") == pytest.approx(0.6), "the end of the ramp"
+        assert 0.1 < spin.value("speed") < 0.6, "the target, part of the way"
+        spin.cancel(seq)
+        _run_until_done(engine, spin, seq)
+        assert spin.goal("speed") == spin.value("speed") < 0.6, "a cancel holds where the ramp was"
+        _run_until_done(engine, spin, spin.start("run", speed=0.3))
+        engine.reset()
+        assert spin.goal("speed") == spin.value("speed") == pytest.approx(0.1), "home again"
+    finally:
+        engine.shutdown()
+
+
 def test_manual_control_leaves_the_actuators_to_the_viewer():
     engine = _press()
     try:
@@ -531,6 +551,30 @@ def test_preempt_cancels_what_runs_and_starts_the_new_program_in_the_same_step()
         assert _run_until_done(engine, press, second).error == ""
         with pytest.raises(MachineError, match="no program 'bend'"):
             press._machine.preempt("bend")
+    finally:
+        engine.shutdown()
+
+
+def test_a_start_is_told_to_the_machine_when_it_is_accepted_not_when_it_is_applied():
+    """``start_accepted`` sees a handle start before the physics thread applies it, a preempt at
+    once, and no start that was refused."""
+    engine = _press()
+    try:
+        press = engine.ctx.blackboard.require("machine:press")
+        seen = []
+        press._machine.start_accepted = lambda program, args: seen.append(
+            (program, args, press._machine.status_now.seq)
+        )
+        first = press.start("dwell", seconds=1.0)
+        assert seen == [("dwell", {"seconds": 1.0}, 0)], "told before it was applied"
+        with pytest.raises(MachineError, match="busy"):
+            press.start("dwell", seconds=2.0)
+        with pytest.raises(MachineError, match="no program"):
+            press.start("bend")
+        assert len(seen) == 1, "a refused start is not told"
+        engine.step()
+        press._machine.preempt("dwell", seconds=0.1)
+        assert seen[1:] == [("dwell", {"seconds": 0.1}, first)]
     finally:
         engine.shutdown()
 
@@ -1068,3 +1112,16 @@ def _steps(engine, count):
     for _ in range(count):
         engine.step()
         yield
+
+
+def test_a_machine_publishes_the_handle_its_class_names_once():
+    engine = _engine(
+        [{"machine_fixtures:HandledPress": {"prefix": "p1_"}, "name": "press"}], gravity=False
+    )
+    try:
+        handle = engine.ctx.blackboard.get("machine:press")
+        plugin = next(p for p in engine.plugins if p.address == "press")
+        assert type(handle).__name__ == "PressHandle" and plugin.handle is handle
+        assert _run_until_done(engine, handle, handle.stroke()).error == ""
+    finally:
+        engine.shutdown()

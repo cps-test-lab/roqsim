@@ -221,7 +221,7 @@ action set_entity_state:
     # Put a free-jointed entity in a state: at `pose`, moving at `twist`. The name and shape are
     # `simulation_interfaces`' SetEntityState, because it is the same operation -- and `twist`
     # defaults to zero, so a placement that states none behaves as a fresh spawn does. The
-    # counterpart of `spawn_robot.pos`/`.yaw` for a factor that is decided per RUN (a campaign's
+    # counterpart of a spawned entity's `pose:` for a factor that is decided per RUN (a campaign's
     # randomly generated start pose) rather than per CONFIGURATION -- nothing before compile knows a
     # value drawn once per repetition, and the substrate does not recompile mid-run. A FULL pose:
     # `orientation` takes roll/pitch/yaw or a quaternion, read by the same parser a world document
@@ -269,11 +269,110 @@ action machine_run:
     # `run`. A branch abandoned while it waits (`one_of`, `timeout`) cancels this start, and no
     # start another client made.
     #
-    #     machine_run(machine: 'press', program: 'stroke', args: 'depth=0.1, show=hole')
+    #     machine_run(machine: 'press', program: 'stroke', args: 'show=hole')
     machine: string                                   # the machine's name in the world
     program: string                                   # the program to run
     args: string = ''                                 # its arguments, as 'name=value, name=value'
     check: bool = true                                # fail on its error, or on a later start
+
+action humanoid_approach:
+    # Start a humanoid's `approach` and wait for that start (a walker with hands or a humanoid robot,
+    # moved by its `humanoid` component): walk to a stand-off in front of a target and face it. Every
+    # humanoid_<move> is `machine_run` with the move's parameters typed: it fails the trial on the
+    # move's error unless `check: false`, and an abandoned branch cancels its own start.
+    humanoid: string                                  # the walker or robot's name in the world
+    target: string                                    # a site, body or entity by name
+    standoff: float = 0.6                             # metres in front of the target
+    facing: float = 1000.0                            # world yaw (rad) to face; unset: the target's front
+    check: bool = true
+
+action humanoid_reach:
+    # A hand, or both, on a target, staying there until another move.
+    humanoid: string
+    hand: string                                      # left | right | both
+    target: string
+    relative: string = ''                             # an offset 'x, y, z[, roll, pitch, yaw]' in the target's frame
+    orient: bool = true                               # take the target's rotation, or its position only
+    pose: string = 'open'                             # open | power | pinch | flat | point
+    check: bool = true
+
+action humanoid_press:
+    # Press a button with a fingertip, by contact, until it has travelled its press; then let go.
+    humanoid: string
+    hand: string                                      # left | right
+    target: string                                    # a site on the button's face, e.g. 'start/button'
+    max_force: float = 0.0                            # N at most; 0: the humanoid's own press_force
+    check: bool = true
+
+action humanoid_grasp:
+    # Take a target's grip site(s) and hold them: a weld, so physics carries what is held.
+    humanoid: string
+    hand: string                                      # left | right | both
+    target: string                                    # an entity with grip sites, or one grip site
+    grip: string = 'power'                            # the hand pose it closes to
+    check: bool = true
+
+action humanoid_release:
+    # Let go: the hold off, the fingers open, the hands back to the gait.
+    humanoid: string
+    hand: string = 'both'
+    check: bool = true
+
+action humanoid_pull:
+    # Pull what a hand holds toward the humanoid (a drawer along its slide).
+    humanoid: string
+    hand: string
+    distance: float                                   # metres
+    speed: float = 0.2                                # m/s
+    check: bool = true
+
+action humanoid_push:
+    # Push what a hand holds away from the humanoid (a drawer shut).
+    humanoid: string
+    hand: string
+    distance: float
+    speed: float = 0.2
+    check: bool = true
+
+action humanoid_carry:
+    # Carry what the hands hold to a stand-off in front of a target, lifted clear of its surface.
+    humanoid: string
+    to: string
+    standoff: float = 0.6
+    check: bool = true
+
+action humanoid_place:
+    # Set what the hands hold down on a target within reach, then (release) let go.
+    humanoid: string
+    at: string
+    release: bool = true
+    check: bool = true
+
+action humanoid_play:
+    # Play a clip over the humanoid's own motion on some joints: once, ending with the clip; or with
+    # `loop`, ending once it has faded in and playing on until humanoid_stop_clip. Moves and hands
+    # come over it. A walker with hands off plays one through entity_call(command: 'play').
+    humanoid: string
+    clip: string                                      # a clip of the walker's anim set, or a .npz path
+    joints: string = ''                               # 'upper' or 'arm_r, head': groups and joints; empty: all
+    weight: float = 1.0                               # 0..1 of the pose under it
+    loop: bool = false
+    fade: float = 0.3                                 # s, in and out
+    speed: float = 1.0                                # times the clip's own pace
+    check: bool = true
+
+action humanoid_stop_clip:
+    # Fade out the clips playing `clip`, or every clip, and wait until they are gone.
+    humanoid: string
+    clip: string = ''
+    check: bool = true
+
+action humanoid_look_at:
+    # Turn the head toward a target (a site, body or entity by name), following it, and wait until it
+    # is on it; empty turns it back.
+    humanoid: string
+    target: string = ''
+    check: bool = true
 
 action zone_entered:
     # Wait until an entity is inside a `zone_trigger`: the form of a Python scenario's `entered`.

@@ -207,7 +207,16 @@ def _merge_split(verts, faces, uv):
 
 
 def add_skin(
-    spec, name, mesh_path, materials=None, rgba=_DEFAULT_RGBA, tpose=False, skeleton=None, flip=None
+    spec,
+    name,
+    mesh_path,
+    materials=None,
+    rgba=_DEFAULT_RGBA,
+    tpose=False,
+    skeleton=None,
+    flip=None,
+    hands=None,
+    finger_weights=None,
 ) -> None:
     """Bind the character mesh at ``mesh_path`` to the ``{name}/{joint}`` humanoid bodies (call after
     :func:`roqsim_walker.humanoid.build_humanoid`, before compile).
@@ -217,8 +226,19 @@ def add_skin(
     (or flat) ``<skin>``. ``tpose`` binds for a T-pose mesh; ``skeleton`` is the walker's per-rig
     bone table. ``flip`` turns a -X-facing mesh to our +X; it defaults to ``tpose`` because CARLA
     exports are both T-posed *and* -X-facing, but the two are independent -- the Open-RMF actors are
-    T-posed and already face +X, and set ``flip: false``."""
+    T-posed and already face +X, and set ``flip: false``.
+
+    ``hands`` (a walker with ``hands: true``) maps each side to its
+    :class:`~roqsim_motion.hands.HandLayout`: the fingers' bones join the skin. With
+    ``finger_weights`` (the blueprint's ``hand_weights``, the path of its ``<obj>.fingers.npz``), each
+    hand vertex's share on the source's thumb and finger chains moves from the wrist to those bones,
+    the four-finger chain split between the four fingers by the bone nearest the vertex; without it,
+    the hand stays bound to the wrist as one rigid part (:func:`hand_weights`)."""
     poses = _bind_bones(tpose=tpose, skeleton=skeleton)
+    bones = list(JOINT_NAMES)
+    if hands:
+        poses = {**poses, **_bind_fingers(poses, hands)}
+        bones += [b for side in ("l", "r") for b in _finger_bones(side)]
     segs = _segments(poses)
     objdir = os.path.dirname(os.path.abspath(mesh_path))
     materials = materials or {}
@@ -227,31 +247,293 @@ def add_skin(
         np.vstack([v for _, v, _, _ in parts]), flip=tpose if flip is None else bool(flip)
     )
     lookup = _load_weights(mesh_path)  # real CARLA skin weights, if exported
+    fingers = _load_fingers(finger_weights) if hands and finger_weights else None
     for i, (matname, verts, faces, uv) in enumerate(parts):
         w = lookup(verts) if lookup is not None else None  # match raw (pre-align) verts
+        shares = fingers(verts) if fingers is not None else None
         verts = apply(verts)
         if w is None:
             w = _weights(verts, segs)  # fallback: auto-rig
+        if hands:
+            w = hand_weights(w, verts, shares, poses)
         spec_mat = materials.get(matname, {})
         tex = spec_mat.get("texture")
         nrm = spec_mat.get("normal")
         texfile = os.path.join(objdir, tex) if tex else None
         nrmfile = os.path.join(objdir, nrm) if nrm else None
         color = spec_mat.get("color", rgba)
-        _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile)
+        _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile, bones)
 
 
-def _emit_part(spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile=None) -> None:
-    used = [bi for bi in range(len(JOINT_NAMES)) if np.any(w[:, bi] > 1e-3)]
+def _finger_bones(side: str) -> list[str]:
+    from roqsim_motion.hands import bone_names
+
+    return bone_names(side)
+
+
+def _bind_fingers(poses: dict, hands: dict) -> dict:
+    """The finger bones' bind poses: each hand's bones on its wrist at the bind pose, every angle
+    zero -- the hand as its mesh has it, which a fitted layout's bones follow."""
+    from roqsim_motion.hands import BONES, finger_fk
+
+    out = {}
+    for side, lay in hands.items():
+        wp, wq = poses[f"wrist_{side}"]
+        pos, rot = finger_fk(lay, wp, wq, np.zeros((5, BONES)))
+        for k, bone in enumerate(_finger_bones(side)):
+            out[bone] = (pos[k], rot[k])
+    return out
+
+
+#: How far a mesh vertex may be from the finger weights' nearest position (m): the OBJ's rounding.
+FINGERS_TOL = 1e-5
+
+
+def _load_fingers(path):
+    """``lookup(verts) -> (n, 12)``: each vertex's shares on the source's finger chains, from the
+    finger weights at ``path``. Refuses a vertex farther than :data:`FINGERS_TOL` from every
+    position the file has: weights of another mesh, which would bind its fingers to nearby vertices
+    of this one."""
+    d = np.load(path)
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(d["positions"])
+    shares = d["weights"]
+
+    def lookup(verts):
+        dist, idx = tree.query(np.asarray(verts, float))
+        if len(dist) and float(dist.max()) > FINGERS_TOL:
+            raise ValueError(
+                f"{path}: these finger weights are not of this mesh -- a vertex is {float(dist.max()):.6f} m "
+                f"from every position they have; regenerate them with `roqsim walker import-actor`"
+            )
+        return shares[idx]
+
+    return lookup
+
+
+#: How far in front of the palm's surface a held handle's axis is (m): a handle's radius.
+GRIP_DEPTH = 0.015
+
+
+def _line(points: np.ndarray, away: np.ndarray):
+    """``(centre, unit direction)`` of the principal axis of ``points``, turned along ``away``."""
+    c = points.mean(axis=0)
+    _, _, vt = np.linalg.svd(points - c, full_matrices=False)
+    d = vt[0]
+    return c, (d if np.dot(d, away) >= 0 else -d)
+
+
+#: How a finger's length divides between its three bones where the mesh does not say (a bone whose
+#: share no vertex carries): roughly an adult's phalanges.
+_PHALANGES = (0.45, 0.32, 0.23)
+
+
+def _bounds(t: np.ndarray, shares: np.ndarray) -> list:
+    """Where along a finger (``t``, m) each of its bones begins and the last ends, from the shares
+    (n, 4: the palm's, then the three bones') of its vertices: a joint is halfway between the last
+    vertex the bone before carries most and the first the bone after does; the tip is the farthest
+    vertex. A joint the mesh does not show (a bone no vertex follows) divides the span around it as
+    :data:`_PHALANGES` do."""
+    dominant = np.argmax(shares, axis=1)
+    spans = [
+        (float(t[dominant == g].min()), float(t[dominant == g].max()))
+        if np.any(dominant == g)
+        else None
+        for g in range(4)
+    ]
+    tip = float(t.max())
+    first = next(g for g in (1, 2, 3) if spans[g] is not None)
+
+    def joint(g: int):
+        """Between group ``g`` and the next: halfway from the last of ``g``'s vertices before the
+        next begins (a few of the palm's lie beside a finger, past its knuckle) to that beginning."""
+        if spans[g] is None or spans[g + 1] is None:
+            return None
+        start = spans[g + 1][0]
+        before = t[(dominant == g) & (t < start)]
+        return 0.5 * (float(before.max()) + start) if len(before) else start
+
+    out = [joint(0), joint(1), joint(2), tip]
+    if out[0] is None:
+        out[0] = spans[first][0]
+    # fill a missing joint between the known ones, as the phalanges divide a finger
+    for k in (1, 2):
+        if out[k] is None:
+            hi = next(j for j in range(k + 1, 4) if out[j] is not None)
+            lo = k - 1
+            share = np.cumsum((0.0,) + _PHALANGES)
+            out[k] = out[lo] + (out[hi] - out[lo]) * (share[k] - share[lo]) / (
+                share[hi] - share[lo]
+            )
+    for k in range(1, 4):
+        out[k] = max(out[k], out[k - 1] + 0.005)
+    return out
+
+
+def fit_hands(mesh_path, finger_weights, tpose=False, skeleton=None, flip=None) -> dict | None:
+    """Each hand's geometry as the character's mesh has it, for
+    :func:`roqsim_motion.hands.make_layout`: ``side -> dict(bases, lengths, directions, palm,
+    grip)`` in the wrist's frame at the bind pose, measured with the finger weights at
+    ``finger_weights`` (the blueprint's ``hand_weights``), or ``None`` for a mesh without skin
+    weights.
+
+    Measured on the vertices the source rig weights to its finger bones: the thumb is the line of
+    its vertices; the four-finger chain is split into four fingers along the palm's breadth (1-D
+    k-means on the vertices of its last two bones), the index the one beside the thumb; each finger
+    is the line of its vertices, its knuckle and joints where the shares of the bones meet, its tip
+    its farthest vertex. The palm faces the body when the arms hang (+y of the right wrist, -y of the
+    left), as the default hand's does; the grip frame is a handle's radius (:data:`GRIP_DEPTH`) in
+    front of the palm's surface, across the fingers' knuckles, in the middle of the four."""
+    fingers = _load_fingers(finger_weights)
+    weights = _load_weights(mesh_path)
+    if weights is None:
+        return None
+    parts = _load_parts(mesh_path)
+    raw = np.vstack([v for _, v, _, _ in parts])
+    raw = np.unique(np.round(raw, 6), axis=0)
+    verts = _aligner(
+        np.vstack([v for _, v, _, _ in parts]), flip=tpose if flip is None else bool(flip)
+    )(raw)
+    shares, w17 = fingers(raw), weights(raw)
+    poses = _bind_bones(tpose=tpose, skeleton=skeleton)
+    col = {n: i for i, n in enumerate(JOINT_NAMES)}
+    out = {}
+    for s_i, side in enumerate(("l", "r")):
+        wp, wq = poses[f"wrist_{side}"]
+        mat = np.zeros(9)
+        mujoco.mju_quat2Mat(mat, np.asarray(wq, float))
+        local = (verts - wp) @ mat.reshape(3, 3)
+        palm = np.array([0.0, -1.0 if side == "l" else 1.0, 0.0])
+        thumb = shares[:, 6 * s_i : 6 * s_i + 3]
+        chain = shares[:, 6 * s_i + 3 : 6 * s_i + 6]
+        # the source's shares are of a vertex's whole weight, which the 17 joints fold into the wrist
+        wrist = np.clip(w17[:, col[f"wrist_{side}"]] - thumb.sum(1) - chain.sum(1), 0.0, None)
+        # the thumb
+        on = thumb.sum(1) > 0.5
+        if on.sum() < 6 or (chain.sum(1) > 0.5).sum() < 12:
+            return None
+        c, d = _line(local[on], local[on].mean(axis=0))
+        t = (local - c) @ d
+        sel = (thumb.sum(1) > 0.1) | (
+            (wrist > 0.5)
+            & (np.linalg.norm(local - c - np.outer(t, d), axis=1) < 0.012)
+            & (t > t[on].min() - 0.03)
+            & (t < t[on].min())
+        )
+        b = _bounds(t[sel], np.column_stack([wrist[sel], thumb[sel]]))
+        lines = [(c, d, b)]
+        # the four fingers along the palm's breadth (x)
+        distal = chain[:, 1:].sum(1) > 0.5
+        x = local[distal, 0]
+        centres = np.quantile(x, [0.125, 0.375, 0.625, 0.875])
+        for _ in range(50):
+            label = np.argmin(np.abs(x[:, None] - centres[None]), axis=1)
+            new = np.array(
+                [x[label == k].mean() if np.any(label == k) else centres[k] for k in range(4)]
+            )
+            if np.allclose(new, centres):
+                break
+            centres = new
+        thumb_x = float(local[on, 0].mean())
+        order = np.argsort(np.abs(centres - thumb_x))  # index, middle, ring, little
+        nearest = np.argmin(np.abs(local[:, 0][:, None] - centres[None]), axis=1)
+        for k in order:
+            core = (nearest == k) & (chain.sum(1) > 0.5)
+            c, d = _line(local[core], local[core].mean(axis=0))
+            t = (local - c) @ d
+            # the finger's vertices, and the palm's just behind its knuckle
+            mine = (nearest == k) & (
+                (chain.sum(1) > 0.1)
+                | ((wrist > 0.5) & (t > t[core].min() - 0.03) & (t < t[core].min()))
+            )
+            b = _bounds(t[mine], np.column_stack([wrist[mine], chain[mine]]))
+            lines.append((c, d, b))
+        bases = np.array([c + d * b[0] for c, d, b in lines])
+        lengths = np.array([np.diff(b) for _, _, b in lines])
+        directions = np.array([d for _, d, _ in lines])
+        # the palm: its surface under the knuckles, the grip a handle's radius in front of it
+        knuckles = bases[1:]
+        across = (local[:, 0] > knuckles[:, 0].min()) & (local[:, 0] < knuckles[:, 0].max())
+        under = (local[:, 2] < 0.0) & (local[:, 2] > knuckles[:, 2].max()) & across & (wrist > 0.5)
+        surface = (
+            float(np.max(local[under] @ palm))
+            if under.any()
+            else float(knuckles.mean(axis=0) @ palm)
+        )
+        grip = knuckles.mean(axis=0)
+        grip = grip + (surface + GRIP_DEPTH - float(grip @ palm)) * palm
+        out[side] = {
+            "bases": bases,
+            "lengths": lengths,
+            "directions": directions,
+            "palm": palm,
+            "grip": grip,
+        }
+    return out
+
+
+def hand_weights(w17: np.ndarray, verts: np.ndarray, shares, poses: dict) -> np.ndarray:
+    """(n, 47) weights for a skin with finger bones, from the 17 joints' (n, 17).
+
+    With ``shares`` (n, 12; :data:`roqsim_walker.cli.import_actor.FINGER_CHAINS` order) a vertex's
+    share on a thumb bone moves from its wrist to that thumb bone, and its share on a bone of the
+    four-finger chain to the same bone of the finger whose bones (as ``poses`` binds them) are
+    nearest the vertex. Without them the hand stays
+    on the wrist: a rigid part, not a hand deformed from weights the mesh does not have."""
+    n = w17.shape[0]
+    out = np.zeros((n, len(JOINT_NAMES) + 30))
+    out[:, : len(JOINT_NAMES)] = w17
+    if shares is None:
+        return out
+    col = {name: i for i, name in enumerate(JOINT_NAMES)}
+    for s_i, side in enumerate(("l", "r")):
+        bones = _finger_bones(side)
+        base = len(JOINT_NAMES) + 15 * s_i
+        wrist = col[f"wrist_{side}"]
+        # the four fingers' chain goes to the finger whose bones the vertex is nearest
+        lines = np.array(
+            [[poses[bones[3 * f + k]][0] for k in range(3)] for f in range(1, 5)]
+        )  # (4, 3, 3)
+        ends = lines[:, 2] + (lines[:, 2] - lines[:, 1])  # past the last joint by a bone
+        segs = np.concatenate([lines, ends[:, None]], axis=1)  # (4, 4, 3): knuckle .. past the tip
+        dist = np.full((n, 4), np.inf)
+        for f in range(4):
+            for j in range(3):
+                a, b = segs[f, j], segs[f, j + 1]
+                ab = b - a
+                t = np.clip((verts - a) @ ab / (ab @ ab + 1e-12), 0.0, 1.0)
+                dist[:, f] = np.minimum(
+                    dist[:, f], np.linalg.norm(verts - (a + t[:, None] * ab), axis=1)
+                )
+        nearest = np.argmin(dist, axis=1)
+        for k in range(3):
+            thumb = shares[:, 6 * s_i + k]
+            chain = shares[:, 6 * s_i + 3 + k]
+            # thumb bone k: index k in the bone list (thumb first, three bones a finger)
+            out[:, base + k] += thumb
+            for f in range(4):
+                sel = nearest == f
+                out[sel, base + 3 * (f + 1) + k] += chain[sel]
+            out[:, wrist] -= thumb + chain
+    out[:, : len(JOINT_NAMES)] = np.clip(out[:, : len(JOINT_NAMES)], 0.0, None)
+    return out / (out.sum(axis=1, keepdims=True) + 1e-9)
+
+
+def _emit_part(
+    spec, name, i, verts, faces, uv, w, poses, texfile, color, nrmfile=None, bones=None
+) -> None:
+    bones = bones or JOINT_NAMES
+    used = [bi for bi in range(len(bones)) if np.any(w[:, bi] > 1e-3)]
     if not used:
         return
     sk = spec.add_skin()
     sk.name = f"{name}_sk{i}"
     sk.vert = verts.flatten()
     sk.face = faces.flatten()
-    sk.bodyname = [f"{name}/{JOINT_NAMES[bi]}" for bi in used]
-    sk.bindpos = np.array([poses[JOINT_NAMES[bi]][0] for bi in used]).flatten()
-    sk.bindquat = np.array([poses[JOINT_NAMES[bi]][1] for bi in used]).flatten()
+    sk.bodyname = [f"{name}/{bones[bi]}" for bi in used]
+    sk.bindpos = np.array([poses[bones[bi]][0] for bi in used]).flatten()
+    sk.bindquat = np.array([poses[bones[bi]][1] for bi in used]).flatten()
     vertid, vertweight = [], []
     for bi in used:
         ids = np.where(w[:, bi] > 1e-3)[0].astype(np.int32)

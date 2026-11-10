@@ -324,12 +324,19 @@ def test_prepare_viewer_gl_also_preloads(monkeypatch):
 
 
 class _FakeHandle:
-    """Stand-in for ``mujoco.viewer.Handle``: ``close()`` only signals, like the real one."""
+    """Stand-in for ``mujoco.viewer.Handle``: ``close()`` only signals, like the real one; its
+    ``opt`` starts as the viewer's does."""
 
     def __init__(self, stop: threading.Event | None = None, raises: bool = False):
+        import contextlib
+
+        import mujoco
+
         self.stop = stop or threading.Event()
         self.raises = raises
         self.closed = 0
+        self.opt = mujoco.MjvOption()
+        self.lock = contextlib.nullcontext
 
     def close(self):
         self.closed += 1
@@ -366,6 +373,19 @@ def test_close_viewer_waits_for_the_render_thread(monkeypatch):
     close_viewer(handle)
     assert handle.closed == 1
     assert not handle.thread.is_alive()  # joined, not merely asked to stop
+
+
+def test_a_viewer_draws_the_window_group_as_every_render_does(monkeypatch):
+    from roqsim.presence import ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP
+
+    stop = threading.Event()
+    _fake_launch(monkeypatch, stop=stop)
+    handle = launch_viewer(object(), object())
+    try:
+        assert handle.opt.geomgroup[WINDOW_GEOM_GROUP] == 1
+        assert handle.opt.geomgroup[ABSENT_GEOM_GROUP] == 0
+    finally:
+        close_viewer(handle)
 
 
 def test_close_viewer_forgets_the_handle_and_is_idempotent(monkeypatch):

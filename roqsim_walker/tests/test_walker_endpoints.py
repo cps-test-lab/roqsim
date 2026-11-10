@@ -11,7 +11,9 @@ from roqsim.types import Transforms
 
 
 def test_body_poses_carries_each_bone_and_belongs_to_the_walker():
-    (row,) = get_plugin_details("walker")["endpoints"]
+    rows = {r["name"]: r for r in get_plugin_details("walker")["endpoints"]}
+    assert set(rows) == {"body_poses", "play", "stop_clip", "look_at", "clips"}
+    row = rows["body_poses"]
     assert row["name"] == "body_poses" and row["rate_hz"] == 30.0
     assert row["payload"] == "Transforms"
 

@@ -43,7 +43,7 @@ from pathlib import Path
 
 import numpy as np
 
-from roqsim.floorplan_collision import wall_colliders
+from roqsim.floorplan_collision import WallDataError, wall_colliders
 from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
@@ -88,13 +88,16 @@ def _faces_for(verts: np.ndarray) -> np.ndarray:
 
 def build(mesh: Path, out_dir: Path, scene_name: str | None = None) -> dict:
     """Write ``out_dir/scene.json`` + ``out_dir/meshes/`` for the floorplan whose mesh is *mesh*."""
-    colliders = wall_colliders(str(mesh))
+    try:
+        colliders = wall_colliders(str(mesh))
+        reason = "" if colliders else "it names no walls"
+    except WallDataError as exc:
+        colliders, reason = [], str(exc)
     if not colliders:
         # Loudly, not as visual-only walls: a scene with no collision geometry is a building a robot
         # drives straight through, which no downstream check would flag as an import failure.
         raise SystemExit(
-            f"{mesh}: no wall colliders came out of the json-ld beside it (expected "
-            f"{mesh.parent.parent / 'json-ld'}/*.json).\n"
+            f"{mesh}: no wall colliders came out of the json-ld beside it ({reason}).\n"
             f"That directory is the whole point of this importer -- without it there is nothing to "
             f"collide with, and baking the mesh instead would hull every doorway shut.\n"
             f"If this environment genuinely has no json-ld, it is not a Floorplan-DSL room: import it "

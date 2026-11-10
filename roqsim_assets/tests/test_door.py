@@ -122,6 +122,18 @@ def test_the_door_action_gives_a_slow_door_time_for_its_swing(tmp_path):
     assert action["timeout"] == pytest.approx(math.radians(120) / 0.3 + 3.0 + 5.0)
 
 
+def test_the_door_action_states_the_doors_arrival_band_and_an_abort_at_its_timeout(tmp_path):
+    """The handler asks the producer: ``reached_goal`` within the band the door's programs end in,
+    so ROS and the door's status agree, and an abort past the door's own bound, where an arm's
+    gripper keeps its result."""
+    engine = _built(tmp_path, {"speed": 0.3})
+    action = engine.ctx.interface.find("door", "door").backend["ros2"]
+    assert action["reach_tolerance"] == 0.02
+    assert action["on_timeout"] == "abort"
+    # The band is the one its programs end in (test_a_leaf_stopped_just_short_of_its_openness_...).
+    assert action["reach_tolerance"] == _door_plugin(engine)._reach_tol
+
+
 def test_mesh_leaf_model_loads_and_swings(tmp_path):
     # The textured leaf model (white panel + chrome handle) hangs on the hinge and opens on command.
     engine = _built(tmp_path, {"model": "door", "width": 0.9, "height": 2.0})
@@ -245,6 +257,15 @@ def test_leafless_without_frame_is_refused(tmp_path):
 
     bad = {"leaf": False, "frame": False}
     assert any("place nothing" in e for e in DoorPlugin(bad).validate_config(bad))
+
+
+def test_a_leafless_door_asked_to_be_controllable_is_refused():
+    from roqsim_assets.plugins.door import DoorPlugin
+
+    bad = {"leaf": False, "controllable": True}
+    assert any("no leaf to command" in e for e in DoorPlugin(bad).validate_config(bad))
+    fine = {"leaf": False}
+    assert not any("controllable" in e for e in DoorPlugin(fine).validate_config(fine))
 
 
 def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
@@ -570,3 +591,69 @@ def test_short_pushes_do_not_add_up_to_a_give_way(tmp_path):
             engine.step()
     assert not [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
     assert math.degrees(_hinge_angle(engine)) == pytest.approx(45, abs=3)
+
+
+def _door_plugin(engine):
+    return next(p for p in engine.plugins if p.address == "door")
+
+
+@pytest.mark.parametrize("start", [("open", {}), ("move_to", {"openness": 0.7})])
+def test_a_command_back_right_after_a_handle_start_is_not_taken_for_a_repeat(tmp_path, start):
+    """A handle's start is applied a step after it is made, and the door compares a ``cmd`` with what
+    it was commanded last: commanded open, then back to closed before the start was applied, it
+    closes, rather than dropping the ``0.0`` as the target it stood at and opening."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    program, args = start
+    first = door.start(program, **args)
+    # The stream's value, applied on the physics thread before the posted start is: what a cmd
+    # arriving between the start and its step does.
+    _door_plugin(engine).cmd(0.0)
+    engine.step()
+    assert door.status().seq > first and door.status().program == "move_to"
+    started = [e["seq"] for e in engine.ctx.events.all() if e["event"] == "program_start"]
+    assert first not in started, "the handle's start was replaced before it ran"
+    assert _finish(engine, door, door.status().seq).error == ""
+    for _ in range(500):
+        engine.step()
+    assert abs(math.degrees(_hinge_angle(engine))) < 2
+
+
+def test_a_repeated_command_after_a_handle_start_is_still_a_repeat(tmp_path):
+    """Recorded at acceptance, the handle's target is what a ``cmd`` of the same value repeats."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    first = door.start("open")
+    _door_plugin(engine).cmd(1.0)
+    engine.step()
+    assert door.status().seq == first and door.status().program == "open"
+    assert _finish(engine, door, first).error == ""
+
+
+def test_a_start_accepted_while_the_door_gives_way_keeps_its_target(tmp_path):
+    """A handle start accepted from another thread between the give-way's busy check and its new
+    target: the start's target stands, so a ``cmd`` of the openness the door gave way at is not
+    dropped as a repeat."""
+    engine = _built(tmp_path, {"max_angle": 90, "open": 0.5, "stall_timeout": 1.0})
+    door = engine.ctx.blackboard.require("machine:door")
+    plugin = _door_plugin(engine)
+    m, d = engine.ctx.model, engine.ctx.data
+    dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+    started = []
+    plain_set = plugin.set
+
+    def set_while_a_start_arrives(actuator, value):
+        if not started:
+            started.append(door.start("open"))
+        plain_set(actuator, value)
+
+    plugin.set = set_while_a_start_arrives
+    held = math.radians(60)
+    for _ in range(1500):
+        d.qfrc_applied[dof] = 400.0 * (held - _hinge_angle(engine)) - 300.0 * float(d.qvel[dof])
+        engine.step()
+        if started:
+            break
+    d.qfrc_applied[dof] = 0.0
+    assert started and [e for e in engine.ctx.events.all() if e["event"] == "gave_way"]
+    assert plugin._goal == 1.0, "the accepted start's target, not where the door gave way"

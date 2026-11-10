@@ -1,10 +1,11 @@
 name: ci
 
-# Three jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
+# Four jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
 # is a make target, so a contributor reproduces CI exactly with one command and the two cannot
 # drift. `ros` carries the heavy integration (colcon build + the nav2 goal test) and is kept
-# separate so a formatting mistake does not wait behind a robot driving to a goal. `pages` publishes
-# the documentation `make ci` already built, from main only.
+# separate so a formatting mistake does not wait behind a robot driving to a goal. `osc` runs the
+# tests gated on scenario-execution with it installed; `core` and `ros` stay without it, where those
+# tests must skip. `pages` publishes the documentation `make ci` already built, from main only.
 
 on:
   push:
@@ -96,6 +97,34 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           make test
+
+  # scenario-execution is the `[osc]` extra of scenario_execution_roqsim, so `make venv` leaves it out
+  # and in `core` and `ros` every test that needs it skips -- which is what those jobs must keep
+  # showing. This job is `make venv` plus the extra, from PyPI, and runs those tests: the actions and
+  # the in-process runner (scenario_execution_roqsim/tests), the reset test's `scenario` case and the
+  # handling scenes' OpenSCENARIO twins.
+  # `make test-osc` fails rather than skips when scenario-execution is missing or broken.
+  osc:
+    name: osc (tests that need scenario-execution)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same GL and ffmpeg dependencies as the core job, for the same reasons: the reset test
+      # builds worlds with cameras, rendered offscreen with osmesa on a runner.
+      - name: Install GL libraries and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6 ffmpeg
+
+      - name: Create venv and install packages
+        run: make venv
+
+      - name: Install scenario-execution (the [osc] extra)
+        run: .venv/bin/pip install -e "scenario_execution_roqsim[osc]"
+
+      - name: make test-osc
+        run: make test-osc
 
   pages:
     name: pages (publish docs)

@@ -120,7 +120,6 @@ def test_bundled_blueprint_resolves():
     [
         ("FemaleVisitorWalk", "female", False, 1),  # handbag group excluded at import
         ("MaleVisitorWalk", "adult", False, 1),
-        ("WorkerHiVisWalk", "adult", False, 1),  # derived from OpScrubsWalk (derive-hivis-worker)
     ],
 )
 def test_imported_openrmf_actor_resolves_and_compiles(name, anim, flip, n_skins):
@@ -185,7 +184,7 @@ def test_obj_corners_with_one_position_and_uv_are_one_skin_vertex(tmp_path):
     np.testing.assert_allclose(uv[faces[2][0]], [0.5, 0])
 
 
-@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "MaleVisitorWalk", "WorkerHiVisWalk"])
+@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "MaleVisitorWalk"])
 def test_an_imported_actor_s_skin_vertices_are_shared_by_their_faces(name):
     """Each vertex of an imported actor's skin is shared by the faces around it, as a smooth surface
     needs, not by the one or two faces of a corner of its own."""
@@ -197,7 +196,7 @@ def test_an_imported_actor_s_skin_vertices_are_shared_by_their_faces(name):
         assert faces.size / len(verts) > 4.0
 
 
-@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "WorkerHiVisWalk"])
+@pytest.mark.parametrize("name", ["FemaleVisitorWalk", "MaleVisitorWalk"])
 def test_imported_actor_weights_sidecar_matches_the_obj(name):
     """The authored weights.npz must be row-matched to the OBJ verts (skin._load_weights KD-tree
     queries by position) and normalised across our 17 joints."""

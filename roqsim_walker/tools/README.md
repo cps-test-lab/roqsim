@@ -1,6 +1,6 @@
 # Walker import tools
 
-**These files are wrappers.** The tool itself is a subcommand, so nothing here needs a path:
+**`import_actor.py` is a wrapper.** The tool itself is a subcommand, so it needs no path:
 
 ```bash
 roqsim walker --help                       # every tool, one line each
@@ -27,8 +27,11 @@ roqsim walker import-actor <actor.dae> --name FemaleVisitorWalk --anim-set femal
     --credits-source <fuel-url> --credits-licence "CC-BY 4.0" --credits-author "..."
 ```
 
-Writes `<name>.obj` + `.mtl` + textures, `<name>.walker.json` (skeleton/collision/sole), and the
-authored `<name>.weights.npz`, plus a `CREDITS.txt`. Like the `roqsim_assets` prop tools, it
+Writes `<name>.obj` + `.mtl` + textures, `<name>.walker.json` (skeleton/collision/sole), the
+authored `<name>.weights.npz` and, where the rig has finger bones, the finger weights
+`<name>.fingers.npz` a walker with `hands: true` binds its fingers with, plus a `CREDITS.txt`.
+`--fingers-only` adds the finger weights, and their sentence in `CREDITS.txt`, to an existing
+blueprint of the same source. Like the `roqsim_assets` prop tools, it
 **only produces files** — committing them and honouring the licence is on you (CC0 / CC-BY /
 CC-BY-SA only; see the package [`THIRD_PARTY.md`](../THIRD_PARTY.md)).
 
@@ -49,31 +52,40 @@ CC-BY-SA only; see the package [`THIRD_PARTY.md`](../THIRD_PARTY.md)).
   e.g. `--exclude-material Handbag-material` to remove the female visitor's bag. Excluded geometry is
   left out of the collision/sole measurements too, so a dropped bag doesn't fatten the hand's capsule.
 
+### What it measures
+
+Everything `walker.json` says of the mesh's shape is measured on the mesh turned as the skin turns it,
+against the bones MuJoCo poses the skin with (`skin._bind_bones`), which are what the foot grounding
+adds a sole offset to and what each collision capsule rides -- not the source rig's own bones, which
+the walker's straight limbs do not keep (`import_actor.measure`): the height, the collision radii,
+the heel and toe points (the lowest of the shoe's vertices the ankle and the toe carry) with
+`foot_tip`, and each shoe's hull, on which the walker is grounded. The pelvis height and the bone
+lengths are the source rig's.
+
+### The bundled visitors, made again
+
+Both are written by the tool from their Gazebo Fuel sources (download each model's zip from the page
+its `CREDITS.txt` names and unpack it into a folder of the name used below); nothing in their folders is edited by hand:
+
+```bash
+roqsim walker import-actor FemaleVisitorWalk/meshes/FemaleVisitorWalk.dae --name FemaleVisitorWalk \
+    --anim-set female --exclude-material Handbag-material \
+    --credits-source "https://fuel.gazebosim.org/1.0/Luca/models/FemaleVisitorWalk (version 1)" \
+    --credits-licence "CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)" \
+    --credits-author "Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: Luca"
+roqsim walker import-actor "Male visitor/meshes/MaleVisitorWalk.dae" --name MaleVisitorWalk \
+    --anim-set adult \
+    --credits-source "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Male visitor (version 2)" \
+    --credits-licence "CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/)" \
+    --credits-author "Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: OpenRobotics"
+```
+
+Without `--out` it writes into this package's `models/people/`. The thumbnails
+(`<Name>.thumb.png`) are `roqsim render <obj> --size 480x480`.
+
 ### The Open-RMF actor family
 
 One rig, so one importer unlocks the set (all on Fuel): `Luca/FemaleVisitorWalk` (CC-BY 4.0),
 `OpenRobotics/Male visitor` → `MaleVisitorWalk` (CC0), and the hospital actors
 (`DoctorFemaleWalk`, `NurseFemaleWalk`, `OpScrubsWalk`, `PatientWalkingCane`, `VisitorKidWalk`).
 Note `anims/` ships only `adult` and `female` today — a `kid` actor falls back to `adult`.
-
-## `roqsim walker derive-hivis-worker` -- the industrial worker, from an imported actor
-
-No redistributable rigged character with a high-visibility vest was found, so `WorkerHiVisWalk` is
-dressed from the Open-RMF *OpScrubsWalk* actor (CC-BY 4.0): import it, then derive.
-
-```bash
-roqsim walker import-actor OpScrubsWalk.dae --name OpScrubsWalk --out /tmp/people \
-    --credits-source "https://fuel.gazebosim.org/1.0/Luca/models/OpScrubsWalk (version 1)" \
-    --credits-licence "CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)" \
-    --credits-author "Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: Luca"
-roqsim walker derive-hivis-worker /tmp/people/OpScrubsWalk \
-    roqsim_walker/src/roqsim_walker/models/people/WorkerHiVisWalk
-```
-
-It keeps the actor's skeleton, skin weights, body and long trousers; removes the surgical mask, its
-ties and the name badge and closes the mouth beneath; subdivides the mesh once (Loop) so its outline
-is round up close; and repaints the texture by the 3-D position each texel lands on: a dark work
-shirt with a yellow vest and two reflective bands over the torso, charcoal trousers, dark safety
-shoes, hair for the scrub cap. It is written for that source's layout and refuses any other, naming
-the UV island it cannot place. The thumbnail is `roqsim render <obj> --size 480x480`.
-

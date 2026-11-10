@@ -74,6 +74,10 @@ press = "roqsim_assets.plugins.press:PressPlugin"
 sliding_door = "roqsim_assets.plugins.sliding_door:SlidingDoorPlugin"
 window = "roqsim_assets.plugins.window:WindowPlugin"
 workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
+# What a hand works: a button it presses, drawers it pulls, a tote it carries by its handles.
+push_button = "roqsim_assets.plugins.push_button:PushButtonPlugin"
+drawer_cabinet = "roqsim_assets.plugins.drawer_cabinet:DrawerCabinetPlugin"
+tote = "roqsim_assets.plugins.tote:TotePlugin"
 # Ceiling fittings: what hangs under a soffit. All three sit above head height, so the core
 # `ceiling` plugin (roqsim) removes them together with the slab when a world opens its roof.
 ceiling_panels = "roqsim_assets.plugins.ceiling_panels:CeilingPanelsPlugin"

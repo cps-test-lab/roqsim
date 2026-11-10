@@ -22,7 +22,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+# The handling tests drive the robots through roqsim_motion, with roqsim_assets' props and the scene's
+# OpenSCENARIO twin (scenario_execution_roqsim). A world of this package that handles things needs
+# roqsim_motion installed; the robots themselves do not.
+test = ["pytest>=7.0", "roqsim_motion", "roqsim_assets", "scenario_execution_roqsim[osc]"]
 
 # Humanoid controller plugins, registered into the shared roqsim.plugins group. lidar comes from
 # roqsim_sensors (a dependency above) -- unitree_g1's manifest pulls it in by name.
@@ -42,6 +45,7 @@ where = ["src"]
 roqsim_humanoid = [
     "models/*.xml",
     "models/*.manifest.yaml",
+    "models/*.retarget.yaml",   # roqsim_motion's retargeting tables (humanoid_robot)
     "models/meshes/*.STL",
     "models/meshes/agibot_g2/*.obj",
     "models/meshes/agibot_g2/*.STL",

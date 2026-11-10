@@ -746,6 +746,12 @@ def _base_record(out: Path, width: int, height: int, model, cam) -> dict:
 DRAWING_OVERRIDES = (("sim", "view"), ("sim", "renderer"), ("sim", "renderers"))
 
 
+def _clip_planes(camera_path) -> dict:
+    """The renderer's own near plane where a camera path states one (``near:``)."""
+    near = getattr(camera_path, "near", None)
+    return {} if near is None else {"near": near}
+
+
 def renderer_choice(ctx, overrides: dict | None = None) -> dict:
     """The renderer the world chose (``sim.renderer`` and its block), as FrameRenderer takes it.
 
@@ -932,7 +938,7 @@ def _render_recording(
             camera_path=camera_path,
             overlays=overlays,
             scene=not framed,
-            choice=renderer_choice(ctx, merged),
+            choice={**renderer_choice(ctx, merged), **_clip_planes(camera_path)},
         )
         if onset is not None:
             record["onset"] = onset.as_record()
@@ -973,7 +979,7 @@ def _render_recording(
         geomgroup,
         overlays=overlays,
         sim_time=sample.sim_time,
-        choice=renderer_choice(ctx, merged),
+        choice={**renderer_choice(ctx, merged), **_clip_planes(camera_path)},
     )
     record["rendered"] = True
     if onset is not None:

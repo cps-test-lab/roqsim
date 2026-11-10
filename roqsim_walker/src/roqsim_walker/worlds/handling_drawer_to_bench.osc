@@ -1,0 +1,15 @@
+# Scene 2: a worker opens a drawer, takes a tote out by its handles, carries it to a bench and sets it
+# down.
+import osc.roqsim
+
+scenario drawer_to_bench:
+    do serial:
+        humanoid_approach(humanoid: 'worker', target: 'cabinet/drawer_1/grip', standoff: 0.75)
+        humanoid_grasp(humanoid: 'worker', hand: 'right', target: 'cabinet/drawer_1/grip')
+        humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.44)
+        humanoid_release(humanoid: 'worker', hand: 'right')
+        humanoid_approach(humanoid: 'worker', target: 'tote_1', standoff: 0.45)
+        humanoid_grasp(humanoid: 'worker', hand: 'both', target: 'tote_1')
+        humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.9)
+        humanoid_approach(humanoid: 'worker', target: 'bench', standoff: 0.55, facing: 1.5707963)
+        humanoid_place(humanoid: 'worker', at: 'bench')

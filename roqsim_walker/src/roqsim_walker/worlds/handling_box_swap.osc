@@ -1,0 +1,29 @@
+# Scene 3: at a robot cell's drawer, a worker swaps the full tote for an empty one.
+import osc.roqsim
+
+scenario box_swap:
+    do serial:
+        zone_entered(zone: 'drawer_zone', pattern: 'tote_*')
+        humanoid_approach(humanoid: 'worker', target: 'cell/drawer_1/grip', standoff: 0.75)
+        humanoid_grasp(humanoid: 'worker', hand: 'right', target: 'cell/drawer_1/grip')
+        humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.44)
+        humanoid_release(humanoid: 'worker', hand: 'right')
+        humanoid_approach(humanoid: 'worker', target: 'tote_full', standoff: 0.45)
+        humanoid_grasp(humanoid: 'worker', hand: 'both', target: 'tote_full')
+        humanoid_carry(humanoid: 'worker', to: 'trolley', standoff: 0.9)
+        humanoid_approach(humanoid: 'worker', target: 'trolley', standoff: 0.55, facing: 3.1415927)
+        humanoid_place(humanoid: 'worker', at: 'trolley')
+        humanoid_approach(humanoid: 'worker', target: 'tote_empty', standoff: 0.45)
+        humanoid_grasp(humanoid: 'worker', hand: 'both', target: 'tote_empty')
+        humanoid_carry(humanoid: 'worker', to: 'cell/drawer_1/inside', standoff: 0.9)
+        humanoid_approach(humanoid: 'worker', target: 'cell/drawer_1/inside', standoff: 0.5, facing: 0.0)
+        humanoid_place(humanoid: 'worker', at: 'cell/drawer_1/inside')
+        # pushed shut in two strokes, stepping up between
+        humanoid_approach(humanoid: 'worker', target: 'cell/drawer_1/grip', standoff: 0.35)
+        humanoid_grasp(humanoid: 'worker', hand: 'right', target: 'cell/drawer_1/grip')
+        humanoid_push(humanoid: 'worker', hand: 'right', distance: 0.22)
+        humanoid_release(humanoid: 'worker', hand: 'right')
+        humanoid_approach(humanoid: 'worker', target: 'cell/drawer_1/grip', standoff: 0.35)
+        humanoid_grasp(humanoid: 'worker', hand: 'right', target: 'cell/drawer_1/grip')
+        humanoid_push(humanoid: 'worker', hand: 'right', distance: 0.22)
+        humanoid_release(humanoid: 'worker', hand: 'right')

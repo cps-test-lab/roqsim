@@ -594,7 +594,12 @@ mover answers and under what name, in the owner's ``namespace``. nav2's ``naviga
 ``navigate_through_poses`` send a route; ``start_route`` (``roqsim_nav_interfaces/StartRoute``) runs
 the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
 number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
-not on ROS.
+not on ROS. They follow a machine's ``start``, ``status`` and ``cancel``: a sequence number per send,
+and a status that latches ``finished`` for that route. Two things differ: a new route overtakes the
+running one, where a machine refuses a start while busy, and ``cancel_route`` stamps a sequence number
+of its own, where a machine's ``cancel`` returns the one it cancelled. They are named for the route
+because an entity that a navigator moves may also run a machine -- a walker with hands, its
+``humanoid`` -- and under one owner the two then stay apart without the component named.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
@@ -2024,7 +2029,8 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
      - ``g1_locomotion``, ``oli_locomotion``, ``spot_locomotion`` (``cmd_vel``; ``odom``,
        ``joint_states``), ``agibot_g2_controller`` (``joint_states``; ``joint_command``),
        ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
-       ``walker`` (``body_poses``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
+       ``walker`` (``play``, ``stop_clip``, ``look_at``;
+       ``body_poses``, ``clips``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
        ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``cmd``, ``door``, ``start``,
        ``cancel``; ``state``, ``status``), ``prop_trajectory``
        (``stage_progress``)
@@ -2929,7 +2935,23 @@ other; with neither, whatever is pending or runs. A program cannot take an argum
 package, ``press`` (a guard door interlocked with a three-phase stroke) and ``sliding_door``. Three
 example worlds in ``roqsim_assets/src/roqsim_assets/worlds/`` -- ``press_demo``, ``sliding_door_demo`` and
 ``light_barrier_demo`` (the conveyor stopped by a ``zone_trigger``) -- each run one cycle of a
-scenario from ``roqsim_assets.scenarios``.
+scenario from ``roqsim_assets.scenarios``. ``DoorForWhoComes`` watches the zone while the door
+closes: someone entering it, or the close ending in a stall, cancels the close and opens the door
+again, and it closes once the zone is empty. ``StopAtBarrier`` reads the belt's speed each time it
+stops the belt and runs it again at that speed once the part is gone.
+
+A controllable ``door`` is driven over ROS too: its ``cmd`` topic and its ``door`` action
+(``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``. A ``cmd``
+equal to the openness last commanded -- through a port, or through a handle's ``start`` the physics
+thread has not applied yet -- changes nothing while the door moves there or stands there. The action
+is the bridge's generic 1-DOF handler (``roqsim_ros_bridge.actions.gripper_command``), which asks
+its producer, through the endpoint's hints, how to grade a goal and does not look at what the
+producer is: ``reach_tolerance`` is how near counts as ``reached_goal`` (0.005 unless stated; a door
+states 0.02, the band its programs end in, so ROS and ``status()`` agree), and ``on_timeout`` is what
+a goal still moving at its ``timeout`` ends as -- ``succeed``, with neither ``reached_goal`` nor
+``stalled`` set, unless stated (an arm's gripper), ``abort`` for a door, whose ``timeout`` is a full
+swing at its ``speed``, ``stall_timeout`` and 5 s. The decision is
+``roqsim_ros_bridge.gripper_policy``, free of ROS imports.
 
 Writing a machine
 ~~~~~~~~~~~~~~~~~
@@ -2977,7 +2999,8 @@ What a program has:
   failure, reported in ``status()``. A failed or cancelled program stops the machine where it is:
   each actuator is held where its joint stands (its servo's standing offset under load kept), and
   each setpoint keeps its value;
-- ``self.value(name)``, ``self.position(name)``, ``self.reached(name)``, ``self.at_home(*names)``.
+- ``self.value(name)``, ``self.goal(name)``, ``self.position(name)``, ``self.reached(name)``,
+  ``self.at_home(*names)``.
 
 ``SETPOINTS = {"speed": "m/s"}`` declares a quantity the plugin applies itself -- read
 ``self.value("speed")`` in its ``pre_step`` after ``super().pre_step(ctx)`` -- that ramps, homes and
@@ -2998,6 +3021,11 @@ it drives the spawned model's actuators under the spawn's prefix and publishes i
 Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
+A machine that compares such a command with what it was commanded last records each start in
+``start_accepted(program, args)``: the base calls it, with its lock held, when a start is accepted,
+on the thread that made it, a step before the physics thread applies a handle's start. It touches
+neither the model nor the handle. The ``door`` records its target there, so a ``cmd`` back to where
+it stood, sent right after a handle's ``start("open")``, is not taken for a repeat.
 
 Writing a scenario
 ~~~~~~~~~~~~~~~~~~
@@ -3064,6 +3092,8 @@ outcome, so it moves from one to the other line by line:
      - OpenSCENARIO
    * - ``yield from self.run(press, "stroke")``
      - ``machine_run(machine: 'press', program: 'stroke')``
+   * - ``yield from self.run(worker, "grasp", hand="both", target="tote_1")``
+     - ``humanoid_grasp(humanoid: 'worker', hand: 'both', target: 'tote_1')``
    * - ``self.start(...)``, ``self.spawn(...)``, ``self.join(...)``
      - ``parallel:``
    * - ``self.first(...)``
@@ -3176,6 +3206,31 @@ entity or the ridden body is absent the zone reports no one -- a zone that only 
 entity's body still counts that entity. ``point: com`` reads the root body's centre of mass, which a
 ``part_state`` state that names an inertia moves; ``point: origin`` reads its frame, for a mocap
 body.
+
+What a hand works: buttons, drawers, totes
+------------------------------------------
+
+Three props in ``roqsim_assets`` are moved by whatever pushes or holds them, never by a controller,
+so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by contact:
+
+* ``push_button``: a sprung button on a housing, facing the housing's +x. It reports itself -- pressed
+  past ``threshold`` of its ``stroke`` and released back under ``release`` of it (a snap action, so a
+  button ringing as a finger lets go is pressed once), the events ``pressed`` and ``released``, the ``pressed``
+  endpoint, a handle under ``button:<name>`` -- and decides nothing: a machine starting because it
+  was pressed is a scenario's. Its front face carries the site ``<name>/button``.
+* ``drawer_cabinet``: drawers on slide joints with friction and an end stop, each an entity
+  (``<name>/drawer_<i>``) with a grip site on its handle, ``<name>/drawer_<i>/grip``.
+* ``tote``: a free box with a grip site at each end, ``<name>/grip_l`` and ``<name>/grip_r``, and
+  with ``contents: true`` the ``look_full``/``look_empty`` bodies a ``part_state`` shows and hides.
+
+A grip site states the frame a hand holds it in (``roqsim_motion.hands``): +x from the palm toward
+the object, +z along the fingers. A hold is a weld between the hand and the object, added when the
+world is built and switched on with the object where it is in the hand (``roqsim_motion.contact``).
+
+**A pressable's housing must not collide with its button.** A child body of a body welded to the
+world is not filtered from that body's geoms, so a button sunk into its housing is held there by
+contact. ``push_button`` excludes the pair (``<contact><exclude>``); a button modelled otherwise needs
+the same.
 
 Writing your own
 ----------------
