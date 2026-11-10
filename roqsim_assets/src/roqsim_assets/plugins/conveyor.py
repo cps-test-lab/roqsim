@@ -33,7 +33,7 @@ Config::
         orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       length: 2.442         # optional full belt length (X, m); default keeps the base model
       width: 0.58           # optional full belt width  (Y, m); default keeps the base model
-      speed: 0.1            # belt speed at the start of each episode (m/s); negative reverses
+      home: {speed: 0.1}    # belt speed at the start of each episode (m/s); negative reverses
       ramp: 0.5             # acceleration of run/stop (m/s^2); unset: the speed changes at once
       friction: 0.6         # optional belt<->package sliding friction override
       roller_radius: 0.0275
@@ -62,6 +62,8 @@ class ConveyorPlugin(MachinePlugin):
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
     SETPOINTS = {"speed": "m/s"}
+    HOME = {"speed": 0.1}
+    START_KEYS = {"speed": "home: {speed: <m/s>}"}
     ENTITY_KIND = "conveyor"
     # Base belt geometry (half-extents, m) as authored in conveyor.xml; the resize helper below
     # rescales the loaded spec to the configured length/width relative to these. Height-class
@@ -85,7 +87,6 @@ class ConveyorPlugin(MachinePlugin):
         self.width = self.config.get("width")
         self._half_len = self._half_extent(self.length, self._L0)
         self._half_wid = self._half_extent(self.width, self._W0)
-        self.HOME = {"speed": float(self.config.get("speed", 0.1))}
         ramp = self.config.get("ramp")
         self.ramp_rate = float(ramp) if ramp is not None else None
         self.roller_radius = float(self.config.get("roller_radius", 0.0275))

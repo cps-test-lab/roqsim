@@ -25,7 +25,7 @@ from scenario_execution_roqsim.actions.zone import (  # noqa: E402
 GATE = {
     "zone_trigger": {
         "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
-        "size": [0.2, 0.3, 0.2],
+        "size": [0.4, 0.6, 0.4],
         "dwell": 0.1,
     },
     "name": "gate",
@@ -41,7 +41,7 @@ import osc.roqsim
 scenario scene:
     do serial:
         zone_entered(zone: 'gate')
-        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.1')
+        machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 0.1}')
         zone_left(zone: 'gate')
 """
 
@@ -57,9 +57,9 @@ import osc.roqsim
 scenario race:
     do serial:
         one_of:
-            machine_run(machine: 'press', program: 'stroke', args: 'seconds=10.0')
+            machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 10.0}')
             zone_entered(zone: 'gate')
-        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.05')
+        machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 0.05}')
 """
 
 
@@ -165,7 +165,7 @@ def test_a_machine_run_abandoned_in_flight_cancels_its_own_start_and_no_other():
     try:
         press = engine.ctx.blackboard.require("machine:press")
         # Accepted: its start is cancelled once its number is known.
-        action = _machine_run(engine, args="seconds=10.0")
+        action = _machine_run(engine, args='{"seconds": 10.0}')
         assert action.update() == py_trees.common.Status.RUNNING
         _abandon(action)
         engine.step()
@@ -175,7 +175,7 @@ def test_a_machine_run_abandoned_in_flight_cancels_its_own_start_and_no_other():
         # Refused, as another client's program runs: that program is left alone.
         other = press.start("stroke", seconds=10.0)
         engine.step()
-        action = _machine_run(engine, args="seconds=0.1")
+        action = _machine_run(engine, args='{"seconds": 0.1}')
         assert action.update() == py_trees.common.Status.RUNNING
         _abandon(action)
         for _ in range(5):
@@ -189,7 +189,7 @@ def test_a_machine_run_abandoned_after_its_program_ended_leaves_the_next_start_a
     engine = _engine()
     try:
         press = engine.ctx.blackboard.require("machine:press")
-        action = _machine_run(engine, args="seconds=0.01")
+        action = _machine_run(engine, args='{"seconds": 0.01}')
         action.update()
         engine.step()
         assert action.update() == py_trees.common.Status.RUNNING, "it knows its number now"
@@ -210,7 +210,7 @@ scenario last_tick:
     do serial:
         wait elapsed(1s)
         one_of:
-            machine_run(machine: 'press', program: 'stroke', args: 'seconds=10.0')
+            machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 10.0}')
             zone_entered(zone: 'gate')
 """
 
@@ -256,9 +256,9 @@ scenario first_tick:
     do serial:
         wait elapsed(1s)
         one_of:
-            machine_run(machine: 'press', program: 'stroke', args: 'seconds=10.0')
+            machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 10.0}')
             zone_entered(zone: 'gate')
-        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.05')
+        machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 0.05}')
 """
 
 
@@ -277,7 +277,7 @@ def test_a_second_cancel_of_an_abandoned_run_leaves_a_later_start_alone():
     try:
         action = MachineRun()
         action.setup(simulation=_Sim(engine.ctx), clock=_Clock(engine.ctx))
-        action.execute("press", "stroke", "seconds=10.0")
+        action.execute("press", "stroke", '{"seconds": 10.0}')
         action.update()
         assert action.request_cancel()
         engine.step()
@@ -297,7 +297,7 @@ def test_machine_run_waits_for_the_program_to_end():
 import osc.roqsim
 scenario waits:
     do serial:
-        machine_run(machine: 'press', program: 'stroke', args: 'seconds=0.2')
+        machine_run(machine: 'press', program: 'stroke', args: '{\\"seconds\\": 0.2}')
 """
         assert _run_osc(engine, text) == py_trees.common.Status.SUCCESS
         assert engine.ctx.sim_time == pytest.approx(0.2, abs=3 * engine.ctx.dt)
@@ -309,21 +309,20 @@ scenario waits:
     ("args", "expected"),
     [
         ("", {}),
-        ("a=1", {"a": 1}),
-        ("a=1, b=hole", {"a": 1, "b": "hole"}),
-        ("a=[1, 2], b=true", {"a": [1, 2], "b": True}),
-        ("a=x=y", {"a": "x=y"}),
+        ('{"a": 1}', {"a": 1}),
+        ('{"a": 1, "b": "hole"}', {"a": 1, "b": "hole"}),
+        ('{"a": [1, 2], "b": true}', {"a": [1, 2], "b": True}),
     ],
 )
-def test_args_are_name_value_pairs(args, expected):
+def test_args_are_a_json_object(args, expected):
     action = MachineRun()
     action.execute("press", "stroke", args)
     assert action._args == expected
 
 
-@pytest.mark.parametrize("args", ["a", "=1", "a=[1, b=2"])
-def test_args_that_are_no_pairs_are_refused(args):
-    with pytest.raises(ActionError):
+@pytest.mark.parametrize("args", ["a=1", "a=1, b=hole", "[1, 2]", "{", "true"])
+def test_args_that_are_no_json_object_are_refused_naming_the_json_form(args):
+    with pytest.raises(ActionError, match=r"`args` is a JSON object .* entity_call's `value`"):
         MachineRun().execute("press", "stroke", args)
 
 

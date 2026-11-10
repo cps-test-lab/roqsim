@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Standalone MCP server exposing roqsim's catalogs and a running simulation's endpoints as tools, for a client with no roqsim knowledge of its own."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "roqsim[ipc]",
     "fastmcp",

@@ -228,7 +228,7 @@ def test_door_placements_applies_map_overrides():
             "model": "door_glass",
             "hinge_side": "right",
             "swing": -1,
-            "open": 0.3,
+            "home": {"openness": 0.3},
             "controllable": True,
             "namespace": "foyer",
             "speed": 0.6,
@@ -236,7 +236,7 @@ def test_door_placements_applies_map_overrides():
     }
     (d,) = [e["door"] for e in fw.door_placements(lines, doors, dmap, 2.5, 2.0)]
     assert d["model"] == "door_glass" and d["hinge_side"] == "right"
-    assert d["swing"] == -1 and d["open"] == 0.3
+    assert d["swing"] == -1 and d["home"] == {"openness": 0.3} and "open" not in d
     assert d["controllable"] is True and d["namespace"] == "foyer"
     assert d["speed"] == 0.6
 
@@ -246,6 +246,10 @@ def test_door_placements_applies_map_overrides():
     [
         ({"1": {"hinge": "right"}}, "doors map: door 1: unknown key(s) 'hinge'"),
         ({"7": {"hinge_side": "right"}}, "doors map: door id: unknown key(s) '7'"),
+        (
+            {"1": {"open": 0.3}},
+            "door 1: 'open' is not read -- a door's start state is its 'home': home: {openness",
+        ),
     ],
 )
 def test_door_placements_refuses_a_map_entry_nothing_reads(dmap, expect):

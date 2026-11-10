@@ -8,6 +8,7 @@ stamped form exists for the other case, where roqsim is one producer in an aggre
 line without a timestamp cannot be ordered against anything else.
 """
 
+import os
 import subprocess
 import sys
 
@@ -70,7 +71,13 @@ def test_a_configured_logger_prints_that_format(env, expected, tmp_path):
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": ":".join(sys.path), **env},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": ":".join(sys.path),
+            # The GL backend the run was given: `import roqsim` selects one, and this is no test of it.
+            **{k: os.environ[k] for k in ("MUJOCO_GL", "PYOPENGL_PLATFORM") if k in os.environ},
+            **env,
+        },
     )
     assert out.returncode == 0, out.stderr
     assert expected in out.stderr

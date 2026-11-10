@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Eyes on an roqsim scene, for an agent and for a human: an MCP server whose sketch_floorplan_by_human and review_scene_by_human tools open native windows and block until a person answers, and whose render_scene renders a world or a recorded moment headless."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # Loads and renders roqsim worlds/scenes/models, so it depends on the core engine + MuJoCo. The
 # native window uses tkinter (Python stdlib) and Pillow to blit frames -- deliberately no Qt.
 dependencies = [

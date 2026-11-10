@@ -426,8 +426,8 @@ def test_emitted_props_validate_against_the_plugin_that_reads_them(obstacle):
     because none of them asks the plugin. Validation is the plugin's own, so it moves when the
     schema moves.
     """
-    box = pytest.importorskip("roqsim_assets.plugins.box")
-    cylinder = pytest.importorskip("roqsim_assets.plugins.cylinder")
+    import roqsim_assets.plugins.box as box
+    import roqsim_assets.plugins.cylinder as cylinder
     plugin_cls = {"box": box.BoxPlugin, "cylinder": cylinder.CylinderPlugin}[obstacle]
 
     entries = g2w.obstacle_plugins(

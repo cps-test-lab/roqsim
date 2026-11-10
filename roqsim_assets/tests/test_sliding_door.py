@@ -15,7 +15,7 @@ DOOR = {
 APPROACH = {
     "zone_trigger": {
         "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
-        "size": [1.5, 1.0, 1.0],
+        "size": [3.0, 2.0, 2.0],
         "entities": ["walker_*", "robot_*"],
     },
     "name": "door_approach",

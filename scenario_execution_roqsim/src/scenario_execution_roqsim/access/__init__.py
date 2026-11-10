@@ -44,7 +44,9 @@ action takes the clock it is handed and never knows which.
 
 What DOES differ, and is stated rather than hidden: over the socket a read is a round-trip, so the
 instant a threshold is crossed is resolved at the tick period rather than at the physics step. A
-dwell shorter than one tick means "the first tick past the threshold" on both paths.
+dwell shorter than one tick means "the first tick past the threshold" on both paths. Over the socket
+an action's pose of an entity is the last one answered since the action started, at most a round
+trip old while it ticks.
 """
 
 from __future__ import annotations
@@ -654,6 +656,10 @@ class WorldAccess(ABC):
             for _call, what in pending:
                 _log.error("%s got no answer", what)
         self._unattended = []
+
+    def restart_reads(self) -> None:
+        """Forget what earlier reads left: called as the action starts again (``initialise``), so
+        nothing it reads in this activation predates it. In-process every read is current."""
 
     def teardown(self) -> None:
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "MuJoCo scene worlds imported from CAD, USD or Gazebo SDF, baked to plain MJCF."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # No runtime plugin: the pipeline (src/roqsim_scenes/cli/) bakes scenes to plain MJCF. roqsim_assets
 # provides the shared textures the baker references; mujoco/pyyaml are used by cli/scene_to_mjcf.py.
 dependencies = [

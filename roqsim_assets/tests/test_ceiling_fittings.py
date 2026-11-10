@@ -85,6 +85,15 @@ def test_rejects_a_pitch_tighter_than_the_panel(tmp_path):
     assert any("overlap" in e for e in errors)
 
 
+def test_an_area_or_yaw_that_is_not_numbers_is_refused():
+    from roqsim_assets.plugins.ceiling_panels import CeilingPanelsPlugin
+
+    bad = {"area": [0, 0, "four", 4], "yaw": "north"}
+    errors = CeilingPanelsPlugin(bad).validate_config(bad)
+    assert any("'area' must be [x0, y0, x1, y1] numbers" in e for e in errors)
+    assert any("'yaw' must be a number" in e for e in errors)
+
+
 def test_area_is_required(tmp_path):
     from roqsim_assets.plugins.ceiling_panels import CeilingPanelsPlugin
 

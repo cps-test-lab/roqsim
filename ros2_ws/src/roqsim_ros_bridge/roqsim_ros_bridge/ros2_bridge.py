@@ -103,7 +103,7 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from roqsim.bridge import BridgeBase, _RateGate
 from roqsim_ros_bridge import registry as reg
 from roqsim_ros_bridge import typemap
-from roqsim_ros_bridge.actions import get_action_handler, goal_rejection
+from roqsim_ros_bridge.actions import check_action_endpoint, get_action_handler, goal_rejection
 from roqsim_ros_bridge.extensions import load_extensions
 from roqsim_ros_bridge.services import get_service_handler
 
@@ -768,6 +768,8 @@ class Ros2Bridge(BridgeBase):
         if "action" in hints:
             action_type = reg.resolve_type(hints["action"])
             handler = get_action_handler(hints["action"])
+            # A producer the goals cannot reach is refused now, not at its first goal.
+            check_action_endpoint(hints["action"], ep)
             name = _join_ns(self._eff_ns(ep), hints["name"])
             self._names[id(ep)] = {"action": name, "type": hints["action"]}
             self._action_servers.append(

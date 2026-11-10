@@ -13,9 +13,9 @@ in [`lib_osc/roqsim.osc`](src/scenario_execution_roqsim/lib_osc/roqsim.osc)):
 | `entity_in_region(entity, region, outside)` | succeeds once the entity is **inside** a box or polygon of the floor plan (or, with `outside`, outside it) |
 | `entity_monitor(entity, value, target_variable)` | keeps a scenario variable equal to a value a **plugin publishes** about the entity, every tick; never succeeds on its own |
 | `entity_call(entity, command, value, require_verified)` | sends a command a plugin declares -- a `model_override` fault, a sensor's `fault:` block, a tare -- and succeeds once it has applied **and, where the command names a confirmation, it says the command landed** |
-| `machine_run(machine, program, args, check)` | runs a machine's program and waits until **that start** has ended; an abandoned branch cancels it |
+| `machine_run(machine, program, args, check)` | runs a machine's program (`args` a JSON object, as `entity_call`'s `value`) and waits until **that start** has ended; an abandoned branch cancels it |
 | `humanoid_approach`, `humanoid_reach`, `humanoid_press`, `humanoid_grasp`, `humanoid_release`, `humanoid_pull`, `humanoid_push`, `humanoid_carry`, `humanoid_place`, `humanoid_play`, `humanoid_stop_clip`, `humanoid_look_at` | start one of a humanoid's moves (a walker with hands, or a humanoid robot; `roqsim_motion`) with its parameters typed, and wait until **that start** has ended: `machine_run` for the moves, with the same check and cancel |
-| `zone_entered(zone, pattern, since)` | succeeds once an entity is **inside** a `zone_trigger`, or with `since` has been |
+| `zone_entered(zone, pattern, since)` | succeeds once an entity is **inside** a `zone_trigger`, or with `since` (optional, no default) has been |
 | `zone_dwelled(zone, pattern, since)` | ...once one has been inside for the zone's `dwell` |
 | `zone_left(zone, pattern)` | ...once none is inside |
 
@@ -202,7 +202,8 @@ One consequence, stated rather than hidden:
 
 - Over the socket a pose is a round-trip, so a threshold crossing is resolved at the **tick period**,
   not at the physics step. A dwell shorter than one tick means "the first tick past the threshold"
-  either way.
+  either way. A condition's pose of an entity is the last one answered since it started, at most a
+  round trip old while it ticks, so one that needs several entities' poses has them all in one tick.
 
 ## Things that will bite
 

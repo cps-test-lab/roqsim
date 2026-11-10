@@ -27,6 +27,8 @@ Its keys are declared (``roqsim plugins describe humanoid``); nested under a wal
             graspable: [tote_*, cabinet]  # entities whose grip sites the hands may hold (fnmatch);
                                           # a hold is a weld per hand and grip site, set at build
             hold: {max_force: 300.0, slip: 0.06}  # past either (low-passed), a hold lets go and fails
+            press: {max_force: 40.0}              # a press pushes no harder; a press move's
+                                                  # `max_force` overrides it for that press
 
 Refused when the world loads: a ``humanoid`` under a walker with ``hands: false`` (its moves need
 hands: set ``hands: true`` on the walker), one beside a navigator whose ``arrival_radius`` is over
@@ -43,7 +45,7 @@ import math
 import mujoco
 import numpy as np
 
-from roqsim.machine import MachineError, MachineHandle, MachinePlugin, program
+from roqsim.machine import MACHINE_SCHEMA, MachineError, MachineHandle, MachinePlugin, program
 from roqsim.schema import Field
 
 from . import quat as Q
@@ -109,6 +111,11 @@ HOLD = {
     ),
 }
 
+#: How hard a press may push: the default of a press move's ``max_force``.
+PRESS = {
+    "max_force": Field(float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"),
+}
+
 
 def _side_word(side: str) -> str:
     return {"l": "left", "r": "right"}[side]
@@ -160,19 +167,18 @@ class HumanoidPlugin(MachinePlugin):
     registers_entity = False
     requires_owner = True
     ENTITY_KIND = "humanoid"
+    HANDLE_CLASS = HumanoidHandle
     CONFIG_SCHEMA = {
+        **MACHINE_SCHEMA,
         "graspable": Field(
             list, default=[], doc="entities whose grip sites the hands may hold (fnmatch)"
         ),
         "hold": Field(dict, schema=HOLD, doc="how hard a hold may pull and how far it may slip"),
-        "press_force": Field(
-            float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"
-        ),
-        "on_error": Field(
-            str, default="raise", choices=["raise", "report"], doc="a defect in a move"
-        ),
-        "home": Field(dict, doc="(a machine's; a humanoid drives no actuator)"),
+        "press": Field(dict, schema=PRESS, doc="how hard a press may push"),
     }
+
+    #: The force cap a press move and ``humanoid_press`` call ``max_force`` has the same name here.
+    CONFIG_HINTS = {"press_force": "press: {max_force: <N>}, the name a press move's cap has too"}
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -265,8 +271,6 @@ class HumanoidPlugin(MachinePlugin):
 
     def configure(self, ctx) -> None:
         super().configure(ctx)
-        self.handle = HumanoidHandle(self)
-        ctx.blackboard.set(f"machine:{self.machine_entity}", self.handle)
         ctx.blackboard.set(f"humanoid:{self.machine_entity}", self.handle)
         m = ctx.model
         self._holds = {
@@ -669,7 +673,7 @@ class HumanoidPlugin(MachinePlugin):
         qadr = int(m.jnt_qposadr[jnt])
         stroke = float(m.jnt_range[jnt][1] - m.jnt_range[jnt][0]) if m.jnt_limited[jnt] else 0.01
         need = travel if travel is not None else 0.6 * stroke
-        limit = max_force if max_force is not None else self.settings.press_force
+        limit = max_force if max_force is not None else self.settings.press.max_force
         q0 = float(d.qpos[qadr])
         self._far(d.site_xpos[site])
         self.body.set_pose(side, pose)

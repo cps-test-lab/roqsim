@@ -9,8 +9,9 @@ leaves -- a door opening is otherwise just a 2 m hole with a lintel, no leaf.
 Geometry. The door is placed by its **opening centre** (``pose.position``, like every other prop)
 and the wall direction (the pose's yaw). ``hinge_side`` picks which vertical edge of the opening is *fixed* (the
 hinge); the leaf spans from there across the opening. A ``hinge`` joint about +Z lets it swing;
-``swing`` (+1/-1) chooses which side of the wall it opens toward. ``open`` is the initial openness
-fraction (0 = closed, 1 = fully open at ``max_angle``) -- i.e. *how open* the door starts.
+``swing`` (+1/-1) chooses which side of the wall it opens toward. ``home: {openness: ...}`` is the
+openness fraction it starts at (0 = closed, 1 = fully open at ``max_angle``) -- i.e. *how open* the
+door starts, and where a reset puts it.
 
 A machine (:class:`roqsim.machine.MachinePlugin`): opening and closing is the door's own procedure;
 a door that opens because someone comes near is a scenario reading a ``zone_trigger`` and starting
@@ -29,7 +30,7 @@ openness 0.42`` (and a ``stalled`` event), for the caller to decide; a slow ramp
 since the leaf keeps up with the target it is given. An idle door pushed off its target gives way
 the same way: after ``stall_timeout`` it takes where it stands as its target and stops pressing back
 (a ``gave_way`` event), so a robot can push through an automatic door. A **passive** door
-(``controllable: false``) holds its ``open`` angle and declares no ROS surface; a scenario in the
+(``controllable: false``) holds its ``home`` openness and declares no ROS surface; a scenario in the
 same process can still start its programs.
 
 Handle: a :class:`~roqsim.machine.MachineHandle` under ``machine:<name>`` -- ``start("open")``,
@@ -40,16 +41,17 @@ publishes its openness reader under ``machine:<name>:openness``: ``() -> (openne
 the leaf's measured openness as a fraction.
 
 ROS interface (declared only when ``controllable``; wired by the generic ``ros2_bridge``, so no ROS is
-imported here). Openness is a fraction in ``[0, 1]`` on every port, and a command on either ``in``
-port replaces what the door was doing (``move_to``, preempting):
+imported here). Every endpoint is named for the openness, a fraction in ``[0, 1]`` on every port, as the
+conveyor's are for its speed; a command on either ``in`` port replaces what the door was doing
+(``move_to``, preempting):
 
-* ``in``  ``<ns>/cmd``   -- ``std_msgs/Float64`` set-openness (fire-and-forget; the path an ``.osc``
+* ``in``  ``<ns>/openness`` -- ``std_msgs/Float64`` set-openness (fire-and-forget; the path an ``.osc``
   ``topic_publish`` drives). A repeated value -- the openness last commanded, by a port or by a
   handle ``start`` not applied yet -- changes nothing while the door moves there or stands there;
   after a stall or a cancel it starts the move again.
-* ``out`` ``<ns>/state`` -- ``std_msgs/Float64`` current openness, ~10 Hz.
-* ``in``  action ``<ns>/door`` -- ``control_msgs/action/GripperCommand`` for open/close *with feedback*
-  (``goal.command.position`` is the target fraction; the handler reports reached/stalled by watching
+* ``out`` ``<ns>/openness_state`` -- ``std_msgs/Float64`` current openness, ~10 Hz.
+* ``in``  action ``<ns>/openness_goal`` -- ``control_msgs/action/GripperCommand`` for open/close
+  *with feedback* (``goal.command.position`` is the target fraction, the command's ``openness``; the handler reports reached/stalled by watching
   the ``machine:<name>:openness`` state reader on the blackboard -- see ``roqsim_ros_bridge.actions``).
   The door states its own policy in the action's hints: ``reached_goal`` within its arrival band of
   0.02 (``reach_tolerance``), the one its programs end in, so ROS and ``status()`` agree; a goal is
@@ -80,11 +82,11 @@ Config::
       swing: 1               # +1 / -1 -- which way the leaf opens about +Z
       max_angle: 120         # fully-open hinge angle (deg); a leaf can swing well past 90 in free
                              #   space -- raise/lower per door for what its surroundings allow
-      open: 0.0              # initial openness fraction 0..1 ('how open'): the door's home
-                             #   (a `home: {hinge_pos: <rad>}` overrides it, as on any machine)
+      home: {openness: 0.0}  # the openness fraction 0..1 it starts at and a reset puts it at
       speed: 0.8             # hinge speed of open/close/move_to (rad/s); unset: the target jumps
-      controllable: true     # expose the ROS endpoints/action; false = passive, held at 'open'
-      namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
+      controllable: true     # expose the ROS endpoints/action; false = passive, held at home
+      namespace: ""          # transport scope -> /<ns>/openness, /<ns>/openness_state,
+                             #   /<ns>/openness_goal
       kp: 40.0               # position-actuator stiffness
       kv: 30.0               # position-actuator damping (velocity gain); with kp 40 it damps the
                              #   default leaf at zeta 0.54, so a half-open target does not overshoot
@@ -107,7 +109,7 @@ Leafless openings. ``leaf: false`` welds the casing but hangs **no leaf** -- a c
 wall opening should read as a doorway rather than a hole, while staying a ``door`` in the floorplan so the
 room loops it belongs to are unchanged. It is still registered as a ``door`` entity (on the casing body),
 so anything enumerating the building's doors still finds it. ``leaf: false`` with ``frame: false`` would
-place nothing at all and is refused.
+place nothing at all and is refused, as is ``controllable: true``, which would have no leaf to command.
 
 Colour. ``color`` repaints the leaf and (unless ``frame_color`` overrides it) the casing, so a world can
 match its doors to the rest of its trim without a recoloured copy of the model. Only the leaf's
@@ -154,6 +156,8 @@ class DoorPlugin(MachinePlugin):
     _JOINT = "hinge"
     _ACTUATOR = "hinge_pos"
     ACTUATORS = (_ACTUATOR,)
+    HOME_KEYS = {"openness": "fraction"}
+    START_KEYS = {"open": "home: {openness: <0..1>}"}
     ENTITY_KIND = "door"
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -189,7 +193,9 @@ class DoorPlugin(MachinePlugin):
         self.hinge_side = str(self.config.get("hinge_side", "left")).lower()
         self.swing = 1 if self._float(self.config.get("swing"), 1.0) >= 0 else -1
         self.max_angle = math.radians(self._float(self.config.get("max_angle"), 120.0))
-        self.open0 = min(max(self._float(self.config.get("open"), 0.0), 0.0), 1.0)
+        home = self.config.get("home")
+        home = home if isinstance(home, dict) else {}
+        self.open0 = min(max(self._float(home.get("openness"), 0.0), 0.0), 1.0)
         speed = self.config.get("speed")
         self.speed = self._float(speed, 0.0) if speed is not None else None
         self.controllable = bool(self.config.get("controllable", True))
@@ -281,17 +287,24 @@ class DoorPlugin(MachinePlugin):
                     errors.append(f"'{key}' must be > 0")
             except (TypeError, ValueError):
                 errors.append(f"'{key}' must be a number > 0")
-        if "open" in config:
-            try:
-                if not 0.0 <= float(config["open"]) <= 1.0:
-                    errors.append("'open' must be a fraction in [0, 1]")
-            except (TypeError, ValueError):
-                errors.append("'open' must be a number in [0, 1]")
+        home = config.get("home")
+        if isinstance(home, dict) and "openness" in home:
+            value = home["openness"]
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and not 0.0 <= float(value) <= 1.0
+            ):
+                errors.append("'home: {openness}' must be a fraction in [0, 1]")
         for key in ("color", "frame_color"):
             if key in config and self._rgba(config[key]) is None:
                 errors.append(f"'{key}' must be [r, g, b] or [r, g, b, a] numbers")
         if not bool(config.get("leaf", True)) and not bool(config.get("frame", True)):
             errors.append("'leaf: false' with 'frame: false' would place nothing; keep the casing")
+        if not bool(config.get("leaf", True)) and config.get("controllable"):
+            errors.append(
+                "'controllable' on a door with 'leaf: false': there is no leaf to command"
+            )
         if "hinge_side" in config and str(config["hinge_side"]).lower() not in ("left", "right"):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
@@ -456,13 +469,6 @@ class DoorPlugin(MachinePlugin):
                     meta={"prefix": p, "leaf": False, "width": self.width, "height": self.height},
                 )
             )
-            # Only complain when a world explicitly asked for it -- `controllable` defaults to true, and
-            # a leafless entry that never mentions it has nothing to be warned about.
-            if self.config.get("controllable"):
-                logger.warning(
-                    "door %r: 'controllable' is ignored on a leafless door (nothing to command)",
-                    self.door_name,
-                )
             return
         self._jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, p + self._JOINT)
         self._aid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, p + self._ACTUATOR)
@@ -534,16 +540,16 @@ class DoorPlugin(MachinePlugin):
 
     # -- endpoints, declared only when `commandable` -------------------------------------------
     @endpoint.stream(when="commandable", ros2={"type": "std_msgs.msg.Float64"})
-    def cmd(self, data: float) -> None:
+    def openness(self, openness: float) -> None:
         """Target openness, fire-and-forget; applied once per step.
 
         Args:
-            data: openness, 0 closed to 1 fully open; clamped
+            openness: 0 closed to 1 fully open; clamped
         """
-        self.set_openness(data)
+        self.set_openness(openness)
 
     @endpoint.out(rate=10.0, when="commandable")
-    def state(self) -> float:
+    def openness_state(self) -> float:
         """Current openness, 0 closed to 1 fully open."""
         return self.read_state()[0]
 
@@ -560,13 +566,13 @@ class DoorPlugin(MachinePlugin):
             "on_timeout": "abort",
         },
     )
-    def door(self, position: float) -> None:
+    def openness_goal(self, openness: float) -> None:
         """Move to an openness and report when it is reached or the leaf stalls.
 
         Args:
-            position: openness, 0 closed to 1 fully open; clamped
+            openness: 0 closed to 1 fully open; clamped
         """
-        self.set_openness(position)
+        self.set_openness(openness)
 
     def action_timeout(self) -> float:
         """Sim seconds a door goal may take: a full swing at ``speed``, a stall, and time to settle."""
@@ -629,8 +635,14 @@ class DoorPlugin(MachinePlugin):
             return (0.0, 0.0)
         return (float(d.qpos[self._qadr]) / self._span, float(d.qvel[self._dadr]) / self._span)
 
+    def home_targets(self, home: dict[str, float]) -> dict[str, float]:
+        """``home: {openness: f}`` as the hinge target it stands at."""
+        if "openness" not in home:
+            return {}
+        return {self._ACTUATOR: min(max(home["openness"], 0.0), 1.0) * self._span}
+
     def _home_openness(self) -> float:
-        """The openness the door's ``home`` stands at: ``open``, or a ``home: {hinge_pos: ...}``."""
+        """The openness the door's ``home`` stands at."""
         return self.home[self._ACTUATOR] / self._span if self._span else 0.0
 
     def on_reset(self, ctx: SimContext) -> None:

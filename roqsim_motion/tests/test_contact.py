@@ -84,3 +84,13 @@ def test_holds_are_added_on_sites_added_after_a_compile_made_while_building():
     eq = model.equality(name).id
     assert model.body(int(model.eq_obj1id[eq])).name == "box"
     assert model.body(int(model.eq_obj2id[eq])).name == "hand"
+
+
+def test_a_humanoids_press_force_is_its_press_max_force():
+    """One name for the cap a press pushes at most: ``press: {max_force}`` in the world, as a
+    press move's ``max_force``; the world key ``press_force`` is refused naming it."""
+    from roqsim_motion.moves import HumanoidPlugin
+
+    assert HumanoidPlugin.validate_schema({"press": {"max_force": 25.0}}) == []
+    (error,) = HumanoidPlugin.validate_schema({"press_force": 25.0})
+    assert "'press_force' is not a setting" in error and "press: {max_force: <N>}" in error

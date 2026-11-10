@@ -96,6 +96,7 @@ _DOOR_FORWARDED_KEYS = (  # passed to the door plugin unchanged when present
     "color",
     "frame_color",
     "leaf",
+    "home",
 )
 _DOOR_MAP_KEYS = (
     "skip",
@@ -104,10 +105,11 @@ _DOOR_MAP_KEYS = (
     "model",
     "hinge_side",
     "swing",
-    "open",
     "controllable",
     *_DOOR_FORWARDED_KEYS,
 )
+#: A doors-map key that stated a door's start state outside ``home:``, and what to write instead.
+_DOOR_START_KEYS = {"open": "home: {openness: <0..1>}"}
 
 
 # --- geometry (pure) -----------------------------------------------------------------------------
@@ -253,7 +255,7 @@ def door_placements(
     """One ``{"door": {...}}`` plugin entry per swing-door opening.
 
     Reuses the same opening geometry as :func:`assign_doors` (line + fraction ``t`` + ``width_m``) to
-    place the leaf by the opening's **centre** and the wall yaw; ``hinge_side`` / ``swing`` / ``open`` /
+    place the leaf by the opening's **centre** and the wall yaw; ``hinge_side`` / ``swing`` / ``home`` /
     ``model`` / ``controllable`` come from ``doors_map[id]`` (defaults: a passive, closed wooden door
     hinged on the ``left`` -- automatic doors are opt-in). A **full-height** opening
     (``height >= ceiling``) is a true doorway/gate, not a swing door: it gets no leaf (a candidate for
@@ -318,7 +320,6 @@ def door_placements(
             "model": entry.get("model", "door"),
             "hinge_side": entry.get("hinge_side", "left"),
             "swing": int(entry.get("swing", 1)),
-            "open": float(entry.get("open", 0.0)),
             "controllable": bool(entry.get("controllable", False)),
         }
         for key in _DOOR_FORWARDED_KEYS:
@@ -336,6 +337,12 @@ def check_doors_map(doors: list[dict], doors_map: dict) -> None:
     known = {str(d.get("id", "?")) for d in doors}
     refuse_unknown_keys(doors_map, known, "doors map: door id", error=KeyError)
     for did, entry in doors_map.items():
+        for key, there in _DOOR_START_KEYS.items():
+            if key in entry:
+                raise KeyError(
+                    f"doors map: door {did}: {key!r} is not read -- a door's start state is its "
+                    f"'home': {there}"
+                )
         refuse_unknown_keys(entry, _DOOR_MAP_KEYS, f"doors map: door {did}", error=KeyError)
 
 
@@ -577,7 +584,7 @@ def main(argv: list | None = None) -> int:
         "--doors-map",
         help="JSON {door_id: {...}} overriding per-door leaf options (optional; unmapped "
         "doors get a passive, closed wooden door hinged 'left'). Keys: model "
-        "(door|door_glass), hinge_side (left|right), swing (+1/-1), open (0..1), "
+        "(door|door_glass), hinge_side (left|right), swing (+1/-1), home ({openness: 0..1}), "
         "controllable (bool -> automatic door), name, prefix, namespace, max_angle, thickness, "
         "kp, kv, speed (rad/s of open and close), color, frame_color, leaf (false -> a cased "
         "opening: casing welded, no leaf "

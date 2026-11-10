@@ -22,7 +22,12 @@ from importlib import import_module, metadata
 from pathlib import Path
 
 import pytest
-from installed_requirements import not_installed_with_its_requirements
+from installed_requirements import (
+    missing_requirements,
+    not_installed_with_its_requirements,
+    ours,
+    ours_name,
+)
 
 from roqsim import exit_status
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
@@ -32,6 +37,12 @@ from roqsim.world import _resolve_world_ref, available_worlds, resolve_world_yam
 
 
 def _rows(catalog: dict, kind: str | None = None) -> list[dict]:
+    """The catalog's rows; a provider of this repository that failed to load fails the test, naming
+    it -- another repository's is its to check."""
+    broken = [i for i in catalog["items"] if "error" in i and ours_name(i.get("package") or "")]
+    assert not broken, "providers that did not load: " + "; ".join(
+        f"{i['provider']} ({i['package']}): {i['error']}" for i in broken
+    )
     items = [i for i in catalog["items"] if "error" not in i]
     return [i for i in items if kind is None or i.get("kind") == kind]
 
@@ -39,8 +50,14 @@ def _rows(catalog: dict, kind: str | None = None) -> list[dict]:
 # -- forward: everything listed resolves -----------------------------------------------------
 
 
+def _ours(rows: list[dict]) -> list[dict]:
+    """The rows of this repository's packages: another repository's models and worlds are its to
+    check."""
+    return [row for row in rows if ours_name(row.get("package") or "")]
+
+
 def test_every_listed_model_resolves():
-    rows = _rows(list_models())
+    rows = _ours(_rows(list_models()))
     assert rows, "no models at all -- the provider registry is not being read"
     for row in rows:
         assert Path(row["path"]).is_file()
@@ -49,7 +66,7 @@ def test_every_listed_model_resolves():
 
 
 def test_every_listed_world_resolves_the_way_its_row_says_it_is_used():
-    rows = _rows(list_worlds())
+    rows = _ours(_rows(list_worlds()))
     kinds = {row["kind"] for row in rows}
     assert {"builtin", "world"} <= kinds
     for row in rows:
@@ -73,11 +90,12 @@ def test_a_worlds_row_carries_the_line_that_runs_it():
 
 
 def _installed_roqsim_packages() -> list[str]:
+    """This repository's installed packages, by import name; another repository's are its to check."""
     names = set()
     for dist in metadata.distributions():
-        name = (dist.metadata["Name"] or "").replace("-", "_")
-        if name.startswith("roqsim"):
-            names.add(name)
+        name = dist.metadata["Name"] or ""
+        if ours_name(name):
+            names.add(name.replace("-", "_"))
     return sorted(names)
 
 
@@ -102,6 +120,8 @@ def test_a_world_is_listed_exactly_when_its_package_offers_it_as_an_interface():
 
     providers, incomplete = {}, []
     for ep in _world_entry_points():
+        if not ours(ep):
+            continue  # another repository's worlds are its to check
         if reason := not_installed_with_its_requirements(ep):
             incomplete.append(f"{ep.name}: {reason}")
             continue
@@ -116,8 +136,7 @@ def test_a_world_is_listed_exactly_when_its_package_offers_it_as_an_interface():
             f"provider {provider!r} registered its worlds, so every YAML it ships must be in the "
             f"catalog and nothing else may be"
         )
-    if incomplete:
-        pytest.skip("the rest agree; not checked: " + "; ".join(incomplete))
+    assert not incomplete, "the rest agree; not checked: " + "; ".join(incomplete)
 
 
 def test_an_unregistered_packages_worlds_are_absent_by_design():
@@ -125,10 +144,11 @@ def test_an_unregistered_packages_worlds_are_absent_by_design():
     listed = {Path(row["path"]).resolve() for row in _rows(list_worlds()) if row.get("path")}
     unregistered = 0
     for package in _installed_roqsim_packages():
-        try:
-            module = import_module(package)
-        except ImportError:
-            continue
+        if missing := missing_requirements(package):
+            pytest.fail(
+                f"{package} is installed without its declared requirement(s) {', '.join(missing)}"
+            )
+        module = import_module(package)  # one that does not import fails here, by name
         if hasattr(module, "WORLDS_DIR"):
             continue  # a provider; covered by the test above
         for path in sorted((Path(module.__file__).parent / "worlds").glob("*.yaml")):
@@ -157,7 +177,7 @@ def test_a_model_sharing_its_directory_with_several_licences_names_its_own():
     vendor's terms for another vendor's robot, which is a wrong answer nobody would notice.
     """
     undeclared = []
-    for row in _rows(list_models()):
+    for row in _ours(_rows(list_models())):
         model_file = Path(row["path"])
         if manifest_license(model_file):
             continue

@@ -50,7 +50,7 @@ def _geom_pos(engine, name):
 
 
 def test_belt_advances_package(tmp_path):
-    engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
+    engine = Engine(_belt_only(tmp_path, {"home": {"speed": 0.2}}))
     _run(engine, 5)
     x0 = _package_x(engine)
     for _ in range(1000):
@@ -61,7 +61,7 @@ def test_belt_advances_package(tmp_path):
 
 
 def test_speed_handle_reverses_belt(tmp_path):
-    engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
+    engine = Engine(_belt_only(tmp_path, {"home": {"speed": 0.2}}))
     engine.setup()
     engine.reset()
     handle = engine.ctx.blackboard.require("machine:conveyor")
@@ -76,7 +76,7 @@ def test_speed_handle_reverses_belt(tmp_path):
 
 def test_reset_returns_the_belt_to_its_configured_speed(tmp_path):
     """Trial 2 runs the belt at the world's speed, not at the one trial 1 was switched to."""
-    engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
+    engine = Engine(_belt_only(tmp_path, {"home": {"speed": 0.2}}))
     engine.setup()
     engine.reset()
     handle = engine.ctx.blackboard.require("machine:conveyor")
@@ -203,7 +203,7 @@ def _belt_velocity(engine):
 
 
 def test_run_and_stop_ramp_at_the_stated_rate_with_an_event_at_each_start_and_stop(tmp_path):
-    engine = Engine(_belt_only(tmp_path, {"speed": 0.0, "ramp": 0.5}))
+    engine = Engine(_belt_only(tmp_path, {"home": {"speed": 0.0}, "ramp": 0.5}))
     engine.setup()
     engine.reset()
     belt = engine.ctx.blackboard.require("machine:conveyor")
@@ -231,7 +231,7 @@ def test_run_and_stop_ramp_at_the_stated_rate_with_an_event_at_each_start_and_st
 
 
 def test_a_repeated_speed_on_the_stream_starts_nothing(tmp_path):
-    engine = Engine(_belt_only(tmp_path, {"speed": 0.1}))
+    engine = Engine(_belt_only(tmp_path, {"home": {"speed": 0.1}}))
     engine.setup()
     engine.reset()
     belt = engine.ctx.blackboard.require("machine:conveyor")
@@ -242,3 +242,9 @@ def test_a_repeated_speed_on_the_stream_starts_nothing(tmp_path):
     starts = [e for e in engine.ctx.events.all() if e["event"] == "program_start"]
     assert len(starts) == 1 and starts[0]["args"] == {"speed": 0.25}
     assert belt.value("speed") == pytest.approx(0.25)
+
+
+def test_a_start_speed_outside_home_is_refused_naming_home(tmp_path):
+    """A belt's start speed is ``home: {speed: ...}``; ``speed:`` is refused when the world loads."""
+    with pytest.raises(Exception, match=r"home: \{speed"):
+        Engine(_belt_only(tmp_path, {"speed": 0.2})).setup()

@@ -506,7 +506,8 @@ timing (``entity_navigate_start``).
 driven along a straight leg through the wall the planner could not get round. A goal given up on
 after ``recovery.max_recovery`` attempts is skipped, and the route reports that when it ends. Either
 way ``route_status`` carries an ``error`` naming the goal, a nav2 action aborts, and
-``entity_navigate`` fails -- a route that did not reach its goals is never reported as an arrival.
+``entity_navigate`` fails the trial (with ``check: false`` it succeeds, saying the route did not
+arrive) -- a route that did not reach its goals is never reported as an arrival.
 
 **One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
 three independent capabilities, each one question with one answer:
@@ -595,6 +596,25 @@ mover answers and under what name, in the owner's ``namespace``. nav2's ``naviga
 the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
 number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
 not on ROS.
+
+The route endpoints are read as a machine's ``start``, ``status`` and ``cancel`` are: a route sent
+gets a sequence number, and ``route_status`` latches ``finished`` and the error under it. Where they
+differ:
+
+- a route sent (``navigate_to_pose``, ``navigate_through_poses``) overtakes the running one, where a
+  machine refuses a start while busy;
+- ``start_route`` releases the configured route of a navigator with ``autostart: false``, once: once
+  it ran, or once any route was sent (a cancel does not undo either), it starts nothing until a
+  reset and returns the number last applied; with ``autostart`` on, it never starts anything. A sent
+  route that finishes hands back to the configured route, held or not;
+- ``cancel_route`` takes no argument: it stops whatever runs and returns a number of its own, latched
+  finished with no error, and the cancelled route's number never finishes, so its caller learns of
+  the cancel from a larger number. A machine's ``cancel`` can name the start it cancels (by its number
+  or a token), and finishes that start with the error ``cancelled``.
+
+Carrying the route in their names, the navigator's commands stay apart from a machine's ``start`` and
+``cancel`` on an entity that has both -- a walker with hands, moved by its navigator and running its
+``humanoid`` -- so a scenario's ``entity_call`` names either by the entity alone.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
@@ -1742,7 +1762,8 @@ type ``motor`` where a choice says ``effort`` -- is declared as a ``hint`` on th
 it: ``Field(dict, schema=GAINS, hints={"kp": "use 'p'"})`` for a key of a block,
 ``Field(str, choices=..., hints={"motor": "use effort"})`` for a value. It is refused like any other
 unknown key or value, in one error that carries the hint in place of the nearest-name suggestion,
-and nothing reads it.
+and nothing reads it. A word at the top level -- a key the plugin no longer reads, under its new
+name -- goes into the class's ``CONFIG_HINTS``: ``{"press_force": "press: {max_force: <N>}"}``.
 
 A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
 (``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
@@ -2026,8 +2047,8 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
        ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
        ``walker`` (``play``, ``stop_clip``, ``look_at``;
        ``body_poses``, ``clips``), ``navigator`` (its route commands), ``conveyor`` (``speed``,
-       ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``cmd``, ``door``, ``start``,
-       ``cancel``; ``state``, ``status``), ``prop_trajectory``
+       ``start``, ``cancel``; ``package_pose``, ``status``), ``door`` (``openness``, ``openness_goal``, ``start``,
+       ``cancel``; ``openness_state``, ``status``), ``prop_trajectory``
        (``stage_progress``)
      - families: ``navigator`` (one command per configured route endpoint); owner: ``conveyor``,
        ``door``, ``prop_trajectory``, ``walker`` (the entity each registers), and ``conveyor``'s
@@ -2935,8 +2956,10 @@ closes: someone entering it, or the close ending in a stall, cancels the close a
 again, and it closes once the zone is empty. ``StopAtBarrier`` reads the belt's speed each time it
 stops the belt and runs it again at that speed once the part is gone.
 
-A controllable ``door`` is driven over ROS too: its ``cmd`` topic and its ``door`` action
-(``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``. A ``cmd``
+A controllable ``door`` is driven over ROS too: its ``openness`` topic and its ``openness_goal``
+action (``control_msgs/GripperCommand``) each replace what the door is doing with ``move_to``, and
+``openness_state`` publishes where it stands; every endpoint of a door is named for its openness, as
+a conveyor's ``speed`` stream is for its speed. An ``openness``
 equal to the openness last commanded -- through a port, or through a handle's ``start`` the physics
 thread has not applied yet -- changes nothing while the door moves there or stands there. The action
 is the bridge's generic 1-DOF handler (``roqsim_ros_bridge.actions.gripper_command``), which asks
@@ -3013,13 +3036,20 @@ nested under that entry, a ``MachinePlugin`` without ``build`` that sets ``regis
 it drives the spawned model's actuators under the spawn's prefix and publishes its handle as
 ``machine:<spawned entity>`` (:ref:`machines-and-scenarios`).
 
-Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. A transport
+Each machine takes ``home:`` and ``on_error:`` in its config besides its own keys. ``home:`` is
+the only place a world states where a machine stands at the start: a belt's start speed is
+``home: {speed: 0.2}``, a door's start openness ``home: {openness: 0.5}``; a ``speed`` key is only
+ever a rate (a door's hinge speed, a sliding door's leaf speed). A machine whose start state is a
+quantity of its own rather than an actuator declares it in ``HOME_KEYS = {"openness":
+"fraction"}`` and maps it onto what it drives in ``home_targets(home)``; its ``home:`` then names
+only those. A key that stated a start state outside ``home:`` goes into ``START_KEYS`` (old key ->
+new form), and the world is refused when it loads, naming the new form. A transport
 endpoint of the machine's own whose command means "this is the target now" calls
 ``self.preempt(program, **args)``, which cancels whatever runs; the handle's ``start`` never does.
 A machine that compares such a command with what it was commanded last records each start in
 ``start_accepted(program, args)``: the base calls it, with its lock held, when a start is accepted,
 on the thread that made it, a step before the physics thread applies a handle's start. It touches
-neither the model nor the handle. The ``door`` records its target there, so a ``cmd`` back to where
+neither the model nor the handle. The ``door`` records its target there, so an ``openness`` back to where
 it stood, sent right after a handle's ``start("open")``, is not taken for a repeat.
 
 Writing a scenario
@@ -3183,7 +3213,7 @@ presence leads to is a scenario's::
 
    - zone_trigger:
        pose: {position: {x: -0.9, y: 0.6, z: 1.0}}   # the box's centre, world or `body` frame
-       size: [0.12, 0.2, 0.08]                        # half-extents (m)
+       size: [0.24, 0.4, 0.16]                        # full extents (m), as a box's
        entities: [package]                            # name patterns that count; default all
        point: com                                     # com (default) | origin
        dwell: 1.0                                     # s inside before `dwelled`; 0 never
