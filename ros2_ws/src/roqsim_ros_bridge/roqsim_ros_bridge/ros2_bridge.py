@@ -768,9 +768,8 @@ class Ros2Bridge(BridgeBase):
         if "action" in hints:
             action_type = reg.resolve_type(hints["action"])
             handler = get_action_handler(hints["action"])
-            check_action_endpoint(
-                hints["action"], ep
-            )  # a producer the goals cannot reach: refused now
+            # A producer the goals cannot reach is refused now, not at its first goal.
+            check_action_endpoint(hints["action"], ep)
             name = _join_ns(self._eff_ns(ep), hints["name"])
             self._names[id(ep)] = {"action": name, "type": hints["action"]}
             self._action_servers.append(

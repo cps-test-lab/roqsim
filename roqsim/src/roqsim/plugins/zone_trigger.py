@@ -11,8 +11,8 @@ presence leads to -- a belt stopping, a door opening -- is a scenario's (``docs/
 it.
 
 **The box.** ``size`` gives its full extents, as a ``box``'s, a conveyor's and a door's do;
-``pose`` its centre and orientation: in the world, or, with ``body``, in that body's frame, so the zone rides on it (a barrier on a moving carriage, a die
-zone on a press). Nested under an entity, ``body`` is named after that entity's prefix. An entity is
+``pose`` its centre and orientation: in the world, or, with ``body``, in that body's frame, so the
+zone rides on it (a barrier on a moving carriage, a die zone on a press). Nested under an entity, ``body`` is named after that entity's prefix. An entity is
 inside when its ``point`` is: ``com`` (default) the centre of mass of its root body; ``origin`` the
 root body's frame, for a body whose mass is not where it stands (a walker's mocap pelvis).
 

@@ -9,8 +9,9 @@ The OpenSCENARIO form of :meth:`roqsim.scenario.ScenarioPlugin.run`, with the sa
     machine_run(machine: 'press', program: 'stroke', args: '{\\"show\\": \\"hole\\"}')
 
 ``args`` is a JSON object of the program's arguments, as ``entity_call``'s ``value`` is JSON; empty
-is none. A quote inside an OpenSCENARIO string is written ``\\"``. The ``name=value`` form is refused, naming this one. It waits on the start's own number, through the machine's ``status``, so a later start is not taken
-for this one. With ``check`` the machine's error, or another start following this one before it
+is none. A quote inside an OpenSCENARIO string is written ``\\"``. The ``name=value`` form is
+refused, naming this one. It waits on the start's own number, through the machine's ``status``, so
+a later start is not taken for this one. With ``check`` the machine's error, or another start following this one before it
 ended, fails the trial; without it the action succeeds whatever the program did. A branch abandoned
 while it waits (a ``one_of``, a ``timeout``) cancels this start, so the machine is free for the next
 start and a start another client made is left alone: each start carries a token of this action's
