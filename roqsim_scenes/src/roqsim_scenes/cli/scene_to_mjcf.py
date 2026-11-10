@@ -389,9 +389,10 @@ def _add_lights(spec: mujoco.MjSpec, manifest: dict, origin: list[float], config
     """Light the room: a directional light straight down that casts, and an uplight that does not.
 
     Why not one casting lamp at the plan's centre: it lights the walls with a light that casts.
-    MuJoCo culls front faces when it draws a shadow map, so a wall whose faces are wound inward -- as
-    an importer or a hand-written tool may write one -- draws its own room-facing side into the map and shadows itself in a hard band; and a lamp at the centre throws every shadow away
-    from it, across the floor, instead of under what casts it. MuJoCo offers no shadow bias, and the
+    MuJoCo culls front faces when it draws a shadow map, so a wall whose faces are wound inward --
+    as an importer or a hand-written tool may write one -- draws its own room-facing side into the
+    map and shadows itself in a hard band; and a lamp at the centre throws every shadow away from
+    it, across the floor, instead of under what casts it. MuJoCo offers no shadow bias, and the
     shadow-map size, scale, clip and the lamp's cutoff trade one artefact for another.
 
     - **Down** (``scene_down``): a directional light pointing straight down, the one light that
