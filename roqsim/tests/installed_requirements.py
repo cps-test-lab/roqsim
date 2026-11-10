@@ -1,6 +1,6 @@
 # Copyright (C) 2026 Frederik Pasch
 # SPDX-License-Identifier: Apache-2.0
-"""Whether an installed distribution has what it declares: for the tests that walk every installed one.
+"""Whether an installed distribution has what it declares, and whether it is this repository's.
 
 A test that loads every ``roqsim.plugins`` entry or every ``roqsim`` command group of this repository
 meets each of its packages, and a package installed without its declared requirements (``pip install
@@ -34,16 +34,18 @@ def _installed(name: str) -> metadata.Distribution | None:
 def missing_requirements(dist_name: str) -> tuple[str, ...]:
     """The requirements *dist_name* declares, directly or through those it requires, not installed.
 
-    Requirements behind an extra are not counted: an extra is optional by definition.
+    A requirement behind one of *dist_name*'s own extras is not counted: an extra is optional by
+    definition. One behind an extra a requirement asks for is (``roqsim[ipc]`` brings ``pyzmq``).
     """
     missing: list[str] = []
-    seen: set[str] = set()
-    todo = [dist_name]
+    seen: set[tuple[str, frozenset[str]]] = set()
+    todo: list[tuple[str, frozenset[str]]] = [(dist_name, frozenset())]
     while todo:
-        name = canonicalize_name(todo.pop())
-        if name in seen:
+        name, extras = todo.pop()
+        name = canonicalize_name(name)
+        if (name, extras) in seen:
             continue
-        seen.add(name)
+        seen.add((name, extras))
         dist = _installed(name)
         if dist is None:
             continue
@@ -52,12 +54,14 @@ def missing_requirements(dist_name: str) -> tuple[str, ...]:
                 req = Requirement(spec)
             except InvalidRequirement:
                 continue
-            if req.marker is not None and not req.marker.evaluate({"extra": ""}):
+            if req.marker is not None and not any(
+                req.marker.evaluate({"extra": extra}) for extra in ("", *extras)
+            ):
                 continue
             if _installed(req.name) is None:
                 missing.append(req.name)
             else:
-                todo.append(req.name)
+                todo.append((req.name, frozenset(req.extras)))
     return tuple(sorted(set(missing)))
 
 
@@ -95,8 +99,9 @@ def repository_distributions(root: Path) -> frozenset[str]:
         names.add(name)
     for xml in root.glob("ros2_ws/src/*/package.xml"):
         found = re.search(r"<name>\s*([^<\s]+)\s*</name>", xml.read_text())
-        if found:
-            names.add(canonicalize_name(found.group(1)))
+        if not found:
+            raise ValueError(f"{xml}: no <name> could be read")
+        names.add(canonicalize_name(found.group(1)))
     return frozenset(n for n in names if n)
 
 
@@ -107,6 +112,11 @@ ROOT = Path(__file__).resolve().parents[2]
 @functools.cache
 def _ours() -> frozenset[str]:
     return repository_distributions(ROOT)
+
+
+def ours_name(name: str) -> bool:
+    """Whether distribution (or package) *name* is one of this repository's."""
+    return canonicalize_name(name) in _ours()
 
 
 def ours(ep) -> bool:

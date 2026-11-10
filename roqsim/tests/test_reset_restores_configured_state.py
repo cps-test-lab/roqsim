@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every plugin's reset returns it to the state it was configured in.
 
-For each plugin registered under ``roqsim.plugins``, in the smallest world it configures in:
+For each plugin this repository registers under ``roqsim.plugins``, in the smallest world it
+configures in:
 
 A. set up, reset, record the per-trial state;
 B. use it -- write every ``in`` endpoint of the world, step, call the case's setters (a
@@ -25,7 +26,7 @@ either whole or by attribute path. A plugin with no world it can configure in he
 :data:`SKIPPED`. A case whose plugin has a known open defect names it (``defect=``) and is a strict
 expected failure, so the fix that makes it pass has to remove it.
 
-Every registered plugin must appear in exactly one of :data:`CASES`, :data:`EXEMPT` (whole) or
+Every plugin this repository registers must appear in exactly one of :data:`CASES`, :data:`EXEMPT` (whole) or
 :data:`SKIPPED`, so a new plugin cannot go unchecked by being left out.
 """
 

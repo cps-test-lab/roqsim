@@ -16,8 +16,9 @@ enforced where the drift happens, in the plugin's own source:
   blocks included;
 * a plugin with a schema is strict, or says why not in ``OPEN_KEYS``.
 
-The scan is :func:`roqsim.introspection.undeclared_config_reads`, run for every entry of the
-``roqsim.plugins`` group that is installed; its docstring says which reads it sees. The exemptions
+The scan is :func:`roqsim.introspection.undeclared_config_reads`, run for every entry this
+repository's packages register in the ``roqsim.plugins`` group; its docstring says which reads it
+sees. The exemptions
 below are this repository's, and each is checked to still hold.
 """
 
