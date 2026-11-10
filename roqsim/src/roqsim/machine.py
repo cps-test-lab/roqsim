@@ -77,6 +77,7 @@ import mujoco
 from . import endpoint
 from .context import Entity, SimContext
 from .plugin import Plugin
+from .schema import Field
 
 #: How near a joint is to its target, its servo's standing offset allowed for, when it has reached it
 #: (the joint's unit).
@@ -205,6 +206,24 @@ class _Run:
     token: str = ""
 
 
+#: The keys every machine takes, for a machine that declares a ``CONFIG_SCHEMA`` of its own and
+#: extends this one (``{**MACHINE_SCHEMA, ...}``); one without a schema documents them through the
+#: base's ``Config::`` block.
+MACHINE_SCHEMA = {
+    "home": Field(
+        dict,
+        doc="where an actuator or setpoint stands at the start of an episode and after a reset, "
+        "over the class's HOME",
+    ),
+    "on_error": Field(
+        str,
+        default="raise",
+        choices=list(ON_ERROR),
+        doc="a program that raises: raise (stop the run, naming it) or report (its error in status())",
+    ),
+}
+
+
 class MachinePlugin(Plugin):
     """Base of a machine's plugin: actuators, programs, waits, events and the standard handle.
 
@@ -220,7 +239,9 @@ class MachinePlugin(Plugin):
     Config (every machine; a subclass adds its own keys)::
 
         home: {ram: 0.054}   # where an actuator or setpoint stands at the start of an episode and
-                             #   after a reset, over the class's HOME; inside the actuator's range
+                             #   after a reset, over the class's HOME; inside the actuator's range.
+                             #   A machine with HOME_KEYS names its start state in those instead
+                             #   (a door: home: {openness: 0.5}). Every start state is stated here.
         on_error: raise      # a program that raises: raise (stop the run, naming it) | report
                              #   (its error in status(), the caller decides)
     """
@@ -234,11 +255,21 @@ class MachinePlugin(Plugin):
     #: Where the actuators and setpoints stand at the start of an episode; a world's ``home:``
     #: overrides it per name. An actuator named in neither stands at 0, clamped into its range.
     HOME: dict[str, float] = {}
+    #: The quantities a world's ``home:`` names where the machine's start state is not an actuator
+    #: or setpoint itself, name -> unit (a door's ``openness``); :meth:`home_targets` maps them onto
+    #: what it drives. A machine that declares any takes ``home:`` in these names only.
+    HOME_KEYS: dict[str, str] = {}
+    #: Config keys that stated a start state outside ``home:``, old key -> the form that replaced
+    #: it; each is refused when the world loads, naming that form.
+    START_KEYS: dict[str, str] = {}
     #: Blackboard handles the machine needs, attribute -> key (``{address}`` is its own address);
     #: resolved at every reset, after every plugin configured, and refused when one is missing.
     NEEDS: dict[str, str] = {}
     #: The kind of the entity a machine registers when it registers one itself.
     ENTITY_KIND = "machine"
+    #: The handle published under ``machine:<name>``: a subclass with methods of its own on it (a
+    #: method per program) names its subclass of :class:`MachineHandle` here.
+    HANDLE_CLASS: type = MachineHandle
     #: How near and how still a joint is when it has reached and stopped on its target.
     REACHED: float = REACHED
     STOPPED_SPEED: float = STOPPED_SPEED
@@ -343,17 +374,26 @@ class MachinePlugin(Plugin):
         """The keys every machine takes: ``home`` names what it drives, ``on_error`` is known."""
         errors = []
         what = f"machine {self.address}"
+        for key, there in self.START_KEYS.items():
+            if key in config:
+                errors.append(
+                    f"{what}: {key!r} is not read -- a machine's start state is its 'home': {there}"
+                )
         home = config.get("home")
         if home is not None:
             if not isinstance(home, dict):
                 errors.append(f"{what}: 'home' maps an actuator or setpoint to its start value")
             else:
-                driven = set(self.ACTUATORS) | set(self.SETPOINTS)
+                driven = set(self.HOME_KEYS) or set(self.ACTUATORS) | set(self.SETPOINTS)
                 for key, value in home.items():
                     if key not in driven:
                         errors.append(
-                            f"{what}: home names {key!r}, which it does not drive (it drives "
-                            f"{sorted(driven) or 'nothing'})"
+                            f"{what}: home names {key!r}, which it does not "
+                            + (
+                                f"take (its home names {sorted(driven)})"
+                                if self.HOME_KEYS
+                                else f"drive (it drives {sorted(driven) or 'nothing'})"
+                            )
                         )
                     elif (
                         isinstance(value, bool)
@@ -405,7 +445,7 @@ class MachinePlugin(Plugin):
             )
         self._resolve_actuators(ctx)
         self._resolve_home(ctx)
-        self.handle = MachineHandle(self)
+        self.handle = self.HANDLE_CLASS(self)
         ctx.blackboard.set(f"machine:{self.machine_entity}", self.handle)
 
     def register_entity(
@@ -474,8 +514,14 @@ class MachinePlugin(Plugin):
                 kp=float(m.actuator_gainprm[aid, 0]),
             )
 
+    def home_targets(self, home: dict[str, float]) -> dict[str, float]:
+        """A world's ``home:`` as values of the actuators and setpoints; a machine with
+        :attr:`HOME_KEYS` maps its quantities here. The default takes them as they are."""
+        return home
+
     def _resolve_home(self, ctx: SimContext) -> None:
-        home = {**self.HOME, **{k: float(v) for k, v in (self.config.get("home") or {}).items()}}
+        given = {k: float(v) for k, v in (self.config.get("home") or {}).items()}
+        home = {**self.HOME, **self.home_targets(given)}
         for name, value in home.items():
             if name not in self._actuators and name not in self.SETPOINTS:
                 raise MachineError(
@@ -808,7 +854,7 @@ class MachinePlugin(Plugin):
         """Called once a start is accepted, before it is applied; a subclass records what it commands.
 
         A handle's ``start`` is applied on the physics thread a step later, so a machine that compares
-        a new command with its last one (a door's repeated ``cmd``) reads the last one here, where it
+        a new command with its last one (a door's repeated ``openness``) reads the last one here, where it
         is commanded, and not where it is applied. Called from :meth:`request_start` and
         :meth:`preempt`, with the machine's lock held and on whichever thread made the start: it
         must not take the lock, touch ``model``/``data`` or call the handle. ``args`` are checked
@@ -868,7 +914,7 @@ class MachinePlugin(Plugin):
         """Cancel whatever runs and start ``program_name`` now. Physics thread only.
 
         For the machine's own transport endpoints, where a new command means "this is the target
-        now" (a door's ``cmd``); the handle's ``start`` still refuses while busy."""
+        now" (a door's ``openness``); the handle's ``start`` still refuses while busy."""
         self.bind(program_name, args)
         with self._lock:
             pending, self._pending = self._pending, None

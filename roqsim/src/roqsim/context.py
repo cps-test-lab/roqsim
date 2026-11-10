@@ -14,7 +14,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from .seed import SeedError
 
@@ -316,10 +316,7 @@ def endpoint_kind(ep: Endpoint) -> str:
     return "command"
 
 
-_T = TypeVar("_T")
-
-
-class CommandFuture(Generic[_T]):
+class CommandFuture[T]:
     """The outcome of a command submitted to the physics thread (:meth:`SimContext.submit`).
 
     A caller on another thread waits for it with a timeout. :meth:`result` returns what the command

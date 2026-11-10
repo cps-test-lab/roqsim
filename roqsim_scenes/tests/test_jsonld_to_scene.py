@@ -136,18 +136,29 @@ def test_the_mesh_is_carried_as_visual_only(tmp_path):
 
 
 def test_a_mesh_with_no_json_ld_is_refused_not_degraded(tmp_path):
-    """Silence here would be a building a robot drives straight through.
-
-    ``wall_colliders`` returns [] and warns when the json-ld is missing, which suits a run-time plugin
-    that can fall back to visual-only walls. A baked scene has no such fallback: it would simply have
-    no collision geometry, and nothing downstream would call that an import failure.
-    """
+    """Silence here would be a building a robot drives straight through: a baked scene with no
+    collision geometry, which nothing downstream would call an import failure."""
     import pytest
 
     mesh = tmp_path / "3d-mesh" / "room.stl"
     _stl(mesh, [[(0, 0, 0), (1, 0, 0), (0, 1, 0)]])
-    with pytest.raises(SystemExit, match="json-ld"):
+    with pytest.raises(SystemExit, match="no json-ld beside"):
         jsonld_to_scene.build(mesh, tmp_path / "mujoco")
+
+
+def test_wall_colliders_say_why_there_are_none(tmp_path):
+    import pytest
+
+    from roqsim.floorplan_collision import WallDataError, wall_colliders
+
+    mesh = tmp_path / "3d-mesh" / "room.stl"
+    _stl(mesh, [[(0, 0, 0), (1, 0, 0), (0, 1, 0)]])
+    with pytest.raises(WallDataError, match="no json-ld beside"):
+        wall_colliders(str(mesh))
+    (tmp_path / "json-ld").mkdir()
+    (tmp_path / "json-ld" / "broken.json").write_text("{not json")
+    with pytest.raises(WallDataError, match="cannot be read"):
+        wall_colliders(str(mesh))
 
 
 def _typed(prefix, kind):

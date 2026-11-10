@@ -34,7 +34,7 @@ def _mover(name, start, velocity, **extra):
 
 
 def _zone(name="gate", **config):
-    base = {"pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}}, "size": [0.2, 0.3, 0.2]}
+    base = {"pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}}, "size": [0.4, 0.6, 0.4]}
     return {"zone_trigger": {**base, **config}, "name": name}
 
 
@@ -132,7 +132,7 @@ def test_a_body_the_model_lacks_is_refused_and_a_pattern_matching_nothing_is_war
 
 
 def test_a_bad_config_is_refused_when_the_world_loads():
-    with pytest.raises(Exception, match="'size' is three positive half-extents") as exc:
+    with pytest.raises(Exception, match="'size' is three positive full extents") as exc:
         _engine(_zone(size=[0.1, 0.1], point="middle", dwell=-1))
     assert "'point' is com or origin" in str(exc.value) and "'dwell' is seconds" in str(exc.value)
 
@@ -223,7 +223,7 @@ def test_point_com_follows_a_centre_of_mass_a_state_moves(tmp_path):
         },
         "name": "plate",
     }
-    zone = _zone(pose={"position": {"x": 0.3, "y": 0.0, "z": 0.5}}, size=[0.05, 0.1, 0.1])
+    zone = _zone(pose={"position": {"x": 0.3, "y": 0.0, "z": 0.5}}, size=[0.1, 0.2, 0.2])
     engine = _engine(plate, {"part_state": {}}, zone)
     try:
         gate = engine.ctx.blackboard.require("zone:gate")
@@ -405,7 +405,7 @@ def test_a_rotated_zone_is_a_rotated_box():
         _mover("across", [0.25, 0.0, 0.5], [0.0, 0.0, 0.0]),
         _zone(
             pose={"position": {"x": 0.0, "y": 0.0, "z": 0.5}, "orientation": quat},
-            size=[0.3, 0.1, 0.2],
+            size=[0.6, 0.2, 0.4],
         ),
     )
     try:

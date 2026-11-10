@@ -39,7 +39,7 @@ def _asset_folders() -> list[Path]:
 
 
 def _package_data_globs() -> list[str]:
-    tomllib = pytest.importorskip("tomllib")  # stdlib from 3.11
+    import tomllib
     with open(PACKAGE_ROOT / "pyproject.toml", "rb") as f:
         pyproject = tomllib.load(f)
     return pyproject["tool"]["setuptools"]["package-data"]["roqsim_assets"]

@@ -123,3 +123,12 @@ def test_humanoid_robot_belongs_under_a_spawn_model(files):
     model, table = files
     with pytest.raises(PluginError, match="nest it under the spawn_model"):
         _engine(model, table, "kinematic", spawn="box")
+
+
+def test_the_humanoid_takes_the_keys_every_machine_takes():
+    from roqsim_motion.moves import HumanoidPlugin
+
+    from roqsim.machine import MACHINE_SCHEMA
+
+    assert set(MACHINE_SCHEMA) <= set(HumanoidPlugin.CONFIG_SCHEMA)
+    assert any("on_error" in e for e in HumanoidPlugin.validate_schema({"on_error": "ignore"}))
