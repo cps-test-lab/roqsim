@@ -26,7 +26,9 @@ What the spec gets, per baked geom:
 
 from __future__ import annotations
 
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import mujoco
@@ -39,6 +41,8 @@ from .analysis import Analysis
 from .settings import RIG, fill_direction, rig_light
 from .store import EntityMaps, linear_to_srgb, read_entity, resize, srgb_to_linear
 
+#: Entities composed at once.
+COMPOSE_THREADS = 8
 #: The most a composed texture is finer than its light map, and the largest it may be.
 MAX_UPSCALE = 8
 MAX_TEXTURE = 4096
@@ -68,16 +72,16 @@ def _spec_geom(spec: mujoco.MjSpec, rec) -> mujoco.MjsGeom:
     return geoms[rec.index_in_body]
 
 
-def rasterize(uv: np.ndarray, size: int) -> np.ndarray:
+def rasterize(uv: np.ndarray, size: int, pad: int = PAD_TEXELS) -> np.ndarray:
     """Per texel of a ``size x size`` map (rows bottom first), the triangle covering it, -1 where none;
-    then extended :data:`PAD_TEXELS` into the space between islands."""
+    then extended *pad* texels into the space between islands."""
     img = Image.new("I", (size, size), -1)
     draw = ImageDraw.Draw(img)
     pts = (uv * size).astype(np.float64)
     for i, t in enumerate(pts):
         draw.polygon([(t[0, 0], t[0, 1]), (t[1, 0], t[1, 1]), (t[2, 0], t[2, 1])], fill=i)
-    ids = np.asarray(img, np.int64).copy()  # image row y is v = y / size: bottom first
-    for _ in range(PAD_TEXELS):
+    ids = np.asarray(img, np.int32).copy()  # image row y is v = y / size: bottom first
+    for _ in range(pad):
         empty = ids < 0
         if not empty.any():
             break
@@ -106,16 +110,78 @@ def barycentric(uv_tri: np.ndarray, p: np.ndarray) -> np.ndarray:
     return w / np.maximum(w.sum(1, keepdims=True), 1e-12)
 
 
+#: sRGB-encoded byte to linear, and linear (on a fine grid over [0, 1]) to an sRGB-encoded byte.
+_TO_LINEAR = None
+_TO_SRGB_STEPS = 16384
+_TO_SRGB = None
+
+
+def _luts():
+    global _TO_LINEAR, _TO_SRGB
+    if _TO_LINEAR is None:
+        _TO_LINEAR = srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0).astype(np.float32)
+        x = (np.arange(_TO_SRGB_STEPS + 1, dtype=np.float32) / _TO_SRGB_STEPS)
+        _TO_SRGB = linear_to_srgb(x).astype(np.float32)
+    return _TO_LINEAR, _TO_SRGB
+
+
+def to_srgb(x: np.ndarray) -> np.ndarray:
+    """Linear values in [0, 1] (clipped) to sRGB-encoded ones, through a table."""
+    lut = _luts()[1]
+    i = np.clip(x, 0.0, 1.0)
+    i *= _TO_SRGB_STEPS
+    return lut[(i + 0.5).astype(np.int32)]
+
+
+#: Encoded byte values (bilinearly blended, so fractional) to linear, on a grid of this many steps.
+_BYTE_STEPS = 4096
+_BYTE_TO_LINEAR = None
+
+
 def sample(tex: np.ndarray, uv: np.ndarray) -> np.ndarray:
-    """*tex* ``(h, w, 3)`` uint8 (MuJoCo's rows: row 0 is v = 0) at *uv*, bilinear, repeating."""
+    """*tex* ``(h, w, 3)`` uint8, sRGB-encoded (MuJoCo's rows: row 0 is v = 0), at *uv*: bilinear in
+    the encoded values, as the renderer filters it, repeating; returned linear, float32."""
+    global _BYTE_TO_LINEAR
+    if _BYTE_TO_LINEAR is None:
+        _BYTE_TO_LINEAR = srgb_to_linear(np.arange(_BYTE_STEPS + 1, dtype=np.float32) / _BYTE_STEPS)
     h, w = tex.shape[:2]
-    x = uv[:, 0] * w - 0.5
-    y = uv[:, 1] * h - 0.5
-    x0, y0 = np.floor(x).astype(np.int64), np.floor(y).astype(np.int64)
-    fx, fy = (x - x0)[:, None].astype(np.float32), (y - y0)[:, None].astype(np.float32)
-    x0, x1, y0, y1 = x0 % w, (x0 + 1) % w, y0 % h, (y0 + 1) % h
-    t = tex.astype(np.float32) / 255.0
-    return (t[y0, x0] * (1 - fx) + t[y0, x1] * fx) * (1 - fy) + (t[y1, x0] * (1 - fx) + t[y1, x1] * fx) * fy
+    flat = tex.reshape(-1, 3)
+    x = uv[:, 0] * np.float32(w) - np.float32(0.5)
+    y = uv[:, 1] * np.float32(h) - np.float32(0.5)
+    x0f, y0f = np.floor(x), np.floor(y)
+    fx, fy = (x - x0f)[:, None], (y - y0f)[:, None]
+    x0 = np.mod(x0f.astype(np.int32), w)
+    y0 = np.mod(y0f.astype(np.int32), h)
+    x1 = x0 + 1
+    x1[x1 == w] = 0
+    y1 = y0 + 1
+    y1[y1 == h] = 0
+    r0, r1 = y0 * w, y1 * w
+    top = np.take(flat, r0 + x0, axis=0) * (1 - fx) + np.take(flat, r0 + x1, axis=0) * fx
+    bottom = np.take(flat, r1 + x0, axis=0) * (1 - fx) + np.take(flat, r1 + x1, axis=0) * fx
+    v = top * (1 - fy) + bottom * fy
+    v *= _BYTE_STEPS / 255.0
+    v += 0.5
+    return _BYTE_TO_LINEAR[v.astype(np.int32)]
+
+
+def affine_uv(uv2: np.ndarray, uv1: np.ndarray) -> np.ndarray:
+    """Per triangle, the affine map from its lightmap UVs to its albedo UVs: ``(n, 2, 3)``, so that
+    ``uv1 = M[:, :, :2] @ uv2 + M[:, :, 2]``. A degenerate triangle maps everything to its first
+    corner."""
+    a, b, c = uv2[:, 0], uv2[:, 1], uv2[:, 2]
+    e = np.stack([b - a, c - a], 2)  # (n, 2, 2): columns are the edges
+    det = e[:, 0, 0] * e[:, 1, 1] - e[:, 0, 1] * e[:, 1, 0]
+    ok = np.abs(det) > 1e-14
+    inv = np.zeros_like(e)
+    inv[ok, 0, 0] = e[ok, 1, 1] / det[ok]
+    inv[ok, 0, 1] = -e[ok, 0, 1] / det[ok]
+    inv[ok, 1, 0] = -e[ok, 1, 0] / det[ok]
+    inv[ok, 1, 1] = e[ok, 0, 0] / det[ok]
+    f = np.stack([uv1[:, 1] - uv1[:, 0], uv1[:, 2] - uv1[:, 0]], 2)  # (n, 2, 2)
+    lin = f @ inv
+    off = uv1[:, 0] - np.einsum("nij,nj->ni", lin, a)
+    return np.concatenate([lin, off[..., None]], 2)
 
 
 def detail_upscale(pos, uv1, mat, materials, textures, light_size: int) -> int:
@@ -144,41 +210,88 @@ def detail_upscale(pos, uv1, mat, materials, textures, light_size: int) -> int:
     return k
 
 
-def compose_entity(maps: EntityMaps, pos, nrm, uv1, mat, materials, textures, exposure: float) -> tuple[np.ndarray, float, dict]:
+def _material_tables(materials):
+    rgb = np.array([srgb_to_linear(np.asarray(m["rgba"][:3], np.float32)) for m in materials], np.float32)
+    textured = np.array([m["texture"] >= 0 for m in materials])
+    return rgb, textured
+
+
+def compose_entity(maps: EntityMaps, pos, nrm, uv1, mat, materials, textures,
+                   exposure: float) -> tuple[np.ndarray, float, dict]:
     """The composed texture of one entity (``(C, C, 3)`` uint8, rows bottom first), its material's
-    emission and what it cost. *pos*, *nrm*, *uv1*, *mat* are aligned to ``maps.uv``'s triangles."""
+    emission and what it cost. *pos*, *nrm*, *uv1*, *mat* are aligned to ``maps.uv``'s triangles.
+
+    What varies slowly is computed at the light map's resolution: the light times the exposure and
+    the rig's light for each texel's normal (whose 99.5th percentile sets the material's emission, so
+    a surface facing down does not clip). At the composed resolution, finer where the entity is
+    textured, each texel takes the two by bilinear interpolation and its own surface colour: its
+    material's, times its texture read through the geom's own UVs where it has one."""
     t0 = time.perf_counter()
     S = maps.light.shape[0]
-    k = detail_upscale(pos, uv1, mat, materials, textures, S)
-    C = S * k
-    ids = rasterize(maps.uv, C)
-    covered = ids >= 0
-    yy, xx = np.nonzero(covered)
+    rgb_table, textured_table = _material_tables(materials)
+    # -- at the light map's resolution: the light and the rig's light for the normal.
+    ids = rasterize(maps.uv, S)
+    yy, xx = np.nonzero(ids >= 0)
     tri = ids[yy, xx]
-    p = np.stack([(xx + 0.5) / C, (yy + 0.5) / C], 1)
+    p = np.stack([(xx + 0.5) / S, (yy + 0.5) / S], 1)
     w = barycentric(maps.uv[tri].astype(np.float64), p).astype(np.float32)
-    n = (nrm[tri] * w[..., None]).sum(1)
+    n = (nrm[tri].astype(np.float32) * w[..., None]).sum(1)
     n = np.where(maps.flip[tri][:, None], -n, n)
     n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
-    albedo = np.empty((len(tri), 3), np.float32)
-    mats = mat[tri]
-    for mi in np.unique(mats):
-        sel = mats == mi
-        spec = materials[int(mi)]
-        rgb = srgb_to_linear(np.asarray(spec["rgba"][:3], np.float32))
-        if spec["texture"] >= 0:
-            uv = (uv1[tri[sel]] * w[sel][..., None]).sum(1)
-            albedo[sel] = rgb * srgb_to_linear(sample(textures[spec["texture"]], uv))
-        else:
-            albedo[sel] = rgb
-    light = resize(maps.light, C)[yy, xx] if C != S else maps.light[yy, xx]
-    display = linear_to_srgb(exposure * albedo * light)
     lit = rig_light(n)
     emission = float(max(0.0, 1.0 - np.percentile(lit, 99.5))) if len(lit) else 0.0
-    L = rig_light(n, emission)[:, None]
-    out = np.zeros((C, C, 3), np.uint8)
-    out[yy, xx] = np.round(np.clip(display / np.maximum(L, 1e-3), 0, 1) * 255).astype(np.uint8)
-    clipped = float(((display / np.maximum(L, 1e-3)) > 1.0).any(1).mean()) if len(display) else 0.0
+    rig_map = np.ones((S, S), np.float32)
+    rig_map[yy, xx] = rig_light(n, emission)
+    q = (exposure * maps.light).astype(np.float32)
+    # -- at the composed resolution.
+    k = detail_upscale(pos, uv1, mat, materials, textures, S)
+    C = S * k
+    if k == 1:
+        idc = ids
+        q_c, rig_c = q, rig_map
+    else:
+        idc = rasterize(maps.uv, C, pad=0)
+        empty = idc < 0
+        # The space between islands takes the padded ids of the light map's resolution.
+        coarse = np.repeat(np.repeat(ids, k, 0), k, 1)
+        idc[empty] = coarse[empty]
+        del coarse
+        q_c, rig_c = resize(q, C), resize(rig_map, C)
+    covered = idc >= 0
+    albedo = np.zeros((C, C, 3), np.float32)
+    tri_c = np.where(covered, idc, 0)
+    mats = mat[tri_c]
+    albedo[covered] = rgb_table[mats[covered]]
+    tex_sel = covered & textured_table[mats]
+    if tex_sel.any():
+        flat_idx = np.flatnonzero(tex_sel)
+        ty, tx = np.divmod(flat_idx, C)
+        tt = idc.ravel()[flat_idx]
+        # Each triangle's albedo UVs are an affine function of its lightmap UVs.
+        M = affine_uv(maps.uv.astype(np.float64), uv1.astype(np.float64)).astype(np.float32)
+        Mt = M[tt]
+        u2x = (tx.astype(np.float32) + 0.5) / C
+        u2y = (ty.astype(np.float32) + 0.5) / C
+        uv = np.stack([Mt[:, 0, 0] * u2x + Mt[:, 0, 1] * u2y + Mt[:, 0, 2],
+                       Mt[:, 1, 0] * u2x + Mt[:, 1, 1] * u2y + Mt[:, 1, 2]], 1)
+        del Mt, u2x, u2y, ty, tx
+        tm = mat[tt]
+        values = np.empty((len(flat_idx), 3), np.float32)
+        for mi in np.unique(tm):
+            sel = tm == mi
+            values[sel] = sample(textures[materials[int(mi)]["texture"]], uv[sel])
+        flat_albedo = albedo.reshape(-1, 3)
+        flat_albedo[flat_idx] *= values
+    albedo *= q_c if q_c.ndim == 3 else q_c[..., None]
+    display = to_srgb(albedo)
+    del albedo
+    display /= np.maximum(rig_c, 1e-3)[..., None]
+    clipped = float((display.max(-1)[covered] > 1.0).mean()) if covered.any() else 0.0
+    np.clip(display, 0.0, 1.0, out=display)
+    display *= 255.0
+    display += 0.5
+    out = display.astype(np.uint8)
+    out[~covered] = 0
     return out, emission, {"size": C, "upscale": k, "clipped_share": round(clipped, 4),
                            "seconds": round(time.perf_counter() - t0, 3)}
 
@@ -208,6 +321,8 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
     no_shadow: list[str] = []
     stats = {"entities": {}, "geoms": 0, "missing": []}
     replaced: dict[str, mujoco.MjsGeom] = {}
+    # What each entity draws, matched to the world as it loads.
+    jobs = []
     for ename, entry in meta["entities"].items():
         maps = read_entity(root, ename, entry)
         cur = export.entities.get(ename)
@@ -231,9 +346,18 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
             continue
         keep = idx >= 0
         sub = EntityMaps(maps.light, maps.indirect, maps.ao, maps.uv[keep], maps.geom[keep], maps.flip[keep])
-        ci = idx[keep]
-        tex, emission, info = compose_entity(sub, cur.pos[ci], cur.nrm[ci], cur.uv1[ci], cur.mat[ci],
-                                             export.materials, export.textures, exposure)
+        jobs.append((ename, cur, sub, idx[keep], keep, present_geoms))
+    # Composed side by side: the work is numpy's, which runs outside the interpreter's lock.
+    def one(job):
+        ename, cur, sub, ci, _, _ = job
+        return compose_entity(sub, cur.pos[ci], cur.nrm[ci], cur.uv1[ci], cur.mat[ci], export.materials,
+                              export.textures, exposure)
+
+    order = sorted(range(len(jobs)), key=lambda i: -jobs[i][2].light.shape[0])
+    with ThreadPoolExecutor(max_workers=max(1, min(COMPOSE_THREADS, os.cpu_count() or 1))) as pool:
+        results = dict(zip(order, pool.map(one, [jobs[i] for i in order])))
+    for i, (ename, cur, sub, ci, keep, present_geoms) in enumerate(jobs):
+        tex, emission, info = results[i]
         C = tex.shape[0]
         tname = f"{prefix}_{ename}"
         spec.add_texture(name=tname, type=mujoco.mjtTexture.mjTEXTURE_2D, width=C, height=C, nchannel=3,

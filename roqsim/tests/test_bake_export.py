@@ -234,3 +234,11 @@ def test_a_texture_edit_is_a_material_change():
             'name="wall_w" type="box" size="0.05 2 1.25" pos="-2 0 1.25" material="tm"')
     v = verdict(analysed(world("1 1 1")), analysed(world("0.5 0.5 0.5")))
     assert v["changed"] == ["wall_w"]
+
+
+def test_the_floor_is_the_largest_surface_facing_up_not_the_lowest():
+    # A foundation slab under the floor (room_world has geometry 26 cm below its floor).
+    slab = '<geom name="slab" type="box" size="1 1 0.05" pos="0 0 -0.3"/>'
+    ents = analysed(room(extra=slab)).export.entities
+    floor_geoms = {analysed(room(extra=slab)).export.geoms[int(g)].key for g in np.unique(ents["floor"].geom)}
+    assert floor_geoms == {"floor_visual"}

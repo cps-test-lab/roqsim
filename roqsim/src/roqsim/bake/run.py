@@ -61,6 +61,8 @@ from .store import (
 from .store import write as write_bake
 
 DEVICES = ("cpu", "cuda", "optix", "hip", "metal", "oneapi")
+#: The Cycles threads per Blender process on the CPU (``--jobs`` defaults to the cores over this).
+THREADS_PER_JOB = 4
 #: Blender's major.minor the bake is written against.
 BLENDER_MIN = (4, 2)
 
@@ -146,8 +148,9 @@ def write_work(analysis: Analysis, work: Path) -> None:
 
 def plan_jobs(analysis: Analysis, jobs: int) -> list[list[str]]:
     """The entities split over *jobs* processes, largest first onto the least loaded (by an estimate
-    of their cost: the UV layout grows with the triangles, the passes with the texels)."""
-    cost = {n: len(e.pos) / 2000.0 + (e.size / 512.0) ** 2 * (2 if e.two_sided else 1)
+    of their cost: the passes grow with the texels and the sides baked, the UV layout with the
+    triangles)."""
+    cost = {n: (e.size / 512.0) ** 2 * (2 if e.two_sided else 1) + len(e.pos) / 20000.0
             for n, e in analysis.export.entities.items()}
     jobs = max(1, min(jobs, len(cost)))
     load = [0.0] * jobs
@@ -312,7 +315,10 @@ def bake(plugin, *, device: str = "cpu", jobs: int | None = None, blender: str |
     times = {"analyse_s": round(getattr(plugin, "analysis_seconds", 0.0), 2)}
     if not analysis.export.entities:
         raise BakeRunError("the world has no static, drawn geometry to bake")
-    jobs = jobs or os.cpu_count() or 1
+    # Cycles spreads a pass over a process's threads, and the passes are most of a bake: a few
+    # processes of several threads each keep every core busy without one large light map waiting on
+    # a single thread.
+    jobs = jobs or max(1, (os.cpu_count() or 1) // THREADS_PER_JOB)
     if device != "cpu":
         jobs = 1  # one GPU, one process
     parts = plan_jobs(analysis, jobs)
@@ -382,7 +388,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument("world", help="world YAML, or a package ref such as roqsim_scenes:depot")
     parser.add_argument("--device", default="cpu", choices=DEVICES, help="where Cycles runs (default: cpu)")
-    parser.add_argument("--jobs", type=int, default=None, help="Blender processes on the CPU (default: cores)")
+    parser.add_argument("--jobs", type=int, default=None, help="Blender processes on the CPU (default: the cores over 4)")
     parser.add_argument("--blender", default=None, help="Blender's executable (default: blender on PATH)")
     parser.add_argument("--work", type=Path, default=None, help="keep the intermediates here")
     parser.add_argument("--dry-run", action="store_true", help="say what would be baked, bake nothing")

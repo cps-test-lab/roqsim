@@ -479,7 +479,6 @@ def export_world(
             Entity("shell", "shell", *[np.concatenate(parts["shell"][k]) for k in ("pos", "nrm", "uv1")],
                    np.concatenate(parts["shell"]["mat"]).astype(np.int32),
                    np.concatenate(parts["shell"]["geom"]).astype(np.int32)),
-            float(static_lo[2]),
             settings,
         ):
             entities[ent.name] = ent
@@ -531,12 +530,27 @@ def map_size(area: float, cls: str, settings: BakeSettings) -> int:
     return int(min(cap, max(ROUND_TO, math.ceil(side / ROUND_TO) * ROUND_TO)))
 
 
-def _split_shell(shell: Entity, floor_z: float, settings: BakeSettings) -> list[Entity]:
-    """The shell as the entity ``floor`` (its triangles facing up at the lowest static height) and the
-    rest, the rest split by geom into light maps that fit ``map_cap``."""
+def floor_height(shell: Entity) -> float | None:
+    """The height of the floor: of the shell's triangles that face up, the 2 cm band holding the most
+    area (the floor is the largest surface facing up; what lies under it or on top of a wall is not)."""
     fn = face_normals(shell.pos)
-    top = shell.pos[..., 2].max(1)
-    floor = (fn[:, 2] > 0.9) & (top <= floor_z + 0.05)
+    up = fn[:, 2] > 0.9
+    if not up.any():
+        return None
+    z = shell.pos[up][..., 2].mean(1)
+    a = _areas(shell.pos[up])
+    bins = np.round(z / 0.02).astype(np.int64)
+    keys, inv = np.unique(bins, return_inverse=True)
+    return float(keys[np.argmax(np.bincount(inv.ravel(), weights=a))] * 0.02)
+
+
+def _split_shell(shell: Entity, settings: BakeSettings) -> list[Entity]:
+    """The shell as the entity ``floor`` (its triangles facing up at the floor's height,
+    :func:`floor_height`) and the rest, the rest split by geom into light maps that fit ``map_cap``."""
+    fn = face_normals(shell.pos)
+    zf = floor_height(shell)
+    mid = shell.pos[..., 2].mean(1)
+    floor = (fn[:, 2] > 0.9) & (np.abs(mid - zf) <= 0.03) if zf is not None else np.zeros(len(fn), bool)
     out = []
 
     def take(name, cls, sel):
