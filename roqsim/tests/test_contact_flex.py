@@ -55,7 +55,7 @@ SCENE = f"""
     <body name="soft" pos="0 0 0.2">
       <flexcomp name="blob" type="grid" count="3 3 3" spacing=".03 .03 .03" radius=".005"
                 dim="3" mass="{BLOB_MASS}">
-        <contact selfcollide="none" internal="false" friction="{{blob_friction}}"
+        <contact selfcollide="none" friction="{{blob_friction}}"
                  priority="{{blob_priority}}"/>
         <edge equality="true"/>
       </flexcomp>
