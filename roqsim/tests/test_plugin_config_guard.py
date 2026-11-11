@@ -27,12 +27,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points
 
 import pytest
-from installed_requirements import (
-    not_installed_with_its_requirements,
-    not_testable,
-    ours,
-    tree_plugins,
-)
+from installed_requirements import not_installed_with_its_requirements, ours
 
 from roqsim.introspection import _config_keys_read, published_keys, undeclared_config_reads
 from roqsim.plugin import Plugin
@@ -96,12 +91,6 @@ def _plugins() -> tuple[list[tuple[str, type]], dict[str, str], dict[str, str]]:
 
 
 PLUGINS, UNLOADABLE, INCOMPLETE = _plugins()
-
-
-def _not_here(name: str) -> str:
-    """Why plugin *name*, one of this repository's, is not installed here, or ``""``."""
-    package = tree_plugins().get(name)
-    return not_testable(package) if package else ""
 
 
 def _exempt(name: str) -> set[str]:
@@ -184,8 +173,6 @@ def test_a_plugin_with_a_schema_writes_no_config_block_of_its_own(name, cls):
 def test_a_key_read_to_be_refused_is_refused(name, key):
     """An exemption that outlives its refusal would hide a key read as a setting."""
     assert name not in INCOMPLETE, INCOMPLETE.get(name)
-    if name not in dict(PLUGINS) and (why := _not_here(name)):
-        pytest.skip(f"{name}'s package is left out here: {why}")
     cls = dict(PLUGINS)[name]
     errors = cls({}).config_errors({key: 1})
     assert any(f"'{key}'" in e for e in errors), (name, key, errors)
@@ -198,8 +185,6 @@ def test_every_exemption_names_an_installed_plugin_and_a_key_it_reads():
         if name in INCOMPLETE:
             unchecked.append(f"{name}: {INCOMPLETE[name]}")
             continue
-        if name not in plugins and _not_here(name):
-            continue  # its package is left out of this run, by name (tools/test_packages.py)
         assert name in plugins, f"exemption for {name!r}, which is not an installed plugin"
         assert key in _config_keys_read(plugins[name]), (
             f"{name} no longer reads {key!r}; drop its exemption"

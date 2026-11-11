@@ -39,10 +39,6 @@ def _parent(dir_, **sim):
 
 
 def test_child_plugins_appended_after_parent(tmp_path):
-    from installed_requirements import not_testable
-
-    if why := not_testable("roqsim_humanoid"):
-        pytest.skip(f"the child spawns roqsim_humanoid's oli: {why}")
     _parent(tmp_path)
     child = _write(
         tmp_path,

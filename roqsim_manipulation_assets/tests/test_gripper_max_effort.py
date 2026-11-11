@@ -28,34 +28,12 @@ from roqsim.models import apply_assets, resolve_model
 
 #: Every shipped gripper: its gripper joint, the effort on it per unit of actuator force, and the
 #: joint-effort limit its actuator's force range allows (N for a slide jaw, N*m for a knuckle).
-def _installed(distribution: str) -> bool:
-    from importlib.metadata import PackageNotFoundError
-    from importlib.metadata import distribution as dist
-
-    try:
-        dist(distribution)
-    except PackageNotFoundError:
-        return False
-    return True
-
-
 SHIPPED = [
     pytest.param("robotiq_2f85", "robotiq_85_left_knuckle_joint", 0.5, 2.5, id="robotiq_2f85"),
     pytest.param("gen3", "robotiq_85_left_knuckle_joint", 0.5, 2.5, id="gen3"),
     pytest.param("schunk_pg70", "finger_left_joint", 0.5, 100.0, id="schunk_pg70"),
     pytest.param("robotiq_hande", "hande_left_finger_joint", 0.5, 185.0, id="robotiq_hande"),
-    pytest.param(
-        "unitree_g1_dex1",
-        "left_dex1_finger_joint_1",
-        1.0,
-        20.0,
-        id="unitree_g1_dex1",
-        # The G1's gripper ships with the humanoid, a package make test leaves out where it is not
-        # installed (tools/test_packages.py).
-        marks=pytest.mark.skipif(
-            not _installed("roqsim_humanoid"), reason="roqsim_humanoid (the G1) is not installed"
-        ),
-    ),
+    pytest.param("unitree_g1_dex1", "left_dex1_finger_joint_1", 1.0, 20.0, id="unitree_g1_dex1"),
     pytest.param("vx300s", "left_finger", 1.0, 35.0, id="vx300s"),
     pytest.param("wx250s", "left_finger", 1.0, 35.0, id="wx250s"),
     pytest.param("tiago_pro", "gripper_left_finger_joint", 1.0, 10.0, id="tiago_pro"),
