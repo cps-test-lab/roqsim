@@ -35,7 +35,8 @@ to disagree with what is drawn. A corridor width is then an ordinary config valu
 the run's provenance records, rather than a mesh baked ahead of time that nothing downstream can
 tell apart from another mesh. Naming both sources, or neither, is refused. The wall arithmetic is
 shared with the mesh baker and the plan-view renderer, so a preview, a baked world and this plugin
-cut the same openings.
+cut the same openings, and walls meet as the baker joins them: no two boxes show a face in one place
+(``roqsim.floorplan_geometry.wall_pieces``).
 
 Any endpoint-producing plugin below accepts an optional ``topics:`` map to set an endpoint's ROS
 topic. An absolute name **hardwires** it, overriding the namespace+default — e.g. ``topics: {image:

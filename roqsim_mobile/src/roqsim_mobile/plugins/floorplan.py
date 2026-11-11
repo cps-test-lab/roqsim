@@ -418,7 +418,11 @@ class FloorplanPlugin(Plugin):
         thickness = float(cfg["thickness"])
         boxes = []
         for (x0, y0), (x1, y1), z0, z1 in wall_pieces(
-            lines, doors, float(cfg["height"]), float(cfg["opening_height"])
+            lines,
+            doors,
+            float(cfg["height"]),
+            float(cfg["opening_height"]),
+            thickness=thickness,
         ):
             length = math.hypot(x1 - x0, y1 - y0)
             if length <= 0.0:
