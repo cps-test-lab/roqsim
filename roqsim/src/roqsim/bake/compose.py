@@ -19,9 +19,8 @@ What the spec gets, per baked geom:
 * the geom itself moved to group 3: it still collides and every ray still meets it, and it is no
   longer drawn by default, so sensing and contacts are those of the unbaked world;
 * the light sources glow (their material's emission 1); the world's lights are replaced by the rig;
-* every baked geom and light source is declared *casting no shadow*
-  (:data:`roqsim.rendering.NO_SHADOW_TEXT`): its shadows are in the bake already, and the rig's key
-  throws only what moves.
+* every baked geom and light source casts no shadow (``castshadow`` off): its shadows are in the
+  bake already, and the rig's key throws only what moves.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .. import presence
-from ..rendering import NO_SHADOW_TEXT
 from .analysis import Analysis
 from .settings import RIG, fill_direction, rig_light
 from .store import EntityMaps, linear_to_srgb, read_entity, resize, srgb_to_linear
@@ -318,7 +316,6 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
     position = {g.key: i for i, g in enumerate(export.geoms)}
     stored = meta["geoms"]
     exposure = float(meta["exposure"])
-    no_shadow: list[str] = []
     stats = {"entities": {}, "geoms": 0, "missing": []}
     replaced: dict[str, mujoco.MjsGeom] = {}
     # What each entity draws, matched to the world as it loads.
@@ -387,10 +384,11 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
             mesh.userfacenormal = list(range(k))
             mesh.userfacetexcoord = list(range(k))
             body = spec.worldbody if rec.body == "world" else spec.body(rec.body)
-            body.add_geom(name=gname, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=mesh.name, material=tname,
-                          contype=0, conaffinity=0, group=presence.WINDOW_GEOM_GROUP, density=0.0,
-                          pos=[0, 0, 0], quat=[1, 0, 0, 0])
-            no_shadow.append(gname)
+            visual = body.add_geom(name=gname, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=mesh.name,
+                                   material=tname, contype=0, conaffinity=0,
+                                   group=presence.WINDOW_GEOM_GROUP, density=0.0, pos=[0, 0, 0],
+                                   quat=[1, 0, 0, 0])
+            visual.castshadow = False
             if rec.key not in replaced:
                 replaced[rec.key] = _spec_geom(spec, rec)
             stats["geoms"] += 1
@@ -406,13 +404,8 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
         m = spec.add_material(name=f"{prefix}_emitter_{i}", rgba=list(rgba), emission=1.0, specular=0.0,
                               shininess=0.0, reflectance=0.0)
         g.material = m.name
-        no_shadow.append(rec.name)
+        g.castshadow = False
     _rig(spec, moving_shadows, prefix)
-    for text in list(spec.texts):
-        if text.name == NO_SHADOW_TEXT:
-            no_shadow = text.data.split() + no_shadow
-            spec.delete(text)
-    spec.add_text(name=NO_SHADOW_TEXT, data=" ".join(n for n in no_shadow if n))
     stats["seconds"] = round(time.perf_counter() - t0, 3)
     stats["textures_bytes_gpu"] = int(sum(v["size"] ** 2 * 3 * 4 / 3 for v in stats["entities"].values()))
     return stats

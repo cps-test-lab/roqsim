@@ -693,26 +693,8 @@ def has_clear_geoms(model: mujoco.MjModel) -> bool:
     return bool(np.any((alpha > 0.0) & (alpha < 1.0)))
 
 
-#: The model text element naming, space-separated, the geoms a model declares to throw no shadow:
-#: baked lighting's surfaces (:mod:`roqsim.bake.compose`), whose shadows are in their textures already.
-#: MuJoCo 3.14 has no per-geom switch for it.
-NO_SHADOW_TEXT = "roqsim:cast_no_shadow"
-
-
-def no_shadow_geoms(model: mujoco.MjModel) -> frozenset:
-    """The ids of the geoms *model* declares to throw no shadow (:data:`NO_SHADOW_TEXT`)."""
-    tid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_TEXT, NO_SHADOW_TEXT)
-    if tid < 0:
-        return frozenset()
-    adr, size = int(model.text_adr[tid]), int(model.text_size[tid])
-    names = bytes(model.text_data[adr : adr + size]).split(b"\0", 1)[0].decode().split()
-    ids = (mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) for n in names)
-    return frozenset(int(i) for i in ids if i >= 0)
-
-
-def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene, declared: frozenset = frozenset()) -> None:
-    """Take every see-through geom of a populated scene out of the shadow pass, and every geom the
-    model declares to throw none (*declared*, :func:`no_shadow_geoms`).
+def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene) -> None:
+    """Take every see-through geom of a populated scene out of the shadow pass.
 
     MuJoCo's shadow map is binary: every geom it draws into it blocks the light completely, so a
     pane of glass or a shrink film at 10 % opacity throws the same full shadow as a steel plate, and
@@ -722,11 +704,10 @@ def clear_geoms_cast_no_shadow(scene: mujoco.MjvScene, declared: frozenset = fro
     longer darkens what is behind it.
     """
     decor = int(mujoco.mjtCatBit.mjCAT_DECOR)
-    geom_type = int(mujoco.mjtObj.mjOBJ_GEOM)
     for i in range(scene.ngeom):
         geom = scene.geoms[i]
         # By its resolved alpha: MuJoCo sets `transparent` itself, but only inside mjr_render.
-        if geom.rgba[3] < 1.0 or (declared and geom.objtype == geom_type and geom.objid in declared):
+        if geom.rgba[3] < 1.0:
             geom.category = decor
 
 
@@ -1046,7 +1027,6 @@ class MujocoRenderer(Renderer):
         self._scene: mujoco.MjvScene | None = None
         self._atlas: _Atlas | None = None
         self._clear_geoms = False
-        self._no_shadow: frozenset = frozenset()
         self._vopts: dict = {}
         #: Scene builds and draws since open (what a test counts).
         self.stats = {"scene_builds": 0, "draws": 0, "readbacks": 0, "batches": 0}
@@ -1077,8 +1057,7 @@ class MujocoRenderer(Renderer):
         self._con.readDepthMap = mujoco.mjtDepthMap.mjDEPTH_ZEROFAR
         max_geom = max([DEFAULT_MAX_GEOM] + [c.max_geom or 0 for c in scene.cameras])
         self._scene = mujoco.MjvScene(model=model, maxgeom=max_geom)
-        self._no_shadow = no_shadow_geoms(model)
-        self._clear_geoms = has_clear_geoms(model) or bool(len(self._no_shadow))
+        self._clear_geoms = has_clear_geoms(model)
         _log_gl_once()
 
     def close(self) -> None:
@@ -1197,7 +1176,7 @@ class MujocoRenderer(Renderer):
         )
         self.stats["scene_builds"] += 1
         if self._clear_geoms:
-            clear_geoms_cast_no_shadow(scene, self._no_shadow)
+            clear_geoms_cast_no_shadow(scene)
 
     def _set_view(self, model, data, request: CameraRequest) -> tuple[float, float, bool]:
         """Point the built scene at *request*'s camera: its view, its lights and its planes."""

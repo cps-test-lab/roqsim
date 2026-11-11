@@ -128,9 +128,10 @@ of its resolution, its lightmap UVs, and ``bake.json`` (fingerprint, lights, set
 times). The surface colour is the model's own textures and materials. MuJoCo's classic renderer is one
 consumer (``roqsim.bake.compose``: light map times the model's colour, divided by the run-time rig's
 light for each texel's normal, composed in memory). A physically based renderer takes the indirect
-light and the occlusion as its emission and occlusion inputs and does the direct light itself, and a
-glTF export can carry the same files: each is an adapter over this format, not a rebake. The format is
-documented in ``python -m pydoc roqsim.bake.store``.
+light and the occlusion as its emission and occlusion inputs and does the direct light itself -- for
+MuJoCo's Filament renderer, a material's ``emissive`` and ``occlusion`` textures over the same
+lightmap UVs -- and a glTF export can carry the same files: each is an adapter over this format, not a
+rebake. The format is documented in ``python -m pydoc roqsim.bake.store``.
 
 The run-time rig
 ----------------
@@ -138,10 +139,8 @@ The run-time rig
 A baked world is drawn under a fixed rig, which replaces the world's lights: no headlight; a key light
 straight down that throws the shadow of what moves; three shadowless fills. The baked textures are
 divided by exactly that rig's light, so MuJoCo draws the bake and not the bake lit again, and what moves
-is lit the way the room was: brighter on top than at its sides. The baked surfaces are declared to throw
-no shadow (``roqsim.rendering.NO_SHADOW_TEXT``), so the key darkens the floor only under what moves.
-MuJoCo's interactive viewer does not read that declaration, so in the viewer the baked props' run-time
-shadows fall on their baked ones.
+is lit the way the room was: brighter on top than at its sides. The baked surfaces throw no shadow
+(their geoms' ``castshadow`` is off), so the key darkens the floor only under what moves.
 
 Limits
 ------

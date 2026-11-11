@@ -24,7 +24,6 @@ from roqsim.config import load_config
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 from roqsim.presence import WINDOW_GEOM_GROUP
-from roqsim.rendering import no_shadow_geoms
 
 
 def grid_uv(n: int) -> np.ndarray:
@@ -129,10 +128,9 @@ def test_a_fitting_bake_is_composed(tmp_path):
         assert m.nlight == 4 and m.vis.headlight.active == 0
         assert m.light_castshadow[0] and not any(m.light_castshadow[1:])
         # Every baked geom and the light source throw no shadow of their own.
-        declared = no_shadow_geoms(m)
-        assert visual in declared
-        assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "light_panel") in declared
-        assert wall not in declared
+        assert not m.geom_castshadow[visual]
+        assert not m.geom_castshadow[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "light_panel")]
+        assert m.geom_castshadow[wall]
     finally:
         engine.shutdown()
 
