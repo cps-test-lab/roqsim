@@ -181,18 +181,29 @@ def check_flex_options(spec: mujoco.MjSpec, choice: IntegratorChoice) -> None:
     ropes = edge_stiff_ropes(spec)
     if ropes and integrator == DISCRETE:
         names = ", ".join(f"flex {r!r}" for r in ropes)
-        if flexes:
-            passive = any(f.reason == "passive contact" for f in flexes)
-            explicit = "" if passive else ", or set sim.integrator: euler (or rk4) to run both"
+        passive = any(f.reason == "passive contact" for f in flexes)
+        explicit = "" if passive else ", or set sim.integrator: euler (or rk4)"
+        instead = (
+            "Give the rope its stiffness and damping as <elasticity young>/<elasticity damping> "
+            "instead of on its edges"
+        )
+        others = [f for f in flexes if f.name not in ropes]
+        if others:
             raise PluginError(
-                f"no implicit integrator can run {named} beside {names}: MuJoCo integrates the "
-                "first only under discrete and refuses a rope's <edge stiffness>/<edge damping> "
-                f"under discrete. Give the rope <elasticity young> instead{explicit}."
+                f"no implicit integrator can run {', '.join(map(str, others))} beside {names}: "
+                "MuJoCo integrates the first only under discrete and refuses a rope's <edge "
+                f"stiffness>/<edge damping> under discrete. {instead}{explicit} to run both."
+            )
+        if flexes:
+            raise PluginError(
+                f"no implicit integrator can run {names}: MuJoCo integrates its <elasticity young> "
+                "only under discrete and refuses a rope's <edge stiffness>/<edge damping> under "
+                f"discrete. {instead}{explicit}."
             )
         raise PluginError(
             f"sim.integrator: discrete cannot run {names}: MuJoCo refuses a rope's <edge "
             "stiffness>/<edge damping> under discrete. Set sim.integrator: auto (or "
-            "implicitfast), or give the rope <elasticity young> instead."
+            f"implicitfast), or {instead[0].lower()}{instead[1:]}."
         )
     if flexes and integrator == DISCRETE:
         if spec.option.solver == mujoco.mjtSolver.mjSOL_PGS:
