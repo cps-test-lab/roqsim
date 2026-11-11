@@ -6,7 +6,7 @@
   <a href="https://github.com/cps-test-lab/roqsim/actions"><img src="https://github.com/cps-test-lab/roqsim/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/MuJoCo-3.14-orange.svg" alt="MuJoCo 3.14">
+  <img src="https://img.shields.io/badge/MuJoCo-4.0-orange.svg" alt="MuJoCo 4.0">
 </p>
 
 **roqsim** — **ro**bots, **q**uickly **sim**ulated (in [MuJoCo](https://mujoco.org)) — is a
