@@ -422,13 +422,21 @@ def _bounds(model, data, g) -> tuple[np.ndarray, np.ndarray]:
 def shared_faces(model: mujoco.MjModel, data: mujoco.MjData | None = None) -> list[SharedFace]:
     """Every pair of drawn geoms that show a face in one place, with where they touch.
 
-    ``data`` holds the pose to check, already forwarded (``mj_forward`` or ``mj_kinematics``); with
-    none, the model's own ``qpos0``. Raises :class:`UncomparableGeoms` after comparing every pair it
+    ``data`` holds the pose to check, already forwarded (``mj_forward`` or ``mj_kinematics``); data
+    that was not is refused with a ``ValueError``, since it would compare nothing. With none, the
+    model's own ``qpos0``. Raises :class:`UncomparableGeoms` after comparing every pair it
     can, when a pair whose bounds touch is one no rule here decides (the module docstring).
     """
     if data is None:
         data = mujoco.MjData(model)
         mujoco.mj_kinematics(model, data)
+    elif model.ngeom and not data.geom_xmat.any(axis=1).all():
+        # A geom's orientation is a rotation, never all zero, once kinematics ran. Without them every
+        # face collapses onto the origin, no pair is found, and a model full of pairs passes.
+        raise ValueError(
+            "shared_faces: data holds no pose (geom orientations are zero); run "
+            "mujoco.mj_kinematics(model, data) or mj_forward on it first"
+        )
     shown = [g for g in range(model.ngeom) if drawn_by_default(model, g)]
     box = {g: _bounds(model, data, g) for g in shown}
     flat: dict[int, tuple[np.ndarray, np.ndarray]] = {}
