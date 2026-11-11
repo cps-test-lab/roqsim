@@ -427,18 +427,41 @@ def compose(
         jobs.append((ename, cur, sub, idx[keep], keep, present_geoms))
     # Every geom it changes, found before the spec is changed: a bake that does not fit fails here,
     # with the world as it was, never half composed.
-    geom_names = {g.name for g in spec.geoms if g.name}
-    mesh_names = {m.name for m in spec.meshes if m.name}
+    # Every name it adds, checked before the spec is changed: a world that already has one would
+    # fail to compile.
+    taken = {
+        "geom": {g.name for g in spec.geoms if g.name},
+        "mesh": {m.name for m in spec.meshes if m.name},
+        "texture": {t.name for t in spec.textures if t.name},
+        "material": {m.name for m in spec.materials if m.name},
+        # The lights the rig keeps: those on what moves.
+        "light": {
+            light.name
+            for light in spec.lights
+            if light.name and not _welded_to_world(light.parent, spec)
+        },
+    }
+    adds = []
     for ename, *_, present_geoms in jobs:
+        adds += [("texture", f"{prefix}_{ename}"), ("material", f"{prefix}_{ename}")]
         for _gi, rec, _mine in present_geoms:
             gname = _visual_name(rec, ename)
-            for name, taken in ((gname, geom_names), (f"{prefix}_{gname}", mesh_names)):
-                if name in taken:
-                    raise ComposeError(
-                        f"the name {name!r} the bake gives what draws {rec.key!r} is taken in the "
-                        "world: rename the geom or mesh that has it"
-                    )
-                taken.add(name)
+            adds += [("geom", gname), ("mesh", f"{prefix}_{gname}")]
+    adds += [
+        ("material", f"{prefix}_emitter_{i}")
+        for i in range(len(meta.get("light", {}).get("emitters", [])))
+    ]
+    adds += [("light", f"{prefix}_key")] + [
+        ("light", f"{prefix}_fill{i}") for i in range(len(RIG["fills"]))
+    ]
+    for kind, name in adds:
+        if name in taken[kind]:
+            raise ComposeError(
+                f"the {kind} name {name!r} the bake adds is taken in the world: rename that {kind}"
+            )
+        taken[kind].add(name)
+    for *_, present_geoms in jobs:
+        for _gi, rec, _mine in present_geoms:
             if rec.key not in replaced:
                 replaced[rec.key] = _spec_geom(spec, rec)
     emitters = []

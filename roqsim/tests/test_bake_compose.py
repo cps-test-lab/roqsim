@@ -357,16 +357,34 @@ def test_a_robot_s_lamp_stays_when_the_world_is_drawn_baked(tmp_path):
         engine.shutdown()
 
 
-def test_a_world_naming_a_geom_as_the_bake_would_draws_unbaked_and_says_which(tmp_path):
-    """The bake names the mesh that draws geom ``x`` ``x__baked``; a world that already has that name
-    is drawn unbaked, the warning naming the clash, before anything is composed."""
-    taken = '<geom name="wall_e__baked" type="box" size=".05 .05 .05" pos="0 -1.5 0.05" group="3"/>'
-    world = write_world(tmp_path, xml=room(extra=taken))
+@pytest.mark.parametrize(
+    "extra, name",
+    [
+        (
+            '<geom name="wall_e__baked" type="box" size=".05 .05 .05" pos="0 -1.5 0.05" group="3"/>',
+            "wall_e__baked",
+        ),
+        ("", "baked_P"),  # a material of the world named as the table's composed one
+        (
+            '<body name="bot" pos="0 1 0.2"><freejoint/><geom type="box" size=".1 .1 .1"/>'
+            '<light name="baked_key"/></body>',
+            "baked_key",
+        ),
+    ],
+    ids=["geom", "material", "light"],
+)
+def test_a_name_the_bake_would_add_that_the_world_has_draws_it_unbaked(tmp_path, extra, name):
+    """Every name compose adds is checked before the spec changes: a world that has one is drawn
+    unbaked, the warning naming it, rather than failing to compile."""
+    xml = room(extra=extra)
+    if name == "baked_P":
+        xml = xml.replace("<asset>", '<asset><material name="baked_P"/>', 1)
+    world = write_world(tmp_path, xml=xml)
     synthetic_bake(world)
     engine = loaded(world)
     try:
         assert codes(engine) == ["bake_stale"]
-        assert "'wall_e__baked'" in engine.ctx.conditions[0]["message"]
+        assert repr(name) in engine.ctx.conditions[0]["message"]
         m = engine.ctx.model
         assert m.geom_group[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "wall_e")] != 3
     finally:
