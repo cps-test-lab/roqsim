@@ -1350,7 +1350,10 @@ def main(argv: list | None = None) -> int:
             exit_status.BAD_INPUT,
             exit_status.NO_GL,
             exit_status.RECORDING,
-            note="Stdout is one JSON line on success; every failure is one line on stderr.",
+            note="Stdout is one JSON line on success; every failure is one line on stderr. A world "
+            "drawn flat, or whose shadows look wrong, is lit by the classic renderer's few lamps: "
+            "its baked_lighting component (roqsim bake) draws bounced light and soft shadows, and "
+            "the JSON line's `conditions` say whether an image was drawn baked.",
         ),
     )
     parser.add_argument(
