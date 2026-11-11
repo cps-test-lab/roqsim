@@ -7,7 +7,7 @@ Lifecycle::
 
     setup()   -> build phase: plugin.build(spec) for all, then plugin.build_late(spec) for all;
                  spec.compile(); make data;
-                 plugin.configure(ctx)
+                 plugin.configure(ctx); mj_forward (the initial state's poses, no time advance)
     reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
                  (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base)
@@ -241,7 +241,12 @@ class Engine:
 
     # -- lifecycle ----------------------------------------------------------------------------
     def setup(self) -> None:
-        """Build the scene from all plugins, compile, create data, and configure plugins."""
+        """Build the scene from all plugins, compile, create data, and configure plugins.
+
+        ``data`` then describes the model's initial state: ``mj_forward`` has run on it, so body,
+        geom, site and camera poses, sensor data and contacts are computed, while ``data.time``
+        stays 0. ``configure`` runs before that pass, so a plugin reading a pose there runs its own.
+        """
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
@@ -439,6 +444,11 @@ class Engine:
             # Every camera has registered: a renderer that cannot give what one asks for fails the
             # load here, naming it, rather than at its first frame.
             self.ctx.render.check()
+            # Last, once every plugin has written its part: a world inspected before its first reset
+            # or step -- a geometry check, an export, a test -- reads body, geom, site and camera
+            # poses, sensor data and contacts of the initial state, not MjData's zeros, which put
+            # every part at the origin. No time passes, and reset() starts from mj_resetData.
+            mujoco.mj_forward(self.ctx.model, self.ctx.data)
         except BaseException:
             self._shutdown_plugins(configured, " after a configure failed")
             self.ctx.render.close()

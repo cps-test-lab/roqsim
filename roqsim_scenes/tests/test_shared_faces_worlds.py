@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import mujoco
 import pytest
 
 import roqsim_scenes
@@ -25,8 +24,6 @@ def test_no_two_drawn_parts_of_a_world_show_a_face_in_one_place(world):
     engine = Engine(load_config(world))
     engine.setup()
     try:
-        # setup compiles the world; its pose is computed here
-        mujoco.mj_kinematics(engine.ctx.model, engine.ctx.data)
         found = shared_faces(engine.ctx.model, engine.ctx.data)
     finally:
         engine.shutdown()

@@ -104,7 +104,6 @@ def _bounds(**placement):
     engine = Engine(load_config_from_dict({"sim": {}, "components": [cfg]}), preview=True)
     engine.setup()
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
 
     def geom(name):
         return mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, name)

@@ -129,7 +129,6 @@ def test_mounted_arm_sits_on_the_plate_behind_the_scanner(tmp_path):
     engine = Engine(_world(tmp_path))
     engine.setup()
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
     base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     arm_root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "ur10e_base")
     scanner = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "lidar2d_0_mount")
