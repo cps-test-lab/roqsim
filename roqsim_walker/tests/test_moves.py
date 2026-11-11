@@ -299,6 +299,51 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
         engine.shutdown()
 
 
+def _turned(sim, seq, limit=60.0) -> float:
+    """Step until the move ``seq`` ends; the body's heading change when it had first turned a
+    quarter turn either way (rad, signed; left is positive)."""
+    _, _, last = sim.body.root()
+    turned, t0 = 0.0, sim.e.ctx.sim_time
+    first = None
+    while True:
+        sim.e.step()
+        _, _, yaw = sim.body.root()
+        turned += math.atan2(math.sin(yaw - last), math.cos(yaw - last))
+        last = yaw
+        if first is None and abs(turned) > math.pi / 2:
+            first = turned
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            assert st.error == "", st.error
+            return first
+        assert sim.e.ctx.sim_time - t0 < limit
+
+
+@pytest.mark.parametrize("side", [1.0, -1.0], ids=["walks-on-right", "walks-on-left"])
+def test_a_carry_turning_round_turns_on_the_side_it_walks_on_to(sim, side):
+    """A way point straight behind the body is half a turn either way: a carry turns round on the
+    side it walks on to from there, whichever side a millimetre puts the point on."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, h = sim.body.root()
+    left = np.array([-math.sin(h), math.cos(h)])
+    # behind it, a millimetre to the side the sign of the turn would take it the other way round
+    behind = np.array([x, y]) - 0.5 * np.array([math.cos(h), math.sin(h)]) + side * 0.002 * left
+    # and from there on to its right (side 1: the body then faces back, and its left is its right)
+    on = behind + side * 1.0 * left
+    facing = math.atan2(side * left[1], side * left[0])
+    to = {
+        "position": {
+            "x": float(on[0] + 0.6 * side * left[0]),
+            "y": float(on[1] + 0.6 * side * left[1]),
+            "z": 0.0,
+        }
+    }
+    seq = sim.h.carry(to, standoff=0.6, facing=facing, via=[behind.tolist(), on.tolist()])
+    first = _turned(sim, seq)
+    assert first is not None and math.copysign(1.0, first) == -side, first
+
+
 def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
     """Off what it stood on, the load goes straight up first: drawn in at once, a box would drag
     what it stands in (a drawer's stops) along with it."""
