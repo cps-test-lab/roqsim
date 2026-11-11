@@ -173,6 +173,19 @@ def test_two_capsules_of_one_radius_meeting_end_on_end_at_an_angle_share_the_elb
     assert shared_faces(_model(straight)) == []
 
 
+def test_a_straight_capsule_chain_off_the_axes_shares_nothing():
+    # Axes written to six decimals leave the angle between two links' ends a hair short of 180
+    # degrees: a lune narrower than the tolerance, which shows nothing.
+    d = (0.267261, 0.534522, 0.801784)  # one direction, rounded
+    joints = [tuple(round(0.3 * k * c, 6) for c in d) for k in range(4)]
+    chain = "".join(
+        f'<geom name="link{k}" type="capsule" size="0.04" '
+        f'fromto="{" ".join(map(str, a))} {" ".join(map(str, b))}"/>'
+        for k, (a, b) in enumerate(zip(joints, joints[1:]))
+    )
+    assert shared_faces(_model(chain)) == []
+
+
 def test_the_pose_given_is_the_one_compared():
     model = _model(
         CUBE + '<body name="lid" pos="1 0 0"><freejoint/>'

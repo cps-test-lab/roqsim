@@ -22,8 +22,8 @@
     <body name="leaf">
       <geom type="mesh" mesh="door_pane" material="door_glass"/>
       <!-- hinge-side rail: a slim chrome mullion at the hinge edge, connecting the pane to the frame;
-           1 mm inside the pane's hinge edge, top and bottom, so no face of it lies in one plane
-           with the pane's -->
+           1 mm inside the pane's hinge edge, top and bottom (the door plugin hangs the leaf above
+           the floor, so the bottom shows too), so no face of it lies in one plane with the pane's -->
       <geom type="box" size="0.0195 0.025 0.999" pos="0.0205 0.0 1.0" material="door_chrome"/>
       <geom type="mesh" mesh="door_handle" material="door_chrome" contype="0" conaffinity="0"/>
     </body>

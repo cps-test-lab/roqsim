@@ -298,8 +298,9 @@ def _cap_hit(model, data, g, h) -> tuple[np.ndarray, float] | None:
     A sphere covers all directions and a capsule's round end the half around its outward axis, so a
     sphere on a capsule end shares that half (2 pi r²); two capsule ends whose outward axes are
     ``theta`` apart share the lune where both halves meet, 2 (pi - theta) r², which vanishes for two
-    capsules end to end on one axis. Ends whose centres lie apart, being spheres of one radius, meet
-    in a circle at most.
+    capsules end to end on one axis: a lune no wider than TOL, (pi - theta) r, is none, as a capsule
+    chain whose axes are written to a few decimals leaves theta a hair short of pi. Ends whose
+    centres lie apart, being spheres of one radius, meet in a circle at most.
     """
     r = model.geom_size[g][0]
     if abs(r - model.geom_size[h][0]) > TOL:
@@ -310,10 +311,11 @@ def _cap_hit(model, data, g, h) -> tuple[np.ndarray, float] | None:
             if np.linalg.norm(pg - ph) > TOL:
                 continue
             if not ag.any() or not ah.any():
-                area = 2 * math.pi * r * r
+                lune = math.pi
             else:
-                area = 2 * (math.pi - math.acos(float(np.clip(ag @ ah, -1.0, 1.0)))) * r * r
-            if area > TOL * TOL and (best is None or area > best[1]):
+                lune = math.pi - math.acos(float(np.clip(ag @ ah, -1.0, 1.0)))
+            area = 2 * lune * r * r
+            if lune * r > TOL and (best is None or area > best[1]):
                 best = (pg.copy(), area)
     return best
 

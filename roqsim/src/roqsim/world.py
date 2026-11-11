@@ -146,8 +146,9 @@ def _add_ground_and_light(spec: mujoco.MjSpec, size: float) -> None:
     light.specular = [0.1, 0.1, 0.1]
 
 
-#: Wall thickness (m) and height (m). Walls are tall enough to sit above a standing humanoid's lidar
-#: (~1.1 m) so the scan actually returns the walls rather than passing over them.
+#: Wall thickness (m) and height (m; the y walls are _CORNER_INSET lower). Walls are tall enough to
+#: sit above a standing humanoid's lidar (~1.1 m) so the scan actually returns the walls rather than
+#: passing over them.
 _WALL_THICKNESS = 0.1
 _WALL_HEIGHT = 2.0
 #: m: how far a wall's end and the y walls' tops stay inside the wall they meet at a corner.
