@@ -214,6 +214,18 @@ def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, mon
     sim.shutdown()
 
 
+def test_scenario_adapter_step_before_reset_raises_and_builds_nothing(tmp_path: Path):
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    with pytest.raises(RuntimeError, match=r"call reset\(\) first"):
+        sim.step()
+    assert sim.context is None
+    sim.reset()
+    sim.step()
+    assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
+    sim.shutdown()
+
+
 def test_scenario_adapter_records_each_scenario_into_its_own_directory(tmp_path: Path, monkeypatch):
     """A reset() told the scenario's output directory finishes the recording before it and
     starts one there; a reset() in the same directory is a reset within that recording."""

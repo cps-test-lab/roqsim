@@ -453,7 +453,7 @@ class Engine:
             # load here, naming it, rather than at its first frame.
             self.ctx.render.check()
             # Last, once every plugin has written its part: a world inspected before its first reset
-            # or step -- a geometry check, an export, a test -- reads body, geom, site and camera
+            # -- a geometry check, an export, a test -- reads body, geom, site and camera
             # poses, sensor data and contacts of the initial state, not MjData's zeros, which put
             # every part at the origin. No time passes, and reset() starts from mj_resetData.
             mujoco.mj_forward(self.ctx.model, self.ctx.data)
