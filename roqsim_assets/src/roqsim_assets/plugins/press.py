@@ -153,7 +153,9 @@ class PressPlugin(MachinePlugin):
 
         box(press, "base", [0.35, 0.3, table / 2], [0, 0, table / 2], _GREY)
         box(press, "die", [0.12, 0.12, 0.02], [0, 0, table + 0.02], _STEEL)
-        box(press, "column", [0.08, 0.22, 0.45], [-0.27, 0, head_bottom - 0.05], _GREY)
+        # Parts that meet keep a 1 mm step between their faces: two faces in one plane flicker in
+        # every render as the camera moves (roqsim_assets.shared_faces).
+        box(press, "column", [0.0795, 0.22, 0.45], [-0.2695, 0, head_bottom - 0.05], _GREY)
         box(press, "head", [0.33, 0.24, 0.12], [-0.02, 0, head_bottom + 0.12], _GREY)
         box(press, "accent", [0.005, 0.2, 0.03], [0.315, 0, head_bottom + 0.15], _ACCENT, False)
         box(press, "foot", [0.4, 0.34, 0.02], [0, 0, 0.02], _DARK)
@@ -175,12 +177,12 @@ class PressPlugin(MachinePlugin):
             box(
                 door,
                 f"door_edge_{side + 1}",
-                [0.012, 0.02, half],
+                [0.012, 0.019, half - 0.002],
                 [0, side * 0.23, 0],
                 _YELLOW,
                 False,
             )
-        box(door, "door_edge_bottom", [0.012, 0.25, 0.015], [0, 0, -half + 0.015], _YELLOW, False)
+        box(door, "door_edge_bottom", [0.011, 0.248, 0.015], [0, 0, -half + 0.016], _YELLOW, False)
         press.add_site(
             name="die_zone",
             type=mujoco.mjtGeom.mjGEOM_BOX,
