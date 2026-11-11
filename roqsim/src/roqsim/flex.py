@@ -302,9 +302,11 @@ def spec_flex_body_names(flex) -> list[str]:
 # treats it, each measured in ``tests/test_flex_models.py`` (6: ``roqsim_sensors``'
 # ``tests/test_force_torque_flex.py``):
 #
-# 4. **``MjSpec.attach`` silently drops a flex pinned to the attached model's world body.** A
-#    top-level ``<flexcomp>`` with a ``<pin>`` names ``world`` as its pin body, and the spec it is
-#    attached into has no flex at all. :func:`lift_top_level_flexes` gives it a body to be pinned to.
+# 4. **``MjSpec.attach`` keeps a flex pinned to the attached model's world body pinned to the
+#    world.** A top-level ``<flexcomp>`` with a ``<pin>`` names ``world`` as its pin body, and after
+#    the attach its pinned vertices are on the world body of the spec it is attached into, however
+#    the frame it is attached at moves -- a tool's pad would hang in space while the arm moved on.
+#    :func:`lift_top_level_flexes` gives it a body of its own to be pinned to.
 # 5. **A mesh or gmsh ``<flexcomp>`` reads its ``file`` while the model is parsed**, against the
 #    model's own directory and ``<compiler meshdir>``, and leaves no mesh asset behind. So
 #    :func:`roqsim.models.apply_assets` never sees it, and the directories a manifest borrows
@@ -366,7 +368,7 @@ def lift_top_level_flexes(child: mujoco.MjSpec, root_name: str) -> mujoco.MjSpec
 
     A ``<flexcomp>`` written directly under ``<worldbody>`` leaves a model with no body of its own:
     its vertex bodies are top-level, so the first of them would pass for the model's root, and a
-    pinned one names ``world``, which ``MjSpec.attach`` drops with the flex (rule 4 above). The
+    pinned one names ``world``, which ``MjSpec.attach`` leaves on the world (rule 4 above). The
     returned spec holds a body named *root_name* at the origin, with no joint, carrying what the
     world body carried; a ``world`` pin now names that body, which is where the pinned vertices
     were. A model with no such flex is returned unchanged, so nothing else gains a body.

@@ -1138,8 +1138,8 @@ prop needs around it:
   that body's pose, whichever ``motion`` it has: the pad below, spawned ``static``, is a mat welded
   where it is placed.
 * **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
-  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
-  that flex outright).
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would leave
+  it pinned to the world, wherever the prop is placed).
 * **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
   ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
   the flex, where its contacts combine it with the other side's by priority (below).
