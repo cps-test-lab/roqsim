@@ -1,0 +1,224 @@
+"""Drawn parts showing a face in one place: what roqsim_assets.shared_faces finds, what it leaves
+alone, what it refuses to pass, and how inspect-prop reports it."""
+
+import json
+from pathlib import Path
+
+import mujoco
+import pytest
+
+from roqsim_assets.cli import inspect_prop
+from roqsim_assets.shared_faces import UncomparableGeoms, shared_faces
+
+
+def _model(body: str, asset: str = "") -> mujoco.MjModel:
+    return mujoco.MjModel.from_xml_string(
+        f"<mujoco><asset>{asset}</asset><worldbody>{body}</worldbody></mujoco>"
+    )
+
+
+#: A 0.2 m cube on the floor, and a slab ``b`` overlapping its upper half from the side: their tops
+#: lie in one plane at z = 0.2, and so do their front and back faces (y = +-0.1).
+SLAB = '<geom name="b" type="box" size="0.1 0.1 0.05" pos="0.15 0 0.15" {extra}/>'
+CUBE = '<geom name="a" type="box" size="0.1 0.1 0.1" pos="0 0 0.1"/>'
+
+
+def _boxes(second: str = "") -> mujoco.MjModel:
+    return _model(CUBE + SLAB.format(extra=second))
+
+
+def test_two_boxes_showing_a_top_in_one_plane_are_found_with_where_they_touch():
+    (pair,) = shared_faces(_boxes())
+    assert (pair.first, pair.second, pair.kind) == ("a", "b", "plane")
+    # The tops share x in [0.05, 0.1] by the full 0.2 m depth, the larger of the planes they share.
+    assert pair.direction == pytest.approx((0, 0, 1))
+    assert pair.at == pytest.approx((0.075, 0, 0.2), abs=1e-9)
+    assert pair.area == pytest.approx(0.05 * 0.2)
+
+
+def test_a_part_inset_by_a_millimetre_shows_no_face_in_the_others_plane():
+    # b moved 1 mm in from every face it shared with a: the top, the front and the back.
+    inset = '<geom name="b" type="box" size="0.1 0.099 0.0495" pos="0.15 0 0.1495"/>'
+    assert shared_faces(_model(CUBE + inset)) == []
+
+
+def test_boxes_pressed_back_to_back_are_hidden_and_pass():
+    stacked = _model(
+        '<geom name="a" type="box" size="0.1 0.1 0.1" pos="0 0 0.1"/>'
+        '<geom name="b" type="box" size="0.05 0.05 0.05" pos="0 0 0.25"/>'
+    )
+    assert shared_faces(stacked) == []
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    ['group="3"', 'group="4"', 'rgba="1 0 0 0"'],
+    ids=["collision group", "hidden group", "alpha 0"],
+)
+def test_a_part_no_render_shows_may_share_a_face(hidden):
+    assert shared_faces(_boxes(second=hidden)) == []
+
+
+def test_a_material_s_alpha_counts_where_the_geom_keeps_the_default_colour():
+    asset = '<material name="clear" rgba="1 1 1 0"/>'
+    body = (
+        '<geom name="a" type="box" size="0.1 0.1 0.1" pos="0 0 0.1"/>'
+        '<geom name="b" type="box" size="0.1 0.1 0.1" pos="0.15 0 0.1" material="clear"/>'
+    )
+    assert shared_faces(_model(body, asset)) == []
+    tinted = body.replace('material="clear"', 'material="clear" rgba="1 0 0 1"')
+    assert len(shared_faces(_model(tinted, asset))) == 1
+
+
+def test_a_cylinder_end_flush_with_a_box_top_is_found_and_one_set_into_it_is_not():
+    flush = _model(
+        '<geom name="box" type="box" size="0.2 0.2 0.1" pos="0 0 0.1"/>'
+        '<geom name="post" type="cylinder" size="0.05 0.1" pos="0 0 0.1"/>'
+    )
+    (pair,) = shared_faces(flush)
+    assert pair.kind == "plane" and pair.direction == pytest.approx((0, 0, 1))
+    assert pair.at == pytest.approx((0, 0, 0.2), abs=1e-9)
+    sunk = _model(
+        '<geom name="box" type="box" size="0.2 0.2 0.1" pos="0 0 0.1"/>'
+        '<geom name="post" type="cylinder" size="0.05 0.0995" pos="0 0 0.0995"/>'
+    )
+    assert shared_faces(sunk) == []
+
+
+def test_coaxial_cylinder_and_capsule_of_one_radius_share_their_side():
+    (pair,) = shared_faces(
+        _model(
+            '<geom name="tube" type="cylinder" size="0.03 0.2" pos="0 0 0.5" euler="0 90 0"/>'
+            '<geom name="grip" type="capsule" size="0.03 0.05" pos="0.1 0 0.5" euler="0 90 0"/>'
+        )
+    )
+    assert pair.kind == "cylinder" and abs(pair.direction[0]) == pytest.approx(1)
+    thinner = '<geom type="capsule" size="0.029 0.05" pos="0.1 0 0.5" euler="0 90 0"/>'
+    tube = '<geom type="cylinder" size="0.03 0.2" pos="0 0 0.5" euler="0 90 0"/>'
+    assert shared_faces(_model(tube + thinner)) == []
+
+
+#: A unit cube as an OBJ, its faces wound counter-clockwise seen from outside.
+CUBE_OBJ = """v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+v 0 0 1
+v 1 0 1
+v 1 1 1
+v 0 1 1
+f 1 3 2
+f 1 4 3
+f 5 6 7
+f 5 7 8
+f 1 2 6
+f 1 6 5
+f 2 3 7
+f 2 7 6
+f 3 4 8
+f 3 8 7
+f 4 1 5
+f 4 5 8
+"""
+
+
+def test_a_mesh_face_in_a_box_face_s_plane_is_found(tmp_path):
+    (tmp_path / "cube.obj").write_text(CUBE_OBJ)
+    xml = tmp_path / "m.xml"
+    xml.write_text(
+        '<mujoco><compiler meshdir="."/><asset><mesh name="cube" file="cube.obj" scale="0.2 0.2 0.2"/>'
+        '</asset><worldbody><geom name="mesh" type="mesh" mesh="cube"/>'
+        '<geom name="lid" type="box" size="0.05 0.05 0.05" pos="0.1 0.1 0.15"/>'
+        "</worldbody></mujoco>"
+    )
+    (pair,) = shared_faces(mujoco.MjModel.from_xml_path(str(xml)))
+    # The lid's top is at 0.2 like the mesh's, both facing up -- outward by the mesh's winding.
+    assert (pair.first, pair.second) == ("mesh", "lid")
+    assert pair.direction == pytest.approx((0, 0, 1))
+    assert pair.area == pytest.approx(0.1 * 0.1)
+
+
+def test_a_sphere_against_a_capsule_of_its_radius_is_not_passed():
+    model = _model(
+        '<geom name="a" type="box" size="0.1 0.1 0.1" pos="0 0 0.1"/>'
+        '<geom name="b" type="box" size="0.1 0.1 0.1" pos="0.15 0 0.1"/>'
+        '<geom name="joint" type="sphere" size="0.02" pos="0 0 1"/>'
+        '<geom name="limb" type="capsule" size="0.02 0.1" pos="0 0 1.1"/>'
+    )
+    with pytest.raises(UncomparableGeoms) as raised:
+        shared_faces(model)
+    assert [p[:2] for p in raised.value.pairs] == [("joint", "limb")]
+    assert [(f.first, f.second) for f in raised.value.found] == [("a", "b")]
+
+
+def test_an_ellipsoid_touching_another_round_part_is_not_passed_and_one_apart_is_ignored():
+    touching = '<geom type="ellipsoid" size="0.1 0.1 0.2"/><geom type="sphere" size="0.1"/>'
+    with pytest.raises(UncomparableGeoms, match="ellipsoid"):
+        shared_faces(_model(touching))
+    apart = (
+        '<geom type="ellipsoid" size="0.1 0.1 0.2"/><geom type="sphere" size="0.1" pos="1 0 0"/>'
+    )
+    assert shared_faces(_model(apart)) == []
+
+
+def _prop(tmp_path: Path, body: str) -> Path:
+    """A finalized, credited prop folder whose MJCF is ``body``."""
+    prop = tmp_path / "panel"
+    prop.mkdir()
+    (prop / "panel.obj").write_text(CUBE_OBJ)
+    (prop / "CREDITS.txt").write_text("panel\nlicensed under CC0 (cc0)\n")
+    (prop / "panel.xml").write_text(
+        '<mujoco model="panel"><compiler meshdir="."/><asset>'
+        '<mesh name="panel" file="panel.obj" scale="0.2 0.2 0.2"/></asset>'
+        f'<worldbody><body name="panel"><geom name="shell" type="mesh" mesh="panel"/>{body}'
+        "</body></worldbody></mujoco>"
+    )
+    return prop
+
+
+def test_inspect_prop_fails_a_prop_with_a_shared_face_and_says_where(tmp_path, capsys):
+    prop = _prop(
+        tmp_path, '<geom name="badge" type="box" size="0.02 0.05 0.05" pos="0.1 0.1 0.15"/>'
+    )
+    with pytest.raises(SystemExit) as code:
+        inspect_prop.main([str(prop)])
+    assert code.value.code == 5
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if "shared_faces" in ln)
+    assert "[FAIL]" in line and "shell / badge" in line and "inset the touching part" in line
+
+    with pytest.raises(SystemExit):
+        inspect_prop.main([str(prop), "--json"])
+    (check,) = [
+        c for c in json.loads(capsys.readouterr().out)["checks"] if c["check"] == "shared_faces"
+    ]
+    assert check["status"] == "FAIL" and check["not_compared"] == []
+    (pair,) = check["pairs"]
+    assert (pair["first"], pair["second"], pair["kind"]) == ("shell", "badge", "plane")
+    assert pair["at"][2] == pytest.approx(0.2)
+
+
+def test_inspect_prop_passes_the_part_once_inset(tmp_path, capsys):
+    prop = _prop(
+        tmp_path, '<geom name="badge" type="box" size="0.02 0.05 0.0495" pos="0.1 0.1 0.15"/>'
+    )
+    with pytest.raises(SystemExit) as code:
+        inspect_prop.main([str(prop), "--json"])
+    (check,) = [
+        c for c in json.loads(capsys.readouterr().out)["checks"] if c["check"] == "shared_faces"
+    ]
+    assert check["status"] == "PASS" and code.value.code == 0
+
+
+def test_inspect_prop_fails_a_pair_it_cannot_compare(tmp_path, capsys):
+    prop = _prop(
+        tmp_path,
+        '<geom name="knob" type="sphere" size="0.01" pos="0.1 0.1 0.5"/>'
+        '<geom name="lever" type="capsule" size="0.01 0.05" pos="0.1 0.1 0.55"/>',
+    )
+    with pytest.raises(SystemExit) as code:
+        inspect_prop.main([str(prop), "--json"])
+    (check,) = [
+        c for c in json.loads(capsys.readouterr().out)["checks"] if c["check"] == "shared_faces"
+    ]
+    assert code.value.code == 5 and check["status"] == "FAIL" and check["pairs"] == []
+    assert [(p["first"], p["second"]) for p in check["not_compared"]] == [("knob", "lever")]
