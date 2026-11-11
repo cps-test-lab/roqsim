@@ -76,12 +76,20 @@ the classic renderer: a default environment light, the headlight (``visual/headl
          shadows: true          # draw shadows (their kind: the model's filament.shadows.type)
          post_processing: true  # tone mapping, grading, ambient occlusion, anti-aliasing, bloom
          reflections: true
+         colour_textures: srgb  # a colour texture left at colorspace="auto" is read as sRGB, as
+                                # the classic renderer shows it; `model`: as MuJoCo reads it (linear)
          software: false        # allow a CPU rasteriser where a GPU was given
 
 It gives colour, depth and segmentation through pinhole, orthographic and free cameras, an off-centre
 principal point, non-square pixels and a camera's own geom groups. It does not draw MuJoCo
 decorations or the moving bodies alone, and a camera asking for either is refused at load.
 
+- **Colour textures look as they do under the classic renderer.** The classic renderer shows a
+  texture's bytes as display colours, and MuJoCo reads a texture whose ``colorspace`` is ``auto``
+  as linear unless its file says otherwise; Filament honours that, and would draw such a texture
+  lighter and paler than the same colour given as ``rgba``. So a material's colour texture left
+  at ``auto`` is read as sRGB; set ``colorspace`` on a texture to choose, or
+  ``colour_textures: model`` for MuJoCo's own reading.
 - **It needs Vulkan.** It runs headless through Vulkan, never through EGL or a display: in a container
   the GPU's Vulkan driver must be mounted (for NVIDIA the ``graphics`` driver capability). Where no
   Vulkan context opens, the world fails to load with Filament's own words. A process given an NVIDIA

@@ -48,6 +48,9 @@ What this module adds is roqsim's contract (:mod:`roqsim.render_api`):
   linearised to metres along the view axis, ``inf`` where nothing was drawn; segmentation is read
   as Filament's ids (an object's renderable's ``segmentation_id``, 0 for the background) and turned
   into ``(object id, mjtObj type)`` from the renderables themselves.
+* **Colour textures as the classic renderer shows them.** A material's colour texture whose
+  colorspace the model leaves at ``auto`` is read as sRGB, as its ``rgba`` colours are, on the
+  renderer's own copy of the model (``colour_textures``; :func:`colour_textures_left_auto`).
 * **The camera MuJoCo would draw**, from ``mjv_camera2GLCamera``, with the camera's own clip planes.
 
 What it does not do: MuJoCo decorations (``mjvGeom`` markers), the moving bodies alone. A camera
@@ -56,6 +59,7 @@ that asks for either is refused when the world loads (:attr:`FilamentRenderer.ca
 
 from __future__ import annotations
 
+import copy
 import ctypes
 import dataclasses
 import logging
@@ -172,6 +176,30 @@ def check_device(device: str, allow_software: bool) -> None:
     )
 
 
+#: The roles in which a material's texture is a colour, read as one (``mjtTextureRole``).
+_COLOUR_ROLES = (
+    mujoco.mjtTextureRole.mjTEXROLE_RGB,
+    mujoco.mjtTextureRole.mjTEXROLE_RGBA,
+    mujoco.mjtTextureRole.mjTEXROLE_EMISSIVE,
+)
+
+
+def colour_textures_left_auto(model: mujoco.MjModel) -> np.ndarray:
+    """The ids of the textures some material uses as a colour whose colorspace is ``auto``.
+
+    MuJoCo reads such a texture as linear unless its file says otherwise, and the classic renderer
+    shows its bytes as display values whatever it says; a world authored under it has display
+    (sRGB) colours in them. Filament honours the colourspace, so read as linear they are drawn
+    lighter and paler than the same colour as an ``rgba``, which it reads as sRGB.
+    """
+    if not model.nmat or not model.ntex:
+        return np.zeros(0, dtype=int)
+    ids = np.asarray(model.mat_texid)[:, [int(r) for r in _COLOUR_ROLES]].ravel()
+    ids = np.unique(ids[ids >= 0])
+    auto = np.asarray(model.tex_colorspace)[ids] == int(mujoco.mjtColorSpace.mjCOLORSPACE_AUTO)
+    return ids[auto]
+
+
 def _custom_numeric(model: mujoco.MjModel, name: str) -> np.ndarray | None:
     i = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_NUMERIC, name)
     if i < 0:
@@ -284,6 +312,14 @@ class FilamentRenderer(Renderer):
             "change from frame to frame)",
         ),
         "reflections": Setting(True, "draw the reflections of materials with a reflectance"),
+        "colour_textures": Setting(
+            "srgb",
+            "how a colour texture (a material's rgb, rgba or emissive) whose colorspace the model "
+            "leaves at auto is read: srgb, as the classic renderer shows it and as rgba colours "
+            "are read; model, as MuJoCo reads it (linear unless the image file says otherwise), "
+            "which draws it lighter and paler than the same colour as rgba. An explicit "
+            "colorspace is always honoured",
+        ),
         "software": Setting(
             False,
             "allow a CPU rasteriser (lavapipe) in a process that was given an NVIDIA GPU; "
@@ -303,7 +339,13 @@ class FilamentRenderer(Renderer):
     def validate_config(cls, settings, base_dir=None) -> list[str]:
         errors = super().validate_config(settings, base_dir)
         if isinstance(settings, Mapping):
+            if settings.get("colour_textures", "srgb") not in ("srgb", "model"):
+                errors.append(
+                    f"'colour_textures' must be srgb or model, got {settings['colour_textures']!r}"
+                )
             for key in cls.SETTINGS:
+                if key == "colour_textures":
+                    continue
                 if key in settings and not isinstance(settings[key], bool):
                     errors.append(f"{key!r} must be true or false, got {settings[key]!r}")
         return errors
@@ -346,8 +388,16 @@ class FilamentRenderer(Renderer):
             ) from err
         self._mjrf = mjrf
         model = scene.model
-        self.model = model
         self._private = bool(scene.private_model)
+        colour = colour_textures_left_auto(model)
+        if len(colour) and self.settings.get("colour_textures", "srgb") == "srgb":
+            if not self._private:
+                # A copy of its own, which this renderer may write; the runtime values come with
+                # each snapshot, as for a renderer off the physics thread.
+                model = copy.copy(model)
+                self._private = True
+            model.tex_colorspace[colour] = int(mujoco.mjtColorSpace.mjCOLORSPACE_SRGB)
+        self.model = model
         self._thread = threading.get_ident()
         self._ctx = borrow()
         clear = _custom_numeric(model, "filament.clear_color")

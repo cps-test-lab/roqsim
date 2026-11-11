@@ -108,6 +108,7 @@ def test_a_frame_is_a_function_of_the_state_only_without_post_processing():
 
 def test_settings_are_booleans_and_known_keys():
     assert FilamentRenderer.validate_config({"shadows": False, "software": True}) == []
+    assert "must be srgb or model" in FilamentRenderer.validate_config({"colour_textures": "x"})[0]
     errors = FilamentRenderer.validate_config({"shadows": "yes", "shadow": True})
     assert any("'shadows' must be true or false" in e for e in errors)
     assert any("unknown key 'shadow'" in e and "did you mean 'shadows'" in e for e in errors)
@@ -243,6 +244,42 @@ def test_colour_shows_the_scene(scene):
     assert (red[:, 0] > red[:, 1] + 40).mean() > 0.9, "the red box is drawn red"
     # Black where the model sets no colour, but for the dithering's level or two.
     assert rgb[0].max() <= 2, "the background is black where the model sets no colour"
+
+
+def _texture_and_rgba(colorspace="auto", settings=None):
+    """A colour as a flat texture and as an rgba, side by side; the two patches as Filament draws them."""
+    colour = "0.55 0.65 0.15"
+    model = mujoco.MjModel.from_xml_string(
+        f"""<mujoco><asset>
+        <texture name="t" type="2d" builtin="flat" rgb1="{colour}" width="16" height="16"
+                 colorspace="{colorspace}"/>
+        <material name="textured" texture="t"/><material name="plain" rgba="{colour} 1"/></asset>
+        <worldbody><light pos="0 0 3" dir="0 0 -1"/>
+        <geom type="box" pos="-.5 0 0" size=".4 .4 .01" material="textured"/>
+        <geom type="box" pos=".5 0 0" size=".4 .4 .01" material="plain"/>
+        <camera name="c" pos="0 0 2"/></worldbody></mujoco>"""
+    )
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    frame = FrameRenderer(model, 200, 100, camera="c", renderer="filament", settings=settings)
+    try:
+        rgb = frame.render(data).astype(int)
+    finally:
+        frame.close()
+    assert model.tex_colorspace[0] == {"auto": 0, "linear": 1, "sRGB": 2}[colorspace], "not written"
+    return rgb[40:60, 40:60].mean((0, 1)), rgb[40:60, 140:160].mean((0, 1))
+
+
+@needs_vulkan
+def test_a_colour_texture_is_drawn_as_the_same_colour_given_as_rgba():
+    textured, plain = _texture_and_rgba()
+    assert np.abs(textured - plain).max() < 4
+    # MuJoCo's own reading of `auto` (linear) draws it lighter and paler, and so does `linear`.
+    for linear in (
+        _texture_and_rgba(settings={"colour_textures": "model"})[0],
+        _texture_and_rgba("linear")[0],
+    ):
+        assert linear[2] > plain[2] + 30, "the blue of a linear lime is lifted"
 
 
 @needs_vulkan
