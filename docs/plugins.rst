@@ -1222,8 +1222,9 @@ parameter variation over ``components.block_material.young``. Four things to kno
   model's flexes, so the first run tells you the right one. Plugins build in YAML order, so it is
   declared after the component that brings the flex in -- the spawn, or the arm whose
   ``end_effector`` carries it.
-* **A key the flex would not read is refused**: a modulus on a cable, on a shell left at
-  ``elastic2d: none`` or on a rigid flex would run exactly as without it. ``elastic2d`` and
+* **A key the flex would not read is refused**: a modulus on a shell left at ``elastic2d: none``
+  or on a rigid flex would run exactly as without it, and one on a rope its MJCF leaves inelastic
+  would bend it but never twist it (the rope gets its twist joints while MuJoCo parses it, above). ``elastic2d`` and
   ``thickness`` can be set in the same block, so a shell can be made elastic here, and a flex made
   elastic here is integrated under ``discrete`` when ``sim.integrator`` is ``auto``.
 * **Write an exponent as** ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string --
@@ -1245,21 +1246,21 @@ weight.
 **roqsim check explains each flex**, from the compiled model and before any step. On the world
 above, its flex lines::
 
-   WARN  [flex-timestep] flex 'ur5e_pad': mode 1 (135 Hz) is under-resolved by the timestep (omega * timestep = 0.85, above 0.3), and so are modes 2 and 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
-         hint: set sim.timestep <= 0.000325 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
-   WARN  [flex-timestep] flex 'block': mode 3 (55.5 Hz) is under-resolved by the timestep (omega * timestep = 0.35, above 0.3); the damping ratio and frequency reported for it are not the ones that run: the discrete integrator distorts its dynamics, damping it less and ringing it slower than stated
-         hint: set sim.timestep <= 0.00086 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+   WARN  [flex-timestep] flex 'ur5e_pad': mode 1 (134 Hz) is under-resolved by the timestep (omega * timestep = 0.85, above 0.3), and so are modes 2 and 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
+         hint: set sim.timestep <= 0.000331 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+   WARN  [flex-timestep] flex 'block': mode 3 (54.9 Hz) is under-resolved by the timestep (omega * timestep = 0.34, above 0.3); the damping ratio and frequency reported for it are not the ones that run: the discrete integrator distorts its dynamics, damping it less and ringing it slower than stated
+         hint: set sim.timestep <= 0.000869 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
 
    model: 186 bodies, 38 geoms, 531 joints, 6 actuators, 0 sensors, 1 cameras
           timestep 0.001s, integrator discrete (auto: flex 'ur5e_pad' (elasticity), flex 'block' (elasticity))
 
    flexes (2):
      ur5e_pad  dim 3, 75 vertices, 192 elements, dof full, 25 pinned, on ur5e_pad (entity ur5e); elastic, no passive contact
-          modes 135*, 141*, 147* Hz; damping ratio 0.849*, 0.883*, 0.923* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
+          modes 134*, 139*, 144* Hz; damping ratio 0.845*, 0.874*, 0.906* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
           * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
           contact solref 0.004 1 (flex), floor 0.00100504 s
      block  dim 3, 125 vertices, 384 elements, dof full, 0 pinned, on block (entity block); elastic, no passive contact
-          modes 41.8, 41.8, 55.5* Hz; damping ratio 0.262, 0.262, 0.349* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
+          modes 41.7, 41.7, 54.9* Hz; damping ratio 0.262, 0.262, 0.345* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
           * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
           contact solref 0.004 1 (flex), floor 0.00100504 s
 
@@ -1276,7 +1277,7 @@ its hint. Here the pad's three modes and the block's third are starred at the 1 
 default 2 ms step the same world also warns ``flex-damping``, because the integrator's share of the
 damping passes half::
 
-   WARN  [flex-damping] flex 'block': numerical damping is 67% of its damping (zeta_1 = 0.394, of which 0.262 is the discrete integrator's timestep * omega / 2), so its ringing changes with sim.timestep
+   WARN  [flex-damping] flex 'block': numerical damping is 67% of its damping (zeta_1 = 0.393, of which 0.262 is the discrete integrator's timestep * omega / 2), so its ringing changes with sim.timestep
          hint: set sim.timestep <= 0.001 s (the flex's damping) to keep the integrator's share at most half, or raise <elasticity damping>
 
 (and the same for the pad, with every mode of both starred). The three flex warnings are
@@ -1310,7 +1311,7 @@ at ``omega * timestep`` 0.1, 2 % at 0.2, 4.4 % at 0.3, 11 % at 0.5 and 23 % at 0
 frequency by 0.5 %, 1.8 %, 3.8 %, 9 % and 20 %; at a fixed ``omega * timestep`` the shortfall grows
 with the damping ratio. On the block's first mode, at its own damping, the reported ratio held
 within 1 % at ``omega * timestep`` 0.13 and 3 % at 0.26, and 0.9 of it rang at 0.52. The pad's first
-mode is 135 Hz, so at a 1 ms step ``omega * timestep`` is 0.85: ``roqsim check`` reports a damping
+mode is 134 Hz, so at a 1 ms step ``omega * timestep`` is 0.85: ``roqsim check`` reports a damping
 ratio of 0.85, and a ring-down measures 0.65: a stiff, light flex at a coarse step is less damped
 than reported. ``roqsim check`` therefore takes 0.3 as the resolution limit -- at or below it, a
 mode damped at a ratio up to 0.3 rings within 5 % of both figures -- and stars and warns about
