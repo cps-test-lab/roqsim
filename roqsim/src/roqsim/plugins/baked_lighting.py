@@ -87,18 +87,28 @@ class BakedLightingPlugin(Plugin):
     """Draw a world's static geometry with its baked light (see the module docstring)."""
 
     CONFIG_SCHEMA = {
-        "path": Field(str, default="", doc="the bake's directory; default <mjcf stem>.bake beside the MJCF"),
+        "path": Field(
+            str, default="", doc="the bake's directory; default <mjcf stem>.bake beside the MJCF"
+        ),
         "require": Field(bool, default=False, doc="a missing or stale bake stops the world"),
         "quality": Field(str, default="default", choices=("default", "high"), doc="the preset"),
-        "texels_per_m": Field(dict, default=None, doc="light-map texels per metre: {shell, floor, props}"),
-        "samples": Field(int, default=0, minimum=0, doc="Cycles samples per texel (0: the preset's)"),
+        "texels_per_m": Field(
+            dict, default=None, doc="light-map texels per metre: {shell, floor, props}"
+        ),
+        "samples": Field(
+            int, default=0, minimum=0, doc="Cycles samples per texel (0: the preset's)"
+        ),
         "denoise": Field(bool, default=True, doc="Open Image Denoise over the passes"),
         "lights": Field((str, list), default="auto", doc="auto, or a list of lights"),
-        "emitters": Field(list, default=None, doc="lamps no material declares: [{match, strength_w_m2}]"),
+        "emitters": Field(
+            list, default=None, doc="lamps no material declares: [{match, strength_w_m2}]"
+        ),
         "exclude": Field(list, default=None, doc="static geoms (glob) left unbaked"),
         "occluders": Field(list, default=None, doc="moving geoms (glob) whose shadow is baked"),
         "moving_shadows": Field(bool, default=True, doc="the key light throws what moves' shadow"),
-        "max_mb": Field(float, default=5.0, minimum=0.0, unit="MB", doc="the bake's size cap on disk"),
+        "max_mb": Field(
+            float, default=5.0, minimum=0.0, unit="MB", doc="the bake's size cap on disk"
+        ),
     }
 
     def validate_config(self, config: dict) -> list[str]:
@@ -111,7 +121,7 @@ class BakedLightingPlugin(Plugin):
             errors.append(f"lights: 'auto' or a list of lights, not {lights!r}")
         elif isinstance(lights, list):
             errors += check_lights(lights)
-        for key in (config.get("texels_per_m") or {}):
+        for key in config.get("texels_per_m") or {}:
             if key not in CLASSES:
                 errors.append(f"texels_per_m.{key}: one of {CLASSES}")
         for i, e in enumerate(config.get("emitters") or []):
@@ -186,24 +196,41 @@ class BakedLightingPlugin(Plugin):
         else:
             problem = f"no bake at {self.root}"
         if meta is None:
-            self._weaker(ctx, "bake_missing", f"{problem}: the world is drawn unbaked", command,
-                         {"path": str(self.root)})
+            self._weaker(
+                ctx,
+                "bake_missing",
+                f"{problem}: the world is drawn unbaked",
+                command,
+                {"path": str(self.root)},
+            )
             return
         verdict = fp.compare(meta.get("fingerprint", {}), self.analysis.fingerprint)
         if verdict["status"] == "stale":
-            self._weaker(ctx, "bake_stale",
-                         f"the bake at {self.root} is stale ({'; '.join(verdict['reasons'])}): the world "
-                         "is drawn unbaked", command,
-                         {"path": str(self.root), "reasons": verdict["reasons"],
-                          "changed": verdict["changed"][:50], "added": verdict["added"][:50]})
+            self._weaker(
+                ctx,
+                "bake_stale",
+                f"the bake at {self.root} is stale ({'; '.join(verdict['reasons'])}): the world "
+                "is drawn unbaked",
+                command,
+                {
+                    "path": str(self.root),
+                    "reasons": verdict["reasons"],
+                    "changed": verdict["changed"][:50],
+                    "added": verdict["added"][:50],
+                },
+            )
             return
         self._compose(spec, ctx, meta, verdict, t0)
 
     def _weaker(self, ctx, code: str, message: str, command: str, details: dict) -> None:
         if self.config.get("require", False):
-            raise PluginError(f"{self.address}: {message.split(': the world')[0]}; `require: true` "
-                              f"stops the world -- bake it: {command}")
-        raise_condition(ctx, source=self.address, code=code, message=message, fix=command, details=details)
+            raise PluginError(
+                f"{self.address}: {message.split(': the world')[0]}; `require: true` "
+                f"stops the world -- bake it: {command}"
+            )
+        raise_condition(
+            ctx, source=self.address, code=code, message=message, fix=command, details=details
+        )
 
     def _compose(self, spec, ctx, meta: dict, verdict: dict, t0: float) -> None:
         from ..bake import fingerprint as fp
@@ -213,21 +240,39 @@ class BakedLightingPlugin(Plugin):
         d = mujoco.MjData(m)
         mujoco.mj_forward(m, d)
         try:
-            stats = compose(spec, self.analysis, d, self.root, meta,
-                            moving_shadows=bool(self.config.get("moving_shadows", True)))
+            stats = compose(
+                spec,
+                self.analysis,
+                d,
+                self.root,
+                meta,
+                moving_shadows=bool(self.config.get("moving_shadows", True)),
+            )
         except ComposeError as err:
-            self._weaker(ctx, "bake_stale", f"the bake at {self.root} does not fit the world ({err}): "
-                         "the world is drawn unbaked", self.bake_command(ctx), {"path": str(self.root)})
+            self._weaker(
+                ctx,
+                "bake_stale",
+                f"the bake at {self.root} does not fit the world ({err}): "
+                "the world is drawn unbaked",
+                self.bake_command(ctx),
+                {"path": str(self.root)},
+            )
             return
         self.compose_stats = stats
         if verdict["status"] == "partial":
             raise_condition(
-                ctx, source=self.address, code="bake_partial", level="info",
+                ctx,
+                source=self.address,
+                code="bake_partial",
+                level="info",
                 message=f"{len(verdict['missing'])} baked geom(s) are not in this world (drawn baked: the rest)",
                 details={"missing": verdict["missing"][:50]},
             )
         raise_condition(
-            ctx, source=self.address, code="bake_used", level="info",
+            ctx,
+            source=self.address,
+            code="bake_used",
+            level="info",
             message=f"drawn with the bake at {self.root}",
             details={
                 "path": str(self.root),

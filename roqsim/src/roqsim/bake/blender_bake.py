@@ -46,7 +46,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 argv = sys.argv[sys.argv.index("--") + 1 :]
-opts = dict(zip(argv[0::2], argv[1::2]))
+opts = dict(zip(argv[0::2], argv[1::2], strict=True))
 WORK, OUT = Path(opts["--work"]), Path(opts["--out"])
 ENTITIES = [e for e in opts["--entities"].split(",") if e]
 DEVICE = opts.get("--device", "CPU").upper()
@@ -87,7 +87,9 @@ else:
     try:
         prefs.compute_device_type = DEVICE
     except TypeError:
-        print(f"roqsim-bake: this Blender knows no {DEVICE} device type; --device cpu bakes on the CPU")
+        print(
+            f"roqsim-bake: this Blender knows no {DEVICE} device type; --device cpu bakes on the CPU"
+        )
         sys.exit(3)
     prefs.get_devices()
     for dev in prefs.devices:
@@ -235,10 +237,13 @@ for i, L in enumerate(man["light"]["lights"]):
     if "dir" in L:
         # A light points down its -z: turn -z onto the light's direction.
         lo.rotation_mode = "QUATERNION"
-        lo.rotation_quaternion = Vector((0, 0, -1)).rotation_difference(Vector(L["dir"]).normalized())
+        lo.rotation_quaternion = Vector((0, 0, -1)).rotation_difference(
+            Vector(L["dir"]).normalized()
+        )
     elif t == "area":
         lo.rotation_euler = (0.0, 0.0, math.radians(L.get("yaw_deg", 0.0)))
     scene.collection.objects.link(lo)
+
 
 # Every surface a ray can meet, for the tests below: the entities, the occluders.
 def bvh_of(obs):
@@ -255,8 +260,12 @@ if man["emitters"]:
     z = np.load(WORK / "emitters.npz")
     src = z["source"]
     keys = sorted(set(int(s) for s in src))
-    emats = [emission_material(f"emitter{k}", man["emitters"][k]["colour"], man["emitters"][k]["strength_w_m2"])
-             for k in keys]
+    emats = [
+        emission_material(
+            f"emitter{k}", man["emitters"][k]["colour"], man["emitters"][k]["strength_w_m2"]
+        )
+        for k in keys
+    ]
     dark = make_material(len(materials) + 1, {"rgba": [0.05, 0.05, 0.05, 1]})
     surfaces = bvh_of([o for o in scene.objects if o.type == "MESH"])
     pos = z["pos"].astype(np.float64)
@@ -266,7 +275,9 @@ if man["emitters"]:
     backed = np.zeros(len(pos), bool)
     if surfaces is not None:
         for i in range(len(pos)):
-            hit = surfaces.ray_cast(Vector(centre[i] + fn[i] * 1e-4), Vector(fn[i]), EMITTER_BACKING)
+            hit = surfaces.ray_cast(
+                Vector(centre[i] + fn[i] * 1e-4), Vector(fn[i]), EMITTER_BACKING
+            )
             backed[i] = hit[0] is not None
     mat_index = np.array([keys.index(int(s)) for s in src])
     mat_index[backed] = len(keys)
@@ -300,16 +311,26 @@ def oidn():
         names += glob.glob(str(base / "*OpenImageDenoise*"))
     names = [n for n in names if "core" not in n and "device" not in n]
     if not names:
-        print(f"roqsim-bake: Open Image Denoise not found beside {bpy.app.binary_path}; `denoise: false` bakes without it")
+        print(
+            f"roqsim-bake: Open Image Denoise not found beside {bpy.app.binary_path}; `denoise: false` bakes without it"
+        )
         sys.exit(4)
     lib = ctypes.CDLL(sorted(names, key=len)[0])
     lib.oidnNewDevice.restype = ctypes.c_void_p
     lib.oidnNewFilter.restype = ctypes.c_void_p
     lib.oidnNewFilter.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
     lib.oidnCommitDevice.argtypes = [ctypes.c_void_p]
-    lib.oidnSetSharedFilterImage.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_int,
-                                             ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
-                                             ctypes.c_size_t]
+    lib.oidnSetSharedFilterImage.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
     lib.oidnSetFilterBool.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
     lib.oidnCommitFilter.argtypes = [ctypes.c_void_p]
     lib.oidnExecuteFilter.argtypes = [ctypes.c_void_p]
@@ -351,7 +372,9 @@ def uv_array(layer):
 
 def check_uv(name, layer, step):
     a = uv_array(layer)
-    if not (np.isfinite(a).all() and a.min() > -1e-4 and a.max() < 1 + 1e-4 and a.max() - a.min() > 0.05):
+    if not (
+        np.isfinite(a).all() and a.min() > -1e-4 and a.max() < 1 + 1e-4 and a.max() - a.min() > 0.05
+    ):
         sys.exit(f"roqsim-bake: {name}: the lightmap UVs after {step} span {a.min()}..{a.max()}")
 
 
@@ -366,8 +389,15 @@ def pack(margin):
     bpy.ops.mesh.select_all(action="SELECT")
     for _ in range(2):
         bpy.ops.uv.select_all(action="SELECT")
-        bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=True, scale=True, merge_overlap=False,
-                                margin_method="ADD", margin=margin, shape_method="CONCAVE")
+        bpy.ops.uv.pack_islands(
+            udim_source="CLOSEST_UDIM",
+            rotate=True,
+            scale=True,
+            merge_overlap=False,
+            margin_method="ADD",
+            margin=margin,
+            shape_method="CONCAVE",
+        )
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
@@ -396,8 +426,15 @@ def uv_islands(vid, uv):
 
 
 def small_islands(lab, uv, size, skip):
-    area = np.abs((uv[:, 1, 0] - uv[:, 0, 0]) * (uv[:, 2, 1] - uv[:, 0, 1])
-                  - (uv[:, 2, 0] - uv[:, 0, 0]) * (uv[:, 1, 1] - uv[:, 0, 1])) / 2 * size * size
+    area = (
+        np.abs(
+            (uv[:, 1, 0] - uv[:, 0, 0]) * (uv[:, 2, 1] - uv[:, 0, 1])
+            - (uv[:, 2, 0] - uv[:, 0, 0]) * (uv[:, 1, 1] - uv[:, 0, 1])
+        )
+        / 2
+        * size
+        * size
+    )
     out = {}
     for isl in np.unique(lab):
         t = lab == isl
@@ -431,8 +468,13 @@ def layout(name, ob, size, shrink_unseen):
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     # No margin here: Smart UV Project spends it per island; Pack Islands keeps it.
-    bpy.ops.uv.smart_project(angle_limit=math.radians(ANGLE_DEG), island_margin=0.0, area_weight=0.0,
-                             correct_aspect=True, scale_to_bounds=False)
+    bpy.ops.uv.smart_project(
+        angle_limit=math.radians(ANGLE_DEG),
+        island_margin=0.0,
+        area_weight=0.0,
+        correct_aspect=True,
+        scale_to_bounds=False,
+    )
     bpy.ops.object.mode_set(mode="OBJECT")
     uv2 = me.uv_layers["lightmap"]  # leaving edit mode reallocates the layers
     check_uv(name, uv2, "smart project")
@@ -479,8 +521,13 @@ def layout(name, ob, size, shrink_unseen):
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.object.mode_set(mode="OBJECT")
     check_uv(name, me.uv_layers["lightmap"], "packing")
-    info.update({"islands": int(uv_islands(vid, uv_array(me.uv_layers["lightmap"])).max() + 1),
-                 "islands_enlarged": enlarged, "unseen_faces": len(unseen)})
+    info.update(
+        {
+            "islands": int(uv_islands(vid, uv_array(me.uv_layers["lightmap"])).max() + 1),
+            "islands_enlarged": enlarged,
+            "unseen_faces": len(unseen),
+        }
+    )
     return info
 
 
@@ -503,8 +550,14 @@ def bake_pass(ob, size, kind, **kw):
     img = bpy.data.images.new(f"{ob.name}_{kind}", size, size, float_buffer=True, alpha=False)
     img.colorspace_settings.name = "Non-Color"
     target(ob, img)
-    bpy.ops.object.bake(margin=16, margin_type="EXTEND", use_clear=True, target="IMAGE_TEXTURES",
-                        uv_layer="lightmap", **kw)
+    bpy.ops.object.bake(
+        margin=16,
+        margin_type="EXTEND",
+        use_clear=True,
+        target="IMAGE_TEXTURES",
+        uv_layer="lightmap",
+        **kw,
+    )
     px = np.empty(size * size * 4, np.float32)
     img.pixels.foreach_get(px)
     bpy.data.images.remove(img)
@@ -559,7 +612,13 @@ for ename in ENTITIES:
         flip_normals(ob)
         t.update(passes(ename, ob, size, "_back"))
         flip_normals(ob)
-    timing["entities"][ename] = {"size": size, "uv_s": t_uv, "bake_s": t, "faces": len(ob.data.polygons), **info}
+    timing["entities"][ename] = {
+        "size": size,
+        "uv_s": t_uv,
+        "bake_s": t,
+        "faces": len(ob.data.polygons),
+        **info,
+    }
     print(f"roqsim-bake: baked {ename}: {size}px, uv {t_uv}s, passes {t}", flush=True)
 
 timing["total_s"] = round(time.time() - t_start, 2)

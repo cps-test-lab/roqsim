@@ -38,7 +38,6 @@ from pathlib import Path
 
 from . import control as ctl
 from . import env, exit_status, ipc, logging_setup
-from .conditions import write_run_file as write_conditions_file
 from .capture import (
     DEFAULT_FPS,
     RECORD_EXCLUDE_VAR,
@@ -52,6 +51,7 @@ from .capture import (
     snap_fps,
 )
 from .clock import Pacer
+from .conditions import write_run_file as write_conditions_file
 from .config import (
     drop_transport,
     load_config,

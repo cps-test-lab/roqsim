@@ -66,7 +66,9 @@ def _spec_geom(spec: mujoco.MjSpec, rec) -> mujoco.MjsGeom:
         raise ComposeError(f"no body {rec.body!r} in the world")
     geoms = list(body.geoms)
     if rec.index_in_body >= len(geoms):
-        raise ComposeError(f"body {rec.body!r} has {len(geoms)} geoms, the bake names its {rec.index_in_body + 1}th")
+        raise ComposeError(
+            f"body {rec.body!r} has {len(geoms)} geoms, the bake names its {rec.index_in_body + 1}th"
+        )
     return geoms[rec.index_in_body]
 
 
@@ -83,7 +85,12 @@ def rasterize(uv: np.ndarray, size: int, pad: int = PAD_TEXELS) -> np.ndarray:
         empty = ids < 0
         if not empty.any():
             break
-        for shifted in (np.roll(ids, 1, 0), np.roll(ids, -1, 0), np.roll(ids, 1, 1), np.roll(ids, -1, 1)):
+        for shifted in (
+            np.roll(ids, 1, 0),
+            np.roll(ids, -1, 0),
+            np.roll(ids, 1, 1),
+            np.roll(ids, -1, 1),
+        ):
             take = empty & (shifted >= 0)
             ids[take] = shifted[take]
             empty &= ~take
@@ -118,7 +125,7 @@ def _luts():
     global _TO_LINEAR, _TO_SRGB
     if _TO_LINEAR is None:
         _TO_LINEAR = srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0).astype(np.float32)
-        x = (np.arange(_TO_SRGB_STEPS + 1, dtype=np.float32) / _TO_SRGB_STEPS)
+        x = np.arange(_TO_SRGB_STEPS + 1, dtype=np.float32) / _TO_SRGB_STEPS
         _TO_SRGB = linear_to_srgb(x).astype(np.float32)
     return _TO_LINEAR, _TO_SRGB
 
@@ -192,8 +199,14 @@ def detail_upscale(pos, uv1, mat, materials, textures, light_size: int) -> int:
     world = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
     e1, e2 = uvt[:, 1] - uvt[:, 0], uvt[:, 2] - uvt[:, 0]
     uv_area = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
-    texels = np.array([textures[materials[int(k)]["texture"]].shape[0] * textures[materials[int(k)]["texture"]].shape[1]
-                       for k in mat[textured]], float)
+    texels = np.array(
+        [
+            textures[materials[int(k)]["texture"]].shape[0]
+            * textures[materials[int(k)]["texture"]].shape[1]
+            for k in mat[textured]
+        ],
+        float,
+    )
     ok = world > 1e-9
     if not ok.any():
         return 1
@@ -201,7 +214,9 @@ def detail_upscale(pos, uv1, mat, materials, textures, light_size: int) -> int:
     order = np.argsort(density)
     cum = np.cumsum(world[ok][order])
     detail = float(min(density[order][np.searchsorted(cum, cum[-1] / 2)], MAX_DETAIL_PER_M))
-    all_area = float(0.5 * np.linalg.norm(np.cross(pos[:, 1] - pos[:, 0], pos[:, 2] - pos[:, 0]), axis=1).sum())
+    all_area = float(
+        0.5 * np.linalg.norm(np.cross(pos[:, 1] - pos[:, 0], pos[:, 2] - pos[:, 0]), axis=1).sum()
+    )
     light_density = light_size / max(np.sqrt(all_area * 1.4), 1e-6)
     k = int(np.ceil(detail / max(light_density, 1e-6)))
     k = max(1, min(MAX_UPSCALE, k, MAX_TEXTURE // max(light_size, 1)))
@@ -209,13 +224,16 @@ def detail_upscale(pos, uv1, mat, materials, textures, light_size: int) -> int:
 
 
 def _material_tables(materials):
-    rgb = np.array([srgb_to_linear(np.asarray(m["rgba"][:3], np.float32)) for m in materials], np.float32)
+    rgb = np.array(
+        [srgb_to_linear(np.asarray(m["rgba"][:3], np.float32)) for m in materials], np.float32
+    )
     textured = np.array([m["texture"] >= 0 for m in materials])
     return rgb, textured
 
 
-def compose_entity(maps: EntityMaps, pos, nrm, uv1, mat, materials, textures,
-                   exposure: float) -> tuple[np.ndarray, float, dict]:
+def compose_entity(
+    maps: EntityMaps, pos, nrm, uv1, mat, materials, textures, exposure: float
+) -> tuple[np.ndarray, float, dict]:
     """The composed texture of one entity (``(C, C, 3)`` uint8, rows bottom first), its material's
     emission and what it cost. *pos*, *nrm*, *uv1*, *mat* are aligned to ``maps.uv``'s triangles.
 
@@ -270,8 +288,13 @@ def compose_entity(maps: EntityMaps, pos, nrm, uv1, mat, materials, textures,
         Mt = M[tt]
         u2x = (tx.astype(np.float32) + 0.5) / C
         u2y = (ty.astype(np.float32) + 0.5) / C
-        uv = np.stack([Mt[:, 0, 0] * u2x + Mt[:, 0, 1] * u2y + Mt[:, 0, 2],
-                       Mt[:, 1, 0] * u2x + Mt[:, 1, 1] * u2y + Mt[:, 1, 2]], 1)
+        uv = np.stack(
+            [
+                Mt[:, 0, 0] * u2x + Mt[:, 0, 1] * u2y + Mt[:, 0, 2],
+                Mt[:, 1, 0] * u2x + Mt[:, 1, 1] * u2y + Mt[:, 1, 2],
+            ],
+            1,
+        )
         del Mt, u2x, u2y, ty, tx
         tm = mat[tt]
         values = np.empty((len(flat_idx), 3), np.float32)
@@ -290,8 +313,16 @@ def compose_entity(maps: EntityMaps, pos, nrm, uv1, mat, materials, textures,
     display += 0.5
     out = display.astype(np.uint8)
     out[~covered] = 0
-    return out, emission, {"size": C, "upscale": k, "clipped_share": round(clipped, 4),
-                           "seconds": round(time.perf_counter() - t0, 3)}
+    return (
+        out,
+        emission,
+        {
+            "size": C,
+            "upscale": k,
+            "clipped_share": round(clipped, 4),
+            "seconds": round(time.perf_counter() - t0, 3),
+        },
+    )
 
 
 def _mesh_arrays(pos, nrm, uv, flip):
@@ -305,8 +336,16 @@ def _mesh_arrays(pos, nrm, uv, flip):
     return pos, nrm, uv
 
 
-def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Path, meta: dict, *,
-            moving_shadows: bool = True, prefix: str = "baked") -> dict:
+def compose(
+    spec: mujoco.MjSpec,
+    analysis: Analysis,
+    d: mujoco.MjData,
+    root: Path,
+    meta: dict,
+    *,
+    moving_shadows: bool = True,
+    prefix: str = "baked",
+) -> dict:
     """Draw the bake at *root* (its ``bake.json`` *meta*) into *spec*. *analysis* is the world as it
     loads (:func:`roqsim.bake.analysis.analyse_spec`), *d* its data at the pose analysed. Returns what
     was composed and what it cost."""
@@ -335,37 +374,62 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
                 continue
             cur_tris = np.nonzero(cur.geom == position[key])[0]
             if len(cur_tris) != len(mine):
-                raise ComposeError(f"{key}: the bake has {len(mine)} triangles in {ename}, the world "
-                                   f"{len(cur_tris)}; the world changed since the bake")
+                raise ComposeError(
+                    f"{key}: the bake has {len(mine)} triangles in {ename}, the world "
+                    f"{len(cur_tris)}; the world changed since the bake"
+                )
             idx[mine] = cur_tris
             present_geoms.append((int(gi), rec, mine))
         if not present_geoms:
             continue
         keep = idx >= 0
-        sub = EntityMaps(maps.light, maps.indirect, maps.ao, maps.uv[keep], maps.geom[keep], maps.flip[keep])
+        sub = EntityMaps(
+            maps.light, maps.indirect, maps.ao, maps.uv[keep], maps.geom[keep], maps.flip[keep]
+        )
         jobs.append((ename, cur, sub, idx[keep], keep, present_geoms))
+
     # Composed side by side: the work is numpy's, which runs outside the interpreter's lock.
     def one(job):
         ename, cur, sub, ci, _, _ = job
-        return compose_entity(sub, cur.pos[ci], cur.nrm[ci], cur.uv1[ci], cur.mat[ci], export.materials,
-                              export.textures, exposure)
+        return compose_entity(
+            sub,
+            cur.pos[ci],
+            cur.nrm[ci],
+            cur.uv1[ci],
+            cur.mat[ci],
+            export.materials,
+            export.textures,
+            exposure,
+        )
 
     order = sorted(range(len(jobs)), key=lambda i: -jobs[i][2].light.shape[0])
     with ThreadPoolExecutor(max_workers=max(1, min(COMPOSE_THREADS, os.cpu_count() or 1))) as pool:
-        results = dict(zip(order, pool.map(one, [jobs[i] for i in order])))
+        results = dict(zip(order, pool.map(one, [jobs[i] for i in order]), strict=True))
     for i, (ename, cur, sub, ci, keep, present_geoms) in enumerate(jobs):
         tex, emission, info = results[i]
         C = tex.shape[0]
         tname = f"{prefix}_{ename}"
-        spec.add_texture(name=tname, type=mujoco.mjtTexture.mjTEXTURE_2D, width=C, height=C, nchannel=3,
-                         colorspace=mujoco.mjtColorSpace.mjCOLORSPACE_LINEAR).data = tex.tobytes()
-        material = spec.add_material(name=tname, rgba=[1, 1, 1, 1], emission=emission, specular=0.0,
-                                     shininess=0.0, reflectance=0.0)
+        spec.add_texture(
+            name=tname,
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            width=C,
+            height=C,
+            nchannel=3,
+            colorspace=mujoco.mjtColorSpace.mjCOLORSPACE_LINEAR,
+        ).data = tex.tobytes()
+        material = spec.add_material(
+            name=tname,
+            rgba=[1, 1, 1, 1],
+            emission=emission,
+            specular=0.0,
+            shininess=0.0,
+            reflectance=0.0,
+        )
         material.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tname
         stats["entities"][ename] = {**info, "emission": round(emission, 4)}
         # Per geom: its visual mesh in its body's frame.
         new_index = {int(j): i for i, j in enumerate(np.nonzero(keep)[0])}
-        for gi, rec, mine in present_geoms:
+        for _gi, rec, mine in present_geoms:
             rows = np.array([new_index[int(j)] for j in mine])
             body_id = int(analysis.model.geom_bodyid[rec.id])
             R, p = d.xmat[body_id].reshape(3, 3), d.xpos[body_id]
@@ -384,10 +448,18 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
             mesh.userfacenormal = list(range(k))
             mesh.userfacetexcoord = list(range(k))
             body = spec.worldbody if rec.body == "world" else spec.body(rec.body)
-            visual = body.add_geom(name=gname, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=mesh.name,
-                                   material=tname, contype=0, conaffinity=0,
-                                   group=presence.WINDOW_GEOM_GROUP, density=0.0, pos=[0, 0, 0],
-                                   quat=[1, 0, 0, 0])
+            visual = body.add_geom(
+                name=gname,
+                type=mujoco.mjtGeom.mjGEOM_MESH,
+                meshname=mesh.name,
+                material=tname,
+                contype=0,
+                conaffinity=0,
+                group=presence.WINDOW_GEOM_GROUP,
+                density=0.0,
+                pos=[0, 0, 0],
+                quat=[1, 0, 0, 0],
+            )
             visual.castshadow = False
             if rec.key not in replaced:
                 replaced[rec.key] = _spec_geom(spec, rec)
@@ -401,13 +473,21 @@ def compose(spec: mujoco.MjSpec, analysis: Analysis, d: mujoco.MjData, root: Pat
             continue
         g = _spec_geom(spec, rec)
         rgba = src.get("display_rgba") or export.materials[rec.material]["rgba"]
-        m = spec.add_material(name=f"{prefix}_emitter_{i}", rgba=list(rgba), emission=1.0, specular=0.0,
-                              shininess=0.0, reflectance=0.0)
+        m = spec.add_material(
+            name=f"{prefix}_emitter_{i}",
+            rgba=list(rgba),
+            emission=1.0,
+            specular=0.0,
+            shininess=0.0,
+            reflectance=0.0,
+        )
         g.material = m.name
         g.castshadow = False
     _rig(spec, moving_shadows, prefix)
     stats["seconds"] = round(time.perf_counter() - t0, 3)
-    stats["textures_bytes_gpu"] = int(sum(v["size"] ** 2 * 3 * 4 / 3 for v in stats["entities"].values()))
+    stats["textures_bytes_gpu"] = int(
+        sum(v["size"] ** 2 * 3 * 4 / 3 for v in stats["entities"].values())
+    )
     return stats
 
 
@@ -422,14 +502,24 @@ def _rig(spec: mujoco.MjSpec, moving_shadows: bool, prefix: str) -> None:
     hl.specular = [0, 0, 0]
     spec.visual.quality.shadowsize = int(RIG["shadowsize"])
     k = RIG["key"]
-    key = spec.worldbody.add_light(name=f"{prefix}_key", type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
-                                   pos=[0, 0, 3.0], dir=list(k["dir"]), castshadow=bool(moving_shadows))
+    key = spec.worldbody.add_light(
+        name=f"{prefix}_key",
+        type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
+        pos=[0, 0, 3.0],
+        dir=list(k["dir"]),
+        castshadow=bool(moving_shadows),
+    )
     key.ambient = [k["ambient"]] * 3
     key.diffuse = [k["diffuse"]] * 3
     key.specular = [0, 0, 0]
     for i, f in enumerate(RIG["fills"]):
-        fill = spec.worldbody.add_light(name=f"{prefix}_fill{i}", type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
-                                        pos=[0, 0, 3.0], dir=fill_direction(f).tolist(), castshadow=False)
+        fill = spec.worldbody.add_light(
+            name=f"{prefix}_fill{i}",
+            type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
+            pos=[0, 0, 3.0],
+            dir=fill_direction(f).tolist(),
+            castshadow=False,
+        )
         fill.ambient = [f["ambient"]] * 3
         fill.diffuse = [f["diffuse"]] * 3
         fill.specular = [0, 0, 0]

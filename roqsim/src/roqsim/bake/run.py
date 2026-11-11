@@ -84,8 +84,12 @@ def find_blender(given: str | None = None) -> tuple[str, str]:
             "https://www.blender.org/download/ and put `blender` on PATH, or pass --blender PATH"
         )
     try:
-        out = subprocess.run([exe, "-b", "--factory-startup", "--version"], capture_output=True, text=True,
-                             timeout=120).stdout
+        out = subprocess.run(
+            [exe, "-b", "--factory-startup", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        ).stdout
     except (OSError, subprocess.TimeoutExpired) as err:
         raise BakeRunError(f"{exe} does not run as Blender ({err}); pass --blender PATH") from None
     match = re.search(r"Blender (\d+)\.(\d+)(\.\d+)?", out)
@@ -110,7 +114,7 @@ def write_work(analysis: Analysis, work: Path) -> None:
     (work / "entities").mkdir(parents=True, exist_ok=True)
     (work / "textures").mkdir(exist_ok=True)
     materials = []
-    for i, mat in enumerate(export.materials):
+    for mat in export.materials:
         entry = {"rgba": mat["rgba"]}
         if mat["texture"] >= 0:
             name = f"textures/tex{mat['texture']}.png"
@@ -124,12 +128,23 @@ def write_work(analysis: Analysis, work: Path) -> None:
     for name, ent in export.entities.items():
         uv1 = ent.uv1.copy()
         uv1[..., 1] = 1.0 - uv1[..., 1]
-        np.savez_compressed(work / "entities" / f"{name}.npz", pos=ent.pos.astype(np.float32),
-                            nrm=ent.nrm.astype(np.float32), uv1=uv1.astype(np.float32),
-                            mat=ent.mat, geom=ent.geom)
-        entities[name] = {"size": ent.size, "class": ent.cls, "two_sided": ent.two_sided,
-                          "triangles": int(len(ent.pos))}
-    np.savez_compressed(work / "occluders.npz", pos=export.occluders.reshape(-1, 3).astype(np.float32))
+        np.savez_compressed(
+            work / "entities" / f"{name}.npz",
+            pos=ent.pos.astype(np.float32),
+            nrm=ent.nrm.astype(np.float32),
+            uv1=uv1.astype(np.float32),
+            mat=ent.mat,
+            geom=ent.geom,
+        )
+        entities[name] = {
+            "size": ent.size,
+            "class": ent.cls,
+            "two_sided": ent.two_sided,
+            "triangles": int(len(ent.pos)),
+        }
+    np.savez_compressed(
+        work / "occluders.npz", pos=export.occluders.reshape(-1, 3).astype(np.float32)
+    )
     sources = analysis.light["emitters"]
     if export.emitters:
         pos, nrm, src = [], [], []
@@ -139,11 +154,20 @@ def write_work(analysis: Analysis, work: Path) -> None:
             pos.append(p)
             nrm.append(n)
             src.append(np.full(len(p), index[rec.name]))
-        np.savez_compressed(work / "emitters.npz", pos=np.concatenate(pos).astype(np.float32),
-                            nrm=np.concatenate(nrm).astype(np.float32), source=np.concatenate(src))
+        np.savez_compressed(
+            work / "emitters.npz",
+            pos=np.concatenate(pos).astype(np.float32),
+            nrm=np.concatenate(nrm).astype(np.float32),
+            source=np.concatenate(src),
+        )
     light = {"lights": analysis.light["lights"], "sky": analysis.light["sky"]}
-    manifest = {"entities": entities, "materials": materials, "emitters": sources if export.emitters else [],
-                "light": light, "settings": analysis.settings.as_record()}
+    manifest = {
+        "entities": entities,
+        "materials": materials,
+        "emitters": sources if export.emitters else [],
+        "light": light,
+        "settings": analysis.settings.as_record(),
+    }
     (work / "manifest.json").write_text(json.dumps(manifest, indent=1))
 
 
@@ -151,8 +175,10 @@ def plan_jobs(analysis: Analysis, jobs: int) -> list[list[str]]:
     """The entities split over *jobs* processes, largest first onto the least loaded (by an estimate
     of their cost: the passes grow with the texels and the sides baked, the UV layout with the
     triangles)."""
-    cost = {n: (e.size / 512.0) ** 2 * (2 if e.two_sided else 1) + len(e.pos) / 20000.0
-            for n, e in analysis.export.entities.items()}
+    cost = {
+        n: (e.size / 512.0) ** 2 * (2 if e.two_sided else 1) + len(e.pos) / 20000.0
+        for n, e in analysis.export.entities.items()
+    }
     jobs = max(1, min(jobs, len(cost)))
     load = [0.0] * jobs
     parts: list[list[str]] = [[] for _ in range(jobs)]
@@ -163,19 +189,44 @@ def plan_jobs(analysis: Analysis, jobs: int) -> list[list[str]]:
     return [p for p in parts if p]
 
 
-def run_blender(exe: str, work: Path, parts: list[list[str]], device: str, threads: int,
-                uv_from: Path | None, log) -> list[Path]:
+def run_blender(
+    exe: str,
+    work: Path,
+    parts: list[list[str]],
+    device: str,
+    threads: int,
+    uv_from: Path | None,
+    log,
+) -> list[Path]:
     """Run the Blender processes side by side; their output directories."""
     script = blender_script()
     procs = []
     for i, part in enumerate(parts):
         out = work / f"out{i}"
-        cmd = [exe, "-b", "--factory-startup", "--python", script, "--", "--work", str(work), "--out", str(out),
-               "--entities", ",".join(part), "--device", device.upper(), "--threads", str(threads)]
+        cmd = [
+            exe,
+            "-b",
+            "--factory-startup",
+            "--python",
+            script,
+            "--",
+            "--work",
+            str(work),
+            "--out",
+            str(out),
+            "--entities",
+            ",".join(part),
+            "--device",
+            device.upper(),
+            "--threads",
+            str(threads),
+        ]
         if uv_from is not None:
             cmd += ["--uv-from", str(uv_from)]
         logf = open(work / f"blender{i}.log", "w")  # noqa: SIM115 - closed below
-        procs.append((subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT), logf, out, part))
+        procs.append(
+            (subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT), logf, out, part)
+        )
     failed = []
     for proc, logf, out, part in procs:
         code = proc.wait()
@@ -184,14 +235,24 @@ def run_blender(exe: str, work: Path, parts: list[list[str]], device: str, threa
             failed.append((code, out, part))
     if failed:
         code, out, part = failed[0]
-        text = (work / f"blender{procs.index(next(p for p in procs if p[2] == out))}.log").read_text(errors="replace")
-        said = [ln[len("roqsim-bake: "):] for ln in text.splitlines() if ln.startswith("roqsim-bake: ")]
+        text = (
+            work / f"blender{procs.index(next(p for p in procs if p[2] == out))}.log"
+        ).read_text(errors="replace")
+        said = [
+            ln[len("roqsim-bake: ") :] for ln in text.splitlines() if ln.startswith("roqsim-bake: ")
+        ]
         if code == 3:
-            raise BakeRunError(said[-1] if said else f"no {device} device; --device cpu bakes on the CPU")
+            raise BakeRunError(
+                said[-1] if said else f"no {device} device; --device cpu bakes on the CPU"
+            )
         if code == 4:
-            raise BakeRunError(said[-1] if said else "Open Image Denoise not found; `denoise: false`")
+            raise BakeRunError(
+                said[-1] if said else "Open Image Denoise not found; `denoise: false`"
+            )
         tail = "\n".join(text.splitlines()[-15:])
-        raise BakeRunError(f"Blender failed (exit {code}) baking {', '.join(part)}; its log ends:\n{tail}")
+        raise BakeRunError(
+            f"Blender failed (exit {code}) baking {', '.join(part)}; its log ends:\n{tail}"
+        )
     return [p[2] for p in procs]
 
 
@@ -225,7 +286,7 @@ def exposure_of(maps: dict[str, dict]) -> float:
     """The exposure that puts the 95th percentile of the shell's lit vertical texels at
     :data:`roqsim.bake.settings.SHELL_P95` (or of every entity's, in a world without a shell)."""
     values = []
-    for name, m in maps.items():
+    for m in maps.values():
         if m["class"] != "shell" and any(v["class"] == "shell" for v in maps.values()):
             continue
         n = m["normal"] * 2 - 1
@@ -247,9 +308,15 @@ def finish(analysis: Analysis, dirs: list[Path]) -> tuple[dict[str, bytes], dict
         if light is None:
             raise BakeRunError(f"Blender wrote no light map for {name}")
         uv = _load(dirs, name, "uv2")
-        m = {"class": ent.cls, "light": light, "direct": _load(dirs, name, "direct"),
-             "ao": _load(dirs, name, "ao"), "normal": _load(dirs, name, "normal"), "uv": uv,
-             "flip": np.zeros(len(uv), bool)}
+        m = {
+            "class": ent.cls,
+            "light": light,
+            "direct": _load(dirs, name, "direct"),
+            "ao": _load(dirs, name, "ao"),
+            "normal": _load(dirs, name, "normal"),
+            "uv": uv,
+            "flip": np.zeros(len(uv), bool),
+        }
         if ent.two_sided:
             back = _load(dirs, name, "light_back")
             flip, side = choose_sides(light, back, uv, light.shape[0])
@@ -263,9 +330,14 @@ def finish(analysis: Analysis, dirs: list[Path]) -> tuple[dict[str, bytes], dict
     files, entries = {}, {}
     for name, m in raw.items():
         indirect = np.clip(m["light"] - m["direct"], 0, None) @ LUMA
-        maps = EntityMaps(light=m["light"], indirect=_down(indirect, INDIRECT_DIVISOR),
-                          ao=_down(m["ao"] @ LUMA, INDIRECT_DIVISOR),
-                          uv=m["uv"], geom=export.entities[name].geom, flip=m["flip"])
+        maps = EntityMaps(
+            light=m["light"],
+            indirect=_down(indirect, INDIRECT_DIVISOR),
+            ao=_down(m["ao"] @ LUMA, INDIRECT_DIVISOR),
+            uv=m["uv"],
+            geom=export.entities[name].geom,
+            flip=m["flip"],
+        )
         f, entry = encode_entity(name, maps)
         entry["class"] = m["class"]
         entry["faces_turned"] = int(m["flip"].sum())
@@ -291,7 +363,10 @@ def reusable_uvs(analysis: Analysis, root: Path, into: Path) -> list[str]:
         keys = {analysis.export.geoms[int(g)].key for g in np.unique(ent.geom)}
         if keys != {k for k, v in old_geoms.items() if name in v.get("entities", {})}:
             continue
-        if not all(fp._close(cur_geoms[k]["entities"].get(name), old_geoms[k]["entities"].get(name)) for k in keys):
+        if not all(
+            fp._close(cur_geoms[k]["entities"].get(name), old_geoms[k]["entities"].get(name))
+            for k in keys
+        ):
             continue
         try:
             maps = read_entity(root, name, entry)
@@ -304,8 +379,16 @@ def reusable_uvs(analysis: Analysis, root: Path, into: Path) -> list[str]:
     return reused
 
 
-def bake(plugin, *, device: str = "cpu", jobs: int | None = None, blender: str | None = None,
-         work: Path | None = None, keep_work: bool = False, log=None) -> dict:
+def bake(
+    plugin,
+    *,
+    device: str = "cpu",
+    jobs: int | None = None,
+    blender: str | None = None,
+    work: Path | None = None,
+    keep_work: bool = False,
+    log=None,
+) -> dict:
     """Bake the world *plugin* (a set-up :class:`~roqsim.plugins.baked_lighting.BakedLightingPlugin`)
     was loaded into; returns the summary ``roqsim bake`` prints."""
     log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
@@ -333,11 +416,15 @@ def bake(plugin, *, device: str = "cpu", jobs: int | None = None, blender: str |
         write_work(analysis, work)
         reused = reusable_uvs(analysis, root, work / "uv_from")
         times["export_s"] = round(time.perf_counter() - t0, 2)
-        log(f"roqsim bake: {len(analysis.export.entities)} light maps in {len(parts)} Blender process(es) "
+        log(
+            f"roqsim bake: {len(analysis.export.entities)} light maps in {len(parts)} Blender process(es) "
             f"on the {device.upper()}, {analysis.settings.samples} samples"
-            + (f"; reusing the UV layout of {len(reused)}" if reused else ""))
+            + (f"; reusing the UV layout of {len(reused)}" if reused else "")
+        )
         t0 = time.perf_counter()
-        dirs = run_blender(exe, work, parts, device, threads, work / "uv_from" if reused else None, log)
+        dirs = run_blender(
+            exe, work, parts, device, threads, work / "uv_from" if reused else None, log
+        )
         times["blender_s"] = round(time.perf_counter() - t0, 2)
         per_entity = {}
         for d in dirs:
@@ -361,17 +448,30 @@ def bake(plugin, *, device: str = "cpu", jobs: int | None = None, blender: str |
         )
     for name, entry in entries.items():
         entry["times"] = per_entity.get(name, {})
-    meta = bake_meta(analysis, entries, info["exposure"], {
-        "baked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    meta = bake_meta(
+        analysis,
+        entries,
+        info["exposure"],
+        {
+            "baked_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+            "device": device,
+            "blender": version,
+            "jobs": len(parts),
+            "times": times,
+        },
+    )
+    write_bake(root, meta, files)
+    return {
+        "path": str(root),
+        "bytes": size_on_disk(root),
+        "entities": len(entries),
         "device": device,
         "blender": version,
         "jobs": len(parts),
         "times": times,
-    })
-    write_bake(root, meta, files)
-    return {"path": str(root), "bytes": size_on_disk(root), "entities": len(entries), "device": device,
-            "blender": version, "jobs": len(parts), "times": times, "uv_reused": reused,
-            "digest": meta["digest"]}
+        "uv_reused": reused,
+        "digest": meta["digest"],
+    }
 
 
 def main(argv=None) -> int:
@@ -385,15 +485,29 @@ def main(argv=None) -> int:
         prog="roqsim bake",
         description="Bake a world's lighting with Blender's Cycles into its baked_lighting component's "
         "bake (lighting, shadows, global illumination, ambient occlusion; once, by hand).",
-        epilog=exit_status.epilog(exit_status.BAD_INPUT, note="1: the bake failed (no Blender, no such "
-                                  "GPU, over max_mb, Blender's own error), with the next step."),
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="1: the bake failed (no Blender, no such "
+            "GPU, over max_mb, Blender's own error), with the next step.",
+        ),
     )
     parser.add_argument("world", help="world YAML, or a package ref such as roqsim_scenes:depot")
-    parser.add_argument("--device", default="cpu", choices=DEVICES, help="where Cycles runs (default: cpu)")
-    parser.add_argument("--jobs", type=int, default=None, help="Blender processes on the CPU (default: the cores over 4)")
-    parser.add_argument("--blender", default=None, help="Blender's executable (default: blender on PATH)")
+    parser.add_argument(
+        "--device", default="cpu", choices=DEVICES, help="where Cycles runs (default: cpu)"
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=None,
+        help="Blender processes on the CPU (default: the cores over 4)",
+    )
+    parser.add_argument(
+        "--blender", default=None, help="Blender's executable (default: blender on PATH)"
+    )
     parser.add_argument("--work", type=Path, default=None, help="keep the intermediates here")
-    parser.add_argument("--dry-run", action="store_true", help="say what would be baked, bake nothing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="say what would be baked, bake nothing"
+    )
     add_override_options(parser)
     args = parser.parse_args(argv)
     target = args.world
@@ -416,18 +530,30 @@ def main(argv=None) -> int:
         plugin = plugins[0]
         if args.dry_run:
             export = plugin.analysis.export
-            print(json.dumps({
-                "path": str(plugin.root),
-                "entities": {n: {"class": e.cls, "size": e.size, "triangles": int(len(e.pos))}
-                             for n, e in export.entities.items()},
-                "lights": plugin.analysis.light["rule"],
-                "emitters": [s["geom"] for s in plugin.analysis.light["emitters"]],
-                "digest": fp.digest(plugin.analysis.fingerprint),
-                "settings": plugin.analysis.settings.as_record(),
-            }))
+            print(
+                json.dumps(
+                    {
+                        "path": str(plugin.root),
+                        "entities": {
+                            n: {"class": e.cls, "size": e.size, "triangles": int(len(e.pos))}
+                            for n, e in export.entities.items()
+                        },
+                        "lights": plugin.analysis.light["rule"],
+                        "emitters": [s["geom"] for s in plugin.analysis.light["emitters"]],
+                        "digest": fp.digest(plugin.analysis.fingerprint),
+                        "settings": plugin.analysis.settings.as_record(),
+                    }
+                )
+            )
             return 0
-        summary = bake(plugin, device=args.device, jobs=args.jobs, blender=args.blender, work=args.work,
-                       keep_work=args.work is not None)
+        summary = bake(
+            plugin,
+            device=args.device,
+            jobs=args.jobs,
+            blender=args.blender,
+            work=args.work,
+            keep_work=args.work is not None,
+        )
     except BakeRunError as err:
         print(f"roqsim bake: {err}", file=sys.stderr)
         return 1

@@ -40,7 +40,7 @@ baked one afterwards. A baked load records ``bake_used`` with the bake's digest.
 ``--set components.baked_lighting.require=true`` for one run) stops the world instead.
 
 What it costs, measured on a furnished room
-------------------------------------------
+-------------------------------------------
 
 A room of about 45 m² with 30 props: 32 light maps.
 

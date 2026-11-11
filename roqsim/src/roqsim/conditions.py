@@ -118,7 +118,11 @@ def as_check_warnings(conditions: list[dict]) -> list[dict]:
     for c in conditions:
         if c.get("level") != "warning":
             continue
-        warning = {"check": "condition", "message": f"{c['source']}: {c['message']}", "code": c["code"]}
+        warning = {
+            "check": "condition",
+            "message": f"{c['source']}: {c['message']}",
+            "code": c["code"],
+        }
         if c.get("fix"):
             warning["hint"] = c["fix"]
         out.append(warning)

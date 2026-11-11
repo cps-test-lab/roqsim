@@ -47,7 +47,9 @@ def analyse(
     return Analysis(export, light, fp.compute(export, light, settings), settings, model=m)
 
 
-def analyse_spec(spec: mujoco.MjSpec, settings: BakeSettings, **kwargs) -> tuple[Analysis, mujoco.MjModel]:
+def analyse_spec(
+    spec: mujoco.MjSpec, settings: BakeSettings, **kwargs
+) -> tuple[Analysis, mujoco.MjModel]:
     """:func:`analyse` of a copy of *spec* compiled at its reset pose (``qpos0``). The spec itself
     is not compiled: compiling it would freeze its name lookup for the plugins after this one."""
     m = spec.copy().compile()

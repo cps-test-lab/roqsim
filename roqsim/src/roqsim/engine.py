@@ -54,6 +54,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from . import entity_pose
 from .actuators import GravityReaction
 from .assets import deduplicate_assets
+from .conditions import write_to_spec as write_conditions
 from .config import (
     SIM_OPTION_KEYS,
     SimConfig,
@@ -61,7 +62,6 @@ from .config import (
     drop_transport_plugins,
     instantiate_plugins,
 )
-from .conditions import write_to_spec as write_conditions
 from .context import SimContext
 from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator

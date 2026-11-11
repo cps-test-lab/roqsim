@@ -92,7 +92,11 @@ def emitter_geoms(m: mujoco.MjModel, emitters: list[dict]) -> tuple[dict[int, in
                 "from": "emitters" if entry else "fixture",
             }
         )
-    unmatched = [e["match"] for e in emitters if not any(fnmatch.fnmatch(s["geom"], e["match"]) for s in sources)]
+    unmatched = [
+        e["match"]
+        for e in emitters
+        if not any(fnmatch.fnmatch(s["geom"], e["match"]) for s in sources)
+    ]
     if unmatched:
         raise ValueError(f"emitters that match no drawn static geom: {unmatched}")
     return out, sources
@@ -114,11 +118,23 @@ def model_lights(m: mujoco.MjModel, d: mujoco.MjData) -> list[dict]:
         name = m.light(i).name or f"light{i}"
         ltype = int(m.light_type[i])
         if ltype == int(T.mjLIGHT_DIRECTIONAL):
-            out.append({"type": "sun", "name": name, "dir": direction, "strength": SUN_PER_DIFFUSE * diffuse,
-                        "colour": colour})
+            out.append(
+                {
+                    "type": "sun",
+                    "name": name,
+                    "dir": direction,
+                    "strength": SUN_PER_DIFFUSE * diffuse,
+                    "colour": colour,
+                }
+            )
             continue
         cutoff = float(m.light_cutoff[i])
-        light = {"name": name, "pos": pos, "power_w": POINT_W_PER_DIFFUSE * diffuse, "colour": colour}
+        light = {
+            "name": name,
+            "pos": pos,
+            "power_w": POINT_W_PER_DIFFUSE * diffuse,
+            "colour": colour,
+        }
         if ltype == int(T.mjLIGHT_SPOT) and cutoff < 90.0:
             out.append({"type": "spot", "dir": direction, "spot_deg": 2.0 * cutoff, **light})
         else:
@@ -131,7 +147,11 @@ def default_lights(bounds) -> tuple[list[dict], float]:
     lo, hi = np.asarray(bounds[0], float), np.asarray(bounds[1], float)
     size = np.maximum(hi[:2] - lo[:2], 0.5)
     centre = (lo[:2] + hi[:2]) / 2
-    z = float(hi[2] - DEFAULT_BELOW_TOP) if hi[2] - lo[2] > 2 * DEFAULT_BELOW_TOP else float(lo[2] + 3.0)
+    z = (
+        float(hi[2] - DEFAULT_BELOW_TOP)
+        if hi[2] - lo[2] > 2 * DEFAULT_BELOW_TOP
+        else float(lo[2] + 3.0)
+    )
     light = {
         "type": "area",
         "name": "default",
@@ -155,8 +175,12 @@ def check_lights(lights: list) -> list[str]:
         if t not in LIGHT_TYPES:
             errors.append(f"lights[{i}].type: one of {LIGHT_TYPES}, not {t!r}")
             continue
-        need = {"area": ("pos", "size", "power_w"), "point": ("pos", "power_w"),
-                "spot": ("pos", "dir", "spot_deg", "power_w"), "sun": ("dir", "strength")}[t]
+        need = {
+            "area": ("pos", "size", "power_w"),
+            "point": ("pos", "power_w"),
+            "spot": ("pos", "dir", "spot_deg", "power_w"),
+            "sun": ("dir", "strength"),
+        }[t]
         missing = [k for k in need if k not in light]
         if missing:
             errors.append(f"lights[{i}] ({t}): missing {missing}")
@@ -168,13 +192,29 @@ def resolve(m: mujoco.MjModel, d: mujoco.MjData, lights, sources: list[dict], bo
     fixtures = [s for s in sources if s["from"] == "fixture"]
     declared = model_lights(m, d)
     if isinstance(lights, list):
-        return {"rule": "explicit", "lights": [dict(x) for x in lights], "sky": 0.0, "emitters": sources,
-                "stand_ins": [x["name"] for x in declared]}
+        return {
+            "rule": "explicit",
+            "lights": [dict(x) for x in lights],
+            "sky": 0.0,
+            "emitters": sources,
+            "stand_ins": [x["name"] for x in declared],
+        }
     if fixtures:
-        return {"rule": "fixtures", "lights": [], "sky": 0.0, "emitters": sources,
-                "stand_ins": [x["name"] for x in declared]}
+        return {
+            "rule": "fixtures",
+            "lights": [],
+            "sky": 0.0,
+            "emitters": sources,
+            "stand_ins": [x["name"] for x in declared],
+        }
     if declared:
-        return {"rule": "mjcf_lights", "lights": declared, "sky": 0.0, "emitters": sources, "stand_ins": []}
+        return {
+            "rule": "mjcf_lights",
+            "lights": declared,
+            "sky": 0.0,
+            "emitters": sources,
+            "stand_ins": [],
+        }
     default, sky = default_lights(bounds)
     return {"rule": "default", "lights": default, "sky": sky, "emitters": sources, "stand_ins": []}
 

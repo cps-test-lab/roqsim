@@ -51,16 +51,35 @@ def summary(tri: np.ndarray, uv: np.ndarray | None = None) -> list[float]:
     centroid = (c * w[:, None]).sum(0)
     corners = tri.reshape(-1, 3)
     wc = np.repeat(w, 3) / 3.0
-    second = [float((corners[:, i] * corners[:, j] * wc).sum()) for i, j in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))]
-    out = [float(len(tri)), total, *centroid.tolist(), *corners.min(0).tolist(), *corners.max(0).tolist(), *second]
+    second = [
+        float((corners[:, i] * corners[:, j] * wc).sum())
+        for i, j in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
+    ]
+    out = [
+        float(len(tri)),
+        total,
+        *centroid.tolist(),
+        *corners.min(0).tolist(),
+        *corners.max(0).tolist(),
+        *second,
+    ]
     if uv is not None:
         u = np.asarray(uv, float).reshape(-1, 2)
-        out += [*u.mean(0).tolist(), float((u[:, 0] ** 2).mean()), float((u[:, 1] ** 2).mean()), float((u[:, 0] * u[:, 1]).mean())]
+        out += [
+            *u.mean(0).tolist(),
+            float((u[:, 0] ** 2).mean()),
+            float((u[:, 1] ** 2).mean()),
+            float((u[:, 0] * u[:, 1]).mean()),
+        ]
     return out
 
 
 def material_record(mat: dict) -> dict:
-    return {"rgba": rounded(mat["rgba"]), "emission": rounded(mat["emission"]), "texture": mat["texture_hash"]}
+    return {
+        "rgba": rounded(mat["rgba"]),
+        "emission": rounded(mat["emission"]),
+        "texture": mat["texture_hash"],
+    }
 
 
 def compute(export: Export, light: dict, settings: BakeSettings) -> dict:
@@ -70,7 +89,10 @@ def compute(export: Export, light: dict, settings: BakeSettings) -> dict:
         for gi in np.unique(ent.geom):
             rec = export.geoms[int(gi)]
             sel = ent.geom == gi
-            part = geoms.setdefault(rec.key, {"entities": {}, "material": material_record(export.materials[rec.material])})
+            part = geoms.setdefault(
+                rec.key,
+                {"entities": {}, "material": material_record(export.materials[rec.material])},
+            )
             part["entities"][ent.name] = summary(ent.pos[sel], ent.uv1[sel])
     return {
         "geoms": geoms,
@@ -85,7 +107,9 @@ def _light_record(light: dict) -> dict:
         "rule": light["rule"],
         "lights": light["lights"],
         "sky": light["sky"],
-        "emitters": [{k: e[k] for k in ("geom", "strength_w_m2", "colour")} for e in light["emitters"]],
+        "emitters": [
+            {k: e[k] for k in ("geom", "strength_w_m2", "colour")} for e in light["emitters"]
+        ],
     }
 
 
@@ -93,7 +117,7 @@ def _close(a, b) -> bool:
     if isinstance(a, dict) and isinstance(b, dict):
         return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
-        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
+        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b, strict=True))
     if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
         return abs(float(a) - float(b)) <= ABS_TOL + REL_TOL * abs(float(b))
     return a == b
@@ -124,11 +148,20 @@ def compare(stored: dict, current: dict) -> dict:
     if not _close(current.get("lights"), stored.get("lights")):
         reasons.append("the lights differ")
     if current.get("settings") != stored.get("settings"):
-        diff = sorted(k for k in set(current.get("settings", {})) | set(stored.get("settings", {}))
-                      if current.get("settings", {}).get(k) != stored.get("settings", {}).get(k))
+        diff = sorted(
+            k
+            for k in set(current.get("settings", {})) | set(stored.get("settings", {}))
+            if current.get("settings", {}).get(k) != stored.get("settings", {}).get(k)
+        )
         reasons.append(f"the bake's settings differ ({', '.join(diff)})")
     status = "stale" if reasons else ("partial" if missing else "fresh")
-    return {"status": status, "reasons": reasons, "changed": changed, "added": added, "missing": missing}
+    return {
+        "status": status,
+        "reasons": reasons,
+        "changed": changed,
+        "added": added,
+        "missing": missing,
+    }
 
 
 def _few(keys: list[str], n: int = 4) -> str:

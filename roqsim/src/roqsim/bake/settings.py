@@ -45,7 +45,9 @@ class BakeSettings:
     """Everything that changes a bake's result (and is therefore in its fingerprint)."""
 
     #: Light-map texels per metre per class.
-    texels_per_m: dict = field(default_factory=lambda: {"shell": 50.0, "floor": 108.0, "props": 400.0})
+    texels_per_m: dict = field(
+        default_factory=lambda: {"shell": 50.0, "floor": 108.0, "props": 400.0}
+    )
     #: The most a prop's light map may be across, in texels (a large flat prop needs fewer per metre).
     prop_cap: int = 512
     #: The most any light map may be across; a shell larger than this is split.
@@ -71,7 +73,9 @@ PRESETS = {
 }
 
 
-def settings_for(quality: str, texels_per_m: dict | None = None, samples=None, denoise=None) -> BakeSettings:
+def settings_for(
+    quality: str, texels_per_m: dict | None = None, samples=None, denoise=None
+) -> BakeSettings:
     """The preset *quality* with any of the overrides a world sets."""
     if quality not in PRESETS:
         raise ValueError(f"quality {quality!r}: one of {sorted(PRESETS)}")
@@ -80,7 +84,9 @@ def settings_for(quality: str, texels_per_m: dict | None = None, samples=None, d
         unknown = set(texels_per_m) - set(CLASSES)
         if unknown:
             raise ValueError(f"texels_per_m: unknown classes {sorted(unknown)}; one of {CLASSES}")
-        s = replace(s, texels_per_m={**s.texels_per_m, **{k: float(v) for k, v in texels_per_m.items()}})
+        s = replace(
+            s, texels_per_m={**s.texels_per_m, **{k: float(v) for k, v in texels_per_m.items()}}
+        )
     if samples is not None:
         s = replace(s, samples=int(samples))
     if denoise is not None:

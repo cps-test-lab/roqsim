@@ -134,7 +134,9 @@ def encode_entity(name: str, maps: EntityMaps) -> tuple[dict[str, bytes], dict]:
     ao = np.round(np.clip(maps.ao, 0, 1) * 255).astype(np.uint8)
     uvq = np.round(np.clip(maps.uv, 0, 1) * UV_SCALE).astype(np.uint16)
     npz = io.BytesIO()
-    np.savez_compressed(npz, uv=uvq, geom=maps.geom.astype(np.int32), flip=maps.flip.astype(np.uint8))
+    np.savez_compressed(
+        npz, uv=uvq, geom=maps.geom.astype(np.int32), flip=maps.flip.astype(np.uint8)
+    )
     files = {
         f"{name}.light.png": _png_bytes(light_png, "L"),
         f"{name}.chroma.png": _png_bytes(chroma_png, "RGB"),
@@ -157,7 +159,11 @@ def write(root: Path, meta: dict, files: dict[str, bytes]) -> int:
     root.mkdir(parents=True, exist_ok=True)
     keep = set(files) | {BAKE_JSON}
     for old in root.iterdir():
-        if old.is_file() and old.name not in keep and (old.suffix in (".png", ".npz") or old.name == BAKE_JSON):
+        if (
+            old.is_file()
+            and old.name not in keep
+            and (old.suffix in (".png", ".npz") or old.name == BAKE_JSON)
+        ):
             old.unlink()
     total = 0
     for name, data in files.items():
@@ -194,7 +200,9 @@ def _png(path: Path) -> np.ndarray:
 def read_entity(root: Path, name: str, entry: dict) -> EntityMaps:
     """One entity's maps, decoded."""
     root = Path(root)
-    y = srgb_to_linear(_png(root / f"{name}.light.png").astype(np.float32) / 255) * float(entry["light_scale"])
+    y = srgb_to_linear(_png(root / f"{name}.light.png").astype(np.float32) / 255) * float(
+        entry["light_scale"]
+    )
     s = y.shape[0]
     chroma = _png(root / f"{name}.chroma.png").astype(np.float32) / 255 * 3.0
     up = resize(chroma, s)
@@ -219,9 +227,18 @@ def bake_meta(analysis, entries: dict, exposure: float, extra: dict) -> dict:
     from .settings import FORMAT_VERSION
 
     export = analysis.export
-    geoms = [{"key": g.key, "name": g.name, "body": g.body, "index_in_body": g.index_in_body,
-              "collides": g.collides, "geom_group": g.geom_group, "entities": g.entities}
-             for g in export.geoms]
+    geoms = [
+        {
+            "key": g.key,
+            "name": g.name,
+            "body": g.body,
+            "index_in_body": g.index_in_body,
+            "collides": g.collides,
+            "geom_group": g.geom_group,
+            "entities": g.entities,
+        }
+        for g in export.geoms
+    ]
     return {
         "format": FORMAT_VERSION,
         "fingerprint": analysis.fingerprint,

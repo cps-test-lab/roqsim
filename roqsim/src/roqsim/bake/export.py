@@ -181,11 +181,15 @@ def _mesh(m: mujoco.MjModel, g: int):
     fa, fnum = int(m.mesh_faceadr[k]), int(m.mesh_facenum[k])
     tri = m.mesh_vert[va : va + vn][m.mesh_face[fa : fa + fnum]].astype(float)
     na = int(m.mesh_normaladr[k])
-    nrm = m.mesh_normal[na : na + int(m.mesh_normalnum[k])][m.mesh_facenormal[fa : fa + fnum]].astype(float)
+    nrm = m.mesh_normal[na : na + int(m.mesh_normalnum[k])][
+        m.mesh_facenormal[fa : fa + fnum]
+    ].astype(float)
     uv = None
     if int(m.mesh_texcoordnum[k]) > 0:
         ta = int(m.mesh_texcoordadr[k])
-        uv = m.mesh_texcoord[ta : ta + int(m.mesh_texcoordnum[k])][m.mesh_facetexcoord[fa : fa + fnum]]
+        uv = m.mesh_texcoord[ta : ta + int(m.mesh_texcoordnum[k])][
+            m.mesh_facetexcoord[fa : fa + fnum]
+        ]
         uv = uv.astype(float)
     return tri, nrm, uv
 
@@ -476,9 +480,13 @@ def export_world(
     if "shell" in entities:
         entities.pop("shell")
         for ent in _split_shell(
-            Entity("shell", "shell", *[np.concatenate(parts["shell"][k]) for k in ("pos", "nrm", "uv1")],
-                   np.concatenate(parts["shell"]["mat"]).astype(np.int32),
-                   np.concatenate(parts["shell"]["geom"]).astype(np.int32)),
+            Entity(
+                "shell",
+                "shell",
+                *[np.concatenate(parts["shell"][k]) for k in ("pos", "nrm", "uv1")],
+                np.concatenate(parts["shell"]["mat"]).astype(np.int32),
+                np.concatenate(parts["shell"]["geom"]).astype(np.int32),
+            ),
             settings,
         ):
             entities[ent.name] = ent
@@ -550,11 +558,21 @@ def _split_shell(shell: Entity, settings: BakeSettings) -> list[Entity]:
     fn = face_normals(shell.pos)
     zf = floor_height(shell)
     mid = shell.pos[..., 2].mean(1)
-    floor = (fn[:, 2] > 0.9) & (np.abs(mid - zf) <= 0.03) if zf is not None else np.zeros(len(fn), bool)
+    floor = (
+        (fn[:, 2] > 0.9) & (np.abs(mid - zf) <= 0.03) if zf is not None else np.zeros(len(fn), bool)
+    )
     out = []
 
     def take(name, cls, sel):
-        return Entity(name, cls, shell.pos[sel], shell.nrm[sel], shell.uv1[sel], shell.mat[sel], shell.geom[sel])
+        return Entity(
+            name,
+            cls,
+            shell.pos[sel],
+            shell.nrm[sel],
+            shell.uv1[sel],
+            shell.mat[sel],
+            shell.geom[sel],
+        )
 
     if floor.any():
         out.append(take("floor", "floor", floor))
@@ -564,7 +582,10 @@ def _split_shell(shell: Entity, settings: BakeSettings) -> list[Entity]:
         areas = _areas(shell.pos)
         cap_area = (settings.map_cap / settings.texels_per_m["shell"]) ** 2 / PACKING_LOSS
         by_geom = sorted(
-            ((float(areas[rest & (shell.geom == gi)].sum()), int(gi)) for gi in np.unique(shell.geom[rest])),
+            (
+                (float(areas[rest & (shell.geom == gi)].sum()), int(gi))
+                for gi in np.unique(shell.geom[rest])
+            ),
             reverse=True,
         )
         bins: list[list] = []
