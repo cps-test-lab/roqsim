@@ -78,6 +78,12 @@ RUN NUMPY_VER=$(python3 -c 'import numpy; print(numpy.__version__)') && \
     cat /etc/pip-constraints.txt
 ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
 
+# The base's Debian pip (24.0) does not backtrack out of that cryptography pin: given fastmcp's newest
+# release, whose authlib needs a newer cryptography, it reports the resolution impossible instead of
+# taking an earlier fastmcp. A current pip, installed beside the Debian one, finds the earlier release.
+RUN pip install --no-cache-dir --break-system-packages --ignore-installed pip && \
+    hash -r && pip --version
+
 # 2) Stable layer: CPU-only PyTorch (no multi-GB CUDA wheels), as the Makefile does before the
 #    torch-dependent editable installs.
 RUN pip install --no-cache-dir --break-system-packages \
