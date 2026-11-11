@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Baked lighting: a world's light path-traced once (Blender's Cycles), kept with the world, drawn by
-any renderer.
+MuJoCo's classic renderer; the stored format is renderer-neutral.
 
 The pieces, in the order they run:
 

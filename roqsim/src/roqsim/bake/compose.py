@@ -533,10 +533,21 @@ def compose(
     return stats
 
 
+def _welded_to_world(body, spec: mujoco.MjSpec) -> bool:
+    """Whether *body* (of *spec*) is welded to the world: no joint and no mocap body on its way there."""
+    while body is not None and body.name != spec.worldbody.name:
+        if len(body.joints) or body.mocap:
+            return False
+        body = body.parent
+    return True
+
+
 def _rig(spec: mujoco.MjSpec, moving_shadows: bool, prefix: str) -> None:
-    """Replace the world's lights by :data:`roqsim.bake.settings.RIG`."""
+    """Replace the world's lights by :data:`roqsim.bake.settings.RIG`. A light on what moves (a
+    robot's headlamp) is not the world's and stays."""
     for light in list(spec.lights):
-        spec.delete(light)
+        if _welded_to_world(light.parent, spec):
+            spec.delete(light)
     hl = spec.visual.headlight
     hl.active = 0
     hl.ambient = [0, 0, 0]

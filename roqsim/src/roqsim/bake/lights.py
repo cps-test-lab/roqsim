@@ -104,11 +104,15 @@ def emitter_geoms(m: mujoco.MjModel, emitters: list[dict]) -> tuple[dict[int, in
 
 
 def model_lights(m: mujoco.MjModel, d: mujoco.MjData) -> list[dict]:
-    """The MJCF ``<light>``\\ s as bake lights (rule 2)."""
+    """The MJCF ``<light>``\\ s of the world as bake lights (rule 2): those welded to the world. A
+    light on what moves (a robot's headlamp) is lit live, as what carries it is."""
     out = []
     T = mujoco.mjtLightType
     for i in range(m.nlight):
         if not bool(m.light_active[i]):
+            continue
+        body = int(m.light_bodyid[i])
+        if int(m.body_weldid[body]) != 0 or int(m.body_mocapid[body]) >= 0:
             continue
         diffuse = float(np.mean(m.light_diffuse[i]))
         if diffuse <= 0:

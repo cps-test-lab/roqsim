@@ -390,6 +390,7 @@ def export_world(
 
     todo = []
     index_of: dict[int, int] = {}
+    baked_keys: set[str] = set()
     for g in range(m.ngeom):
         b = int(m.geom_bodyid[g])
         k_in_body = per_body.get(b, 0)
@@ -410,6 +411,15 @@ def export_world(
             kind = "baked"
         else:
             kind = "moving"
+        if kind in ("baked", "emitter"):
+            # The bake finds a geom again by its key; two that share one would be one to it.
+            if key in baked_keys:
+                raise ValueError(
+                    f"two baked geoms are both named {key!r} by the bake (a geom without a name is "
+                    "named after its body, and a body without one is empty): name the geoms or "
+                    "their bodies"
+                )
+            baked_keys.add(key)
         rec = GeomRecord(
             id=g,
             name=name,

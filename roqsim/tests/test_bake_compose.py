@@ -337,3 +337,21 @@ def test_an_unnamed_fixture_is_a_light_source_of_its_own(tmp_path):
     analysis, _ = analyse_spec(spec, PRESETS["default"])
     keys = [s["geom"] for s in analysis.light["emitters"]]
     assert len(keys) == 2 and len(set(keys)) == 2 and all("#" in k for k in keys)
+
+
+def test_a_robot_s_lamp_stays_when_the_world_is_drawn_baked(tmp_path):
+    world = write_world(tmp_path)
+    synthetic_bake(world)
+    robot = (
+        '<body name="bot" pos="0 1 0.2"><freejoint/><geom name="bot" type="box" size="0.2 0.2 0.1"/>'
+        '<light name="bot/headlamp" pos="0.2 0 0" dir="1 0 0"/></body>'
+    )
+    (tmp_path / "room.xml").write_text(room(extra=robot))
+    engine = loaded(world)
+    try:
+        assert codes(engine) == ["bake_used"]
+        m = engine.ctx.model
+        assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_LIGHT, "bot/headlamp") >= 0
+        assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_LIGHT, "lamp") < 0  # the world's, replaced
+    finally:
+        engine.shutdown()

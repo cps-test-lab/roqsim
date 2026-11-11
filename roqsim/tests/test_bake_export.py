@@ -101,7 +101,9 @@ def test_entities_are_the_prefix_the_floor_and_the_shell():
     a = analysed(room())
     ents = a.export.entities
     assert set(ents) == {"floor", "shell", "P"}
-    assert ents["floor"].cls == "floor" and ents["shell"].cls == "shell" and ents["P"].cls == "props"
+    assert (
+        ents["floor"].cls == "floor" and ents["shell"].cls == "shell" and ents["P"].cls == "props"
+    )
     assert ents["P"].two_sided and not ents["shell"].two_sided
     # The floor plane is the floor entity; the walls' tops and the ceiling are the shell.
     floor_geoms = {a.export.geoms[int(g)].key for g in np.unique(ents["floor"].geom)}
@@ -145,8 +147,10 @@ def test_without_fixtures_the_mjcf_lights():
 
 
 def test_a_narrow_spot_and_a_directional_light():
-    extra = ('<light name="spot" pos="1 0 2" dir="0 0 -1" cutoff="30" diffuse="1 1 1"/>'
-             '<light name="sun" directional="true" dir="0 0 -1" diffuse="0.4 0.4 0.4"/>')
+    extra = (
+        '<light name="spot" pos="1 0 2" dir="0 0 -1" cutoff="30" diffuse="1 1 1"/>'
+        '<light name="sun" directional="true" dir="0 0 -1" diffuse="0.4 0.4 0.4"/>'
+    )
     a = analysed(room(panel=False, lamp=False, extra=extra))
     by_name = {x["name"]: x for x in a.light["lights"]}
     assert by_name["spot"]["type"] == "spot" and by_name["spot"]["spot_deg"] == pytest.approx(60.0)
@@ -214,7 +218,10 @@ def test_a_removed_ceiling_is_partial_not_stale():
 
 
 def test_other_lights_are_stale():
-    v = verdict(analysed(room()), analysed(room(), emitters=[{"match": "light_panel", "strength_w_m2": 10.0}]))
+    v = verdict(
+        analysed(room()),
+        analysed(room(), emitters=[{"match": "light_panel", "strength_w_m2": 10.0}]),
+    )
     assert v["status"] == "stale" and any("lights" in r for r in v["reasons"])
 
 
@@ -228,10 +235,17 @@ def test_other_settings_are_stale_and_say_which():
 def test_a_texture_edit_is_a_material_change():
     tex = '<texture name="t" type="2d" builtin="checker" width="8" height="8" rgb1="{}" rgb2="0 0 0"/>'
     mat = '<material name="tm" texture="t"/>'
+
     def world(rgb):
-        return room(extra="").replace("<asset>", "<asset>" + tex.format(rgb) + mat).replace(
-            'name="wall_w" type="box" size="0.05 2 1.25" pos="-2 0 1.25" material="grey"',
-            'name="wall_w" type="box" size="0.05 2 1.25" pos="-2 0 1.25" material="tm"')
+        return (
+            room(extra="")
+            .replace("<asset>", "<asset>" + tex.format(rgb) + mat)
+            .replace(
+                'name="wall_w" type="box" size="0.05 2 1.25" pos="-2 0 1.25" material="grey"',
+                'name="wall_w" type="box" size="0.05 2 1.25" pos="-2 0 1.25" material="tm"',
+            )
+        )
+
     v = verdict(analysed(world("1 1 1")), analysed(world("0.5 0.5 0.5")))
     assert v["changed"] == ["wall_w"]
 
@@ -240,5 +254,28 @@ def test_the_floor_is_the_largest_surface_facing_up_not_the_lowest():
     # A foundation slab under the floor, as an imported room can have.
     slab = '<geom name="slab" type="box" size="1 1 0.05" pos="0 0 -0.3"/>'
     ents = analysed(room(extra=slab)).export.entities
-    floor_geoms = {analysed(room(extra=slab)).export.geoms[int(g)].key for g in np.unique(ents["floor"].geom)}
+    floor_geoms = {
+        analysed(room(extra=slab)).export.geoms[int(g)].key for g in np.unique(ents["floor"].geom)
+    }
     assert floor_geoms == {"floor_visual"}
+
+
+def test_two_unnamed_geoms_of_unnamed_bodies_are_refused_by_name():
+    """A geom without a name is named after its body; two in bodies without names would be one geom
+    to the bake, so the world says what to name instead of baking or drawing them as one."""
+    xml = room(
+        extra='<body pos="1 1 0.2"><geom type="box" size=".1 .1 .1"/></body>'
+        '<body pos="-1 1 0.2"><geom type="box" size=".1 .1 .1"/></body>'
+    )
+    with pytest.raises(ValueError, match="name the geoms or their bodies"):
+        analysed(xml)
+
+
+def test_a_robot_with_a_lamp_keeps_the_bake_and_its_lamp():
+    """A light on what moves is lit live, as what carries it is: not the world's, not baked."""
+    robot = """<body name="robot" pos="0 1 0.1"><freejoint/>
+        <geom name="robot/chassis" type="box" size="0.3 0.2 0.1"/>
+        <light name="robot/headlamp" pos="0.3 0 0.1" dir="1 0 0" diffuse="0.5 0.5 0.5"/></body>"""
+    without = room(panel=False)  # the MJCF lights are the bake's (rule 2)
+    v = verdict(analysed(without), analysed(room(panel=False, extra=robot)))
+    assert v["status"] == "fresh", v

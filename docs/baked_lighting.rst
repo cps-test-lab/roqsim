@@ -92,7 +92,9 @@ What is baked, what moves
   is an entity with a light map of its own.
 - **Lit live**: everything else. What hangs on a joint to the world (a door's leaf, a drawer, an arm)
   is an *occluder* in the bake at its reset pose; what floats free (a robot, a crate) and mocap bodies
-  are not, so adding a robot to a world keeps its bake fresh. ``occluders:`` names them instead.
+  are not, so adding a robot to a world keeps its bake fresh. ``occluders:`` names them instead. A
+  ``<light>`` on what moves (a robot's headlamp) is lit live too: it is not baked and stays when the
+  world's lights are replaced by the run-time rig.
 - **Glass** (a static geom with alpha below 1) is neither: light passes it, and it is drawn as it is.
 - A geom the world no longer has (a ceiling opened by ``ceiling``, ``roqsim render --no-ceiling``) does
   not make the bake stale: the rest is drawn baked, recorded as ``bake_partial``.
@@ -112,7 +114,8 @@ Where the light comes from
 1. **Emitting fixtures** -- static geoms whose material's emission is 0.5 or more (a ceiling panel): an
    emissive surface of 83 W/m² in the bake, glowing at run time. The world's MJCF lights are then their
    run-time stand-ins and are not baked again.
-2. **The MJCF lights** -- point, spot (a ``cutoff`` of 90° is a point), directional as a sun.
+2. **The MJCF lights** welded to the world -- point, spot (a ``cutoff`` of 90° is a point), directional
+   as a sun.
 3. **The default** -- one area light the size of the static footprint, 10 cm under its top, facing
    down, and a dim sky: an overcast skylight.
 
@@ -158,5 +161,7 @@ Limits
 - A texture finer than about 500 texels per metre is drawn at that resolution in a baked world (thin
   lines of a floor pattern fade at a distance).
 - A metal underside does not mirror the floor: the bake holds diffuse light only.
+- Two baked geoms without names in bodies without names cannot be told apart by the bake, and a world
+  with baked lighting refuses them, saying to name them.
 - Moving a static prop makes the bake stale; the world then loads unbaked until it is baked again (the
   UV layout of everything else is reused).
