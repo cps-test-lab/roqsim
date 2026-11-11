@@ -6,14 +6,14 @@ for two reasons: to choose the integrator when a world leaves ``sim.integrator``
 refuse a combination with a message that names the world key to change -- MuJoCo's own error names
 an ``<option>`` attribute the world may never have written, because roqsim set it.
 
-**These rules are MuJoCo-version-sensitive.** Each was measured on MuJoCo 3.14.0, the range the
-packages pin (``>=3.14,<3.15``), and ``tests/test_flex_rules.py`` compiles every case and checks
+**These rules are MuJoCo-version-sensitive.** Each was measured on MuJoCo 4.0.0, the range the
+packages pin (``>=4.0,<4.1``), and ``tests/test_flex_rules.py`` compiles every case and checks
 the verdict here against MuJoCo's own, so a MuJoCo that changes one fails that test rather than a
 run. Nothing else in roqsim encodes one of these rules; a change to one belongs here. A rule that
 only one consumer reads is stated in that consumer's module, named there rather than numbered, and
 pinned by that consumer's tests the same way.
 
-The rules, as measured on 3.14.0:
+The rules, as measured on 4.0.0:
 
 1. **A discrete flex.** MuJoCo integrates some flexes through the ``discrete`` integrator's
    effective metric and refuses to compile them under any integrator that lacks it. A flex is one
@@ -22,27 +22,32 @@ The rules, as measured on 3.14.0:
 
    - it has **passive contact** (``<contact passive="true">``). Every other integrator is refused
      ("passive flex contact requires an integrator with the effective metric"); or
-   - it has **elasticity MuJoCo integrates**: ``young > 0`` on a ``dim=3`` flex, or on a ``dim=2``
-     flex whose ``elastic2d`` is not ``none``. ``implicit`` and ``implicitfast`` are refused ("flex
-     elasticity is no longer integrated implicitly"); ``euler`` and ``rk4`` compile it and
-     integrate it explicitly.
+   - it has **elasticity MuJoCo integrates**: ``young > 0`` on a ``dim=3`` flex, on a ``dim=1``
+     rod (bending), or on a ``dim=2`` flex whose ``elastic2d`` is not ``none``. ``implicit`` and
+     ``implicitfast`` are refused ("flex elasticity is no longer integrated implicitly");
+     ``euler`` and ``rk4`` compile it and integrate it explicitly.
 
-   Not on this path, and accepted by every integrator: a ``dim=1`` flex's ``young``, a ``dim=2``
-   flex with ``elastic2d="none"`` (the default), edge stiffness, damping alone, and any rigid flex
-   (all vertices on one body, e.g. ``rigid="true"`` or every vertex pinned).
-2. **Solver options under ``discrete``.** A model with a discrete flex refuses the PGS solver and
-   any ``noslip_iterations > 0`` ("PGS and noslip not yet supported with flex"). CG and Newton
-   work. A model whose flexes are all outside rule 1 accepts both.
+   Not on this path, and accepted by every integrator: a ``dim=2`` flex with ``elastic2d="none"``
+   (the default), damping alone, and any rigid flex (all vertices on one body, e.g.
+   ``rigid="true"`` or every vertex pinned). A rope's edge stiffness is rule 2.
+2. **What ``discrete`` refuses.** A model with a discrete flex refuses the PGS solver and any
+   ``noslip_iterations > 0`` ("PGS and noslip not yet supported with flex"). CG and Newton work. A
+   model whose flexes are all outside rule 1 accepts both. And a ``dim=1`` flex that is not rigid
+   and has ``<edge stiffness>`` or ``<edge damping>`` is refused ("flex edge stiffness and damping
+   are not supported"); every other integrator runs it. A model holding such a rope and a discrete
+   flex therefore runs under ``euler`` or ``rk4`` only; the rope's stiffness can instead be its
+   ``<elasticity young>``, which ``discrete`` integrates.
 3. **No flex under a mocap body.** A flex's vertex DOFs are relative to the body it is declared in,
    and a mocap body moves by having its frame replaced, which applies no acceleration. The flex is
    therefore carried rigidly and never deforms however the mocap moves -- measured: zero
-   deformation under a 2 Hz, 5 cm oscillation that bends the same flex by millimetres on a
-   position-servoed slide joint. Pinned or not, trilinear or full, it compiles and runs, which is
-   why roqsim refuses it: the result would be a flex that silently does not respond to the motion
-   the experiment is about.
+   deformation under a 2 Hz, 5 cm oscillation that moves the same flex's vertices by millimetres
+   on a position-servoed slide joint. MuJoCo refuses an elastic flex there itself ("flex
+   elasticity does not support mocap attachments"); one without elasticity, pinned or not, compiles
+   and runs, which is why roqsim refuses every flex there: the result would be a flex that silently
+   does not respond to the motion the experiment is about.
 
 ``sim.integrator: auto`` (the default) resolves to ``discrete`` for a model with a discrete flex and
-to ``implicitfast`` otherwise.
+to ``implicitfast`` otherwise; a model that rule 2 then refuses is refused by name.
 """
 
 from __future__ import annotations
@@ -118,10 +123,21 @@ def discrete_flexes(spec: mujoco.MjSpec) -> list[DiscreteFlex]:
         if flex.passive:
             found.append(DiscreteFlex(label, "passive contact"))
             continue
-        elastic_dim = flex.dim == 3 or (flex.dim == 2 and int(flex.elastic2d) != 0)
+        elastic_dim = flex.dim in (1, 3) or (flex.dim == 2 and int(flex.elastic2d) != 0)
         if flex.young > 0 and elastic_dim:
             found.append(DiscreteFlex(label, "elasticity"))
     return found
+
+
+def edge_stiff_ropes(spec: mujoco.MjSpec) -> list[str]:
+    """The names of every rope in *spec* that ``discrete`` refuses for its edge stiffness (rule 2)."""
+    return [
+        _flex_label(flex, index)
+        for index, flex in enumerate(spec.flexes)
+        if flex.dim == 1
+        and not _is_rigid(flex)
+        and (flex.edgestiffness > 0 or flex.edgedamping > 0)
+    ]
 
 
 def needs_discrete(spec: mujoco.MjSpec) -> bool:
@@ -162,6 +178,22 @@ def check_flex_options(spec: mujoco.MjSpec, choice: IntegratorChoice) -> None:
                 "flex elasticity and passive flex contact only under the discrete integrator. Set "
                 "sim.integrator: auto (or discrete)."
             )
+    ropes = edge_stiff_ropes(spec)
+    if ropes and integrator == DISCRETE:
+        names = ", ".join(f"flex {r!r}" for r in ropes)
+        if flexes:
+            passive = any(f.reason == "passive contact" for f in flexes)
+            explicit = "" if passive else ", or set sim.integrator: euler (or rk4) to run both"
+            raise PluginError(
+                f"no implicit integrator can run {named} beside {names}: MuJoCo integrates the "
+                "first only under discrete and refuses a rope's <edge stiffness>/<edge damping> "
+                f"under discrete. Give the rope <elasticity young> instead{explicit}."
+            )
+        raise PluginError(
+            f"sim.integrator: discrete cannot run {names}: MuJoCo refuses a rope's <edge "
+            "stiffness>/<edge damping> under discrete. Set sim.integrator: auto (or "
+            "implicitfast), or give the rope <elasticity young> instead."
+        )
     if flexes and integrator == DISCRETE:
         if spec.option.solver == mujoco.mjtSolver.mjSOL_PGS:
             raise PluginError(
@@ -266,7 +298,7 @@ def spec_flex_body_names(flex) -> list[str]:
 # ``dof="trilinear"``/``"quadratic"``) carrying three unnamed slide joints and an explicit mass, and
 # the flex itself, which names those bodies. A pinned vertex gets no body: the flex names the body
 # the ``<flexcomp>`` was declared in -- its *pin body* -- and keeps the vertex's position in that
-# body's frame. Three more MuJoCo 3.14.0 behaviours decide how a plugin that attaches such a model
+# body's frame. Three more MuJoCo 4.0.0 behaviours decide how a plugin that attaches such a model
 # treats it, each measured in ``tests/test_flex_models.py`` (6: ``roqsim_sensors``'
 # ``tests/test_force_torque_flex.py``):
 #

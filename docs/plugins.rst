@@ -1090,18 +1090,20 @@ and the ``dof`` attribute decides how many there are:
 * ``trilinear``: 8 nodes carry the flex and every vertex is interpolated from them (24);
 * ``quadratic``: 27 nodes (81).
 
-The two reduced modes compile only with ``selfcollide="none"``: MuJoCo 3.14 refuses
-``selfcollide="auto"`` under either ("trilinear interpolation cannot do self-collision"). A solid
-block cannot fold onto itself anyway, so stating ``none`` costs it nothing and keeps both modes
-open. ``roqsim check`` computes a flex's modes up to 2400 degrees of freedom and suggests a reduced
-mode above that; the web replay draws a ``quadratic`` flex approximately (below).
+The two reduced modes collide a flex with itself only between elements that are neither in the
+same grid cell nor in neighbouring ones. A solid block cannot fold onto itself anyway, so the
+examples state ``selfcollide="none"``, which spares those tests. ``roqsim check`` computes a flex's
+modes up to 2400 degrees of freedom and suggests a reduced mode above that; the web replay draws a ``quadratic`` flex approximately (below).
 
-**Elasticity is integrated only on a solid or an elastic shell.** ``young`` acts on a ``dim=3``
-flex, and on a ``dim=2`` flex whose ``elastic2d`` is not ``none``. On a ``dim=1`` cable, or on a
-shell left at ``elastic2d="none"`` (the default), it changes nothing: measured on MuJoCo 3.14, a
-pinned rope and a pinned sheet fall identically at 0, 1e4 and 1e7 Pa, where the same sheet at
-``elastic2d="both"`` holds its shape. A cable is made stiff with ``<edge stiffness>`` instead, and
-``flex_material`` refuses a modulus it would not read.
+**Elasticity is integrated on a solid, a rope and an elastic shell.** ``young`` acts on a ``dim=3``
+flex, on a ``dim=1`` rope, which it makes bend and, through ``poisson`` (or ``shear``), twist, and on
+a ``dim=2`` flex whose ``elastic2d`` is not ``none``. On a shell left at ``elastic2d="none"`` (the
+default) it changes nothing, and ``flex_material`` refuses a modulus it would not read. An elastic
+rope gets a twist body and hinge joint per edge (``<name>_twist_<i>``) while MuJoCo parses the
+``<flexcomp>``, which adds to ``nq`` and ``nv``; so a rope is made elastic in its MJCF, and
+``flex_material`` only restates its modulus. Its bending is integrated by ``discrete``, ``euler``
+and ``rk4``, never ``implicitfast``. A rope can be made stiff along its length with ``<edge
+stiffness>`` instead, which every integrator but ``discrete`` runs (``roqsim.flex``, rule 2).
 
 A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
 model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
@@ -1293,8 +1295,9 @@ them.
 What MuJoCo does with it
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Each of these was measured on MuJoCo 3.14.0, the version range the packages pin, and "the block"
-and "the pad" are the two models above.
+Each of these was measured on MuJoCo 3.14.0 and rechecked on 4.0.0, the version range the packages
+pin, where the modes of the block and the pad moved by less than 1 % (MuJoCo 4.0 corrected the Lame
+constants of a solid flex); "the block" and "the pad" are the two models above.
 
 **Numerical damping under** ``discrete``. The integrator damps each elastic mode as if the stated
 ``<elasticity damping>`` were one timestep larger: mode *i* rings down with damping ratio ``(damping
