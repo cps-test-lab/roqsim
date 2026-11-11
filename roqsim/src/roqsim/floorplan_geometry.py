@@ -216,31 +216,211 @@ def bounds(lines: list[dict]) -> tuple[float, float, float, float]:
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def wall_pieces(lines: list[dict], doors: list[dict], ceiling_h: float, opening_h: float):
+def wall_pieces(
+    lines: list[dict], doors: list[dict], ceiling_h: float, opening_h: float, *, thickness: float
+):
     """The wall boxes to build as ``(p0, p1, z0, z1)``, with each line's door openings cut out.
 
     A drawn line becomes: full-height solid pieces ``(0, ceiling_h)`` around its openings, plus one
     lintel per opening spanning ``(height, ceiling_h)`` over the opening width (skipped when the
     opening reaches the ceiling). So a door is a 2 m-high hole with a beam above it, not a full gap.
+    Each box is ``thickness`` wide, centred on the segment ``p0``->``p1``.
+
+    Where walls meet, no two boxes show a face in one plane, which would flicker in every render as
+    the camera moves (:func:`_wall_joints`): a box overlapping another stands ``JOINT_INSET_M`` lower
+    (and a lintel's underside that much higher) per step, and at a corner of two walls each runs on
+    past the corner point until its end face lies ``JOINT_INSET_M`` inside the other wall.
     """
+    if thickness <= 0:
+        raise ValueError(f"wall thickness must be positive, not {thickness:g}")
     per_seg = assign_doors(lines, doors, opening_h)
+    segs = line_segments(lines)
+    reach = _corner_extensions(segs, thickness)
     pieces = []
-    for i, ((x0, y0), (x1, y1)) in enumerate(line_segments(lines)):
+    for i, ((x0, y0), (x1, y1)) in enumerate(segs):
         length = math.hypot(x1 - x0, y1 - y0)
         ux, uy = (x1 - x0) / length, (y1 - y0) / length
+        # A piece ending at the line's end runs on past it by that corner's extension.
+        ends = {0.0: -reach[i][0], length: length + reach[i][1]}
+
+        def at(t: float, x0=x0, y0=y0, ux=ux, uy=uy, ends=ends) -> tuple[float, float]:
+            t = ends.get(t, t)
+            return (x0 + ux * t, y0 + uy * t)
+
         openings = per_seg.get(i, [])
         for t0, t1 in cut_openings(length, [(t, w) for t, w, _ in openings]):
-            pieces.append(
-                ((x0 + ux * t0, y0 + uy * t0), (x0 + ux * t1, y0 + uy * t1), 0.0, ceiling_h)
-            )
+            pieces.append((at(t0), at(t1), 0.0, ceiling_h))
         for t_m, width, height in openings:
             if height >= ceiling_h:
                 continue  # a full-height opening keeps a true doorway -- no lintel above it
             g0, g1 = max(0.0, t_m - width / 2), min(length, t_m + width / 2)
-            pieces.append(
-                ((x0 + ux * g0, y0 + uy * g0), (x0 + ux * g1, y0 + uy * g1), height, ceiling_h)
-            )
-    return pieces
+            pieces.append((at(g0), at(g1), height, ceiling_h))
+    return _wall_joints(pieces, thickness)
+
+
+#: m: how far apart two wall boxes keep their faces where they meet. A render cannot show 1 mm, and
+#: it keeps the depth test from having to choose between two faces in one plane.
+JOINT_INSET_M = 0.001
+#: m: wall ends this close are one corner, and a wall end this close to another wall's line meets it.
+_JOINT_TOL_M = 1e-6
+#: m²: an overlap of two boxes' footprints smaller than this is two boxes touching, not overlapping.
+_OVERLAP_M2 = 1e-9
+
+
+def _corner_extensions(
+    segs: list[tuple[tuple[float, float], tuple[float, float]]], thickness: float
+) -> list[tuple[float, float]]:
+    """How far each wall runs on past its start and its end, in metres: ``[(before, after)]``.
+
+    A box ending at the corner point leaves the outside of the corner open, a notch half the
+    thickness square at a right angle. Where exactly two walls end at one point and no other wall
+    passes through it, each runs on past that point as far as its end face stays ``JOINT_INSET_M``
+    inside the other wall's sides: ``((t/2)(1 - |cos a|) - inset) / sin a`` for the angle ``a``
+    between them, ``t/2 - inset`` at a right angle. The corner is closed but for a sliver of that
+    inset, the inner faces end where they did and nothing reaches past the other wall's outer face.
+    Walls in line (``a`` = 180 degrees) meet end to end and run on by nothing; so does any end at a
+    point three or more walls share, or on another wall's length (a T), which already lies inside
+    a wall.
+    """
+    half = thickness / 2
+    ends = [(i, k, seg[k]) for i, seg in enumerate(segs) for k in (0, 1)]
+    near = _near_pairs([(p, p) for _, _, p in ends] + [_aabb(seg) for seg in segs])
+    meets: dict[int, list[int]] = {}  # end -> the other ends at its point
+    through: set[int] = set()  # ends lying on another wall's length
+    for e, f in near:
+        if f < len(ends):
+            if ends[e][0] != ends[f][0] and math.dist(ends[e][2], ends[f][2]) <= _JOINT_TOL_M:
+                meets.setdefault(e, []).append(f)
+                meets.setdefault(f, []).append(e)
+        elif e < len(ends) and ends[e][0] != f - len(ends):
+            if _on_interior(ends[e][2], segs[f - len(ends)]):
+                through.add(e)
+    out = [[0.0, 0.0] for _ in segs]
+    for e, (i, k, _) in enumerate(ends):
+        others = meets.get(e, [])
+        if len(others) != 1 or e in through:
+            continue
+        j, m, _ = ends[others[0]]
+        a, b = _away(segs[i], k), _away(segs[j], m)
+        cos_a = a[0] * b[0] + a[1] * b[1]
+        sin_a = abs(a[0] * b[1] - a[1] * b[0])
+        if sin_a <= 1e-9:
+            continue
+        out[i][k] = max(0.0, (half * (1.0 - abs(cos_a)) - JOINT_INSET_M) / sin_a)
+    return [(before, after) for before, after in out]
+
+
+def _aabb(points) -> tuple[tuple[float, float], tuple[float, float]]:
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    return ((min(xs), min(ys)), (max(xs), max(ys)))
+
+
+def _near_pairs(boxes: list) -> list[tuple[int, int]]:
+    """The pairs ``(i, j)``, ``i < j``, of ``((xmin, ymin), (xmax, ymax))`` boxes that touch, within
+    ``_JOINT_TOL_M``: hashed into a grid of cells, so a plan of many walls is not compared all to all.
+    """
+    if not boxes:
+        return []
+    cell = max(
+        1.0, max(max(hi[0] - lo[0], hi[1] - lo[1]) for lo, hi in boxes) / 4
+    )  # a long wall spans a few cells, not thousands
+    grid: dict[tuple[int, int], list[int]] = {}
+    for i, (lo, hi) in enumerate(boxes):
+        for cx in range(
+            math.floor((lo[0] - _JOINT_TOL_M) / cell), math.floor((hi[0] + _JOINT_TOL_M) / cell) + 1
+        ):
+            for cy in range(
+                math.floor((lo[1] - _JOINT_TOL_M) / cell),
+                math.floor((hi[1] + _JOINT_TOL_M) / cell) + 1,
+            ):
+                grid.setdefault((cx, cy), []).append(i)
+    pairs = set()
+    for members in grid.values():
+        for a, i in enumerate(members):
+            for j in members[a + 1 :]:
+                (alo, ahi), (blo, bhi) = boxes[i], boxes[j]
+                if all(
+                    alo[d] <= bhi[d] + _JOINT_TOL_M and blo[d] <= ahi[d] + _JOINT_TOL_M
+                    for d in (0, 1)
+                ):
+                    pairs.add((min(i, j), max(i, j)))
+    return sorted(pairs)
+
+
+def _away(seg, end: int) -> tuple[float, float]:
+    """The unit direction from a segment's ``end`` along the segment."""
+    (x0, y0), (x1, y1) = seg if end == 0 else (seg[1], seg[0])
+    n = math.hypot(x1 - x0, y1 - y0)
+    return ((x1 - x0) / n, (y1 - y0) / n)
+
+
+def _on_interior(p, seg) -> bool:
+    """Whether point ``p`` lies on ``seg`` away from both its ends."""
+    (x0, y0), (x1, y1) = seg
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    t = ((p[0] - x0) * dx + (p[1] - y0) * dy) / length
+    if t <= _JOINT_TOL_M or t >= length - _JOINT_TOL_M:
+        return False
+    return abs((p[0] - x0) * dy - (p[1] - y0) * dx) / length <= _JOINT_TOL_M
+
+
+def _wall_joints(pieces: list, thickness: float) -> list:
+    """``pieces`` with no two overlapping boxes at one height: each steps ``JOINT_INSET_M`` down.
+
+    Two boxes whose footprints overlap and whose heights overlap show their tops in one plane where
+    they overlap (and two lintels their undersides). Taken in order, each box takes the lowest step
+    no earlier box it overlaps holds -- at a corner one wall stays at full height and the other
+    stands 1 mm lower -- and a step lowers its top and raises a floating box's underside by
+    ``JOINT_INSET_M`` each. Boxes that only touch, end to end or side to side, keep their heights.
+    """
+    feet = [_footprint(p0, p1, thickness) for p0, p1, _, _ in pieces]
+    overlaps: dict[int, list[int]] = {}  # piece -> the earlier pieces it overlaps
+    for i, j in _near_pairs([_aabb(f) for f in feet]):
+        (_, _, zi0, zi1), (_, _, zj0, zj1) = pieces[i], pieces[j]
+        if zi0 < zj1 and zj0 < zi1 and _overlap_area(feet[i], feet[j]) > _OVERLAP_M2:
+            overlaps.setdefault(j, []).append(i)
+    steps: list[int] = []
+    for i in range(len(pieces)):
+        taken = {steps[j] for j in overlaps.get(i, [])}
+        steps.append(next(k for k in range(len(taken) + 1) if k not in taken))
+    out = []
+    for (p0, p1, z0, z1), k in zip(pieces, steps, strict=True):
+        lift = k * JOINT_INSET_M
+        out.append((p0, p1, z0 + lift if z0 > 0.0 else z0, z1 - lift))
+    return out
+
+
+def _footprint(p0, p1, thickness: float) -> list[tuple[float, float]]:
+    """A wall box's footprint: the rectangle ``thickness`` wide round ``p0``->``p1``, counter-clockwise."""
+    (x0, y0), (x1, y1) = p0, p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    nx, ny = -(y1 - y0) / length * thickness / 2, (x1 - x0) / length * thickness / 2
+    return [(x0 - nx, y0 - ny), (x1 - nx, y1 - ny), (x1 + nx, y1 + ny), (x0 + nx, y0 + ny)]
+
+
+def _overlap_area(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
+    """The area two convex counter-clockwise polygons share (Sutherland-Hodgman)."""
+    out = a
+    for i in range(len(b)):
+        (ax, ay), (bx, by) = b[i], b[(i + 1) % len(b)]
+
+        def side(p, ax=ax, ay=ay, bx=bx, by=by):
+            return (bx - ax) * (p[1] - ay) - (by - ay) * (p[0] - ax)
+
+        kept = []
+        for j in range(len(out)):
+            p, q = out[j], out[(j + 1) % len(out)]
+            sp, sq = side(p), side(q)
+            if sp >= 0:
+                kept.append(p)
+            if (sp >= 0) != (sq >= 0):
+                f = sp / (sp - sq)
+                kept.append((p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f))
+        out = kept
+        if not out:
+            return 0.0
+    return polygon_area(out)
 
 
 # --- rooms ---------------------------------------------------------------------------------------
