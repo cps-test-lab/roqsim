@@ -161,7 +161,8 @@ Limits
 - A texture finer than about 500 texels per metre is drawn at that resolution in a baked world (thin
   lines of a floor pattern fade at a distance).
 - A metal underside does not mirror the floor: the bake holds diffuse light only.
-- Two baked geoms without names in bodies without names cannot be told apart by the bake, and a world
-  with baked lighting refuses them, saying to name them.
+- A static geom in a body without a name cannot be found again by the bake (it finds a geom's body by
+  name), and a world with baked lighting refuses it, saying to name its body; so are two static geoms
+  the bake would name alike.
 - Moving a static prop makes the bake stale; the world then loads unbaked until it is baked again (the
   UV layout of everything else is reused).

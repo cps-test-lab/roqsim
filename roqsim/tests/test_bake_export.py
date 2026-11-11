@@ -267,7 +267,18 @@ def test_two_unnamed_geoms_of_unnamed_bodies_are_refused_by_name():
         extra='<body pos="1 1 0.2"><geom type="box" size=".1 .1 .1"/></body>'
         '<body pos="-1 1 0.2"><geom type="box" size=".1 .1 .1"/></body>'
     )
-    with pytest.raises(ValueError, match="name the geoms or their bodies"):
+    with pytest.raises(ValueError, match="name its body"):
+        analysed(xml)
+
+
+def test_a_static_geom_in_an_unnamed_body_is_refused_after_a_moving_one():
+    """The bake finds a body by its name: an unnamed static body, with an unnamed moving one before
+    it, would be found as the moving one."""
+    xml = room(
+        extra='<body pos="1 -1 0.2"><joint type="slide"/><geom name="slider" type="box" size=".1 .1 .1"/></body>'
+        '<body pos="-1 -1 0.2"><geom type="box" size=".1 .1 .1"/></body>'
+    )
+    with pytest.raises(ValueError, match="name its body"):
         analysed(xml)
 
 

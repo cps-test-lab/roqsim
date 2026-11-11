@@ -412,7 +412,13 @@ def export_world(
         else:
             kind = "moving"
         if kind in ("baked", "emitter"):
-            # The bake finds a geom again by its key; two that share one would be one to it.
+            # The bake finds a geom, and the body its baked mesh hangs on, again by name.
+            if b != 0 and not body:
+                raise ValueError(
+                    f"baked geom {key!r} is in a body without a name, which the bake cannot find "
+                    "again: name its body"
+                )
+            # Two geoms that share one key would be one to it.
             if key in baked_keys:
                 raise ValueError(
                     f"two baked geoms are both named {key!r} by the bake (a geom without a name is "
