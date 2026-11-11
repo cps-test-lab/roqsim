@@ -425,3 +425,16 @@ def test_a_rope_with_edge_stiffness_beside_an_elastic_solid_is_refused_under_aut
         assert _integrator(engine) == mujoco.mjtIntegrator.mjINT_EULER
     finally:
         engine.shutdown()
+
+
+def test_an_elastic_rope_with_edge_stiffness_is_refused_under_auto_by_its_own_name(tmp_path):
+    """Its modulus asks for discrete and its edges refuse it: one rope, not one beside another."""
+    rope = (
+        f'<flexcomp name="rope" {_ROPE}><elasticity young="1e5"/><edge stiffness="10"/></flexcomp>'
+    )
+    engine = _engine(tmp_path, rope)
+    with pytest.raises(PluginError) as err:
+        engine.setup()
+    message = str(err.value)
+    assert message.startswith("no implicit integrator can run flex 'rope':"), message
+    assert "beside" not in message and "sim.integrator: euler" in message
