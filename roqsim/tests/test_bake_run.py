@@ -8,8 +8,6 @@ for Blender, and -- where Blender is installed -- a small world bakes on the CPU
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import stat
 import sys
 import textwrap
@@ -24,7 +22,7 @@ from roqsim.engine import Engine
 
 #: A stand-in for Blender: answers --version, and run as a bake writes what blender_bake.py writes --
 #: a grid layout, and passes of the given light with noise -- or exits with the given code.
-FAKE = r'''#!{python}
+FAKE = r"""#!{python}
 import json, math, os, sys
 from pathlib import Path
 import numpy as np
@@ -64,7 +62,7 @@ for e in opts["--entities"].split(","):
         np.save(out / f"{{e}}.normal{{side}}.npy", nrm)
     times[e] = {{"size": s, "uv_s": 0.0, "bake_s": {{}}}}
 (out / f"times.{{opts['--entities'].split(',')[0]}}.json").write_text(json.dumps({{"entities": times}}))
-'''
+"""
 
 
 @pytest.fixture
@@ -105,7 +103,9 @@ def test_a_gpu_type_that_is_not_there_names_the_cpu(fake_blender, tmp_path, monk
     world = write_world(tmp_path)
     engine, plugin = _plugin(world)
     monkeypatch.setenv("FAKE_BLENDER_EXIT", "3")
-    monkeypatch.setenv("FAKE_BLENDER_SAY", "roqsim-bake: no OPTIX device found; --device cpu bakes on the CPU")
+    monkeypatch.setenv(
+        "FAKE_BLENDER_SAY", "roqsim-bake: no OPTIX device found; --device cpu bakes on the CPU"
+    )
     try:
         with pytest.raises(BakeRunError, match="--device cpu"):
             run.bake(plugin, device="optix", blender=fake_blender())
@@ -122,7 +122,11 @@ def test_the_passes_become_a_bake_the_world_loads(fake_blender, tmp_path):
         engine.shutdown()
     assert summary["path"] == str(tmp_path / "room.bake") and summary["jobs"] == 2
     meta = json.loads((tmp_path / "room.bake" / "bake.json").read_text())
-    assert meta["blender"] == "4.2.0" and meta["device"] == "cpu" and set(meta["entities"]) == {"floor", "shell", "P"}
+    assert (
+        meta["blender"] == "4.2.0"
+        and meta["device"] == "cpu"
+        and set(meta["entities"]) == {"floor", "shell", "P"}
+    )
     # The light is 2 everywhere: the exposure puts the shell's at SHELL_P95.
     assert meta["exposure"] == pytest.approx(0.55 / 2.0, rel=0.02)
     engine = Engine(load_config(str(world)), preview=True)
@@ -170,14 +174,21 @@ def test_dry_run_says_what_it_would_bake(tmp_path, capsys):
     assert out["path"] == str(tmp_path / "room.bake")
 
 
-def _blender_here() -> bool:
-    """Whether a Blender runs here: ``BLENDER`` (which the Makefile always exports, as ``blender`` when
-    unset) or ``blender``, resolved on ``PATH`` or as a file -- a name that resolves to nothing is none."""
-    exe = os.environ.get("BLENDER") or "blender"
-    return bool(shutil.which(exe) or (os.path.isfile(exe) and os.access(exe, os.X_OK)))
+def _no_blender() -> str:
+    """Why no Blender the bake can use runs here, or ``""``: ``BLENDER`` (which the Makefile always
+    exports, as ``blender`` when unset) or ``blender`` on ``PATH``, at 4.2 or later
+    (:func:`roqsim.bake.run.find_blender`)."""
+    try:
+        find_blender()
+    except BakeRunError as err:
+        return str(err)
+    return ""
 
 
-@pytest.mark.skipif(not _blender_here(), reason="Blender is not installed")
+_NO_BLENDER = _no_blender()
+
+
+@pytest.mark.skipif(bool(_NO_BLENDER), reason=_NO_BLENDER or "Blender runs here")
 def test_a_small_world_bakes_on_the_cpu_and_loads_baked(tmp_path):
     """The real thing: Cycles on the CPU, at a coarse resolution so it takes seconds."""
     world = write_world(tmp_path, texels_per_m={"shell": 8, "floor": 16, "props": 60}, samples=16)
