@@ -608,6 +608,11 @@ class SimContext:
         # the run's result and nothing reads it.
         self.unfinished: list[str] = []
 
+        # How the world loaded where that is weaker than asked for, or worth stating with a result:
+        # one plain-data condition each (:mod:`roqsim.conditions`), raised during the build. The
+        # engine writes them into the compiled model, so they travel with it.
+        self.conditions: list[dict] = []
+
         # Thread-safe command queue: external threads post, the physics thread drains. A deque's
         # append and popleft are atomic, so neither side takes a lock; the one consumer is the
         # physics thread, so a non-empty check followed by popleft cannot race another reader.

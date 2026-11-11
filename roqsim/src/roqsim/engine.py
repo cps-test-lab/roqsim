@@ -60,6 +60,7 @@ from .config import (
     drop_transport_plugins,
     instantiate_plugins,
 )
+from .conditions import write_to_spec as write_conditions
 from .context import SimContext
 from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
@@ -386,6 +387,10 @@ class Engine:
         # that field is live at all when the model compiles. Armed for every world rather than for
         # the ones that declare an absent entity: any entity can be deleted at run time.
         arm_gravity_compensation(spec)
+
+        # Into the model, so whatever holds only the model (a renderer, a recording's reader) can
+        # say how the world loaded. After every build hook, which is where conditions are raised.
+        write_conditions(spec, self.ctx.conditions)
 
         with self._span("compile"):
             self.ctx.model = spec.compile()

@@ -38,6 +38,7 @@ from pathlib import Path
 
 from . import control as ctl
 from . import env, exit_status, ipc, logging_setup
+from .conditions import write_run_file as write_conditions_file
 from .capture import (
     DEFAULT_FPS,
     RECORD_EXCLUDE_VAR,
@@ -728,6 +729,8 @@ def run(
                 seed, logger or log, config_seed=getattr(cfg, "seed", None)
             )
             stack.enter_context(engine)
+            # How the world loaded, beside the run's other artifacts, where a campaign collects them.
+            write_conditions_file(engine.ctx.conditions)
             if control:
                 # Once the socket is bound: a client started on this line finds it.
                 print(f"control: {control}", flush=True)
