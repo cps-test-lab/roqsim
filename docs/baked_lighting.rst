@@ -133,6 +133,11 @@ MuJoCo's Filament renderer, a material's ``emissive`` and ``occlusion`` textures
 lightmap UVs -- and a glTF export can carry the same files: each is an adapter over this format, not a
 rebake. The format is documented in ``python -m pydoc roqsim.bake.store``.
 
+Only the classic renderer (``mujoco``) draws a baked world today. A camera whose renderer does not
+declare it draws the bake (``baked_lighting`` in ``roqsim renderers describe``) is refused when the
+world loads, as its images would light the bake a second time: choose ``renderer: mujoco`` for it, or
+load the world unbaked with ``disable: [baked_lighting]``.
+
 The run-time rig
 ----------------
 

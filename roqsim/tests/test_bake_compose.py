@@ -254,3 +254,34 @@ def test_the_config_is_checked():
     )
     text = " ".join(errors)
     assert "quality" in text and "lights" in text and "texels_per_m.walls" in text and "emitters[0]" in text
+
+
+def test_a_renderer_that_does_not_draw_the_bake_is_refused_at_load(tmp_path):
+    """A world drawn baked holds its light in its textures, divided by the classic renderer's rig: a
+    renderer that lights it itself (Filament) would light it twice, so a camera of one is refused."""
+    from roqsim.rendering import RenderService
+
+    world = write_world(tmp_path)
+    synthetic_bake(world)
+    engine = loaded(world)
+    try:
+        model = engine.ctx.model
+        for name, refused in (("mujoco", False), ("filament", True)):
+            service = RenderService(model, renderer=name)
+            service.view("c", camera=-1, width=32, height=24)
+            if refused:
+                with pytest.raises(PluginError, match="does not draw baked lighting"):
+                    service.check()
+            else:
+                service.check()
+    finally:
+        engine.shutdown()
+    # Unbaked, the same world is any renderer's.
+    (tmp_path / "unbaked").mkdir()
+    engine = loaded(write_world(tmp_path / "unbaked"))
+    try:
+        service = RenderService(engine.ctx.model, renderer="filament")
+        service.view("c", camera=-1, width=32, height=24)
+        service.check()
+    finally:
+        engine.shutdown()
