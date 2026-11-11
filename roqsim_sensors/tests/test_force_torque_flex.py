@@ -98,12 +98,25 @@ def _cantilever(support: bool) -> str:
 
 
 def _hang(support: bool, push: float = 0.0):
+    """The cantilever stepped until it is at rest: every vertex slower than 1 mm/s for 0.5 s,
+    which a turning point of the swing, where all of them stop at once, is not.
+
+    At rest, not after a fixed time: how long the beam rings depends on its material, which MuJoCo
+    4.0 made softer than 3.14 did for the same young and poisson (``roqsim.flex``). Propped up, its
+    vertices on the support keep a jitter of about 0.1 mm/s under 4.0, so the bar is above that.
+    """
     model = mujoco.MjModel.from_xml_string(_cantilever(support))
     data = mujoco.MjData(model)
     tip = [b for b in range(model.nbody) if model.body_parentid[b] == model.body("mount").id][-1]
-    for _ in range(8000):
-        data.xfrc_applied[tip, 2] = push
+    data.xfrc_applied[tip, 2] = push
+    still = 0
+    for _ in range(40000):
         mujoco.mj_step(model, data)
+        still = still + 1 if float(np.abs(data.qvel).max()) < 1e-3 else 0
+        if still * model.opt.timestep >= 0.5:
+            break
+    else:
+        raise AssertionError("the cantilever did not come to rest in 20 s")
     mujoco.mj_forward(model, data)
     return model, data
 
