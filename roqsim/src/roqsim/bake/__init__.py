@@ -23,5 +23,11 @@ The pieces, in the order they run:
   run-time light rig the classic renderer draws a bake under;
 * :mod:`.export` -- the world as loaded, split into what is baked (static, drawn) and what moves, its
   lights resolved (:mod:`.lights`) and its fingerprint (:mod:`.fingerprint`), in one call by
-  :mod:`.analysis`.
+  :mod:`.analysis`;
+* :mod:`.store` -- the bake on disk, renderer-neutral: light maps without the surface colour, the
+  lightmap UVs, ``bake.json``;
+* :mod:`.compose` -- MuJoCo's classic renderer's part: the light map times the model's own colour,
+  divided by the rig's light, composed in memory when the world loads.
+
+The plugin a world turns it on with is :mod:`roqsim.plugins.baked_lighting`.
 """

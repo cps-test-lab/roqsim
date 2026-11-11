@@ -376,6 +376,9 @@ class SimConfig:
     unresolved: list[tuple[str, str]] = field(default_factory=list)
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
+    #: The world YAML this config was loaded from (``None`` for one built from a dict): what a message
+    #: names when it tells the user a command to run on the world.
+    source: Path | None = None
     #: ``sim`` values the engine settled at setup where the document left the choice to it --
     #: ``integrator``, which ``auto`` resolves once the model's flexes are known. Overlaid on ``sim``
     #: in :meth:`as_record`, so a run's provenance states what ran rather than what was delegated.
@@ -751,12 +754,14 @@ def load_config(
     raw = _resolve_inheritance(raw, path.parent, where=str(path))
     if transport:
         raw = with_transport(raw, **transport)
-    return _from_dict(
+    cfg = _from_dict(
         raw,
         base_dir=path.parent,
         assignments=assignments_from_mapping(overrides or {}),
         where=str(path),
     )
+    cfg.source = path
+    return cfg
 
 
 def world_sources(path: str | Path, *, skipped: list | None = None) -> list[Path]:

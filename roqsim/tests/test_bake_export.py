@@ -78,9 +78,23 @@ def test_static_drawn_geoms_are_baked_and_what_moves_occludes():
         assert k[key] == "moving", key
     assert k["light_panel"] == "emitter"
     assert "collider" not in k  # group 3 is not drawn
-    # The occluders are the moving geoms' triangles at reset: the door's leaf, the crate, the sphere.
-    assert len(a.export.occluders) > 24  # two boxes of 12 triangles and a tessellated sphere
+    # What hangs on a joint to the world throws its shadow into the bake, at reset: the door's leaf
+    # (a box, 12 triangles). The free crate and the mocap target do not: they are elsewhere every run.
+    assert len(a.export.occluders) == 12
     assert a.export.occluders[..., 1].min() < -1.9  # the door stands at y = -1.9
+
+
+def test_the_occluders_can_be_named():
+    assert len(analysed(room(), occluders=()).export.occluders) == 0
+    assert len(analysed(room(), occluders=("crate",)).export.occluders) == 12
+
+
+def test_a_robot_added_to_the_world_does_not_make_its_bake_stale():
+    robot = """<body name="robot" pos="0 1 0.1"><freejoint/>
+        <geom name="robot/chassis" type="box" size="0.3 0.2 0.1"/>
+        <body name="robot/arm" pos="0 0 0.2"><joint type="hinge"/>
+        <geom name="robot/link" type="capsule" size="0.03 0.2"/></body></body>"""
+    assert verdict(analysed(room()), analysed(room(extra=robot)))["status"] == "fresh"
 
 
 def test_entities_are_the_prefix_the_floor_and_the_shell():

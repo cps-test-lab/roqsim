@@ -612,6 +612,10 @@ class SimContext:
         # one plain-data condition each (:mod:`roqsim.conditions`), raised during the build. The
         # engine writes them into the compiled model, so they travel with it.
         self.conditions: list[dict] = []
+        # The world's MJCF file (``sim.world``, when it names one) and the YAML it was loaded from:
+        # set by the engine at setup, ``None`` where there is none.
+        self.world_path = None
+        self.world_source = None
 
         # Thread-safe command queue: external threads post, the physics thread drains. A deque's
         # append and popleft are atomic, so neither side takes a lock; the one consumer is the

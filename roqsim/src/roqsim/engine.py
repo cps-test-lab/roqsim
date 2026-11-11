@@ -37,6 +37,7 @@ import copy
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 
 try:
     import mujoco
@@ -296,6 +297,9 @@ class Engine:
             world_name = self.config.sim.get("world")
             self._check_one_world(world_name)
             world_path = world_file(world_name, self.config.base_dir)
+            # Where the world came from, for a plugin that keeps files beside it (baked lighting).
+            self.ctx.world_path = Path(world_path) if world_path else None
+            self.ctx.world_source = getattr(self.config, "source", None)
             if world_path is not None:
                 spec = mujoco.MjSpec.from_file(world_path)
             else:

@@ -11,9 +11,13 @@ floorplan, hand-written MJCF, props spawned at load) and splits its drawn geoms 
   drawn (geom group below 3, alpha above 0), not a light source and not excluded. Its triangles go to
   an *entity*'s light map;
 * **moving** -- every other drawn geom (a door's leaf, a robot, a free-jointed prop, a pooled body).
-  It is lit at run time; in the bake it is an *occluder* at its reset pose, so its shadow is there;
+  It is lit at run time. What hangs on a joint to the world (a door's leaf) is an *occluder* in the
+  bake at its reset pose, so its shadow is there; what floats free (a robot) is not
+  (:func:`is_occluder`);
 * **emitters** -- a static geom that is a light source (:mod:`.lights`): not baked, it lights the bake
-  and glows at run time.
+  and glows at run time;
+* **see-through** -- a static geom drawn with an alpha below 1 (glass): light passes it, so it is
+  neither baked nor an occluder, and it is drawn as it is.
 
 An **entity** is what shares a light map: the part of a geom's name (else its body's) before the first
 ``/`` -- what a spawned prop is prefixed with -- or else the room's shell. The shell's triangles that face
@@ -60,7 +64,7 @@ class GeomRecord:
     index_in_body: int
     #: How a bake names it: its name, else ``<body>#<index>``.
     key: str
-    kind: str  # "baked" | "moving" | "emitter"
+    kind: str  # "baked" | "moving" | "emitter" | "see_through"
     collides: bool
     geom_group: int
     material: int
@@ -302,6 +306,29 @@ def is_static(m: mujoco.MjModel, g: int) -> bool:
     return int(m.body_weldid[b]) == 0 and int(m.body_mocapid[b]) < 0
 
 
+def free_floating(m: mujoco.MjModel, g: int) -> bool:
+    """Whether geom *g* is part of a body tree that hangs on a free joint (a robot, a loose crate)."""
+    root = int(m.body_rootid[int(m.geom_bodyid[g])])
+    adr, num = int(m.body_jntadr[root]), int(m.body_jntnum[root])
+    return any(int(m.jnt_type[j]) == int(mujoco.mjtJoint.mjJNT_FREE) for j in range(adr, adr + num))
+
+
+def is_occluder(m: mujoco.MjModel, g: int, occluders: tuple[str, ...] | None) -> bool:
+    """Whether moving geom *g* throws its shadow into the bake.
+
+    By default what moves on a joint to the world (a door's leaf, a drawer, an arm at its reset pose)
+    does; what floats free (a robot, a loose crate) and mocap bodies do not: they are elsewhere in every
+    run, and a robot added to a world must not make its bake stale. *occluders* (fnmatch patterns on the
+    geom's name or its body's) replaces the rule: ``()`` for none.
+    """
+    if occluders is not None:
+        names = (m.geom(g).name, m.body(int(m.geom_bodyid[g])).name)
+        return any(fnmatch.fnmatch(n, p) for n in names if n for p in occluders)
+    b = int(m.geom_bodyid[g])
+    root = int(m.body_rootid[b])
+    return not free_floating(m, g) and int(m.body_mocapid[root]) < 0 and int(m.body_mocapid[b]) < 0
+
+
 def export_world(
     m: mujoco.MjModel,
     d: mujoco.MjData,
@@ -309,11 +336,13 @@ def export_world(
     *,
     emitter_geoms: dict[int, int] | None = None,
     exclude: tuple[str, ...] = (),
+    occluders: tuple[str, ...] | None = None,
 ) -> Export:
     """Split the compiled world (*d* at its reset pose, after ``mj_forward``) for the bake.
 
     *emitter_geoms* maps a geom id to the index of the light source it is (:mod:`.lights`); an
-    *exclude* pattern (fnmatch, on the geom's name) leaves a static geom unbaked, lit live.
+    *exclude* pattern (fnmatch, on the geom's name) leaves a static geom unbaked, lit live;
+    *occluders* chooses what of the moving geoms throws its shadow into the bake (:func:`is_occluder`).
     """
     emitter_geoms = emitter_geoms or {}
     per_body: dict[int, int] = {}
@@ -360,6 +389,10 @@ def export_world(
         static = is_static(m, g)
         if static and g in emitter_geoms:
             kind = "emitter"
+        elif static and resolved_rgba(m, g)[3] < 1.0:
+            # Glass: light passes it and the classic renderer blends it, so it is neither baked nor an
+            # occluder; it is drawn as it is, lit live.
+            kind = "see_through"
         elif static and not any(fnmatch.fnmatch(name, p) for p in exclude):
             kind = "baked"
         else:
@@ -406,8 +439,11 @@ def export_world(
         tri = separate_sheets(tri)
         R, p = d.geom_xmat[g].reshape(3, 3), d.geom_xpos[g]
         wtri, wnrm = tri @ R.T + p, nrm @ R.T
+        if rec.kind == "see_through":
+            continue
         if rec.kind == "moving":
-            occl.append(wtri)
+            if is_occluder(m, g, occluders):
+                occl.append(wtri)
             continue
         if rec.kind == "emitter":
             emitters[g] = (wtri, wnrm)

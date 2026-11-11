@@ -24,6 +24,8 @@ class Analysis:
     light: dict
     fingerprint: dict
     settings: BakeSettings
+    #: The compiled model it was taken from (a copy, for a plugin that analyses its spec).
+    model: mujoco.MjModel | None = None
 
 
 def analyse(
@@ -34,12 +36,15 @@ def analyse(
     lights="auto",
     emitters: list[dict] | None = None,
     exclude: tuple[str, ...] = (),
+    occluders: tuple[str, ...] | None = None,
 ) -> Analysis:
     """Export *m* at the pose in *d* (call ``mj_forward`` first) and fingerprint it."""
     geom_to_source, sources = bake_lights.emitter_geoms(m, list(emitters or []))
-    export = export_world(m, d, settings, emitter_geoms=geom_to_source, exclude=tuple(exclude))
+    export = export_world(
+        m, d, settings, emitter_geoms=geom_to_source, exclude=tuple(exclude), occluders=occluders
+    )
     light = bake_lights.resolve(m, d, lights, sources, export.bounds)
-    return Analysis(export, light, fp.compute(export, light, settings), settings)
+    return Analysis(export, light, fp.compute(export, light, settings), settings, model=m)
 
 
 def analyse_spec(spec: mujoco.MjSpec, settings: BakeSettings, **kwargs) -> tuple[Analysis, mujoco.MjModel]:
