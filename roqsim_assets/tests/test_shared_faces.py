@@ -217,10 +217,11 @@ def _rotated_wall_and_sill(ox: float, oy: float, inset: float = 0.0) -> mujoco.M
     )
 
 
-@pytest.mark.parametrize("origin", [(3, 2), (300, 300)])
-def test_a_rotated_mesh_written_to_six_decimals_is_compared_wherever_it_stands(origin):
+@pytest.mark.parametrize("origin", [(3, 2), (100, 100)])
+def test_a_rotated_mesh_written_to_six_decimals_is_compared_near_and_far_out(origin):
     # Rounding and single-precision vertices leave the faces micrometres out of one plane; the
-    # plane is measured across the faces, so a model far from the origin is compared as near it.
+    # plane is measured across the faces, so a model far out is compared as one near the origin
+    # (the module's TOL says how far that holds for a mesh written in world coordinates).
     (pair,) = shared_faces(_rotated_wall_and_sill(*origin))
     assert (pair.first, pair.second, pair.kind) == ("wall", "sill", "plane")
     assert pair.area == pytest.approx(0.1 * 0.04, rel=1e-3)

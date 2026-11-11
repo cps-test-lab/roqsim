@@ -43,8 +43,11 @@ from roqsim.rendering import drawn_by_default
 #: A model's numbers are written to about six decimals, and a mesh's vertices are stored in single
 #: precision: a rotated face's normal is off by that rounding over its edge length, so across a
 #: face metres long its corners stray from the plane of a part placed against it by up to a few
-#: 1e-6 m. The distance is measured across the faces, never from the world origin, so it does not
-#: grow with where a model stands; still a hundredth of the 1 mm inset that remedies a pair.
+#: 1e-6 m. The distance is measured across the faces, not from the world origin, so that error does
+#: not grow with where a geom stands; still a hundredth of the 1 mm inset that remedies a pair. A
+#: mesh whose vertices are written in world coordinates is the exception: MuJoCo reads them in
+#: single precision before it recentres them, which rounds by about 6e-8 of the coordinate, so
+#: beyond some hundred metres from the origin such a mesh's faces may be missed.
 TOL = 1e-5
 #: The sides a cylinder's flat ends are drawn with here: enough that a cap inside another face is
 #: seen as inside it.
@@ -252,13 +255,16 @@ def _candidates(ta, na, shown, tb, nb):
     One plane means the second face's corners lie within TOL of the first face's plane, measured
     from the first face's own corner: a plane's offset from the world origin would multiply the
     slightest error in a normal by the distance to the origin, and miss a pair far out in a scene.
-    The offsets still sort out cheaply the pairs that cannot be in one plane, with the slack that
-    multiplication can take (``_NORMAL_SLACK`` times the distance to the origin), so a mesh's many
-    parallel faces at other heights are never gathered pairwise.
+    The offsets, taken from a point among the faces, still sort out cheaply the pairs that cannot be
+    in one plane, with the slack that multiplication can take (``_NORMAL_SLACK`` times the distance
+    to that point), so a mesh's many parallel faces at other heights are never gathered pairwise.
     """
-    da = np.einsum("ij,ij->i", na, ta[:, 0])
-    db = np.einsum("ij,ij->i", nb, tb[:, 0])
-    slack = TOL + _NORMAL_SLACK * np.linalg.norm(tb[:, 0], axis=1)
+    ref = (
+        np.minimum(ta.min((0, 1)), tb.min((0, 1))) + np.maximum(ta.max((0, 1)), tb.max((0, 1)))
+    ) / 2
+    da = np.einsum("ij,ij->i", na, ta[:, 0] - ref)
+    db = np.einsum("ij,ij->i", nb, tb[:, 0] - ref)
+    slack = TOL + _NORMAL_SLACK * np.linalg.norm(tb[:, 0] - ref, axis=1)
     for start in range(0, len(na), _CHUNK):
         rows = slice(start, start + _CHUNK)
         same = (na[rows] @ nb.T > _SAME_WAY) & shown[rows, None]
