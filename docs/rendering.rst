@@ -38,6 +38,61 @@ the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
    roqsim sim world.yaml --renderer mujoco
    roqsim render world.yaml --out shot.png --renderer mujoco
 
+MuJoCo's physically based renderer: ``filament``
+-------------------------------------------------
+
+``sim.renderer: filament`` draws through MuJoCo's Filament renderer: per-pixel light from any number
+of lights, soft shadows, image-based light, metallic-roughness materials, ambient occlusion and colour
+grading. It reads all of these from the model, so a world turns them on in its MJCF:
+
+.. code-block:: xml
+
+   <asset>
+     <texture name="sky" type="skybox" file="room_sky.png"/>        <!-- the light around the room -->
+     <material name="oak" texture="oak" roughness="0.6" metallic="0"/>
+   </asset>
+   <custom>
+     <text name="filament.shadows.type" data="pcss"/>     <!-- soft shadows -->
+     <numeric name="filament.cg.exposure" data="-0.5"/>   <!-- colour grading, in stops -->
+   </custom>
+   <worldbody>
+     <light type="image" texture="sky" intensity="20000"/>
+     <light pos="0 0 2.9" dir="0 0 -1" intensity="900" bulbradius="0.3"/>  <!-- candela -->
+   </worldbody>
+
+MuJoCo's rendering documentation lists every ``filament.*`` flag. **One light with a positive
+``intensity`` switches the whole model to photometric light**: every light then gives exactly its own
+intensity (lights left at zero go dark), the headlight is off and nothing lights the scene but the
+lights and an ``image`` light. A model with none is drawn the way MuJoCo draws a model authored for
+the classic renderer: a default environment light, the headlight (``visual/headlight``: on unless
+``active="0"``; MuJoCo 4.0's ``auto`` is on) and the model's lights sharing a fixed intensity.
+
+.. code-block:: yaml
+
+   sim:
+     renderer: filament
+     renderers:
+       filament:
+         shadows: true          # draw shadows (their kind: the model's filament.shadows.type)
+         post_processing: true  # tone mapping, grading, ambient occlusion, anti-aliasing, bloom
+         reflections: true
+         software: false        # allow a CPU rasteriser where a GPU was given
+
+It gives colour, depth and segmentation through pinhole, orthographic and free cameras, an off-centre
+principal point, non-square pixels and a camera's own geom groups. It does not draw MuJoCo
+decorations or the moving bodies alone, and a camera asking for either is refused at load.
+
+- **It needs Vulkan.** It runs headless through Vulkan, never through EGL or a display: in a container
+  the GPU's Vulkan driver must be mounted (for NVIDIA the ``graphics`` driver capability). Where no
+  Vulkan context opens, the world fails to load with Filament's own words. A process given an NVIDIA
+  GPU that would draw on a CPU rasteriser (lavapipe) is refused unless ``software: true``.
+- **A frame is a function of the state only without post-processing.** Filament's dithering and
+  ambient occlusion change from frame to frame by a few levels; ``post_processing: false`` draws
+  identical frames for identical states, without ambient occlusion and tone mapping.
+- **Its contexts live as long as the process.** Each open renderer holds a Vulkan context of its
+  own, given back for the next world on its thread when it closes, and never destroyed: destroying
+  one ends MuJoCo's own renderer in the same process (:doc:`architecture` §8).
+
 What is installed, and what each takes
 --------------------------------------
 

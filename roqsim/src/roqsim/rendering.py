@@ -636,21 +636,29 @@ def set_clip_planes(scene: mujoco.MjvScene, near: float | None, far: float | Non
     """Move the clip planes of *scene*'s GL cameras to *near*/*far* metres, keeping the view.
 
     ``mjv_updateScene`` fills each ``MjvGLCamera`` from the model's planes; this overrides them in
-    the scene alone. A perspective frustum's sides are given at the near plane, so they scale with
-    it, which keeps the field of view; an orthographic one's are absolute. ``None`` keeps a plane.
+    the scene alone (:func:`set_camera_planes`). ``None`` keeps a plane.
     """
     for cam in scene.camera:
-        if near is not None:
-            old = float(cam.frustum_near)
-            if not cam.orthographic:
-                scale = near / old
-                cam.frustum_bottom *= scale
-                cam.frustum_top *= scale
-                cam.frustum_center *= scale
-                cam.frustum_width *= scale
-            cam.frustum_near = near
-        if far is not None:
-            cam.frustum_far = far
+        set_camera_planes(cam, near, far)
+
+
+def set_camera_planes(cam: mujoco.MjvGLCamera, near: float | None, far: float | None) -> None:
+    """Move *cam*'s clip planes to *near*/*far* metres, keeping its view.
+
+    A perspective frustum's sides are given at the near plane, so they scale with it, which keeps
+    the field of view; an orthographic one's are absolute. ``None`` keeps a plane.
+    """
+    if near is not None:
+        old = float(cam.frustum_near)
+        if not cam.orthographic:
+            scale = near / old
+            cam.frustum_bottom *= scale
+            cam.frustum_top *= scale
+            cam.frustum_center *= scale
+            cam.frustum_width *= scale
+        cam.frustum_near = near
+    if far is not None:
+        cam.frustum_far = far
 
 
 def linear_depth(
