@@ -27,7 +27,9 @@ The pieces, in the order they run:
 * :mod:`.store` -- the bake on disk, renderer-neutral: light maps without the surface colour, the
   lightmap UVs, ``bake.json``;
 * :mod:`.compose` -- MuJoCo's classic renderer's part: the light map times the model's own colour,
-  divided by the rig's light, composed in memory when the world loads.
+  divided by the rig's light, composed in memory when the world loads;
+* :mod:`.run` -- ``roqsim bake``: the export handed to Blender (:mod:`.blender_bake`, which runs
+  *inside* Blender and is never imported here), its passes turned into the stored bake.
 
 The plugin a world turns it on with is :mod:`roqsim.plugins.baked_lighting`.
 """
