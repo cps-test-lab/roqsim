@@ -10,6 +10,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim_assets.shared_faces import shared_faces
 
 
 def _belt_only(tmp_path, conv_extra=None):
@@ -101,10 +102,14 @@ def test_belt_resizes_to_configured_length_and_width(tmp_path):
     L, W = 1.75, 0.4
     assert np.allclose(_geom_size(engine, "belt_visual"), [L, W, 0.0275])
     assert np.allclose(_geom_size(engine, "belt_surface"), [L + 0.029, W, 0.0275])
-    # Roller half-length spans the width (radius fixed) and the body sits at the belt end.
-    assert np.allclose(_geom_size(engine, "roller_a_geom"), [0.0275, W, 0.0])
+    # Roller half-length spans the width, 1 mm inside each side (radius fixed), and the body sits
+    # at the belt end.
+    assert np.allclose(_geom_size(engine, "roller_a_geom"), [0.0275, W - 0.001, 0.0])
     assert np.allclose(_body_pos(engine, "roller_a"), [-L, 0.0, 0.9425])
     assert np.allclose(_body_pos(engine, "roller_b"), [L, 0.0, 0.9425])
+    # Resized, no two drawn parts show a face in one place (test_shared_faces_shipped compares the
+    # model at its own size).
+    assert [f.describe() for f in shared_faces(engine.ctx.model, engine.ctx.data)] == []
     # Package default start pose tracks the feed end (L - 0.221) and rides the resized belt.
     x0 = _package_x(engine)
     assert x0 == pytest.approx(L - 0.221, abs=1e-6)

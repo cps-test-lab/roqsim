@@ -74,6 +74,9 @@ class ConveyorPlugin(MachinePlugin):
     _SLAB_OVER = 0.029  # drive-slab overhang past belt end (belt_surface 1.25 - belt_visual 1.221)
     _RAIL_OFF = 0.006  # rail centre offset past belt edge (0.296 - 0.29); == rail half-thickness
     _SURF_Z = 0.9425  # belt-surface height inside the model (rail/roller z), fixed
+    # Roller ends sit this far inside the belt's sides: flush, the two faces would flicker in a
+    # render (roqsim_assets.shared_faces).
+    _ROLLER_INSET = 0.001
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -200,10 +203,11 @@ class ConveyorPlugin(MachinePlugin):
             g = child.geom(rail)
             g.size = [L, self._RAIL_OFF, 0.03]
             g.pos = [0.0, side * (W + self._RAIL_OFF), z]
-        # End rollers: at each belt end (radius fixed), cylinder half-length spans the width.
+        # End rollers: at each belt end (radius fixed), cylinder half-length spans the width, its
+        # ends just inside the belt's sides.
         for roller, side in (("roller_a", -1.0), ("roller_b", 1.0)):
             child.body(roller).pos = [side * L, 0.0, z]
-            child.geom(roller + "_geom").size = [self.roller_radius, W, 0.0]
+            child.geom(roller + "_geom").size = [self.roller_radius, W - self._ROLLER_INSET, 0.0]
         # Decorative feet: proportional scale (never inverts), so they stay under the belt corners.
         fx, fy = L / self._L0, W / self._W0
         for name in ("conv_leg_1", "conv_leg_2", "conv_leg_3", "conv_leg_4"):

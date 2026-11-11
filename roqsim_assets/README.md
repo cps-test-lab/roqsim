@@ -128,7 +128,9 @@ of one radius meeting it at an angle (an elbow), shares that end's surface where
 coincide and passes where they lie apart, since two spheres of one radius on different centres meet
 in a circle only. A touching pair no rule decides -- an ellipsoid, a heightfield, an SDF geom --
 raises `UncomparableGeoms` rather than passing. Any package
-can call the function in a test over its own props and worlds.
+can call the function in a test over its own props and worlds; this package's
+`tests/test_shared_faces_shipped.py` compares every prop folder here, the hand-written MJCFs
+inspect-prop never sees included, and the default room.
 
 ## Props: reusing another prop's mesh (hierarchical props)
 
