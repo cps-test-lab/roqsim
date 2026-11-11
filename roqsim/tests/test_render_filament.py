@@ -272,14 +272,14 @@ def _texture_and_rgba(colorspace="auto", settings=None):
 
 @needs_vulkan
 def test_a_colour_texture_is_drawn_as_the_same_colour_given_as_rgba():
-    textured, plain = _texture_and_rgba()
+    for colorspace in ("auto", "linear", "sRGB"):
+        textured, plain = _texture_and_rgba(colorspace)
+        assert np.abs(textured - plain).max() < 4, colorspace
+    # Read by its colorspace, a linear one is drawn lighter and paler.
+    textured, plain = _texture_and_rgba("linear", settings={"colour_textures": "model"})
+    assert textured[2] > plain[2] + 30, "the blue of a linear lime is lifted"
+    textured, plain = _texture_and_rgba("sRGB", settings={"colour_textures": "model"})
     assert np.abs(textured - plain).max() < 4
-    # MuJoCo's own reading of `auto` (linear) draws it lighter and paler, and so does `linear`.
-    for linear in (
-        _texture_and_rgba(settings={"colour_textures": "model"})[0],
-        _texture_and_rgba("linear")[0],
-    ):
-        assert linear[2] > plain[2] + 30, "the blue of a linear lime is lifted"
 
 
 @needs_vulkan

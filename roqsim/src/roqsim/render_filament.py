@@ -48,9 +48,9 @@ What this module adds is roqsim's contract (:mod:`roqsim.render_api`):
   linearised to metres along the view axis, ``inf`` where nothing was drawn; segmentation is read
   as Filament's ids (an object's renderable's ``segmentation_id``, 0 for the background) and turned
   into ``(object id, mjtObj type)`` from the renderables themselves.
-* **Colour textures as the classic renderer shows them.** A material's colour texture whose
-  colorspace the model leaves at ``auto`` is read as sRGB, as its ``rgba`` colours are, on the
-  renderer's own copy of the model (``colour_textures``; :func:`colour_textures_left_auto`).
+* **Colour textures as the classic renderer shows them.** A material's colour texture is read as
+  sRGB, as its ``rgba`` colours are, on the renderer's own copy of the model
+  (``colour_textures``; :func:`linear_colour_textures`).
 * **The camera MuJoCo would draw**, from ``mjv_camera2GLCamera``, with the camera's own clip planes.
 
 What it does not do: MuJoCo decorations (``mjvGeom`` markers), the moving bodies alone. A camera
@@ -184,20 +184,22 @@ _COLOUR_ROLES = (
 )
 
 
-def colour_textures_left_auto(model: mujoco.MjModel) -> np.ndarray:
-    """The ids of the textures some material uses as a colour whose colorspace is ``auto``.
+def linear_colour_textures(model: mujoco.MjModel) -> np.ndarray:
+    """The ids of the textures some material uses as a colour that the model reads as linear.
 
-    MuJoCo reads such a texture as linear unless its file says otherwise, and the classic renderer
-    shows its bytes as display values whatever it says; a world authored under it has display
-    (sRGB) colours in them. Filament honours the colourspace, so read as linear they are drawn
-    lighter and paler than the same colour as an ``rgba``, which it reads as sRGB.
+    The classic renderer shows a texture's bytes as display values whatever its colourspace, so a
+    world authored under it has display (sRGB) colours in them. MuJoCo compiles a texture file
+    left at ``colorspace="auto"`` to linear unless the file says otherwise, so the compiled model
+    cannot tell it from one that asked for linear. Filament honours the colourspace: read as
+    linear, such a texture is drawn lighter and paler than the same colour as an ``rgba``, which
+    it reads as sRGB.
     """
     if not model.nmat or not model.ntex:
         return np.zeros(0, dtype=int)
     ids = np.asarray(model.mat_texid)[:, [int(r) for r in _COLOUR_ROLES]].ravel()
     ids = np.unique(ids[ids >= 0])
-    auto = np.asarray(model.tex_colorspace)[ids] == int(mujoco.mjtColorSpace.mjCOLORSPACE_AUTO)
-    return ids[auto]
+    srgb = np.asarray(model.tex_colorspace)[ids] == int(mujoco.mjtColorSpace.mjCOLORSPACE_SRGB)
+    return ids[~srgb]
 
 
 def _custom_numeric(model: mujoco.MjModel, name: str) -> np.ndarray | None:
@@ -314,11 +316,11 @@ class FilamentRenderer(Renderer):
         "reflections": Setting(True, "draw the reflections of materials with a reflectance"),
         "colour_textures": Setting(
             "srgb",
-            "how a colour texture (a material's rgb, rgba or emissive) whose colorspace the model "
-            "leaves at auto is read: srgb, as the classic renderer shows it and as rgba colours "
-            "are read; model, as MuJoCo reads it (linear unless the image file says otherwise), "
-            "which draws it lighter and paler than the same colour as rgba. An explicit "
-            "colorspace is always honoured",
+            "how a colour texture (a material's rgb, rgba or emissive) is read: srgb, as the "
+            "classic renderer shows it and as rgba colours are read; model, by its colorspace "
+            "(MuJoCo compiles a file left at auto to linear unless the file says otherwise), "
+            "which draws a linear one lighter and paler than the same colour as rgba. Data "
+            "textures (normal, roughness, ...) are always read by their colorspace",
         ),
         "software": Setting(
             False,
@@ -389,7 +391,7 @@ class FilamentRenderer(Renderer):
         self._mjrf = mjrf
         model = scene.model
         self._private = bool(scene.private_model)
-        colour = colour_textures_left_auto(model)
+        colour = linear_colour_textures(model)
         if len(colour) and self.settings.get("colour_textures", "srgb") == "srgb":
             if not self._private:
                 # A copy of its own, which this renderer may write; the runtime values come with
