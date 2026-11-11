@@ -16,8 +16,10 @@ from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
 from roqsim_walker.skin import hand_weights
 
-#: The two bundled walkers with hands off: the counts and a digest over their bodies, geoms and
-#: skins, as the walker builds them without the hands code. Hands off keeps them, byte for byte.
+#: The two bundled walkers with hands off: the model's counts, and a digest over the walkers' own
+#: bodies, geoms and skins (the world body and the room's floor and walls left out, so a change to
+#: the default room does not move it), as the walker builds them without the hands code. Hands off
+#: keeps them, byte for byte.
 HANDS_OFF = {
     "nbody": 35,
     "ngeom": 47,
@@ -25,12 +27,10 @@ HANDS_OFF = {
     "nsite": 0,
     "nskin": 2,
     "nskinbone": 34,
-    "sha256": "ade22214445e35fe61a2c82b72f7fc58d80fdbf41605c2575616e61bc4bc5576",
+    "sha256": "a5da525f6466213433989ade7f11b54b53e75b8bc7b5ecc258bbfa187f6e07a2",
 }
-FIELDS = (
-    "body_pos",
-    "body_quat",
-    "body_mocapid",
+BODY_FIELDS = ("body_pos", "body_quat", "body_mocapid")
+GEOM_FIELDS = (
     "geom_type",
     "geom_size",
     "geom_pos",
@@ -38,6 +38,8 @@ FIELDS = (
     "geom_contype",
     "geom_conaffinity",
     "geom_group",
+)
+SKIN_FIELDS = (
     "skin_vertnum",
     "skin_bonenum",
     "skin_bonebindpos",
@@ -76,8 +78,15 @@ def test_hands_off_adds_nothing_to_the_walkers_model(hands):
     try:
         m = engine.ctx.model
         digest = hashlib.sha256()
-        for field in FIELDS:
-            digest.update(np.ascontiguousarray(np.asarray(getattr(m, field))).tobytes())
+        own_geoms = np.flatnonzero(np.asarray(m.geom_bodyid) != 0)
+        for fields, rows in (
+            (BODY_FIELDS, slice(1, None)),
+            (GEOM_FIELDS, own_geoms),
+            (SKIN_FIELDS, slice(None)),
+        ):
+            for field in fields:
+                values = np.asarray(getattr(m, field))[rows]
+                digest.update(np.ascontiguousarray(values).tobytes())
         got = {
             k: int(getattr(m, k))
             for k in ("nbody", "ngeom", "nmocap", "nsite", "nskin", "nskinbone")
