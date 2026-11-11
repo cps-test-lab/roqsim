@@ -37,8 +37,8 @@ import numpy as np
 
 from .export import is_static, resolved_rgba
 
-#: A material at least this emissive is a light source (room_world's ceiling panels are 1, its ceiling's
-#: stand-in for indirect light 0.35).
+#: A material at least this emissive is a light source (a ceiling panel drawn glowing is 1; a ceiling's
+#: emission standing in for bounced light, 0.35, is not).
 FIXTURE_EMISSION = 0.5
 #: A fixture's radiant exitance in the bake (W/m²): a 60 W panel of 1.2 x 0.6 m.
 FIXTURE_W_M2 = 83.0

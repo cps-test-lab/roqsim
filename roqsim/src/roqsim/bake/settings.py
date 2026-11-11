@@ -4,12 +4,12 @@
 
 """The bake's settings, its presets, and the run-time light rig a baked world is drawn under.
 
-**The presets.** ``default`` is sized for a machine with only a CPU: room_world (a furnished room of
-about 50 m² with 30 props) bakes in about four minutes on a 20-core desktop CPU, at a mean error of
-about two 8-bit levels against the full-quality bake (``projects/roqsim/results/scene-bake/``). What it
+**The presets.** ``default`` is sized for a machine with only a CPU: a furnished room of about 50 m²
+with 30 props bakes in about four minutes on a 20-core desktop CPU, at a mean error of about two 8-bit
+levels against the full-quality bake. What it
 gives up: shadow edges on walls and floor about four times softer, small parts of props less exact,
-bounced colour coarse. ``high`` is the full-quality bake (the resolution and samples the evaluation
-measured against photos), meant for a GPU, and larger than the default's size cap.
+bounced colour coarse. ``high`` is the full-quality bake (the resolution and samples that matched
+a real room's photos), meant for a GPU, and larger than the default's size cap.
 
 Resolution is in **light-map texels per metre**, per class of surface: the room's shell (walls,
 ceiling), its floor (where the contact shadows are) and the props (small parts, many islands). Light
@@ -92,7 +92,7 @@ def settings_for(quality: str, texels_per_m: dict | None = None, samples=None, d
 
 #: The rig the classic renderer draws a baked world under (see the module docstring). Measured to do
 #: what it should against the bake's own values: 0.52 of 255 levels mean difference over 16.6 M pixels
-#: (``projects/roqsim/results/baked-lighting/``, "How MuJoCo shows a baked texture").
+#: of a furnished room.
 RIG = {
     "key": {"dir": (0.0, 0.0, -1.0), "diffuse": 0.2, "ambient": 0.0},
     "fills": (
@@ -123,5 +123,5 @@ def rig_light(normals: np.ndarray, emission: float | np.ndarray = 0.0) -> np.nda
 
 #: The exposure rule: the bake's light is scaled so that the 95th percentile of the shell's lit
 #: vertical surfaces is this (linear). A white wall then reads 0.75 as a display value there, the level
-#: the evaluation set against the room's photos.
+#: that matched a real room's photos.
 SHELL_P95 = 0.55

@@ -24,7 +24,7 @@ An **entity** is what shares a light map: the part of a geom's name (else its bo
 up at the lowest static height form the entity ``floor``, which gets the floor's resolution (the
 contact shadows are there); a shell larger than one light map is split by geom.
 
-The geometry is fixed for a bake the way the evaluation found it had to be: a closed mesh wound inside
+The geometry is fixed for a bake as a bake needs it: a closed mesh wound inside
 out is turned round (MuJoCo draws it, a bake lights the side a face points to); a per-corner normal
 more than 60 degrees off its face takes the face's (a box of eight shared corners); a sheet drawn from
 both sides is pulled 1 mm apart.

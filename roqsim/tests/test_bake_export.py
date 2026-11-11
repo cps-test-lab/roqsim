@@ -118,7 +118,7 @@ def test_a_static_geom_can_be_excluded_from_the_bake():
 
 
 def test_a_shell_wound_inside_out_is_turned_to_face_the_room():
-    # A box wound inside out, as room_world's walls were: its mesh normals point into the solid.
+    # A box wound inside out, as imported walls can be: its mesh normals point into the solid.
     verts = "-1 -1 0  1 -1 0  1 1 0  -1 1 0  -1 -1 1  1 -1 1  1 1 1  -1 1 1"
     faces = "0 1 2  0 2 3  4 6 5  4 7 6  0 5 1  0 4 5  1 6 2  1 5 6  2 7 3  2 6 7  3 4 0  3 7 4"
     xml = f"""<mujoco><asset><mesh name="inv" vertex="{verts}" face="{faces}"/></asset>
@@ -237,7 +237,7 @@ def test_a_texture_edit_is_a_material_change():
 
 
 def test_the_floor_is_the_largest_surface_facing_up_not_the_lowest():
-    # A foundation slab under the floor (room_world has geometry 26 cm below its floor).
+    # A foundation slab under the floor, as an imported room can have.
     slab = '<geom name="slab" type="box" size="1 1 0.05" pos="0 0 -0.3"/>'
     ents = analysed(room(extra=slab)).export.entities
     floor_geoms = {analysed(room(extra=slab)).export.geoms[int(g)].key for g in np.unique(ents["floor"].geom)}

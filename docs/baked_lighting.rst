@@ -39,10 +39,10 @@ render``'s JSON record (``conditions``), in ``roqsim check``'s warnings and in
 baked one afterwards. A baked load records ``bake_used`` with the bake's digest. ``require: true`` (or
 ``--set components.baked_lighting.require=true`` for one run) stops the world instead.
 
-What it costs, measured on room_world
--------------------------------------
+What it costs, measured on a furnished room
+------------------------------------------
 
-``roqsim_rover_robot:room_world``: a furnished room of about 45 m², 30 props, 32 light maps.
+A room of about 45 m² with 30 props: 32 light maps.
 
 - **Bake**, ``default`` preset, on a 20-core desktop CPU (no GPU): about 4.5 minutes from scratch, less
   when only the lights or the settings changed (the UV layout is reused). An 8-core CPU takes roughly
@@ -56,7 +56,7 @@ What it costs, measured on room_world
   and the baked world draws at the unbaked world's rate; only what moves loses its shadow.
 - **Quality** against the full-quality bake: a mean error of about two 8-bit levels. What the default
   gives up: shadow edges about four times softer on walls and floor, small parts of props less exact,
-  bounced colour coarse. Against the room's photos it reproduces what the full-quality bake did: the
+  bounced colour coarse. Against the photos of the real room it models, it reproduces what the full-quality bake did: the
   walls' brightness against height and the floor's contact shadows come much closer than unbaked.
 
 The keys
