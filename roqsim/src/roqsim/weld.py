@@ -28,5 +28,4 @@ def set_relpose(model: mujoco.MjModel, eq: int, anchor, pos, quat) -> None:
     row[0:3] = np.asarray(anchor, dtype=float)
     row[3:6] = np.asarray(pos, dtype=float)
     row[6:10] = np.asarray(quat, dtype=float)
-    if row.shape[0] > _RECOMPUTE:
-        row[_RECOMPUTE] = 0.0
+    row[_RECOMPUTE] = 0.0
