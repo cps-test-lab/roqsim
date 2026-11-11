@@ -328,23 +328,82 @@ def test_what_roqsim_hides_at_run_time_is_not_drawn(scene):
 
 @needs_vulkan
 def test_an_entity_absent_when_the_renderer_opens_is_drawn_once_it_returns(scene):
-    """Renderables keep the group a geom had when they were made; an absent one comes back."""
+    """Renderables keep the group a geom had when they were made; an absent one comes back, in
+    the labels and in colour, and a colour written at run time is drawn."""
     from roqsim.presence import ABSENT_GEOM_GROUP
 
     model, data = scene
     box = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "box")
     model.geom_group[box] = ABSENT_GEOM_GROUP
+    model.geom_rgba[box, 3] = 0.0
     frame = FrameRenderer(model, 160, 100, camera="persp", renderer="filament")
     try:
         assert not (frame.render_segmentation(data)[..., 0] == box).any()
         model.geom_group[box] = 0
-        assert (frame.render_segmentation(data)[..., 0] == box).any(), "drawn once it returns"
+        model.geom_rgba[box] = [0.0, 0.0, 1.0, 1.0]
+        where = frame.render_segmentation(data)[..., 0] == box
+        assert where.any(), "drawn once it returns"
+        rgb = frame.render(data)[where].astype(float).mean(axis=0)
+        assert rgb[2] > 2 * max(rgb[0], rgb[1]), f"drawn blue, as the model is now: {rgb}"
         frame.close()
         frame = FrameRenderer(model, 160, 100, camera="persp", renderer="filament", geomgroup=(1,))
         assert not (frame.render_segmentation(data)[..., 0] == box).any(), "a group not asked for"
     finally:
         frame.close()
-        model.geom_group[box] = 0
+
+
+FLEX_AND_TENDON = """
+<mujoco>
+  <worldbody>
+    <light pos="0 0 3"/>
+    <geom type="plane" size="2 2 .1"/>
+    <camera name="c" pos="0 -2 1.2" xyaxes="1 0 0 0 .5 .87"/>
+    <body name="a" pos="0 0 .5"><joint name="j1" type="hinge"/><geom size=".1"/>
+      <site name="s1" size=".05" pos=".2 0 0"/></body>
+    <body name="b" pos=".5 0 .5"><joint name="j2" type="slide"/><geom size=".1"/>
+      <site name="s2" size=".05"/></body>
+    <body name="f" pos="-.5 0 .3">
+      <flexcomp type="grid" count="3 3 1" spacing=".1 .1 .1" dim="2" name="cloth" group="GROUP"
+                rgba="0 1 0 1"/>
+    </body>
+  </worldbody>
+  <tendon><spatial name="st" width=".01"><site site="s1"/><site site="s2"/></spatial></tendon>
+</mujoco>
+"""
+
+
+@needs_vulkan
+@pytest.mark.parametrize("group", [0, 3])
+def test_flexes_and_spatial_tendons_are_labelled_and_hidden_as_the_classic_renderer_does(group):
+    """A flex and a spatial tendon are drawn as parts; each part is labelled as its object, and
+    a flex in a group the camera does not show, or one presence hides, is not drawn."""
+    from roqsim.presence import ABSENT_GEOM_GROUP
+
+    model = mujoco.MjModel.from_xml_string(FLEX_AND_TENDON.replace("GROUP", str(group)))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    def labelled(renderer):
+        frame = FrameRenderer(model, 320, 200, camera="c", renderer=renderer)
+        try:
+            labels = frame.render_segmentation(data).reshape(-1, 2)
+        finally:
+            frame.close()
+        return {(int(i), int(t)) for i, t in labels if i >= 0}
+
+    flex = (0, int(mujoco.mjtObj.mjOBJ_FLEX))
+    tendon = (0, int(mujoco.mjtObj.mjOBJ_TENDON))
+    classic, filament = labelled("mujoco"), labelled("filament")
+    assert tendon in classic and tendon in filament
+    assert (flex in classic) == (group == 0) == (flex in filament)
+    frame = FrameRenderer(model, 320, 200, camera="c", renderer="filament")
+    try:
+        frame.render_segmentation(data)
+        model.flex_group[0] = ABSENT_GEOM_GROUP
+        labels = frame.render_segmentation(data).reshape(-1, 2)
+        assert flex not in {(int(i), int(t)) for i, t in labels}, "hidden at run time"
+    finally:
+        frame.close()
 
 
 @needs_vulkan
