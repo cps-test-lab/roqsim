@@ -35,7 +35,7 @@ import math
 import mujoco
 import numpy as np
 
-from .export import is_static, resolved_rgba
+from .export import geom_key, is_static, resolved_rgba
 
 #: A material at least this emissive is a light source (a ceiling panel drawn glowing is 1; a ceiling's
 #: emission standing in for bounced light, 0.35, is not).
@@ -63,7 +63,8 @@ def _srgb_to_linear(c):
 def emitter_geoms(m: mujoco.MjModel, emitters: list[dict]) -> tuple[dict[int, int], list[dict]]:
     """The geoms that are light sources: ``{geom id: index into sources}`` and the sources.
 
-    A source is ``{"geom", "name", "strength_w_m2", "colour", "display_rgba", "from"}``; ``from`` is
+    A source is ``{"geom", "strength_w_m2", "colour", "display_rgba", "from"}``: ``geom`` its key (its
+    name, else ``<body>#<index among its body's geoms>``, as :mod:`.export` names it), ``from``
     ``"fixture"`` (its material glows) or ``"emitters"`` (the world named it).
     """
     out: dict[int, int] = {}
@@ -85,7 +86,7 @@ def emitter_geoms(m: mujoco.MjModel, emitters: list[dict]) -> tuple[dict[int, in
         out[g] = len(sources)
         sources.append(
             {
-                "geom": name,
+                "geom": geom_key(m, g),
                 "strength_w_m2": float(entry.get("strength_w_m2", FIXTURE_W_M2)),
                 "colour": [float(c) for c in colour],
                 "display_rgba": entry.get("display_rgba"),

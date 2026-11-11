@@ -235,7 +235,9 @@ def test_the_bake_is_kept_beside_the_mjcf_and_reads_back(tmp_path):
 
 
 def test_a_world_without_an_mjcf_must_name_the_path(tmp_path):
-    (tmp_path / "w.yaml").write_text("sim: {world: empty_room}\ncomponents:\n  - baked_lighting: {}\n")
+    (tmp_path / "w.yaml").write_text(
+        "sim: {world: empty_room}\ncomponents:\n  - baked_lighting: {}\n"
+    )
     with pytest.raises(PluginError, match="path:"):
         loaded(tmp_path / "w.yaml")
 
@@ -257,7 +259,12 @@ def test_the_config_is_checked():
         {"quality": "ultra", "lights": "sun", "texels_per_m": {"walls": 3}, "emitters": [{"x": 1}]}
     )
     text = " ".join(errors)
-    assert "quality" in text and "lights" in text and "texels_per_m.walls" in text and "emitters[0]" in text
+    assert (
+        "quality" in text
+        and "lights" in text
+        and "texels_per_m.walls" in text
+        and "emitters[0]" in text
+    )
 
 
 def test_a_renderer_that_does_not_draw_the_bake_is_refused_at_load(tmp_path):
@@ -306,3 +313,27 @@ def test_a_bake_missing_a_map_draws_the_world_unbaked_and_whole(tmp_path):
         assert all(m.geom_group[i] != 3 or m.geom(i).name == "collider" for i in range(m.ngeom))
     finally:
         engine.shutdown()
+
+
+def test_an_unnamed_fixture_is_a_light_source_of_its_own(tmp_path):
+    """A source is named by its geom's key, as every baked geom is: two unnamed fixtures are two
+    sources, and each glows and casts no shadow when the world is drawn baked."""
+    unnamed = '<geom type="box" size="0.2 0.2 0.01" pos="{x} 1 2.48" material="glow"/>'
+    xml = room(panel=False, extra=unnamed.format(x=-1) + unnamed.format(x=1))
+    world = write_world(tmp_path, xml=xml)
+    synthetic_bake(world)
+    engine = loaded(world)
+    try:
+        assert codes(engine) == ["bake_used"]
+        m = engine.ctx.model
+        glow = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_MATERIAL, "glow")
+        fixtures = [g for g in range(m.ngeom) if not m.geom(g).name and m.geom_size[g][0] == 0.2]
+        assert len(fixtures) == 2
+        for g in fixtures:
+            assert not m.geom_castshadow[g] and m.geom_matid[g] != glow
+    finally:
+        engine.shutdown()
+    spec = mujoco.MjSpec.from_file(str(tmp_path / "room.xml"))
+    analysis, _ = analyse_spec(spec, PRESETS["default"])
+    keys = [s["geom"] for s in analysis.light["emitters"]]
+    assert len(keys) == 2 and len(set(keys)) == 2 and all("#" in k for k in keys)

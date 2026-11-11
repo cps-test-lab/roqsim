@@ -41,9 +41,9 @@ world whose bake is missing or stale, saying the same.
 What is baked is the static, drawn geometry (welded to the world); what moves is lit live; glass is
 drawn as it is; the light sources are the world's emitting fixtures, else its MJCF lights, else a
 documented default (:mod:`roqsim.bake.lights`). It acts in ``build_late``, after every other plugin has
-built, so it sees the world however it was made. Costs: a third or so of the colour camera's frame
-rate on a GPU (the key light's shadow pass); in software GL set ``moving_shadows: false`` and the
-baked world draws at today's rate; textures take more GPU memory. ``docs/baked_lighting.rst`` has it all.
+built, so it sees the world however it was made. Costs: on a GPU the colour camera runs at half to two
+thirds of the unbaked world's frame rate (mostly the key light's shadow pass); in software GL set
+``moving_shadows: false`` and the baked world draws at the unbaked world's rate; textures take more GPU memory. ``docs/baked_lighting.rst`` has it all.
 
 Its keys, with their defaults (``roqsim plugins describe baked_lighting`` publishes them from the
 schema)::

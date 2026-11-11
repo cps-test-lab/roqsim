@@ -154,7 +154,7 @@ def write_work(analysis: Analysis, work: Path) -> None:
             rec = next(r for r in export.geoms if r.id == g)
             pos.append(p)
             nrm.append(n)
-            src.append(np.full(len(p), index[rec.name]))
+            src.append(np.full(len(p), index[rec.key]))
         np.savez_compressed(
             work / "emitters.npz",
             pos=np.concatenate(pos).astype(np.float32),

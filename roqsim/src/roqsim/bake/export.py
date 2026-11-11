@@ -305,6 +305,15 @@ def _drawn(m: mujoco.MjModel, g: int) -> bool:
     return int(m.geom_group[g]) < DRAWN_GROUPS and resolved_rgba(m, g)[3] > 0
 
 
+def geom_key(m: mujoco.MjModel, g: int) -> str:
+    """How a bake names geom *g*: its name, else ``<body>#<index among its body's geoms>``."""
+    name = m.geom(g).name
+    if name:
+        return name
+    b = int(m.geom_bodyid[g])
+    return f"{m.body(b).name}#{g - int(m.body_geomadr[b])}"
+
+
 def is_static(m: mujoco.MjModel, g: int) -> bool:
     b = int(m.geom_bodyid[g])
     return int(m.body_weldid[b]) == 0 and int(m.body_mocapid[b]) < 0

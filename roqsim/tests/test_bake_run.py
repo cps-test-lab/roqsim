@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import stat
 import sys
-import textwrap
 
 import numpy as np
 import pytest
@@ -205,7 +204,6 @@ def test_a_small_world_bakes_on_the_cpu_and_loads_baked(tmp_path):
         assert [c["code"] for c in engine.ctx.conditions] == ["bake_used"]
     finally:
         engine.shutdown()
-    print(textwrap.dedent(f"baked on the CPU in {summary['times']['blender_s']} s"))
 
 
 def test_a_primitive_keeps_its_front_however_its_back_is_lit():

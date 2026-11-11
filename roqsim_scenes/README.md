@@ -346,7 +346,7 @@ lists its keys in `--help`): nothing would read it, so it would be ignored.
 
 ## Better light: baked lighting
 
-A generated or imported world is drawn by MuJoCo's classic renderer under the bake's few lamps: one
+A generated or imported world is drawn by MuJoCo's classic renderer under the few lamps its scene gives it: one
 overhead light, hard shadows, every wall about as bright as the next, nothing darker under a table,
 and with a lamp that casts shadows, a hard band across the walls. For a world that should look real,
 add the core `baked_lighting` component and bake it once:
