@@ -240,6 +240,10 @@ def _within(faces, lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarr
 #: Faces of one geom compared against all of the other's at once: bounds the memory two large
 #: meshes take to a few rows of their pairwise comparison.
 _CHUNK = 1024
+#: The cosine above which two face normals count as one direction.
+_SAME_WAY = 1 - 1e-9
+#: How far apart two normals that count as one direction can be: |n_a - n_b| = sqrt(2 (1 - cos)).
+_NORMAL_SLACK = math.sqrt(2 * (1 - _SAME_WAY))
 
 
 def _candidates(ta, na, shown, tb, nb):
@@ -248,10 +252,17 @@ def _candidates(ta, na, shown, tb, nb):
     One plane means the second face's corners lie within TOL of the first face's plane, measured
     from the first face's own corner: a plane's offset from the world origin would multiply the
     slightest error in a normal by the distance to the origin, and miss a pair far out in a scene.
+    The offsets still sort out cheaply the pairs that cannot be in one plane, with the slack that
+    multiplication can take (``_NORMAL_SLACK`` times the distance to the origin), so a mesh's many
+    parallel faces at other heights are never gathered pairwise.
     """
+    da = np.einsum("ij,ij->i", na, ta[:, 0])
+    db = np.einsum("ij,ij->i", nb, tb[:, 0])
+    slack = TOL + _NORMAL_SLACK * np.linalg.norm(tb[:, 0], axis=1)
     for start in range(0, len(na), _CHUNK):
         rows = slice(start, start + _CHUNK)
-        same = (na[rows] @ nb.T > 1 - 1e-9) & shown[rows, None]
+        same = (na[rows] @ nb.T > _SAME_WAY) & shown[rows, None]
+        same &= np.abs(da[rows, None] - db[None, :]) <= slack[None, :]
         i, j = np.nonzero(same)
         i += start
         off = np.einsum("pkc,pc->pk", tb[j] - ta[i, 0][:, None], na[i])  # corners off the plane
@@ -277,8 +288,9 @@ def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
         piece = _clip(pa, pb)
         area = abs(_area(piece)) if len(piece) >= 3 else 0.0
         centre = a[0] + basis @ (_centroid(piece) if len(piece) else pa.mean(0))
-        # Pieces of one plane are summed: grouped by the normal and the offset, to well within the
-        # 1 mm a remedy moves a part, however far from the origin they lie.
+        # Pieces of one plane are summed for the report: grouped by the normal and the offset, to
+        # the millimetre (approximate: a plane whose pieces straddle a rounding step is reported
+        # by its larger part; finding the pair does not depend on it).
         key = (*np.round(n, 3), round(float(n @ a[0]), 3))
         planes.setdefault(key, []).append((centre, n, area))
     if not planes:
