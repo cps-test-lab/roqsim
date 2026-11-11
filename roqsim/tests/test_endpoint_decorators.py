@@ -114,6 +114,7 @@ def test_a_bridge_listed_after_the_producer_binds_its_endpoints():
 def test_a_commands_result_reaches_the_caller():
     engine, _probe = _engine()
     with engine:
+        engine.reset()
         future = _from_worker(lambda: _ep(engine, "reset_counter").write({"count": 7}))
         assert isinstance(future, CommandFuture) and not future.done()
         engine.step()
@@ -123,6 +124,7 @@ def test_a_commands_result_reaches_the_caller():
 def test_a_commands_exception_reaches_the_waiting_caller_and_is_not_logged(caplog):
     engine, _probe = _engine()
     with engine:
+        engine.reset()
         future = _from_worker(lambda: _ep(engine, "reset_counter").write({"label": "bad"}))
         raised = []
 
@@ -146,6 +148,7 @@ def test_a_commands_exception_reaches_the_waiting_caller_and_is_not_logged(caplo
 def test_an_unwaited_commands_exception_is_logged(caplog):
     engine, _probe = _engine()
     with engine:
+        engine.reset()
         future = _ep(engine, "reset_counter").write({"label": "bad"})
         with caplog.at_level(logging.ERROR):
             engine.step()
@@ -165,6 +168,7 @@ def test_a_command_not_yet_run_times_out():
 def test_a_stream_applies_only_its_latest_value_once_per_step():
     engine, probe = _engine()
     with engine:
+        engine.reset()
         write = _ep(engine, "setpoint").write
         _from_worker(lambda: [write({"value": v}) for v in (1.0, 2.0, 3.0)])
         assert probe.applied == []
@@ -180,6 +184,7 @@ def test_a_stream_applies_only_its_latest_value_once_per_step():
 def test_nothing_runs_off_the_physics_thread():
     engine, probe = _engine()
     with engine:
+        engine.reset()
         physics = threading.get_ident()
         _from_worker(lambda: _ep(engine, "reset_counter").write({"count": 1}))
         _from_worker(lambda: _ep(engine, "setpoint").write({"value": 1.0}))

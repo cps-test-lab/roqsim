@@ -138,11 +138,11 @@ def compile_world(
     normally inject at run time.
 
     ``setup()`` alone never runs ``on_reset``, so a mocap-driven walker's bones stay at their park
-    pose (below the floor) and free bodies keep only their configure-time seating. We ``reset()``
-    (which runs every plugin's ``on_reset`` -- re-posing the walker's mocap and re-seating robot
-    bases) then a second ``mj_forward`` to propagate the re-posed mocap into ``data.xpos``/``xquat``
-    (reset()'s own forward runs *before* the walker re-poses). ``settle_steps`` optionally steps
-    physics a little further (e.g. to let a dropped free body settle) before the state is captured.
+    pose (below the floor) and free bodies keep only their configure-time seating. We ``reset()``,
+    which runs every plugin's ``on_reset`` -- re-posing the walker's mocap and re-seating robot
+    bases -- and ends with ``mj_forward``, so ``data.xpos``/``xquat`` hold the re-posed state.
+    ``settle_steps`` optionally steps physics a little further (e.g. to let a dropped free body
+    settle) before the state is captured.
 
     The sensor cameras are asked of the plugins while they are configured, so a camera's id and
     its intrinsics are the ones the run renders with.
@@ -159,7 +159,6 @@ def compile_world(
     # The model and data outlive the plugins: an export reads only them.
     with Engine(cfg, preview=True, skip_unloadable=True) as engine:  # build + compile + configure
         engine.reset()  # on_reset: re-pose mocap walkers, re-seat robot bases
-        mujoco.mj_forward(engine.ctx.model, engine.ctx.data)  # re-posed mocap into data.xpos
         for _ in range(max(0, settle_steps)):
             engine.step()
         return CompiledSource(engine.ctx.model, engine.ctx.data, cfg.view, declared_cameras(engine))

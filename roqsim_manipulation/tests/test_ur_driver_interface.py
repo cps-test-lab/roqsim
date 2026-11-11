@@ -54,6 +54,7 @@ def _engine(controller_type: str | None = SCALED, **driver) -> Engine:
     engine = Engine(cfg)
     engine.ctx.seed = 0
     engine.setup()
+    engine.reset()
     for _ in range(50):
         engine.step()
     return engine

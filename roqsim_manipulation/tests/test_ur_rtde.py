@@ -67,6 +67,7 @@ def _engine(block: bool = False, ft_frame: str = "world", tmp_path=None, **rtde)
     )
     engine.ctx.seed = 0
     engine.setup()
+    engine.reset()
     for _ in range(200):
         engine.step()
     return engine

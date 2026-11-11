@@ -143,7 +143,6 @@ def _load_world(
     with engine:
         engine.reset()
         model, data = engine.ctx.model, engine.ctx.data
-        mujoco.mj_forward(model, data)
 
         # ...but NOT the robot. A map is the environment; the robot is what moves through it.
         # Compiling the world puts the robot at its spawn pose, so without this its chassis and

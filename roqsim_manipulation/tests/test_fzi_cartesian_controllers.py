@@ -92,6 +92,7 @@ def _engine(block: bool = False, tmp_path=None) -> Engine:
     )
     engine.ctx.seed = 0
     engine.setup()
+    engine.reset()
     for _ in range(100):
         engine.step()
     return engine
@@ -211,6 +212,7 @@ def _press(tmp_path, servo_p: float, servo_d: float) -> tuple[float, float]:
     engine = Engine(cfg)
     engine.ctx.seed = 0
     engine.setup()
+    engine.reset()
     for _ in range(500):
         engine.step()
     m, d = engine.ctx.model, engine.ctx.data
