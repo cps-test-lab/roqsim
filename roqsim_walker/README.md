@@ -249,7 +249,7 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 | `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |
 | `release` | `hand` `both` | `opened` | `not holding anything` |
 | `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
-| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route`, `cannot turn to …`, `cannot stand at …`, `via: a point is [x, y] …` |
+| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s), `back_max` 0.5 m (how far it may step back before a turn; 0: never), `long_way` false (may it turn the long way round where no step back clears) | `lifted`, `stepping_back`, `turning_long_way`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route`, `cannot turn to …` (naming what the load would sweep through, what a step back would meet, and whether the long way was allowed), `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …` |
 | `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `out of reach: the hands bring it to … and no nearer`, `caught on …` (held up above the place), `nothing under it` |
 | `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
 | `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
@@ -259,8 +259,9 @@ A move that walks (`approach`, `carry`) goes straight to its stand-off on the na
 round the walls by its planner if it has one; `via` sends it through floor points of the scene's
 first, in order -- a way laid out round a fence or a bench, for a navigator that walks its points as
 given (`route_mode: exact`). The turn before a carry faces the first of them, and a carry walks
-them leg by leg, turning on the spot at its carrying pace at each, so what it carries in front
-stays over the way and does not swing out of it at a corner.
+through a point where its way bends by 45 degrees or less, turning at its carrying pace as it walks
+on; at a sharper corner it comes to rest and turns on the spot at its carrying pace, so what it
+carries in front stays over the way and does not swing out of it at the corner.
 
 `approach` to something a hand takes by its handles (a grip site, a tote) stands its `standoff` from
 the handles, then steps back until nothing solid is within the body's clearance in front of it,
@@ -274,8 +275,17 @@ handle with the hand turned on it, fingers forward and down along the forearm th
 while it carries. A handle off the floor is taken as its frame says.
 
 `carry` lifts what the hands hold straight up off what it stood on first (6 cm), then in toward
-the body; carrying, the body turns on the spot the way its load sweeps clear of what stands round
-it, and fails naming what is in the way if neither way is. `place` takes the load over the highest
+the body; carrying, the body turns on the spot the short way where its load sweeps clear of what stands
+round it. Where it would not, the body first steps straight back, keeping its heading, by as little
+as clears the sweep (in steps of 5 cm, and 5 cm more so the load does not graze what it clears, at
+most `back_max`); before it does, rays from its back over its breadth, foot to shoulder, and from
+the load look behind it, and a step back that would meet something is not taken. Where no step back
+clears it, it fails naming what is in the way: the long way round is a choice the scenario states,
+`long_way: true`, and taken only if it is clear, with a `turning_long_way` event naming what the
+short way would have met. A turn of half a turn, within 5 degrees,
+goes round on the side the body walks on to next (toward the following point of its `via`, or the
+way it faces at the end), and right where that is straight on; the sign of a rounding error never
+picks it. `place` takes the load over the highest
 thing between where it is and the place -- read on a grid under its footprint, past what rides in
 it -- then leads it on until it is within millimetres of the place, square to the place's heading
 (a site's, a body's, or a world pose that states one; at most 20 degrees), and lowers it until it

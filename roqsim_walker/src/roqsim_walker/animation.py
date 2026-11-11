@@ -228,7 +228,9 @@ def animate(data, st, new_pos, dt):
     # whipping around, and a walker that is blocked (~0 displacement) still turns in place to
     # face its goal.
     pref = st.pref_vel
-    if float(np.hypot(pref[0], pref[1])) > 1e-3:
+    if st.keep is not None:
+        target = st.keep  # a move keeps the heading while the body steps (hands on only)
+    elif float(np.hypot(pref[0], pref[1])) > 1e-3:
         target = math.atan2(float(pref[1]), float(pref[0]))
     elif st.face is not None:
         target = st.face  # a move turned the standing body (hands on only)
@@ -610,6 +612,9 @@ class AnimState:
     face: float | None = None
     #: the body's turn rate cap (rad/s) a move sets while it carries; ``None``: ``_MAX_TURN_RATE``
     turn_rate: float | None = None
+    #: hands on: the heading a move keeps the body at while it walks (a step back); ``None``: it
+    #: faces where it walks
+    keep: float | None = None
     #: the clips playing over the gait (:class:`MotionLayer`), in the order they were started, and
     #: the ids of those that have ended
     layers: list = field(default_factory=list)
