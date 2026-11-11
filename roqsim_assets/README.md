@@ -123,10 +123,15 @@ not fully transparent, with a material's alpha where the geom keeps the default 
 proxy (group 3) or a hidden part (group 4, alpha 0) may lie where it likes, and faces pressed back to
 back or down on the floor are out of sight. Boxes, planes, cylinder ends and meshes (outward by their
 winding) are compared face by face; cylinders and capsules on one axis and spheres on one centre, of
-one radius, by their curved surface. A touching pair no rule decides -- an ellipsoid, a sphere against
-a capsule of its radius, two capsules of one radius meeting end on end at an angle, a heightfield --
+one radius, by their curved surface. A round capsule end of a sphere's radius, or another capsule's
+of one radius meeting it at an angle (an elbow), shares that end's surface where their centres
+coincide and passes where they lie apart, since two spheres of one radius on different centres meet
+in a circle only. A touching pair no rule decides -- an ellipsoid, a heightfield, an SDF geom --
 raises `UncomparableGeoms` rather than passing. Any package
-can call the function in a test over its own props and worlds.
+can call the function in a test over its own props and worlds; this package's
+`tests/test_shared_faces_shipped.py` compares every prop folder here, the hand-written MJCFs
+inspect-prop never sees included, this package's worlds and the default room (`roqsim_scenes`
+compares its own worlds the same way).
 
 ## Props: reusing another prop's mesh (hierarchical props)
 
