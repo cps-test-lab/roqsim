@@ -7,7 +7,6 @@ from __future__ import annotations
 import contextlib
 import io
 
-import mujoco
 import pytest
 
 from roqsim.config import load_config
@@ -96,7 +95,6 @@ def _shared_faces(tmp_path, floorplan, *, ceiling=False, doors_map=None):
     engine.setup()
     try:
         model, data = engine.ctx.model, engine.ctx.data
-        mujoco.mj_kinematics(model, data)  # setup compiles; the pose to compare is computed here
         return [f.describe() for f in shared_faces(model, data)]
     finally:
         engine.shutdown()
