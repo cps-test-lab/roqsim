@@ -40,6 +40,7 @@ import time
 from importlib import resources
 from pathlib import Path
 
+import mujoco
 import numpy as np
 from PIL import Image
 
@@ -267,19 +268,30 @@ def _load(dirs: list[Path], name: str, kind: str) -> np.ndarray | None:
     return None
 
 
-def choose_sides(light, back, uv, size) -> tuple[np.ndarray, np.ndarray]:
+def choose_sides(light, back, uv, size, outward=None) -> tuple[np.ndarray, np.ndarray]:
     """Per triangle, whether its back sees more light (sampled at seven points inside it), and per
-    texel, whether it takes the back's value."""
+    texel, whether it takes the back's value. A triangle *outward* names (per triangle) is wound to
+    face out and keeps its front: a hidden face, dark on both sides, would otherwise take whichever
+    side the samples' noise favours and could turn to face the same way as a face it touches."""
     w = np.random.default_rng(0).dirichlet([1, 1, 1], 7)
     q = np.einsum("sk,tkd->tsd", w, uv.astype(np.float64))
     ij = np.clip(np.floor(q * size).astype(int), 0, size - 1)
     front = (light[ij[..., 1], ij[..., 0]] @ LUMA).mean(1)
     rear = (back[ij[..., 1], ij[..., 0]] @ LUMA).mean(1)
     flip = rear > front
+    if outward is not None:
+        flip &= ~np.asarray(outward, bool)
     ids = rasterize(uv, size)
     side = np.zeros((size, size), bool)
     side[ids >= 0] = flip[ids[ids >= 0]]
     return flip, side
+
+
+def primitive_triangles(analysis: Analysis, ent) -> np.ndarray:
+    """Per triangle of *ent*, whether it belongs to a primitive geom (a box, a cylinder, ...), whose
+    triangles :mod:`.export` winds to face out; only a mesh's winding is not known."""
+    ids = np.array([g.id for g in analysis.export.geoms], np.int64)[ent.geom]
+    return analysis.model.geom_type[ids] != int(mujoco.mjtGeom.mjGEOM_MESH)
 
 
 def exposure_of(maps: dict[str, dict]) -> float:
@@ -319,7 +331,9 @@ def finish(analysis: Analysis, dirs: list[Path]) -> tuple[dict[str, bytes], dict
         }
         if ent.two_sided:
             back = _load(dirs, name, "light_back")
-            flip, side = choose_sides(light, back, uv, light.shape[0])
+            flip, side = choose_sides(
+                light, back, uv, light.shape[0], primitive_triangles(analysis, ent)
+            )
             for k in ("light", "direct", "ao"):
                 b = _load(dirs, name, f"{k}_back")
                 m[k] = np.where(side[..., None], b, m[k])

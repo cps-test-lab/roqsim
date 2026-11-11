@@ -12,6 +12,7 @@ import stat
 import sys
 import textwrap
 
+import numpy as np
 import pytest
 from test_bake_compose import write_world
 
@@ -205,3 +206,29 @@ def test_a_small_world_bakes_on_the_cpu_and_loads_baked(tmp_path):
     finally:
         engine.shutdown()
     print(textwrap.dedent(f"baked on the CPU in {summary['times']['blender_s']} s"))
+
+
+def test_a_primitive_keeps_its_front_however_its_back_is_lit():
+    """A prop's face is drawn from the side that sees more light, as a mesh's winding is not known;
+    a primitive's is, so its faces keep their front. A hidden face, dark on both sides, would
+    otherwise turn by the samples' noise and face the same way as the face it rests on."""
+    uv = np.array(
+        [[[0.1, 0.1], [0.4, 0.1], [0.1, 0.4]], [[0.6, 0.6], [0.9, 0.6], [0.6, 0.9]]], np.float32
+    )
+    front = np.full((16, 16, 3), 0.01, np.float32)
+    back = np.full((16, 16, 3), 0.02, np.float32)
+    flip, side = run.choose_sides(front, back, uv, 16)
+    assert flip.tolist() == [True, True] and side.any()
+    flip, side = run.choose_sides(front, back, uv, 16, outward=[True, False])
+    assert flip.tolist() == [False, True]
+
+
+def test_the_primitive_triangles_are_those_of_the_primitive_geoms(tmp_path):
+    world = write_world(tmp_path)
+    engine, plugin = _plugin(world)
+    try:
+        analysis = plugin.analysis
+        ent = analysis.export.entities["P"]  # a table of a box and a cylinder
+        assert run.primitive_triangles(analysis, ent).all()
+    finally:
+        engine.shutdown()
