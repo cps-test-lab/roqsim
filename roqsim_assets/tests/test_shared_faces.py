@@ -8,7 +8,6 @@ from pathlib import Path
 import mujoco
 import pytest
 
-import roqsim_assets.shared_faces as shared_faces_module
 from roqsim_assets.cli import inspect_prop
 from roqsim_assets.shared_faces import UncomparableGeoms, shared_faces
 
@@ -187,14 +186,14 @@ def test_a_straight_capsule_chain_off_the_axes_shares_nothing():
     assert shared_faces(_model(chain)) == []
 
 
-def _rotated_wall_and_sill() -> mujoco.MjModel:
-    """A 3 m wall mesh turned 13 degrees and a sill box set 0.1 m into its end, sides flush, every
-    number written to six decimals as an exporter would."""
+def _rotated_wall_and_sill(ox: float, oy: float, inset: float = 0.0) -> mujoco.MjModel:
+    """A 3 m wall mesh at (ox, oy) turned 13 degrees and a sill box set 0.1 m into its end, sides
+    flush (or ``inset`` inside them), every number written to six decimals as an exporter would."""
     a = math.radians(13)
     c, s = math.cos(a), math.sin(a)
 
     def at(x, y):
-        return 3 + c * x - s * y, 2 + s * x + c * y
+        return ox + c * x - s * y, oy + s * x + c * y
 
     corners = [(*at(x, y), z) for x in (-1.5, 1.5) for y in (-0.1, 0.1) for z in (0, 2)]
     centre = [sum(v[i] for v in corners) / 8 for i in range(3)]
@@ -212,18 +211,20 @@ def _rotated_wall_and_sill() -> mujoco.MjModel:
     x, y = at(1.7, 0)
     return _model(
         '<geom name="wall" type="mesh" mesh="wall"/>'
-        f'<geom name="sill" type="box" size="0.3 0.1 0.02" pos="{x:.6f} {y:.6f} 0.5" euler="0 0 13"/>',
+        f'<geom name="sill" type="box" size="0.3 {0.1 - inset} 0.02" pos="{x:.6f} {y:.6f} 0.5" '
+        'euler="0 0 13"/>',
         f'<mesh name="wall" vertex="{vertex}" face="{face}"/>',
     )
 
 
-def test_a_rotated_mesh_written_to_six_decimals_is_compared_within_the_tolerance(monkeypatch):
-    (pair,) = shared_faces(_rotated_wall_and_sill())
+@pytest.mark.parametrize("origin", [(3, 2), (300, 300)])
+def test_a_rotated_mesh_written_to_six_decimals_is_compared_wherever_it_stands(origin):
+    # Rounding and single-precision vertices leave the faces micrometres out of one plane; the
+    # plane is measured across the faces, so a model far from the origin is compared as near it.
+    (pair,) = shared_faces(_rotated_wall_and_sill(*origin))
     assert (pair.first, pair.second, pair.kind) == ("wall", "sill", "plane")
     assert pair.area == pytest.approx(0.1 * 0.04, rel=1e-3)
-    # A micrometre is closer than the six decimals and single-precision vertices hold the plane.
-    monkeypatch.setattr(shared_faces_module, "TOL", 1e-6)
-    assert shared_faces(_rotated_wall_and_sill()) == []
+    assert shared_faces(_rotated_wall_and_sill(*origin, inset=1e-4)) == []
 
 
 def test_the_pose_given_is_the_one_compared():

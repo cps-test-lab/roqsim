@@ -41,10 +41,10 @@ from roqsim.rendering import drawn_by_default
 
 #: m: the plane distance, in-plane overlap and radius difference below which two faces count as one.
 #: A model's numbers are written to about six decimals, and a mesh's vertices are stored in single
-#: precision (about 1e-7 of its extent): a rotated mesh's face then strays from the plane of a part
-#: placed against it by up to a few 1e-6 m. Fixed rather than scaled to the model, since the larger
-#: share of that error is the written decimals, which do not grow with the model; still a hundredth
-#: of the 1 mm inset that remedies a pair.
+#: precision: a rotated face's normal is off by that rounding over its edge length, so across a
+#: face metres long its corners stray from the plane of a part placed against it by up to a few
+#: 1e-6 m. The distance is measured across the faces, never from the world origin, so it does not
+#: grow with where a model stands; still a hundredth of the 1 mm inset that remedies a pair.
 TOL = 1e-5
 #: The sides a cylinder's flat ends are drawn with here: enough that a cap inside another face is
 #: seen as inside it.
@@ -242,14 +242,21 @@ def _within(faces, lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarr
 _CHUNK = 1024
 
 
-def _candidates(na, da, shown, nb, db):
-    """The face pairs (i, j) that face the same way in one plane, the first face shown."""
+def _candidates(ta, na, shown, tb, nb):
+    """The face pairs (i, j) that face the same way in one plane, the first face shown.
+
+    One plane means the second face's corners lie within TOL of the first face's plane, measured
+    from the first face's own corner: a plane's offset from the world origin would multiply the
+    slightest error in a normal by the distance to the origin, and miss a pair far out in a scene.
+    """
     for start in range(0, len(na), _CHUNK):
         rows = slice(start, start + _CHUNK)
         same = (na[rows] @ nb.T > 1 - 1e-9) & shown[rows, None]
-        near = np.abs(da[rows, None] - db[None, :]) <= TOL
-        for i, j in zip(*np.nonzero(same & near), strict=True):
-            yield start + i, j
+        i, j = np.nonzero(same)
+        i += start
+        off = np.einsum("pkc,pc->pk", tb[j] - ta[i, 0][:, None], na[i])  # corners off the plane
+        near = np.abs(off).max(1) <= TOL
+        yield from zip(i[near], j[near], strict=True)
 
 
 def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
@@ -259,9 +266,8 @@ def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
     if not len(ta) or not len(tb):
         return None
     shown = ~((na[:, 2] < -1 + 1e-9) & (np.abs(ta[:, :, 2]).max(1) <= TOL))  # down on the floor
-    da, db = np.einsum("ij,ij->i", na, ta[:, 0]), np.einsum("ij,ij->i", nb, tb[:, 0])
     planes: dict[tuple, list] = {}
-    for i, j in _candidates(na, da, shown, nb, db):
+    for i, j in _candidates(ta, na, shown, tb, nb):
         a, b, n = ta[i], tb[j], na[i]
         u = (a[1] - a[0]) / np.linalg.norm(a[1] - a[0])
         basis = np.c_[u, np.cross(n, u)]
@@ -271,7 +277,9 @@ def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
         piece = _clip(pa, pb)
         area = abs(_area(piece)) if len(piece) >= 3 else 0.0
         centre = a[0] + basis @ (_centroid(piece) if len(piece) else pa.mean(0))
-        key = (*np.round(n, 6), round(float(da[i]), 6))
+        # Pieces of one plane are summed: grouped by the normal and the offset, to well within the
+        # 1 mm a remedy moves a part, however far from the origin they lie.
+        key = (*np.round(n, 3), round(float(n @ a[0]), 3))
         planes.setdefault(key, []).append((centre, n, area))
     if not planes:
         return None
