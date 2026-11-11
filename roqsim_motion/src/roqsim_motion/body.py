@@ -178,6 +178,11 @@ class HumanoidBody:
         """Turn the standing body to ``yaw`` (world, rad); ``None``: wherever it walks."""
         raise NotImplementedError
 
+    def keep_heading(self, yaw) -> None:
+        """Keep the body at heading ``yaw`` (world, rad) while it walks, whichever way it goes -- a
+        step back; ``None``: it faces where it walks again."""
+        raise NotImplementedError
+
     def settled(self, side: str) -> bool:
         """``side``'s goal has fully taken over from the gait (or it has none)."""
         raise NotImplementedError

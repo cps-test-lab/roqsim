@@ -171,6 +171,7 @@ class WalkerBody(HumanoidBody):
         self._last_posture = None
         self.st.face = None
         self.st.turn_rate = None
+        self.st.keep = None
 
     def grip(self, data, side):
         sid = self._grip[side]
@@ -211,6 +212,9 @@ class WalkerBody(HumanoidBody):
 
     def face(self, yaw):
         self.st.face = None if yaw is None else float(yaw)
+
+    def keep_heading(self, yaw):
+        self.st.keep = None if yaw is None else float(yaw)
 
     def tip(self, data, side: str):
         wid = self._wrist[side]

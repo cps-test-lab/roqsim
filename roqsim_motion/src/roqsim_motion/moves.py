@@ -111,6 +111,21 @@ CARRY_TURN = 1.0
 #: chosen by what the load sweeps and where the body walks next, never by the sign of a rounding
 #: error. With nothing to choose by, it turns right (clockwise).
 TURN_TIE = math.radians(5)
+#: How far a carry steps straight back before it turns, at most, by default (m): where the short way
+#: round sweeps what it holds through something, it steps back as little as clears it, in steps of
+#: BACK_STEP (m), and BACK_MARGIN (m) further, within the most, so what it holds does not graze
+#: what it clears.
+BACK_MAX = 0.5
+BACK_STEP = 0.05
+BACK_MARGIN = 0.05
+#: What a step back keeps clear behind it: the body's back, behind its root (m), and its breadth to
+#: each side (m), checked from the floor to the shoulders at these heights (m).
+BACK_CLEAR = 0.2
+BACK_SIDE = 0.2
+BACK_HEIGHTS = (0.1, 0.25, 0.4, 0.9, 1.4)
+#: How many times a step back that falls short of its distance is aimed on (a navigator stops
+#: within its arrival radius of a goal).
+BACK_TRIES = 3
 #: The time constant (s) a hold's force is judged over.
 FORCE_TAU = 0.15
 
@@ -592,7 +607,7 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _walk(self, stand, yaw, what: str, while_walking=None, via=()):
+    def _walk(self, stand, yaw, what: str, while_walking=None, via=(), back_max: float = BACK_MAX):
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to walk to {what} with")
@@ -609,13 +624,15 @@ class HumanoidPlugin(MachinePlugin):
                         math.atan2(point[1] - y, point[0] - x),
                         while_walking,
                         then=self._next_heading(legs, i, yaw),
+                        toward=point,
+                        back_max=back_max,
                     )
                 yield from self._leg(nav, point, what, while_walking)
         else:
             yield from self._leg(nav, stand, what, while_walking, via)
         if while_walking is not None:
             # carrying: turn at a carrying pace
-            yield from self._turn(yaw, while_walking)
+            yield from self._turn(yaw, while_walking, back_max=back_max)
         self.body.face(yaw)
         t0 = self._ctx.sim_time
         while abs(
@@ -696,6 +713,7 @@ class HumanoidPlugin(MachinePlugin):
                     math.atan2(first[1] - y, first[0] - x),
                     lambda: self._hold_carried(carried),
                     then=self._next_heading(legs, legs.index(first), yaw),
+                    toward=first,
                 )
             yield from self._walk(
                 stand, yaw, target, while_walking=lambda: self._hold_carried(carried), via=points
@@ -1108,14 +1126,20 @@ class HumanoidPlugin(MachinePlugin):
         height: float | None = None,
         via: list | None = None,
         facing: float | None = None,
+        back_max: float = BACK_MAX,
     ):
         """Carry what the hands hold to a target: lift it to a carrying height in front of the body
         (``height``: the hands' height, m; default a hand's breadth under the pelvis, or high enough
         for what is held to clear the surface the target is on by :data:`CLEAR`), turn toward
         the way it leaves, walk to a stand-off in front of the target holding it there -- through
         the floor points ``via`` first, in order, as ``approach`` does -- and face the target, or the
-        world yaw ``facing``, as ``approach`` faces it."""
+        world yaw ``facing``, as ``approach`` faces it. Where a turn on the spot would sweep what it
+        holds through something, it first steps straight back, keeping its heading, by as little as
+        clears it and at most ``back_max`` (m; 0: never)."""
         points = self._via(via)
+        if not (math.isfinite(float(back_max)) and float(back_max) >= 0.0):
+            self.fail(f"back_max: a distance of 0 m or more, not {back_max!r}")
+        back_max = float(back_max)
         sides = self._held("both")
         d = self._d
         m = self._m
@@ -1171,15 +1195,26 @@ class HumanoidPlugin(MachinePlugin):
             leave,
             lambda: self._hold_carried(carried),
             then=self._next_heading(legs, legs.index(first), yaw),
+            toward=first,
+            back_max=back_max,
         )
         yield from self._walk(
-            stand, yaw, to, while_walking=lambda: self._hold_carried(carried), via=points
+            stand,
+            yaw,
+            to,
+            while_walking=lambda: self._hold_carried(carried),
+            via=points,
+            back_max=back_max,
         )
 
-    def _turn_way(self, yaw: float, then: float | None = None) -> float:
-        """How far to turn (rad, signed) from the heading to ``yaw``: the short way, unless what the
-        hands hold would sweep through something on it and the long way is clear; failing if
-        neither is. Half a turn, within :data:`TURN_TIE`, is a tie (:meth:`_tie`)."""
+    def _turn_way(
+        self, yaw: float, then: float | None = None, back_max: float = BACK_MAX
+    ) -> tuple[float, float]:
+        """How to turn from the heading to ``yaw``: ``(back, way)``, a step straight back (m) and
+        then a turn on the spot (rad, signed). The short way, if what the hands hold sweeps through
+        nothing on it; else, stepping back first by as little as clears it (:meth:`_back_for`, at
+        most ``back_max``); else the long way, if that is clear; failing if none is. Half a turn,
+        within :data:`TURN_TIE`, is a tie (:meth:`_tie`), its two ways tried as short ones."""
         heading = self.body.root()[2]
         short = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
         held = next(
@@ -1187,22 +1222,110 @@ class HumanoidPlugin(MachinePlugin):
             None,
         )
         if held is None or abs(short) < math.radians(20):
-            return short
+            return 0.0, short
         long = short - math.copysign(2 * math.pi, short)
-        ways = (
-            self._tie(short, long, yaw, then)
-            if abs(abs(short) - math.pi) < TURN_TIE
-            else (short, long)
-        )
+        tie = abs(abs(short) - math.pi) < TURN_TIE
+        ways = self._tie(short, long, yaw, then) if tie else (short,)
         blocked = {}
         for way in ways:
             blocked[way] = self._swept(held, way)
             if blocked[way] is None:
-                return way
+                return 0.0, way
+        back, way, behind = self._back_for(held, ways, back_max)
+        if way is not None:
+            return back, way
+        if not tie:
+            blocked[long] = self._swept(held, long)
+            if blocked[long] is None:
+                return 0.0, long
+        swept = " one way and ".join(str(blocked[w]) for w in ways) + (" the other" if tie else "")
+        if not tie:
+            swept += f", and {blocked[long]} the long way round"
         self.fail(
             f"cannot turn to {math.degrees(yaw):.0f} deg: what it holds would sweep through "
-            f"{blocked[ways[0]]} one way and {blocked[ways[1]]} the other"
+            f"{swept}; {behind}"
         )
+
+    def _back_for(self, held: int, ways, back_max: float):
+        """The least step straight back (m, in steps of :data:`BACK_STEP`, at most ``back_max``)
+        after which one of ``ways`` (rad, in order) sweeps what is held through nothing, and
+        :data:`BACK_MARGIN` more where the space behind and ``back_max`` allow: ``(back, way, "")``;
+        or ``(0, None, why)``, why no step back clears it -- something behind the body, named, or no
+        step up to ``back_max``."""
+        if back_max < BACK_STEP:
+            return 0.0, None, "it steps back no further than 0 m"
+        free, behind = self._clear_behind(held, back_max)
+        n = int(math.floor(back_max / BACK_STEP + 1e-9))
+        for k in range(1, n + 1):
+            back = k * BACK_STEP
+            if back > free:
+                return (
+                    0.0,
+                    None,
+                    f"a step back of {back:.2f} m would meet {behind}, {free:.2f} m behind it",
+                )
+            for way in ways:
+                if self._swept(held, way, back) is None:
+                    return min(back + BACK_MARGIN, back_max, free), way, ""
+        return 0.0, None, f"stepping back {back_max:.2f} m does not clear it"
+
+    def _clear_behind(self, held: int, reach: float) -> tuple[float, str]:
+        """How far the body can step straight back, keeping its heading, before it or what it holds
+        meets something solid (m, up to ``reach``), and what that is: rays backward over the body's
+        breadth (:data:`BACK_SIDE`) from its back (:data:`BACK_CLEAR` behind its root) at
+        :data:`BACK_HEIGHTS`, and from what it holds at its underside, middle and top."""
+        d = self._d
+        x, y, h = self.body.root()
+        back = np.array([-math.cos(h), -math.sin(h), 0.0])
+        side = np.array([-math.sin(h), math.cos(h), 0.0])
+        skip = self._sweep_skip(held)
+        starts = [
+            np.array([x, y, z]) + s * BACK_SIDE * side
+            for z in BACK_HEIGHTS
+            for s in (-1.0, 0.0, 1.0)
+        ]
+        lo, hi = self._extent(held)
+        for z in (lo[2] + 0.02, 0.5 * (lo[2] + hi[2]), hi[2] - 0.02):
+            for off in self._footprint(held, 0.04):
+                p = d.xpos[held][:2] + off[:2]
+                starts.append(np.array([p[0], p[1], z]))
+        nearest, what = reach, ""
+        for i, start in enumerate(starts):
+            # the body's own rays start at its root and keep its back clear; the load's at the load
+            extra = BACK_CLEAR if i < len(BACK_HEIGHTS) * 3 else 0.0
+            hit = self._first_hit(start, back, nearest + extra, skip, held)
+            if hit is not None:
+                dist, name = hit
+                nearest, what = max(0.0, dist - extra), name
+        return nearest, what
+
+    def _sweep_skip(self, held: int) -> set:
+        """The bodies (by their weld roots) no sweep counts: what is held and what rides in it."""
+        m = self._m
+        return {int(m.body_weldid[held])} | {int(m.body_weldid[r]) for r in self._contents(held)}
+
+    def _first_hit(self, start, vec, length: float, skip: set, exclude: int):
+        """The first solid thing a ray from ``start`` along ``vec`` meets within ``length``, past
+        the bodies in ``skip``, the humanoid's own and ``exclude``: ``(distance, name)``, or
+        ``None``."""
+        m, d = self._m, self._d
+        geomid = np.zeros(1, np.int32)
+        start = np.array(start, float)
+        gone = 0.0
+        while gone < length:
+            dist = mujoco.mj_ray(m, d, start, vec, None, 1, exclude, geomid)
+            if dist < 0 or gone + dist > length:
+                return None
+            g = int(geomid[0])
+            body = int(m.geom_bodyid[g])
+            solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
+            if solid and int(m.body_weldid[body]) not in skip and not self.body.owns(m, body):
+                return gone + dist, mujoco.mj_id2name(
+                    m, mujoco.mjtObj.mjOBJ_BODY, body
+                ) or "the world"
+            gone += dist + 1e-4
+            start = start + (dist + 1e-4) * vec
+        return None
 
     @staticmethod
     def _tie(short: float, long: float, yaw: float, then: float | None) -> tuple:
@@ -1216,50 +1339,34 @@ class HumanoidPlugin(MachinePlugin):
                 return left, right
         return right, left
 
-    def _swept(self, held: int, turn: float) -> str | None:
+    def _swept(self, held: int, turn: float, back: float = 0.0) -> str | None:
         """What the held object would sweep through if the body turned on the spot by ``turn``
-        (rad): the name of the first body a point of its footprint meets on the way, at its
-        underside, its middle or its top -- or ``None``. Rays along the arc each point sweeps, so a
-        shelf above it or a surface below it is not in the way, and a post or a wall is."""
-        m, d = self._m, self._d
-        x, y, _ = self.body.root()
+        (rad), having stepped straight back by ``back`` (m) first: the name of the first body a
+        point of its footprint meets on the way, at its underside, its middle or its top -- or
+        ``None``. Rays along the arc each point sweeps, so a shelf above it or a surface below it is
+        not in the way, and a post or a wall is."""
+        d = self._d
+        x, y, h = self.body.root()
         lo, hi = self._extent(held)
         origin = d.xpos[held][:2] - [x, y]
+        pivot = np.array([x - back * math.cos(h), y - back * math.sin(h)])
         offsets = self._footprint(held, 0.04)
-        inside = self._contents(held)
-        skip = {int(m.body_weldid[held])} | {int(m.body_weldid[r]) for r in inside}
+        skip = self._sweep_skip(held)
         steps = max(2, int(math.ceil(abs(turn) / math.radians(5))))
-        geomid = np.zeros(1, np.int32)
         for z in (lo[2] + 0.02, 0.5 * (lo[2] + hi[2]), hi[2] - 0.02):
             for off in offsets:
                 rel = origin + off[:2]
-                prev = np.array([x, y]) + rel
+                prev = pivot + rel
                 for k in range(1, steps + 1):
                     a = turn * k / steps
                     c, s = math.cos(a), math.sin(a)
-                    nxt = np.array([x, y]) + np.array([[c, -s], [s, c]]) @ rel
+                    nxt = pivot + np.array([[c, -s], [s, c]]) @ rel
                     chord = nxt - prev
                     length = float(np.linalg.norm(chord))
-                    start = np.array([prev[0], prev[1], z])
                     vec = np.array([chord[0] / length, chord[1] / length, 0.0])
-                    gone = 0.0
-                    while gone < length:
-                        dist = mujoco.mj_ray(m, d, start, vec, None, 1, held, geomid)
-                        if dist < 0 or gone + dist > length:
-                            break
-                        g = int(geomid[0])
-                        body = int(m.geom_bodyid[g])
-                        solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
-                        if (
-                            solid
-                            and int(m.body_weldid[body]) not in skip
-                            and not self.body.owns(m, body)
-                        ):
-                            return (
-                                mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, body) or "the world"
-                            )
-                        gone += dist + 1e-4
-                        start = start + (dist + 1e-4) * vec
+                    hit = self._first_hit([prev[0], prev[1], z], vec, length, skip, held)
+                    if hit is not None:
+                        return hit[1]
                     prev = nxt
         return None
 
@@ -1292,18 +1399,67 @@ class HumanoidPlugin(MachinePlugin):
         p[2] = float(self._extent(held)[0][2])
         return p
 
-    def _turn(self, yaw: float, each=None, then: float | None = None):
+    def _turn(
+        self,
+        yaw: float,
+        each=None,
+        then: float | None = None,
+        toward=None,
+        back_max: float = BACK_MAX,
+    ):
         """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
         does), calling ``each`` every step; holding something, the way its load sweeps clear
         (:meth:`_turn_way`; ``then``: the heading it walks on in afterwards), a quarter turn at a
-        time."""
+        time, stepping straight back first where that clears it. ``toward``: the point ``yaw``
+        faces, faced from where a step back leaves the body."""
+        back, way = self._turn_way(yaw, then, back_max)
+        if back > 0.0:
+            yield from self._step_back(back, each)
+            if toward is not None:
+                x, y, _ = self.body.root()
+                yaw = math.atan2(toward[1] - y, toward[0] - x)
+                heading = self.body.root()[2]
+                rest = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
+                # the same way round, by as far as faces the point from here
+                way = (
+                    rest
+                    if rest * way > 0 or abs(rest) < 1e-6
+                    else rest + math.copysign(2 * math.pi, way)
+                )
         heading0 = self.body.root()[2]
-        way = self._turn_way(yaw, then)
         legs = max(1, int(math.ceil(abs(way) / (math.pi / 2))))
         for k in range(1, legs + 1):
             # on through each quarter but the last, not stopping at it
             tol = math.radians(3 if k == legs else 25)
             yield from self._turn_to(heading0 + way * k / legs, each, tol)
+
+    def _step_back(self, distance: float, each=None):
+        """Step straight back by ``distance`` (m), keeping the heading, on the navigator, calling
+        ``each`` every step; then come to rest. A navigator stops within its arrival radius of a
+        goal, so a step that falls short is aimed on by what it lacks (:data:`BACK_TRIES` at most),
+        to stand within a centimetre of where the sweep was judged from."""
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if nav is None:
+            self.fail(f"{self.entity} has no navigator to step back with")
+        x0, y0, h = self.body.root()
+        back = np.array([-math.cos(h), -math.sin(h)])
+        self.step("stepping_back", distance=float(distance))
+        self.body.keep_heading(h)
+        self.body.limit_turn(CARRY_TURN)
+        try:
+            aim = distance
+            for _ in range(BACK_TRIES):
+                goal = (x0 + aim * back[0], y0 + aim * back[1])
+                yield from self._route(nav, goal, "a step back", each)
+                yield from self._come_to_rest("a step back", each)
+                x, y, _ = self.body.root()
+                short = distance - float(np.dot([x - x0, y - y0], back))
+                if short < 0.01:
+                    break
+                aim += short
+        finally:
+            self.body.keep_heading(None)
+            self.body.limit_turn(None)
 
     def _turn_to(self, yaw: float, each=None, tol: float = math.radians(3)):
         self.body.limit_turn(CARRY_TURN)
