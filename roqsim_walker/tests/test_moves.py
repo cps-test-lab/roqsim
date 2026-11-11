@@ -250,9 +250,118 @@ def test_a_carry_along_a_way_turns_at_its_corners_so_the_load_stays_over_the_way
     assert st.error == "" and off < 0.12, off
 
 
+def _post_world(*extra):
+    """The worker facing east at the origin, the tote in front of it, and a post where turning left
+    swings the tote through it."""
+    world = _world()
+    world["components"][0]["walker"]["pose"] = {
+        "position": {"x": 0.0, "y": 0.0},
+        "orientation": {"yaw": 0.0},
+    }
+    world["components"] = [c for c in world["components"] if c.get("name") != "tote_1"] + [
+        {
+            "tote": {"pose": {"position": {"x": 0.6, "y": 0.0}, "orientation": {"yaw": 1.5708}}},
+            "name": "tote_1",
+        },
+        {
+            "box": {
+                "prefix": "post_",
+                "pose": {"position": {"x": 0.1, "y": 0.6}},
+                "size": [0.1, 0.1, 1.8],
+                "motion": "static",
+            },
+            "name": "post",
+        },
+        *extra,
+    ]
+    return world
+
+
+def test_a_carry_steps_back_as_far_as_its_load_needs_then_turns_the_short_way():
+    """A post stands where the short way round would swing the tote: the body steps straight back,
+    keeping its heading, by a few steps of 5 cm, then turns the short way; the tote never meets the
+    post."""
+    engine = _engine(_post_world())
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        x0, y0, h0 = sim.body.root()
+        to = {"position": {"x": x0 - 1.6, "y": y0 + 0.9, "z": 0.0}}
+        seq = sim.h.carry(to, standoff=0.6)
+        post = sim.m.body("post_box").id
+        tote = sim.m.body("tote_1").id
+        nearest, turned, last, first = math.inf, 0.0, h0, None
+        path = []  # (distance back along the heading, off to the side, heading change)
+        while True:
+            sim.e.step()
+            x, y, h = sim.body.root()
+            nearest = min(
+                nearest, float(np.linalg.norm(sim.d.xpos[tote][:2] - sim.d.xpos[post][:2]))
+            )
+            turned += math.atan2(math.sin(h - last), math.cos(h - last))
+            last = h
+            if first is None and abs(turned) > math.pi / 2:
+                first = turned
+            path.append((-(x - x0) * math.cos(h0) - (y - y0) * math.sin(h0), abs(y - y0), turned))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        back = [
+            ev
+            for ev in engine.ctx.events.all()
+            if ev["source"].startswith("worker") and ev["event"] == "stepping_back"
+        ]
+        assert len(back) == 1 and 0.0 < back[0]["distance"] <= 0.5, back
+        distance = back[0]["distance"]
+        assert abs(distance / 0.05 - round(distance / 0.05)) < 1e-6
+        # straight back, the heading kept, until it has stepped the distance; then the turn
+        stepping = [p for p in path if abs(p[2]) < math.radians(20) and p[0] > 0.01]
+        assert stepping and max(p[0] for p in stepping) > distance - 0.03
+        assert max(p[1] for p in stepping) < 0.02
+        reached = next(i for i, p in enumerate(path) if p[0] > distance - 0.03)
+        assert max(abs(p[2]) for p in path[:reached]) < math.radians(3)
+        assert first is not None and first > 0.0, first  # left, the short way
+        # the tote's half breadth and the post's are 0.25 m: clear of it by 2 cm at least
+        assert nearest > 0.27, nearest
+    finally:
+        engine.shutdown()
+
+
+def test_a_step_back_that_would_meet_something_fails_naming_it():
+    """A wall a hand's breadth behind the body: it cannot step back, the long way round sweeps the
+    tote through the wall too, and the carry fails naming what is behind it."""
+    wall = {
+        "box": {
+            "prefix": "behind_",
+            "pose": {"position": {"x": -0.3, "y": 0.0}},
+            "size": [0.05, 2.0, 1.2],
+            "motion": "static",
+        },
+        "name": "behind",
+    }
+    engine = _engine(_post_world(wall))
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        x0, y0, _ = sim.body.root()
+        st = sim.run(
+            "carry", to={"position": {"x": x0 - 1.6, "y": y0 + 0.9, "z": 0.0}}, standoff=0.6
+        )
+        assert "a step back of" in st.error and "would meet behind_box" in st.error, st.error
+        x, y, _ = sim.body.root()
+        assert math.hypot(x - x0, y - y0) < 0.02  # it did not step into the wall
+    finally:
+        engine.shutdown()
+
+
 def test_carrying_it_turns_the_way_its_load_sweeps_clear():
-    """A post stands where the short way round would swing the tote: the body turns the long way,
-    and the tote never meets the post."""
+    """A post stands where the short way round would swing the tote, and the carry may not step
+    back: the body turns the long way, and the tote never meets the post."""
     world = _world()
     world["components"][0]["walker"]["pose"] = {
         "position": {"x": 0.0, "y": 0.0},
@@ -281,7 +390,7 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
         sim.ok("grasp", hand="both", target="tote_1")
         x, y, _ = sim.body.root()
         to = {"position": {"x": x - 1.6, "y": y + 0.9, "z": 0.0}}
-        seq = sim.h.carry(to, standoff=0.6)
+        seq = sim.h.carry(to, standoff=0.6, back_max=0.0)
         post = sim.m.body("post_box").id
         tote = sim.m.body("tote_1").id
         nearest = math.inf
@@ -297,6 +406,51 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
         assert nearest > 0.3, nearest
     finally:
         engine.shutdown()
+
+
+def _turned(sim, seq, limit=60.0) -> float:
+    """Step until the move ``seq`` ends; the body's heading change when it had first turned a
+    quarter turn either way (rad, signed; left is positive)."""
+    _, _, last = sim.body.root()
+    turned, t0 = 0.0, sim.e.ctx.sim_time
+    first = None
+    while True:
+        sim.e.step()
+        _, _, yaw = sim.body.root()
+        turned += math.atan2(math.sin(yaw - last), math.cos(yaw - last))
+        last = yaw
+        if first is None and abs(turned) > math.pi / 2:
+            first = turned
+        st = sim.h.status()
+        if st.seq == seq and st.finished:
+            assert st.error == "", st.error
+            return first
+        assert sim.e.ctx.sim_time - t0 < limit
+
+
+@pytest.mark.parametrize("side", [1.0, -1.0], ids=["walks-on-right", "walks-on-left"])
+def test_a_carry_turning_round_turns_on_the_side_it_walks_on_to(sim, side):
+    """A way point straight behind the body is half a turn either way: a carry turns round on the
+    side it walks on to from there, whichever side a millimetre puts the point on."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, h = sim.body.root()
+    left = np.array([-math.sin(h), math.cos(h)])
+    # behind it, a millimetre to the side the sign of the turn would take it the other way round
+    behind = np.array([x, y]) - 0.5 * np.array([math.cos(h), math.sin(h)]) + side * 0.002 * left
+    # and from there on to its right (side 1: the body then faces back, and its left is its right)
+    on = behind + side * 1.0 * left
+    facing = math.atan2(side * left[1], side * left[0])
+    to = {
+        "position": {
+            "x": float(on[0] + 0.6 * side * left[0]),
+            "y": float(on[1] + 0.6 * side * left[1]),
+            "z": 0.0,
+        }
+    }
+    seq = sim.h.carry(to, standoff=0.6, facing=facing, via=[behind.tolist(), on.tolist()])
+    first = _turned(sim, seq)
+    assert first is not None and math.copysign(1.0, first) == -side, first
 
 
 def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
@@ -461,6 +615,13 @@ def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     assert st.error.startswith("via: a point is [x, y]")
     st = sim.run("approach", target="start/button", via=[[1.0, 2.0, 3.0]])
     assert st.error.startswith("via: a point is [x, y]")
+
+
+def test_a_back_max_that_is_no_distance_fails_naming_it(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    st = sim.run("carry", to="bench", back_max=-0.1)
+    assert st.error.startswith("back_max: a distance"), st.error
 
 
 def test_approach_to_nothing_fails_naming_it(sim):
