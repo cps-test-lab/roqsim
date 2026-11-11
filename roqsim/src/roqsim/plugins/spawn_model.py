@@ -393,7 +393,7 @@ class SpawnModelPlugin(Plugin):
         # folder is included as a fallback), so compilation does not depend on CWD.
         apply_assets(child, asset)
         # A flexcomp under <worldbody> gets a body of its own, so the prop has a root to register,
-        # hide and weld (and a world pin survives the attach -- roqsim.flex, rule 4).
+        # hide and weld (and a world pin moves with it -- roqsim.flex, rule 4).
         child = lift_top_level_flexes(child, asset.path.stem)
         if self.scale != 1.0:
             _scale_spec(child, self.scale)

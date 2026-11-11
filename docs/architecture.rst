@@ -62,10 +62,12 @@ Full-run sequence:
 
 ::
 
-   setup():   build(p0)…build(pN)  →  spec.compile()  →  MjData  →  configure(p0)…configure(pN)
+   setup():   build(p0)…build(pN)  →  spec.compile()  →  MjData  →  configure(p0)…configure(pN) → mj_forward
    reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → mj_forward → interpenetration check → gates.reset()
    step():    drain → pre_step(p0…pN) → mj_step → post_step(p0…pN) → publish_snapshot
    shutdown(): shutdown(pN)…shutdown(p0)   (best-effort; a failure is logged, others still run)
+
+**After** ``setup()`` **the data describes the initial state.** Its closing ``mj_forward`` computes body, geom, site and camera poses, sensor data and contacts from what the model and every ``configure`` put in ``data``, so a world inspected before its first reset or step -- a geometry check, an export, a test -- does not read MjData's zeros, which put every part at the origin. No time passes (``data.time`` stays 0) and ``reset()`` starts from ``mj_resetData``, so the pass changes no trial; a driver that steps without a reset has its first ``pre_step`` read the initial pose rather than zeros. ``configure`` runs before it: a plugin that reads a pose there runs its own forward pass. What ``on_reset`` writes -- an arm's ``home``, a re-seated base, a walker's first frame -- comes with ``reset()``, so the pose ``setup()`` leaves is the one ``reset()`` gives wherever no ``on_reset`` writes one.
 
 A ``configure`` that raises ends ``setup()`` with the plugins configured before it, and the failing one, shut down in reverse order: they hold what ``configure`` opens, and the driver never receives an engine to shut down. ``shutdown()`` on such an engine is then a no-op, as is a second ``shutdown()``.
 
@@ -332,7 +334,7 @@ at compile: a typo here is otherwise invisible.
 so a world asking for less gets the floor while its own configuration still reads the tighter value.
 A time constant below the floor is therefore refused, naming the floor and the rule that applies,
 because tightening a fit is exactly the reason to reach for this key and a silent clamp turns the
-attempt into a wrong conclusion about the solver. MuJoCo imposes it in two ways, measured on 3.14:
+attempt into a wrong conclusion about the solver. MuJoCo imposes it in two ways, measured on 4.0:
 
 * Under ``euler``, ``rk4``, ``implicit`` and ``implicitfast`` the time constant itself is raised to
   ``2 * sim.timestep``. At a 2 ms step a world asking for 0.5 ms, 1 ms or 2 ms gets 4 ms and a contact
@@ -867,6 +869,7 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    is named ``module:Class`` / ``file.py:Class``, resolved as plugins are (§12,
    :func:`roqsim.registry.resolve_renderer`); the core names none. MuJoCo's own,
    :class:`~roqsim.rendering.MujocoRenderer`, registers there as ``mujoco`` and is the default;
+   :class:`~roqsim.render_filament.FilamentRenderer` registers as ``filament`` (below);
    :class:`~roqsim.render_socket.SocketRenderer` (``socket``) is the client of a renderer in another
    process, with ``TCP_NODELAY`` on both ends of a TCP connection, since a message is several writes.
    A package for one server subclasses it: it starts that server, sends the scene in the form the
@@ -926,7 +929,9 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    its view (``mjv_updateCamera``), its lights (``mjv_makeLights``: the headlight follows the camera)
    and its clip planes, is drawn at the origin of the framebuffer, and its colour image is copied on
    the GPU into its tile of one atlas, read back once per batch. Depth and segmentation keep a pass
-   of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them. A camera with
+   of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them; under MSAA
+   the labels are drawn in a second, single-sampled context, since a multisampled buffer blends the
+   id colours of two geoms at an edge into a third geom's id. A camera with
    its own geom groups or decorations gets a build of its own, and so does a camera asking for the
    moving bodies alone (``CameraSpec.bodies``: ``moving``), whose build takes MuJoCo's dynamic
    category only -- the bodies :func:`~roqsim.rendering.moving_bodies` marks, with no static geom, no
@@ -936,6 +941,27 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    MuJoCo's default 4x MSAA a frame is not bit-reproducible on every GPU, with or without the service:
    a run may differ from another in a handful of values by one level; a model with
    ``<quality offsamples="0"/>`` draws exactly.
+-  **Filament** (:class:`~roqsim.render_filament.FilamentRenderer`, ``filament``) is MuJoCo's
+   physically based renderer (``mjrf``), retained-mode: it makes the model's meshes, textures, lights
+   and renderables once at ``open`` and per batch updates their poses from the snapshot; each image
+   of each camera -- colour, depth and segmentation, each in Filament's own draw mode -- is one
+   ``mjrf`` render call read back into an array of its own, since MuJoCo 4.0 reads back one target
+   per call, and every call of a batch is submitted before the first wait. It runs headless through
+   **Vulkan only**: its OpenGL backend opens an X display (GLX), and both a missing display and a
+   missing Vulkan driver end the process inside Filament, so the first context of a process is opened
+   in a child first (:func:`~roqsim.render_filament.probe`), which also names the device. Three
+   properties of MuJoCo 4.0's Filament shape it. A Filament engine destroyed off the thread that made
+   it aborts the process, and a Vulkan context destroyed on an NVIDIA driver terminates the EGL display
+   the classic renderer shares; so contexts are never destroyed: each renderer borrows one of its
+   thread's pool and gives it back on close, freeing only its world's resources (and from another
+   thread, not even those). One context holds one textured model at a time, which is why each open
+   renderer has a context of its own. ``ModelRenderables`` takes a geom's group when it is made and
+   labels a geom of zero alpha, so what presence hides at run time is taken out of the scene by the
+   renderer itself, and the renderables are made again when something hidden when they were made
+   is shown. A flex and a spatial tendon are drawn as parts, each labelled as its object. Depth is
+   reversed-Z, linearised in closed form; labels are the renderables' own ``segmentation_id``, mapped back to ``(object, mjtObj)``. With post-processing on, Filament's
+   dithering and ambient occlusion change from frame to frame, so it declares itself deterministic
+   only with ``post_processing: false`` (``capabilities_for``).
 -  **Clip planes.** MuJoCo derives every camera's clip planes from the model, ``visual/map znear``/``zfar`` times its extent, so in a large world the near plane stands tens of centimetres out. A sensor camera draws instead between its ``render_near`` (a physical distance, default 0.01 m) and the model's own far plane, so what it sees does not depend on the world's size: the renderer sets those planes on the GL cameras of its own scene after the camera's view is set and linearises its depth reads with them, and the model, the viewer, an export and every other camera keep theirs. Every pass of a camera -- colour, depth, registered depth, labels -- is drawn with its planes. What a depth camera senses is separate: ``clip_near``/``clip_far`` mask the rendered depth to "no return" afterwards, so a surface nearer than ``clip_near`` is drawn, hides what is behind it and reads "no return"; ``render_near`` must not exceed ``clip_near``.
 -  **Without a tick.** ``roqsim render`` and its videos, the thumbnails, the scene review and the
    coverage visualisation draw through :class:`~roqsim.rendering.FrameRenderer`, one view of a service
@@ -1069,7 +1095,7 @@ The runtime counterpart to ``--set``: name a model field, name the objects, name
 
 **Not every model field can be written at runtime, and the ones that cannot fail silently** -- so the plugin ships a curated allowlist, one row per field with its object namespace, its write class and its caveat, and refuses everything else by name with the reason. Two write classes, both measured against MuJoCo 3.11.0:
 
--  ``live`` -- in effect on the next step: ``geom_friction``, ``geom_contype``/``geom_conaffinity``, ``actuator_forcerange``, and a flex's ``flex_friction``, ``flex_solref``, ``flex_solimp`` and ``flex_damping`` (measured on MuJoCo 3.14.0). ``flex_damping`` is live only on a flex compiled with a non-zero damping: MuJoCo sizes the flex's edge Jacobian at compile, and over a compiled 0 a written damping acts in part (measured: the ringing barely changes, where written over a compiled 1e-9 it reproduces the compiled run exactly), so that write is refused. A flex's Young's modulus and Poisson's ratio have no row because they have no field -- MuJoCo bakes them into ``flex_stiffness`` -- and the ``flex_material`` plugin sets them before compile.
+-  ``live`` -- in effect on the next step: ``geom_friction``, ``geom_contype``/``geom_conaffinity``, ``actuator_forcerange``, and a flex's ``flex_friction``, ``flex_solref``, ``flex_solimp`` and ``flex_damping`` (measured on MuJoCo 4.0.0). ``flex_damping`` is live only on a flex compiled with a non-zero damping: MuJoCo sizes the flex's edge Jacobian at compile, and over a compiled 0 a written damping acts in part (measured: the ringing barely changes, where written over a compiled 1e-9 it reproduces the compiled run exactly), so that write is refused. A flex's Young's modulus and Poisson's ratio have no row because they have no field -- MuJoCo bakes them into ``flex_stiffness`` -- and the ``flex_material`` plugin sets them before compile.
 -  ``needs_setconst`` -- ``body_mass``, whose write the dynamics **ignore** until ``mj_setConst`` recomputes the derived inertia (measured: the mass matrix does not move, and ``body_invweight0``/``body_subtreemass`` keep their compile-time values). The plugin calls it.
 
 ``geom_size`` is refused: ``geom_rbound`` is cached at compile, so a box grown 0.05 → 0.4 m kept ``rbound`` at 0.0866 and, while overlapping the floor, produced ``ncon = 0`` -- geometry that renders big and collides as if small. Three further refusals are *decisions* rather than safety, and the plugin says so: ``geom_priority`` (it also governs ``condim``/``solref``/``solimp``, so it would swap the contact's stiffness model at the instant of the fault), MuJoCo's own ``sensor_noise`` (§9.1 gave that to per-sensor config), and every ``opt.*`` global (``sim.contact_override`` and the ``sim:`` block own those, *before compile*, so they are in the compiled model and in the run's provenance -- a runtime write would make the recorded value differ from the one that ran).

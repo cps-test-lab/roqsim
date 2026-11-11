@@ -8,7 +8,7 @@ and whether its contact stiffness is the one MuJoCo will use.
 Three answers are rules of MuJoCo's integrator rather than of the model. Two are read only by this
 analysis, so they are stated where they are used, in :func:`explain_flex`, rather than among
 :mod:`roqsim.flex`'s numbered rules: **numerical damping under** ``discrete`` and **the resolution
-limit**. Each was measured on MuJoCo 3.14.0 and is pinned by ``tests/test_flex_modes.py``, which
+limit**. Each was measured on MuJoCo 4.0.0 and is pinned by ``tests/test_flex_modes.py``, which
 measures it on a stepped model. The third, **the** ``solref`` **floor**, applies to every contact
 and not only a flex's, so it is :func:`roqsim.solref.solref_floor`, measured in
 ``tests/test_solref_floor.py``: two timesteps under every integrator but ``discrete``, and under

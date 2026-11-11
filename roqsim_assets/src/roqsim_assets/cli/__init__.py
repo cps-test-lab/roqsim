@@ -10,10 +10,11 @@ with a span under it (a desk, a shelf, a chair) leaves that step solid right thr
 ``collision audit`` says whether this prop is one of those and ``collision diff`` measures a
 replacement against the mesh; neither is optional for a prop something has to drive past.
 
-``inspect-prop`` is the one that decides: it is the deterministic ground truth on scale, origin and
-materials, and a prop that has not passed it is not ready to place. For a *look* at a mesh, use
-``roqsim render prop.obj --out prop.png`` -- rendering is one tool for everything now, and it reads the
-mesh through the same preview scene (:mod:`roqsim.mesh_preview`) that ``render-thumbnails`` here uses.
+``inspect-prop`` is the one that decides: it is the deterministic ground truth on scale, origin,
+materials and drawn parts sharing a face, and a prop that has not passed it is not ready to place.
+For a *look* at a mesh, use ``roqsim render prop.obj --out prop.png`` -- rendering is one tool for
+everything now, and it reads the mesh through the same preview scene (:mod:`roqsim.mesh_preview`)
+that ``render-thumbnails`` here uses.
 ``render-thumbnails`` refreshes the catalogue images after a model changes.
 
 For the reasoning behind any of them -- what a check refuses and why -- read the module::

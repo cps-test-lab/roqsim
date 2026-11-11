@@ -25,6 +25,7 @@ import mujoco
 import numpy as np
 
 from roqsim.solref import solref_floor
+from roqsim.weld import set_relpose
 
 #: A hold's softness: a weld's time constant (s) and damping ratio, and its impedance. Stiff enough to
 #: carry a box within millimetres, soft enough that its force is a spring's, bounded by the move.
@@ -131,11 +132,12 @@ class Hold:
             mujoco.mju_rotVecQuat(pos, data.xpos[b2] - data.xpos[b1], qi)
             quat = np.zeros(4)
             mujoco.mju_mulQuat(quat, qi, data.xquat[b2])
-            row = self.model.eq_data[self.eq]
-            row[0:3] = 0.0  # the anchor: the hand body's origin
-            row[3:6] = pos  # the hand's pose in the object's frame, as it is
-            row[6:10] = quat
-            row[10] = 1.0 if (self.whole if whole is None else whole) else 0.0
+            # The anchor is the hand body's origin; the pose is the hand's in the object's frame, as
+            # it is now, and stays so through a later mj_setConst.
+            set_relpose(self.model, self.eq, np.zeros(3), pos, quat)
+            self.model.eq_data[self.eq][10] = (
+                1.0 if (self.whole if whole is None else whole) else 0.0
+            )
         data.eq_active[self.eq] = 1 if on else 0
 
     def distance(self, data) -> float:

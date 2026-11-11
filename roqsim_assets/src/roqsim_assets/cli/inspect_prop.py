@@ -23,12 +23,20 @@ prop is placed:
   the textured ``<name>.xml`` that ``roqsim assets finalize-mujoco`` writes; a prop that was never finalized has no
   textures wired at all.
 
+* **Shared faces.** Two drawn parts whose outward faces lie in one plane and overlap, or that share
+  one curved surface, flicker in every render as the camera moves (z-fighting), while a still
+  picture often looks right. Each such pair is a FAIL naming where they touch; the remedy is to
+  inset the touching part by about 1 mm, so its face sits just inside the other. A pair the check
+  cannot compare (an ellipsoid, a heightfield, an SDF) is a FAIL too: an unverified pair is not a
+  passed one. The rules are :mod:`roqsim_assets.shared_faces`.
+
 Also checks scale plausibility, up-axis (is it standing?), leftover download intermediates, and that a
 redistributable ``CREDITS.txt`` is present, which under CC BY also says what was changed.
 
-Pure stdlib, no MuJoCo/GL -- geometry comes straight from the OBJ (honouring any ``scale`` on the
-``<mesh>`` in the MJCF). Pair it with ``roqsim render <prop> --out check.png`` for the visual eyeball;
-this is the deterministic ground truth of the import pipeline.
+No GL: geometry comes straight from the OBJ (honouring any ``scale`` on the ``<mesh>`` in the MJCF);
+only the shared-face check compiles the MJCF with MuJoCo, since it compares the parts as placed. Pair
+it with ``roqsim render <prop> --out check.png`` for the visual eyeball; this is the deterministic
+ground truth of the import pipeline.
 
 Usage::
 
@@ -65,13 +73,14 @@ _MIN_DIM, _MAX_DIM = 0.02, 5.0
 
 
 class Check:
-    """One named verdict: status in {PASS, WARN, FAIL} plus a human message."""
+    """One named verdict: status in {PASS, WARN, FAIL} plus a human message, and any structured
+    findings behind it (``data``, merged into the JSON entry)."""
 
-    def __init__(self, name: str, status: str, msg: str):
-        self.name, self.status, self.msg = name, status, msg
+    def __init__(self, name: str, status: str, msg: str, data: dict | None = None):
+        self.name, self.status, self.msg, self.data = name, status, msg, data or {}
 
     def as_dict(self) -> dict:
-        return {"check": self.name, "status": self.status, "detail": self.msg}
+        return {"check": self.name, "status": self.status, "detail": self.msg, **self.data}
 
 
 def _locate(target: str) -> tuple[str, str, str]:
@@ -200,6 +209,42 @@ def _intermediates(prop_dir: str) -> list[str]:
     ]
 
 
+def _shared_faces_check(xml_path: str) -> Check:
+    """Whether two drawn parts of the finalized MJCF show a face in one place."""
+    import mujoco
+
+    from roqsim_assets.shared_faces import UncomparableGeoms, shared_faces
+
+    try:
+        model = mujoco.MjModel.from_xml_path(xml_path)
+    except ValueError as exc:
+        return Check("shared_faces", "FAIL", f"MJCF does not compile, nothing compared: {exc}")
+    try:
+        found, unchecked = shared_faces(model), []
+    except UncomparableGeoms as exc:
+        found, unchecked = exc.found, exc.pairs
+    data = {
+        "pairs": [f.as_dict() for f in found],
+        "not_compared": [{"first": a, "second": b, "reason": why} for a, b, why in unchecked],
+    }
+    if not found and not unchecked:
+        return Check("shared_faces", "PASS", "no two drawn parts show a face in one place", data)
+    parts = []
+    if found:
+        parts.append(
+            "drawn parts showing a face in one place flicker in renders (z-fighting): "
+            + "; ".join(f.describe() for f in found)
+            + " -- inset the touching part by about 1 mm"
+        )
+    if unchecked:
+        parts.append(
+            "not compared: "
+            + "; ".join(f"{a} / {b}: {why}" for a, b, why in unchecked)
+            + " -- check these by eye while moving the camera, or use parts the check compares"
+        )
+    return Check("shared_faces", "FAIL", " | ".join(parts), data)
+
+
 def _analyze(prop_dir: str, name: str, obj_path: str) -> tuple[list[Check], dict]:
     geo = _obj_geometry(obj_path)
     mj = _mjcf_info(prop_dir, name)
@@ -309,6 +354,9 @@ def _analyze(prop_dir: str, name: str, obj_path: str) -> tuple[list[Check], dict
                 "textured MJCF present" if mj["textured"] else "MJCF present (no colour texture)",
             )
         )
+
+    if mj["exists"]:
+        checks.append(_shared_faces_check(os.path.join(prop_dir, f"{name}.xml")))
 
     if non_png:
         checks.append(
@@ -430,7 +478,10 @@ def main(argv: list | None = None) -> None:
     ap = argparse.ArgumentParser(
         description=__doc__.split("\n")[0],
         epilog=exit_status.epilog(
-            exit_status.BAD_INPUT, exit_status.FINDING, note="5 is any check that is FAIL."
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="5 is any check that is FAIL. shared_faces fails on two drawn parts showing a face "
+            "in one place, which flicker in renders: inset the touching part by about 1 mm.",
         ),
     )
     ap.add_argument("prop", help="prop directory (models/<name>/) or a .obj path")

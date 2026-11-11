@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
-    "mujoco>=3.14,<3.15",
+    "mujoco>=4.0,<4.1",
     "numpy>=1.24",
     "pyyaml>=6.0",
     "click>=8.1",   # the `roqsim` command tree (roqsim/commands.py); tools keep their own argparse
@@ -33,6 +33,7 @@ ipc = ["pyzmq>=22"]
 [project.entry-points."roqsim.renderers"]
 mujoco = "roqsim.rendering:MujocoRenderer"
 socket = "roqsim.render_socket:SocketRenderer"
+filament = "roqsim.render_filament:FilamentRenderer"
 
 [project.entry-points."roqsim.plugins"]
 dummy = "roqsim.plugins.dummy:DummyPlugin"

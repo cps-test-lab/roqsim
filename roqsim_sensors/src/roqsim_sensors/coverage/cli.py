@@ -85,10 +85,9 @@ def load_world(world: str, overrides: dict | None = None):
     # Coverage reads geometry: the preview engine leaves out the transport, which would bind ports
     # and wait for a peer that never comes.
     # The model and data outlive the plugins: coverage reads only them.
+    # setup() leaves the data posed in the world's initial state.
     with Engine(cfg, preview=True) as engine:
-        ctx = engine.ctx
-        mujoco.mj_forward(ctx.model, ctx.data)
-        return ctx.model, ctx.data
+        return engine.ctx.model, engine.ctx.data
 
 
 # -- shared helpers ----------------------------------------------------------------------------------

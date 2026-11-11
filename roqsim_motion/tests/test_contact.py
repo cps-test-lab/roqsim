@@ -72,3 +72,18 @@ def test_a_humanoids_press_force_is_its_press_max_force():
     assert HumanoidPlugin.validate_schema({"press": {"max_force": 25.0}}) == []
     (error,) = HumanoidPlugin.validate_schema({"press_force": 25.0})
     assert "'press_force' is not a setting" in error and "press: {max_force: <N>}" in error
+
+
+def test_a_hold_keeps_the_pose_it_took_through_mj_set_const():
+    """A payload's mass, or ``model_override``'s ``body_mass``, re-derives the model with
+    ``mj_setConst``, which recomputes the pose of a weld compiled without one; a hold keeps its own."""
+    m, _ = _model()
+    d = mujoco.MjData(m)
+    hold = Hold.find(m, "hand/grip", "box/grip_l")
+    d.mocap_pos[0] = d.site("box/grip_l").xpos
+    mujoco.mj_forward(m, d)
+    hold.set(d, True)
+    taken = m.eq_data[hold.eq].copy()
+    m.body_mass[m.body("box").id] = 4.0
+    mujoco.mj_setConst(m, d)
+    np.testing.assert_array_equal(m.eq_data[hold.eq][:11], taken[:11])

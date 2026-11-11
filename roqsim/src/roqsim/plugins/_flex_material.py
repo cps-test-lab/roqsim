@@ -4,7 +4,7 @@ A flex's material is a campaign factor, so it has to be settable from a world ra
 the MJCF that declares the flex -- whichever asset, end effector or world MJCF that is. Where it is
 set is decided by what MuJoCo does with each value at compile. The rules here concern only the
 ``flex_material`` plugin and ``model_override``'s flex rows, which is why they live beside them
-rather than among :mod:`roqsim.flex`'s numbered ones. Each was measured on MuJoCo 3.14.0 and is
+rather than among :mod:`roqsim.flex`'s numbered ones. Each was measured on MuJoCo 4.0.0 and is
 pinned by ``tests/test_flex_material.py``:
 
 - **Baked at compile.** ``young`` and ``poisson`` do not survive compile: they are baked into
@@ -14,10 +14,13 @@ pinned by ``tests/test_flex_material.py``:
   ``damping``, ``friction``, ``solref``, ``solimp``, ``priority`` and ``radius`` are compiled fields
   (``flex_damping``, ...), set here the same way so one block states a whole material.
 - **Elasticity only where it is integrated.** Elasticity is read only where :mod:`roqsim.flex`'s
-  rule 1 says MuJoCo integrates it: ``young`` on a ``dim=1`` flex, or on a ``dim=2`` flex whose
-  ``elastic2d`` is ``none``, changes nothing (measured: a pinned rope and sheet fall identically at
-  0, 1e4 and 1e7 Pa), and a rigid flex has no degrees of freedom for it to act on.
-  :func:`apply_material` refuses those rather than recording a material that did not run.
+  rule 1 says MuJoCo integrates it: on a solid, on a rope (bending, and torsion through
+  ``poisson``), and on a shell whose ``elastic2d`` is not ``none``. ``young`` on a shell left at
+  ``elastic2d: none`` changes nothing, and a rigid flex has no degrees of freedom for it to act on.
+  A rope is elastic in full only if its MJCF makes it so: MuJoCo gives it a twist joint per edge
+  while parsing the ``<flexcomp>``, so a modulus set on the spec of a rope written without one bends
+  it but never twists it (measured: the same tip sag, and no twist joints). :func:`apply_material`
+  refuses all three rather than recording a material that did not run.
 - **No damping written over a compiled zero.** At run time ``flex_damping``, ``flex_friction``,
   ``flex_solref`` and ``flex_solimp`` are live, with one exception: MuJoCo builds the flex's edge
   Jacobian at compile only for a flex whose damping is non-zero, so a damping written into a flex
@@ -80,8 +83,8 @@ def apply_material(flex, values: dict, where: str) -> dict:
     A vector key given short (``friction: 1.5``, ``solref: [0.004]``) keeps the flex's own values for
     the rest, so a sweep over one element leaves the others as the model states them. Refuses a key
     the flex would not read (elasticity only where it is integrated): a shell key on a flex that is
-    not ``dim=2``, and elasticity on a rigid flex, a ``dim=1`` flex, or a ``dim=2`` flex left at
-    ``elastic2d: none``.
+    not ``dim=2``, and elasticity on a rigid flex, on a ``dim=2`` flex left at ``elastic2d: none``,
+    or on a rope its MJCF leaves without elasticity.
     """
     label = flex.name or "unnamed flex"
     shell = [k for k in _SHELL_KEYS if k in values]
@@ -101,16 +104,19 @@ def apply_material(flex, values: dict, where: str) -> dict:
                 f"{where}: {', '.join(elastic)} set on flex {label!r}, which is rigid (every "
                 "vertex on one body), so it has no degrees of freedom for elasticity to act on."
             )
-        if flex.dim == 1 or (flex.dim == 2 and int(flex.elastic2d) == 0):
-            fix = (
-                "set elastic2d (bend, stretch or both) as well"
-                if flex.dim == 2
-                else "give its edges a stiffness in the model (<edge stiffness=...>) instead"
-            )
+        if flex.dim == 2 and int(flex.elastic2d) == 0:
             raise PluginError(
                 f"{where}: {', '.join(elastic)} set on flex {label!r}, where MuJoCo does not read "
-                f"it (dim={flex.dim}{', elastic2d none' if flex.dim == 2 else ''}) -- the flex "
-                f"would run exactly as without it. To make it elastic, {fix}."
+                "it (dim=2, elastic2d none) -- the flex would run exactly as without it. To make "
+                "it elastic, set elastic2d (bend, stretch or both) as well."
+            )
+        if flex.dim == 1 and flex.young <= 0:
+            raise PluginError(
+                f"{where}: {', '.join(elastic)} set on rope {label!r}, which its MJCF leaves "
+                "without elasticity. MuJoCo gives an elastic rope a twist joint per edge while it "
+                "parses the <flexcomp>, so a modulus set afterwards would bend the rope but never "
+                "twist or roll it. Write <elasticity young=...> in the rope's <flexcomp>; this "
+                "plugin then sets the value a run uses."
             )
     for key in ("young", "poisson", "damping", "radius", "thickness"):
         if key in values:

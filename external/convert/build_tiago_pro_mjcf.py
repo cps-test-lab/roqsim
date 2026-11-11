@@ -166,8 +166,12 @@ LOOP_ANCHOR = "0.017 -0.0057 -0.004"
 
 # Position-servo gains: (kp, forcerange). Every forcerange is the URDF <limit effort>, so the model
 # saturates where the real joint does. kp is sized to hold the pose against gravity and is the one
-# genuinely tuned number; `dampratio=1` lets MuJoCo derive the matching damping
-# from the joint's own effective inertia instead of hand-tuned per-joint damping.
+# genuinely tuned number; each servo is critically damped against its joint's own inertia instead of
+# hand-tuned per-joint damping (SERVO_DAMPRATIO, bake_servo_damping).
+#: The damping ratio of every position servo, against the diagonal of the joint-space inertia at
+#: qpos0 (bake_servo_damping).
+SERVO_DAMPRATIO = 1.0
+
 POS_GAINS = {
     "torso_lift_joint": (60000, 2000),  # slide: carries the whole ~28 kg upper body
     "head_1_joint": (100, 5.197),
@@ -561,7 +565,8 @@ def postprocess(base: Path, out: Path) -> None:
         ET.SubElement(
             act,
             "position",
-            {"name": j.replace("_joint", "_pos"), "joint": j, "kp": str(kp), "dampratio": "1",
+            {"name": j.replace("_joint", "_pos"), "joint": j, "kp": str(kp),
+             "dampratio": str(SERVO_DAMPRATIO),
              "forcerange": f"-{fr} {fr}", "inheritrange": "1"},
         )
 
@@ -641,6 +646,7 @@ def main() -> None:
         out = MODEL_DIR / f"{MODEL}.xml"
         postprocess(base, out)
         add_pad_boxes(out)
+        bake_servo_damping(out)
     finally:
         if args.keep_work:
             print(f"  work dir kept: {work}")
@@ -780,6 +786,38 @@ def add_pad_boxes(model_path: Path) -> None:
         with_headline("\n".join(l for l in xml.splitlines() if l.strip()), HEADLINE) + "\n"
     )
     print(f"  added 8 pad boxes (2 per finger), fingertip hulls no longer collide")
+
+
+def bake_servo_damping(model_path: Path) -> None:
+    """Write each position servo's damping as ``kv``, critical against its joint's own inertia.
+
+    ``dampratio`` asks MuJoCo to derive ``kv`` at compile, from the operational-space inertia
+    ``1 / (M^-1)_jj`` at qpos0: the inertia the joint feels while every other joint is free. Here
+    every other joint is a stiff servo as well, so the joint feels close to the diagonal ``M_jj``
+    (``dof_M0``, armature included), and the derived damping leaves the shoulders ringing: 41 %
+    overshoot on a 0.3 rad step at ``dampratio="1"``, where damping against ``M_jj`` overshoots by
+    none. So this pass reads the model just written and replaces each
+    servo's ``dampratio`` with ``kv = 2 * dampratio * sqrt(kp * M_jj)``.
+    """
+    import mujoco
+
+    m = mujoco.MjModel.from_xml_path(str(model_path))
+    tree = ET.parse(model_path)
+    root = tree.getroot()
+    for el in root.iter("position"):
+        ratio = el.get("dampratio")
+        if ratio is None:
+            continue
+        joint = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, el.get("joint"))
+        inertia = float(m.dof_M0[m.jnt_dofadr[joint]])
+        kv = 2.0 * float(ratio) * np.sqrt(float(el.get("kp")) * inertia)
+        del el.attrib["dampratio"]
+        el.set("kv", f"{kv:.6g}")
+    xml = minidom.parseString(ET.tostring(root, encoding="unicode")).toprettyxml(indent="  ")
+    model_path.write_text(
+        with_headline("\n".join(line for line in xml.splitlines() if line.strip()), HEADLINE) + "\n"
+    )
+    print("  baked the position servos' critical damping into kv")
 
 
 if __name__ == "__main__":
