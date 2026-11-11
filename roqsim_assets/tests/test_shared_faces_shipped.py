@@ -3,7 +3,7 @@
 inspect-prop reaches only a prop with an OBJ; a hand-written MJCF of primitives never passes through
 it, so every prop folder is compared here, and a new one is caught when it is added. Robots are
 left to their own packages: their meshes run to hundreds of thousands of faces, which makes the
-comparison take minutes per robot.
+comparison take from seconds to over ten minutes per robot.
 """
 
 from __future__ import annotations

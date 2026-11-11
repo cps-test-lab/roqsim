@@ -10,6 +10,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim_assets.plugins.conveyor import ConveyorPlugin
 from roqsim_assets.shared_faces import shared_faces
 
 
@@ -253,3 +254,9 @@ def test_a_start_speed_outside_home_is_refused_naming_home(tmp_path):
     """A belt's start speed is ``home: {speed: ...}``; ``speed:`` is refused when the world loads."""
     with pytest.raises(Exception, match=r"home: \{speed"):
         Engine(_belt_only(tmp_path, {"speed": 0.2})).setup()
+
+
+def test_a_belt_too_narrow_for_its_rollers_is_refused():
+    plugin = ConveyorPlugin({})
+    assert any("rollers end inside it" in e for e in plugin.validate_config({"width": 0.002}))
+    assert not any("width" in e for e in plugin.validate_config({"width": 0.01}))

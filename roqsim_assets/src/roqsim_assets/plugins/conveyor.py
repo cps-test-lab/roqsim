@@ -156,6 +156,10 @@ class ConveyorPlugin(MachinePlugin):
                 continue
             if value <= 0:
                 errors.append(f"'{key}' must be > 0")
+            elif key == "width" and value / 2 <= self._ROLLER_INSET:
+                errors.append(
+                    f"'width' must be > {2 * self._ROLLER_INSET} m: the rollers end inside it"
+                )
         if "ramp" in config:
             try:
                 if float(config["ramp"]) <= 0:

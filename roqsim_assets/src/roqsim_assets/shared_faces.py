@@ -298,8 +298,9 @@ def _cap_hit(model, data, g, h) -> tuple[np.ndarray, float] | None:
     A sphere covers all directions and a capsule's round end the half around its outward axis, so a
     sphere on a capsule end shares that half (2 pi r²); two capsule ends whose outward axes are
     ``theta`` apart share the lune where both halves meet, 2 (pi - theta) r², which vanishes for two
-    capsules end to end on one axis: a lune no wider than TOL, (pi - theta) r, is none, as a capsule
-    chain whose axes are written to a few decimals leaves theta a hair short of pi. Ends whose
+    capsules end to end on one axis: a lune no wider than TOL, (pi - theta) r, is none, as rounding
+    leaves theta a hair short of pi in a straight chain off the coordinate axes (with its joints
+    written to about six decimals; coarser, the lune is reported). Ends whose
     centres lie apart, being spheres of one radius, meet in a circle at most.
     """
     r = model.geom_size[g][0]
