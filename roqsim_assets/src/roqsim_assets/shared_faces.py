@@ -14,17 +14,18 @@ groups 0-2 and a window, not fully transparent) whose bounds touch:
   and share an area. Faces pressed together back to back (a part resting on another) look away from
   each other and are hidden, and a face pointing down at ``z = 0`` is on the floor, out of sight;
 * **round surfaces**: cylinders or capsules of one radius on one axis over an overlapping length,
-  and spheres of one radius on one centre.
+  spheres of one radius on one centre, a sphere on the centre of a round capsule end of its radius,
+  and two capsules of one radius on different axes whose round ends share one centre (an elbow):
+  where those centres coincide the round ends are one surface, and where they lie apart two spheres
+  of one radius meet in a circle, which shows no area.
 
 A collision-only proxy (group 3) or a part kept out of every picture (group 4, alpha 0) may lie
 where it likes. The remedy for a pair found is to inset the touching part by about 1 mm, so its face
 sits just inside the other; a render cannot show the difference.
 
-A pair whose bounds touch and that no rule above decides is not passed: a sphere against a capsule
-of the same radius (its round end), two capsules of one radius on different axes meeting end on end
-(an elbow), an ellipsoid against a sphere, capsule or ellipsoid, and any
-heightfield or SDF geom. :func:`shared_faces` raises :class:`UncomparableGeoms` naming each such
-pair, after comparing everything else.
+A pair whose bounds touch and that no rule above decides is not passed: an ellipsoid against a
+sphere, capsule or ellipsoid, and any heightfield or SDF geom. :func:`shared_faces` raises
+:class:`UncomparableGeoms` naming each such pair, after comparing everything else.
 """
 
 from __future__ import annotations
@@ -58,9 +59,10 @@ class SharedFace:
     """Two drawn geoms showing a face in one place.
 
     ``kind`` is ``"plane"`` (flat faces in one plane), ``"cylinder"`` (one curved side) or
-    ``"sphere"``. ``at`` is the centre of the shared area in the world frame, ``direction`` the
-    outward normal both faces show (plane), the common axis (cylinder) or ``None`` (sphere), and
-    ``area`` the shared area in m².
+    ``"sphere"`` (one round surface: two spheres, or a round capsule end against a sphere or
+    another's). ``at`` is the centre of the shared area in the world frame (a sphere's: its centre),
+    ``direction`` the outward normal both faces show (plane), the common axis (cylinder) or ``None``
+    (sphere), and ``area`` the shared area in m².
     """
 
     first: str
@@ -277,9 +279,49 @@ def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
     return centre, best[0][1], total
 
 
+def _caps(
+    model: mujoco.MjModel, data: mujoco.MjData, g: int
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """A sphere's or capsule's round surfaces as (centre, outward axis); a sphere's axis is zero,
+    as it is round all over."""
+    if int(model.geom_type[g]) == _G.mjGEOM_SPHERE:
+        return [(data.geom_xpos[g], np.zeros(3))]
+    axis = data.geom_xmat[g].reshape(3, 3)[:, 2]
+    half = axis * model.geom_size[g][1]
+    return [(data.geom_xpos[g] + half, axis), (data.geom_xpos[g] - half, -axis)]
+
+
+def _cap_hit(model, data, g, h) -> tuple[np.ndarray, float] | None:
+    """Where a sphere and a capsule, or two capsules, of one radius have a round surface on one
+    centre: (that centre, the area both show), or None.
+
+    A sphere covers all directions and a capsule's round end the half around its outward axis, so a
+    sphere on a capsule end shares that half (2 pi r²); two capsule ends whose outward axes are
+    ``theta`` apart share the lune where both halves meet, 2 (pi - theta) r², which vanishes for two
+    capsules end to end on one axis. Ends whose centres lie apart, being spheres of one radius, meet
+    in a circle at most.
+    """
+    r = model.geom_size[g][0]
+    if abs(r - model.geom_size[h][0]) > TOL:
+        return None
+    best = None
+    for pg, ag in _caps(model, data, g):
+        for ph, ah in _caps(model, data, h):
+            if np.linalg.norm(pg - ph) > TOL:
+                continue
+            if not ag.any() or not ah.any():
+                area = 2 * math.pi * r * r
+            else:
+                area = 2 * (math.pi - math.acos(float(np.clip(ag @ ah, -1.0, 1.0)))) * r * r
+            if area > TOL * TOL and (best is None or area > best[1]):
+                best = (pg.copy(), area)
+    return best
+
+
 def _round_hit(model, data, g, h) -> tuple[str, np.ndarray, np.ndarray | None, float] | None:
     """Whether two round geoms share a curved surface: cylinders or capsules on one axis with one
-    radius and overlapping lengths, or spheres on one centre with one radius."""
+    radius and overlapping lengths, spheres on one centre with one radius, or a round capsule end
+    on the centre of a sphere or of another capsule's end of its radius (:func:`_cap_hit`)."""
     tg, th = _G(int(model.geom_type[g])), _G(int(model.geom_type[h]))
     sg, sh = model.geom_size[g], model.geom_size[h]
     cg, ch = data.geom_xpos[g], data.geom_xpos[h]
@@ -287,6 +329,20 @@ def _round_hit(model, data, g, h) -> tuple[str, np.ndarray, np.ndarray | None, f
         if abs(sg[0] - sh[0]) <= TOL and np.linalg.norm(cg - ch) <= TOL:
             return "sphere", cg.copy(), None, 4 * math.pi * sg[0] ** 2
         return None
+    if {tg, th} <= {_G.mjGEOM_SPHERE, _G.mjGEOM_CAPSULE}:
+        side = _side_hit(model, data, g, h) if tg == th else None
+        if side is not None:
+            return side
+        cap = _cap_hit(model, data, g, h)
+        return None if cap is None else ("sphere", cap[0], None, cap[1])
+    return _side_hit(model, data, g, h)
+
+
+def _side_hit(model, data, g, h) -> tuple[str, np.ndarray, np.ndarray, float] | None:
+    """Cylinders or capsules of one radius on one axis over an overlapping length."""
+    tg, th = _G(int(model.geom_type[g])), _G(int(model.geom_type[h]))
+    sg, sh = model.geom_size[g], model.geom_size[h]
+    cg, ch = data.geom_xpos[g], data.geom_xpos[h]
     side = (_G.mjGEOM_CYLINDER, _G.mjGEOM_CAPSULE)
     if tg not in side or th not in side or abs(sg[0] - sh[0]) > TOL:
         return None
@@ -306,42 +362,14 @@ def _type_name(t: _G) -> str:
     return t.name.removeprefix("mjGEOM_").lower()
 
 
-def _ends(data: mujoco.MjData, model: mujoco.MjModel, g: int) -> list[np.ndarray]:
-    """The centres of a capsule's two round ends."""
-    axis = data.geom_xmat[g].reshape(3, 3)[:, 2] * model.geom_size[g][1]
-    return [data.geom_xpos[g] + axis, data.geom_xpos[g] - axis]
-
-
-def _uncomparable(model: mujoco.MjModel, data: mujoco.MjData, g: int, h: int) -> str | None:
+def _uncomparable(model: mujoco.MjModel, g: int, h: int) -> str | None:
     """Why no rule here decides geoms ``g`` and ``h``, or None when one does."""
     tg, th = _G(int(model.geom_type[g])), _G(int(model.geom_type[h]))
     for t in (tg, th):
         if t not in _FLAT and t not in _CURVED:
             return f"geom type {_type_name(t)} is not compared"
-    if tg == th == _G.mjGEOM_CAPSULE:
-        # Coaxial capsules are compared by their sides; two on different axes meeting end on end
-        # with one radius (an elbow) show both round ends over one patch of a sphere.
-        ag = data.geom_xmat[g].reshape(3, 3)[:, 2]
-        ah = data.geom_xmat[h].reshape(3, 3)[:, 2]
-        if (
-            abs(model.geom_size[g][0] - model.geom_size[h][0]) <= TOL
-            and abs(abs(ag @ ah) - 1) > 1e-9
-            and any(
-                np.linalg.norm(p - q) <= TOL
-                for p in _ends(data, model, g)
-                for q in _ends(data, model, h)
-            )
-        ):
-            return (
-                "two capsules of one radius meeting end on end: their round ends are not compared"
-            )
+    if tg not in _CURVED or th not in _CURVED or _G.mjGEOM_ELLIPSOID not in (tg, th):
         return None
-    if tg not in _CURVED or th not in _CURVED or tg == th == _G.mjGEOM_SPHERE:
-        return None
-    if {tg, th} == {_G.mjGEOM_SPHERE, _G.mjGEOM_CAPSULE}:
-        if abs(model.geom_size[g][0] - model.geom_size[h][0]) > TOL:
-            return None  # surfaces of different radii share no area
-        return "a sphere and a capsule of one radius: its round end is not compared"
     return f"{' and '.join(sorted(map(_type_name, (tg, th))))}: an ellipsoid is not compared"
 
 
@@ -375,7 +403,7 @@ def shared_faces(model: mujoco.MjModel, data: mujoco.MjData | None = None) -> li
     for g, h in combinations(shown, 2):
         if np.any(box[g][0] > box[h][1] + TOL) or np.any(box[h][0] > box[g][1] + TOL):
             continue
-        why = _uncomparable(model, data, g, h)
+        why = _uncomparable(model, g, h)
         if why is not None:
             skipped.append((_name(model, g), _name(model, h), why))
             continue

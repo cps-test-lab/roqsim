@@ -2,6 +2,7 @@
 alone, what it refuses to pass, and how inspect-prop reports it."""
 
 import json
+import math
 from pathlib import Path
 
 import mujoco
@@ -138,28 +139,38 @@ def test_a_mesh_face_in_a_box_face_s_plane_is_found(tmp_path):
     assert pair.area == pytest.approx(0.1 * 0.1)
 
 
-def test_a_sphere_against_a_capsule_of_its_radius_is_not_passed():
-    model = _model(
-        '<geom name="a" type="box" size="0.1 0.1 0.1" pos="0 0 0.1"/>'
-        '<geom name="b" type="box" size="0.1 0.1 0.1" pos="0.15 0 0.1"/>'
-        '<geom name="joint" type="sphere" size="0.02" pos="0 0 1"/>'
-        '<geom name="limb" type="capsule" size="0.02 0.1" pos="0 0 1.1"/>'
-    )
-    with pytest.raises(UncomparableGeoms) as raised:
-        shared_faces(model)
-    assert [p[:2] for p in raised.value.pairs] == [("joint", "limb")]
-    assert [(f.first, f.second) for f in raised.value.found] == [("a", "b")]
+def test_a_sphere_on_a_capsule_end_of_its_radius_shares_that_end_and_one_off_it_passes():
+    joint = '<geom name="joint" type="sphere" size="0.02" pos="0 0 {z}"/>'
+    limb = '<geom name="limb" type="capsule" size="0.02 0.1" pos="0 0 1.1"/>'  # ends at z 1 and 1.2
+    (pair,) = shared_faces(_model(joint.format(z=1) + limb))
+    assert (pair.first, pair.second, pair.kind, pair.direction) == ("joint", "limb", "sphere", None)
+    assert pair.at == pytest.approx((0, 0, 1))
+    assert pair.area == pytest.approx(2 * math.pi * 0.02**2)  # the end's half of the sphere
+    # A millimetre off the end, along the limb or away from it: two spheres of one radius on
+    # different centres meet in a circle, which shows no area.
+    assert shared_faces(_model(joint.format(z=1.001) + limb)) == []
+    assert shared_faces(_model(joint.format(z=0.999) + limb)) == []
+    # A sphere of the capsule's radius inside its straight part touches the side in a circle only.
+    assert shared_faces(_model(joint.format(z=1.1) + limb)) == []
 
 
-def test_two_capsules_meeting_end_on_end_at_an_angle_are_not_passed():
+def test_two_capsules_of_one_radius_meeting_end_on_end_at_an_angle_share_the_elbow():
     elbow = (
         '<geom name="run" type="capsule" size="0.05" fromto="0 0 1 1 0 1"/>'
         '<geom name="rise" type="capsule" size="0.05" fromto="1 0 1 1 1 1"/>'
     )
-    with pytest.raises(UncomparableGeoms, match="end on end"):
-        shared_faces(_model(elbow))
+    (pair,) = shared_faces(_model(elbow))
+    assert (pair.first, pair.second, pair.kind) == ("run", "rise", "sphere")
+    assert pair.at == pytest.approx((1, 0, 1))
+    # Outward axes +x and -y, 90 degrees apart: the ends share a lune of 90 degrees, a quarter sphere.
+    assert pair.area == pytest.approx(math.pi * 0.05**2)
+    apart = elbow.replace('fromto="1 0 1 1 1 1"', 'fromto="1 0.001 1 1 1 1"')
+    assert shared_faces(_model(apart)) == []
     thinner = elbow.replace('size="0.05" fromto="1 0 1', 'size="0.04" fromto="1 0 1')
     assert shared_faces(_model(thinner)) == []
+    # End to end on one axis, the two ends look away from each other: one circle, no area.
+    straight = elbow.replace('fromto="1 0 1 1 1 1"', 'fromto="1 0 1 2 0 1"')
+    assert shared_faces(_model(straight)) == []
 
 
 def test_the_pose_given_is_the_one_compared():
@@ -235,7 +246,7 @@ def test_inspect_prop_passes_the_part_once_inset(tmp_path, capsys):
 def test_inspect_prop_fails_a_pair_it_cannot_compare(tmp_path, capsys):
     prop = _prop(
         tmp_path,
-        '<geom name="knob" type="sphere" size="0.01" pos="0.1 0.1 0.5"/>'
+        '<geom name="knob" type="ellipsoid" size="0.01 0.01 0.02" pos="0.1 0.1 0.5"/>'
         '<geom name="lever" type="capsule" size="0.01 0.05" pos="0.1 0.1 0.55"/>',
     )
     with pytest.raises(SystemExit) as code:
