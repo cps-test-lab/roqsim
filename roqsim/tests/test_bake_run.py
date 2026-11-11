@@ -170,9 +170,14 @@ def test_dry_run_says_what_it_would_bake(tmp_path, capsys):
     assert out["path"] == str(tmp_path / "room.bake")
 
 
-@pytest.mark.skipif(
-    not (os.environ.get("BLENDER") or shutil.which("blender")), reason="Blender is not installed"
-)
+def _blender_here() -> bool:
+    """Whether a Blender runs here: ``BLENDER`` (which the Makefile always exports, as ``blender`` when
+    unset) or ``blender``, resolved on ``PATH`` or as a file -- a name that resolves to nothing is none."""
+    exe = os.environ.get("BLENDER") or "blender"
+    return bool(shutil.which(exe) or (os.path.isfile(exe) and os.access(exe, os.X_OK)))
+
+
+@pytest.mark.skipif(not _blender_here(), reason="Blender is not installed")
 def test_a_small_world_bakes_on_the_cpu_and_loads_baked(tmp_path):
     """The real thing: Cycles on the CPU, at a coarse resolution so it takes seconds."""
     world = write_world(tmp_path, texels_per_m={"shell": 8, "floor": 16, "props": 60}, samples=16)
