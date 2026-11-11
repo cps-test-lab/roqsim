@@ -54,6 +54,7 @@ from .render_api import (
     image_mismatch,
     validate_renderer_config,
 )
+from .scene_content import resolved_rgba
 
 _logger = logging.getLogger(__name__)
 
@@ -800,6 +801,19 @@ def _vopt(geomgroup) -> mujoco.MjvOption:
             vopt.geomgroup[group] = 1 if group in geomgroup else 0
         vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
     return vopt
+
+
+def drawn_by_default(model: mujoco.MjModel, g: int) -> bool:
+    """Whether a render that names no groups shows geom ``g``.
+
+    Its group is drawn by the options :class:`FrameRenderer` uses when no groups are named
+    (MuJoCo's default 0-2, and a window), and the colour it is drawn in (:func:`roqsim.scene_content.resolved_rgba`: the material's, where the geom keeps the
+    default colour) is not fully transparent. A collision-only part (group 3), an absent one, or one
+    hidden with alpha 0 is not shown.
+    """
+    if not _vopt(None).geomgroup[int(model.geom_group[g])]:
+        return False
+    return resolved_rgba(model, int(model.geom_matid[g]), model.geom_rgba[g])[3] > 0
 
 
 #: The names of the GL error codes ``glGetError`` returns.
