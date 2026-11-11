@@ -166,7 +166,15 @@ def check_device(device: str, allow_software: bool) -> None:
     """Refuse a CPU rasteriser in a process that was given an NVIDIA GPU, unless asked for."""
     from .gl import gpu_visible  # noqa: PLC0415 -- the device checks live with the GL ones
 
-    if allow_software or not device or not software_rendered(device) or not gpu_visible():
+    if allow_software or not gpu_visible():
+        return
+    if not device:
+        _logger.warning(
+            "filament: Filament's log names no Vulkan device, so whether it draws on the GPU "
+            "this process was given is not checked"
+        )
+        return
+    if not software_rendered(device):
         return
     raise RenderError(
         f"filament: this process was given an NVIDIA GPU but Vulkan selected {device!r}, a CPU "
@@ -441,7 +449,7 @@ class FilamentRenderer(Renderer):
         """Free the world's meshes, textures and renderables and give the context back, on the
         thread that opened it; from any other, keep them all. Idempotent."""
         # Freed in this order: what uses the resources before the resources.
-        objects = [self._renderables, self._lights, self._resources, self._targets]
+        objects = [self._renderables, self._lights, self._scene, self._resources, self._targets]
         self._renderables = self._lights = self._resources = self._scene = None
         self._targets = {}
         self._removed = {}
@@ -461,7 +469,9 @@ class FilamentRenderer(Renderer):
     def __del__(self) -> None:
         # Collected without close(): the collector may run on any thread, so keep, never destroy.
         if getattr(self, "_ctx", None) is not None:
-            _keep_forever([self._renderables, self._lights, self._resources, self._targets])
+            _keep_forever(
+                [self._renderables, self._lights, self._scene, self._resources, self._targets]
+            )
 
     # -- drawing ---------------------------------------------------------------------------------
 
@@ -490,7 +500,7 @@ class FilamentRenderer(Renderer):
     def _set_options(self, geomgroup) -> None:
         if geomgroup not in self._vopts:
             self._vopts[geomgroup] = _vopt(geomgroup)
-        if self._options is not geomgroup or self._options is None:
+        if self._options is None or self._options != geomgroup:
             self._renderables.set_options(self._vopts[geomgroup])
             self._options = geomgroup
 
