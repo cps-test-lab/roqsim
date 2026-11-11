@@ -64,7 +64,9 @@ def test_an_unknown_renderer_names_the_installed_ones_and_the_package_that_adds_
         load_config_from_dict({"sim": {"renderer": "splats"}, "components": []})
     message = str(err.value)
     assert "unknown renderer 'splats'" in message
-    assert "Installed: mujoco, socket, splat" in message
+    # Every renderer installed is named; which others are installed is not this package's to say.
+    installed = message.split("Installed: ", 1)[1].split(". ", 1)[0].split(", ")
+    assert {"mujoco", "splat"} <= set(installed)
     assert "roqsim_render_splats" in message
 
 
