@@ -18,9 +18,10 @@ a raycast returns    resolved alpha > 0, **and** the group is in the caster's ma
 physics collides     ``contype``/``conaffinity`` -- appearance is irrelevant
 ===================  ====================================================
 
-So "invisible" and "unsensed" are one setting (alpha), not two: hiding a geom takes it away from every
-lidar as well. A baked scene's ground uses that deliberately -- ``floor`` is alpha 0 and collides,
-``floor_visual`` is opaque and does not.
+The first row is :func:`roqsim.rendering.drawn_by_default`. So "invisible" and "unsensed" are one
+setting (alpha), not two: hiding a geom takes it away from every lidar as well. A baked scene's
+ground uses that deliberately -- ``floor`` is alpha 0 and collides, ``floor_visual`` is opaque and
+does not.
 
 So the world looks right in every render, reads as passable on ``/scan``, and stops the robot dead.
 That is not a defect a human or an agent can see; it has to be measured.
