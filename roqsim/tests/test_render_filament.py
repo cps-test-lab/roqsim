@@ -182,6 +182,30 @@ def test_labels_agree_with_mujoco_s_renderer(scene, camera):
 
 
 @needs_vulkan
+def test_a_batch_of_cameras_and_images_is_drawn_as_each_alone(scene):
+    """Several cameras and every image in one batch: each frame is the one drawn by itself."""
+    model, data = scene
+    service = RenderService(
+        model, renderer="filament", renderers={"filament": {"post_processing": False}}
+    )
+    images = ("rgb", "depth", "segmentation")
+    views = [
+        service.view(c, camera=c, width=160, height=100, near=0.1, far=20, images=images)
+        for c in ("persp", "ortho", "offset")
+    ]
+    try:
+        batch = service.render_now([(v, images) for v in views], data)
+        for view, frame in zip(views, batch, strict=True):
+            (alone,) = service.render_now([(view, images)], data)
+            assert np.array_equal(frame.rgb, alone.rgb), view.id
+            assert np.array_equal(frame.segmentation, alone.segmentation), view.id
+            np.testing.assert_array_equal(frame.depth, alone.depth)
+        assert service.renderer("filament").stats["submits"] == 18  # one call per image
+    finally:
+        service.close()
+
+
+@needs_vulkan
 def test_depth_is_metres_along_the_view_axis():
     """A wall square to the camera reads its distance; the floor reads the pinhole's geometry."""
     model = mujoco.MjModel.from_xml_string(

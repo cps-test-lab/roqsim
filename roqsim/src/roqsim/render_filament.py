@@ -255,9 +255,9 @@ class FilamentRenderer(Renderer):
     """MuJoCo's Filament renderer, headless through Vulkan: one context and one scene per world.
 
     Per batch it updates the scene's lights and renderables from the snapshot once per set of geom
-    groups, and submits every camera's images of that set in one ``mjrf`` render call: colour in
-    the default draw mode, depth and segmentation in Filament's own draw modes, each read back into
-    an array of its own.
+    groups, then submits every camera's images of that set -- colour in the default draw mode,
+    depth and segmentation in Filament's own draw modes -- one ``mjrf`` render call per image (it
+    reads back one target per call), and waits once they are all submitted.
     """
 
     capabilities = RendererCapabilities(
@@ -561,9 +561,13 @@ class FilamentRenderer(Renderer):
                 outputs.append((frame, kind, buffer, planes))
         if not renders:
             return
-        handle = self._ctx.render(renders, reads)
-        self._ctx.wait_for_frame(handle)
-        self.stats["submits"] += 1
+        # MuJoCo 4.0's Filament reads back one target per render call ("Only one read request is
+        # supported for now"; with more it aborts or skips the rest), so each image is a call of
+        # its own. All are submitted before the first wait; frames finish in order.
+        handles = [self._ctx.render([q], [read]) for q, read in zip(renders, reads, strict=True)]
+        for handle in handles:
+            self._ctx.wait_for_frame(handle)
+        self.stats["submits"] += len(handles)
         self.stats["reads"] += len(reads)
         for frame, kind, buffer, (near, far, ortho) in outputs:
             if kind == "rgb":
