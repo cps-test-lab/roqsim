@@ -236,7 +236,7 @@ def textured_surface(gtype: str, size, segments: int, extent: float = 1.0):
 
     Positions and normals are exact for the shape; ``uv`` is the texture coordinate MuJoCo's
     renderer gives the same point, before ``texrepeat`` and ``texuniform`` scale it (the
-    parametrisation of MuJoCo 3.14's ``src/render/classic/render_context.c``: ``sphere``,
+    parametrisation of MuJoCo 4.0's ``src/render/classic/render_context.c``: ``sphere``,
     ``halfSphere``, ``cylinder``, ``disk``, the box and ``makePlane``). ``segments`` is the count
     around a round shape; half as many run from pole to pole. An infinite plane side is ``extent``
     long either way of the origin.

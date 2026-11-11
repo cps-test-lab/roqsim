@@ -3,9 +3,8 @@
 The model's ``link`` body is the vendor ``camera_link``, so the vendor's own extrinsics hold as
 written in it: the IMU is the gyro optical frame of the manifest's ``frames:`` chain, and
 ``d435_color`` is the colour optical frame. Both are checked here against the published ``realsense2_description`` constants, so a chain
-that drifted from the vendor would fail. And a device on a fixed mount must read 1 g: MuJoCo
-computes no acceleration for a body welded to the world, so without the plugin's closed-form branch
-a tripod-mounted camera would report free fall forever.
+that drifted from the vendor would fail. And a device on a fixed mount must read 1 g: a
+tripod-mounted camera that read zero would report free fall forever.
 """
 
 from __future__ import annotations
@@ -125,7 +124,7 @@ def test_the_imu_frame_is_published_on_the_chain():
 
 
 def test_a_fixed_mount_reads_one_g_along_the_optical_down_axis():
-    """The trap this closes: MuJoCo computes no acceleration for a body welded to the world."""
+    """A body welded to the world is at rest: its proper acceleration is g, upward."""
     reading = _imu(_spawn()).read()
     accel = np.asarray(reading.linear_acceleration)
     assert np.linalg.norm(accel) == pytest.approx(9.81, rel=1e-6)

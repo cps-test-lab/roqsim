@@ -18,7 +18,7 @@ import pytest
 from roqsim.check import _render_text, check_world
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.flex import discrete_flexes, needs_discrete
+from roqsim.flex import discrete_flexes, edge_stiff_ropes, needs_discrete
 from roqsim.plugin import PluginError
 
 # One small lattice, varied only in what decides the rules. 3x3x3 vertices, 2 cm apart.
@@ -29,7 +29,7 @@ _ROPE = 'type="grid" count="5 1 1" spacing=".02 .02 .02" dim="1" mass=".1" radiu
 ELASTIC = f'<flexcomp name="blk" {_GRID}><elasticity young="1e5" poisson="0.2"/><contact selfcollide="none"/></flexcomp>'
 PLAIN = f'<flexcomp name="blk" {_GRID}><contact selfcollide="none"/></flexcomp>'
 
-#: name -> (flexcomp, whether MuJoCo 3.14 integrates it under `discrete` only)
+#: name -> (flexcomp, whether MuJoCo 4.0 integrates it under `discrete` only)
 CASES = {
     "elastic_solid": (ELASTIC, True),
     "elastic_solid_pinned": (
@@ -69,9 +69,21 @@ CASES = {
         f'<flexcomp name="blk" {_SHEET}><elasticity young="1e5" thickness=".002"/></flexcomp>',
         False,
     ),
-    "rope_young": (f'<flexcomp name="blk" {_ROPE}><elasticity young="1e5"/></flexcomp>', False),
+    "rope_young": (f'<flexcomp name="blk" {_ROPE}><elasticity young="1e5"/></flexcomp>', True),
+    "rope_young_rigid": (
+        f'<flexcomp name="blk" {_ROPE} rigid="true"><elasticity young="1e5"/></flexcomp>',
+        False,
+    ),
     "rope_edge_stiffness": (
         f'<flexcomp name="blk" {_ROPE}><edge stiffness="10"/></flexcomp>',
+        False,
+    ),
+    "rope_edge_damping": (
+        f'<flexcomp name="blk" {_ROPE}><edge damping="0.1"/></flexcomp>',
+        False,
+    ),
+    "rope_edge_stiffness_rigid": (
+        f'<flexcomp name="blk" {_ROPE} rigid="true"><edge stiffness="10"/></flexcomp>',
         False,
     ),
 }
@@ -108,13 +120,17 @@ def test_the_rule_matches_what_mujoco_compiles(case):
     flex, expected = CASES[case]
     spec = mujoco.MjSpec.from_string(_mjcf(flex))
     assert needs_discrete(spec) is expected
+    rope = bool(edge_stiff_ropes(spec))
 
     passive = "passive=" in flex and expected
     # Rule 1: implicit/implicitfast refuse every discrete flex; euler/rk4 refuse only passive contact.
     assert _compiles(_mjcf(flex, option='integrator="implicitfast"')) is not expected
     assert _compiles(_mjcf(flex, option='integrator="Euler"')) is not passive
-    assert _compiles(_mjcf(flex, option='integrator="discrete"'))
-    # Rule 2: under discrete, PGS and noslip are refused exactly for a discrete flex.
+    assert _compiles(_mjcf(flex, option='integrator="RK4"')) is not passive
+    # Rule 2: discrete refuses a rope's edge stiffness, and PGS and noslip exactly for a discrete flex.
+    assert _compiles(_mjcf(flex, option='integrator="discrete"')) is not rope
+    if rope:
+        return
     pgs = _mjcf(flex, option='integrator="discrete" solver="PGS"')
     noslip = _mjcf(flex, option='integrator="discrete" noslip_iterations="3"')
     assert _compiles(pgs) is not expected
@@ -129,10 +145,16 @@ def test_the_verdict_names_the_flex_and_why():
 def test_a_flex_under_a_mocap_body_never_deforms():
     """Rule 3, measured: why roqsim refuses what MuJoCo accepts.
 
-    The same pinned flex, shaken by a mocap body and by a servoed slide joint. Under the joint its
+    MuJoCo refuses an elastic flex under a mocap body itself. The same pinned flex held in shape by
+    its edges instead, shaken by a mocap body and by a servoed slide joint: under the joint its
     vertices lag the holder; under the mocap they do not move relative to it at all.
     """
-    flex = f'<flexcomp name="blk" {_GRID}><elasticity young="1e4" damping="0.001"/><pin id="0 1 2 3 4 5 6 7 8"/><contact contype="0" conaffinity="0"/></flexcomp>'
+    pin = '<pin id="0 1 2 3 4 5 6 7 8"/><contact contype="0" conaffinity="0"/>'
+    elastic = (
+        f'<flexcomp name="blk" {_GRID}><elasticity young="1e4" damping="0.001"/>{pin}</flexcomp>'
+    )
+    assert not _compiles(_mjcf(elastic, option='integrator="discrete"', holder='mocap="true"'))
+    flex = f'<flexcomp name="blk" {_GRID}><edge equality="true"/>{pin}</flexcomp>'
 
     def deformation(mocap: bool) -> float:
         holder = 'mocap="true"' if mocap else ""
@@ -370,3 +392,49 @@ def test_check_reports_a_refusal_at_the_build_stage(tmp_path):
     assert not report["ok"]
     assert report["problems"][0]["stage"] == "build"
     assert "sim.integrator: auto" in report["problems"][0]["message"]
+
+
+ROPE_EDGE = CASES["rope_edge_stiffness"][0].replace('name="blk"', 'name="rope"')
+
+
+def test_auto_runs_a_rope_with_edge_stiffness_under_implicitfast(tmp_path):
+    engine = _engine(tmp_path, ROPE_EDGE)
+    engine.setup()
+    try:
+        assert _integrator(engine) == mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+    finally:
+        engine.shutdown()
+
+
+def test_discrete_with_a_rope_with_edge_stiffness_is_refused_by_name(tmp_path):
+    engine = _engine(tmp_path, ROPE_EDGE, sim={"integrator": "discrete"})
+    with pytest.raises(PluginError, match=r"sim.integrator: discrete cannot run flex 'rope'"):
+        engine.setup()
+
+
+def test_a_rope_with_edge_stiffness_beside_an_elastic_solid_is_refused_under_auto(tmp_path):
+    """No implicit integrator runs both; the refusal names the explicit one that does."""
+    engine = _engine(tmp_path, ELASTIC + ROPE_EDGE)
+    with pytest.raises(
+        PluginError, match=r"no implicit integrator can run flex 'blk'.*sim.integrator: euler"
+    ):
+        engine.setup()
+    engine = _engine(tmp_path, ELASTIC + ROPE_EDGE, sim={"integrator": "euler"})
+    engine.setup()
+    try:
+        assert _integrator(engine) == mujoco.mjtIntegrator.mjINT_EULER
+    finally:
+        engine.shutdown()
+
+
+def test_an_elastic_rope_with_edge_stiffness_is_refused_under_auto_by_its_own_name(tmp_path):
+    """Its modulus asks for discrete and its edges refuse it: one rope, not one beside another."""
+    rope = (
+        f'<flexcomp name="rope" {_ROPE}><elasticity young="1e5"/><edge stiffness="10"/></flexcomp>'
+    )
+    engine = _engine(tmp_path, rope)
+    with pytest.raises(PluginError) as err:
+        engine.setup()
+    message = str(err.value)
+    assert message.startswith("no implicit integrator can run flex 'rope':"), message
+    assert "beside" not in message and "sim.integrator: euler" in message

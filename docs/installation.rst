@@ -53,6 +53,19 @@ Manual install
    python3 -m venv --system-site-packages .venv
    .venv/bin/pip install -e "roqsim[test]" -e "roqsim_sensors[test]" -e "roqsim_mobile[test]"
 
+Upgrading an existing venv to MuJoCo 4.0
+----------------------------------------
+
+The packages pin ``mujoco>=4.0,<4.1``. From 4.0, MuJoCo's ``mujoco`` distribution is split into
+``mujoco-core`` (the C library and bindings) and ``mujoco-studio`` (Studio and the Filament
+bindings), and ``mujoco`` installs both. A plain ``pip install`` over an older ``mujoco`` removes
+files that now belong to ``mujoco-core``, so uninstall it first:
+
+.. code-block:: bash
+
+   .venv/bin/pip uninstall -y mujoco
+   .venv/bin/pip install -e "roqsim[test]"    # or `make venv` again
+
 ROS 2 (optional)
 ----------------
 

@@ -155,10 +155,11 @@ _PLANE_XML = """
 
 
 def test_a_plane_within_the_cutoff_is_hit_however_far_its_position_is():
-    """MuJoCo culls a plane by the distance to its POSITION, so a floor centred at the origin
-    vanished from any short-range cast made more than the cutoff away from the origin -- a cliff
-    sensor two metres out read no floor. The planes are intersected here instead; the
-    bounding-sphere cull still drops a box beyond the requested cutoff."""
+    """A plane is hit within the cutoff wherever its position is, and missed beyond it, as a box is.
+
+    MuJoCo bounds no plane, so it reports a floor a metre below a 15 cm probe; the cast drops that
+    hit, so a cliff sensor two metres out reads the floor at two centimetres and a probe held high
+    reads nothing."""
     model = mujoco.MjModel.from_xml_string(_PLANE_XML)
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)

@@ -311,7 +311,7 @@ a reported ratio of 0.85 rings down at 0.65 -- so the report stars that mode's f
 raises a stiffer ``solref`` to: two timesteps under every integrator but ``discrete``; under
 ``discrete`` it caps the stiffness instead, which is ``timestep * sqrt(solimp[1]) / (solimp[1] *
 dampratio)`` at the default ``solimp`` -- about 1.03 steps at a damping ratio of 1. These rules were
-measured on MuJoCo 3.14; the damping and the resolution are stated in
+measured on MuJoCo 4.0; the damping and the resolution are stated in
 :func:`roqsim.flex_modes.explain_flex`, the floor in :func:`roqsim.solref.solref_floor`, which
 ``sim.contact_override`` is held to as well; :ref:`deformable-bodies` in :doc:`plugins` measures them
 and says where each stops holding.

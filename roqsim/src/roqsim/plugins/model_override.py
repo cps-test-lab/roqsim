@@ -29,7 +29,7 @@ Measured against MuJoCo 3.11.0:
   renders big and collides as if small. Refused; change size in ``build``.
 * ``geom_friction`` and the two contact masks are live and reverse exactly.
 * A flex's ``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are live (measured
-  on MuJoCo 3.14.0) -- damping only on a flex compiled with some, and refused otherwise. Its Young's
+  on MuJoCo 4.0.0) -- damping only on a flex compiled with some, and refused otherwise. Its Young's
   modulus is not a compiled field at all; the ``flex_material`` plugin sets it before compile.
 
 Three refusals are *decisions*, not safety, and are listed so they read as chosen:
@@ -235,7 +235,7 @@ _ALLOWED: dict[str, FieldSpec] = {
                 "acceleration under 100 N was -4.81 m/s^2, i.e. correct for 20 kg"
             ),
         ),
-        # The flex rows were measured on MuJoCo 3.14.0 (tests/test_flex_material.py). A flex's
+        # The flex rows were measured on MuJoCo 4.0.0 (tests/test_flex_material.py). A flex's
         # Young's modulus and Poisson's ratio are not here: MuJoCo bakes them into the compiled
         # stiffness, so they are set before compile by the flex_material plugin (_flex_material,
         # "baked at compile").

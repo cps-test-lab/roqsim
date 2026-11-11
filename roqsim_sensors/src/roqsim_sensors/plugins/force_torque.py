@@ -24,7 +24,7 @@ like a quiet trial rather than a broken world.
 lies outside that subtree. The entity names its tool in ``meta["end_effector"]`` (``site``, where
 it is mounted, and ``bodies``, its root bodies; ``spawn_arm`` records both), and the tool is seen
 when the body carrying its mount site is in the sensed subtree, or when the sensor sits in the tool
-itself, as a fingertip sensor does. Measured on MuJoCo 3.14.0
+itself, as a fingertip sensor does. Measured on MuJoCo 4.0.0
 (``roqsim_manipulation/tests/test_tool_is_in_the_wrench.py``): a 0.5 kg tool on the ``ur5e``
 reads 0.000 N at ``fts_site`` when welded at ``attachment_site`` and its full 4.905 N at
 ``tool_site``, the site the model's manifest declares; on every other arm with a mount site, a
@@ -109,7 +109,7 @@ nobody reads is never tared and one read at 100 Hz tares within a step of the ti
 
 **A flex's contacts are added to the reading.** MuJoCo's site force/torque sensor reads the sensed
 subtree's momentum balance against its external forces and leaves a contact with a flex out of them
-(:mod:`roqsim.flex`, "the wrench a flex's contacts put into a subtree"). Measured on MuJoCo 3.14.0
+(:mod:`roqsim.flex`, "the wrench a flex's contacts put into a subtree"). Measured on MuJoCo 4.0.0
 (``tests/test_force_torque_flex.py``): a rigid probe pressing a flex block read its weight alone, and
 a support carrying 1.5 N of a pinned elastic cantilever was absent from the reading. The rest of
 what a flex does already reaches the sensor -- its weight, its inertia and its elastic forces, which

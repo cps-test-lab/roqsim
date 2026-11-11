@@ -405,25 +405,25 @@
     <velocity name="wheel_front_right_motor" joint="wheel_front_right_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
     <velocity name="wheel_rear_left_motor" joint="wheel_rear_left_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
     <velocity name="wheel_rear_right_motor" joint="wheel_rear_right_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
-    <position name="torso_lift_pos" joint="torso_lift_joint" kp="60000" dampratio="1" forcerange="-2000 2000" inheritrange="1"/>
-    <position name="head_1_pos" joint="head_1_joint" kp="100" dampratio="1" forcerange="-5.197 5.197" inheritrange="1"/>
-    <position name="head_2_pos" joint="head_2_joint" kp="100" dampratio="1" forcerange="-2.77 2.77" inheritrange="1"/>
-    <position name="arm_left_1_pos" joint="arm_left_1_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
-    <position name="arm_left_2_pos" joint="arm_left_2_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
-    <position name="arm_left_3_pos" joint="arm_left_3_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_left_4_pos" joint="arm_left_4_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_left_5_pos" joint="arm_left_5_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_left_6_pos" joint="arm_left_6_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_left_7_pos" joint="arm_left_7_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_right_1_pos" joint="arm_right_1_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
-    <position name="arm_right_2_pos" joint="arm_right_2_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
-    <position name="arm_right_3_pos" joint="arm_right_3_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_right_4_pos" joint="arm_right_4_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_right_5_pos" joint="arm_right_5_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_right_6_pos" joint="arm_right_6_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="arm_right_7_pos" joint="arm_right_7_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
-    <position name="gripper_left_finger_pos" joint="gripper_left_finger_joint" kp="300" dampratio="1" forcerange="-10.0 10.0" inheritrange="1"/>
-    <position name="gripper_right_finger_pos" joint="gripper_right_finger_joint" kp="300" dampratio="1" forcerange="-10.0 10.0" inheritrange="1"/>
+    <position name="torso_lift_pos" joint="torso_lift_joint" kp="60000" forcerange="-2000 2000" inheritrange="1" kv="2122.13"/>
+    <position name="head_1_pos" joint="head_1_joint" kp="100" forcerange="-5.197 5.197" inheritrange="1" kv="2.65255"/>
+    <position name="head_2_pos" joint="head_2_joint" kp="100" forcerange="-2.77 2.77" inheritrange="1" kv="3.11088"/>
+    <position name="arm_left_1_pos" joint="arm_left_1_joint" kp="2000" forcerange="-43.0 43.0" inheritrange="1" kv="10.1115"/>
+    <position name="arm_left_2_pos" joint="arm_left_2_joint" kp="2000" forcerange="-43.0 43.0" inheritrange="1" kv="115.29"/>
+    <position name="arm_left_3_pos" joint="arm_left_3_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="6.17176"/>
+    <position name="arm_left_4_pos" joint="arm_left_4_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="38.0094"/>
+    <position name="arm_left_5_pos" joint="arm_left_5_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="5.49715"/>
+    <position name="arm_left_6_pos" joint="arm_left_6_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="9.09674"/>
+    <position name="arm_left_7_pos" joint="arm_left_7_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="1.42378"/>
+    <position name="arm_right_1_pos" joint="arm_right_1_joint" kp="2000" forcerange="-43.0 43.0" inheritrange="1" kv="10.1115"/>
+    <position name="arm_right_2_pos" joint="arm_right_2_joint" kp="2000" forcerange="-43.0 43.0" inheritrange="1" kv="115.29"/>
+    <position name="arm_right_3_pos" joint="arm_right_3_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="6.17176"/>
+    <position name="arm_right_4_pos" joint="arm_right_4_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="38.0094"/>
+    <position name="arm_right_5_pos" joint="arm_right_5_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="5.49715"/>
+    <position name="arm_right_6_pos" joint="arm_right_6_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="9.09674"/>
+    <position name="arm_right_7_pos" joint="arm_right_7_joint" kp="900" forcerange="-26.0 26.0" inheritrange="1" kv="1.42378"/>
+    <position name="gripper_left_finger_pos" joint="gripper_left_finger_joint" kp="300" forcerange="-10.0 10.0" inheritrange="1" kv="5.47723"/>
+    <position name="gripper_right_finger_pos" joint="gripper_right_finger_joint" kp="300" forcerange="-10.0 10.0" inheritrange="1" kv="5.47723"/>
   </actuator>
   <equality>
     <joint joint1="gripper_left_inner_finger_left_joint" joint2="gripper_left_finger_joint" polycoef="0 -8.28 0 0 0" solimp="0.95 0.99 0.001"/>
