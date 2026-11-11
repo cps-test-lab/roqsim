@@ -311,3 +311,11 @@ def test_inspect_prop_fails_a_pair_it_cannot_compare(tmp_path, capsys):
     ]
     assert code.value.code == 5 and check["status"] == "FAIL" and check["pairs"] == []
     assert [(p["first"], p["second"]) for p in check["not_compared"]] == [("knob", "lever")]
+
+
+def test_data_without_a_pose_is_refused():
+    # A fresh MjData has every orientation zero: compared as it is, every face would lie on the
+    # origin and a model full of pairs would pass.
+    model = _boxes()
+    with pytest.raises(ValueError, match="no pose"):
+        shared_faces(model, mujoco.MjData(model))
