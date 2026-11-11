@@ -34,19 +34,11 @@ def _requirements():
 
 
 def why_not(package: str, req=None) -> str:
-    """Why *package*'s tests cannot run here, or ``""`` when they can."""
-    from importlib.metadata import PackageNotFoundError, distribution
-
-    req = req or _requirements()
-    name = req.project_name(ROOT / package / "pyproject.toml")
-    if name is None:
-        return ""
-    try:
-        distribution(name)
-    except PackageNotFoundError:
-        return f"{name} is not installed"
-    missing = req.missing_requirements(name)
-    return f"{name} lacks {', '.join(missing)}" if missing else ""
+    """Why *package*'s tests cannot run here, or ``""`` when they can: the rule the tests over the
+    whole tree apply (``installed_requirements.not_testable``)."""
+    if not (ROOT / package / "pyproject.toml").is_file():
+        raise SystemExit(f"make test: {package} is not a package directory of this repository")
+    return (req or _requirements()).not_testable(package)
 
 
 def main(argv: list[str]) -> int:

@@ -143,8 +143,8 @@ def test_every_roqsim_name_in_the_repository_is_registered():
     for pattern in SCANNED:
         for path in REPO.glob(pattern):
             rel = path.relative_to(REPO)
-            # A package left out of this run registers its names through an entry point that is not
-            # installed here; its names are checked where it is (tools/test_packages.py).
+            # A package left out of this run (tools/test_packages.py) registers its names through an
+            # entry point that is not installed here; they are checked in a run where it is.
             if len(rel.parts) > 1 and not_testable(rel.parts[0]):
                 continue
             for name in _NAME.findall(path.read_text(errors="replace")):
