@@ -361,7 +361,8 @@ def test_a_step_back_that_would_meet_something_fails_naming_it():
 
 def test_carrying_it_turns_the_way_its_load_sweeps_clear():
     """A post stands where the short way round would swing the tote, and the carry may not step
-    back: the body turns the long way, and the tote never meets the post."""
+    back but may turn the long way: the body turns the long way, says so, and the tote never meets
+    the post. Not allowed to, it fails naming the post."""
     world = _world()
     world["components"][0]["walker"]["pose"] = {
         "position": {"x": 0.0, "y": 0.0},
@@ -390,7 +391,9 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
         sim.ok("grasp", hand="both", target="tote_1")
         x, y, _ = sim.body.root()
         to = {"position": {"x": x - 1.6, "y": y + 0.9, "z": 0.0}}
-        seq = sim.h.carry(to, standoff=0.6, back_max=0.0)
+        st = sim.run("carry", to=to, standoff=0.6, back_max=0.0)
+        assert "post_box" in st.error and "long_way" in st.error, st.error
+        seq = sim.h.carry(to, standoff=0.6, back_max=0.0, long_way=True)
         post = sim.m.body("post_box").id
         tote = sim.m.body("tote_1").id
         nearest = math.inf
@@ -404,6 +407,7 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
                 break
         assert st.error == "", st.error
         assert nearest > 0.3, nearest
+        assert "turning_long_way" in sim.events()
     finally:
         engine.shutdown()
 

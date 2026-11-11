@@ -354,6 +354,8 @@ action humanoid_carry:
     standoff: float = 0.6
     facing: float                                     # world yaw (rad) to face; left out: the target as seen
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
+    back_max: float = 0.5                             # m it may step straight back before a turn; 0: never
+    long_way: bool = false                            # turn the long way round where no step back clears
     check: bool = true
 
 action humanoid_place:

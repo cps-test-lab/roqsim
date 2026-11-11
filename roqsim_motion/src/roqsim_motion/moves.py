@@ -607,7 +607,16 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _walk(self, stand, yaw, what: str, while_walking=None, via=(), back_max: float = BACK_MAX):
+    def _walk(
+        self,
+        stand,
+        yaw,
+        what: str,
+        while_walking=None,
+        via=(),
+        back_max: float = BACK_MAX,
+        long_way: bool = False,
+    ):
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to walk to {what} with")
@@ -626,13 +635,14 @@ class HumanoidPlugin(MachinePlugin):
                         then=self._next_heading(legs, i, yaw),
                         toward=point,
                         back_max=back_max,
+                        long_way=long_way,
                     )
                 yield from self._leg(nav, point, what, while_walking)
         else:
             yield from self._leg(nav, stand, what, while_walking, via)
         if while_walking is not None:
             # carrying: turn at a carrying pace
-            yield from self._turn(yaw, while_walking, back_max=back_max)
+            yield from self._turn(yaw, while_walking, back_max=back_max, long_way=long_way)
         self.body.face(yaw)
         t0 = self._ctx.sim_time
         while abs(
@@ -1127,6 +1137,7 @@ class HumanoidPlugin(MachinePlugin):
         via: list | None = None,
         facing: float | None = None,
         back_max: float = BACK_MAX,
+        long_way: bool = False,
     ):
         """Carry what the hands hold to a target: lift it to a carrying height in front of the body
         (``height``: the hands' height, m; default a hand's breadth under the pelvis, or high enough
@@ -1135,7 +1146,9 @@ class HumanoidPlugin(MachinePlugin):
         the floor points ``via`` first, in order, as ``approach`` does -- and face the target, or the
         world yaw ``facing``, as ``approach`` faces it. Where a turn on the spot would sweep what it
         holds through something, it first steps straight back, keeping its heading, by as little as
-        clears it and at most ``back_max`` (m; 0: never)."""
+        clears it and at most ``back_max`` (m; 0: never); where no step back does, it fails naming what
+        is in the way, or with ``long_way`` turns the long way round if that is clear, saying so in
+        a ``turning_long_way`` event."""
         points = self._via(via)
         if not (math.isfinite(float(back_max)) and float(back_max) >= 0.0):
             self.fail(f"back_max: a distance of 0 m or more, not {back_max!r}")
@@ -1197,6 +1210,7 @@ class HumanoidPlugin(MachinePlugin):
             then=self._next_heading(legs, legs.index(first), yaw),
             toward=first,
             back_max=back_max,
+            long_way=bool(long_way),
         )
         yield from self._walk(
             stand,
@@ -1205,16 +1219,23 @@ class HumanoidPlugin(MachinePlugin):
             while_walking=lambda: self._hold_carried(carried),
             via=points,
             back_max=back_max,
+            long_way=bool(long_way),
         )
 
     def _turn_way(
-        self, yaw: float, then: float | None = None, back_max: float = BACK_MAX
+        self,
+        yaw: float,
+        then: float | None = None,
+        back_max: float = BACK_MAX,
+        long_way: bool = False,
     ) -> tuple[float, float]:
         """How to turn from the heading to ``yaw``: ``(back, way)``, a step straight back (m) and
         then a turn on the spot (rad, signed). The short way, if what the hands hold sweeps through
         nothing on it; else, stepping back first by as little as clears it (:meth:`_back_for`, at
-        most ``back_max``); else the long way, if that is clear; failing if none is. Half a turn,
-        within :data:`TURN_TIE`, is a tie (:meth:`_tie`), its two ways tried as short ones."""
+        most ``back_max``); else, only where the caller allows it (``long_way``), the long way, if
+        that is clear, with an event saying so; failing otherwise, naming what is in the way. Half
+        a turn, within :data:`TURN_TIE`, is a tie (:meth:`_tie`), its two ways tried as short
+        ones."""
         heading = self.body.root()[2]
         short = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
         held = next(
@@ -1234,12 +1255,24 @@ class HumanoidPlugin(MachinePlugin):
         back, way, behind = self._back_for(held, ways, back_max)
         if way is not None:
             return back, way
-        if not tie:
-            blocked[long] = self._swept(held, long)
-            if blocked[long] is None:
-                return 0.0, long
         swept = " one way and ".join(str(blocked[w]) for w in ways) + (" the other" if tie else "")
         if not tie:
+            if not long_way:
+                self.fail(
+                    f"cannot turn to {math.degrees(yaw):.0f} deg: what it holds would sweep through "
+                    f"{swept} the short way; {behind}; the long way round is not taken unless the "
+                    "move is given long_way"
+                )
+            blocked[long] = self._swept(held, long)
+            if blocked[long] is None:
+                self.step(
+                    "turning_long_way",
+                    to=float(yaw),
+                    turn=float(long),
+                    short_way=str(blocked[short]),
+                    why=behind,
+                )
+                return 0.0, long
             swept += f", and {blocked[long]} the long way round"
         self.fail(
             f"cannot turn to {math.degrees(yaw):.0f} deg: what it holds would sweep through "
@@ -1406,13 +1439,14 @@ class HumanoidPlugin(MachinePlugin):
         then: float | None = None,
         toward=None,
         back_max: float = BACK_MAX,
+        long_way: bool = False,
     ):
         """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
         does), calling ``each`` every step; holding something, the way its load sweeps clear
         (:meth:`_turn_way`; ``then``: the heading it walks on in afterwards), a quarter turn at a
         time, stepping straight back first where that clears it. ``toward``: the point ``yaw``
         faces, faced from where a step back leaves the body."""
-        back, way = self._turn_way(yaw, then, back_max)
+        back, way = self._turn_way(yaw, then, back_max, long_way)
         if back > 0.0:
             yield from self._step_back(back, each)
             if toward is not None:
