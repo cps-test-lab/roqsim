@@ -952,8 +952,9 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    thread's pool and gives it back on close, freeing only its world's resources (and from another
    thread, not even those). One context holds one textured model at a time, which is why each open
    renderer has a context of its own. ``ModelRenderables`` takes a geom's group when it is made and
-   labels a geom of zero alpha, so what presence hides at run time is taken out of the scene by the
-   renderer itself. Depth is reversed-Z, linearised in closed form; labels are the renderables' own
+   labels a geom of zero alpha, so the renderables are made in one group and drawn with every group
+   on, and the renderer itself keeps in the scene what each camera's groups and the alphas show at
+   each render: what presence hides or brings back at run time, before or after the renderer opened. Depth is reversed-Z, linearised in closed form; labels are the renderables' own
    ``segmentation_id``, mapped back to ``(object, mjtObj)``. With post-processing on, Filament's
    dithering and ambient occlusion change from frame to frame, so it declares itself deterministic
    only with ``post_processing: false`` (``capabilities_for``).

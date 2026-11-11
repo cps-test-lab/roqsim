@@ -375,9 +375,6 @@ class FilamentRenderer(Renderer):
         self._segtable: np.ndarray | None = None
         self._headlight = (False, (1.0, 1.0, 1.0), 0.0)
         self._vopts: dict = {}
-        self._options = None
-        #: Per object type, the groups its renderables were made with (Filament's own visibility).
-        self._built_groups: dict = {}
         #: Renderables taken out of the scene: hidden at run time (:meth:`_apply_visibility`).
         self._removed: dict = {}
         #: Render calls and images read since open (what a test counts).
@@ -415,14 +412,22 @@ class FilamentRenderer(Renderer):
         self._ctx.set_clear_color(list(clear[:3]) if clear is not None else [0.0, 0.0, 0.0])
         self._scene = self._ctx.create_scene(mjrf.SceneParams())
         self._scene.configure_from_model(model)
-        self._resources = mjrf.ModelResources(self._ctx, model)
+        # ModelRenderables keeps the group a geom or flex had when it was made, so an entity absent
+        # at open (presence's group) would never be drawn once it returns. They are made from a copy
+        # with every geom and flex in group 0 and drawn with every group on; which of them a camera
+        # shows is decided at each render from the groups and alpha the model has then
+        # (_apply_visibility).
+        built = copy.copy(model)
+        built.geom_group[:] = 0
+        built.flex_group[:] = 0
+        self._resources = mjrf.ModelResources(self._ctx, built)
         self._lights = mjrf.ModelLights(self._scene, self._resources)
         self._renderables = mjrf.ModelRenderables(self._scene, self._resources)
+        every_group = _vopt(None)
+        every_group.geomgroup[:] = 1
+        every_group.flexgroup[:] = 1
+        self._renderables.set_options(every_group)
         self._segtable = self._segmentation_table(model)
-        self._built_groups = {
-            "geom": np.array(model.geom_group, copy=True),
-            "flex": np.array(model.flex_group, copy=True),
-        }
         self._removed = {}
         self._headlight = headlight(model)
         _logger.info("filament: Vulkan on %s", self.device or "an unnamed device")
@@ -432,11 +437,8 @@ class FilamentRenderer(Renderer):
         pairs: dict[int, tuple[int, int]] = {}
         for objtype, count in _SEGMENTED:
             for objid in range(int(getattr(model, count))):
-                try:
-                    r = self._renderables.get_renderable(objtype, objid, -1)
-                except Exception:  # noqa: BLE001 -- an object Filament makes nothing for
-                    continue
-                if r is None:
+                r = self._renderables.get_renderable(objtype, objid, -1)
+                if r is None:  # an object Filament makes nothing for
                     continue
                 segid = int(r.get_material().segmentation_id)
                 if segid > 0:
@@ -492,26 +494,21 @@ class FilamentRenderer(Renderer):
         for i, r in enumerate(requests):
             groups.setdefault(r.camera.geomgroup, []).append(i)
         for geomgroup, members in groups.items():
-            self._set_options(geomgroup)
+            if geomgroup not in self._vopts:
+                self._vopts[geomgroup] = _vopt(geomgroup)
             self._renderables.update(data)
             self._apply_visibility(model, self._vopts[geomgroup])
             self._submit(model, data, [requests[i] for i in members], [frames[i] for i in members])
         return frames
 
-    def _set_options(self, geomgroup) -> None:
-        if geomgroup not in self._vopts:
-            self._vopts[geomgroup] = _vopt(geomgroup)
-        if self._options is None or self._options != geomgroup:
-            self._renderables.set_options(self._vopts[geomgroup])
-            self._options = geomgroup
-
     def _apply_visibility(self, model, vopt) -> None:
-        """Hide what roqsim hides at run time, which Filament does not follow.
+        """Keep in the scene exactly the geoms and flexes *vopt* shows, as the model is now.
 
-        ``ModelRenderables`` takes a geom's or a flex's group when it is made, and draws a geom of
-        zero alpha into the labels; :mod:`roqsim.presence` hides an absent entity by moving it to
-        its own group at run time and zeroing its alpha. An object whose group is hidden now, or
-        whose alpha is 0, is taken out of the scene, and put back once it is drawn again.
+        The renderables were made in group 0 and Filament draws every group (:meth:`open`), and it
+        draws a geom of zero alpha into the labels; :mod:`roqsim.presence` hides an absent entity
+        by moving it to its own group at run time and zeroing its alpha. An object whose group is
+        hidden now, or whose alpha is 0, is taken out of the scene, and put back once it is shown
+        again.
         """
         shown = np.asarray(vopt.geomgroup, dtype=bool)
         last = len(shown) - 1
@@ -522,8 +519,7 @@ class FilamentRenderer(Renderer):
             if not len(groups):
                 continue
             now = shown[np.clip(np.asarray(groups), 0, last)] & (np.asarray(rgba)[:, 3] > 0)
-            built = shown[np.clip(self._built_groups[kind], 0, last)]
-            hide = set(np.flatnonzero(built & ~now).tolist())
+            hide = set(np.flatnonzero(~now).tolist())
             removed = self._removed.setdefault(kind, set())
             for i in hide - removed:
                 r = self._renderables.get_renderable(objtype, int(i), -1)

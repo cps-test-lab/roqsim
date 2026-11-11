@@ -327,6 +327,27 @@ def test_what_roqsim_hides_at_run_time_is_not_drawn(scene):
 
 
 @needs_vulkan
+def test_an_entity_absent_when_the_renderer_opens_is_drawn_once_it_returns(scene):
+    """Renderables keep the group a geom had when they were made; an absent one comes back."""
+    from roqsim.presence import ABSENT_GEOM_GROUP
+
+    model, data = scene
+    box = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "box")
+    model.geom_group[box] = ABSENT_GEOM_GROUP
+    frame = FrameRenderer(model, 160, 100, camera="persp", renderer="filament")
+    try:
+        assert not (frame.render_segmentation(data)[..., 0] == box).any()
+        model.geom_group[box] = 0
+        assert (frame.render_segmentation(data)[..., 0] == box).any(), "drawn once it returns"
+        frame.close()
+        frame = FrameRenderer(model, 160, 100, camera="persp", renderer="filament", geomgroup=(1,))
+        assert not (frame.render_segmentation(data)[..., 0] == box).any(), "a group not asked for"
+    finally:
+        frame.close()
+        model.geom_group[box] = 0
+
+
+@needs_vulkan
 def test_two_textured_worlds_draw_at_once(scene):
     """One Filament context holds one textured model at a time; each renderer borrows its own."""
     model, data = scene
