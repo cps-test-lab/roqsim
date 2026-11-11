@@ -112,7 +112,7 @@ def _setup(engine: Engine, monkeypatch, *, without_the_setup_pass: bool) -> None
         monkeypatch.undo()
 
 
-def test_after_setup_a_body_away_from_the_origin_is_posed(monkeypatch):
+def test_after_setup_a_body_away_from_the_origin_is_posed():
     engine = _engine()
     engine.setup()
     try:

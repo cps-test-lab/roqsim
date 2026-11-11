@@ -45,7 +45,6 @@ def test_compiles_and_stands_on_the_floor(tmp_path):
     """min z == 0 at the declared pose, so a world places the tree without knowing the pot's height."""
     engine = _built(tmp_path, pot_height=0.16)
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
     # The pot's underside is the tree's lowest point. Checked on that geom rather than by scanning the
     # whole model: the default world contributes a floor PLANE, whose bounding radius is enormous, so a
     # min-over-all-geoms test measures the floor and passes or fails for the wrong reason.
@@ -60,7 +59,6 @@ def test_compiles_and_stands_on_the_floor(tmp_path):
 def test_bunch_sites_and_entity_agree_with_the_config(tmp_path):
     engine = _built(tmp_path)
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
 
     palm = engine.ctx.entities.get("palm")
     assert palm is not None, (
@@ -93,7 +91,6 @@ def test_fruit_and_fronds_collide(tmp_path):
 def test_frond_count_and_tiers(tmp_path):
     engine = _built(tmp_path, fronds=8, frond_tier=0.1, crown_height=1.0)
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
     names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, i) or "" for i in range(m.ngeom)]
     inner = [n for n in names if n.endswith("_in")]
     assert len(inner) == 8, "one inner segment per frond"
@@ -128,8 +125,6 @@ def test_yaw_rotates_the_crown(tmp_path):
         tmp_path,
         pose={"position": {"x": 0.5, "y": 0.2}, "orientation": {"yaw": math.pi / 8}},
     )
-    for engine in (a, b):
-        mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
 
     def frond_xy(engine):
         m, d = engine.ctx.model, engine.ctx.data
@@ -150,7 +145,6 @@ def test_bunch_positions_follow_a_yawed_tree(tmp_path):
         pose={"position": {"x": 0.5, "y": 0.2}, "orientation": {"yaw": math.pi / 2}},
     )
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
     palm = engine.ctx.entities.get("palm")
     for i in range(len(BUNCHES)):
         sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"palm_bunch_{i}")
