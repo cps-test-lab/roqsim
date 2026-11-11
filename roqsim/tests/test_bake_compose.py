@@ -355,3 +355,19 @@ def test_a_robot_s_lamp_stays_when_the_world_is_drawn_baked(tmp_path):
         assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_LIGHT, "lamp") < 0  # the world's, replaced
     finally:
         engine.shutdown()
+
+
+def test_a_world_naming_a_geom_as_the_bake_would_draws_unbaked_and_says_which(tmp_path):
+    """The bake names the mesh that draws geom ``x`` ``x__baked``; a world that already has that name
+    is drawn unbaked, the warning naming the clash, before anything is composed."""
+    taken = '<geom name="wall_e__baked" type="box" size=".05 .05 .05" pos="0 -1.5 0.05" group="3"/>'
+    world = write_world(tmp_path, xml=room(extra=taken))
+    synthetic_bake(world)
+    engine = loaded(world)
+    try:
+        assert codes(engine) == ["bake_stale"]
+        assert "'wall_e__baked'" in engine.ctx.conditions[0]["message"]
+        m = engine.ctx.model
+        assert m.geom_group[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "wall_e")] != 3
+    finally:
+        engine.shutdown()

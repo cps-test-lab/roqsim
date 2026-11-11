@@ -83,6 +83,12 @@ def baked_sources(model: mujoco.MjModel) -> dict[int, int]:
     return out
 
 
+def _visual_name(rec, ename: str) -> str:
+    """The name of the visual mesh geom that draws *rec*'s part in entity *ename*."""
+    base = rec.name or f"{rec.body}_{rec.index_in_body}"
+    return f"{base}__baked" if len(rec.entities) <= 1 else f"{base}__baked_{ename}"
+
+
 def _spec_geom(spec: mujoco.MjSpec, rec) -> mujoco.MjsGeom:
     if rec.name:
         g = spec.geom(rec.name)
@@ -421,8 +427,18 @@ def compose(
         jobs.append((ename, cur, sub, idx[keep], keep, present_geoms))
     # Every geom it changes, found before the spec is changed: a bake that does not fit fails here,
     # with the world as it was, never half composed.
-    for *_, present_geoms in jobs:
+    geom_names = {g.name for g in spec.geoms if g.name}
+    mesh_names = {m.name for m in spec.meshes if m.name}
+    for ename, *_, present_geoms in jobs:
         for _gi, rec, _mine in present_geoms:
+            gname = _visual_name(rec, ename)
+            for name, taken in ((gname, geom_names), (f"{prefix}_{gname}", mesh_names)):
+                if name in taken:
+                    raise ComposeError(
+                        f"the name {name!r} the bake gives what draws {rec.key!r} is taken in the "
+                        "world: rename the geom or mesh that has it"
+                    )
+                taken.add(name)
             if rec.key not in replaced:
                 replaced[rec.key] = _spec_geom(spec, rec)
     emitters = []
@@ -479,8 +495,7 @@ def compose(
             pos = (cur.pos[ci[rows]] - p) @ R
             nrm = cur.nrm[ci[rows]] @ R
             pos, nrm, uv = _mesh_arrays(pos, nrm, sub.uv[rows].astype(np.float64), sub.flip[rows])
-            base = rec.name or f"{rec.body}_{rec.index_in_body}"
-            gname = f"{base}__baked" if len(rec.entities) <= 1 else f"{base}__baked_{ename}"
+            gname = _visual_name(rec, ename)
             mesh = spec.add_mesh(name=f"{prefix}_{gname}")
             mesh.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL
             k = len(pos) * 3

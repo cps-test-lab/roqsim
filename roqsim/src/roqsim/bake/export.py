@@ -422,8 +422,7 @@ def export_world(
             if key in baked_keys:
                 raise ValueError(
                     f"two baked geoms are both named {key!r} by the bake (a geom without a name is "
-                    "named after its body, and a body without one is empty): name the geoms or "
-                    "their bodies"
+                    "named after its body): name the geoms"
                 )
             baked_keys.add(key)
         rec = GeomRecord(
