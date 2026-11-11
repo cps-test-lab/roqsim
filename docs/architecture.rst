@@ -940,9 +940,10 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    ``<quality offsamples="0"/>`` draws exactly.
 -  **Filament** (:class:`~roqsim.render_filament.FilamentRenderer`, ``filament``) is MuJoCo's
    physically based renderer (``mjrf``), retained-mode: it makes the model's meshes, textures, lights
-   and renderables once at ``open`` and per batch updates their poses from the snapshot; every camera
-   of a set of geom groups goes into one ``mjrf`` render call, colour, depth and segmentation each in
-   Filament's own draw mode and read back into an array of its own. It runs headless through
+   and renderables once at ``open`` and per batch updates their poses from the snapshot; each image
+   of each camera -- colour, depth and segmentation, each in Filament's own draw mode -- is one
+   ``mjrf`` render call read back into an array of its own, since MuJoCo 4.0 reads back one target
+   per call, and every call of a batch is submitted before the first wait. It runs headless through
    **Vulkan only**: its OpenGL backend opens an X display (GLX), and both a missing display and a
    missing Vulkan driver end the process inside Filament, so the first context of a process is opened
    in a child first (:func:`~roqsim.render_filament.probe`), which also names the device. Three
@@ -954,8 +955,8 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    renderer has a context of its own. ``ModelRenderables`` takes a geom's group when it is made and
    labels a geom of zero alpha, so what presence hides at run time is taken out of the scene by the
    renderer itself, and the renderables are made again when something hidden when they were made
-   is shown. A flex and a spatial tendon are drawn as parts, each labelled as its object. Depth is reversed-Z, linearised in closed form; labels are the renderables' own
-   ``segmentation_id``, mapped back to ``(object, mjtObj)``. With post-processing on, Filament's
+   is shown. A flex and a spatial tendon are drawn as parts, each labelled as its object. Depth is
+   reversed-Z, linearised in closed form; labels are the renderables' own ``segmentation_id``, mapped back to ``(object, mjtObj)``. With post-processing on, Filament's
    dithering and ambient occlusion change from frame to frame, so it declares itself deterministic
    only with ``post_processing: false`` (``capabilities_for``).
 -  **Clip planes.** MuJoCo derives every camera's clip planes from the model, ``visual/map znear``/``zfar`` times its extent, so in a large world the near plane stands tens of centimetres out. A sensor camera draws instead between its ``render_near`` (a physical distance, default 0.01 m) and the model's own far plane, so what it sees does not depend on the world's size: the renderer sets those planes on the GL cameras of its own scene after the camera's view is set and linearises its depth reads with them, and the model, the viewer, an export and every other camera keep theirs. Every pass of a camera -- colour, depth, registered depth, labels -- is drawn with its planes. What a depth camera senses is separate: ``clip_near``/``clip_far`` mask the rendered depth to "no return" afterwards, so a surface nearer than ``clip_near`` is drawn, hides what is behind it and reads "no return"; ``render_near`` must not exceed ``clip_near``.
