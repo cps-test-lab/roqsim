@@ -2,6 +2,7 @@
 alone, what it refuses to pass, and how inspect-prop reports it."""
 
 import json
+import math
 from pathlib import Path
 
 import mujoco
@@ -138,28 +139,93 @@ def test_a_mesh_face_in_a_box_face_s_plane_is_found(tmp_path):
     assert pair.area == pytest.approx(0.1 * 0.1)
 
 
-def test_a_sphere_against_a_capsule_of_its_radius_is_not_passed():
-    model = _model(
-        '<geom name="a" type="box" size="0.1 0.1 0.1" pos="0 0 0.1"/>'
-        '<geom name="b" type="box" size="0.1 0.1 0.1" pos="0.15 0 0.1"/>'
-        '<geom name="joint" type="sphere" size="0.02" pos="0 0 1"/>'
-        '<geom name="limb" type="capsule" size="0.02 0.1" pos="0 0 1.1"/>'
-    )
-    with pytest.raises(UncomparableGeoms) as raised:
-        shared_faces(model)
-    assert [p[:2] for p in raised.value.pairs] == [("joint", "limb")]
-    assert [(f.first, f.second) for f in raised.value.found] == [("a", "b")]
+def test_a_sphere_on_a_capsule_end_of_its_radius_shares_that_end_and_one_off_it_passes():
+    joint = '<geom name="joint" type="sphere" size="0.02" pos="0 0 {z}"/>'
+    limb = '<geom name="limb" type="capsule" size="0.02 0.1" pos="0 0 1.1"/>'  # ends at z 1 and 1.2
+    (pair,) = shared_faces(_model(joint.format(z=1) + limb))
+    assert (pair.first, pair.second, pair.kind, pair.direction) == ("joint", "limb", "sphere", None)
+    assert pair.at == pytest.approx((0, 0, 1))
+    assert pair.area == pytest.approx(2 * math.pi * 0.02**2)  # the end's half of the sphere
+    # A millimetre off the end, along the limb or away from it: two spheres of one radius on
+    # different centres meet in a circle, which shows no area.
+    assert shared_faces(_model(joint.format(z=1.001) + limb)) == []
+    assert shared_faces(_model(joint.format(z=0.999) + limb)) == []
+    # A sphere of the capsule's radius inside its straight part touches the side in a circle only.
+    assert shared_faces(_model(joint.format(z=1.1) + limb)) == []
 
 
-def test_two_capsules_meeting_end_on_end_at_an_angle_are_not_passed():
+def test_two_capsules_of_one_radius_meeting_end_on_end_at_an_angle_share_the_elbow():
     elbow = (
         '<geom name="run" type="capsule" size="0.05" fromto="0 0 1 1 0 1"/>'
         '<geom name="rise" type="capsule" size="0.05" fromto="1 0 1 1 1 1"/>'
     )
-    with pytest.raises(UncomparableGeoms, match="end on end"):
-        shared_faces(_model(elbow))
+    (pair,) = shared_faces(_model(elbow))
+    assert (pair.first, pair.second, pair.kind) == ("run", "rise", "sphere")
+    assert pair.at == pytest.approx((1, 0, 1))
+    # Outward axes +x and -y, 90 degrees apart: the ends share a lune of 90 degrees, a quarter sphere.
+    assert pair.area == pytest.approx(math.pi * 0.05**2)
+    apart = elbow.replace('fromto="1 0 1 1 1 1"', 'fromto="1 0.001 1 1 1 1"')
+    assert shared_faces(_model(apart)) == []
     thinner = elbow.replace('size="0.05" fromto="1 0 1', 'size="0.04" fromto="1 0 1')
     assert shared_faces(_model(thinner)) == []
+    # End to end on one axis, the two ends look away from each other: one circle, no area.
+    straight = elbow.replace('fromto="1 0 1 1 1 1"', 'fromto="1 0 1 2 0 1"')
+    assert shared_faces(_model(straight)) == []
+
+
+def test_a_straight_capsule_chain_off_the_axes_shares_nothing():
+    # Axes written to six decimals leave the angle between two links' ends a hair short of 180
+    # degrees: a lune narrower than the tolerance, which shows nothing.
+    d = (0.267261, 0.534522, 0.801784)  # one direction, rounded
+    joints = [tuple(round(0.3 * k * c, 6) for c in d) for k in range(4)]
+    chain = "".join(
+        f'<geom name="link{k}" type="capsule" size="0.04" '
+        f'fromto="{" ".join(map(str, a))} {" ".join(map(str, b))}"/>'
+        for k, (a, b) in enumerate(zip(joints, joints[1:], strict=False))
+    )
+    assert shared_faces(_model(chain)) == []
+
+
+def _rotated_wall_and_sill(ox: float, oy: float, inset: float = 0.0) -> mujoco.MjModel:
+    """A 3 m wall mesh at (ox, oy) turned 13 degrees and a sill box set 0.1 m into its end, sides
+    flush (or ``inset`` inside them), every number written to six decimals as an exporter would."""
+    a = math.radians(13)
+    c, s = math.cos(a), math.sin(a)
+
+    def at(x, y):
+        return ox + c * x - s * y, oy + s * x + c * y
+
+    corners = [(*at(x, y), z) for x in (-1.5, 1.5) for y in (-0.1, 0.1) for z in (0, 2)]
+    centre = [sum(v[i] for v in corners) / 8 for i in range(3)]
+    faces = []
+    for f in [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4],
+              [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]]:  # fmt: skip
+        p, q, r = (corners[i] for i in f)
+        u = [q[i] - p[i] for i in range(3)]
+        w = [r[i] - p[i] for i in range(3)]
+        n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+        outward = sum(n[i] * (p[i] - centre[i]) for i in range(3)) > 0
+        faces.append(f if outward else f[::-1])
+    vertex = " ".join(f"{v:.6f}" for corner in corners for v in corner)
+    face = " ".join(str(i) for f in faces for i in f)
+    x, y = at(1.7, 0)
+    return _model(
+        '<geom name="wall" type="mesh" mesh="wall"/>'
+        f'<geom name="sill" type="box" size="0.3 {0.1 - inset} 0.02" pos="{x:.6f} {y:.6f} 0.5" '
+        'euler="0 0 13"/>',
+        f'<mesh name="wall" vertex="{vertex}" face="{face}"/>',
+    )
+
+
+@pytest.mark.parametrize("origin", [(3, 2), (100, 100)])
+def test_a_rotated_mesh_written_to_six_decimals_is_compared_near_and_far_out(origin):
+    # Rounding and single-precision vertices leave the faces micrometres out of one plane; the
+    # plane is measured across the faces, so a model far out is compared as one near the origin
+    # (the module's TOL says how far that holds for a mesh written in world coordinates).
+    (pair,) = shared_faces(_rotated_wall_and_sill(*origin))
+    assert (pair.first, pair.second, pair.kind) == ("wall", "sill", "plane")
+    assert pair.area == pytest.approx(0.1 * 0.04, rel=1e-3)
+    assert shared_faces(_rotated_wall_and_sill(*origin, inset=1e-4)) == []
 
 
 def test_the_pose_given_is_the_one_compared():
@@ -235,7 +301,7 @@ def test_inspect_prop_passes_the_part_once_inset(tmp_path, capsys):
 def test_inspect_prop_fails_a_pair_it_cannot_compare(tmp_path, capsys):
     prop = _prop(
         tmp_path,
-        '<geom name="knob" type="sphere" size="0.01" pos="0.1 0.1 0.5"/>'
+        '<geom name="knob" type="ellipsoid" size="0.01 0.01 0.02" pos="0.1 0.1 0.5"/>'
         '<geom name="lever" type="capsule" size="0.01 0.05" pos="0.1 0.1 0.55"/>',
     )
     with pytest.raises(SystemExit) as code:
