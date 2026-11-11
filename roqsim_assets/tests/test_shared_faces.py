@@ -8,6 +8,7 @@ from pathlib import Path
 import mujoco
 import pytest
 
+import roqsim_assets.shared_faces as shared_faces_module
 from roqsim_assets.cli import inspect_prop
 from roqsim_assets.shared_faces import UncomparableGeoms, shared_faces
 
@@ -181,9 +182,48 @@ def test_a_straight_capsule_chain_off_the_axes_shares_nothing():
     chain = "".join(
         f'<geom name="link{k}" type="capsule" size="0.04" '
         f'fromto="{" ".join(map(str, a))} {" ".join(map(str, b))}"/>'
-        for k, (a, b) in enumerate(zip(joints, joints[1:]))
+        for k, (a, b) in enumerate(zip(joints, joints[1:], strict=False))
     )
     assert shared_faces(_model(chain)) == []
+
+
+def _rotated_wall_and_sill() -> mujoco.MjModel:
+    """A 3 m wall mesh turned 13 degrees and a sill box set 0.1 m into its end, sides flush, every
+    number written to six decimals as an exporter would."""
+    a = math.radians(13)
+    c, s = math.cos(a), math.sin(a)
+
+    def at(x, y):
+        return 3 + c * x - s * y, 2 + s * x + c * y
+
+    corners = [(*at(x, y), z) for x in (-1.5, 1.5) for y in (-0.1, 0.1) for z in (0, 2)]
+    centre = [sum(v[i] for v in corners) / 8 for i in range(3)]
+    faces = []
+    for f in [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4],
+              [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]]:  # fmt: skip
+        p, q, r = (corners[i] for i in f)
+        u = [q[i] - p[i] for i in range(3)]
+        w = [r[i] - p[i] for i in range(3)]
+        n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+        outward = sum(n[i] * (p[i] - centre[i]) for i in range(3)) > 0
+        faces.append(f if outward else f[::-1])
+    vertex = " ".join(f"{v:.6f}" for corner in corners for v in corner)
+    face = " ".join(str(i) for f in faces for i in f)
+    x, y = at(1.7, 0)
+    return _model(
+        '<geom name="wall" type="mesh" mesh="wall"/>'
+        f'<geom name="sill" type="box" size="0.3 0.1 0.02" pos="{x:.6f} {y:.6f} 0.5" euler="0 0 13"/>',
+        f'<mesh name="wall" vertex="{vertex}" face="{face}"/>',
+    )
+
+
+def test_a_rotated_mesh_written_to_six_decimals_is_compared_within_the_tolerance(monkeypatch):
+    (pair,) = shared_faces(_rotated_wall_and_sill())
+    assert (pair.first, pair.second, pair.kind) == ("wall", "sill", "plane")
+    assert pair.area == pytest.approx(0.1 * 0.04, rel=1e-3)
+    # A micrometre is closer than the six decimals and single-precision vertices hold the plane.
+    monkeypatch.setattr(shared_faces_module, "TOL", 1e-6)
+    assert shared_faces(_rotated_wall_and_sill()) == []
 
 
 def test_the_pose_given_is_the_one_compared():

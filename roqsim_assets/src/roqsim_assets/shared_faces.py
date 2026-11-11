@@ -40,7 +40,12 @@ import numpy as np
 from roqsim.rendering import drawn_by_default
 
 #: m: the plane distance, in-plane overlap and radius difference below which two faces count as one.
-TOL = 1e-6
+#: A model's numbers are written to about six decimals, and a mesh's vertices are stored in single
+#: precision (about 1e-7 of its extent): a rotated mesh's face then strays from the plane of a part
+#: placed against it by up to a few 1e-6 m. Fixed rather than scaled to the model, since the larger
+#: share of that error is the written decimals, which do not grow with the model; still a hundredth
+#: of the 1 mm inset that remedies a pair.
+TOL = 1e-5
 #: The sides a cylinder's flat ends are drawn with here: enough that a cap inside another face is
 #: seen as inside it.
 CAP_SIDES = 24

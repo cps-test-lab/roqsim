@@ -130,7 +130,8 @@ in a circle only. A touching pair no rule decides -- an ellipsoid, a heightfield
 raises `UncomparableGeoms` rather than passing. Any package
 can call the function in a test over its own props and worlds; this package's
 `tests/test_shared_faces_shipped.py` compares every prop folder here, the hand-written MJCFs
-inspect-prop never sees included, and the default room.
+inspect-prop never sees included, this package's worlds and the default room (`roqsim_scenes`
+compares its own worlds the same way).
 
 ## Props: reusing another prop's mesh (hierarchical props)
 
