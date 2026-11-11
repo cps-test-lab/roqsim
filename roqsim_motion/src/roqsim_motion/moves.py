@@ -107,6 +107,10 @@ CAUGHT = 0.03
 SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
+#: A carry walks through a point of its way where the way bends by this much or less (rad), the
+#: body turning at its carrying pace as it walks on; at a sharper corner it stops and turns on the
+#: spot.
+WALK_THROUGH = math.radians(45)
 #: A carried turn this near half a turn (rad) is a tie: both ways turn as far, and the side is
 #: chosen by what the load sweeps and where the body walks next, never by the sign of a rounding
 #: error. With nothing to choose by, it turns right (clockwise).
@@ -587,6 +591,24 @@ class HumanoidPlugin(MachinePlugin):
         x, y, _ = self.body.root()
         return next((p for p in points if math.hypot(p[0] - x, p[1] - y) > 0.05), points[-1])
 
+    def _stretches(self, legs) -> list:
+        """``legs`` (floor points, walked from where the body stands) split where the way bends by
+        more than :data:`WALK_THROUGH`: lists of their indices, each walked without stopping."""
+        x, y, _ = self.body.root()
+        stretches, prev, heading = [[]], (x, y), None
+        for i, p in enumerate(legs):
+            if math.hypot(p[0] - prev[0], p[1] - prev[1]) <= 0.05:
+                stretches[-1].append(i)  # on the point before it: no heading of its own
+                continue
+            h = math.atan2(p[1] - prev[1], p[0] - prev[0])
+            if heading is not None and stretches[-1]:
+                bend = abs(math.atan2(math.sin(h - heading), math.cos(h - heading)))
+                if bend > WALK_THROUGH:
+                    stretches.append([])
+            stretches[-1].append(i)
+            prev, heading = p, h
+        return [s for s in stretches if s]
+
     @staticmethod
     def _next_heading(legs, i: int, yaw: float) -> float:
         """The heading the body walks on in from ``legs[i]``: toward the next of ``legs`` farther
@@ -621,23 +643,27 @@ class HumanoidPlugin(MachinePlugin):
         if nav is None:
             self.fail(f"{self.entity} has no navigator to walk to {what} with")
         if while_walking is not None and via:
-            # Carrying along a way: leg by leg, turning on the spot at a carrying pace between them,
-            # so what it carries in front stays over the way it walks rather than swinging out of
-            # it round a corner the body turns at a carrying pace while walking on.
+            # Carrying along a way: walked through where it bends by WALK_THROUGH or less, the body
+            # turning at a carrying pace as it walks on; at a sharper corner it comes to rest and
+            # turns on the spot, so what it carries in front stays over the way it walks rather
+            # than swinging out of it round the corner.
             legs = [*via, (float(stand[0]), float(stand[1]))]
-            for i, point in enumerate(legs):
+            for k, stretch in enumerate(self._stretches(legs)):
+                point = legs[stretch[0]]
                 x, y, _ = self.body.root()
-                if i and math.hypot(point[0] - x, point[1] - y) > 0.05:
+                if k and math.hypot(point[0] - x, point[1] - y) > 0.05:
                     yield from self._come_to_rest(what, while_walking)
                     yield from self._turn(
                         math.atan2(point[1] - y, point[0] - x),
                         while_walking,
-                        then=self._next_heading(legs, i, yaw),
+                        then=self._next_heading(legs, stretch[0], yaw),
                         toward=point,
                         back_max=back_max,
                         long_way=long_way,
                     )
-                yield from self._leg(nav, point, what, while_walking)
+                yield from self._leg(
+                    nav, legs[stretch[-1]], what, while_walking, [legs[i] for i in stretch[:-1]]
+                )
         else:
             yield from self._leg(nav, stand, what, while_walking, via)
         if while_walking is not None:
