@@ -49,6 +49,7 @@ from .analysis import Analysis
 from .compose import rasterize
 from .settings import FORMAT_VERSION, SHELL_P95
 from .store import (
+    INDIRECT_DIVISOR,
     LUMA,
     EntityMaps,
     _down,
@@ -262,7 +263,8 @@ def finish(analysis: Analysis, dirs: list[Path]) -> tuple[dict[str, bytes], dict
     files, entries = {}, {}
     for name, m in raw.items():
         indirect = np.clip(m["light"] - m["direct"], 0, None) @ LUMA
-        maps = EntityMaps(light=m["light"], indirect=_down(indirect, 2), ao=_down(m["ao"] @ LUMA, 2),
+        maps = EntityMaps(light=m["light"], indirect=_down(indirect, INDIRECT_DIVISOR),
+                          ao=_down(m["ao"] @ LUMA, INDIRECT_DIVISOR),
                           uv=m["uv"], geom=export.entities[name].geom, flip=m["flip"])
         f, entry = encode_entity(name, maps)
         entry["class"] = m["class"]

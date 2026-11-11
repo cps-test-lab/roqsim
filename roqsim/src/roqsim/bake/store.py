@@ -24,8 +24,8 @@ A bake is a directory (``<world>.bake/``) committed with the world:
     ``chroma = png / 255 * 3``, so ``light_rgb = light * chroma`` (chroma's luminance is 1).
 
 ``<entity>.indirect.png``
-    At half the resolution: the indirect light's luminance (greyscale channel, sRGB-encoded,
-    ``* indirect_scale``) and the ambient occlusion (alpha, linear, 1 = open). What a physically based
+    At a quarter of the resolution (it varies slowly, and the difference of two passes is the noisiest
+    map): the indirect light's luminance (greyscale channel, sRGB-encoded, ``* indirect_scale``) and the ambient occlusion (alpha, linear, 1 = open). What a physically based
     renderer, which does direct light and shadows itself, takes as its emission and occlusion inputs.
 
 ``<entity>.uv.npz``
@@ -52,7 +52,7 @@ BAKE_JSON = "bake.json"
 UV_SCALE = 65535.0
 #: The chroma map's and the indirect map's resolution, as a divisor of the light map's.
 CHROMA_DIVISOR = 8
-INDIRECT_DIVISOR = 2
+INDIRECT_DIVISOR = 4
 LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
 
 
@@ -75,8 +75,8 @@ class EntityMaps:
     """One entity's maps as arrays, rows bottom first (row ``r`` is ``v = (r + 0.5) / size``)."""
 
     light: np.ndarray  # (S, S, 3) float32, linear, before the exposure
-    indirect: np.ndarray  # (S/2, S/2) float32
-    ao: np.ndarray  # (S/2, S/2) float32
+    indirect: np.ndarray  # (S/4, S/4) float32
+    ao: np.ndarray  # (S/4, S/4) float32
     uv: np.ndarray  # (n, 3, 2) float32
     geom: np.ndarray  # (n,) int32
     flip: np.ndarray  # (n,) bool

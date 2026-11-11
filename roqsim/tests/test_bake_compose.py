@@ -63,8 +63,8 @@ def synthetic_bake(world, light=1.0, exposure=1.0):
         s = ent.size
         maps = EntityMaps(
             light=np.full((s, s, 3), light, np.float32),
-            indirect=np.zeros((s // 2, s // 2), np.float32),
-            ao=np.ones((s // 2, s // 2), np.float32),
+            indirect=np.zeros((s // 4, s // 4), np.float32),
+            ao=np.ones((s // 4, s // 4), np.float32),
             uv=grid_uv(len(ent.pos)),
             geom=ent.geom,
             flip=np.zeros(len(ent.pos), bool),
