@@ -113,7 +113,13 @@ help:  ## Show this help
 
 .PHONY: venv
 venv:  ## Create .venv (--system-site-packages) and install packages + dev tooling
-	python3 -m venv --system-site-packages $(VENV)
+	# A Python without ensurepip (Debian's, without python3-venv) cannot create a venv with pip in
+	# it; with --system-site-packages the venv still sees the system's pip, which then installs the
+	# venv's own.
+	python3 -m venv --system-site-packages $(VENV) || { \
+		echo "venv: no ensurepip here; creating $(VENV) without pip and installing pip with the system's"; \
+		python3 -m venv --system-site-packages --without-pip --clear $(VENV) && \
+		$(PY) -m pip install --upgrade pip; }
 	$(PIP) install --upgrade pip
 	# Install PyTorch from the CPU wheel index first. roqsim_quadruped/roqsim_humanoid depend on
 	# torch, and the default PyPI wheel drags in multi-GB CUDA libraries this MuJoCo/EGL sim never uses
@@ -154,8 +160,17 @@ build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
 		echo "ROS not sourced; skipping colcon build."; \
 	fi
 
+# The interpreter `make test` runs, made by `make venv` where it does not exist yet -- a fresh
+# checkout tests with one command. A PY given on the command line that does not exist fails.
+.PHONY: venv-ready
+venv-ready:
+	@if [ ! -x "$(PY)" ] && ! command -v "$(PY)" >/dev/null 2>&1; then \
+		if [ "$(PY)" = "$(VENV)/bin/python" ]; then $(MAKE) venv; \
+		else echo "make test: PY=$(PY) does not exist"; exit 1; fi; \
+	fi
+
 .PHONY: test
-test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
+test: venv-ready  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
 	$(PYTEST) $(PKGS) tools/tests -q -rs $(XDIST)
 	@if [ -n "$$ROS_DISTRO" ]; then \
 		echo "ROS sourced -> building ros2_ws and running its tests"; \
