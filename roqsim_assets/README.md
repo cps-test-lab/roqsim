@@ -124,7 +124,8 @@ proxy (group 3) or a hidden part (group 4, alpha 0) may lie where it likes, and 
 back or down on the floor are out of sight. Boxes, planes, cylinder ends and meshes (outward by their
 winding) are compared face by face; cylinders and capsules on one axis and spheres on one centre, of
 one radius, by their curved surface. A touching pair no rule decides -- an ellipsoid, a sphere against
-a capsule of its radius, a heightfield -- raises `UncomparableGeoms` rather than passing. Any package
+a capsule of its radius, two capsules of one radius meeting end on end at an angle, a heightfield --
+raises `UncomparableGeoms` rather than passing. Any package
 can call the function in a test over its own props and worlds.
 
 ## Props: reusing another prop's mesh (hierarchical props)

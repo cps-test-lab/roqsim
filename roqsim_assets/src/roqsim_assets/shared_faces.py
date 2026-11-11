@@ -21,7 +21,8 @@ where it likes. The remedy for a pair found is to inset the touching part by abo
 sits just inside the other; a render cannot show the difference.
 
 A pair whose bounds touch and that no rule above decides is not passed: a sphere against a capsule
-of the same radius (its round end), an ellipsoid against a sphere, capsule or ellipsoid, and any
+of the same radius (its round end), two capsules of one radius on different axes meeting end on end
+(an elbow), an ellipsoid against a sphere, capsule or ellipsoid, and any
 heightfield or SDF geom. :func:`shared_faces` raises :class:`UncomparableGeoms` naming each such
 pair, after comparing everything else.
 """
@@ -221,6 +222,29 @@ def _clip(subject: np.ndarray, clip: np.ndarray) -> np.ndarray:
     return out
 
 
+def _within(faces, lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The faces whose bounds reach into the box ``lo``..``hi``: only they can meet the other
+    geom's, and keeping the rest out keeps the pairwise comparison of two large meshes small."""
+    tri, n = faces
+    keep = np.all(tri.min(1) <= hi + TOL, axis=1) & np.all(tri.max(1) >= lo - TOL, axis=1)
+    return tri[keep], n[keep]
+
+
+#: Faces of one geom compared against all of the other's at once: bounds the memory two large
+#: meshes take to a few rows of their pairwise comparison.
+_CHUNK = 1024
+
+
+def _candidates(na, da, shown, nb, db):
+    """The face pairs (i, j) that face the same way in one plane, the first face shown."""
+    for start in range(0, len(na), _CHUNK):
+        rows = slice(start, start + _CHUNK)
+        same = (na[rows] @ nb.T > 1 - 1e-9) & shown[rows, None]
+        near = np.abs(da[rows, None] - db[None, :]) <= TOL
+        for i, j in zip(*np.nonzero(same & near), strict=True):
+            yield start + i, j
+
+
 def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
     """Where two geoms show an outward face each in one plane, the same way, over a shared area:
     (centre, normal, area) of the largest such plane, or None."""
@@ -228,11 +252,9 @@ def _flat_hit(fa, fb) -> tuple[np.ndarray, np.ndarray, float] | None:
     if not len(ta) or not len(tb):
         return None
     shown = ~((na[:, 2] < -1 + 1e-9) & (np.abs(ta[:, :, 2]).max(1) <= TOL))  # down on the floor
-    same = (na @ nb.T > 1 - 1e-9) & shown[:, None]
     da, db = np.einsum("ij,ij->i", na, ta[:, 0]), np.einsum("ij,ij->i", nb, tb[:, 0])
-    near = np.abs(da[:, None] - db[None, :]) <= TOL
     planes: dict[tuple, list] = {}
-    for i, j in zip(*np.nonzero(same & near), strict=True):
+    for i, j in _candidates(na, da, shown, nb, db):
         a, b, n = ta[i], tb[j], na[i]
         u = (a[1] - a[0]) / np.linalg.norm(a[1] - a[0])
         basis = np.c_[u, np.cross(n, u)]
@@ -284,13 +306,37 @@ def _type_name(t: _G) -> str:
     return t.name.removeprefix("mjGEOM_").lower()
 
 
-def _uncomparable(model: mujoco.MjModel, g: int, h: int) -> str | None:
+def _ends(data: mujoco.MjData, model: mujoco.MjModel, g: int) -> list[np.ndarray]:
+    """The centres of a capsule's two round ends."""
+    axis = data.geom_xmat[g].reshape(3, 3)[:, 2] * model.geom_size[g][1]
+    return [data.geom_xpos[g] + axis, data.geom_xpos[g] - axis]
+
+
+def _uncomparable(model: mujoco.MjModel, data: mujoco.MjData, g: int, h: int) -> str | None:
     """Why no rule here decides geoms ``g`` and ``h``, or None when one does."""
     tg, th = _G(int(model.geom_type[g])), _G(int(model.geom_type[h]))
     for t in (tg, th):
         if t not in _FLAT and t not in _CURVED:
             return f"geom type {_type_name(t)} is not compared"
-    if tg not in _CURVED or th not in _CURVED or tg == th != _G.mjGEOM_ELLIPSOID:
+    if tg == th == _G.mjGEOM_CAPSULE:
+        # Coaxial capsules are compared by their sides; two on different axes meeting end on end
+        # with one radius (an elbow) show both round ends over one patch of a sphere.
+        ag = data.geom_xmat[g].reshape(3, 3)[:, 2]
+        ah = data.geom_xmat[h].reshape(3, 3)[:, 2]
+        if (
+            abs(model.geom_size[g][0] - model.geom_size[h][0]) <= TOL
+            and abs(abs(ag @ ah) - 1) > 1e-9
+            and any(
+                np.linalg.norm(p - q) <= TOL
+                for p in _ends(data, model, g)
+                for q in _ends(data, model, h)
+            )
+        ):
+            return (
+                "two capsules of one radius meeting end on end: their round ends are not compared"
+            )
+        return None
+    if tg not in _CURVED or th not in _CURVED or tg == th == _G.mjGEOM_SPHERE:
         return None
     if {tg, th} == {_G.mjGEOM_SPHERE, _G.mjGEOM_CAPSULE}:
         if abs(model.geom_size[g][0] - model.geom_size[h][0]) > TOL:
@@ -329,7 +375,7 @@ def shared_faces(model: mujoco.MjModel, data: mujoco.MjData | None = None) -> li
     for g, h in combinations(shown, 2):
         if np.any(box[g][0] > box[h][1] + TOL) or np.any(box[h][0] > box[g][1] + TOL):
             continue
-        why = _uncomparable(model, g, h)
+        why = _uncomparable(model, data, g, h)
         if why is not None:
             skipped.append((_name(model, g), _name(model, h), why))
             continue
@@ -345,7 +391,8 @@ def shared_faces(model: mujoco.MjModel, data: mujoco.MjData | None = None) -> li
         for k in (g, h):
             if k not in flat:
                 flat[k] = _faces(model, data, k)
-        hit = _flat_hit(flat[g], flat[h])
+        lo, hi = np.maximum(box[g][0], box[h][0]), np.minimum(box[g][1], box[h][1])
+        hit = _flat_hit(_within(flat[g], lo, hi), _within(flat[h], lo, hi))
         if hit is not None:
             at, n, area = hit
             found.append(

@@ -151,6 +151,29 @@ def test_a_sphere_against_a_capsule_of_its_radius_is_not_passed():
     assert [(f.first, f.second) for f in raised.value.found] == [("a", "b")]
 
 
+def test_two_capsules_meeting_end_on_end_at_an_angle_are_not_passed():
+    elbow = (
+        '<geom name="run" type="capsule" size="0.05" fromto="0 0 1 1 0 1"/>'
+        '<geom name="rise" type="capsule" size="0.05" fromto="1 0 1 1 1 1"/>'
+    )
+    with pytest.raises(UncomparableGeoms, match="end on end"):
+        shared_faces(_model(elbow))
+    thinner = elbow.replace('size="0.05" fromto="1 0 1', 'size="0.04" fromto="1 0 1')
+    assert shared_faces(_model(thinner)) == []
+
+
+def test_the_pose_given_is_the_one_compared():
+    model = _model(
+        CUBE + '<body name="lid" pos="1 0 0"><freejoint/>'
+        '<geom name="b" type="box" size="0.1 0.1 0.05" pos="0 0 0.15"/></body>'
+    )
+    assert shared_faces(model) == []  # qpos0: the lid stands a metre off
+    data = mujoco.MjData(model)
+    data.qpos[:3] = (0.15, 0, 0)
+    mujoco.mj_kinematics(model, data)
+    assert [(p.first, p.second) for p in shared_faces(model, data)] == [("a", "b")]
+
+
 def test_an_ellipsoid_touching_another_round_part_is_not_passed_and_one_apart_is_ignored():
     touching = '<geom type="ellipsoid" size="0.1 0.1 0.2"/><geom type="sphere" size="0.1"/>'
     with pytest.raises(UncomparableGeoms, match="ellipsoid"):

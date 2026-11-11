@@ -27,8 +27,8 @@ prop is placed:
   one curved surface, flicker in every render as the camera moves (z-fighting), while a still
   picture often looks right. Each such pair is a FAIL naming where they touch; the remedy is to
   inset the touching part by about 1 mm, so its face sits just inside the other. A pair the check
-  cannot compare (an ellipsoid, a sphere against a capsule's round end, a heightfield) is a FAIL
-  too: an unverified pair is not a passed one. The rules are :mod:`roqsim_assets.shared_faces`.
+  cannot compare (an ellipsoid, a round capsule end against a sphere or another capsule's end, a
+  heightfield) is a FAIL too: an unverified pair is not a passed one. The rules are :mod:`roqsim_assets.shared_faces`.
 
 Also checks scale plausibility, up-axis (is it standing?), leftover download intermediates, and that a
 redistributable ``CREDITS.txt`` is present, which under CC BY also says what was changed.
