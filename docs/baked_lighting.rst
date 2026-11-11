@@ -99,7 +99,9 @@ What is baked, what moves
 
 Contacts and rays are those of the unbaked world: each baked geom keeps colliding and every ray still
 meets it (it moves to geom group 3), and its bake is drawn by a visual mesh in the window group
-(``presence.WINDOW_GEOM_GROUP``), which rays pass. A camera that draws only chosen groups
+(``presence.WINDOW_GEOM_GROUP``), which rays pass. The visual mesh is recorded as drawing its geom
+(``roqsim.bake.compose.baked_sources``), so a segmentation camera's ``geoms:`` class that names the geom
+labels what the camera sees of it. A camera that draws only chosen groups
 (``geomgroup:``) sees the bake only if group 5 is among them.
 
 Where the light comes from
@@ -130,7 +132,10 @@ consumer (``roqsim.bake.compose``: light map times the model's colour, divided b
 light for each texel's normal, composed in memory). A physically based renderer takes the indirect
 light and the occlusion as its emission and occlusion inputs and does the direct light itself -- for
 MuJoCo's Filament renderer, a material's ``emissive`` and ``occlusion`` textures over the same
-lightmap UVs -- and a glTF export can carry the same files: each is an adapter over this format, not a
+lightmap UVs; as a mesh carries one UV set, the adapter also resamples the surface colour into that
+layout, as the classic renderer's composition does, multiplies the indirect light by it and takes its
+colour from the chroma map, and lights directly with the world's lights where they stand for the baked
+sources -- and a glTF export can carry the same files: each is an adapter over this format, not a
 rebake. The format is documented in ``python -m pydoc roqsim.bake.store``.
 
 Only the classic renderer (``mujoco``) draws a baked world today. A camera whose renderer does not

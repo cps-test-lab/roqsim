@@ -124,6 +124,10 @@ def test_a_fitting_bake_is_composed(tmp_path):
         # Its bake is drawn in the window group: drawn, passed by rays, colliding with nothing.
         assert m.geom_group[visual] == WINDOW_GEOM_GROUP and m.geom_contype[visual] == 0
         assert m.geom_conaffinity[visual] == 0
+        # And it is recorded as drawing the geom, for what labels a geom by its name.
+        from roqsim.bake.compose import baked_sources
+
+        assert baked_sources(m)[visual] == wall
         # The run-time rig replaces the world's lights: a key and three fills, no headlight.
         assert m.nlight == 4 and m.vis.headlight.active == 0
         assert m.light_castshadow[0] and not any(m.light_castshadow[1:])
@@ -283,5 +287,22 @@ def test_a_renderer_that_does_not_draw_the_bake_is_refused_at_load(tmp_path):
         service = RenderService(engine.ctx.model, renderer="filament")
         service.view("c", camera=-1, width=32, height=24)
         service.check()
+    finally:
+        engine.shutdown()
+
+
+def test_a_bake_missing_a_map_draws_the_world_unbaked_and_whole(tmp_path):
+    """A map that cannot be read leaves the world as it was, drawn unbaked with a warning; nothing of
+    the bake is half composed into it."""
+    world = write_world(tmp_path)
+    root = synthetic_bake(world)
+    next(root.glob("shell.light.png")).unlink()
+    engine = loaded(world)
+    try:
+        assert codes(engine) == ["bake_stale"]
+        assert "cannot be read" in engine.ctx.conditions[0]["message"]
+        m = engine.ctx.model
+        assert not any(m.geom(i).name.endswith("__baked") for i in range(m.ngeom))
+        assert all(m.geom_group[i] != 3 or m.geom(i).name == "collider" for i in range(m.ngeom))
     finally:
         engine.shutdown()

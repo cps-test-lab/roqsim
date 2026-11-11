@@ -58,7 +58,7 @@ schema)::
       lights: auto          # auto (fixtures, else MJCF lights, else the default) | a list of lights
       emitters: []          # lamps no material declares: [{match: glob, strength_w_m2: 20.0}]
       exclude: []           # static geoms (glob on the name) left unbaked, lit live
-      occluders: ["K/*"]    # the moving geoms (globs) whose shadow is baked; when not set, what
+      occluders: null       # the moving geoms (globs) whose shadow is baked; when not set, what
                             #   hangs on a joint to the world does and what floats free does not
       moving_shadows: true  # the key light throws the shadow of what moves (off for software GL)
       max_mb: 5.0           # the most the bake may take on disk; roqsim bake fails above it

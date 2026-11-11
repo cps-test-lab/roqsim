@@ -15,7 +15,8 @@ What the spec gets, per baked geom:
 
 * a visual mesh of the same surface carrying the lightmap UVs and its entity's composed texture, in
   geom group :data:`roqsim.presence.WINDOW_GEOM_GROUP` (drawn, passed by every ray, colliding with
-  nothing), named ``<geom>__baked``;
+  nothing), named ``<geom>__baked`` and recorded as drawing it (:data:`DRAWN_FOR_TEXT`,
+  :func:`baked_sources`), so what labels a geom by its name labels its drawn surface too;
 * the geom itself moved to group 3: it still collides and every ray still meets it, and it is no
   longer drawn by default, so sensing and contacts are those of the unbaked world;
 * the light sources glow (their material's emission 1); the world's lights are replaced by the rig;
@@ -25,6 +26,7 @@ What the spec gets, per baked geom:
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -37,7 +39,7 @@ from PIL import Image, ImageDraw
 from .. import presence
 from .analysis import Analysis
 from .settings import RIG, fill_direction, rig_light
-from .store import EntityMaps, linear_to_srgb, read_entity, resize, srgb_to_linear
+from .store import BakeError, EntityMaps, linear_to_srgb, read_entity, resize, srgb_to_linear
 
 #: Entities composed at once.
 COMPOSE_THREADS = 8
@@ -53,6 +55,32 @@ PAD_TEXELS = 8
 
 class ComposeError(Exception):
     """A bake that does not fit the world it is drawn into."""
+
+
+#: The model text element naming, for each visual mesh a bake is drawn by, the geom it draws (as
+#: ``{visual name: [body name, index among the body's geoms]}``, JSON): what labels a geom by its name
+#: (a segmentation camera's ``geoms:`` class) reads to label its drawn surface the same way.
+DRAWN_FOR_TEXT = "roqsim:baked_drawn_for"
+
+
+def baked_sources(model: mujoco.MjModel) -> dict[int, int]:
+    """The geom each visual mesh of a baked world draws, ``{visual geom id: source geom id}``; empty
+    for a world drawn unbaked."""
+    tid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_TEXT, DRAWN_FOR_TEXT)
+    if tid < 0:
+        return {}
+    adr, size = int(model.text_adr[tid]), int(model.text_size[tid])
+    raw = bytes(model.text_data[adr : adr + size]).split(b"\0", 1)[0]
+    out = {}
+    for visual, (body, index) in json.loads(raw.decode()).items():
+        vid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, visual)
+        bid = 0 if body == "world" else mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)
+        if vid < 0 or bid < 0 or index >= int(model.body_geomnum[bid]):
+            raise ValueError(
+                f"{DRAWN_FOR_TEXT}: {visual!r} names {body!r}'s geom {index}, not in the model"
+            )
+        out[vid] = int(model.body_geomadr[bid]) + int(index)
+    return out
 
 
 def _spec_geom(spec: mujoco.MjSpec, rec) -> mujoco.MjsGeom:
@@ -356,11 +384,15 @@ def compose(
     stored = meta["geoms"]
     exposure = float(meta["exposure"])
     stats = {"entities": {}, "geoms": 0, "missing": []}
+    drawn_for: dict[str, list] = {}
     replaced: dict[str, mujoco.MjsGeom] = {}
     # What each entity draws, matched to the world as it loads.
     jobs = []
     for ename, entry in meta["entities"].items():
-        maps = read_entity(root, ename, entry)
+        try:
+            maps = read_entity(root, ename, entry)
+        except (BakeError, OSError) as err:
+            raise ComposeError(f"{ename}'s maps cannot be read: {err}") from None
         cur = export.entities.get(ename)
         n = len(maps.uv)
         idx = np.full(n, -1, np.int64)
@@ -387,6 +419,17 @@ def compose(
             maps.light, maps.indirect, maps.ao, maps.uv[keep], maps.geom[keep], maps.flip[keep]
         )
         jobs.append((ename, cur, sub, idx[keep], keep, present_geoms))
+    # Every geom it changes, found before the spec is changed: a bake that does not fit fails here,
+    # with the world as it was, never half composed.
+    for *_, present_geoms in jobs:
+        for _gi, rec, _mine in present_geoms:
+            if rec.key not in replaced:
+                replaced[rec.key] = _spec_geom(spec, rec)
+    emitters = []
+    for i, src in enumerate(meta.get("light", {}).get("emitters", [])):
+        rec = by_key.get(src["geom"])
+        if rec is not None and rec.kind == "emitter":
+            emitters.append((i, src, rec, _spec_geom(spec, rec)))
 
     # Composed side by side: the work is numpy's, which runs outside the interpreter's lock.
     def one(job):
@@ -461,17 +504,12 @@ def compose(
                 quat=[1, 0, 0, 0],
             )
             visual.castshadow = False
-            if rec.key not in replaced:
-                replaced[rec.key] = _spec_geom(spec, rec)
+            drawn_for[gname] = [rec.body, rec.index_in_body]
             stats["geoms"] += 1
     for g in replaced.values():
         g.group = 3  # still collides, still met by every ray; drawn as its bake
     # The light sources glow, in their own colour or the one the world named.
-    for i, src in enumerate(meta.get("light", {}).get("emitters", [])):
-        rec = by_key.get(src["geom"])
-        if rec is None or rec.kind != "emitter":
-            continue
-        g = _spec_geom(spec, rec)
+    for i, src, rec, g in emitters:
         rgba = src.get("display_rgba") or export.materials[rec.material]["rgba"]
         m = spec.add_material(
             name=f"{prefix}_emitter_{i}",
@@ -484,6 +522,10 @@ def compose(
         g.material = m.name
         g.castshadow = False
     _rig(spec, moving_shadows, prefix)
+    for text in list(spec.texts):
+        if text.name == DRAWN_FOR_TEXT:
+            spec.delete(text)
+    spec.add_text(name=DRAWN_FOR_TEXT, data=json.dumps(drawn_for, sort_keys=True))
     stats["seconds"] = round(time.perf_counter() - t0, 3)
     stats["textures_bytes_gpu"] = int(
         sum(v["size"] ** 2 * 3 * 4 / 3 for v in stats["entities"].values())
