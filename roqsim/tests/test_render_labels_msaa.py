@@ -3,8 +3,8 @@
 """MuJoCo's renderer labels a pixel with the geom drawn at its centre, also under MSAA.
 
 The labels are id colours, and a multisampled buffer averages a pixel's samples when it is read:
-at an edge two geoms' ids would blend into a third geom's, or past the last one, which was a wrong
-label or an index out of range. The label pass draws single-sampled instead.
+at an edge two geoms' ids would blend into a third geom's, or past the last one: a wrong label, or an
+index out of range. The label pass draws single-sampled instead.
 """
 
 from __future__ import annotations

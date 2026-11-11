@@ -386,8 +386,7 @@ class FilamentRenderer(Renderer):
     # -- lifecycle -------------------------------------------------------------------------------
 
     def open(self, scene: SceneDescription) -> None:
-        self.device, _log = probe()
-        check_device(self.device, bool(self.settings.get("software", False)))
+        # The bindings first: without them the probe's child fails as well, for this reason.
         try:
             import mujoco.studio.window  # noqa: F401, PLC0415 -- registers Filament's materials
             from mujoco import mjrf  # noqa: PLC0415
@@ -396,6 +395,8 @@ class FilamentRenderer(Renderer):
                 f"filament: MuJoCo's Filament bindings are not installed ({err}); they come with "
                 "the full 'mujoco' package (mujoco-studio)"
             ) from err
+        self.device, _log = probe()
+        check_device(self.device, bool(self.settings.get("software", False)))
         self._mjrf = mjrf
         model = scene.model
         self._private = bool(scene.private_model)
