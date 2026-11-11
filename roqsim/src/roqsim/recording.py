@@ -35,7 +35,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
+from .capture import (
+    STATE_SPEC,
+    STATE_SPEC_WITHOUT_PLASTIC,
+    RecordingError,
+    RecordingNotFoundError,
+    record_dtype,
+)
 from .document import check_version
 from .mcap_format import (
     CHANNEL_CLOCK,
@@ -426,7 +432,14 @@ class Recording:
         told the world does not match when the world is fine and the format is not.
         """
         spec = int(self.meta.get("state_spec", 0))
-        if spec != STATE_SPEC:
+        plastic = mujoco.mj_stateSize(model, int(mujoco.mjtState.mjSTATE_PLASTIC))
+        if spec == STATE_SPEC_WITHOUT_PLASTIC and plastic:
+            raise RecordingError(
+                f"{self.path} was recorded without the plastic state, and {ref} carries {plastic} "
+                "values of it (an elastic rope's reference frames, or an elasto-plastic spring's or "
+                "flex's yield), so it cannot be replayed faithfully. Re-record it."
+            )
+        if spec not in (STATE_SPEC, STATE_SPEC_WITHOUT_PLASTIC):
             extra = ""
             if spec == int(mujoco.mjtState.mjSTATE_FULLPHYSICS):
                 extra = (

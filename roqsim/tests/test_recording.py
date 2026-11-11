@@ -28,6 +28,7 @@ from roqsim import capture, exit_status
 from roqsim.capture import (
     STATE_FIELDS,
     STATE_SPEC,
+    STATE_SPEC_WITHOUT_PLASTIC,
     CaptureRate,
     StateRecorder,
     camera_from_row,
@@ -671,10 +672,46 @@ def test_a_fullphysics_recording_is_refused_not_rendered(tmp_path, moving):
     with pytest.raises(RecordingError) as err:
         opened._check_size(model, "w")
     message = str(err.value)
-    assert "8223" in message, "the offending spec must be named"
+    assert str(int(mujoco.mjtState.mjSTATE_FULLPHYSICS)) in message, (
+        "the offending spec must be named"
+    )
     assert "frozen at its compile-time pose" in message, "and what it would have done"
     # Must NOT blame the world: the model dimensions are identical, only the format differs.
     assert "does not match this recording" not in message
+
+
+_ROPE_XML = """
+<mujoco><option integrator="discrete"/><worldbody><body name="h" pos="0 0 1">
+  <flexcomp name="rope" type="grid" count="5 1 1" spacing=".02 .02 .02" dim="1" mass=".05"
+            radius=".003"><elasticity young="1e6"/><edge equality="true"/><pin id="0 1"/></flexcomp>
+</body></worldbody></mujoco>
+"""
+
+
+@pytest.mark.parametrize("rope", [False, True], ids=["no_plastic_state", "elastic_rope"])
+def test_a_recording_without_the_plastic_state_is_read_only_where_there_is_none(
+    tmp_path, moving, rope
+):
+    """A recording written before the spec carried ``plastic`` has the same layout where a model
+    has no plastic state, so it replays there; an elastic rope has some, so it is refused."""
+    model, data = moving
+    if rope:
+        model = mujoco.MjModel.from_xml_string(_ROPE_XML)
+        data = mujoco.MjData(model)
+        assert mujoco.mj_stateSize(model, int(mujoco.mjtState.mjSTATE_PLASTIC)) > 0
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(ctx, tmp_path / "older.mcap", snap_fps(25, 0.002), world="w")
+    rec._provenance["state_spec"] = STATE_SPEC_WITHOUT_PLASTIC
+    for _ in range(50):
+        mujoco.mj_step(model, data)
+        rec.sample(ctx)
+    rec.close()
+    opened = open_recording(tmp_path / "older.mcap")
+    if rope:
+        with pytest.raises(RecordingError, match="recorded without the plastic state"):
+            opened._check_size(model, "w")
+    else:
+        opened._check_size(model, "w")
 
 
 # -- selecting a moment ----------------------------------------------------------------------------
