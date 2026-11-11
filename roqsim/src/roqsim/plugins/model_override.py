@@ -235,7 +235,7 @@ _ALLOWED: dict[str, FieldSpec] = {
                 "acceleration under 100 N was -4.81 m/s^2, i.e. correct for 20 kg"
             ),
         ),
-        # The flex rows were measured on MuJoCo 3.14.0 (tests/test_flex_material.py). A flex's
+        # The flex rows were measured on MuJoCo 4.0.0 (tests/test_flex_material.py). A flex's
         # Young's modulus and Poisson's ratio are not here: MuJoCo bakes them into the compiled
         # stiffness, so they are set before compile by the flex_material plugin (_flex_material,
         # "baked at compile").

@@ -1295,9 +1295,8 @@ them.
 What MuJoCo does with it
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Each of these was measured on MuJoCo 3.14.0 and rechecked on 4.0.0, the version range the packages
-pin, where the modes of the block and the pad moved by less than 1 % (MuJoCo 4.0 corrected the Lame
-constants of a solid flex); "the block" and "the pad" are the two models above.
+Each of these was measured on MuJoCo 4.0.0, the version range the packages pin, and "the block"
+and "the pad" are the two models above.
 
 **Numerical damping under** ``discrete``. The integrator damps each elastic mode as if the stated
 ``<elasticity damping>`` were one timestep larger: mode *i* rings down with damping ratio ``(damping

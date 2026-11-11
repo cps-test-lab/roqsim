@@ -45,9 +45,9 @@ CASES = {
     # reaches -55 deg below the horizon, and the arms hang inside it.
     "unitree_g1": (0.002, "robot.mid360.livox_mid360", {"base_link": 777}),
     # The same mount riding the waist chain: shoulders, wrists and grippers below the head. The
-    # finger counts move between MuJoCo releases: mj_multiRay's culling misses a mesh that mj_ray
-    # hits on a fraction of the rays (132 of this fan's 20160 under 3.14, 112 under 4.0, a different
-    # set each), most of them on the fingers.
+    # finger counts are the ones mj_multiRay gives, whose culling misses a mesh that mj_ray hits on
+    # a fraction of the rays (112 of this fan's 20160, most of them on the fingers), so they move
+    # when a MuJoCo release changes that set.
     "unitree_g1_dex1": (
         0.002,
         "robot.mid360.livox_mid360",

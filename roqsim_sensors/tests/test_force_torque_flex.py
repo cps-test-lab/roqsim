@@ -1,6 +1,6 @@
 """A flex's contacts reach the ``force_torque`` reading, which MuJoCo's own site sensor leaves out.
 
-The first half measures MuJoCo 3.14 itself, on the smallest scenes that show it: a rigid probe
+The first half measures MuJoCo 4.0 itself, on the smallest scenes that show it: a rigid probe
 pressed into a block, and a soft cantilever hanging off a sensed mount. A contact with a flex never
 reaches MuJoCo's site sensor; the flex's weight, its elastic reaction and a force applied to one of
 its vertices do. These are the guard on the correction: a MuJoCo that starts transmitting the contact
@@ -101,9 +101,8 @@ def _hang(support: bool, push: float = 0.0):
     """The cantilever stepped until it is at rest: every vertex slower than 1 mm/s for 0.5 s,
     which a turning point of the swing, where all of them stop at once, is not.
 
-    At rest, not after a fixed time: how long the beam rings depends on its material, which MuJoCo
-    4.0 made softer than 3.14 did for the same young and poisson (``roqsim.flex``). Propped up, its
-    vertices on the support keep a jitter of about 0.1 mm/s under 4.0, so the bar is above that.
+    At rest, not after a fixed time: how long the beam rings depends on its material. Propped up,
+    its vertices on the support keep a jitter of about 0.1 mm/s, so the bar is above that.
     """
     model = mujoco.MjModel.from_xml_string(_cantilever(support))
     data = mujoco.MjData(model)

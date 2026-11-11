@@ -217,9 +217,9 @@ STATE_SPEC = int(
     | mujoco.mjtState.mjSTATE_PLASTIC
 )
 
-#: The spec of a recording written before :data:`STATE_SPEC` carried ``plastic``. Its layout is
+#: :data:`STATE_SPEC` without ``plastic``, the spec of an older recording. Its layout is
 #: :data:`STATE_SPEC`'s in a model whose ``plastic`` state is empty, so it is read there and refused
-#: elsewhere (:meth:`roqsim.recording.Recording` checks).
+#: elsewhere (the reader's spec check).
 STATE_SPEC_WITHOUT_PLASTIC = STATE_SPEC & ~int(mujoco.mjtState.mjSTATE_PLASTIC)
 
 #: The spec's fields in the order ``mj_getState`` packs them, recorded in the provenance so a reader

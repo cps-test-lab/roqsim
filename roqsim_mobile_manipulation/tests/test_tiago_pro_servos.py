@@ -2,9 +2,9 @@
 
 Each servo's ``kv`` is ``2 * sqrt(kp * M_jj)`` at qpos0, ``M_jj`` the diagonal of the joint-space
 inertia (``dof_M0``), as ``external/convert/build_tiago_pro_mjcf.py`` bakes it. ``dampratio`` would
-leave the damping to MuJoCo, which since 3.15 derives it from the operational-space inertia
-``1 / (M^-1)_jj``: on this arm that is a quarter of ``M_jj`` at the shoulder, and the shoulder
-overshot a step by 41 %.
+leave the damping to MuJoCo, which derives it from the operational-space inertia ``1 / (M^-1)_jj``:
+on this arm that is a quarter of ``M_jj`` at the shoulder, and the shoulder overshoots a step by
+41 %.
 """
 
 from __future__ import annotations

@@ -791,12 +791,12 @@ def add_pad_boxes(model_path: Path) -> None:
 def bake_servo_damping(model_path: Path) -> None:
     """Write each position servo's damping as ``kv``, critical against its joint's own inertia.
 
-    ``dampratio`` asks MuJoCo to derive ``kv`` at compile, and MuJoCo 3.15 changed what it derives
-    from: the operational-space inertia ``1 / (M^-1)_jj`` at qpos0, the inertia the joint feels
-    while every other joint is free. Here every other joint is a stiff servo as well, so the joint
-    feels close to the diagonal ``M_jj`` (``dof_M0``, armature included), and the derived damping
-    left the shoulders ringing: 41 % overshoot on a 0.3 rad step at ``dampratio="1"``, where damping
-    against ``M_jj`` overshoots by none. So this pass reads the model just written and replaces each
+    ``dampratio`` asks MuJoCo to derive ``kv`` at compile, from the operational-space inertia
+    ``1 / (M^-1)_jj`` at qpos0: the inertia the joint feels while every other joint is free. Here
+    every other joint is a stiff servo as well, so the joint feels close to the diagonal ``M_jj``
+    (``dof_M0``, armature included), and the derived damping leaves the shoulders ringing: 41 %
+    overshoot on a 0.3 rad step at ``dampratio="1"``, where damping against ``M_jj`` overshoots by
+    none. So this pass reads the model just written and replaces each
     servo's ``dampratio`` with ``kv = 2 * dampratio * sqrt(kp * M_jj)``.
     """
     import mujoco

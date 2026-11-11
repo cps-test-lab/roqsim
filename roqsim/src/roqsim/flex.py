@@ -405,7 +405,7 @@ def flex_label(model: mujoco.MjModel, flex_id: int) -> str:
 
 # -- the wrench a flex's contacts put into a subtree -------------------------------------------------
 #
-# MuJoCo 3.14's site force/torque sensor reads a subtree's momentum balance against its external
+# MuJoCo's site force/torque sensor reads a subtree's momentum balance against its external
 # forces, and leaves a contact with a flex out of those forces: a probe pressing a flex reads its own
 # weight alone, and a support under a hanging flex is not in the reading at all. Everything else a
 # flex does is already in it -- its weight, its inertia, the elastic forces on its vertex DOFs, which

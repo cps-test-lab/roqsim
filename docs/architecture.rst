@@ -331,7 +331,7 @@ at compile: a typo here is otherwise invisible.
 so a world asking for less gets the floor while its own configuration still reads the tighter value.
 A time constant below the floor is therefore refused, naming the floor and the rule that applies,
 because tightening a fit is exactly the reason to reach for this key and a silent clamp turns the
-attempt into a wrong conclusion about the solver. MuJoCo imposes it in two ways, measured on 3.14:
+attempt into a wrong conclusion about the solver. MuJoCo imposes it in two ways, measured on 4.0:
 
 * Under ``euler``, ``rk4``, ``implicit`` and ``implicitfast`` the time constant itself is raised to
   ``2 * sim.timestep``. At a 2 ms step a world asking for 0.5 ms, 1 ms or 2 ms gets 4 ms and a contact
