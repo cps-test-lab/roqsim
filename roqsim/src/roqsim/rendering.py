@@ -1008,6 +1008,8 @@ class MujocoRenderer(Renderer):
         self._private = False
         self._gl = None
         self._con: mujoco.MjrContext | None = None
+        #: The single-sampled context of the label pass under MSAA (:meth:`_label_context`).
+        self._label_con: mujoco.MjrContext | None = None
         self._scene: mujoco.MjvScene | None = None
         self._atlas: _Atlas | None = None
         self._clear_geoms = False
@@ -1063,6 +1065,9 @@ class MujocoRenderer(Renderer):
         self._atlas = None
         if con is not None:
             con.free()
+        label, self._label_con = self._label_con, None
+        if label is not None:
+            label.free()
         if gl is not None:
             gl.free()
         self._scene = None
@@ -1202,17 +1207,45 @@ class MujocoRenderer(Renderer):
         if "segmentation" in request.images:
             frame.segmentation = self._segmentation(rect, flip)
 
+    def _label_context(self) -> mujoco.MjrContext:
+        """The context the label pass draws in: single-sampled.
+
+        Under MSAA the offscreen buffer averages a pixel's samples when it is read, so at an edge
+        two geoms' id colours blend into a third geom's id, or one past the last (a wrong label, or
+        an index out of range). A model drawn with MSAA (``visual/quality/offsamples``, MuJoCo's
+        default 4) therefore gets a second context for its labels, made once, whose offscreen
+        buffer is made again without samples; the model is not written. ``mjr_resizeOffscreen``
+        keeps a buffer of the size asked for as it is, so the buffer is made at another size first.
+        """
+        con = self._con
+        if con.offSamples == 0:
+            return con
+        if self._label_con is None:
+            label = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150.value)
+            width, height = int(con.offWidth), int(con.offHeight)
+            label.offSamples = 0
+            mujoco.mjr_resizeOffscreen(width, height + 1, label)
+            mujoco.mjr_resizeOffscreen(width, height, label)
+            self._label_con = label
+        return self._label_con
+
     def _flat_pass(self, rect, rgb=None, depth=None) -> None:
-        """Draw with flat ID colours, as ``mujoco.Renderer`` does for depth and segmentation."""
+        """Draw with flat ID colours, as ``mujoco.Renderer`` does for depth and segmentation; the
+        labels (*rgb*) in a single-sampled context (:meth:`_label_context`)."""
         scene = self._scene
+        con = self._label_context() if rgb is not None else self._con
         flags = scene.flags.copy()
         scene.flags[mujoco.mjtRndFlag.mjRND_SEGMENT] = True
         scene.flags[mujoco.mjtRndFlag.mjRND_IDCOLOR] = True
         try:
-            mujoco.mjr_render(rect, scene, self._con)
-            mujoco.mjr_readPixels(rgb, depth, rect, self._con)
+            if con is not self._con:
+                mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, con)
+            mujoco.mjr_render(rect, scene, con)
+            mujoco.mjr_readPixels(rgb, depth, rect, con)
         finally:
             np.copyto(scene.flags, flags)
+            if con is not self._con:
+                mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, self._con)
         self.stats["draws"] += 1
         self.stats["readbacks"] += 1
 

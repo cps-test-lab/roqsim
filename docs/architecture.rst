@@ -926,7 +926,9 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    its view (``mjv_updateCamera``), its lights (``mjv_makeLights``: the headlight follows the camera)
    and its clip planes, is drawn at the origin of the framebuffer, and its colour image is copied on
    the GPU into its tile of one atlas, read back once per batch. Depth and segmentation keep a pass
-   of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them. A camera with
+   of their own per camera, drawn with flat ID colours as ``mujoco.Renderer`` draws them; under MSAA
+   the labels are drawn in a second, single-sampled context, since a multisampled buffer blends the
+   id colours of two geoms at an edge into a third geom's id. A camera with
    its own geom groups or decorations gets a build of its own, and so does a camera asking for the
    moving bodies alone (``CameraSpec.bodies``: ``moving``), whose build takes MuJoCo's dynamic
    category only -- the bodies :func:`~roqsim.rendering.moving_bodies` marks, with no static geom, no
