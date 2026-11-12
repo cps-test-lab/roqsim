@@ -18,7 +18,7 @@ change that it does not own: the run's stop request on the context, and each con
 the controller registry. A third-party object is compared by its type alone: its insides are that
 library's bookkeeping. Not followed, because they are shared rather than the plugin's own: the
 context and its registries, the entities, other plugins, MuJoCo objects (``model``, ``data``, a
-scratch ``MjData``, a renderer), loggers, locks, threads and callables. Values are compared exactly:
+scratch ``MjData``, a renderer, a ray-cast backend), loggers, locks, threads and callables. Values are compared exactly:
 both records are taken after the same reset, so a difference is a difference, not float noise.
 
 A plugin that keeps some state across a reset on purpose is listed in :data:`EXEMPT` with the reason,
@@ -55,6 +55,7 @@ from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegist
 from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.raycast import Raycaster, RaycastService
 from roqsim.rendering import RenderService
 from roqsim.types import JointState
 
@@ -829,6 +830,9 @@ _SHARED = (
     Engine,
     # The world's render service, which every camera's view belongs to and the engine resets.
     RenderService,
+    # A ray-cast backend, which every sensor that chose it shares, and the world's raycast service.
+    Raycaster,
+    RaycastService,
     Plugin,
     Blackboard,
     EntityRegistry,

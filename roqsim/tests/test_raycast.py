@@ -223,14 +223,108 @@ def test_a_far_plane_keeps_mujocos_own_plane_rules():
 
 class _Ctx:
     def __init__(self, model, sim=None):
+        import logging
+
         self.model = model
         self.config = {"sim": sim or {}}
         self.raycast = None
+        self.conditions = []
+        self.logger = logging.getLogger("test_raycast")
 
 
-def test_a_world_that_names_no_raycaster_casts_through_the_cpu_cast(md):
+class _Gpu(raycast.Raycaster):
+    """A stand-in for a GPU backend ``auto`` may choose: the CPU cast, from 100 rays."""
+
+    auto = True
+    SETTINGS = {"auto_min_rays": raycast.Setting(100, "")}
+    refuse = None
+
+    @classmethod
+    def auto_min_rays(cls, settings):
+        return settings.get("auto_min_rays", 100)
+
+    def open(self, model):
+        if self.refuse:
+            raise RuntimeError(self.refuse)
+
+    def cast(self, model, data, origin, dirs, **kw):
+        return raycast.cast(model, data, origin, dirs, **kw)
+
+
+@pytest.fixture
+def gpu_installed(monkeypatch):
+    """``cpu`` and the stand-in ``gpu`` are the installed backends."""
+    from roqsim import registry
+
+    monkeypatch.setattr(registry, "raycaster_names", lambda: ["cpu", "gpu"])
+    real = registry.resolve_raycaster
+    monkeypatch.setattr(
+        registry,
+        "resolve_raycaster",
+        lambda ref, base_dir=None: _Gpu if ref == "gpu" else real(ref, base_dir),
+    )
+    monkeypatch.setattr(_Gpu, "refuse", None)
+    return _Gpu
+
+
+def test_the_default_is_auto_and_without_a_gpu_backend_it_casts_on_the_cpu(md, monkeypatch):
+    from roqsim import registry
+
+    monkeypatch.setattr(registry, "raycaster_names", lambda: ["cpu"])
     m, d = md
-    backend = raycast.RaycastService.of(_Ctx(m)).get(None, who="lidar robot.lidar")
+    ctx = _Ctx(m)
+    backend = raycast.RaycastService.of(ctx).get(None, who="lidar x", rays=20000, source="robot.x")
+    assert isinstance(backend, raycast.CpuRaycaster)
+    (condition,) = ctx.conditions
+    assert condition["code"] == "raycaster" and condition["source"] == "robot.x"
+    assert condition["details"]["requested"] == "auto"
+    assert condition["details"]["backend"] == "cpu"
+    assert "no ray-cast backend that auto may choose" in condition["details"]["reason"]
+
+
+def test_auto_takes_the_gpu_from_its_ray_count_and_says_why_not_below_it(md, gpu_installed):
+    m, _ = md
+    ctx = _Ctx(m)
+    service = raycast.RaycastService.of(ctx)
+    few = service.get("auto", who="lidar a", rays=50, source="a")
+    many = service.get("auto", who="lidar b", rays=500, source="b")
+    assert isinstance(few, raycast.CpuRaycaster)
+    assert isinstance(many, _Gpu)
+    assert "50 rays, fewer than the 100" in service.choices["a"]["reason"]
+    assert service.choices["b"] == {
+        "requested": "auto",
+        "backend": "gpu",
+        "rays": 500,
+        "reason": "500 rays, at least 100",
+    }
+    assert [c["details"]["backend"] for c in ctx.conditions] == ["cpu", "gpu"]
+
+
+def test_a_setting_overrides_the_ray_threshold(md, gpu_installed):
+    m, _ = md
+    service = raycast.RaycastService.of(_Ctx(m, {"raycasters": {"gpu": {"auto_min_rays": 10}}}))
+    assert isinstance(service.get("auto", who="lidar a", rays=50), _Gpu)
+
+
+def test_auto_falls_back_to_the_cpu_where_the_gpu_cannot_run_and_says_why(md, gpu_installed):
+    m, _ = md
+    gpu_installed.refuse = "no CUDA device"
+    ctx = _Ctx(m)
+    service = raycast.RaycastService.of(ctx)
+    assert isinstance(service.get(None, who="lidar a", rays=500, source="a"), raycast.CpuRaycaster)
+    assert service.choices["a"]["reason"] == "gpu: no CUDA device"
+    # Named, the same backend fails the load, naming the sensor, the backend and the reason.
+    from roqsim.plugin import PluginError
+
+    with pytest.raises(PluginError, match=r"lidar b: raycaster 'gpu' cannot run here: no CUDA"):
+        service.get("gpu", who="lidar b", rays=500)
+
+
+def test_cpu_named_casts_through_the_cpu_cast_byte_for_byte(md, gpu_installed):
+    m, d = md
+    backend = raycast.RaycastService.of(_Ctx(m, {"raycaster": "cpu"})).get(
+        None, who="lidar x", rays=20000
+    )
     assert isinstance(backend, raycast.CpuRaycaster)
     dirs = np.stack([_PX, _PY, -_PX])
     got = backend.cast(m, d, np.zeros(3), dirs, cutoff=50.0)
@@ -244,19 +338,20 @@ def test_a_world_that_names_no_raycaster_casts_through_the_cpu_cast(md):
     )
 
 
-def test_every_sensor_of_a_world_shares_one_backend(md):
+def test_every_sensor_of_a_world_shares_one_backend(md, gpu_installed):
     m, _ = md
-    ctx = _Ctx(m, {"raycaster": "cpu"})
+    ctx = _Ctx(m)
     service = raycast.RaycastService.of(ctx)
     assert raycast.RaycastService.of(ctx) is service
-    assert service.get(None, who="a") is service.get("cpu", who="b")
+    assert service.get("gpu", who="a") is service.get("auto", who="b", rays=1000)
+    assert service.get("cpu", who="c") is service.get("auto", who="d", rays=1)
 
 
 def test_an_unknown_raycaster_fails_naming_the_sensor_and_the_installed_ones(md):
     from roqsim.plugin import PluginError
 
     m, _ = md
-    with pytest.raises(PluginError, match="unknown raycaster 'nope'.*Installed: .*cpu"):
+    with pytest.raises(PluginError, match="lidar x: unknown raycaster 'nope'.*Installed: .*cpu"):
         raycast.RaycastService.of(_Ctx(m, {"raycaster": "nope"})).get(None, who="lidar x")
 
 
@@ -265,7 +360,7 @@ class _Refuses(raycast.Raycaster):
         raise RuntimeError("no CUDA device")
 
 
-def test_a_backend_that_cannot_open_fails_the_load_naming_sensor_backend_and_reason(md, tmp_path):
+def test_a_named_backend_that_cannot_open_fails_naming_sensor_backend_and_reason(md):
     from roqsim.plugin import PluginError
 
     m, _ = md
@@ -312,6 +407,9 @@ def test_sim_raycaster_is_checked_at_load():
 
     validate_raycast({}, None)
     validate_raycast({"raycaster": "cpu"}, None)
+    validate_raycast({"raycaster": "auto"}, None)
+    with pytest.raises(PluginError, match="sim.raycasters.auto: auto takes no settings"):
+        validate_raycast({"raycasters": {"auto": {"x": 1}}}, None)
     with pytest.raises(PluginError, match="unknown raycaster"):
         validate_raycast({"raycaster": "nope"}, None)
     with pytest.raises(PluginError, match="sim.raycasters.cpu: unknown key"):

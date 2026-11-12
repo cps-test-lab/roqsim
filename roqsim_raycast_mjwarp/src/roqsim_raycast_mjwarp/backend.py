@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """The ``mjwarp`` ray-cast backend: roqsim's cast on a CUDA GPU through MuJoCo Warp's ``mjw.rays``.
 
-A world chooses it with ``sim.raycaster: mjwarp``, or a single lidar with ``raycaster: mjwarp``
-(``docs/rendering.rst``, "Choosing a ray caster"). It stands behind :mod:`roqsim.raycast`, so the
-lidar plugins and every other caller of a :class:`~roqsim.raycast.Raycaster` take it unchanged.
+A world takes it by default: ``raycaster: auto`` (the default of ``sim.raycaster``) casts a lidar
+of at least :data:`AUTO_MIN_RAYS` rays here wherever this backend can run, and on the CPU otherwise,
+saying why. ``sim.raycaster: mjwarp`` or a lidar's ``raycaster: mjwarp`` forces it, and then a host
+where it cannot run fails the load (``docs/rendering.rst``, "Choosing a ray caster"). It stands
+behind :mod:`roqsim.raycast`, so the lidar plugins and every other caller of a
+:class:`~roqsim.raycast.Raycaster` take it unchanged.
 
 What it holds, once per world
 -----------------------------
@@ -44,9 +47,10 @@ where the CPU's nearest geom was culled, the CPU may report a farther hit where 
 the lidars drop every hit beyond their range either way. The parity test bounds each kind
 (``tests/test_parity.py``).
 
-It fails loudly and never falls back: no MuJoCo Warp installed, no CUDA device, a Warp build the
-driver cannot run, or a model ``put_model`` refuses -- :meth:`open` raises with the reason, and the
-world does not load.
+Where it cannot run -- no MuJoCo Warp installed, no CUDA device, a Warp build the driver cannot run,
+or a model ``put_model`` refuses -- :meth:`open` raises with the reason. A lidar that named
+``mjwarp`` then fails the world's load; under ``auto`` the lidar casts on the CPU, and the reason is
+logged and recorded with its choice (:class:`roqsim.raycast.RaycastService`).
 """
 
 from __future__ import annotations
@@ -58,6 +62,16 @@ import numpy as np
 from roqsim import raycast
 from roqsim.raycast import Raycaster, RayHits, Setting
 
+#: The fewest rays per cast from which ``raycaster: auto`` casts on this backend. Below it the
+#: CPU's sweep is the cheaper one in a small world: the GPU's cost is a fixed hand-over per cast
+#: (the geom poses, a BVH refit, the launch and the read-back) plus little per ray, the CPU's mostly
+#: per ray. Measured with a 2D lidar, a VLP-16 and a Mid-360 in the default room, on two GPUs of
+#: different classes, the two cost the same at a little under 2,000 rays; this is that crossover,
+#: rounded up, so a 2D lidar (some hundreds of rays) stays on the CPU and a 3D lidar (thousands)
+#: goes to the GPU. A mesh-heavy world moves the crossover far lower; ``auto_min_rays`` in
+#: ``sim.raycasters.mjwarp`` overrides it.
+AUTO_MIN_RAYS = 2000
+
 #: What to install when MuJoCo Warp is missing.
 INSTALL_HINT = "pip install 'roqsim_raycast_mjwarp[mjwarp]'"
 
@@ -67,7 +81,16 @@ class MjwarpRaycaster(Raycaster):
 
     SETTINGS = {
         "device": Setting("cuda:0", "the CUDA device the scene is built on (a Warp device name)"),
+        "auto_min_rays": Setting(
+            AUTO_MIN_RAYS,
+            "the fewest rays per cast from which raycaster: auto takes this backend over the CPU",
+        ),
     }
+    auto = True
+
+    @classmethod
+    def auto_min_rays(cls, settings) -> int:
+        return int((settings or {}).get("auto_min_rays", AUTO_MIN_RAYS))
 
     def __init__(self, settings=None) -> None:
         super().__init__(settings)
@@ -91,6 +114,9 @@ class MjwarpRaycaster(Raycaster):
         device = (settings or {}).get("device", "cuda:0")
         if not isinstance(device, str) or not device.startswith("cuda"):
             errors.append(f"'device' must name a CUDA device such as 'cuda:0', got {device!r}")
+        rays = (settings or {}).get("auto_min_rays", AUTO_MIN_RAYS)
+        if isinstance(rays, bool) or not isinstance(rays, int) or rays < 0:
+            errors.append(f"'auto_min_rays' must be a whole number >= 0, got {rays!r}")
         return errors
 
     # -- open / close -------------------------------------------------------------------------

@@ -1030,29 +1030,37 @@ go through it. Three things live there because they must be decided once:
    throughput is binding, the route is the GPU backend below; a pool of per-worker ``mjData``
    clones with geom poses copied in would need the ``mjData`` fields the ray path reads pinned down
    and kept pinned across MuJoCo upgrades.
--  **The backend is a choice, the CPU the default.** :class:`roqsim.raycast.RaycastService` opens
-   the backend a sensor or its world named (``raycaster:``, ``sim.raycaster``;
-   :doc:`rendering`, "Choosing a ray caster") once per world, when the first sensor that chose it
-   is configured, and every sensor that chose it shares that instance. ``cpu`` is
-   :func:`~roqsim.raycast.cast` and :func:`~roqsim.raycast.cast_many` unchanged, so a world that names none casts bit for bit as before. ``mjwarp``
-   (``roqsim_raycast_mjwarp``, MuJoCo Warp and Warp as its ``[mjwarp]`` extra, so nothing else
-   imports Warp) casts on a CUDA GPU with ``mjw.rays``' BVH search, which applies the mask,
+-  **The backend is a choice, auto the default.** :class:`roqsim.raycast.RaycastService` gives each
+   sensor the backend it or its world names (``raycaster:``, ``sim.raycaster``; :doc:`rendering`,
+   "Choosing a ray caster"), opening each backend once per world, when the first sensor that takes
+   it is configured; every sensor on it shares that instance. ``cpu`` is
+   :func:`~roqsim.raycast.cast` and :func:`~roqsim.raycast.cast_many` unchanged. ``auto``, the
+   default, takes per sensor the first installed backend that declares ``auto`` (a capability the
+   backend declares, not a name the core lists), opens here, and is faster for the sensor's ray
+   count (its ``auto_min_rays``); otherwise the CPU. A backend ``auto`` could not open is not tried
+   again in that world. Every choice is stated: logged at load and raised as a ``raycaster``
+   condition whose details give what was asked for, the backend, the ray count and the reason, so
+   a recording and a campaign's run directory say what each lidar cast on and why.
+
+   ``mjwarp`` (``roqsim_raycast_mjwarp``, MuJoCo Warp and Warp as its ``[mjwarp]`` extra, so nothing
+   else imports Warp) casts on a CUDA GPU with ``mjw.rays``' BVH search, which applies the mask,
    ``flg_static`` and a per-ray excluded body inside the nearest-hit search and skips a geom whose
    resolved alpha is 0, as ``mj_multiRay`` does; it searches a mesh without culling the triangles a
    ray meets from behind, as ``mj_ray`` does and ``mjw.rays`` does not (a lidar inside a visual-only
-   pillar reads the pillar on both). Its device scene (``mjw.put_model``, a pose-only device ``Data``, a
-   camera-less render context for the BVH) is built once after compile; per cast it uploads only
-   what changed since the last -- the geom poses, then a BVH refit, so one refit per tick however
-   many lidars share it, and the presence fields ``geom_group``/``geom_rgba``/``mat_rgba`` -- and
-   applies MuJoCo's culling beyond ``cutoff`` on the host (:func:`roqsim.raycast.cull_beyond_cutoff`,
-   which is the far-plane rule for a plane). It runs on the physics thread, reading ``model`` and
-   ``data`` and writing neither. Its cost is a fixed hand-over per sweep, so it pays for a 3D
-   lidar's thousands of rays and for mesh-heavy worlds, and not for a 2D-lidar sweep, where the
-   simulator is paced ``realtime`` with 30-40x headroom. A backend that cannot run where it was
-   chosen (no MuJoCo Warp, no CUDA device, a Warp build the driver cannot run, a model
-   ``put_model`` refuses) fails the load, naming the sensor, the backend and the reason; nothing
-   casts on the CPU instead. Cameras are unaffected either way -- they rasterize through the render
-   service on the GPU already (§8), and their depth is that render's z-buffer, not a raycast.
+   pillar reads the pillar on both). Its device scene (``mjw.put_model``, a pose-only device
+   ``Data``, a camera-less render context for the BVH) is built once after compile; per cast it
+   uploads only what changed since the last -- the geom poses, then a BVH refit, so one refit per
+   tick however many lidars share it, and the presence fields ``geom_group``/``geom_rgba``/
+   ``mat_rgba`` -- and applies MuJoCo's culling beyond ``cutoff`` on the host
+   (:func:`roqsim.raycast.cull_beyond_cutoff`, which is the far-plane rule for a plane). It runs on
+   the physics thread, reading ``model`` and ``data`` and writing neither. Its cost is a fixed
+   hand-over per sweep, so it pays for a 3D lidar's thousands of rays and for mesh-heavy worlds, and
+   not for a 2D-lidar sweep in a small room: ``auto`` takes it from ``auto_min_rays`` (2,000 by
+   default, the crossover in the default room) rays. Named, a backend that cannot run (no MuJoCo
+   Warp, no CUDA device, a Warp build the driver cannot run, a model ``put_model`` refuses) fails
+   the load, naming the sensor, the backend and the reason; under ``auto`` the sensor casts on the
+   CPU and the condition says why. Cameras are unaffected either way -- they rasterize through the
+   render service on the GPU already (§8), and their depth is that render's z-buffer, not a raycast.
 
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
 

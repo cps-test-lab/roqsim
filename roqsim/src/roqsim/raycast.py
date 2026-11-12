@@ -36,24 +36,27 @@ Backends
 --------
 
 :func:`cast` and :func:`cast_many` are the ``cpu`` backend. A :class:`Raycaster` is the same cast
-elsewhere, and :class:`RaycastService` opens the one a sensor or its world names (``raycaster:``,
-``sim.raycaster``) once per world and shares it between every sensor that chose it. A world that
-names none casts here, unchanged.
+elsewhere, and :class:`RaycastService` gives each sensor the one it or its world names
+(``raycaster:``, ``sim.raycaster``), opened once per world and shared between every sensor on it.
+``auto``, the default, takes per sensor the first installed backend that declares
+:attr:`Raycaster.auto`, opens here and is faster for the sensor's ray count, and the CPU otherwise;
+each choice is logged and raised as a ``raycaster`` condition with its reason. ``cpu`` or a
+backend's name forces it, and a named backend that cannot run fails the load, naming the sensor.
 
 ``mjwarp`` (the ``roqsim_raycast_mjwarp`` package, with MuJoCo Warp and Warp as its ``[mjwarp]``
-extra, so this package never imports Warp) casts on a CUDA GPU through MJWarp's ``mjw.rays``, which
-takes ``geomgroup``, ``flg_static`` and an excluded body per ray and applies them inside the
+extra, so this package never imports Warp) casts on a CUDA GPU through MJWarp's BVH ray search,
+which takes ``geomgroup``, ``flg_static`` and an excluded body per ray and applies them inside the
 nearest-hit search, so an excluded geom does not hide what is behind it and an absent obstacle reads
 as the wall behind it. It builds the device scene once (``mjw.put_model``, which refuses a model
 MJWarp cannot simulate, and a BVH), uploads the geom poses and refits once per tick, and applies
-:func:`cull_beyond_cutoff`, the culling ``mj_multiRay`` does and ``mjw.rays`` does not. Its cost
-is a fixed hand-over per sweep, so it pays for 3D lidars and mesh-heavy worlds, not for a 2D sweep.
-A backend that cannot run fails the load naming the sensor; nothing falls back to the CPU. See
+:func:`cull_beyond_cutoff`, the culling ``mj_multiRay`` does and MJWarp does not. Its cost is a
+fixed hand-over per sweep, so ``auto`` takes it for 3D lidars, not for a 2D sweep. See
 ``docs/architecture.rst`` and ``docs/rendering.rst``, "Choosing a ray caster".
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import mujoco
@@ -271,8 +274,13 @@ def cull_beyond_cutoff(origins, cutoff, model, data, hits) -> None:
 
 # -- backends --------------------------------------------------------------------------------------
 
-#: The backend a world casts through when it names none: :func:`cast` and :func:`cast_many`.
-DEFAULT_RAYCASTER = "cpu"
+#: The CPU backend: :func:`cast` and :func:`cast_many`.
+CPU_RAYCASTER = "cpu"
+#: Chooses per sensor: the first installed backend that declares :attr:`Raycaster.auto`, can run
+#: here and is faster for the sensor's ray count; else the CPU (:meth:`RaycastService.get`).
+AUTO_RAYCASTER = "auto"
+#: What a world casts through when it names nothing.
+DEFAULT_RAYCASTER = AUTO_RAYCASTER
 
 
 @dataclass
@@ -301,6 +309,13 @@ class Raycaster:
 
     #: Its settings block, key by key.
     SETTINGS: dict[str, Setting] = {}
+    #: Whether ``auto`` may choose it: a backend that is a faster cast of the same hits declares so.
+    auto: bool = False
+
+    @classmethod
+    def auto_min_rays(cls, settings) -> int:
+        """The fewest rays per cast from which ``auto`` takes this backend over the CPU."""
+        return 0
 
     def __init__(self, settings=None) -> None:
         self.settings = {k: s.default for k, s in self.SETTINGS.items()}
@@ -409,19 +424,30 @@ class CpuRaycaster(Raycaster):
 class RaycastService:
     """The ray-cast backends of one world: each opened once, on first use, and shared.
 
-    ``sim.raycaster`` names the backend a sensor casts through when it names none of its own, and
-    ``sim.raycasters.<name>`` holds a backend's settings, as ``sim.renderer`` and ``sim.renderers``
-    do for cameras (``docs/rendering.rst``). Every sensor that chose a backend gets the same
-    instance, so a device scene exists once per world and is brought up to date once per state,
-    however many lidars cast in it.
+    ``sim.raycaster`` names the backend a sensor casts through when it names none of its own --
+    ``auto`` when the world says nothing -- and ``sim.raycasters.<name>`` holds a backend's settings,
+    as ``sim.renderer`` and ``sim.renderers`` do for cameras (``docs/rendering.rst``). Every sensor
+    that chose a backend gets the same instance, so a device scene exists once per world and is
+    brought up to date once per state, however many lidars cast in it.
+
+    Each sensor's choice is stated: logged at load and raised as a ``raycaster`` condition
+    (:mod:`roqsim.conditions`), which a recording's provenance and the run's output directory carry,
+    with the backend, what was asked for, the ray count and the reason.
     """
 
-    def __init__(self, model, *, raycaster: str | None = None, raycasters=None, base_dir=None):
+    def __init__(
+        self, model, *, raycaster: str | None = None, raycasters=None, base_dir=None, ctx=None
+    ):
         self.model = model
         self.default = raycaster or DEFAULT_RAYCASTER
         self.settings = {str(k): dict(v or {}) for k, v in (raycasters or {}).items()}
         self.base_dir = base_dir
+        self.ctx = ctx
         self.open_backends: dict[str, Raycaster] = {}
+        #: Why a backend could not open, by name, so ``auto`` tries it once per world.
+        self.failed: dict[str, str] = {}
+        #: Each sensor's choice, by its address: ``{requested, backend, rays, reason}``.
+        self.choices: dict[str, dict] = {}
 
     @classmethod
     def of(cls, ctx) -> RaycastService:
@@ -434,43 +460,139 @@ class RaycastService:
                 raycaster=sim.get("raycaster"),
                 raycasters=sim.get("raycasters"),
                 base_dir=getattr(ctx, "base_dir", None),
+                ctx=ctx,
             )
             ctx.raycast = service
         return service
 
-    def get(self, name: str | None, who: str) -> Raycaster:
-        """The open backend *name* (the world's default when ``None``), for the sensor *who*.
+    def get(
+        self, name: str | None, who: str, *, rays: int | None = None, source: str | None = None
+    ) -> Raycaster:
+        """The open backend for the sensor *who*: *name*, or the world's default when ``None``.
 
-        A backend that cannot open fails here, naming *who*, the backend and the reason.
+        ``cpu`` and a backend's name force it, and a backend that cannot open fails here, naming
+        *who*, the backend and the reason. ``auto`` takes the first installed backend that declares
+        :attr:`Raycaster.auto`, opens here, and is faster for *rays* rays per cast
+        (:meth:`Raycaster.auto_min_rays`); otherwise the CPU, with the reason each was passed over.
+        The choice is logged and raised as a condition under *source* (*who* when not given).
         """
         from .plugin import PluginError  # noqa: PLC0415 -- plugin imports nothing of ours
+
+        requested = name or self.default
+        if requested == AUTO_RAYCASTER:
+            backend, chosen, reason = self._auto(who, rays)
+        elif requested == CPU_RAYCASTER and not self.settings.get(CPU_RAYCASTER):
+            backend, chosen, reason = self._cpu(), CPU_RAYCASTER, "named"
+        else:
+            cls = self._resolve(requested, who)
+            if requested in self.failed:
+                raise PluginError(
+                    f"{who}: raycaster {requested!r} cannot run here: {self.failed[requested]}"
+                )
+            try:
+                backend = self._open(requested, cls)
+            except Exception as err:  # noqa: BLE001 -- a backend raises what its runtime raises
+                raise PluginError(f"{who}: raycaster {requested!r} cannot run here: {err}") from err
+            chosen, reason = requested, "named"
+        self._state(source or who, requested, chosen, rays, reason)
+        return backend
+
+    def _auto(self, who: str, rays: int | None):
+        from .registry import raycaster_names  # noqa: PLC0415
+
+        passed = []
+        candidates = []
+        for name in raycaster_names():
+            if name in (CPU_RAYCASTER, AUTO_RAYCASTER):
+                continue
+            cls = self._resolve(name, who, quiet=True)
+            if cls is not None and getattr(cls, "auto", False):
+                candidates.append((name, cls))
+        if not candidates:
+            return (
+                self._cpu(),
+                CPU_RAYCASTER,
+                "no ray-cast backend that auto may choose is installed",
+            )
+        for name, cls in candidates:
+            threshold = int(cls.auto_min_rays(self._settings(name, cls, who)))
+            if rays is not None and rays < threshold:
+                passed.append(
+                    f"{name}: {rays} rays, fewer than the {threshold} from which it is faster than "
+                    "the CPU"
+                )
+                continue
+            if name in self.failed:
+                passed.append(f"{name}: {self.failed[name]}")
+                continue
+            try:
+                backend = self._open(name, cls)
+            except Exception as err:  # noqa: BLE001 -- auto falls back, saying why
+                passed.append(f"{name}: {err}")
+                continue
+            why = f"{rays} rays, at least {threshold}" if rays is not None else "it opens here"
+            return backend, name, why
+        return self._cpu(), CPU_RAYCASTER, "; ".join(passed)
+
+    def _resolve(self, name: str, who: str, *, quiet: bool = False):
+        from .plugin import PluginError  # noqa: PLC0415
         from .registry import resolve_raycaster  # noqa: PLC0415
 
-        name = name or self.default
+        try:
+            return resolve_raycaster(name, self.base_dir)
+        except PluginError as err:
+            if quiet:
+                self.failed.setdefault(name, str(err))
+                return None
+            raise PluginError(f"{who}: {err}") from err
+
+    def _settings(self, name: str, cls, who: str) -> dict:
+        from .plugin import PluginError  # noqa: PLC0415
+
+        settings = self.settings.get(name, {})
+        errors = cls.validate_config(settings)
+        if errors:
+            raise PluginError(
+                f"{who}: raycaster {name!r}: "
+                + "; ".join(f"sim.raycasters.{name}: {e}" for e in errors)
+            )
+        return {**{k: v.default for k, v in cls.SETTINGS.items()}, **settings}
+
+    def _open(self, name: str, cls) -> Raycaster:
         if name in self.open_backends:
             return self.open_backends[name]
-        if name == DEFAULT_RAYCASTER and not self.settings.get(name):
-            backend = CpuRaycaster()
-        else:
-            try:
-                cls = resolve_raycaster(name, self.base_dir)
-            except PluginError as err:
-                raise PluginError(f"{who}: {err}") from err
-            settings = self.settings.get(name, {})
-            errors = cls.validate_config(settings)
-            if errors:
-                raise PluginError(
-                    f"{who}: raycaster {name!r}: "
-                    + "; ".join(f"sim.raycasters.{name}: {e}" for e in errors)
-                )
-            backend = cls(settings)
-            try:
-                backend.open(self.model)
-            except Exception as err:
-                backend.close()
-                raise PluginError(f"{who}: raycaster {name!r} cannot run here: {err}") from err
+        backend = cls(self._settings(name, cls, name))
+        try:
+            backend.open(self.model)
+        except Exception as err:
+            backend.close()
+            self.failed[name] = str(err)
+            raise
         self.open_backends[name] = backend
         return backend
+
+    def _cpu(self) -> Raycaster:
+        if CPU_RAYCASTER not in self.open_backends:
+            self.open_backends[CPU_RAYCASTER] = CpuRaycaster()
+        return self.open_backends[CPU_RAYCASTER]
+
+    def _state(self, source: str, requested: str, chosen: str, rays, reason: str) -> None:
+        """Log the choice and raise it as a condition, where the run's record carries it."""
+        choice = {"requested": requested, "backend": chosen, "rays": rays, "reason": reason}
+        self.choices[source] = choice
+        if requested == AUTO_RAYCASTER:
+            message = f"raycaster auto chose {chosen}: {reason}"
+        else:
+            message = f"raycaster {chosen}, as named"
+        ctx = self.ctx
+        if ctx is not None and hasattr(ctx, "conditions") and hasattr(ctx, "logger"):
+            from .conditions import raise_condition  # noqa: PLC0415
+
+            raise_condition(
+                ctx, source=source, code="raycaster", level="info", message=message, details=choice
+            )
+        else:
+            logging.getLogger("roqsim.raycast").info("%s: %s", source, message)
 
     def close(self) -> None:
         for backend in self.open_backends.values():

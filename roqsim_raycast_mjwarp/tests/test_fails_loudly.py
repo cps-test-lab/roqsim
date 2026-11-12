@@ -100,3 +100,45 @@ def test_settings_are_checked_at_load():
         validate_raycast({"raycasters": {"mjwarp": {"device": "cpu"}}}, None)
     with pytest.raises(PluginError, match="sim.raycasters.mjwarp: unknown key"):
         validate_raycast({"raycasters": {"mjwarp": {"bvh": False}}}, None)
+
+
+def test_under_auto_a_host_without_cuda_casts_every_lidar_on_the_cpu_and_says_why(monkeypatch):
+    from roqsim import raycast
+
+    monkeypatch.setattr(backend, "_import_warp", lambda: _fake_warp(0))
+    engine = _load(_worlds.lidar_world(None, None))
+    try:
+        lidars = _worlds.lidar_plugins(engine)
+        assert all(isinstance(p._raycaster, raycast.CpuRaycaster) for p in lidars)
+        chosen = {
+            c["source"]: c["details"] for c in engine.ctx.conditions if c["code"] == "raycaster"
+        }
+        mid360 = next(p for p in lidars if p.num_rays > backend.AUTO_MIN_RAYS)
+        assert chosen[mid360.address]["backend"] == "cpu"
+        assert "mjwarp: no CUDA device" in chosen[mid360.address]["reason"]
+        two_d = next(p for p in lidars if p.num_rays < backend.AUTO_MIN_RAYS)
+        assert "fewer than the" in chosen[two_d.address]["reason"]
+    finally:
+        engine.shutdown()
+
+
+def test_under_auto_a_host_without_mujoco_warp_casts_on_the_cpu_and_says_why(monkeypatch):
+    def missing():
+        raise RuntimeError(f"MuJoCo Warp is not installed; {backend.INSTALL_HINT}")
+
+    monkeypatch.setattr(backend, "_import_warp", missing)
+    engine = _load(_worlds.lidar_world(None, None, ONE_LIDAR))
+    try:
+        (choice,) = [c["details"] for c in engine.ctx.conditions if c["code"] == "raycaster"]
+        assert choice["backend"] == "cpu"
+        assert "MuJoCo Warp is not installed" in choice["reason"]
+    finally:
+        engine.shutdown()
+
+
+def test_the_auto_threshold_is_a_setting():
+    from roqsim.config import validate_raycast
+
+    validate_raycast({"raycasters": {"mjwarp": {"auto_min_rays": 500}}}, None)
+    with pytest.raises(PluginError, match="'auto_min_rays' must be a whole number"):
+        validate_raycast({"raycasters": {"mjwarp": {"auto_min_rays": -1}}}, None)

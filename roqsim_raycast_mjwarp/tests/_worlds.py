@@ -88,8 +88,9 @@ def lidar_plugins(engine) -> list:
 def drive_world(world: str | None, raycaster: str | None, *, noise: bool = True) -> dict:
     """A Jackal driving a circle, its own VLP-16 scan and a Mid-360 on its mid mount.
 
-    Both lidars cast through *raycaster* (``sim.raycaster``), so they share one device scene. With
-    ``noise=False`` the Mid-360's range noise is off, so its cloud is the cast's geometry alone.
+    Both lidars cast through *raycaster* (``sim.raycaster``); ``None`` leaves it to the default,
+    ``auto``, which chooses per lidar. With ``noise=False`` the Mid-360's range noise is off, so its
+    cloud is the cast's geometry alone.
     """
     sim = {"timestep": 0.002, "pacing": "asap"}
     if world:

@@ -51,12 +51,15 @@ Config (every ray-cast device; each device's module adds its ray pattern and dat
       emit_static_tf: true       # publish tf_parent -> frame_id; false where the mount publishes it
       tf_parent: ""              # body the static TF hangs from (default: the carrier's root body)
       lazy: false                # cast and publish only while something subscribes
-      raycaster: mjwarp          # the backend this device casts through (default: sim.raycaster,
-                                 #   else cpu); see docs/rendering.rst, "Choosing a ray caster"
+      raycaster: auto            # the backend this device casts through: auto (the GPU where it
+                                 #   runs and is faster for this ray count, else the CPU), cpu or
+                                 #   mjwarp (default: sim.raycaster, else auto); see
+                                 #   docs/rendering.rst, "Choosing a ray caster"
 
 **The cast goes through the backend the device chose** (:class:`roqsim.raycast.RaycastService`):
-MuJoCo's ``mj_multiRay`` on the CPU unless the device or the world names another, such as
-``mjwarp`` (``roqsim_raycast_mjwarp``, on the GPU). The range window, the noise and its draws from
+``auto`` unless the device or the world names one: MuJoCo Warp on the GPU (``mjwarp``,
+``roqsim_raycast_mjwarp``) where it is installed, can run and is faster for the device's ray count,
+else MuJoCo's ``mj_multiRay`` on the CPU. The choice and its reason are logged and recorded. The range window, the noise and its draws from
 ``ctx.rng_for`` are applied here, after the cast, whatever the backend.
 """
 
@@ -265,7 +268,10 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # Opened once per world and shared by every device that chose it; one that cannot run here
         # fails the load, naming this device, rather than casting on the CPU instead.
         self._raycaster = raycast.RaycastService.of(ctx).get(
-            self.raycaster, who=f"{self.PLUGIN_LABEL} {self.address}"
+            self.raycaster,
+            who=f"{self.PLUGIN_LABEL} {self.address}",
+            rays=self.num_rays,
+            source=self.address,
         )
 
         if self.emit_static_tf:

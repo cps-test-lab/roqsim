@@ -29,15 +29,37 @@ def _lidar(engine):
     return next(p for p in engine.plugins if isinstance(p, RayCastSensorPlugin))
 
 
-def test_a_lidar_that_names_no_backend_casts_on_the_cpu():
+def test_a_2d_lidar_under_the_default_auto_casts_on_the_cpu_and_its_choice_is_recorded():
+    """A 2D scanner's few hundred rays are cheaper on the CPU, whatever is installed."""
     engine = Engine(load_config_from_dict(_world()))
     engine.ctx.seed = 1
     with engine:
-        assert isinstance(_lidar(engine)._raycaster, raycast.CpuRaycaster)
+        lidar = _lidar(engine)
+        assert isinstance(lidar._raycaster, raycast.CpuRaycaster)
+        (condition,) = [c for c in engine.ctx.conditions if c["code"] == "raycaster"]
+        assert condition["source"] == lidar.address
+        assert condition["level"] == "info"
+        assert condition["details"]["requested"] == "auto"
+        assert condition["details"]["backend"] == "cpu"
+        assert condition["details"]["rays"] == lidar.num_rays
+        assert condition["details"]["reason"]
         engine.reset()
         engine.step()
-        assert _lidar(engine).latest is not None
+        assert lidar.latest is not None
     assert engine.ctx.raycast is None  # closed with the world
+
+
+def test_cpu_named_on_the_lidar_is_recorded_as_named():
+    engine = Engine(load_config_from_dict(_world(lidar={"raycaster": "cpu"})))
+    engine.ctx.seed = 1
+    with engine:
+        (condition,) = [c for c in engine.ctx.conditions if c["code"] == "raycaster"]
+        assert condition["details"] == {
+            "requested": "cpu",
+            "backend": "cpu",
+            "rays": _lidar(engine).num_rays,
+            "reason": "named",
+        }
 
 
 def test_a_lidar_choice_overrides_the_world_and_an_unknown_one_fails_naming_the_lidar():
