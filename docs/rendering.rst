@@ -175,3 +175,45 @@ server's capabilities, overrides ``scene_blobs`` to send the scene in the form i
 (written from the same walk ``roqsim export gltf`` uses), and states with ``open_timeout_s`` how long
 its server may take to start -- the service waits for that, where it is longer than
 ``sim.render.timeout_s``, before it names the renderer as hung.
+
+Choosing a ray caster
+---------------------
+
+The lidars do not render: they cast rays, through :mod:`roqsim.raycast`. Which backend casts them is
+chosen the way a renderer is, for the world and per sensor, and MuJoCo's ``mj_multiRay`` on the CPU
+is the default::
+
+   sim:
+     raycaster: mjwarp       # the backend every ray-cast sensor casts through; cpu when omitted
+     raycasters:             # one settings block per backend
+       mjwarp: {device: "cuda:0"}
+
+   components:
+     - spawn_sensor: {model: mid360, frame_id: livox_frame}
+       components:
+         - livox_mid360: {raycaster: mjwarp}   # this lidar only: overrides sim.raycaster
+
+A world that says nothing casts on the CPU exactly as before. ``sim.raycaster`` reaches every sensor
+built on the ray-cast base (``lidar``, ``livox_mid360``, ``seyond_robin_w1g``); the other callers of
+:mod:`roqsim.raycast` (a moving box's look-ahead, the coverage tool, the navigator's caution check)
+cast on the CPU.
+
+``mjwarp`` casts on a CUDA GPU through MuJoCo Warp (``pip install 'roqsim_raycast_mjwarp[mjwarp]'``;
+its README). It builds a device copy of the scene once, when the first lidar that chose it is
+configured, and every lidar that chose it shares it: the geom poses go to the device and its BVH is
+refitted once per tick, whichever lidar casts first. It honours what the CPU cast honours -- the
+visible geom groups, an absent entity, the excluded body -- and the lidars add their range window and
+noise after the cast, as on the CPU. Its hits are the CPU's but for float32's few rays: a ray
+grazing an edge, a tie between two geoms at one distance, a thin mesh (its parity test bounds each).
+
+It pays for a 3D lidar and a mesh-heavy world, not for a 2D lidar in a small room: each sweep costs a
+fixed hand-over to the device, about the cost of a 2D sweep on the CPU.
+
+**It never falls back.** Without MuJoCo Warp, without a CUDA device, with a Warp build the host's
+driver cannot run (PyPI's Warp is the CUDA 13 build; Warp's release page has a CUDA 12 build of
+each release), or with a model MuJoCo Warp refuses (``mjw.put_model``), the world fails to load,
+naming the lidar, the backend and the reason.
+
+A backend of your own subclasses :class:`roqsim.raycast.Raycaster` (``open``, ``cast``,
+``cast_many``, ``close``, its ``SETTINGS``) and registers under the ``roqsim.raycasters`` entry
+point, or is named as ``module.path:Class``.

@@ -27,19 +27,29 @@ writing down: the race corrupts an allocator invariant rather than the output, s
 amount of parity testing and then fails as a crash much later, in a campaign. MuJoCo's own guidance
 is one ``mjData`` per thread; the ray functions are not exempt.
 
-So this module is single-threaded on purpose. If 3D-lidar throughput ever becomes the binding
-constraint, the viable route is a pool of per-worker ``mjData`` clones with the geom poses copied in
-before each cast -- which needs the set of ``mjData`` fields the ray path reads to be pinned down and
-kept pinned across MuJoCo upgrades. That is a real project, not a flag.
+So this module is single-threaded on purpose. Where 3D-lidar throughput is the binding constraint,
+the route is a GPU backend (below); a pool of per-worker ``mjData`` clones with the geom poses copied
+in would need the set of ``mjData`` fields the ray path reads pinned down and kept pinned across
+MuJoCo upgrades.
 
-**No GPU backend yet.** MJWarp's ``mjw.rays`` can express this module's cast: it takes
-``geomgroup``, ``flg_static`` and an excluded body per ray, and applies them inside the nearest-hit
-search, so an excluded geom does not hide what is behind it and an absent obstacle reads as the wall
-behind it. A backend on it needs a device copy of the scene (``mjw.put_model``, which refuses a
-model MJWarp cannot simulate), the geom poses uploaded every tick, a BVH (without one every ray
-tests every mesh), and a Warp build that matches the host's CUDA driver. Its cost is a fixed
-hand-over per sweep, so it pays for 3D lidars and mesh-heavy worlds, not for a 2D sweep. See
-``docs/architecture.rst``.
+Backends
+--------
+
+:func:`cast` and :func:`cast_many` are the ``cpu`` backend. A :class:`Raycaster` is the same cast
+elsewhere, and :class:`RaycastService` opens the one a sensor or its world names (``raycaster:``,
+``sim.raycaster``) once per world and shares it between every sensor that chose it. A world that
+names none casts here, unchanged.
+
+``mjwarp`` (the ``roqsim_raycast_mjwarp`` package, with MuJoCo Warp and Warp as its ``[mjwarp]``
+extra, so this package never imports Warp) casts on a CUDA GPU through MJWarp's ``mjw.rays``, which
+takes ``geomgroup``, ``flg_static`` and an excluded body per ray and applies them inside the
+nearest-hit search, so an excluded geom does not hide what is behind it and an absent obstacle reads
+as the wall behind it. It builds the device scene once (``mjw.put_model``, which refuses a model
+MJWarp cannot simulate, and a BVH), uploads the geom poses and refits once per tick, and applies
+:func:`cull_beyond_cutoff`, the culling ``mj_multiRay`` does and ``mjw.rays`` does not. Its cost
+is a fixed hand-over per sweep, so it pays for 3D lidars and mesh-heavy worlds, not for a 2D sweep.
+A backend that cannot run fails the load naming the sensor; nothing falls back to the CPU. See
+``docs/architecture.rst`` and ``docs/rendering.rst``, "Choosing a ray caster".
 """
 
 from __future__ import annotations

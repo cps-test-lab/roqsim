@@ -103,6 +103,9 @@ EXTRAS_roqsim_scenes  := [test,preview]
 # `roqsim assets collision` measures a prop against its own mesh; its tests exercise the measurement,
 # so the dev venv carries the extra even though placing a prop never needs it.
 EXTRAS_roqsim_assets  := [test,collision]
+# The GPU ray-cast backend's parity tests need MuJoCo Warp and Warp; with them in the venv they run
+# wherever a CUDA device and a driver for PyPI's Warp build are, and skip with the reason elsewhere.
+EXTRAS_roqsim_raycast_mjwarp := [test,mjwarp]
 
 .DEFAULT_GOAL := help
 

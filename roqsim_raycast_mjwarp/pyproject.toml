@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_raycast_mjwarp"
+version = "0.1.0"
+description = "A GPU ray-cast backend for roqsim's lidars, on MuJoCo Warp: sim.raycaster: mjwarp."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+dependencies = [
+    "roqsim",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# MuJoCo Warp and Warp at the versions measured (projects/roqsim/results/gpu-raycast/). mujoco-warp
+# asks for mujoco-core>=4.0.0, open above; roqsim pins mujoco>=4.0,<4.1, so mujoco-core is held to
+# the same line here. PyPI's warp-lang 1.19.0 is the CUDA 13 build (a driver of CUDA 13.0 or later);
+# for an older driver install the CUDA 12 build of the same release from Warp's release page:
+#   https://github.com/NVIDIA/warp/releases/download/v1.19.0/warp_lang-1.19.0+cu12-py3-none-manylinux_2_28_x86_64.whl
+mjwarp = [
+    "mujoco-warp==4.0.1",
+    "warp-lang==1.19.0",
+    "mujoco-core>=4.0,<4.1",
+]
+# The parity and drive tests build their worlds from these; without a CUDA device they skip.
+test = [
+    "pytest>=7.0",
+    "roqsim_sensors",
+    "roqsim_scenes",
+    "roqsim_mobile",
+]
+
+[project.entry-points."roqsim.raycasters"]
+mjwarp = "roqsim_raycast_mjwarp.backend:MjwarpRaycaster"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

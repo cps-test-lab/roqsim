@@ -125,3 +125,5 @@ Nothing under a non-commercial (`CC-*-NC`) or no-derivatives (`CC-*-ND`) license
 The splat renderer (`roqsim_render_splat`) draws through gsplat (Apache-2.0) and PyTorch
 (BSD-3-Clause), installed as its dependencies; the reference 3DGS rasteriser, whose licence is
 non-commercial, is neither a dependency nor used.
+The GPU ray-cast backend (`roqsim_raycast_mjwarp`) casts through MuJoCo Warp and NVIDIA Warp (both
+Apache-2.0), installed only with its `[mjwarp]` extra.
