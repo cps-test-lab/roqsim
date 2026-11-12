@@ -32,12 +32,14 @@ constraint, the viable route is a pool of per-worker ``mjData`` clones with the 
 before each cast -- which needs the set of ``mjData`` fields the ray path reads to be pinned down and
 kept pinned across MuJoCo upgrades. That is a real project, not a flag.
 
-**Why no GPU backend either.** None of the available GPU raycasters can express what roqsim needs.
-MJWarp's ``mjw.ray``/``mjw.rays`` documents no ``geomgroup``, no ``bodyexclude`` and no
-``flg_static``, and a returned nearest-hit cannot be post-filtered into the right answer -- rejecting
-a hit does not reveal what is behind it, so an absent obstacle would read as "no return" instead of
-"the wall behind it". Honouring exclusion on a GPU means keeping the excluded geometry out of the
-BVH, i.e. per-sensor BVHs refitted whenever presence changes. See ``docs/architecture.rst``.
+**No GPU backend yet.** MJWarp's ``mjw.rays`` can express this module's cast: it takes
+``geomgroup``, ``flg_static`` and an excluded body per ray, and applies them inside the nearest-hit
+search, so an excluded geom does not hide what is behind it and an absent obstacle reads as the wall
+behind it. A backend on it needs a device copy of the scene (``mjw.put_model``, which refuses a
+model MJWarp cannot simulate), the geom poses uploaded every tick, a BVH (without one every ray
+tests every mesh), and a Warp build that matches the host's CUDA driver. Its cost is a fixed
+hand-over per sweep, so it pays for 3D lidars and mesh-heavy worlds, not for a 2D sweep. See
+``docs/architecture.rst``.
 """
 
 from __future__ import annotations
