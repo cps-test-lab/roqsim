@@ -14,6 +14,10 @@ This mirrors how :mod:`camera_common` + :mod:`depth_camera` already layer the ca
 for the same reason: duplicated copies diverge in ways that are bugs rather than choices. Two rules
 are written once here.
 
+**Noise is drawn per ray.** A frame's range noise is one draw per ray from ``ctx.rng_for``, in ray
+order, whether or not the ray returned, so ray *i*'s noise depends on the sensor, the state's time
+and *i* alone: a ray that hits something else, or nothing, changes its own value and no other.
+
 **A return is classified against the physical detection limits, once, here.** A cast hit nearer
 than :attr:`RayCastSensorPlugin.detection_min` is *too close*: the device cannot measure it. A hit
 beyond :attr:`RayCastSensorPlugin.detection_max`, or no hit at all, is *no return*. What each becomes
@@ -443,8 +447,14 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
                 if self.range_stddev_relative > 0.0:
                     far = true >= self.range_stddev_relative_from
                     sigma[far] = self.range_stddev_relative * true[far]
-                # A measured distance is never negative, however near the surface and wide the sigma.
-                dist[hit] = np.maximum(true + rng.standard_normal(true.shape) * sigma, 0.0)
+                # One draw per RAY, in ray order, whether or not the ray returned: ray i takes the
+                # i-th draw of the frame's stream, so its noise is a function of (key, time, i)
+                # alone. Drawn per return instead, a ray that returns on one run and not on another
+                # (a grazed edge, another ray-cast backend) would hand every later return its
+                # neighbour's draw. A measured distance is never negative, however near the surface
+                # and wide the sigma.
+                draws = rng.standard_normal(self.num_rays)[hit]
+                dist[hit] = np.maximum(true + draws * sigma, 0.0)
             if self.dropout_percent > 0.0:
                 # Randomly drop this percentage of the potential returns per frame: a dropped ray is
                 # no return, whatever it would have been.
