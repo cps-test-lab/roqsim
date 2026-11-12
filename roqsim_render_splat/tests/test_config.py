@@ -187,3 +187,15 @@ def test_the_shipped_example_room_is_what_the_generator_makes(tmp_path):
     shipped = EXAMPLE_PLY.parent
     assert ply.read_bytes() == (shipped / "room.ply").read_bytes()
     assert xml.read_text() == (shipped / "collision.xml").read_text()
+
+
+def test_gsplat_without_its_built_kernels_is_named_not_met_at_the_first_frame(monkeypatch):
+    import sys
+    import types
+
+    from roqsim_render_splat.renderer import gsplat_cuda_missing
+
+    monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", types.SimpleNamespace(_C=None))
+    assert "kernels are not built" in gsplat_cuda_missing()
+    monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", types.SimpleNamespace(_C=object()))
+    assert gsplat_cuda_missing() is None
