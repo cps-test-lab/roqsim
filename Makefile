@@ -170,8 +170,19 @@ venv-ready:
 	fi
 
 .PHONY: test
+# A package not installed with everything it declares is left out by name, never silently: its tests
+# cannot pass for a reason that is the installation's, and run anyway they stop the whole suite at
+# collection (conftest.py). tools/test_packages.py names each one and what it lacks, before the run
+# and again after it. Without pytest-xdist the run is serial, and says so.
 test: venv-ready  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
-	$(PYTEST) $(PKGS) tools/tests -q -rs $(XDIST)
+	@pkgs="$$($(PY) tools/test_packages.py $(PKGS))" || exit 1; \
+	xdist="$(XDIST)"; \
+	if [ -n "$$xdist" ] && ! $(PY) -c "import xdist" 2>/dev/null; then \
+		echo "make test: pytest-xdist is not installed -> running serially"; xdist=""; \
+	fi; \
+	$(PYTEST) $$pkgs tools/tests -q -rs $$xdist; status=$$?; \
+	$(PY) tools/test_packages.py $(PKGS) >/dev/null; \
+	exit $$status
 	@if [ -n "$$ROS_DISTRO" ]; then \
 		echo "ROS sourced -> building ros2_ws and running its tests"; \
 		$(MAKE) build-ros; \

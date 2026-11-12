@@ -63,6 +63,14 @@ serial path if a parallel run ever looks flaky:
    make test JOBS=1           # serial; the fallback when a parallel run looks wrong
    make test-roqsim_sensors   # just one package, for the edit/run loop
 
+``make test`` tests the packages installed in ``.venv`` with everything they declare. A package that
+is not installed, or is installed without a requirement it declares (an image built without network,
+``pip install --no-deps``), is left out by name: ``tools/test_packages.py`` prints ``NOT TESTED
+<package>: <what it lacks>`` before the run and again after it, with their count, and a test that reads the
+whole tree (the README's counts, the plugin guard) leaves out what that package would register.
+Without ``pytest-xdist`` the run is serial and says so. ``make venv`` installs every package with
+what it declares, after which nothing is left out.
+
 ``roqsim export gltf`` is checked by the Khronos glTF Validator, a Node.js program pinned in
 ``tools/gltf_validator``. ``make test`` runs it over an export of a small world when it is installed
 and reports a skip when it is not; ``make test-gltf`` installs it (``npm ci``), requires it, and holds
