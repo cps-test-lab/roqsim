@@ -39,8 +39,9 @@ per scenario rather than one file for all of them. The engine is not rebuilt for
 what separates two scenarios.
 
 Because the world is *compiled* when the engine is built (not on ``reset``), the engine is built
-lazily -- on the first of ``reset()``/``dt``/``step()`` -- so it is constructed with the world and
-overrides in place. A later ``reset()`` naming a different world, or different overrides, rebuilds.
+lazily -- on the first of ``reset()``/``dt`` -- so it is constructed with the world and overrides
+in place. A later ``reset()`` naming a different world, or different overrides, rebuilds. ``step()``
+before the first ``reset()`` raises, naming it: a trial starts from the state a reset leaves.
 
 The deployment may also supply overrides without the scenario mentioning them, through
 ``ROQSIM_WORLD_OVERRIDES`` (a path to the same YAML document ``roqsim sim --override``
@@ -358,21 +359,17 @@ class MujocoSim(_Base):
         Opt-in via the ``ROQSIM_SCENE_EXPORT_DIR`` environment variable: when set, the compiled
         world is exported as :data:`SCENE_FILE` into that directory -- a relative path is resolved
         by :meth:`_resolve_out`, like the recording, so the exact simulated scene, world_overrides
-        included, ships as a run artifact for viewers. Called after ``engine.reset()`` so
-        mocap-driven bodies (walkers) and re-seated robot bases are captured at their true initial
-        pose; the forward pass propagates the re-posed mocap into ``data.xpos`` first (mirrors
-        ``scene_source.compile_world``).
+        included, ships as a run artifact for viewers. Called after ``engine.reset()``, whose
+        closing forward pass has every plugin's ``on_reset`` in it, so mocap-driven bodies (walkers)
+        and re-seated robot bases are captured at their true initial pose.
         """
         self._scene_export_pending = False
         out = env.get("ROQSIM_SCENE_EXPORT_DIR")
         if not out:
             return
-        import mujoco
-
         from .export_gltf import export_gltf
         from .scene_source import declared_cameras
 
-        mujoco.mj_forward(self._engine.ctx.model, self._engine.ctx.data)
         # NOT self._logger: the runner may hand us a non-stdlib logger (e.g. scenario-execution's
         # RosLogger), whose info() lacks %-style lazy formatting that the export uses.
         export_gltf(
@@ -544,7 +541,12 @@ class MujocoSim(_Base):
             )
 
     def step(self) -> None:
-        self._ensure_built().step()
+        if self._engine is None:
+            raise RuntimeError(
+                "MujocoSim.step() before reset(): call reset() first, which builds the world and "
+                "puts it in its initial state"
+            )
+        self._engine.step()
         if self._recorder is not None:
             self._recorder.sample(self._engine.ctx)
         if self._viewer is not None:

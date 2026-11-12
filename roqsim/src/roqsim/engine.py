@@ -10,7 +10,8 @@ Lifecycle::
                  plugin.configure(ctx); mj_forward (the initial state's poses, no time advance)
     reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
-                 (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base)
+                 (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base);
+                 refused until a reset() has run since setup()
     idle()    -> drain posted commands; mj_forward if any ran (a paused driver, no time advance)
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
@@ -22,6 +23,9 @@ A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leav
     with engine:
         engine.reset()
         ...
+
+A trial starts at :meth:`reset`, so :meth:`step` raises until one has run since :meth:`setup`: a set-up
+engine is posed for inspection, but no plugin's ``on_reset`` has restored its initial state.
 
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
 wall-time), so is the physics step itself (the ``<physics>`` row: ``mj_step``, or ``mj_step1``,
@@ -194,6 +198,8 @@ class Engine:
             self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
         self._setup_done = False
+        # Whether a reset() has completed since setup(): step() refuses an engine without one.
+        self._reset_done = False
         #: The integrator the model was compiled with and why (:class:`roqsim.flex.IntegratorChoice`);
         #: set by :meth:`setup`, before compile.
         self.integrator: IntegratorChoice | None = None
@@ -248,7 +254,9 @@ class Engine:
         ``data`` then describes the model's initial state: ``mj_forward`` has run on it, so body,
         geom, site and camera poses, sensor data and contacts are computed, while ``data.time``
         stays 0. ``configure`` runs before that pass, so a plugin reading a pose there runs its own.
+        No plugin's ``on_reset`` has run, so :meth:`step` waits for a :meth:`reset`.
         """
+        self._reset_done = False
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
@@ -454,7 +462,7 @@ class Engine:
             # load here, naming it, rather than at its first frame.
             self.ctx.render.check()
             # Last, once every plugin has written its part: a world inspected before its first reset
-            # or step -- a geometry check, an export, a test -- reads body, geom, site and camera
+            # -- a geometry check, an export, a test -- reads body, geom, site and camera
             # poses, sensor data and contacts of the initial state, not MjData's zeros, which put
             # every part at the origin. No time passes, and reset() starts from mj_resetData.
             mujoco.mj_forward(self.ctx.model, self.ctx.data)
@@ -534,8 +542,12 @@ class Engine:
         (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
         :attr:`interpenetrations` and logged as one WARNING naming the deepest pairs. Nothing is
         refused, and the state is not touched.
+
+        It is what :meth:`step` waits for after :meth:`setup`. One that raises leaves the engine
+        un-reset, so stepping it raises until a reset completes.
         """
         self._require_setup()
+        self._reset_done = False
         # Flush any pending commands so nothing targets the pre-reset state.
         self.ctx.drain_commands()
         # A new trial, and the sensors' noise key says so. Advanced BEFORE the plugins are
@@ -570,10 +582,15 @@ class Engine:
             self.logger.warning("%s", summary(self.interpenetrations))
         for gate in self.ctx.gates():
             gate.reset()
+        self._reset_done = True
 
     def step(self) -> None:
-        """Advance one physics step through the plugin pipeline."""
-        self._require_setup()
+        """Advance one physics step through the plugin pipeline.
+
+        Raises :class:`RuntimeError` on an engine that has not been reset since :meth:`setup`:
+        a trial starts from the state :meth:`reset` leaves, with every plugin's ``on_reset`` run.
+        """
+        self._require_reset()
         # 1) apply all externally-posted mutations on this (physics) thread.
         self.ctx.drain_commands()
         # 2) controllers write actuators.
@@ -637,6 +654,7 @@ class Engine:
         # After the plugins, which may still read a frame in their shutdown.
         self.ctx.render.close()
         self._setup_done = False
+        self._reset_done = False
 
     def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
         for plugin in reversed(plugins):
@@ -747,3 +765,11 @@ class Engine:
     def _require_setup(self) -> None:
         if not self._setup_done:
             raise RuntimeError("Engine.setup() must be called before reset()/step()")
+
+    def _require_reset(self) -> None:
+        self._require_setup()
+        if not self._reset_done:
+            raise RuntimeError(
+                "Engine.step() on an engine that was set up but not reset: call engine.reset() "
+                "first, so every plugin's on_reset has put the world in its initial state"
+            )

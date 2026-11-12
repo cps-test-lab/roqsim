@@ -253,6 +253,7 @@ def _setup(scene: str, **ft):
     engine = Engine(cfg)
     engine.ctx.seed = 0
     engine.setup()
+    engine.reset()
     return engine
 
 

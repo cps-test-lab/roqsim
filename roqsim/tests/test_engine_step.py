@@ -32,6 +32,7 @@ def test_dummy_builds_nonempty_model_and_counts_hooks():
 def test_timing_report_populated():
     engine = _dummy_engine(n=1, profile=True)
     engine.setup()
+    engine.reset()
     engine.step()
     report = engine.timing_report()
     assert "d0" in report
@@ -41,6 +42,7 @@ def test_timing_report_populated():
 def test_timing_off_by_default():
     engine = _dummy_engine(n=1)
     engine.setup()
+    engine.reset()
     engine.step()
     assert engine.timing_report() == {}
     assert engine.load_report() == {"phases": {}, "plugins": {}}
@@ -63,6 +65,7 @@ def test_load_report_populated():
 def test_engine_group_excluded_from_hook_table():
     engine = _dummy_engine(n=1, profile=True)
     engine.setup()
+    engine.reset()
     engine.step()
     assert "<engine>" not in engine.timing_report()
     assert "<engine>" not in engine.format_timing()
@@ -79,6 +82,7 @@ def test_posted_commands_apply_on_physics_thread_in_prestep_order():
     """Commands posted from a worker thread all run on the physics thread, in FIFO order."""
     engine = _dummy_engine(n=1)
     engine.setup()
+    engine.reset()
 
     applied = []
     physics_thread_id = threading.get_ident()

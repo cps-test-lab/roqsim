@@ -208,6 +208,19 @@ def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, mon
     assert sim.context is None
 
     monkeypatch.setattr(Engine, "setup", real_setup)
+    sim.reset()
+    sim.step()
+    assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
+    sim.shutdown()
+
+
+def test_scenario_adapter_step_before_reset_raises_and_builds_nothing(tmp_path: Path):
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    with pytest.raises(RuntimeError, match=r"call reset\(\) first"):
+        sim.step()
+    assert sim.context is None
+    sim.reset()
     sim.step()
     assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
     sim.shutdown()
