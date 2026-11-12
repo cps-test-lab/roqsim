@@ -737,6 +737,9 @@ class StateRecorder:
             # Which entities were absent from which sample on: a model field the state cannot hold.
             # The list itself, so every write of the provenance carries the changes so far.
             "presence": self._presence,
+            # How the world loaded (roqsim.conditions): a recording of a world drawn without its bake,
+            # say, says so, so a result made from it can be told from one made with it.
+            "conditions": list(getattr(ctx, "conditions", []) or []),
             "model": {
                 "name": _model_name(ctx.model),
                 "nbody": int(ctx.model.nbody),

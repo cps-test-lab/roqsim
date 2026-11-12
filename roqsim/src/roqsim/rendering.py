@@ -33,6 +33,7 @@ import mujoco
 import numpy as np
 
 from . import raycast
+from .conditions import of_model as conditions_of_model
 from .exit_status import NO_GL
 from .plugin import PluginError
 from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, WINDOW_GEOM_GROUP, subtree_body_ids
@@ -1000,6 +1001,7 @@ class MujocoRenderer(Renderer):
         principal_point=True,
         non_square_pixels=True,
         moving_only=True,
+        baked_lighting=True,
     )
     SETTINGS = {
         "atlas": Setting(
@@ -1691,12 +1693,23 @@ class RenderService:
         """Refuse, naming the camera, a view its renderer cannot give; resolves every renderer.
 
         Called when the world loads, and raises the world-load error (:class:`PluginError`). A
-        renderer that cannot give what a camera asks for is never stood in for by another.
+        renderer that cannot give what a camera asks for is never stood in for by another. Nor
+        does one draw a world drawn with baked lighting that does not declare it draws the bake
+        (:attr:`RendererCapabilities.baked_lighting`): its images would be lit twice.
         """
+        baked = any(c.get("code") == "bake_used" for c in conditions_of_model(self.model))
         problems = []
         for view in self.views:
             cls = self.renderer_class(view.renderer)
             caps = cls.capabilities_for(self.settings.get(view.renderer, {}))
+            if baked and caps.draws_static and not caps.baked_lighting:
+                problems.append(
+                    f"camera {view.id!r}: renderer {view.renderer!r} does not draw baked lighting, "
+                    "and this world is drawn with its bake (the classic renderer 'mujoco' draws "
+                    "it); choose renderer: mujoco, or load the world unbaked with "
+                    "disable: [baked_lighting]"
+                )
+                continue
             missing = view.spec.missing_from(caps)
             if missing:
                 problems.append(

@@ -37,6 +37,7 @@ import copy
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 
 try:
     import mujoco
@@ -53,6 +54,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from . import entity_pose
 from .actuators import GravityReaction
 from .assets import deduplicate_assets
+from .conditions import write_to_spec as write_conditions
 from .config import (
     SIM_OPTION_KEYS,
     SimConfig,
@@ -300,6 +302,9 @@ class Engine:
             world_name = self.config.sim.get("world")
             self._check_one_world(world_name)
             world_path = world_file(world_name, self.config.base_dir)
+            # Where the world came from, for a plugin that keeps files beside it (baked lighting).
+            self.ctx.world_path = Path(world_path) if world_path else None
+            self.ctx.world_source = getattr(self.config, "source", None)
             if world_path is not None:
                 spec = mujoco.MjSpec.from_file(world_path)
             else:
@@ -391,6 +396,10 @@ class Engine:
         # that field is live at all when the model compiles. Armed for every world rather than for
         # the ones that declare an absent entity: any entity can be deleted at run time.
         arm_gravity_compensation(spec)
+
+        # Into the model, so whatever holds only the model (a renderer, a recording's reader) can
+        # say how the world loaded. After every build hook, which is where conditions are raised.
+        write_conditions(spec, self.ctx.conditions)
 
         with self._span("compile"):
             self.ctx.model = spec.compile()

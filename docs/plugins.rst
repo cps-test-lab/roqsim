@@ -1392,6 +1392,16 @@ intercept either. With the pad pressing the block, the block prints them as the 
 1 ms matched the same run at 0.5 ms, which printed nothing, within 1 % in the block's deflection and
 2 % in the contact force. To trust a run that printed it, halve ``sim.timestep`` and compare.
 
+How a world looks: baked lighting
+---------------------------------
+
+``baked_lighting`` (core) draws a world's static geometry with light path-traced once by Blender's
+Cycles -- bounced light, soft contact shadows, ambient occlusion -- where the classic renderer alone
+gives flat walls and hard shadows. Turn it on with ``- baked_lighting: {}`` and bake once with ``roqsim
+bake <world>``; a world whose bake is missing or stale loads unbaked and says so, recorded with the run.
+It acts in ``build_late``, so it sees the world however it was built. :doc:`baked_lighting` has the
+keys, the costs and what is baked.
+
 Perception ground truth
 -----------------------
 

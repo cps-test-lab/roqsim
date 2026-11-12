@@ -39,6 +39,8 @@ filament = "roqsim.render_filament:FilamentRenderer"
 dummy = "roqsim.plugins.dummy:DummyPlugin"
 spawn_model = "roqsim.plugins.spawn_model:SpawnModelPlugin"
 ceiling = "roqsim.plugins.ceiling:CeilingPlugin"
+# Lighting baked once by Blender's Cycles (`roqsim bake`) and drawn by the classic renderer.
+baked_lighting = "roqsim.plugins.baked_lighting:BakedLightingPlugin"
 contact_monitor = "roqsim.plugins.contact_monitor:ContactMonitorPlugin"
 # WHERE it is being touched, right now, rather than whether it ever was. A separate plugin because
 # it is a different question with a different lifetime: contact_monitor LATCHES the first contact
