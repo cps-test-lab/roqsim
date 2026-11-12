@@ -13,7 +13,8 @@ bounded:
 - ``edge``: a ray whose CPU answer itself changes when its origin or direction moves by the
   float32 error of the device copy (:data:`NUDGE_RAD`) -- a ray grazing an edge;
 - ``thin_mesh``: one side passes a mesh the other hits, reading what lies behind it or nothing --
-  another geom, or another of the same mesh's triangles;
+  another geom, or another of the same mesh's triangles (none is measured: a mesh is hit from
+  either side, as on the CPU; the kind stays counted and bounded);
 - ``beyond_cutoff``: the CPU reports a hit beyond the cutoff on a geom the GPU passed nearer
   (:func:`roqsim.raycast.cull_beyond_cutoff`);
 - anything else is ``unexplained``, and there must be none.
@@ -42,12 +43,11 @@ NUDGE_RAD = 2e-5
 
 #: Per lidar, the most rays of each kind a sweep may disagree on. Measured on these worlds with
 #: :func:`classify`: the 2D lidar and the VLP-16 none; the Mid-360 (20,160 rays) one tie (the VLP-16's
-#: visual mesh and its collision cylinder), two grazing the obstacle's edges and two passing the
-#: depot's ceiling fans, each with a margin of a few rays.
+#: visual mesh and its collision cylinder) and two grazing the obstacle's edges, each with a margin.
 BOUNDS = {
     "sick_tim571": {"tie": 1, "edge": 1, "thin_mesh": 0, "beyond_cutoff": 1},
     "velodyne_vlp16": {"tie": 1, "edge": 1, "thin_mesh": 0, "beyond_cutoff": 1},
-    "mid360": {"tie": 3, "edge": 5, "thin_mesh": 4, "beyond_cutoff": 3},
+    "mid360": {"tie": 3, "edge": 5, "thin_mesh": 2, "beyond_cutoff": 3},
 }
 
 
@@ -271,3 +271,44 @@ def test_every_lidar_shares_one_device_scene_refitted_once_per_state(world):
         assert backend.refits == before + 1
     finally:
         d.geom_xpos[:], d.geom_xmat[:] = saved
+
+
+_CUBE = """
+<mujoco>
+  <asset>
+    <mesh name="cube" vertex="-1 -1 -1  1 -1 -1  1 1 -1  -1 1 -1  -1 -1 1  1 -1 1  1 1 1  -1 1 1"/>
+  </asset>
+  <worldbody>
+    <geom name="cube" type="mesh" mesh="cube"/>
+    <geom name="wall" type="box" size="0.1 5 5" pos="4 0 0"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_a_ray_from_inside_a_mesh_meets_its_face_as_on_the_cpu(gpu):
+    """A lidar inside a mesh (a robot driven into a visual-only pillar) reads the mesh, not the room.
+
+    ``mj_ray`` hits a mesh triangle from either side; ``mjw.rays`` culls one met from behind.
+    """
+    from roqsim_raycast_mjwarp.backend import MjwarpRaycaster
+
+    m = mujoco.MjModel.from_xml_string(_CUBE)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    backend = MjwarpRaycaster()
+    backend.open(m)
+    try:
+        rng = np.random.default_rng(0)
+        dirs = rng.normal(size=(500, 3))
+        dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+        for origin in (np.array([0.1, 0.2, 0.3]), np.array([3.0, 0.0, 0.0])):
+            cpu = raycast.cast(m, d, origin, dirs, cutoff=20.0)
+            got = backend.cast(m, d, origin, dirs, cutoff=20.0)
+            assert (cpu.geomid == got.geomid).mean() >= 0.995
+            agree = (cpu.geomid == got.geomid) & (cpu.geomid >= 0)
+            assert np.abs(cpu.dist - got.dist)[agree].max() <= DIST_TOL_M
+        inside = backend.cast(m, d, np.array([0.1, 0.2, 0.3]), dirs, cutoff=20.0)
+        assert (inside.geomid == 0).all()
+    finally:
+        backend.close()

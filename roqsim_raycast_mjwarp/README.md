@@ -35,7 +35,10 @@ pip install https://github.com/NVIDIA/warp/releases/download/v1.19.0/warp_lang-1
 ## What it gives, and what it refuses
 
 - **The CPU's hits**, but for float32's few rays: a ray grazing an edge, a tie between two visible
-  geoms at the same distance, a ray through a thin mesh. Distances agree to about 10 µm.
+  geoms at the same distance. Distances agree to about 10 µm. A mesh is hit from either side, as
+  MuJoCo's `mj_ray` hits it (MuJoCo Warp's own `mjw.rays` culls a triangle met from behind, so a
+  lidar inside a mesh would see through it); this needs MuJoCo Warp's private ray functions, which
+  is why the extra pins its version.
   `tests/test_parity.py` counts and bounds each kind, for a 2D lidar, a VLP-16 and a Mid-360, in
   the default room and the depot, with an obstacle present and absent.
 - **What the CPU cast honours**: the visible geom groups, `flg_static`, the excluded body, an absent

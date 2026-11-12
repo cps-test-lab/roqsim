@@ -5,7 +5,7 @@
 The same world twice, once on each backend, stepped in lockstep with the Mid-360's range noise on:
 the noise is drawn after the cast from ``ctx.rng_for`` on either backend, so a frame whose rays agree
 is the same frame. Each frame is compared point by point, and each point that differs is a ray
-:func:`test_parity.classify` explains. The trial is kept short so the test stays cheap.
+:func:`test_parity.classify` explains.
 """
 
 from __future__ import annotations
@@ -15,8 +15,9 @@ import numpy as np
 import pytest
 from test_parity import classify
 
-#: Seconds of driving: thirty frames of each lidar at 10 Hz.
-TRIAL_S = 3.0
+#: Seconds of driving: 160 frames of each lidar at 10 Hz, long enough for the circle to carry the
+#: Mid-360 through one of the depot's visual-only pillars, where a mesh is seen from inside.
+TRIAL_S = 16.0
 #: The most points of one Mid-360 frame (20,160 rays) that may differ from the CPU's.
 MAX_POINTS_PER_FRAME = 6
 
@@ -58,7 +59,7 @@ def test_the_gpu_drive_publishes_the_cpus_clouds(runs):
         ticks += cast
     # The robot drove the same path: a lidar changes nothing it reads.
     assert np.array_equal(cpu.ctx.data.qpos, gpu.ctx.data.qpos)
-    assert ticks >= 25
+    assert ticks >= 150
     # Two lidars, one device scene, one upload and refit per tick in which a lidar cast.
     assert backend.refits - refits0 == ticks
     velodyne, mid360 = (p.address for p in lc)

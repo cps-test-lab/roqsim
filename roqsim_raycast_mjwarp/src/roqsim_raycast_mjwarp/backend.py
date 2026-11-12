@@ -25,10 +25,11 @@ What it does per cast
    the scene. The model fields presence writes at run time (``geom_group``, ``geom_rgba``,
    ``mat_rgba``) are compared and uploaded the same way, so an entity made absent
    (:mod:`roqsim.presence`) is absent on the device from the next cast.
-2. **Casts every ray in one launch** with ``mjw.rays``: the mask, ``flg_static`` and the excluded
-   body (per ray) are applied inside the nearest-hit search, as ``mj_multiRay`` applies them, and
-   a geom whose resolved alpha is 0 is skipped as there. :meth:`cast_many` is the same launch with
-   a ray per (origin, direction).
+2. **Casts every ray in one launch** over MuJoCo Warp's BVH (:mod:`roqsim_raycast_mjwarp.kernel`,
+   ``mjw.rays``' search with a mesh hit from either side, as ``mj_ray`` hits it): the mask,
+   ``flg_static`` and the excluded body (per ray) are applied inside the nearest-hit search, as
+   ``mj_multiRay`` applies them, and a geom whose resolved alpha is 0 is skipped as there.
+   :meth:`cast_many` is the same launch with a ray per (origin, direction).
 3. **Reads distances and geom ids back** into page-locked host memory and applies MuJoCo's culling
    beyond ``cutoff``, which ``mjw.rays`` does not do (:func:`roqsim.raycast.cull_beyond_cutoff`; for
    a plane it is roqsim's far-plane rule).
@@ -37,8 +38,8 @@ Where it differs from the CPU
 -----------------------------
 
 The search runs in float32 against MuJoCo's float64, so distances agree to micrometres, and a ray
-can name another geom than the CPU where the answer is not robust to that: a ray grazing an edge, a
-tie between two visible geoms at the same distance, a ray through a thin mesh. Beyond ``cutoff``,
+can name another geom than the CPU where the answer is not robust to that: a ray grazing an edge, or
+a tie between two visible geoms at the same distance. Beyond ``cutoff``,
 where the CPU's nearest geom was culled, the CPU may report a farther hit where this reports none;
 the lidars drop every hit beyond their range either way. The parity test bounds each kind
 (``tests/test_parity.py``).
@@ -73,6 +74,7 @@ class MjwarpRaycaster(Raycaster):
         self._lock = threading.Lock()
         self._wp = None
         self._mjw = None
+        self._kernel = None
         self._device = None
         self._M = None
         self._D = None
@@ -107,6 +109,9 @@ class MjwarpRaycaster(Raycaster):
         except Exception as err:  # noqa: BLE001
             raise RuntimeError(f"no CUDA device {device!r}: {err}") from err
         self._wp, self._mjw = wp, mjw
+        from . import kernel  # noqa: PLC0415 -- imports Warp, so only once a backend opens
+
+        self._kernel = kernel
         import mujoco  # noqa: PLC0415
 
         with wp.ScopedDevice(self._device):
@@ -196,8 +201,8 @@ class MjwarpRaycaster(Raycaster):
         return hits
 
     def _launch(self, model, data, origins, dirs, cutoff, geomgroup, flg_static, bodyexclude, hits):
-        """One ``mjw.rays`` over every (origin, direction); ``hits`` is filled in place."""
-        wp, mjw = self._wp, self._mjw
+        """One launch over every (origin, direction); ``hits`` is filled in place."""
+        wp = self._wp
         if self._M is None:
             raise RuntimeError("raycaster 'mjwarp' is not open")
         npts, nray = len(origins), len(dirs)
@@ -214,9 +219,10 @@ class MjwarpRaycaster(Raycaster):
             if buf["bodyexclude_value"] != bodyexclude:
                 buf["bodyexclude"].fill_(int(bodyexclude))
                 buf["bodyexclude_value"] = bodyexclude
-            mjw.rays(
+            self._kernel.launch(
                 self._M,
                 self._D,
+                self._rc,
                 buf["pnt"],
                 buf["vec"],
                 _vec6(geomgroup),
@@ -225,7 +231,6 @@ class MjwarpRaycaster(Raycaster):
                 buf["dist"],
                 buf["geomid"],
                 buf["normal"],
-                self._rc,
             )
             wp.copy(buf["dist_h"], buf["dist"])
             wp.copy(buf["geomid_h"], buf["geomid"])

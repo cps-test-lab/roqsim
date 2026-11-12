@@ -1036,9 +1036,11 @@ go through it. Three things live there because they must be decided once:
    is configured, and every sensor that chose it shares that instance. ``cpu`` is
    :func:`~roqsim.raycast.cast` and :func:`~roqsim.raycast.cast_many` unchanged, so a world that names none casts bit for bit as before. ``mjwarp``
    (``roqsim_raycast_mjwarp``, MuJoCo Warp and Warp as its ``[mjwarp]`` extra, so nothing else
-   imports Warp) casts on a CUDA GPU with ``mjw.rays``, which applies the mask, ``flg_static`` and a
-   per-ray excluded body inside the nearest-hit search and skips a geom whose resolved alpha is 0,
-   as ``mj_multiRay`` does. Its device scene (``mjw.put_model``, a pose-only device ``Data``, a
+   imports Warp) casts on a CUDA GPU with ``mjw.rays``' BVH search, which applies the mask,
+   ``flg_static`` and a per-ray excluded body inside the nearest-hit search and skips a geom whose
+   resolved alpha is 0, as ``mj_multiRay`` does; it searches a mesh without culling the triangles a
+   ray meets from behind, as ``mj_ray`` does and ``mjw.rays`` does not (a lidar inside a visual-only
+   pillar reads the pillar on both). Its device scene (``mjw.put_model``, a pose-only device ``Data``, a
    camera-less render context for the BVH) is built once after compile; per cast it uploads only
    what changed since the last -- the geom poses, then a BVH refit, so one refit per tick however
    many lidars share it, and the presence fields ``geom_group``/``geom_rgba``/``mat_rgba`` -- and

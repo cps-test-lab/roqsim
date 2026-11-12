@@ -204,7 +204,7 @@ configured, and every lidar that chose it shares it: the geom poses go to the de
 refitted once per tick, whichever lidar casts first. It honours what the CPU cast honours -- the
 visible geom groups, an absent entity, the excluded body -- and the lidars add their range window and
 noise after the cast, as on the CPU. Its hits are the CPU's but for float32's few rays: a ray
-grazing an edge, a tie between two geoms at one distance, a thin mesh (its parity test bounds each).
+grazing an edge, a tie between two geoms at one distance (its parity test bounds each).
 
 It pays for a 3D lidar and a mesh-heavy world, not for a 2D lidar in a small room: each sweep costs a
 fixed hand-over to the device, about the cost of a 2D sweep on the CPU.
