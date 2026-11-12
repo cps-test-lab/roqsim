@@ -83,3 +83,42 @@ def lidar_plugins(engine) -> list:
     from roqsim_sensors.plugins.lidar_common import RayCastSensorPlugin  # noqa: PLC0415
 
     return [p for p in engine.plugins if isinstance(p, RayCastSensorPlugin)]
+
+
+def drive_world(world: str | None, raycaster: str | None, *, noise: bool = True) -> dict:
+    """A Jackal driving a circle, its own VLP-16 scan and a Mid-360 on its mid mount.
+
+    Both lidars cast through *raycaster* (``sim.raycaster``), so they share one device scene. With
+    ``noise=False`` the Mid-360's range noise is off, so its cloud is the cast's geometry alone.
+    """
+    sim = {"timestep": 0.002, "pacing": "asap"}
+    if world:
+        sim["world"] = world
+    if raycaster:
+        sim["raycaster"] = raycaster
+    mid360 = {} if noise else {"range_stddev": 0.0}
+    return {
+        "sim": sim,
+        "components": [
+            {
+                "spawn_robot": {
+                    "model": "clearpath_jackal",
+                    "pose": {"position": {"x": -6.0, "y": 0.0}, "orientation": {"yaw": 0.0}},
+                },
+                "name": "robot",
+                "components": [
+                    {"diff_drive": {"test_cmd": [0.6, 0.3]}},
+                    {
+                        "spawn_sensor": {
+                            "model": "mid360",
+                            "frame_id": "livox_frame",
+                            "parent_frame": "mid_mount",
+                            "pose": {"position": {"z": 0.25}},
+                        },
+                        "name": "mid360",
+                        "components": [{"livox_mid360": mid360}],
+                    },
+                ],
+            }
+        ],
+    }

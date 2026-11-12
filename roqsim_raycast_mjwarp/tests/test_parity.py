@@ -12,12 +12,13 @@ bounded:
   geoms meeting the ray at one point, such as a sensor's visual mesh and its collision cylinder;
 - ``edge``: a ray whose CPU answer itself changes when its origin or direction moves by the
   float32 error of the device copy (:data:`NUDGE_RAD`) -- a ray grazing an edge;
-- ``thin_mesh``: the CPU hits a mesh and the GPU passes it, reading what lies behind or nothing;
+- ``thin_mesh``: one side passes a mesh the other hits, reading what lies behind it or nothing --
+  another geom, or another of the same mesh's triangles;
 - ``beyond_cutoff``: the CPU reports a hit beyond the cutoff on a geom the GPU passed nearer
   (:func:`roqsim.raycast.cull_beyond_cutoff`);
 - anything else is ``unexplained``, and there must be none.
 
-On every ray both name the same geom, the distances agree within :data:`DIST_TOL_M`.
+Every other ray names the same geom on both, at distances within :data:`DIST_TOL_M`.
 """
 
 from __future__ import annotations
@@ -85,20 +86,29 @@ def _basis(v):
 
 
 def classify(engine, plugin, cpu, gpu, origin, dirs) -> dict:
-    """Every ray the two disagree on, by kind; plus the distance error where they agree."""
+    """Every ray the two disagree on, by kind; plus the distance error on the rays they agree on.
+
+    A ray disagrees when the geoms differ, or when the distances differ by more than
+    :data:`DIST_TOL_M` on the same geom (a ray entering a mesh at another of its triangles).
+    """
     m = engine.ctx.model
     kinds = {"tie": [], "edge": [], "thin_mesh": [], "beyond_cutoff": [], "unexplained": []}
-    same = cpu.geomid == gpu.geomid
-    hit = same & (cpu.geomid >= 0)
-    err = np.abs(cpu.dist - gpu.dist)[hit]
-    for i in np.nonzero(~same)[0]:
+    both = (cpu.geomid >= 0) & (gpu.geomid >= 0)
+    far = both & (np.abs(cpu.dist - gpu.dist) > DIST_TOL_M)
+    disagree = (cpu.geomid != gpu.geomid) | far
+    agree_hit = ~disagree & both
+    err = np.abs(cpu.dist - gpu.dist)[agree_hit]
+    mesh = mujoco.mjtGeom.mjGEOM_MESH
+    for i in np.nonzero(disagree)[0]:
         c, g = int(cpu.geomid[i]), int(gpu.geomid[i])
         dc, dg = float(cpu.dist[i]), float(gpu.dist[i])
-        if c >= 0 and g >= 0 and abs(dc - dg) <= TIE_M:
+        if c >= 0 and g >= 0 and c != g and abs(dc - dg) <= TIE_M:
             kind = "tie"
         elif not _robust(engine, plugin, origin, dirs, i):
             kind = "edge"
-        elif c >= 0 and m.geom_type[c] == mujoco.mjtGeom.mjGEOM_MESH and (g < 0 or dg > dc):
+        elif (c >= 0 and m.geom_type[c] == mesh and (g < 0 or dg > dc)) or (
+            g >= 0 and m.geom_type[g] == mesh and (c < 0 or dc > dg)
+        ):
             kind = "thin_mesh"
         elif c >= 0 and dc > plugin.range_max and g < 0:
             kind = "beyond_cutoff"
@@ -107,7 +117,7 @@ def classify(engine, plugin, cpu, gpu, origin, dirs) -> dict:
         kinds[kind].append({"ray": int(i), "cpu": [_name(m, c), dc], "gpu": [_name(m, g), dg]})
     return {
         "kinds": kinds,
-        "same_geom": float(same.mean()),
+        "same_geom": float((cpu.geomid == gpu.geomid).mean()),
         "dist_err_max_m": float(err.max()) if err.size else 0.0,
         "rays": int(len(dirs)),
     }
