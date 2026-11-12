@@ -62,12 +62,16 @@ def _stated(pattern: str) -> int:
 
 
 def _installed(names) -> list[str]:
-    """The subset of *names* that is importable here, so a slim venv skips rather than fails."""
+    """The subset of *names* installed here, so a slim venv skips rather than fails. Installed, not
+    importable: the count reads the installed entry points, and a package's source on the path is
+    importable without them."""
+    from importlib.metadata import PackageNotFoundError, distribution
+
     present = []
     for name in names:
         try:
-            import_module(name)
-        except ImportError:
+            distribution(name)
+        except PackageNotFoundError:
             continue
         present.append(name)
     return present
