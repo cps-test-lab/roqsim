@@ -545,6 +545,9 @@ class SimContext:
         #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
         #: set by the engine at setup, or made on first use (:meth:`RenderService.of`).
         self.render = None
+        #: The ray-cast backends its sensors chose (:class:`roqsim.raycast.RaycastService`), made on
+        #: first use (:meth:`RaycastService.of`) and closed by the engine with the world.
+        self.raycast = None
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of
         #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``

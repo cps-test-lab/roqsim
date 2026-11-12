@@ -195,6 +195,8 @@ _SIM_SAMPLES = {
     "render": {"mode": "async"},
     "renderer": "mujoco",
     "renderers": {"mujoco": {"atlas": True}},
+    "raycaster": "cpu",
+    "raycasters": {"cpu": {}},
     "seed": 7,
     "solver": "newton",
     "sync": {"enabled": False},

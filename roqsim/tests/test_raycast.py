@@ -216,3 +216,203 @@ def test_a_far_plane_keeps_mujocos_own_plane_rules():
         geomgroup=np.array([1, 1, 1, 0, 0, 0], dtype=np.uint8),
     )
     assert masked.dist[0] == -1.0
+
+
+# -- backends ---------------------------------------------------------------------------------------
+
+
+class _Ctx:
+    def __init__(self, model, sim=None):
+        import logging
+
+        self.model = model
+        self.config = {"sim": sim or {}}
+        self.raycast = None
+        self.conditions = []
+        self.logger = logging.getLogger("test_raycast")
+
+
+class _Gpu(raycast.Raycaster):
+    """A stand-in for a GPU backend ``auto`` may choose: the CPU cast, from 100 rays."""
+
+    auto = True
+    SETTINGS = {"auto_min_rays": raycast.Setting(100, "")}
+    refuse = None
+
+    @classmethod
+    def auto_min_rays(cls, settings):
+        return settings.get("auto_min_rays", 100)
+
+    def open(self, model):
+        if self.refuse:
+            raise RuntimeError(self.refuse)
+
+    def cast(self, model, data, origin, dirs, **kw):
+        return raycast.cast(model, data, origin, dirs, **kw)
+
+
+@pytest.fixture
+def gpu_installed(monkeypatch):
+    """``cpu`` and the stand-in ``gpu`` are the installed backends."""
+    from roqsim import registry
+
+    monkeypatch.setattr(registry, "raycaster_names", lambda: ["cpu", "gpu"])
+    real = registry.resolve_raycaster
+    monkeypatch.setattr(
+        registry,
+        "resolve_raycaster",
+        lambda ref, base_dir=None: _Gpu if ref == "gpu" else real(ref, base_dir),
+    )
+    monkeypatch.setattr(_Gpu, "refuse", None)
+    return _Gpu
+
+
+def test_the_default_is_auto_and_without_a_gpu_backend_it_casts_on_the_cpu(md, monkeypatch):
+    from roqsim import registry
+
+    monkeypatch.setattr(registry, "raycaster_names", lambda: ["cpu"])
+    m, d = md
+    ctx = _Ctx(m)
+    backend = raycast.RaycastService.of(ctx).get(None, who="lidar x", rays=20000, source="robot.x")
+    assert isinstance(backend, raycast.CpuRaycaster)
+    (condition,) = ctx.conditions
+    assert condition["code"] == "raycaster" and condition["source"] == "robot.x"
+    assert condition["details"]["requested"] == "auto"
+    assert condition["details"]["backend"] == "cpu"
+    assert "no ray-cast backend that auto may choose" in condition["details"]["reason"]
+
+
+def test_auto_takes_the_gpu_from_its_ray_count_and_says_why_not_below_it(md, gpu_installed):
+    m, _ = md
+    ctx = _Ctx(m)
+    service = raycast.RaycastService.of(ctx)
+    few = service.get("auto", who="lidar a", rays=50, source="a")
+    many = service.get("auto", who="lidar b", rays=500, source="b")
+    assert isinstance(few, raycast.CpuRaycaster)
+    assert isinstance(many, _Gpu)
+    assert "50 rays, fewer than the 100" in service.choices["a"]["reason"]
+    assert service.choices["b"] == {
+        "requested": "auto",
+        "backend": "gpu",
+        "rays": 500,
+        "reason": "500 rays, at least 100",
+    }
+    assert [c["details"]["backend"] for c in ctx.conditions] == ["cpu", "gpu"]
+
+
+def test_a_setting_overrides_the_ray_threshold(md, gpu_installed):
+    m, _ = md
+    service = raycast.RaycastService.of(_Ctx(m, {"raycasters": {"gpu": {"auto_min_rays": 10}}}))
+    assert isinstance(service.get("auto", who="lidar a", rays=50), _Gpu)
+
+
+def test_auto_falls_back_to_the_cpu_where_the_gpu_cannot_run_and_says_why(md, gpu_installed):
+    m, _ = md
+    gpu_installed.refuse = "no CUDA device"
+    ctx = _Ctx(m)
+    service = raycast.RaycastService.of(ctx)
+    assert isinstance(service.get(None, who="lidar a", rays=500, source="a"), raycast.CpuRaycaster)
+    assert service.choices["a"]["reason"] == "gpu: no CUDA device"
+    # Named, the same backend fails the load, naming the sensor, the backend and the reason.
+    from roqsim.plugin import PluginError
+
+    with pytest.raises(PluginError, match=r"lidar b: raycaster 'gpu' cannot run here: no CUDA"):
+        service.get("gpu", who="lidar b", rays=500)
+
+
+def test_cpu_named_casts_through_the_cpu_cast_byte_for_byte(md, gpu_installed):
+    m, d = md
+    backend = raycast.RaycastService.of(_Ctx(m, {"raycaster": "cpu"})).get(
+        None, who="lidar x", rays=20000
+    )
+    assert isinstance(backend, raycast.CpuRaycaster)
+    dirs = np.stack([_PX, _PY, -_PX])
+    got = backend.cast(m, d, np.zeros(3), dirs, cutoff=50.0)
+    ref = raycast.cast(m, d, np.zeros(3), dirs, cutoff=50.0)
+    assert got.dist.tobytes() == ref.dist.tobytes()
+    assert got.geomid.tobytes() == ref.geomid.tobytes()
+    many = backend.cast_many(m, d, np.zeros((2, 3)), dirs, cutoff=50.0)
+    assert (
+        many.dist.tobytes()
+        == raycast.cast_many(m, d, np.zeros((2, 3)), dirs, cutoff=50.0).dist.tobytes()
+    )
+
+
+def test_every_sensor_of_a_world_shares_one_backend(md, gpu_installed):
+    m, _ = md
+    ctx = _Ctx(m)
+    service = raycast.RaycastService.of(ctx)
+    assert raycast.RaycastService.of(ctx) is service
+    assert service.get("gpu", who="a") is service.get("auto", who="b", rays=1000)
+    assert service.get("cpu", who="c") is service.get("auto", who="d", rays=1)
+
+
+def test_an_unknown_raycaster_fails_naming_the_sensor_and_the_installed_ones(md):
+    from roqsim.plugin import PluginError
+
+    m, _ = md
+    with pytest.raises(PluginError, match="lidar x: unknown raycaster 'nope'.*Installed: .*cpu"):
+        raycast.RaycastService.of(_Ctx(m, {"raycaster": "nope"})).get(None, who="lidar x")
+
+
+class _Refuses(raycast.Raycaster):
+    def open(self, model):
+        raise RuntimeError("no CUDA device")
+
+
+def test_a_named_backend_that_cannot_open_fails_naming_sensor_backend_and_reason(md):
+    from roqsim.plugin import PluginError
+
+    m, _ = md
+    ctx = _Ctx(m, {"raycaster": f"{__name__}:_Refuses"})
+    with pytest.raises(
+        PluginError, match=r"lidar robot\.lidar: raycaster .*_Refuses.*no CUDA device"
+    ):
+        raycast.RaycastService.of(ctx).get(None, who="lidar robot.lidar")
+
+
+def test_the_cull_beyond_cutoff_is_the_plane_rule_for_planes():
+    xml = """
+    <mujoco><worldbody>
+      <geom name="floor" type="plane" size="0 0 1" pos="5 0 -1"/>
+      <geom name="box" type="box" size="0.1 0.1 0.1" pos="0 0 -3"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    down = np.array([[0.0, 0.0, -1.0]])
+    for origin, cutoff in (([0, 0, 0], 0.5), ([0, 0, 0], 6.0), ([4.8, 0, 0], 0.5)):
+        a = raycast.RayHits(dist=np.array([1.0]), geomid=np.array([0], np.int32))
+        b = raycast.RayHits(dist=np.array([1.0]), geomid=np.array([0], np.int32))
+        raycast._plane_hits(np.array([origin], float), cutoff, m, d, a)
+        raycast.cull_beyond_cutoff(np.array([origin], float), cutoff, m, d, b)
+        assert (a.dist[0], a.geomid[0]) == (b.dist[0], b.geomid[0])
+    # A box whose bounding sphere's centre is 3 m away, radius 0.17 m: the rule keeps a hit on it
+    # (2.9 m) exactly where mj_multiRay reports one, beyond the cutoff included.
+    m = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><geom type="box" size="0.1 0.1 0.1" pos="0 0 -3"/></worldbody></mujoco>'
+    )
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    for cutoff in (2.0, 2.8, 2.82, 2.83, 2.9, 3.5):
+        cpu = raycast.cast(m, d, np.zeros(3), down, cutoff=cutoff, geomgroup=None)
+        h = raycast.RayHits(dist=np.array([2.9]), geomid=np.array([0], np.int32))
+        raycast.cull_beyond_cutoff(np.zeros((1, 3)), cutoff, m, d, h)
+        assert int(h.geomid[0]) == int(cpu.geomid[0]), cutoff
+
+
+def test_sim_raycaster_is_checked_at_load():
+    from roqsim.config import validate_raycast
+    from roqsim.plugin import PluginError
+
+    validate_raycast({}, None)
+    validate_raycast({"raycaster": "cpu"}, None)
+    validate_raycast({"raycaster": "auto"}, None)
+    with pytest.raises(PluginError, match="sim.raycasters.auto: auto takes no settings"):
+        validate_raycast({"raycasters": {"auto": {"x": 1}}}, None)
+    with pytest.raises(PluginError, match="unknown raycaster"):
+        validate_raycast({"raycaster": "nope"}, None)
+    with pytest.raises(PluginError, match="sim.raycasters.cpu: unknown key"):
+        validate_raycast({"raycasters": {"cpu": {"device": "cuda:0"}}}, None)
+    with pytest.raises(PluginError, match="sim.raycaster: a raycaster name"):
+        validate_raycast({"raycaster": 3}, None)

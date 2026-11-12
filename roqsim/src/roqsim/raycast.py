@@ -27,23 +27,36 @@ writing down: the race corrupts an allocator invariant rather than the output, s
 amount of parity testing and then fails as a crash much later, in a campaign. MuJoCo's own guidance
 is one ``mjData`` per thread; the ray functions are not exempt.
 
-So this module is single-threaded on purpose. If 3D-lidar throughput ever becomes the binding
-constraint, the viable route is a pool of per-worker ``mjData`` clones with the geom poses copied in
-before each cast -- which needs the set of ``mjData`` fields the ray path reads to be pinned down and
-kept pinned across MuJoCo upgrades. That is a real project, not a flag.
+So this module is single-threaded on purpose. Where 3D-lidar throughput is the binding constraint,
+the route is a GPU backend (below); a pool of per-worker ``mjData`` clones with the geom poses copied
+in would need the set of ``mjData`` fields the ray path reads pinned down and kept pinned across
+MuJoCo upgrades.
 
-**No GPU backend yet.** MJWarp's ``mjw.rays`` can express this module's cast: it takes
-``geomgroup``, ``flg_static`` and an excluded body per ray, and applies them inside the nearest-hit
-search, so an excluded geom does not hide what is behind it and an absent obstacle reads as the wall
-behind it. A backend on it needs a device copy of the scene (``mjw.put_model``, which refuses a
-model MJWarp cannot simulate), the geom poses uploaded every tick, a BVH (without one every ray
-tests every mesh), and a Warp build that matches the host's CUDA driver. Its cost is a fixed
-hand-over per sweep, so it pays for 3D lidars and mesh-heavy worlds, not for a 2D sweep. See
-``docs/architecture.rst``.
+Backends
+--------
+
+:func:`cast` and :func:`cast_many` are the ``cpu`` backend. A :class:`Raycaster` is the same cast
+elsewhere, and :class:`RaycastService` gives each sensor the one it or its world names
+(``raycaster:``, ``sim.raycaster``), opened once per world and shared between every sensor on it.
+``auto``, the default, takes per sensor the first installed backend that declares
+:attr:`Raycaster.auto`, opens here and is faster for the sensor's ray count, and the CPU otherwise;
+each choice is logged and raised as a ``raycaster`` condition with its reason. ``cpu`` or a
+backend's name forces it, and a named backend that cannot run fails the load, naming the sensor.
+
+``mjwarp`` (the ``roqsim_raycast_mjwarp`` package, with MuJoCo Warp and Warp as its ``[mjwarp]``
+extra, so this package never imports Warp) casts on a CUDA GPU through MJWarp's BVH ray search,
+which takes ``geomgroup``, ``flg_static`` and an excluded body per ray and applies them inside the
+nearest-hit search, so an excluded geom does not hide what is behind it and an absent obstacle reads
+as the wall behind it. It builds the device scene once (``mjw.put_model``, which refuses a model
+MJWarp cannot simulate, and a BVH), uploads the geom poses and refits once per tick, and applies
+:func:`cull_beyond_cutoff`, the culling ``mj_multiRay`` does and MJWarp does not. Its cost is a
+fixed hand-over per sweep, so ``auto`` takes it for 3D lidars, not for a 2D sweep. See
+``docs/architecture.rst`` and ``docs/rendering.rst``, "Choosing a ray caster".
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import mujoco
@@ -229,3 +242,359 @@ def cast_many(
         )
     _plane_hits(o, cutoff, model, data, hits)
     return hits
+
+
+def cull_beyond_cutoff(origins, cutoff, model, data, hits) -> None:
+    """Drop, in place, the hits beyond ``cutoff`` that ``mj_multiRay`` would not have reported.
+
+    For a backend whose search does not cull: ``mj_multiRay`` skips a geom whose bounding sphere
+    (``geom_rbound`` about ``geom_xpos``) lies wholly farther than ``cutoff`` from the ray's origin,
+    so a hit beyond ``cutoff`` on such a geom is one the CPU never reports. A plane's ``rbound`` is 0,
+    so for planes this is the far-plane rule of :func:`_plane_hits`. ``origins`` is ``(npts, 3)``
+    against hits shaped ``(npts, nray)``.
+
+    It cannot give what the CPU reports *instead*: where the nearest hit is on a culled geom, the CPU
+    may still report a farther hit on a geom it did not cull, and this leaves a miss. Both lie beyond
+    ``cutoff``, which every lidar drops (:mod:`roqsim_sensors.plugins.lidar_common`).
+    """
+    o = np.asarray(origins, dtype=np.float64).reshape(-1, 3)
+    dist, geomid = hits.dist.reshape(len(o), -1), hits.geomid.reshape(len(o), -1)
+    far = (geomid >= 0) & (dist > cutoff)
+    if not far.any():
+        return
+    rows, cols = np.nonzero(far)
+    g = geomid[rows, cols]
+    away = np.linalg.norm(data.geom_xpos[g] - o[rows], axis=1) - model.geom_rbound[g] > cutoff
+    rows, cols = rows[away], cols[away]
+    dist[rows, cols] = -1.0
+    geomid[rows, cols] = -1
+    if hits.normal is not None:
+        hits.normal.reshape(len(o), -1, 3)[rows, cols] = 0.0
+
+
+# -- backends --------------------------------------------------------------------------------------
+
+#: The CPU backend: :func:`cast` and :func:`cast_many`.
+CPU_RAYCASTER = "cpu"
+#: Chooses per sensor: the first installed backend that declares :attr:`Raycaster.auto`, can run
+#: here and is faster for the sensor's ray count; else the CPU (:meth:`RaycastService.get`).
+AUTO_RAYCASTER = "auto"
+#: What a world casts through when it names nothing.
+DEFAULT_RAYCASTER = AUTO_RAYCASTER
+
+
+@dataclass
+class Setting:
+    """One key of a backend's settings block (``sim.raycasters.<name>``): its default and meaning."""
+
+    default: object
+    meaning: str
+
+
+class Raycaster:
+    """Base of a ray-cast backend: the same cast as :func:`cast` and :func:`cast_many`, elsewhere.
+
+    One instance serves every sensor of a world that chose it (:class:`RaycastService`), so it
+    holds whatever it built from the model once -- a device copy of the scene, an acceleration
+    structure -- and brings it up to date with the state it is handed on each call. It is opened
+    after the model compiled, and called only on the physics thread, with that thread's ``model``
+    and ``data``: it reads them, and never writes them.
+
+    Every backend honours what :func:`cast` honours: the ``geomgroup`` mask (the visible groups by
+    default), ``flg_static``, the excluded body, a geom whose resolved alpha is 0, and the rule for
+    hits beyond ``cutoff`` (:func:`cull_beyond_cutoff`). A backend that cannot run where it was
+    chosen raises from :meth:`open`, naming the reason; the service turns that into a load failure
+    naming the sensor, and nothing casts on another backend instead.
+    """
+
+    #: Its settings block, key by key.
+    SETTINGS: dict[str, Setting] = {}
+    #: Whether ``auto`` may choose it: a backend that is a faster cast of the same hits declares so.
+    auto: bool = False
+
+    @classmethod
+    def auto_min_rays(cls, settings) -> int:
+        """The fewest rays per cast from which ``auto`` takes this backend over the CPU."""
+        return 0
+
+    def __init__(self, settings=None) -> None:
+        self.settings = {k: s.default for k, s in self.SETTINGS.items()}
+        self.settings.update(dict(settings or {}))
+
+    @classmethod
+    def validate_config(cls, settings) -> list[str]:
+        """Errors in a settings block: a key it does not declare is one."""
+        unknown = sorted(set(settings or {}) - set(cls.SETTINGS))
+        if unknown:
+            known = ", ".join(sorted(cls.SETTINGS)) or "(none)"
+            return [f"unknown key(s) {', '.join(unknown)}; valid: {known}"]
+        return []
+
+    def open(self, model) -> None:
+        """Build what this backend needs from the compiled ``model``; raise if it cannot run."""
+
+    def cast(
+        self,
+        model,
+        data,
+        origin,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        out=None,
+    ) -> RayHits:
+        raise NotImplementedError
+
+    def cast_many(
+        self,
+        model,
+        data,
+        origins,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        normals=False,
+    ) -> RayHits:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        """Release what :meth:`open` built."""
+
+
+class CpuRaycaster(Raycaster):
+    """MuJoCo's ``mj_multiRay`` on the physics thread: :func:`cast` and :func:`cast_many`, unchanged."""
+
+    def cast(
+        self,
+        model,
+        data,
+        origin,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        out=None,
+    ) -> RayHits:
+        return cast(
+            model,
+            data,
+            origin,
+            dirs,
+            cutoff=cutoff,
+            geomgroup=geomgroup,
+            flg_static=flg_static,
+            bodyexclude=bodyexclude,
+            out=out,
+        )
+
+    def cast_many(
+        self,
+        model,
+        data,
+        origins,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        normals=False,
+    ) -> RayHits:
+        return cast_many(
+            model,
+            data,
+            origins,
+            dirs,
+            cutoff=cutoff,
+            geomgroup=geomgroup,
+            flg_static=flg_static,
+            bodyexclude=bodyexclude,
+            normals=normals,
+        )
+
+
+class RaycastService:
+    """The ray-cast backends of one world: each opened once, on first use, and shared.
+
+    ``sim.raycaster`` names the backend a sensor casts through when it names none of its own --
+    ``auto`` when the world says nothing -- and ``sim.raycasters.<name>`` holds a backend's settings,
+    as ``sim.renderer`` and ``sim.renderers`` do for cameras (``docs/rendering.rst``). Every sensor
+    that chose a backend gets the same instance, so a device scene exists once per world and is
+    brought up to date once per state, however many lidars cast in it.
+
+    Each sensor's choice is stated: logged at load and raised as a ``raycaster`` condition
+    (:mod:`roqsim.conditions`), which a recording's provenance and the run's output directory carry,
+    with the backend, what was asked for, the ray count and the reason.
+    """
+
+    def __init__(
+        self, model, *, raycaster: str | None = None, raycasters=None, base_dir=None, ctx=None
+    ):
+        self.model = model
+        self.default = raycaster or DEFAULT_RAYCASTER
+        self.settings = {str(k): dict(v or {}) for k, v in (raycasters or {}).items()}
+        self.base_dir = base_dir
+        self.ctx = ctx
+        self.open_backends: dict[str, Raycaster] = {}
+        #: Why a backend could not open, by name, so ``auto`` tries it once per world.
+        self.failed: dict[str, str] = {}
+        #: Each sensor's choice, by its address: ``{requested, backend, rays, reason}``.
+        self.choices: dict[str, dict] = {}
+
+    @classmethod
+    def of(cls, ctx) -> RaycastService:
+        """*ctx*'s service, made from its world's ``sim`` block on first use."""
+        service = getattr(ctx, "raycast", None)
+        if service is None or service.model is not ctx.model:
+            sim = (ctx.config or {}).get("sim") or {}
+            service = cls(
+                ctx.model,
+                raycaster=sim.get("raycaster"),
+                raycasters=sim.get("raycasters"),
+                base_dir=getattr(ctx, "base_dir", None),
+                ctx=ctx,
+            )
+            ctx.raycast = service
+        return service
+
+    def get(
+        self, name: str | None, who: str, *, rays: int | None = None, source: str | None = None
+    ) -> Raycaster:
+        """The open backend for the sensor *who*: *name*, or the world's default when ``None``.
+
+        ``cpu`` and a backend's name force it, and a backend that cannot open fails here, naming
+        *who*, the backend and the reason. ``auto`` takes the first installed backend that declares
+        :attr:`Raycaster.auto`, opens here, and is faster for *rays* rays per cast
+        (:meth:`Raycaster.auto_min_rays`); otherwise the CPU, with the reason each was passed over.
+        The choice is logged and raised as a condition under *source* (*who* when not given).
+        """
+        from .plugin import PluginError  # noqa: PLC0415 -- plugin imports nothing of ours
+
+        requested = name or self.default
+        if requested == AUTO_RAYCASTER:
+            backend, chosen, reason = self._auto(who, rays)
+        elif requested == CPU_RAYCASTER and not self.settings.get(CPU_RAYCASTER):
+            backend, chosen, reason = self._cpu(), CPU_RAYCASTER, "named"
+        else:
+            cls = self._resolve(requested, who)
+            if requested in self.failed:
+                raise PluginError(
+                    f"{who}: raycaster {requested!r} cannot run here: {self.failed[requested]}"
+                )
+            try:
+                backend = self._open(requested, cls)
+            except Exception as err:  # noqa: BLE001 -- a backend raises what its runtime raises
+                raise PluginError(f"{who}: raycaster {requested!r} cannot run here: {err}") from err
+            chosen, reason = requested, "named"
+        self._state(source or who, requested, chosen, rays, reason)
+        return backend
+
+    def _auto(self, who: str, rays: int | None):
+        from .registry import raycaster_names  # noqa: PLC0415
+
+        passed = []
+        candidates = []
+        for name in raycaster_names():
+            if name in (CPU_RAYCASTER, AUTO_RAYCASTER):
+                continue
+            cls = self._resolve(name, who, quiet=True)
+            if cls is not None and getattr(cls, "auto", False):
+                candidates.append((name, cls))
+        if not candidates:
+            return (
+                self._cpu(),
+                CPU_RAYCASTER,
+                "no ray-cast backend that auto may choose is installed",
+            )
+        for name, cls in candidates:
+            threshold = int(cls.auto_min_rays(self._settings(name, cls, who)))
+            if rays is not None and rays < threshold:
+                passed.append(
+                    f"{name}: {rays} rays, fewer than the {threshold} from which it is faster than "
+                    "the CPU"
+                )
+                continue
+            if name in self.failed:
+                passed.append(f"{name}: {self.failed[name]}")
+                continue
+            try:
+                backend = self._open(name, cls)
+            except Exception as err:  # noqa: BLE001 -- auto falls back, saying why
+                passed.append(f"{name}: {err}")
+                continue
+            why = f"{rays} rays, at least {threshold}" if rays is not None else "it opens here"
+            return backend, name, why
+        return self._cpu(), CPU_RAYCASTER, "; ".join(passed)
+
+    def _resolve(self, name: str, who: str, *, quiet: bool = False):
+        from .plugin import PluginError  # noqa: PLC0415
+        from .registry import resolve_raycaster  # noqa: PLC0415
+
+        try:
+            return resolve_raycaster(name, self.base_dir)
+        except PluginError as err:
+            if quiet:
+                self.failed.setdefault(name, str(err))
+                return None
+            raise PluginError(f"{who}: {err}") from err
+
+    def _settings(self, name: str, cls, who: str) -> dict:
+        from .plugin import PluginError  # noqa: PLC0415
+
+        settings = self.settings.get(name, {})
+        errors = cls.validate_config(settings)
+        if errors:
+            raise PluginError(
+                f"{who}: raycaster {name!r}: "
+                + "; ".join(f"sim.raycasters.{name}: {e}" for e in errors)
+            )
+        return {**{k: v.default for k, v in cls.SETTINGS.items()}, **settings}
+
+    def _open(self, name: str, cls) -> Raycaster:
+        if name in self.open_backends:
+            return self.open_backends[name]
+        backend = cls(self._settings(name, cls, name))
+        try:
+            backend.open(self.model)
+        except Exception as err:
+            backend.close()
+            self.failed[name] = str(err)
+            raise
+        self.open_backends[name] = backend
+        return backend
+
+    def _cpu(self) -> Raycaster:
+        if CPU_RAYCASTER not in self.open_backends:
+            self.open_backends[CPU_RAYCASTER] = CpuRaycaster()
+        return self.open_backends[CPU_RAYCASTER]
+
+    def _state(self, source: str, requested: str, chosen: str, rays, reason: str) -> None:
+        """Log the choice and raise it as a condition, where the run's record carries it."""
+        choice = {"requested": requested, "backend": chosen, "rays": rays, "reason": reason}
+        self.choices[source] = choice
+        if requested == AUTO_RAYCASTER:
+            message = f"raycaster auto chose {chosen}: {reason}"
+        else:
+            message = f"raycaster {chosen}, as named"
+        ctx = self.ctx
+        if ctx is not None and hasattr(ctx, "conditions") and hasattr(ctx, "logger"):
+            from .conditions import raise_condition  # noqa: PLC0415
+
+            raise_condition(
+                ctx, source=source, code="raycaster", level="info", message=message, details=choice
+            )
+        else:
+            logging.getLogger("roqsim.raycast").info("%s: %s", source, message)
+
+    def close(self) -> None:
+        for backend in self.open_backends.values():
+            backend.close()
+        self.open_backends.clear()

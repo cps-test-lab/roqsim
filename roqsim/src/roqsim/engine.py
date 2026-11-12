@@ -469,6 +469,7 @@ class Engine:
         except BaseException:
             self._shutdown_plugins(configured, " after a configure failed")
             self.ctx.render.close()
+            self._close_raycast()
             raise
 
     def _apply_contact_override(self, spec) -> None:
@@ -653,8 +654,15 @@ class Engine:
         self._shutdown_plugins(self.plugins, "")
         # After the plugins, which may still read a frame in their shutdown.
         self.ctx.render.close()
+        self._close_raycast()
         self._setup_done = False
         self._reset_done = False
+
+    def _close_raycast(self) -> None:
+        """Close the ray-cast backends the sensors opened (a device scene, for a GPU one)."""
+        if self.ctx.raycast is not None:
+            self.ctx.raycast.close()
+            self.ctx.raycast = None
 
     def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
         for plugin in reversed(plugins):

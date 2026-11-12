@@ -101,7 +101,9 @@ RANGE_SENSORS = ("LidarPlugin", "LivoxMid360Plugin")
 
 def _spawn(model: str, timestep: float) -> Engine:
     world = {
-        "sim": {"timestep": timestep},
+        # The CPU cast, which this test repeats from the plugin's own rays: where a GPU backend
+        # is installed, `auto` would put a 3D lidar on it, whose ties name another geom.
+        "sim": {"timestep": timestep, "raycaster": "cpu"},
         "components": [{"spawn_robot": {"model": model, "prefix": PREFIX}, "name": "robot"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
