@@ -35,12 +35,12 @@ pip install https://github.com/NVIDIA/warp/releases/download/v1.19.0/warp_lang-1
 ## What it gives, and what it refuses
 
 - **The CPU's hits**, but for float32's few rays: a ray grazing an edge, a tie between two visible
-  geoms at the same distance. Distances agree to about 10 µm. A mesh is hit from either side, as
-  MuJoCo's `mj_ray` hits it (MuJoCo Warp's own `mjw.rays` culls a triangle met from behind, so a
-  lidar inside a mesh would see through it); this needs MuJoCo Warp's private ray functions, which
-  is why the extra pins its version.
-  `tests/test_parity.py` counts and bounds each kind, for a 2D lidar, a VLP-16 and a Mid-360, in
-  the default room and the depot, with an obstacle present and absent.
+  geoms at the same distance. Distances agree to float32's precision (the parity test's tolerance
+  is 50 µm). `tests/test_parity.py` counts and bounds each kind, for a 2D lidar, a VLP-16 and a
+  Mid-360, in the default room and the depot, with an obstacle present and absent.
+- **A mesh hit from either side**, as MuJoCo's `mj_ray` hits it. MuJoCo Warp's own `mjw.rays` culls
+  a triangle met from behind, so a lidar inside a mesh would see through it; the backend's kernel
+  calls MuJoCo Warp's private ray functions to avoid that, which is why the extra pins its version.
 - **What the CPU cast honours**: the visible geom groups, `flg_static`, the excluded body, an absent
   entity (`roqsim.presence`) and roqsim's rule for hits beyond the cutoff. The lidars' range window
   and noise are applied after the cast, the same on either backend.
@@ -51,7 +51,7 @@ pip install https://github.com/NVIDIA/warp/releases/download/v1.19.0/warp_lang-1
   lidar, the backend and the reason.
 
 It pays for a 3D lidar and a mesh-heavy world. A 2D lidar in a small room gains nothing: each
-sweep costs a fixed hand-over to the device of a few tenths of a millisecond.
+sweep costs a fixed hand-over to the device, about what a 2D sweep costs on the CPU.
 
 ## Tests
 
