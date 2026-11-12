@@ -1030,16 +1030,18 @@ go through it. Three things live there because they must be decided once:
    ever becomes binding, the route is a pool of per-worker ``mjData`` clones with geom poses copied
    in — which needs the ``mjData`` fields the ray path reads pinned down and kept pinned across
    MuJoCo upgrades. A project, not a flag.
--  **No GPU backend.** No available GPU raycaster expresses what roqsim needs. MJWarp's ``mjw.ray`` /
-   ``mjw.rays`` documents no ``geomgroup``, no ``bodyexclude`` and no ``flg_static``, and a returned
-   nearest-hit cannot be post-filtered into the right answer — rejecting a hit does not reveal what
-   is behind it, so an absent obstacle would read as "no return" rather than "the wall behind it".
-   Honouring exclusion on a GPU means keeping excluded geometry out of the BVH, i.e. per-sensor BVHs
-   refitted on every presence change. Measured against a 2D-lidar sweep the payoff is ~0: the
-   simulator there is paced ``realtime`` with 30-40x headroom, and raycasting is ~2% of one core
-   against a container that is mostly ROS transport. Cameras are unaffected either way — they
-   rasterize through the render service on the GPU already (§8), and their depth is that render's
-   z-buffer, not a raycast.
+-  **No GPU backend yet.** MJWarp's ``mjw.rays`` can express the cast roqsim needs: it takes
+   ``geomgroup``, ``flg_static`` and an excluded body per ray and applies them inside the
+   nearest-hit search, so an excluded geom does not hide what is behind it and an absent obstacle
+   reads as the wall behind it. A backend on it needs a device copy of the scene
+   (``mjw.put_model``, which refuses a model MJWarp cannot simulate, such as a flex beside a height
+   field), the geom poses uploaded every tick, a BVH (without one every ray tests every mesh, which
+   is slower than the CPU in a mesh-heavy world), and a Warp build that matches the host's CUDA
+   driver. Its cost is a fixed hand-over per sweep, so it pays for a 3D lidar's thousands of rays
+   and for mesh-heavy worlds, and not for a 2D-lidar sweep: the simulator there is paced
+   ``realtime`` with 30-40x headroom, and raycasting is ~2% of one core against a container that is
+   mostly ROS transport. Cameras are unaffected either way — they rasterize through the render
+   service on the GPU already (§8), and their depth is that render's z-buffer, not a raycast.
 
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
 
