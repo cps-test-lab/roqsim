@@ -229,3 +229,240 @@ def cast_many(
         )
     _plane_hits(o, cutoff, model, data, hits)
     return hits
+
+
+def cull_beyond_cutoff(origins, cutoff, model, data, hits) -> None:
+    """Drop, in place, the hits beyond ``cutoff`` that ``mj_multiRay`` would not have reported.
+
+    For a backend whose search does not cull: ``mj_multiRay`` skips a geom whose bounding sphere
+    (``geom_rbound`` about ``geom_xpos``) lies wholly farther than ``cutoff`` from the ray's origin,
+    so a hit beyond ``cutoff`` on such a geom is one the CPU never reports. A plane's ``rbound`` is 0,
+    so for planes this is the far-plane rule of :func:`_plane_hits`. ``origins`` is ``(npts, 3)``
+    against hits shaped ``(npts, nray)``.
+
+    It cannot give what the CPU reports *instead*: where the nearest hit is on a culled geom, the CPU
+    may still report a farther hit on a geom it did not cull, and this leaves a miss. Both lie beyond
+    ``cutoff``, which every lidar drops (:mod:`roqsim_sensors.plugins.lidar_common`).
+    """
+    o = np.asarray(origins, dtype=np.float64).reshape(-1, 3)
+    dist, geomid = hits.dist.reshape(len(o), -1), hits.geomid.reshape(len(o), -1)
+    far = (geomid >= 0) & (dist > cutoff)
+    if not far.any():
+        return
+    rows, cols = np.nonzero(far)
+    g = geomid[rows, cols]
+    away = np.linalg.norm(data.geom_xpos[g] - o[rows], axis=1) - model.geom_rbound[g] > cutoff
+    rows, cols = rows[away], cols[away]
+    dist[rows, cols] = -1.0
+    geomid[rows, cols] = -1
+    if hits.normal is not None:
+        hits.normal.reshape(len(o), -1, 3)[rows, cols] = 0.0
+
+
+# -- backends --------------------------------------------------------------------------------------
+
+#: The backend a world casts through when it names none: :func:`cast` and :func:`cast_many`.
+DEFAULT_RAYCASTER = "cpu"
+
+
+@dataclass
+class Setting:
+    """One key of a backend's settings block (``sim.raycasters.<name>``): its default and meaning."""
+
+    default: object
+    meaning: str
+
+
+class Raycaster:
+    """Base of a ray-cast backend: the same cast as :func:`cast` and :func:`cast_many`, elsewhere.
+
+    One instance serves every sensor of a world that chose it (:class:`RaycastService`), so it
+    holds whatever it built from the model once -- a device copy of the scene, an acceleration
+    structure -- and brings it up to date with the state it is handed on each call. It is opened
+    after the model compiled, and called only on the physics thread, with that thread's ``model``
+    and ``data``: it reads them, and never writes them.
+
+    Every backend honours what :func:`cast` honours: the ``geomgroup`` mask (the visible groups by
+    default), ``flg_static``, the excluded body, a geom whose resolved alpha is 0, and the rule for
+    hits beyond ``cutoff`` (:func:`cull_beyond_cutoff`). A backend that cannot run where it was
+    chosen raises from :meth:`open`, naming the reason; the service turns that into a load failure
+    naming the sensor, and nothing casts on another backend instead.
+    """
+
+    #: Its settings block, key by key.
+    SETTINGS: dict[str, Setting] = {}
+
+    def __init__(self, settings=None) -> None:
+        self.settings = {k: s.default for k, s in self.SETTINGS.items()}
+        self.settings.update(dict(settings or {}))
+
+    @classmethod
+    def validate_config(cls, settings) -> list[str]:
+        """Errors in a settings block: a key it does not declare is one."""
+        unknown = sorted(set(settings or {}) - set(cls.SETTINGS))
+        if unknown:
+            known = ", ".join(sorted(cls.SETTINGS)) or "(none)"
+            return [f"unknown key(s) {', '.join(unknown)}; valid: {known}"]
+        return []
+
+    def open(self, model) -> None:
+        """Build what this backend needs from the compiled ``model``; raise if it cannot run."""
+
+    def cast(
+        self,
+        model,
+        data,
+        origin,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        out=None,
+    ) -> RayHits:
+        raise NotImplementedError
+
+    def cast_many(
+        self,
+        model,
+        data,
+        origins,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        normals=False,
+    ) -> RayHits:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        """Release what :meth:`open` built."""
+
+
+class CpuRaycaster(Raycaster):
+    """MuJoCo's ``mj_multiRay`` on the physics thread: :func:`cast` and :func:`cast_many`, unchanged."""
+
+    def cast(
+        self,
+        model,
+        data,
+        origin,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        out=None,
+    ) -> RayHits:
+        return cast(
+            model,
+            data,
+            origin,
+            dirs,
+            cutoff=cutoff,
+            geomgroup=geomgroup,
+            flg_static=flg_static,
+            bodyexclude=bodyexclude,
+            out=out,
+        )
+
+    def cast_many(
+        self,
+        model,
+        data,
+        origins,
+        dirs,
+        *,
+        cutoff,
+        geomgroup=_UNSET,
+        flg_static=True,
+        bodyexclude=-1,
+        normals=False,
+    ) -> RayHits:
+        return cast_many(
+            model,
+            data,
+            origins,
+            dirs,
+            cutoff=cutoff,
+            geomgroup=geomgroup,
+            flg_static=flg_static,
+            bodyexclude=bodyexclude,
+            normals=normals,
+        )
+
+
+class RaycastService:
+    """The ray-cast backends of one world: each opened once, on first use, and shared.
+
+    ``sim.raycaster`` names the backend a sensor casts through when it names none of its own, and
+    ``sim.raycasters.<name>`` holds a backend's settings, as ``sim.renderer`` and ``sim.renderers``
+    do for cameras (``docs/rendering.rst``). Every sensor that chose a backend gets the same
+    instance, so a device scene exists once per world and is brought up to date once per state,
+    however many lidars cast in it.
+    """
+
+    def __init__(self, model, *, raycaster: str | None = None, raycasters=None, base_dir=None):
+        self.model = model
+        self.default = raycaster or DEFAULT_RAYCASTER
+        self.settings = {str(k): dict(v or {}) for k, v in (raycasters or {}).items()}
+        self.base_dir = base_dir
+        self.open_backends: dict[str, Raycaster] = {}
+
+    @classmethod
+    def of(cls, ctx) -> RaycastService:
+        """*ctx*'s service, made from its world's ``sim`` block on first use."""
+        service = getattr(ctx, "raycast", None)
+        if service is None or service.model is not ctx.model:
+            sim = (ctx.config or {}).get("sim") or {}
+            service = cls(
+                ctx.model,
+                raycaster=sim.get("raycaster"),
+                raycasters=sim.get("raycasters"),
+                base_dir=getattr(ctx, "base_dir", None),
+            )
+            ctx.raycast = service
+        return service
+
+    def get(self, name: str | None, who: str) -> Raycaster:
+        """The open backend *name* (the world's default when ``None``), for the sensor *who*.
+
+        A backend that cannot open fails here, naming *who*, the backend and the reason.
+        """
+        from .plugin import PluginError  # noqa: PLC0415 -- plugin imports nothing of ours
+        from .registry import resolve_raycaster  # noqa: PLC0415
+
+        name = name or self.default
+        if name in self.open_backends:
+            return self.open_backends[name]
+        if name == DEFAULT_RAYCASTER and not self.settings.get(name):
+            backend = CpuRaycaster()
+        else:
+            try:
+                cls = resolve_raycaster(name, self.base_dir)
+            except PluginError as err:
+                raise PluginError(f"{who}: {err}") from err
+            settings = self.settings.get(name, {})
+            errors = cls.validate_config(settings)
+            if errors:
+                raise PluginError(
+                    f"{who}: raycaster {name!r}: "
+                    + "; ".join(f"sim.raycasters.{name}: {e}" for e in errors)
+                )
+            backend = cls(settings)
+            try:
+                backend.open(self.model)
+            except Exception as err:
+                backend.close()
+                raise PluginError(f"{who}: raycaster {name!r} cannot run here: {err}") from err
+        self.open_backends[name] = backend
+        return backend
+
+    def close(self) -> None:
+        for backend in self.open_backends.values():
+            backend.close()
+        self.open_backends.clear()

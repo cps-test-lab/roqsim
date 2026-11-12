@@ -47,6 +47,13 @@ Config (every ray-cast device; each device's module adds its ray pattern and dat
       emit_static_tf: true       # publish tf_parent -> frame_id; false where the mount publishes it
       tf_parent: ""              # body the static TF hangs from (default: the carrier's root body)
       lazy: false                # cast and publish only while something subscribes
+      raycaster: mjwarp          # the backend this device casts through (default: sim.raycaster,
+                                 #   else cpu); see docs/rendering.rst, "Choosing a ray caster"
+
+**The cast goes through the backend the device chose** (:class:`roqsim.raycast.RaycastService`):
+MuJoCo's ``mj_multiRay`` on the CPU unless the device or the world names another, such as
+``mjwarp`` (``roqsim_raycast_mjwarp``, on the GPU). The range window, the noise and its draws from
+``ctx.rng_for`` are applied here, after the cast, whatever the backend.
 """
 
 from __future__ import annotations
@@ -114,6 +121,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         "exclude_body": "it is resolved to a body id at configure.",
         "emit_static_tf": "the static TF is published once, at configure.",
         "tf_parent": "the static TF is published once, at configure.",
+        "raycaster": "the backend is opened at configure, and its device scene with it.",
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -152,6 +160,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # A robot manifest sets it on the small sensors only its own stack reads, so a world that
         # never launches that stack pays nothing for them.
         self.lazy = bool(self.config.get("lazy", False))
+        # The backend the rays are cast through; None takes the world's `sim.raycaster`.
+        self.raycaster = self.config.get("raycaster")
+        self._raycaster: raycast.Raycaster | None = None
         self._endpoint: Endpoint | None = None
         self._site_id = -1
         self._bodyexclude = -1
@@ -229,6 +240,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             errors.append("'range_resolution' must be >= 0")
         if not 0.0 <= float(config.get("dropout_percent", 0.0)) <= 100.0:
             errors.append("'dropout_percent' must be in [0, 100]")
+        raycaster = config.get("raycaster")
+        if raycaster is not None and (not isinstance(raycaster, str) or not raycaster):
+            errors.append(f"'raycaster' must be a raycaster name, got {raycaster!r}")
         return errors + self._validate_extra(config) + self.validate_fault(config)
 
     def configure(self, ctx: SimContext) -> None:
@@ -244,6 +258,11 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # Allocated once, so the per-cast path does not allocate -- this fires at rate_hz for the
         # life of the run, and for a 3D lidar it is 20k+ rays a frame.
         self._hits = raycast.buffers(self.num_rays)
+        # Opened once per world and shared by every device that chose it; one that cannot run here
+        # fails the load, naming this device, rather than casting on the CPU instead.
+        self._raycaster = raycast.RaycastService.of(ctx).get(
+            self.raycaster, who=f"{self.PLUGIN_LABEL} {self.address}"
+        )
 
         if self.emit_static_tf:
             self._static_tf = self._mount_tf(m, prefix, entity)
@@ -386,7 +405,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         rot = d.site_xmat[self._site_id].reshape(3, 3)
         # Site-frame directions rotated into the world. `_local_dirs @ rot.T` is the world direction
         # of each ray; the payload is built back in the site frame, so both live off one array.
-        raycast.cast(
+        self._raycaster.cast(
             m,
             d,
             origin,
