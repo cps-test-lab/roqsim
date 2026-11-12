@@ -35,7 +35,8 @@ mujoco = "roqsim.rendering:MujocoRenderer"
 socket = "roqsim.render_socket:SocketRenderer"
 filament = "roqsim.render_filament:FilamentRenderer"
 
-# Ray-cast backends behind roqsim.raycast; MuJoCo's mj_multiRay on the CPU is the default.
+# Ray-cast backends behind roqsim.raycast; `auto`, the default, casts on the CPU (mj_multiRay) unless a
+# backend that declares auto is installed, runs here and is faster for the sensor.
 [project.entry-points."roqsim.raycasters"]
 cpu = "roqsim.raycast:CpuRaycaster"
 
