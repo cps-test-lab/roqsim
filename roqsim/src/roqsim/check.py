@@ -277,6 +277,9 @@ def check_world(target: str, overrides: dict | None = None) -> dict:
         from roqsim.interpenetration import as_warnings
 
         report["warnings"].extend(as_warnings(engine.interpenetrations))
+        from roqsim.conditions import as_check_warnings
+
+        report["warnings"].extend(as_check_warnings(engine.ctx.conditions))
         report["warnings"].extend(friction_cone_warnings(engine))
 
         report["world"] = _inventory(engine, rates)

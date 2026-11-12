@@ -469,6 +469,8 @@ CASES: dict[str, Case] = {
     # core
     "dummy": _static({"dummy": {}}),
     "ceiling": _static({"ceiling": {}}),
+    # No bake there: the world loads unbaked, the plugin holds what it read at the build.
+    "baked_lighting": Case(lambda tmp: _world({"baked_lighting": {"path": str(tmp / "none.bake")}})),
     "part_state": Case(_part_with_states),
     "zone_trigger": _static({"zone_trigger": {"size": [0.5, 0.5, 0.5]}, "name": "zone"}),
     "spawn_model": _static(

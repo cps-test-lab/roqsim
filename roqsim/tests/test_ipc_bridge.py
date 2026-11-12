@@ -12,8 +12,8 @@ import pytest
 
 zmq = pytest.importorskip("zmq")
 
+from roqsim import conditions, endpoint, ipc, runner  # noqa: E402
 from roqsim import control as ctl  # noqa: E402
-from roqsim import endpoint, ipc, runner  # noqa: E402
 from roqsim.bridge import BridgeBase  # noqa: E402
 from roqsim.clock import Pacer  # noqa: E402
 from roqsim.config import load_config_from_dict  # noqa: E402
@@ -384,7 +384,10 @@ def test_the_default_socket_does_not_depend_on_a_runners_output_directory(
     assert (
         f"control: ipc://{tmp_path / 'roqsim' / f'{os.getpid()}.sock'}" in capsys.readouterr().out
     )
-    assert not (tmp_path / "out").exists()
+    # Nothing of the socket's is there; what the run writes there is the run's (its conditions).
+    out = tmp_path / "out"
+    assert not [p for p in out.rglob("*") if "sock" in p.name]
+    assert (out / "config" / "0" / conditions.RUN_FILE).is_file()
 
 
 def test_roqsim_control_names_the_address_for_the_simulator(tmp_path, monkeypatch, capsys):

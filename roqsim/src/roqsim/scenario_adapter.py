@@ -297,6 +297,10 @@ class MujocoSim(_Base):
         # A setup that raises has shut down what it configured; held only once it succeeded, so
         # the next call builds afresh instead of stepping an engine that never set up.
         engine.setup()
+        # How the world loaded, into this run's own output directory, which the campaign collects.
+        from .conditions import write_run_file
+
+        write_run_file(engine.ctx.conditions, self._conditions_dir())
         self._engine = engine
         self._world = world
         self._built_overrides = overrides
@@ -376,6 +380,12 @@ class MujocoSim(_Base):
             cameras=declared_cameras(self._engine),
             log=logging.getLogger(__name__),
         )
+
+    def _conditions_dir(self) -> Path | None:
+        """Where this run's :data:`roqsim.conditions.RUN_FILE` goes: the run's directory, as
+        :meth:`_resolve_out` anchors a relative path, or ``None`` when nothing names one."""
+        base = self._run_dir or os.environ.get("RUN_OUTPUT_DIR") or self._output_dir
+        return Path(base) if base else None
 
     def _resolve_out(self, value: str) -> Path:
         """Resolve a relative output path against THIS RUN's directory.

@@ -45,6 +45,9 @@ hand-assemble.
   where?*
 - **Scenes from what you already have.** Import Gazebo SDF, USD or CAD — or draw a floorplan in a window
   and get a world back.
+- **Light that looks real.** Baked lighting: a world's bounced light, soft contact shadows and ambient
+  occlusion path-traced once with Blender (`roqsim bake`, minutes on a CPU), kept with the world and
+  drawn by MuJoCo's renderer, while robots are lit live and throw their shadows into it.
 - **People as dynamic obstacles.** Kinematic pedestrians with A\* and behaviour-tree navigation, plus
   optional ORCA local avoidance, for the case your robot has to share a corridor.
 - **Runs where you need it.** Viewer by default, headless for CI and containers; real-time, scaled, or
@@ -89,6 +92,7 @@ start with [getting started](docs/getting_started.rst), then:
 | [Installation](docs/installation.rst) | packages, the venv, ROS 2 |
 | [Quickstart](docs/quickstart.rst) · [Plugins](docs/plugins.rst) | writing a world; every built-in plugin |
 | [Models](docs/models.rst) · [Textures](docs/textures.rst) | the robot/prop catalog; surfaces and floors |
+| [Rendering](docs/rendering.rst) · [Baked lighting](docs/baked_lighting.rst) | renderers; realistic light and shadows |
 | [Interfaces](docs/interfaces.rst) | ROS 2, scenario-execution, your own code |
 | [Scene builder](docs/scene_builder.rst) · [Coverage](docs/coverage.rst) | building worlds; sensor placement |
 | [nav2 example](docs/nav2_example.rst) · [Ground truth](docs/ground_truth.rst) | navigation; getting numbers out |
