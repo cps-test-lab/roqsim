@@ -15,10 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# MuJoCo Warp and Warp at the versions measured (projects/roqsim/results/gpu-raycast/). mujoco-warp
-# asks for mujoco-core>=4.0.0, open above; roqsim pins mujoco>=4.0,<4.1, so mujoco-core is held to
-# the same line here. PyPI's warp-lang 1.19.0 is the CUDA 13 build (a driver of CUDA 13.0 or later);
-# for an older driver install the CUDA 12 build of the same release from Warp's release page:
+# MuJoCo Warp is pinned exactly, since the cast kernel (kernel.py) calls its private ray functions,
+# and Warp at the release it is tested with. mujoco-warp asks for mujoco-core>=4.0.0, open above;
+# roqsim pins mujoco>=4.0,<4.1, so mujoco-core is held to the same line here. PyPI's warp-lang
+# 1.19.0 is the CUDA 13 build (a driver of CUDA 13.0 or later); for an older driver install the
+# CUDA 12 build of the same release from Warp's release page:
 #   https://github.com/NVIDIA/warp/releases/download/v1.19.0/warp_lang-1.19.0+cu12-py3-none-manylinux_2_28_x86_64.whl
 mjwarp = [
     "mujoco-warp==4.0.1",
