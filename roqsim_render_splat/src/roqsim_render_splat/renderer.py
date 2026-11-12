@@ -285,6 +285,9 @@ class SplatRenderer(Renderer):
                 "run on a machine with an NVIDIA GPU and a CUDA build of torch, or choose another "
                 "renderer (sim.renderer)"
             )
+        reason = gsplat_cuda_missing()
+        if reason:
+            raise RenderError(f"the splat renderer cannot draw here: {reason}")
         index = torch.device(device).index or 0
         if index >= torch.cuda.device_count():
             raise RenderError(
@@ -491,3 +494,23 @@ class SplatRenderer(Renderer):
             torch.where(nearer[..., None], body_rgb, rgb),
             torch.where(nearer, body_depth, depth),
         )
+
+
+def gsplat_cuda_missing() -> str | None:
+    """Why gsplat cannot rasterise on this machine, or ``None`` when it can.
+
+    gsplat ships its CUDA kernels as source and compiles them on first import; where it finds no CUDA
+    toolkit it says so on stderr and leaves its backend unset, and the first frame then fails inside
+    gsplat with an ``AttributeError`` on ``None``. Asked here, the renderer refuses to open instead.
+    """
+    try:
+        from gsplat.cuda._backend import _C  # noqa: PLC0415 -- gsplat's compiled kernels
+    except ImportError as err:
+        return f"gsplat's CUDA backend does not import ({err})"
+    if _C is None:
+        return (
+            "gsplat's CUDA kernels are not built: gsplat compiles them on first use and found no "
+            "CUDA toolkit (nvcc) here; install the CUDA toolkit matching torch's CUDA, or a gsplat "
+            "wheel built for this torch"
+        )
+    return None

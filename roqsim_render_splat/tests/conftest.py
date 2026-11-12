@@ -13,7 +13,9 @@ def _cuda() -> str | None:
 
     if not torch.cuda.is_available():
         return "needs a CUDA GPU: torch.cuda.is_available() is false on this machine"
-    return None
+    from roqsim_render_splat.renderer import gsplat_cuda_missing  # noqa: PLC0415
+
+    return gsplat_cuda_missing()
 
 
 @pytest.fixture
