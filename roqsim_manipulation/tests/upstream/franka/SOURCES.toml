@@ -1,0 +1,112 @@
+# The Franka upstream files the test_franka* tests read, at the commits roqsim's simulated FR3 is
+# held to. Fetched and checked by `roqsim arm franka-upstream` (roqsim_manipulation.cli.franka_upstream);
+# never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0).
+#
+# The pins: libfranka 0.21.3 (needs FR3 system >= 5.9.0, robot server version 10), the
+# libfranka-common commit it pins as its `common` submodule (the FCI wire format, kVersion 10),
+# franka_description 2.9.0 and franka_ros2 v3.6.1 (Jazzy), the pair each compatibility table names.
+
+[[repo]]
+dir = "libfranka"
+url = "https://github.com/frankarobotics/libfranka"
+tag = "0.21.3"
+commit = "85912fe02258d8cb811d3eff1f11e52ce89e3217"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "include/franka/rate_limiting.h",
+  "include/franka/lowpass_filter.h",
+  "include/franka/robot_state.h",
+  "include/franka/errors.h",
+  "include/franka/control_types.h",
+  "include/franka/robot.h",
+  "src/joint_velocity_limits.cpp",
+  "src/errors.cpp",
+  "examples/generate_joint_position_motion.cpp",
+  "examples/examples_common.cpp",
+  "docs/compatibility_matrix.rst",
+]
+
+[[repo]]
+dir = "libfranka-common"
+url = "https://github.com/frankarobotics/libfranka-common"
+tag = "(libfranka 0.21.3's common submodule)"
+commit = "2e090a65e51c94a98f9fc82b6ec3d1aa54d0f85f"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "include/research_interface/robot/service_types.h",
+  "include/research_interface/robot/rbk_types.h",
+  "include/research_interface/robot/error.h",
+]
+
+[[repo]]
+dir = "franka_description"
+url = "https://github.com/frankarobotics/franka_description"
+tag = "2.9.0"
+commit = "7aeeddc449edf8d62b594f9e36a81da53e7796f9"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "robots/fr3/joint_limits.yaml",
+  "robots/fr3/kinematics.yaml",
+  "robots/fr3/inertials.yaml",
+  "robots/fr3/dynamics.yaml",
+]
+
+[[repo]]
+dir = "franka_ros2"
+url = "https://github.com/frankarobotics/franka_ros2"
+tag = "v3.6.1"
+commit = "8c946641bdedaf20c35604d8bc5a809117e4ed6c"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "franka_ros2/doc/compatibility_matrix.rst",
+  "franka_msgs/msg/FrankaRobotState.msg",
+]
+
+# `robots/fr3/fr3.urdf.xacro hand:=false`, processed by xacro: the arm without the Franka Hand, under
+# franka_description's names (fr3_link0..8, fr3_joint1..7), the names franka_ros2 uses.
+[[generated]]
+dir = "franka_description"
+file = "fr3.urdf"
+xacro = "robots/fr3/fr3.urdf.xacro"
+mappings = { hand = "false" }
+
+# The same with `no_prefix:=true` (link0..8, joint1..7): the names libfranka's Model looks up in the
+# URDF the robot serves (src/robot_model.h, kLastLinkName "link8"), so the one the simulated robot
+# serves through GetRobotModel.
+[[generated]]
+dir = "franka_description"
+file = "fr3_no_prefix.urdf"
+xacro = "robots/fr3/fr3.urdf.xacro"
+mappings = { hand = "false", no_prefix = "true" }
+
+[sha256]
+"franka_description/LICENSE" = "4b25434e6ec2012e28a484f1d7924a0fd1a8bf232c2be2d50d584d299d04d6d6"
+"franka_description/fr3.urdf" = "e13c063b0b044943081f9712aca1d05cf5702530c602ab1902e84d02e97e7152"
+"franka_description/fr3_no_prefix.urdf" = "1ae00125fb9c83a51ffe51cbc014665af1f8befa0de69f8be5801039cb83bf44"
+"franka_description/robots/fr3/dynamics.yaml" = "e65e145114b431bd17cdebc58b88c43505f0658472cca6ffbc9c32b7a198f79b"
+"franka_description/robots/fr3/inertials.yaml" = "02a39046b36303f748c9755b48610b7600fb819d54828475514c36915ae54a89"
+"franka_description/robots/fr3/joint_limits.yaml" = "42e999184f37689568b58f320d062859053f03c62c8b49bf00a00d69f20d7a65"
+"franka_description/robots/fr3/kinematics.yaml" = "44326830a6773dd6611cdf9947045eeb3276ea4e3ca47a05272816c862c8e386"
+"franka_ros2/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"franka_ros2/franka_msgs/msg/FrankaRobotState.msg" = "c55a163656bcf7674601ff18d02819b3088c1e9e3edc220855b3099ec0985ae5"
+"franka_ros2/franka_ros2/doc/compatibility_matrix.rst" = "4275881506d91cf1a617ae0f89cfa3fdb0bc881e59824b02ac675cfad42bad00"
+"libfranka-common/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"libfranka-common/include/research_interface/robot/error.h" = "23701ab61c37332c4158fed55d3e4ad3dba1f5db9492b3ab70034cb5ef137b7a"
+"libfranka-common/include/research_interface/robot/rbk_types.h" = "975f007782d2ad416634e5e764d6a2de1be02e6089e26d58e94a461caaaf10f3"
+"libfranka-common/include/research_interface/robot/service_types.h" = "e9af4e13a4f6db43676337368528a1c394a2daf8e32171f767c3314fa69deefb"
+"libfranka/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"libfranka/docs/compatibility_matrix.rst" = "b571a312536a170fee17c03e6539719c23971e00335692ce96cbedd8bc7db8af"
+"libfranka/examples/examples_common.cpp" = "cab122051fa0fae0c75e3295867fa7d5ae65ed2a0dad499ecae0f31a14c328f2"
+"libfranka/examples/generate_joint_position_motion.cpp" = "93cf0071edcfe19025e27d5c74034b08040fb8fadd3aadaf225b292221623920"
+"libfranka/include/franka/control_types.h" = "78ee4cf675de80b7a0080aceddd60d14aaf88b44f5a3786df17fe31e084cac10"
+"libfranka/include/franka/errors.h" = "b8af6514aa2d6e78440fc2430856c927fe06a80082007049d062c5cb1f2c58ed"
+"libfranka/include/franka/lowpass_filter.h" = "635653f8b282fc30a1e2866f1d018e9f86dfb2891252073bc4d6b5c2a578e205"
+"libfranka/include/franka/rate_limiting.h" = "dc5b5af00882e90363298f12df8d62ed5a135e6a9ff0f92999384d39f499cd15"
+"libfranka/include/franka/robot.h" = "73560ff227b14670f258a92dccf83426b1a64de4d41b0e62814d0e434ec42856"
+"libfranka/include/franka/robot_state.h" = "a1be5118af87ea1c779282f2f153268a17efb7b4bf2fcd3171a0f6285fee9376"
+"libfranka/src/errors.cpp" = "10afba3a4d8d376cf51975cfc926b2c3eca00526ca8e27417f8f30b98d10b4a9"
+"libfranka/src/joint_velocity_limits.cpp" = "087194e90e4b19fd1f424274567f4205433b1fa1a7329dbc908ab22578fe2e57"
