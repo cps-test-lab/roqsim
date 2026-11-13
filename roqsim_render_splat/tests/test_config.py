@@ -199,3 +199,24 @@ def test_gsplat_without_its_built_kernels_is_named_not_met_at_the_first_frame(mo
     assert "kernels are not built" in gsplat_cuda_missing()
     monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", types.SimpleNamespace(_C=object()))
     assert gsplat_cuda_missing() is None
+
+
+def test_a_gsplat_backend_that_fails_to_load_is_named_not_raised_raw(monkeypatch):
+    import sys
+
+    from roqsim_render_splat.renderer import gsplat_cuda_missing
+
+    monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", None)  # an import error
+    assert "did not load" in gsplat_cuda_missing()
+
+    class FailingCompile:
+        """A finder that stands in for gsplat's backend, whose compile fails."""
+
+        @staticmethod
+        def find_spec(name, path=None, target=None):
+            if name == "gsplat.cuda._backend":
+                raise RuntimeError("Error building extension 'gsplat_cuda'")
+
+    monkeypatch.delitem(sys.modules, "gsplat.cuda._backend")
+    monkeypatch.setattr(sys, "meta_path", [FailingCompile, *sys.meta_path])
+    assert "RuntimeError: Error building extension" in gsplat_cuda_missing()

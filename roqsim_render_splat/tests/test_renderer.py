@@ -240,6 +240,31 @@ def test_without_a_gpu_it_refuses_to_open_and_names_why(tmp_path, monkeypatch):
         renderer.open(scene)
 
 
+@pytest.mark.parametrize("backend", [None, "missing"])
+def test_open_refuses_where_gsplat_has_no_kernels_before_reading_the_capture(
+    tmp_path, monkeypatch, backend
+):
+    """Without a GPU: a CUDA torch and an unbuilt gsplat backend, the capture file never read."""
+    import sys
+    import types
+
+    from roqsim.render_api import SceneDescription
+    from roqsim.rendering import moving_bodies
+
+    renderer = SplatRenderer({"splat": {"file": "absent.ply"}})
+    fake_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True))
+    monkeypatch.setattr(renderer, "_import_torch", lambda: fake_torch)
+    monkeypatch.setitem(
+        sys.modules,
+        "gsplat.cuda._backend",
+        types.SimpleNamespace(_C=None) if backend is None else None,
+    )
+    model = mujoco.MjModel.from_xml_string(XML)
+    scene = SceneDescription(model, moving_bodies(model), [], {}, base_dir=tmp_path)
+    with pytest.raises(RenderError, match="the splat renderer cannot draw here: gsplat's CUDA"):
+        renderer.open(scene)
+
+
 def test_the_placement_reads_a_pose_as_any_world_pose_is_read():
     rot, trans, scale = splat_placement(PLACEMENT)
     q = rpy_to_quat(-1.5708, 0.0, 0.3)
