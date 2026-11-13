@@ -59,7 +59,7 @@ def _ft_site(arm: str) -> str:
 
 def _torque_driven(arm: str) -> bool:
     """Every actuator a torque motor: such an arm holds no pose without its controller (an ``fr3``
-    without one falls), and what is measured here is where the wrench is read."""
+    without ``franka_fci`` falls), and what is measured here is where the wrench is read."""
     m = mujoco.MjModel.from_xml_path(str(MODELS_DIR / arm / f"{arm}.xml"))
     return m.nu > 0 and all(int(b) == int(mujoco.mjtBias.mjBIAS_NONE) for b in m.actuator_biastype)
 

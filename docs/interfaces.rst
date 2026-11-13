@@ -964,6 +964,47 @@ semantic::
          name: ft
        - ur_rtde: {ft: ft}
 
+**A Franka Research 3 under libfranka, as the robot serves it.** The ``fr3`` model (franka_description
+2.9.0, torque motors, no hand) takes a ``franka_fci`` entry, which is the robot's controller and its
+FCI. With ``bind:`` set it serves the robot's side of the network protocol (libfranka-common's
+headers, protocol version 10, libfranka 0.21.3), so an unmodified libfranka program, pylibfranka and
+franka_ros2's hardware interface (``robot_ip:=<bind>``) connect to the simulated arm as to a robot,
+and in lock-step: one control callback per millisecond of simulated time, the physics waiting for
+each command, so a run is reproducible however slow it is. ``GetRobotModel`` serves
+franka_description's URDF, from which libfranka builds its ``Model``. The rate limiter and the
+low-pass filter are libfranka's own code on the client. The robot side is the core's:
+
+* gravity from the robot's model and the configured end effector and load (``setLoad``,
+  ``end_effector:``), so a wrong load sags the arm and biases the estimate as on the robot;
+* the motion-generator checks at ``rate_limiting.h``'s limits, the internal joint and Cartesian
+  impedance controllers, and the reflexes at ``setCollisionBehavior``'s thresholds, each ending the
+  motion with libfranka's own error flag;
+* ``tau_ext_hat_filtered``, ``O_F_ext_hat_K`` and ``K_F_ext_hat_K`` estimated from the link-side
+  joint torques and the robot's model; the arm has no wrist sensor.
+
+The world must state ``collision_behavior``: the robot's own start-up thresholds are not published,
+and whether the arm stops on a contact turns on them. The timestep must be 1 ms / N. Two arms are two
+entries with two addresses (libfranka always connects to port 1337), stepped by one physics, so a
+law that coordinates them sees one clock. In process, the handle ``franka_fci:<arm>`` runs a law
+``law(state, period) -> command`` with libfranka's field names. What Franka does not publish -- the
+estimator's filter, the internal impedance laws, when the "acceleration" thresholds apply -- is a
+stated assumption in the plugin's docstring, and absent are guiding mode, ``PTPMotion``, power and
+self-collision limits, the gripper, and late answers (none can happen in lock-step). The tests
+(``roqsim_manipulation/tests/test_franka_*.py``) read Franka's files at the pinned commits
+(``roqsim arm franka-upstream``) and build and run the real libfranka against the server::
+
+   sim: {timestep: 0.001}
+   components:
+     - spawn_arm: {model: fr3, prefix: left_, pose: {position: {y: 0.5}}}
+       name: left
+       components:
+         - franka_fci:
+             bind: 127.0.0.2
+             collision_behavior: {lower_torque: [20, 20, 20, 20, 20, 20, 20],
+                                  upper_torque: [40, 40, 40, 40, 40, 40, 40],
+                                  lower_force: [20, 20, 20, 20, 20, 20],
+                                  upper_force: [60, 60, 60, 60, 60, 60]}
+
 Three semantics are worth stating because getting them wrong makes a scenario that works here fail
 on the arm:
 

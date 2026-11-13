@@ -1,6 +1,6 @@
 """Fetch, or check, the Franka upstream files the ``test_franka*`` tests read.
 
-The simulated Franka Research 3 (the ``fr3`` model) is held to Franka's own
+The simulated Franka Research 3 (``franka_fci``, the ``fr3`` model) is held to Franka's own
 releases by tests that read Franka's files, never a copy typed from them. Those files are vendored
 under ``roqsim_manipulation/tests/upstream/franka/``, one directory per repository at the pinned
 commit, each with its ``LICENSE`` (all Apache-2.0), and listed with their sha256 in ``SOURCES.toml``
