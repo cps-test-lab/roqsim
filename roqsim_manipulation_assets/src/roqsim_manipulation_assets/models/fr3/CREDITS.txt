@@ -1,0 +1,9 @@
+Franka Research 3 (fr3)
+  Source:    https://github.com/frankarobotics/franka_description @ 7aeeddc449edf8d62b594f9e36a81da53e7796f9 (2.9.0),
+             robots/fr3/fr3.urdf.xacro with hand:=false
+  Author:    Franka Robotics GmbH
+  License:   Apache-2.0 (full text and changes: FR3_LICENSE beside this file)
+  Converted: external/convert/build_fr3_mjcf.py
+  Joint dynamics (armature, damping, frictionloss): MuJoCo Menagerie franka_fr3, v2026.11.3,
+             Apache-2.0, (c) Google DeepMind ("identified in torque control").
+  "Franka" and "Franka Research 3" name the source only; Apache-2.0 grants no trademark right.

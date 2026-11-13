@@ -34,7 +34,9 @@ dependencies = [
 # controller's own account of it. At run time `cartesian_admittance` reads its wrench from a blackboard
 # key (`ft:<key>`), not from this package: the world that selects a force law declares the sensor that
 # publishes the key, so the runtime graph does not gain it.
-test = ["pytest>=7.0", "roqsim_manipulation_assets", "roqsim_sensors"]
+#
+# `pin` (Pinocchio, the library libfranka's Model runs on) checks the `fr3` model against Franka's URDF.
+test = ["pytest>=7.0", "roqsim_manipulation_assets", "roqsim_sensors", "pin"]
 
 # Manipulator plugins, registered into the shared roqsim.plugins group.
 # `roqsim arm`: what a recorded arm did (src/roqsim_manipulation/cli).

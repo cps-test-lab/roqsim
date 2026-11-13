@@ -11,4 +11,8 @@ Models with a `CREDITS.txt` beside them:
   CORPORATION. Meshes converted and the forearm lettering painted over; "FANUC" names the source only
   (Apache-2.0 grants no trademark right). `models/m20id25/CREDITS.txt`, `models/crx25ia/CREDITS.txt`.
 
+- **`fr3`** (Franka Research 3): frankarobotics/franka_description 2.9.0, Apache-2.0, (c) Franka
+  Robotics GmbH; joint dynamics from MuJoCo Menagerie's `franka_fr3` (Apache-2.0). Meshes converted and
+  decimated. "Franka" names the source only. `models/fr3/CREDITS.txt`.
+
 When adding a model, keep its licence file and `CREDITS.txt` alongside it and list it here.
