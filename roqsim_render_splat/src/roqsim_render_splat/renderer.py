@@ -499,14 +499,17 @@ class SplatRenderer(Renderer):
 def gsplat_cuda_missing() -> str | None:
     """Why gsplat cannot rasterise on this machine, or ``None`` when it can.
 
-    gsplat ships its CUDA kernels as source and compiles them on first import; where it finds no CUDA
-    toolkit it says so on stderr and leaves its backend unset, and the first frame then fails inside
-    gsplat with an ``AttributeError`` on ``None``. Asked here, the renderer refuses to open instead.
+    gsplat loads its CUDA backend when ``gsplat.cuda._backend`` is first imported, and compiles the
+    kernels there on first use; ``import gsplat`` alone does not. ``open`` asks here, so the compile
+    runs under ``open_timeout_s`` and not inside the first frame. Where it finds no CUDA toolkit,
+    gsplat says so on stderr and leaves its backend unset, and a frame would then fail inside gsplat
+    with an ``AttributeError`` on ``None``; where the compile fails, the import raises. Either way
+    the renderer refuses to open, with the reason.
     """
     try:
         from gsplat.cuda._backend import _C  # noqa: PLC0415 -- gsplat's compiled kernels
-    except ImportError as err:
-        return f"gsplat's CUDA backend does not import ({err})"
+    except Exception as err:  # noqa: BLE001 -- an import error, or the compiler's own failure
+        return f"gsplat's CUDA backend did not load ({type(err).__name__}: {err})"
     if _C is None:
         return (
             "gsplat's CUDA kernels are not built: gsplat compiles them on first use and found no "
