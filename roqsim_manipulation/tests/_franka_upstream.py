@@ -16,7 +16,7 @@ LIBFRANKA = UPSTREAM / "libfranka"
 COMMON = UPSTREAM / "libfranka-common" / "include" / "research_interface" / "robot"
 DESCRIPTION = UPSTREAM / "franka_description"
 ROS2 = UPSTREAM / "franka_ros2"
-TOOL = Path(__file__).resolve().parents[1] / "tools" / "franka_upstream.py"
+TOOL = Path(__file__).resolve().parents[2] / "external" / "franka_upstream.py"
 
 
 def sources() -> dict:
@@ -24,7 +24,7 @@ def sources() -> dict:
 
 
 def upstream_tool() -> ModuleType:
-    """The checkout's ``tools/franka_upstream.py``, which the installed package does not carry."""
+    """The checkout's ``external/franka_upstream.py``, which no installed package carries."""
     spec = importlib.util.spec_from_file_location("franka_upstream", TOOL)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
