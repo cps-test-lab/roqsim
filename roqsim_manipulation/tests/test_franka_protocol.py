@@ -90,6 +90,11 @@ def test_status_enums(struct, ours):
     assert _status(struct) == [s.name.replace("_", "").lower() for s in ours]
 
 
+def test_command_base_status():
+    """``CommandBase::Status``, which ``GetRobotModel`` answers with."""
+    assert _status("CommandBase") == [s.name.replace("_", "").lower() for s in P.CommandStatus]
+
+
 def test_getter_setter_status():
     body = struct_body(SERVICE, "GetterSetterCommandBase")
     assert [v[1:].lower() for v in enum_values(body, "Status")] == [

@@ -1,8 +1,7 @@
 """The simulated FCI's network side on its own: the handshake, the robot model and lock-step UDP.
 
 A client here speaks the wire format of ``roqsim_manipulation.franka.protocol`` by hand, so the
-server is tested without the controller behind it; ``test_franka_libfranka.py`` runs Franka's own
-client against the whole robot.
+server is tested without a controller or a client library behind it.
 """
 
 from __future__ import annotations
@@ -30,7 +29,9 @@ def _connect(version: int, udp: socket.socket) -> tuple[socket.socket, tuple]:
     tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 0, P.HEADER.size + len(payload)) + payload)
     reply = b""
     while len(reply) < P.HEADER.size + P.CONNECT_RESPONSE.size:
-        reply += tcp.recv(64)
+        chunk = tcp.recv(64)
+        assert chunk, "the server closed the connection before it answered Connect"
+        reply += chunk
     return tcp, P.CONNECT_RESPONSE.unpack(reply[P.HEADER.size :])
 
 
@@ -111,3 +112,64 @@ def test_a_client_that_never_answers_stops_the_run(server):
         server.await_command(1, _state(1), strict=True, client_timeout_s=0.3)
     assert server.await_command(2, _state(2), strict=False, client_timeout_s=0.3) is None
     tcp.close()
+
+
+def test_a_malformed_connect_is_dropped_and_the_connection_still_served(server):
+    """A wrong-size Connect is logged and skipped, as any wrong-size command: it must not end the
+    connection's thread and leave the server holding a client it no longer reads."""
+    udp = _udp()
+    tcp = socket.create_connection((ADDRESS, P.COMMAND_PORT), timeout=5)
+    tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 0, P.HEADER.size + 1) + b"\0")
+    payload = P.CONNECT_REQUEST.pack(P.VERSION, udp.getsockname()[1])
+    tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 1, P.HEADER.size + len(payload)) + payload)
+    reply = b""
+    while len(reply) < P.HEADER.size + P.CONNECT_RESPONSE.size:
+        chunk = tcp.recv(64)
+        assert chunk, "the server closed the connection after a malformed Connect"
+        reply += chunk
+    assert P.HEADER.unpack(reply[: P.HEADER.size])[1] == 1
+    assert P.CONNECT_RESPONSE.unpack(reply[P.HEADER.size :])[0] == P.ConnectStatus.SUCCESS
+    tcp.close()
+
+
+def test_a_closing_old_client_leaves_its_successor_connected(server):
+    """One client at a time: a new connection replaces the old, and the old one's closing (its
+    thread noticing later) does not drop the new client."""
+    old, _ = _connect(P.VERSION, _udp())
+    new_udp = _udp()
+    new, (status, _) = _connect(P.VERSION, new_udp)
+    assert status == P.ConnectStatus.SUCCESS
+    old.close()
+    new.sendall(P.HEADER.pack(P.Command.GET_ROBOT_MODEL, 2, P.HEADER.size))
+    data = b""
+    while b"/>" not in data:
+        chunk = new.recv(256)
+        assert chunk, "the new client was dropped"
+        data += chunk
+    assert server.client_udp == ("127.0.0.1", new_udp.getsockname()[1])
+    new.close()
+
+
+def test_only_the_connected_clients_commands_are_taken(server):
+    udp = _udp()
+    tcp, _ = _connect(P.VERSION, udp)
+    stranger = _udp()
+    stranger.sendto(
+        P.pack_robot_command({"message_id": 3, "tau_J_d": [9] * 7}), server._udp.getsockname()
+    )
+    assert server.await_command(3, _state(3), strict=False, client_timeout_s=1) is None
+    udp.sendto(
+        P.pack_robot_command({"message_id": 3, "tau_J_d": [1] * 7}), server._udp.getsockname()
+    )
+    assert (
+        server.await_command(3, _state(3), strict=False, client_timeout_s=1)["tau_J_d"] == [1.0] * 7
+    )
+    tcp.close()
+
+
+def test_a_client_gone_during_a_strict_wait_ends_the_wait(server):
+    """The motion ends through the StopMove the disconnect queues; the run goes on."""
+    tcp, _ = _connect(P.VERSION, _udp())
+    tcp.close()
+    assert server.await_command(1, _state(1), strict=True, client_timeout_s=5) is None
+    assert server.requests.get(timeout=5).command == P.Command.STOP_MOVE

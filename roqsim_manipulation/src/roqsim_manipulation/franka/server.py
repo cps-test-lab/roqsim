@@ -78,6 +78,9 @@ class FCIServer:
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._udp.bind((bind, 0))
         self._conn: socket.socket | None = None
+        # Guards the swap of the connected client: a closing connection's thread must not drop the
+        # client that replaced it.
+        self._conn_lock = threading.Lock()
         self._send_lock = threading.Lock()
         self.client_udp: tuple[str, int] | None = None
         self._closed = False
@@ -93,9 +96,10 @@ class FCIServer:
             except OSError:
                 return
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            if self._conn is not None:  # one client at a time, as the robot serves one
-                self._drop_client("a new client connected")
-            self._conn = conn
+            with self._conn_lock:
+                if self._conn is not None:  # one client at a time, as the robot serves one
+                    self._drop_client("a new client connected", self._conn)
+                self._conn = conn
             threading.Thread(target=self._serve, args=(conn, addr[0]), daemon=True).start()
 
     def _recv_exact(self, conn: socket.socket, n: int) -> bytes | None:
@@ -125,6 +129,14 @@ class FCIServer:
                 log.warning("fci %s: unknown command %d", self.bind, command)
                 continue
             if command == Command.CONNECT:
+                if len(payload) != CONNECT_REQUEST.size:
+                    log.warning(
+                        "fci %s: CONNECT payload of %d bytes, expected %d",
+                        self.bind,
+                        len(payload),
+                        CONNECT_REQUEST.size,
+                    )
+                    continue
                 version, udp_port = CONNECT_REQUEST.unpack(payload)
                 ok = version == VERSION
                 if ok:  # streaming to the client before it hears the reply it may act on
@@ -156,17 +168,20 @@ class FCIServer:
                 )
                 continue
             self.requests.put(Request(command, command_id, payload))
-        if self._conn is conn:
-            self._drop_client("the client closed the connection")
+        with self._conn_lock:
+            self._drop_client("the client closed the connection", conn)
 
-    def _drop_client(self, why: str) -> None:
+    def _drop_client(self, why: str, conn: socket.socket) -> None:
+        """Close ``conn`` and forget the client, if ``conn`` is still the connected one; the caller
+        holds ``_conn_lock``."""
+        if self._conn is not conn:
+            return
         log.info("fci %s: %s", self.bind, why)
-        conn, self._conn, self.client_udp = self._conn, None, None
-        if conn is not None:
-            try:
-                conn.close()
-            except OSError:
-                pass
+        self._conn, self.client_udp = None, None
+        try:
+            conn.close()
+        except OSError:
+            pass
         self.requests.put(Request(Command.STOP_MOVE, -1, b""))  # a motion without a client ends
 
     def reply(self, command: Command, command_id: int, payload: bytes) -> None:
@@ -196,10 +211,14 @@ class FCIServer:
     def await_command(
         self, message_id: int, state: bytes, *, strict: bool, client_timeout_s: float
     ) -> dict | None:
-        """The ``RobotCommand`` answering ``message_id``; ``None`` if none came (see the module doc).
+        """The ``RobotCommand`` answering ``message_id``, from the connected client's address.
 
         ``strict``: wait for it, re-sending ``state`` every ``resend_s``, and raise after
         ``client_timeout_s`` of wall time; otherwise wait at most ``first_command_wait_s``.
+
+        ``None`` when none came within ``first_command_wait_s`` (not strict), or when the client
+        disconnected meanwhile (either way). A disconnect ends the motion through the ``StopMove``
+        it queues, and the run goes on, as a robot whose client went away does.
         """
         start = time.monotonic()
         last_send = start
@@ -219,8 +238,8 @@ class FCIServer:
             ready, _, _ = select.select([self._udp], [], [], min(0.005, self.resend_s))
             if not ready:
                 continue
-            data, _ = self._udp.recvfrom(4096)
-            if len(data) != ROBOT_COMMAND.size:
+            data, sender = self._udp.recvfrom(4096)
+            if sender != self.client_udp or len(data) != ROBOT_COMMAND.size:
                 continue
             cmd = unpack_robot_command(data)
             if cmd["message_id"] == message_id:
