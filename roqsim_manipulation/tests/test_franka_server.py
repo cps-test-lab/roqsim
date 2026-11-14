@@ -57,7 +57,9 @@ def test_get_robot_model_serves_the_urdf(server):
     tcp.sendall(P.HEADER.pack(P.Command.GET_ROBOT_MODEL, 1, P.HEADER.size))
     data = b""
     while b"/>" not in data:
-        data += tcp.recv(256)
+        chunk = tcp.recv(256)
+        assert chunk, "the server closed the connection before it served the model"
+        data += chunk
     command, command_id, size = P.HEADER.unpack(data[: P.HEADER.size])
     assert (command, command_id) == (P.Command.GET_ROBOT_MODEL, 1)
     assert data[P.HEADER.size] == P.CommandStatus.SUCCESS
@@ -139,6 +141,7 @@ def test_a_closing_old_client_leaves_its_successor_connected(server):
     new_udp = _udp()
     new, (status, _) = _connect(P.VERSION, new_udp)
     assert status == P.ConnectStatus.SUCCESS
+    assert old.recv(64) == b"", "the replaced client's connection stays open"
     old.close()
     new.sendall(P.HEADER.pack(P.Command.GET_ROBOT_MODEL, 2, P.HEADER.size))
     data = b""

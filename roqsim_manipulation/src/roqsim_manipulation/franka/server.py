@@ -178,6 +178,10 @@ class FCIServer:
             return
         log.info("fci %s: %s", self.bind, why)
         self._conn, self.client_udp = None, None
+        try:  # shutdown wakes the connection's blocked recv, so its thread ends; close alone does not
+            conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             conn.close()
         except OSError:
