@@ -5,7 +5,8 @@ Upstream:   frankarobotics/franka_description, https://github.com/frankarobotics
 Copyright:  Franka Robotics GmbH
 License:    Apache License 2.0.
 Changes:    built by external/convert/build_fr3_mjcf.py: URDF compiled to MJCF; COLLADA visuals
-            converted to OBJ and decimated; joint armature, damping and frictionloss taken from
+            converted to OBJ, one file per material, triangles unchanged; collision STLs split
+            into convex pieces (CoACD); joint armature, damping and frictionloss taken from
             MuJoCo Menagerie franka_fr3 (Apache-2.0, (c) Google DeepMind), v2026.11.3; torque
             motors added; accelerometer frames dropped. See CREDITS.txt.
 

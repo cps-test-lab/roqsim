@@ -6,8 +6,6 @@ Each value names the file it is from, at the commits ``tests/upstream/franka/SOU
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 #: libfranka ``rate_limiting.h``: the control period and the margin every limit is reduced by.
@@ -70,6 +68,3 @@ def lower_joint_velocity_limits(q) -> np.ndarray:
         np.maximum(-DQ_MAX, np.minimum(0.0, VELOCITY_OFFSET - root))
         + JOINT_VELOCITY_LIMITS_TOLERANCE
     )
-
-
-assert math.isclose(DELTA_T, 1e-3)

@@ -107,8 +107,19 @@ def test_the_velocity_limit_formula_is_libfrankas():
             )
             - L.JOINT_VELOCITY_LIMITS_TOLERANCE
         )
+        low = (
+            np.maximum(
+                -L.DQ_MAX,
+                np.minimum(
+                    0.0,
+                    L.VELOCITY_OFFSET
+                    - np.sqrt(np.maximum(0.0, 2 * L.DECELERATION_LIMIT * (q - L.Q_LOWER))),
+                ),
+            )
+            + L.JOINT_VELOCITY_LIMITS_TOLERANCE
+        )
         assert np.allclose(L.upper_joint_velocity_limits(q), up)
-        assert np.all(L.lower_joint_velocity_limits(q) <= 0.0 + L.JOINT_VELOCITY_LIMITS_TOLERANCE)
+        assert np.allclose(L.lower_joint_velocity_limits(q), low)
 
 
 def test_impedance_ranges_are_the_documented_ones():
