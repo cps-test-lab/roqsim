@@ -6,8 +6,8 @@ name: ci
 # separate so a formatting mistake does not wait behind a robot driving to a goal. `osc` runs the
 # tests gated on scenario-execution with it installed; `core` and `ros` stay without it, where those
 # tests must skip. `franka` builds libfranka from source and runs it against the simulated FR3, which
-needs a C++ toolchain the other jobs do not. `pages` publishes the documentation `make ci` already
-built, from main only.
+# needs a C++ toolchain the other jobs do not. `pages` publishes the documentation `make ci` already
+# built, from main only.
 
 on:
   push:

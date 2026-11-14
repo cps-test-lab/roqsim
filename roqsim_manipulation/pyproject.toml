@@ -55,11 +55,11 @@ franka_fci = "roqsim_manipulation.plugins.franka_fci:FrankaFCIPlugin"
 ur_driver_interface = "roqsim_manipulation.plugins.ur_driver_interface:URDriverInterfacePlugin"
 ur_rtde = "roqsim_manipulation.plugins.ur_rtde:URRTDEPlugin"
 
-# How the ROS bridge carries this package's own payload types; loaded by the bridge only.
 # The ROQSIM_* variables this package reads (roqsim.env refuses an unregistered one).
 [project.entry-points."roqsim.environment"]
 roqsim_manipulation = "roqsim_manipulation.environment:VARIABLES"
 
+# How the ROS bridge carries this package's own payload types; loaded by the bridge only.
 [project.entry-points."roqsim.ros2_types"]
 roqsim_manipulation = "roqsim_manipulation.ros2_types:TYPES"
 

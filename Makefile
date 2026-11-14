@@ -201,8 +201,8 @@ test: venv-ready  ## Run unit tests; also the ros2_ws tests (incl. nav2 integrat
 FRANKA_TESTS := roqsim_manipulation/tests/test_franka_libfranka.py
 
 .PHONY: test-franka
-test-franka:  ## libfranka 0.21.3, built from source, against the simulated FCI (needs C++, Eigen3, Poco, fmt)
-	$(PYTEST) $(FRANKA_TESTS) -q -rs
+test-franka: venv-ready  ## libfranka 0.21.3, built from source, against the simulated FCI (needs C++, Eigen3, Poco, fmt)
+	$(PYTEST) $(FRANKA_TESTS) -q -rs --confcutdir=$(CURDIR)
 
 # The Khronos glTF Validator is a Node.js program, so it is not part of `make test`: there, the export
 # gltf test of a small world runs only when the validator is installed, and says so when it is not.
@@ -250,7 +250,7 @@ test-osc:  ## The scenario-execution tests, in a venv with the [osc] extra; noth
 # package as for all: a package installed without what it declares fails naming it.
 .PHONY: test-%
 test-%:
-	$(PYTEST) $* -q --confcutdir=$(CURDIR)
+	$(PYTEST) $* -q --confcutdir=$(CURDIR) --ignore=$(FRANKA_TESTS)
 
 .PHONY: smoke
 smoke:  ## Headless-run every shipped world; a world with a scene must finish it (tools/smoke.py)

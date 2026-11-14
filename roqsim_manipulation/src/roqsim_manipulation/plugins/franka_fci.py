@@ -318,7 +318,7 @@ class FrankaFCIPlugin(Plugin):
                 Command.MOVE, motion.command_id, STATUS_RESPONSE.pack(MoveStatus.ABORTED)
             )
         if self._inproc is not None and self._inproc.ending is None:
-            self._inproc.ending = Ending(None, MoveStatus.ABORTED, ["reset"])
+            self._inproc.ending = Ending(None, MoveStatus.ABORTED, [])  # no reflex: the reset
         self._inproc = None
         self.core.reset(ctx.data.qpos[self._qadr])
         self._net_motion = False

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from _franka_upstream import sources
 
-from roqsim import env
+from roqsim import env as roqsim_env
 
 HERE = Path(__file__).resolve().parent
 
@@ -60,7 +60,9 @@ def runtime_env() -> dict:
 
 def _cache() -> Path:
     pin = _libfranka_pin()
-    root = Path(env.get("ROQSIM_FRANKA_CACHE") or Path.home() / ".cache" / "roqsim" / "franka")
+    root = Path(
+        roqsim_env.get("ROQSIM_FRANKA_CACHE") or Path.home() / ".cache" / "roqsim" / "franka"
+    )
     return root / pin["commit"][:12]
 
 
