@@ -222,12 +222,24 @@ def test_a_preview_serves_no_fci():
     engine.shutdown()
 
 
-def _read_reply(tcp, header, response):
+def _read_reply(tcp, header, response, engine=None):
+    """One reply off the command connection. With ``engine``, step it while waiting: the server's
+    thread queues a command for the physics thread, which answers it at a later tick."""
     data = b""
-    while len(data) < header.size + response.size:
-        chunk = tcp.recv(256)
+    tcp.settimeout(0.01 if engine is not None else 5)
+    for _ in range(5000):
+        if len(data) >= header.size + response.size:
+            break
+        try:
+            chunk = tcp.recv(256)
+        except TimeoutError:
+            if engine is None:
+                raise
+            engine.step()
+            continue
         assert chunk, "the server closed the connection"
         data += chunk
+    assert len(data) >= header.size + response.size, "no reply within 5000 steps"
     return header.unpack(data[: header.size]), response.unpack(
         data[header.size : header.size + response.size]
     )
@@ -271,8 +283,7 @@ def test_a_reset_answers_a_running_network_motion_as_aborted():
             *([2.0] * 7),
         )
         tcp.sendall(P.HEADER.pack(P.Command.MOVE, 2, P.HEADER.size + len(move)) + move)
-        _steps(engine, 3)
-        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)
+        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE, engine)
         assert (command, command_id, status) == (P.Command.MOVE, 2, P.MoveStatus.MOTION_STARTED)
         _steps(engine, 3)
         engine.reset()
@@ -314,8 +325,7 @@ def test_a_move_in_a_mode_the_protocol_does_not_define_is_refused():
         _read_reply(tcp, P.HEADER, P.CONNECT_RESPONSE)
         move = P.MOVE_REQUEST.pack(99, 0, *([10.0] * 6), False, *([2.0] * 7))
         tcp.sendall(P.HEADER.pack(P.Command.MOVE, 3, P.HEADER.size + len(move)) + move)
-        _steps(engine, 3)
-        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)
+        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE, engine)
         assert (command, command_id, status) == (
             P.Command.MOVE,
             3,
