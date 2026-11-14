@@ -6,6 +6,7 @@ cloned at the tag ``SOURCES.toml`` pins (its commit is checked), built with the 
 its dependencies -- Poco and Eigen from the system, Pinocchio, urdfdom and tinyxml2 from the ``cmeel``
 Python packages (``pin`` and ``cmeel-urdfdom-headers``, the ``test`` extra) -- and cached under ``ROQSIM_FRANKA_CACHE``
 (default ``~/.cache/roqsim/franka``). A failure is a test failure naming the step, never a skip.
+``make test-franka`` runs it; ``make test`` leaves it out, for the C++ toolchain it needs.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ import sys
 from pathlib import Path
 
 from _franka_upstream import sources
+
+from roqsim import env
 
 HERE = Path(__file__).resolve().parent
 
@@ -57,7 +60,7 @@ def runtime_env() -> dict:
 
 def _cache() -> Path:
     pin = _libfranka_pin()
-    root = Path(os.environ.get("ROQSIM_FRANKA_CACHE", Path.home() / ".cache" / "roqsim" / "franka"))
+    root = Path(env.get("ROQSIM_FRANKA_CACHE") or Path.home() / ".cache" / "roqsim" / "franka")
     return root / pin["commit"][:12]
 
 

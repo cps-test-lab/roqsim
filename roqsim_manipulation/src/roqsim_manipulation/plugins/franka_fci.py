@@ -17,8 +17,10 @@ Commands come from two places, and the robot side is the same for both:
   socket -- how a roqsim plugin (an executor, a task) drives the arm.
 
 **The timestep.** One tick is 1 ms, so the world's timestep must be 1 ms / N for an integer N; the
-command is held over the N steps of a tick, the internal controllers run every step. Any other
-timestep is refused at configure.
+command is held over the N steps of a tick. The internal controllers run every step, on that
+step's joint positions and velocities, with the mass matrix, Jacobian, flange pose and gravity of
+the tick, as the robot's model is updated once per tick. Any other timestep is refused at
+configure.
 
 **Settings only the world can give**, with no invented default:
 
@@ -307,6 +309,14 @@ class FrankaFCIPlugin(Plugin):
         return out
 
     def on_reset(self, ctx: SimContext) -> None:
+        # A motion the reset ends is answered as aborted: a network client blocks on its Move's
+        # outcome (libfranka's throwOnMotionError) and would otherwise wait for it forever.
+        self._settle_endings()
+        motion = self.core.motion
+        if self._net_motion and self.server is not None and motion is not None:
+            self.server.reply(
+                Command.MOVE, motion.command_id, STATUS_RESPONSE.pack(MoveStatus.ABORTED)
+            )
         if self._inproc is not None and self._inproc.ending is None:
             self._inproc.ending = Ending(None, MoveStatus.ABORTED, ["reset"])
         self._inproc = None
@@ -450,14 +460,16 @@ class FrankaFCIPlugin(Plugin):
         c, p = req.command, req.payload
         if c == Command.MOVE:
             values = MOVE_REQUEST.unpack(p)
-            if self._inproc is not None:
+            try:
+                modes = MoveControllerMode(values[0]), MoveMotionGeneratorMode(values[1])
+            except ValueError:  # a mode the protocol does not define, refused as the robot does
+                modes = None
+            if modes is None:
+                status = MoveStatus.INVALID_ARGUMENT_REJECTED
+            elif self._inproc is not None:
                 status = MoveStatus.COMMAND_NOT_POSSIBLE_REJECTED
             else:
-                status = core.start_motion(
-                    MoveControllerMode(values[0]),
-                    MoveMotionGeneratorMode(values[1]),
-                    req.command_id,
-                )
+                status = core.start_motion(*modes, req.command_id)
             if status is not None:
                 replies.append((c, req.command_id, STATUS_RESPONSE.pack(status)))
             else:

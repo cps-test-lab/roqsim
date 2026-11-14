@@ -183,7 +183,7 @@ test: venv-ready  ## Run unit tests; also the ros2_ws tests (incl. nav2 integrat
 	if [ -n "$$xdist" ] && ! $(PY) -c "import xdist" 2>/dev/null; then \
 		echo "make test: pytest-xdist is not installed -> running serially"; xdist=""; \
 	fi; \
-	$(PYTEST) $$pkgs tools/tests -q -rs $$xdist; status=$$?; \
+	$(PYTEST) $$pkgs tools/tests -q -rs $$xdist --ignore=$(FRANKA_TESTS); status=$$?; \
 	$(PY) tools/test_packages.py $(PKGS) >/dev/null; \
 	exit $$status
 	@if [ -n "$$ROS_DISTRO" ]; then \
@@ -193,6 +193,16 @@ test: venv-ready  ## Run unit tests; also the ros2_ws tests (incl. nav2 integrat
 	else \
 		echo "ROS not sourced -> skipped the ros2_ws tests (source ROS to include them)."; \
 	fi
+
+# The libfranka in-sync test builds Franka's own client library at its pinned release and runs it
+# against the simulated FR3's FCI (roqsim_manipulation/tests/franka_build.py). That needs a C++
+# toolchain, CMake, Eigen3, Poco and fmt, so it is not part of `make test`: this target runs it, and
+# fails rather than skips when libfranka cannot be built.
+FRANKA_TESTS := roqsim_manipulation/tests/test_franka_libfranka.py
+
+.PHONY: test-franka
+test-franka:  ## libfranka 0.21.3, built from source, against the simulated FCI (needs C++, Eigen3, Poco, fmt)
+	$(PYTEST) $(FRANKA_TESTS) -q -rs
 
 # The Khronos glTF Validator is a Node.js program, so it is not part of `make test`: there, the export
 # gltf test of a small world runs only when the validator is installed, and says so when it is not.

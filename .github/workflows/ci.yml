@@ -1,11 +1,13 @@
 name: ci
 
-# Four jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
+# Five jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
 # is a make target, so a contributor reproduces CI exactly with one command and the two cannot
 # drift. `ros` carries the heavy integration (colcon build + the nav2 goal test) and is kept
 # separate so a formatting mistake does not wait behind a robot driving to a goal. `osc` runs the
 # tests gated on scenario-execution with it installed; `core` and `ros` stay without it, where those
-# tests must skip. `pages` publishes the documentation `make ci` already built, from main only.
+# tests must skip. `franka` builds libfranka from source and runs it against the simulated FR3, which
+needs a C++ toolchain the other jobs do not. `pages` publishes the documentation `make ci` already
+built, from main only.
 
 on:
   push:
@@ -125,6 +127,28 @@ jobs:
 
       - name: make test-osc
         run: make test-osc
+
+  # libfranka at its pinned release, built from source on the runner, against the simulated FR3's
+  # FCI. Its C++ dependencies are what the other jobs do without; Pinocchio, urdfdom and tinyxml2 come
+  # from the `test` extra's cmeel packages. `make test-franka` fails rather than skips when the build
+  # does.
+  franka:
+    name: franka (libfranka against the simulated FCI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GL libraries and libfranka's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6 \
+            build-essential cmake libeigen3-dev libpoco-dev libfmt-dev
+
+      - name: Create venv and install packages
+        run: make venv
+
+      - name: make test-franka
+        run: make test-franka
 
   pages:
     name: pages (publish docs)

@@ -970,7 +970,11 @@ FCI. With ``bind:`` set it serves the robot's side of the network protocol (libf
 headers, protocol version 10, libfranka 0.21.3), so an unmodified libfranka program, pylibfranka and
 franka_ros2's hardware interface (``robot_ip:=<bind>``) connect to the simulated arm as to a robot,
 and in lock-step: one control callback per millisecond of simulated time, the physics waiting for
-each command, so a run is reproducible however slow it is. ``GetRobotModel`` serves
+each command, however slow it is. One wait is bounded in wall time: libfranka reads one state of a
+motion before it sends its first command, so the simulation waits for that command at most 20 ms
+of wall time and steps on without it. The tick a motion's first command lands on can
+therefore depend on how fast the client answers; from that command on, a run is reproducible.
+``GetRobotModel`` serves
 franka_description's URDF, from which libfranka builds its ``Model``. The rate limiter and the
 low-pass filter are libfranka's own code on the client. The robot side is the core's:
 

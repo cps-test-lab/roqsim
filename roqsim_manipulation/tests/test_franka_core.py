@@ -203,7 +203,6 @@ def test_collision_behavior_is_required():
 def test_a_run_is_reproducible():
     def run():
         engine = _engine(tau_J_noise=0.05)
-        law, _ = _hold_law(0.3, tau=[0, 0.5, 0, 0, 0, 0, 0])
         _handle(engine).control(
             lambda s, p: {"tau_J_d": [0, min(0.5, s["message_id"] * 0.0005), 0, 0, 0, 0, 0]}
         )
@@ -221,3 +220,108 @@ def test_a_preview_serves_no_fci():
     engine = _engine(bind="127.0.0.9")
     assert not any(getattr(p, "server", None) for p in engine.plugins)
     engine.shutdown()
+
+
+def _read_reply(tcp, header, response):
+    data = b""
+    while len(data) < header.size + response.size:
+        chunk = tcp.recv(256)
+        assert chunk, "the server closed the connection"
+        data += chunk
+    return header.unpack(data[: header.size]), response.unpack(
+        data[header.size : header.size + response.size]
+    )
+
+
+def test_a_reset_answers_a_running_network_motion_as_aborted():
+    """libfranka blocks on a Move's outcome (throwOnMotionError); a reset that ends the motion must
+    send it, or the client waits forever."""
+    import socket
+
+    from roqsim_manipulation.franka import protocol as P
+
+    address = "127.0.0.6"
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "left_"},
+                "name": "left",
+                "components": [{"franka_fci": {"collision_behavior": CB, "bind": address}}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    tcp = socket.create_connection((address, P.COMMAND_PORT), timeout=5)
+    try:
+        connect = P.CONNECT_REQUEST.pack(P.VERSION, udp.getsockname()[1])
+        tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 1, P.HEADER.size + len(connect)) + connect)
+        _, (status, _) = _read_reply(tcp, P.HEADER, P.CONNECT_RESPONSE)
+        assert status == P.ConnectStatus.SUCCESS
+        move = P.MOVE_REQUEST.pack(
+            P.MoveControllerMode.JOINT_IMPEDANCE,
+            P.MoveMotionGeneratorMode.JOINT_POSITION,
+            *([10.0] * 6),
+            False,
+            *([2.0] * 7),
+        )
+        tcp.sendall(P.HEADER.pack(P.Command.MOVE, 2, P.HEADER.size + len(move)) + move)
+        _steps(engine, 3)
+        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)
+        assert (command, command_id, status) == (P.Command.MOVE, 2, P.MoveStatus.MOTION_STARTED)
+        _steps(engine, 3)
+        engine.reset()
+        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)
+        assert (command, command_id, status) == (P.Command.MOVE, 2, P.MoveStatus.ABORTED)
+    finally:
+        tcp.close()
+        udp.close()
+        engine.shutdown()
+
+
+def test_a_move_in_a_mode_the_protocol_does_not_define_is_refused():
+    """As the robot refuses it, rather than raising on the physics thread and ending the run."""
+    import socket
+
+    from roqsim_manipulation.franka import protocol as P
+
+    address = "127.0.0.7"
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "left_"},
+                "name": "left",
+                "components": [{"franka_fci": {"collision_behavior": CB, "bind": address}}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    tcp = socket.create_connection((address, P.COMMAND_PORT), timeout=5)
+    try:
+        connect = P.CONNECT_REQUEST.pack(P.VERSION, udp.getsockname()[1])
+        tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 1, P.HEADER.size + len(connect)) + connect)
+        _read_reply(tcp, P.HEADER, P.CONNECT_RESPONSE)
+        move = P.MOVE_REQUEST.pack(99, 0, *([10.0] * 6), False, *([2.0] * 7))
+        tcp.sendall(P.HEADER.pack(P.Command.MOVE, 3, P.HEADER.size + len(move)) + move)
+        _steps(engine, 3)
+        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)
+        assert (command, command_id, status) == (
+            P.Command.MOVE,
+            3,
+            P.MoveStatus.INVALID_ARGUMENT_REJECTED,
+        )
+    finally:
+        tcp.close()
+        udp.close()
+        engine.shutdown()

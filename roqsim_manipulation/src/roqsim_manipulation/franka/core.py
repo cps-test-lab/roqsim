@@ -4,7 +4,7 @@ One :class:`FrankaCore` per arm, owned by the ``franka_fci`` plugin on the physi
 millisecond of simulated time (a *tick*) it measures the arm, builds the robot state libfranka
 receives, and takes the next command; on every physics step in between it computes the joint
 torques. It knows no socket: the FCI server (:mod:`.server`) and an in-process law
-(:class:`InProcessControl`) hand it commands the same way.
+(``franka_fci``'s :class:`~roqsim_manipulation.plugins.franka_fci.InProcessMotion`) hand it commands the same way.
 
 **What the robot does, and where it comes from.**
 
@@ -541,9 +541,10 @@ class FrankaCore:
         if ctrl == ControllerMode.EXTERNAL_CONTROLLER:
             tau = np.asarray(cmd["tau_J_d"], float)
             # Against what the client was sent: tau_J_d travels as float32, and a rate-limited
-            # client steps from that value.
+            # client steps from that value; the slack is that rounding, on both values, over dt.
             prev = self.tau_J_d.astype(np.float32).astype(float) if not motion.first else tau
-            if np.any(np.abs(tau - prev) / dt > limits.MAX_TORQUE_RATE + limits.LIMIT_EPS + 0.5):
+            slack = 2 * np.finfo(np.float32).eps * np.maximum(np.abs(tau), np.abs(prev)) / dt
+            if np.any(np.abs(tau - prev) / dt > limits.MAX_TORQUE_RATE + limits.LIMIT_EPS + slack):
                 problems.append("controller_torque_discontinuity")
             motion.tau_c = tau
             self.tau_J_d = tau
@@ -646,6 +647,7 @@ class FrankaCore:
             "O_F_ext_hat_K": list(self.F_ext_O),
             "K_F_ext_hat_K": list(self.F_ext_K),
             "O_dP_EE_d": list(v),
+            # robot_state.h documents O_ddP_O as constant gravity, whatever the base's mounting.
             "O_ddP_O": [0.0, 0.0, -9.81],
             "elbow_c": list(motion.elbow_c)
             if motion is not None and motion.elbow_c is not None
