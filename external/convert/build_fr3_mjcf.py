@@ -243,7 +243,13 @@ def build(description: Path) -> None:
         act.forcerange = [-EFFORT[i], EFFORT[i]]
     spec.add_key(name="home", qpos=HOME)
     spec.compile()
+    # MuJoCo writes the keyframe count as <size nkey>, which every world the arm is attached to
+    # then warns about; the <key> element alone defines it.
     xml = spec.to_xml().replace(f'meshdir="{meshes}"', 'meshdir="meshes"')
+    size = '  <size nkey="1"/>\n\n'
+    if size not in xml:
+        raise SystemExit(f"fr3.xml: MuJoCo no longer writes {size.strip()!r}")
+    xml = xml.replace(size, "", 1)
     # The comment that opens <mujoco> is the model's catalog description: its first sentence says
     # what the model is.
     header = (

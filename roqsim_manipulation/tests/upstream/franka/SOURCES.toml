@@ -15,15 +15,11 @@ license = "Apache-2.0"
 files = [
   "LICENSE",
   "include/franka/rate_limiting.h",
-  "include/franka/lowpass_filter.h",
-  "include/franka/robot_state.h",
-  "include/franka/errors.h",
-  "include/franka/control_types.h",
   "include/franka/robot.h",
+  "include/franka/errors.h",
   "src/joint_velocity_limits.cpp",
   "src/errors.cpp",
   "examples/generate_joint_position_motion.cpp",
-  "examples/examples_common.cpp",
   "docs/compatibility_matrix.rst",
 ]
 
@@ -49,8 +45,6 @@ license = "Apache-2.0"
 files = [
   "LICENSE",
   "robots/fr3/joint_limits.yaml",
-  "robots/fr3/kinematics.yaml",
-  "robots/fr3/inertials.yaml",
   "robots/fr3/dynamics.yaml",
 ]
 
@@ -63,7 +57,6 @@ license = "Apache-2.0"
 files = [
   "LICENSE",
   "franka_ros2/doc/compatibility_matrix.rst",
-  "franka_msgs/msg/FrankaRobotState.msg",
 ]
 
 # `robots/fr3/fr3.urdf.xacro hand:=false`, processed by xacro: the arm without the Franka Hand, under
@@ -107,11 +100,8 @@ meshes = [
 "franka_description/fr3_no_prefix.urdf" = "89ede113e9cd3b826fd21474a8146494dec3cb70bba7f8ed2c11db86028a9260"
 "franka_description/fr3_visual.json" = "b2a29edac4de7e97cad85675709f6deb8ad7b4a51bb5d79285563ae4a99095d6"
 "franka_description/robots/fr3/dynamics.yaml" = "e65e145114b431bd17cdebc58b88c43505f0658472cca6ffbc9c32b7a198f79b"
-"franka_description/robots/fr3/inertials.yaml" = "02a39046b36303f748c9755b48610b7600fb819d54828475514c36915ae54a89"
 "franka_description/robots/fr3/joint_limits.yaml" = "42e999184f37689568b58f320d062859053f03c62c8b49bf00a00d69f20d7a65"
-"franka_description/robots/fr3/kinematics.yaml" = "44326830a6773dd6611cdf9947045eeb3276ea4e3ca47a05272816c862c8e386"
 "franka_ros2/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
-"franka_ros2/franka_msgs/msg/FrankaRobotState.msg" = "c55a163656bcf7674601ff18d02819b3088c1e9e3edc220855b3099ec0985ae5"
 "franka_ros2/franka_ros2/doc/compatibility_matrix.rst" = "4275881506d91cf1a617ae0f89cfa3fdb0bc881e59824b02ac675cfad42bad00"
 "libfranka-common/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
 "libfranka-common/include/research_interface/robot/error.h" = "23701ab61c37332c4158fed55d3e4ad3dba1f5db9492b3ab70034cb5ef137b7a"
@@ -119,13 +109,9 @@ meshes = [
 "libfranka-common/include/research_interface/robot/service_types.h" = "e9af4e13a4f6db43676337368528a1c394a2daf8e32171f767c3314fa69deefb"
 "libfranka/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
 "libfranka/docs/compatibility_matrix.rst" = "b571a312536a170fee17c03e6539719c23971e00335692ce96cbedd8bc7db8af"
-"libfranka/examples/examples_common.cpp" = "cab122051fa0fae0c75e3295867fa7d5ae65ed2a0dad499ecae0f31a14c328f2"
 "libfranka/examples/generate_joint_position_motion.cpp" = "93cf0071edcfe19025e27d5c74034b08040fb8fadd3aadaf225b292221623920"
-"libfranka/include/franka/control_types.h" = "78ee4cf675de80b7a0080aceddd60d14aaf88b44f5a3786df17fe31e084cac10"
 "libfranka/include/franka/errors.h" = "b8af6514aa2d6e78440fc2430856c927fe06a80082007049d062c5cb1f2c58ed"
-"libfranka/include/franka/lowpass_filter.h" = "635653f8b282fc30a1e2866f1d018e9f86dfb2891252073bc4d6b5c2a578e205"
 "libfranka/include/franka/rate_limiting.h" = "dc5b5af00882e90363298f12df8d62ed5a135e6a9ff0f92999384d39f499cd15"
 "libfranka/include/franka/robot.h" = "73560ff227b14670f258a92dccf83426b1a64de4d41b0e62814d0e434ec42856"
-"libfranka/include/franka/robot_state.h" = "a1be5118af87ea1c779282f2f153268a17efb7b4bf2fcd3171a0f6285fee9376"
 "libfranka/src/errors.cpp" = "10afba3a4d8d376cf51975cfc926b2c3eca00526ca8e27417f8f30b98d10b4a9"
 "libfranka/src/joint_velocity_limits.cpp" = "087194e90e4b19fd1f424274567f4205433b1fa1a7329dbc908ab22578fe2e57"

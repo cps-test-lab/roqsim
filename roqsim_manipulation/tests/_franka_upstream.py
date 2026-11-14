@@ -114,10 +114,6 @@ def joint_limits() -> dict:
     return yaml.safe_load(text(DESCRIPTION / "robots/fr3/joint_limits.yaml"))
 
 
-def inertials() -> dict:
-    return yaml.safe_load(text(DESCRIPTION / "robots/fr3/inertials.yaml"))
-
-
 def constexpr(src: str, name: str) -> str:
     m = re.search(r"constexpr[^;=]*\b" + re.escape(name) + r"\b\s*(?:=|\{)(.*?);", src, flags=re.S)
     if m is None:
