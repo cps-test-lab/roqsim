@@ -210,7 +210,13 @@ def fetch(root: Path) -> None:
                 dest = root / d / gen["file"]
                 _generate_urdf(checkout, gen, dest)
                 if "serve" in gen:
-                    served = root.parents[len(UPSTREAM.parts) - 1] / gen["serve"]
+                    roqsim = root.parents[len(UPSTREAM.parts) - 1]
+                    if roqsim / UPSTREAM != root:
+                        raise SystemExit(
+                            f"franka-upstream: {root} is not {UPSTREAM} of a roqsim checkout, so "
+                            f"there is no {gen['serve']} to write"
+                        )
+                    served = roqsim / gen["serve"]
                     served.write_bytes(dest.read_bytes())
                     print(f"served {gen['serve']}")
                 hashes[f"{d}/{gen['file']}"] = sha256(dest)

@@ -8,8 +8,6 @@
   -->
   <compiler angle="radian" meshdir="meshes"/>
 
-  <size nkey="1"/>
-
   <asset>
     <material name="fr3_64_64_64" specular="0.3" rgba="0.0382043 0.0497065 0.0561285 1"/>
     <material name="fr3_255_66_6" specular="0.2" rgba="1 0.0722716 0.0395463 1"/>
