@@ -51,10 +51,10 @@ robot itself. Each value is held to Franka's published files, never typed from t
   position-dependent velocity limits.
 
 The Franka files the model is built from and checked against are vendored under
-`tests/upstream/franka/`, pinned by commit and sha256 in `SOURCES.toml`. `tools/franka_upstream.py
---check` verifies them offline. Without `--check`, run from a roqsim checkout, it
-fetches them again at the pins. It also writes the URDF the simulated robot serves, and the digest
-of Franka's visual meshes that the `fr3` model's tests read.
+`tests/upstream/franka/`, pinned by commit and sha256 in `SOURCES.toml`. In a roqsim checkout,
+`make franka-upstream-check` verifies them offline, and `make franka-upstream` fetches them again at
+the pins. It also writes the URDF the simulated robot serves, and the digest of Franka's visual
+meshes that the `fr3` model's tests read.
 
 ## Run standalone (no ROS)
 
