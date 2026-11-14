@@ -67,7 +67,12 @@ def _torque_driven(arm: str) -> bool:
 def _engine(tmp_path: Path, arm: str, *, tool=TOOL, ee=None, ft=None) -> Engine:
     spawn: dict = {"model": arm, "prefix": "a_"}
     if _torque_driven(arm):
-        spawn["actuators"] = {"control": "position", "p": 4500.0, "d": 450.0, "ctrlrange": [-6.2832, 6.2832]}
+        spawn["actuators"] = {
+            "control": "position",
+            "p": 4500.0,
+            "d": 450.0,
+            "ctrlrange": [-6.2832, 6.2832],
+        }
     if tool is not None:
         (tmp_path / "tool.xml").write_text(tool, encoding="utf-8")
         spawn["end_effector"] = {"model": "tool.xml", **(ee or {})}
