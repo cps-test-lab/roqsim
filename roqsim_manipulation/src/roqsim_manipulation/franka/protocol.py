@@ -306,9 +306,10 @@ def pack_robot_state(state: dict) -> bytes:
             seq = list(v)
             if len(seq) != n:
                 raise ValueError(f"RobotState.{name}: {len(seq)} values, the protocol has {n}")
-            values.extend(bool(x) for x in seq) if code == "?" else values.extend(
-                float(x) for x in seq
-            )
+            if code == "?":
+                values.extend(bool(x) for x in seq)
+            else:
+                values.extend(float(x) for x in seq)
     return ROBOT_STATE.pack(*values)
 
 
