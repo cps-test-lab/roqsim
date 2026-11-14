@@ -1,5 +1,5 @@
 # The Franka upstream files roqsim's simulated FR3 is built from and checked against, at the commits
-# it is held to. Fetched and checked by `roqsim arm franka-upstream` (roqsim_manipulation.cli.franka_upstream);
+# it is held to. Fetched and checked by roqsim_manipulation/tools/franka_upstream.py;
 # never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0).
 #
 # The pins: libfranka 0.21.3 (needs FR3 system >= 5.9.0, robot server version 10), the
@@ -79,7 +79,7 @@ xacro = "robots/fr3/fr3.urdf.xacro"
 mappings = { hand = "false", no_prefix = "true" }
 serve = "roqsim_manipulation_assets/src/roqsim_manipulation_assets/models/fr3/fr3.robot_model.urdf"
 
-# What the converted visual meshes are held to (roqsim_manipulation.cli.franka_upstream.visual_digest):
+# What the converted visual meshes are held to (visual_digest in roqsim_manipulation/tools/franka_upstream.py):
 # per primitive of each DAE, in file order, its material and colours, triangle count, bounds, open
 # edges and area-weighted normal. The DAE files themselves are too large to vendor.
 [[digest]]

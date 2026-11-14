@@ -995,7 +995,7 @@ estimator's filter, the internal impedance laws, when the "acceleration" thresho
 stated assumption in the plugin's docstring, and absent are guiding mode, ``PTPMotion``, power and
 self-collision limits, the gripper, and late answers (none can happen in lock-step). The tests
 (``roqsim_manipulation/tests/test_franka_*.py``) read Franka's files at the pinned commits
-(``roqsim arm franka-upstream``) and build and run the real libfranka against the server::
+(``roqsim_manipulation/tools/franka_upstream.py``) and build and run the real libfranka against the server::
 
    sim: {timestep: 0.001}
    components:

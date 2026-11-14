@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import tomllib
 from pathlib import Path
+from types import ModuleType
 
 import yaml
 
@@ -14,10 +16,19 @@ LIBFRANKA = UPSTREAM / "libfranka"
 COMMON = UPSTREAM / "libfranka-common" / "include" / "research_interface" / "robot"
 DESCRIPTION = UPSTREAM / "franka_description"
 ROS2 = UPSTREAM / "franka_ros2"
+TOOL = Path(__file__).resolve().parents[1] / "tools" / "franka_upstream.py"
 
 
 def sources() -> dict:
     return tomllib.loads((UPSTREAM / "SOURCES.toml").read_text(encoding="utf-8"))
+
+
+def upstream_tool() -> ModuleType:
+    """The checkout's ``tools/franka_upstream.py``, which the installed package does not carry."""
+    spec = importlib.util.spec_from_file_location("franka_upstream", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def text(path: Path) -> str:

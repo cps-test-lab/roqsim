@@ -1,7 +1,7 @@
 """The ``fr3`` looks as Franka's description draws it, and collides where it is drawn.
 
 The visual meshes are held to ``upstream/franka/franka_description/fr3_visual.json``, the digest of
-franka_description's COLLADA visuals that ``roqsim arm franka-upstream`` reads at the pin: each
+franka_description's COLLADA visuals that ``tools/franka_upstream.py`` reads at the pin: each
 primitive (one material) is one OBJ beside the MJCF, with the same triangles, the same open edges
 (a decimated piece tears and pulls its outline away from its neighbour's), the same winding, and
 the DAE's diffuse, emission and reflectivity as its material.

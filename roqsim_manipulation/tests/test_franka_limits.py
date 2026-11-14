@@ -10,14 +10,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from _franka_upstream import LIBFRANKA, eval_constexpr, joint_limits, strip_comments, text
-from roqsim_manipulation.cli.franka_upstream import check
 from roqsim_manipulation.franka import limits as L
 
 
 def test_the_vendored_files_are_the_pinned_ones():
-    from _franka_upstream import UPSTREAM
+    from _franka_upstream import UPSTREAM, upstream_tool
 
-    assert check(UPSTREAM) == []
+    assert upstream_tool().check(UPSTREAM) == []
 
 
 RATE = strip_comments(text(LIBFRANKA / "include/franka/rate_limiting.h"))

@@ -4,7 +4,7 @@
 Source: ``frankarobotics/franka_description`` (Apache-2.0, (c) Franka Robotics GmbH), at the commit
 ``roqsim_manipulation/tests/upstream/franka/SOURCES.toml`` pins, and the URDF its
 ``robots/fr3/fr3.urdf.xacro`` produces with ``hand:=false`` (vendored there as ``fr3.urdf`` by
-``roqsim arm franka-upstream``). The tests compare the built model against that URDF
+``roqsim_manipulation/tools/franka_upstream.py``). The tests compare the built model against that URDF
 (``roqsim_manipulation/tests/test_franka_model.py``) and its meshes against the digest of the DAE
 visuals beside it (``fr3_visual.json``, ``test_franka_visual.py``), so a rebuild that drifts fails
 them.
