@@ -3,14 +3,25 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
+from types import ModuleType
 
 import yaml
 
 UPSTREAM = Path(__file__).resolve().parent / "upstream" / "franka"
 LIBFRANKA = UPSTREAM / "libfranka"
 DESCRIPTION = UPSTREAM / "franka_description"
+TOOL = Path(__file__).resolve().parents[1] / "tools" / "franka_upstream.py"
+
+
+def upstream_tool() -> ModuleType:
+    """The checkout's ``tools/franka_upstream.py``, which the installed package does not carry."""
+    spec = importlib.util.spec_from_file_location("franka_upstream", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def text(path: Path) -> str:
