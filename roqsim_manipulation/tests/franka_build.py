@@ -7,12 +7,19 @@ its dependencies -- Poco and Eigen from the system, Pinocchio, urdfdom and tinyx
 Python packages (``pin`` and ``cmeel-urdfdom-headers``, the ``test`` extra) -- and cached under ``ROQSIM_FRANKA_CACHE``
 (default ``~/.cache/roqsim/franka``). A failure is a test failure naming the step, never a skip.
 ``make test-franka`` runs it; ``make test`` leaves it out, for the C++ toolchain it needs.
+
+libfranka and the client are compiled for the instruction set the ``pin`` wheel's Pinocchio was built
+for, the architecture's baseline (``-march=x86-64`` on x86-64). libfranka builds and frees
+Pinocchio's ``Model`` through Eigen's inlined code, whose alignment and allocator follow the
+instruction set: a compiler that targets AVX by default, as Ubuntu's x86-64-v3 builds do, makes
+``loadModel()`` crash.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +29,13 @@ from _franka_upstream import sources
 from roqsim import env as roqsim_env
 
 HERE = Path(__file__).resolve().parent
+
+#: The baseline the manylinux ``pin`` wheel is built for, where the compiler's default may be newer.
+BASELINE = {"x86_64": "-march=x86-64 -mtune=generic"}.get(platform.machine(), "")
+
+
+def _cxx_flags() -> str:
+    return f"{os.environ.get('CXXFLAGS', '')} {BASELINE}".strip()
 
 
 class BuildError(RuntimeError):
@@ -63,7 +77,8 @@ def _cache() -> Path:
     root = Path(
         roqsim_env.get("ROQSIM_FRANKA_CACHE") or Path.home() / ".cache" / "roqsim" / "franka"
     )
-    return root / pin["commit"][:12]
+    tag = hashlib.sha256(_cxx_flags().encode()).hexdigest()[:8]
+    return root / f"{pin['commit'][:12]}-{tag}"
 
 
 def build_client() -> Path:
@@ -106,6 +121,7 @@ def build_client() -> Path:
                 "cmake",
                 str(src),
                 "-DCMAKE_BUILD_TYPE=Release",
+                f"-DCMAKE_CXX_FLAGS={_cxx_flags()}",
                 "-DBUILD_TESTS=OFF",
                 "-DBUILD_EXAMPLES=OFF",
                 f"-DCMAKE_PREFIX_PATH={prefixes}",
@@ -128,6 +144,7 @@ def build_client() -> Path:
                 "cmake",
                 str(HERE / "franka_clients"),
                 "-DCMAKE_BUILD_TYPE=Release",
+                f"-DCMAKE_CXX_FLAGS={_cxx_flags()}",
                 f"-DCMAKE_PREFIX_PATH={prefixes}",
                 f"-Dfmt_DIR={build / '_deps' / 'fmt-build'}",
                 f"-DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,{rpath}",
