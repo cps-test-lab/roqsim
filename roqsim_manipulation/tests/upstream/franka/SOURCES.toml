@@ -1,5 +1,5 @@
-# The Franka upstream files the test_franka* tests read, at the commits roqsim's simulated FR3 is
-# held to. Fetched and checked by `roqsim arm franka-upstream` (roqsim_manipulation.cli.franka_upstream);
+# The Franka upstream files roqsim's simulated FR3 is built from and checked against, at the commits
+# it is held to. Fetched and checked by `roqsim arm franka-upstream` (roqsim_manipulation.cli.franka_upstream);
 # never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0).
 #
 # The pins: libfranka 0.21.3 (needs FR3 system >= 5.9.0, robot server version 10), the
@@ -82,11 +82,30 @@ dir = "franka_description"
 file = "fr3_no_prefix.urdf"
 xacro = "robots/fr3/fr3.urdf.xacro"
 mappings = { hand = "false", no_prefix = "true" }
+serve = "roqsim_manipulation_assets/src/roqsim_manipulation_assets/models/fr3/fr3.robot_model.urdf"
+
+# What the converted visual meshes are held to (roqsim_manipulation.cli.franka_upstream.visual_digest):
+# per primitive of each DAE, in file order, its material and colours, triangle count, bounds, open
+# edges and area-weighted normal. The DAE files themselves are too large to vendor.
+[[digest]]
+dir = "franka_description"
+file = "fr3_visual.json"
+meshes = [
+  "meshes/robots/fr3/visual/link0.dae",
+  "meshes/robots/fr3/visual/link1.dae",
+  "meshes/robots/fr3/visual/link2.dae",
+  "meshes/robots/fr3/visual/link3.dae",
+  "meshes/robots/fr3/visual/link4.dae",
+  "meshes/robots/fr3/visual/link5.dae",
+  "meshes/robots/fr3/visual/link6.dae",
+  "meshes/robots/fr3/visual/link7.dae",
+]
 
 [sha256]
 "franka_description/LICENSE" = "4b25434e6ec2012e28a484f1d7924a0fd1a8bf232c2be2d50d584d299d04d6d6"
-"franka_description/fr3.urdf" = "e13c063b0b044943081f9712aca1d05cf5702530c602ab1902e84d02e97e7152"
-"franka_description/fr3_no_prefix.urdf" = "1ae00125fb9c83a51ffe51cbc014665af1f8befa0de69f8be5801039cb83bf44"
+"franka_description/fr3.urdf" = "ba2974294bd62c9d501066251eefe93591e96d440ff6868d4cb221195c61d895"
+"franka_description/fr3_no_prefix.urdf" = "89ede113e9cd3b826fd21474a8146494dec3cb70bba7f8ed2c11db86028a9260"
+"franka_description/fr3_visual.json" = "b2a29edac4de7e97cad85675709f6deb8ad7b4a51bb5d79285563ae4a99095d6"
 "franka_description/robots/fr3/dynamics.yaml" = "e65e145114b431bd17cdebc58b88c43505f0658472cca6ffbc9c32b7a198f79b"
 "franka_description/robots/fr3/inertials.yaml" = "02a39046b36303f748c9755b48610b7600fb819d54828475514c36915ae54a89"
 "franka_description/robots/fr3/joint_limits.yaml" = "42e999184f37689568b58f320d062859053f03c62c8b49bf00a00d69f20d7a65"
