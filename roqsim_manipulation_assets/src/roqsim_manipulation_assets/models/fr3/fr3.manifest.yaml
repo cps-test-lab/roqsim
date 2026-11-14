@@ -1,0 +1,9 @@
+# Franka Research 3 without a hand: seven torque motors and nothing else.
+#
+# No default plugins. Gravity is not compensated by the model: on the robot the controller adds it
+# from its model and the load it was told, and in simulation so must the controller a world declares
+# under the arm. `fr3.robot_model.urdf` beside the MJCF is the description the robot serves to its
+# client library (franka_description's, link names without the fr3_ prefix). A bare
+# `spawn_arm: {model: fr3}` is the arm with its controller off: it falls.
+end_effector:
+  site: attachment_site

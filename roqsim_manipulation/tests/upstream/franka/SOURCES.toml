@@ -1,0 +1,79 @@
+# The Franka upstream files roqsim's simulated FR3 is built from and checked against, at the commits
+# it is held to. Fetched and checked by external/franka_upstream.py;
+# never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0).
+#
+# The pins: libfranka 0.21.3 and franka_description 2.9.0.
+
+[[repo]]
+dir = "libfranka"
+url = "https://github.com/frankarobotics/libfranka"
+tag = "0.21.3"
+commit = "85912fe02258d8cb811d3eff1f11e52ce89e3217"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "include/franka/rate_limiting.h",
+  "include/franka/robot.h",
+  "src/joint_velocity_limits.cpp",
+  "examples/generate_joint_position_motion.cpp",
+]
+
+[[repo]]
+dir = "franka_description"
+url = "https://github.com/frankarobotics/franka_description"
+tag = "2.9.0"
+commit = "7aeeddc449edf8d62b594f9e36a81da53e7796f9"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "robots/fr3/joint_limits.yaml",
+  "robots/fr3/dynamics.yaml",
+]
+
+# `robots/fr3/fr3.urdf.xacro hand:=false`, processed by xacro: the arm without the Franka Hand, under
+# franka_description's names (fr3_link0..8, fr3_joint1..7), the names franka_ros2 uses.
+[[generated]]
+dir = "franka_description"
+file = "fr3.urdf"
+xacro = "robots/fr3/fr3.urdf.xacro"
+mappings = { hand = "false" }
+
+# The same with `no_prefix:=true` (link0..8, joint1..7): the names libfranka's Model looks up in the
+# URDF the robot serves (src/robot_model.h, kLastLinkName "link8"), so the one the simulated robot
+# serves through GetRobotModel.
+[[generated]]
+dir = "franka_description"
+file = "fr3_no_prefix.urdf"
+xacro = "robots/fr3/fr3.urdf.xacro"
+mappings = { hand = "false", no_prefix = "true" }
+serve = "roqsim_manipulation_assets/src/roqsim_manipulation_assets/models/fr3/fr3.robot_model.urdf"
+
+# What the converted visual meshes are held to (visual_digest in external/franka_upstream.py):
+# per primitive of each DAE, in file order, its material and colours, triangle count, bounds, open
+# edges and area-weighted normal. The DAE files themselves are too large to vendor.
+[[digest]]
+dir = "franka_description"
+file = "fr3_visual.json"
+meshes = [
+  "meshes/robots/fr3/visual/link0.dae",
+  "meshes/robots/fr3/visual/link1.dae",
+  "meshes/robots/fr3/visual/link2.dae",
+  "meshes/robots/fr3/visual/link3.dae",
+  "meshes/robots/fr3/visual/link4.dae",
+  "meshes/robots/fr3/visual/link5.dae",
+  "meshes/robots/fr3/visual/link6.dae",
+  "meshes/robots/fr3/visual/link7.dae",
+]
+
+[sha256]
+"franka_description/LICENSE" = "4b25434e6ec2012e28a484f1d7924a0fd1a8bf232c2be2d50d584d299d04d6d6"
+"franka_description/fr3.urdf" = "ba2974294bd62c9d501066251eefe93591e96d440ff6868d4cb221195c61d895"
+"franka_description/fr3_no_prefix.urdf" = "89ede113e9cd3b826fd21474a8146494dec3cb70bba7f8ed2c11db86028a9260"
+"franka_description/fr3_visual.json" = "b2a29edac4de7e97cad85675709f6deb8ad7b4a51bb5d79285563ae4a99095d6"
+"franka_description/robots/fr3/dynamics.yaml" = "e65e145114b431bd17cdebc58b88c43505f0658472cca6ffbc9c32b7a198f79b"
+"franka_description/robots/fr3/joint_limits.yaml" = "42e999184f37689568b58f320d062859053f03c62c8b49bf00a00d69f20d7a65"
+"libfranka/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"libfranka/examples/generate_joint_position_motion.cpp" = "93cf0071edcfe19025e27d5c74034b08040fb8fadd3aadaf225b292221623920"
+"libfranka/include/franka/rate_limiting.h" = "dc5b5af00882e90363298f12df8d62ed5a135e6a9ff0f92999384d39f499cd15"
+"libfranka/include/franka/robot.h" = "73560ff227b14670f258a92dccf83426b1a64de4d41b0e62814d0e434ec42856"
+"libfranka/src/joint_velocity_limits.cpp" = "087194e90e4b19fd1f424274567f4205433b1fa1a7329dbc908ab22578fe2e57"
