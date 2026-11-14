@@ -309,6 +309,13 @@ external-resources:  ## Fetch + convert external assets into their (git-ignored)
 external-sync-gitignore:  ## Rewrite the managed .gitignore block from external_assets.yaml
 	$(EXTERNAL) sync-gitignore
 
+.PHONY: franka-upstream franka-upstream-check
+franka-upstream:  ## Re-fetch the vendored Franka files at the pins in their SOURCES.toml
+	$(PY) external/franka_upstream.py
+
+franka-upstream-check:  ## Check the vendored Franka files against their SOURCES.toml, offline
+	$(PY) external/franka_upstream.py --check
+
 .PHONY: add-external-resource
 add-external-resource:  ## Append a resource to external_assets.yaml + .gitignore (see `$(EXTERNAL) add -h`)
 	$(EXTERNAL) add $(ARGS)

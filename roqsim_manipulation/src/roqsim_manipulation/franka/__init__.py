@@ -1,8 +1,8 @@
 """The robot's side of a Franka Research 3: what its controller does with a command, and its FCI.
 
-A simulated FR3 is held to Franka's releases (``roqsim_manipulation/tools/franka_upstream.py`` pins
-them): the limits here are ``rate_limiting.h``'s and ``joint_limits.yaml``'s, the wire format
-``libfranka-common``'s, and the tests read those files and fail when a number here differs.
+A simulated FR3 is held to Franka's releases (``external/franka_upstream.py`` pins them): the limits
+here are ``rate_limiting.h``'s and ``joint_limits.yaml``'s, the wire format ``libfranka-common``'s,
+and the tests read those files and fail when a number here differs.
 
 - :mod:`.limits` -- the joint and Cartesian limits the robot enforces.
 - :mod:`.protocol` -- the FCI messages, byte for byte, and the 41 error flags.

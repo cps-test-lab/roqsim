@@ -8,11 +8,11 @@ under ``roqsim_manipulation/tests/upstream/franka/``, one directory per reposito
 commit, each with its ``LICENSE`` (all Apache-2.0), and listed with their sha256 in ``SOURCES.toml``
 beside them. ``make test`` then needs no network.
 
-    roqsim_manipulation/tools/franka_upstream.py --check   # every listed file present, with its hash (offline)
-    roqsim_manipulation/tools/franka_upstream.py           # re-fetch every file at the commits SOURCES.toml pins
+    make franka-upstream-check   # every listed file present, with its hash (offline)
+    make franka-upstream         # re-fetch every file at the commits SOURCES.toml pins
 
-It is a tool of the roqsim checkout, not of the installed package: what it reads and writes exists
-only in a checkout.
+Like ``external_resources.py`` beside it, it belongs to the roqsim checkout, not to an installed
+package: what it reads and writes exists only in a checkout.
 
 Moving a pin is: edit the commit in ``SOURCES.toml``, run this without ``--check``, and fix what
 the tests then find, in one pull request.
@@ -245,9 +245,7 @@ def _write_hashes(root: Path, hashes: dict[str, str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="franka_upstream.py", description=__doc__.split("\n")[0]
-    )
+    parser = argparse.ArgumentParser(prog="franka_upstream.py", description=__doc__.split("\n")[0])
     parser.add_argument("--check", action="store_true", help="verify the vendored files offline")
     parser.add_argument("--dir", type=Path, default=None, help="the vendored directory")
     args = parser.parse_args(argv)
