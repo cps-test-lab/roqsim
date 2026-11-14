@@ -17,9 +17,11 @@ files = [
   "include/franka/rate_limiting.h",
   "include/franka/robot.h",
   "include/franka/errors.h",
+  "include/franka/robot_state.h",
   "src/joint_velocity_limits.cpp",
   "src/errors.cpp",
   "examples/generate_joint_position_motion.cpp",
+  "examples/examples_common.cpp",
   "docs/compatibility_matrix.rst",
 ]
 
@@ -109,9 +111,11 @@ meshes = [
 "libfranka-common/include/research_interface/robot/service_types.h" = "e9af4e13a4f6db43676337368528a1c394a2daf8e32171f767c3314fa69deefb"
 "libfranka/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
 "libfranka/docs/compatibility_matrix.rst" = "b571a312536a170fee17c03e6539719c23971e00335692ce96cbedd8bc7db8af"
+"libfranka/examples/examples_common.cpp" = "cab122051fa0fae0c75e3295867fa7d5ae65ed2a0dad499ecae0f31a14c328f2"
 "libfranka/examples/generate_joint_position_motion.cpp" = "93cf0071edcfe19025e27d5c74034b08040fb8fadd3aadaf225b292221623920"
 "libfranka/include/franka/errors.h" = "b8af6514aa2d6e78440fc2430856c927fe06a80082007049d062c5cb1f2c58ed"
 "libfranka/include/franka/rate_limiting.h" = "dc5b5af00882e90363298f12df8d62ed5a135e6a9ff0f92999384d39f499cd15"
 "libfranka/include/franka/robot.h" = "73560ff227b14670f258a92dccf83426b1a64de4d41b0e62814d0e434ec42856"
+"libfranka/include/franka/robot_state.h" = "a1be5118af87ea1c779282f2f153268a17efb7b4bf2fcd3171a0f6285fee9376"
 "libfranka/src/errors.cpp" = "10afba3a4d8d376cf51975cfc926b2c3eca00526ca8e27417f8f30b98d10b4a9"
 "libfranka/src/joint_velocity_limits.cpp" = "087194e90e4b19fd1f424274567f4205433b1fa1a7329dbc908ab22578fe2e57"

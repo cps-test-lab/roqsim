@@ -24,8 +24,7 @@ Not from the URDF, and said so in ``CREDITS.txt``:
   torque-controlled arm is what the model is for; neither is these arms' own measurement.
 - **Actuators.** One torque motor per joint (``control: effort``), force range the
   URDF's effort limit (87 N m on joints 1-4, 12 N m on 5-7). Nothing compensates gravity: on the
-  robot the controller adds it from its model and the configured load, and so must the controller a
-  world declares under the arm.
+  robot the controller adds it from its model and the configured load, and so does ``franka_fci``.
 - **Visual meshes.** franka_description's COLLADA visuals, read with pycollada (node transforms
   applied), one OBJ per DAE primitive, which is one material: the triangles verbatim, exact duplicate
   vertices merged, nothing remeshed or decimated. A decimated piece pulls its outline in on its own,
