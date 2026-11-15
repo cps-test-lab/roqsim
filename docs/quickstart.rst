@@ -1188,6 +1188,16 @@ one records and exports its scene into its own directory, with the engine kept r
 something replayable: the scene above is the world's geometry, and the recording is what moved
 in it.
 
+A parameter document can also name the world its scenario runs in, through scenario-execution's
+``_reset`` mapping (``world`` and ``world_overrides``, the same names a scenario may declare as
+parameters), so one process runs a file whose documents differ in their world. A world change
+rebuilds the engine, and only a world change does: the recording before is finished with its
+summary, the engine shut down, the new world built and reset, and the next run's recording
+started. The episode counter continues across the rebuild and the drawn seed is kept, so every
+run of the process has a ``(seed, episode)`` pair of its own and each recording names its world.
+An empty ``world_overrides`` mapping means no overrides, the same as none at all -- a document
+that says so neither inherits the deployment's ``ROQSIM_WORLD_OVERRIDES`` nor forces a rebuild.
+
 What a scenario can ask the simulation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
