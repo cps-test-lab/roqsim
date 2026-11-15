@@ -1,6 +1,6 @@
 # The Franka upstream files roqsim's simulated FR3 is built from and checked against, at the commits
 # it is held to. Fetched and checked by external/franka_upstream.py;
-# never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0).
+# never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0) and NOTICE.
 #
 # The pins: libfranka 0.21.3 and franka_description 2.9.0.
 
@@ -12,6 +12,7 @@ commit = "85912fe02258d8cb811d3eff1f11e52ce89e3217"
 license = "Apache-2.0"
 files = [
   "LICENSE",
+  "NOTICE",
   "include/franka/rate_limiting.h",
   "include/franka/robot.h",
   "src/joint_velocity_limits.cpp",
@@ -26,6 +27,7 @@ commit = "7aeeddc449edf8d62b594f9e36a81da53e7796f9"
 license = "Apache-2.0"
 files = [
   "LICENSE",
+  "NOTICE",
   "robots/fr3/joint_limits.yaml",
   "robots/fr3/dynamics.yaml",
 ]
@@ -67,12 +69,14 @@ meshes = [
 
 [sha256]
 "franka_description/LICENSE" = "4b25434e6ec2012e28a484f1d7924a0fd1a8bf232c2be2d50d584d299d04d6d6"
+"franka_description/NOTICE" = "13991525876741e3dc94c46e0afce111dc0a5c6156c89bbbefd06547b84738fd"
 "franka_description/fr3.urdf" = "ba2974294bd62c9d501066251eefe93591e96d440ff6868d4cb221195c61d895"
 "franka_description/fr3_no_prefix.urdf" = "89ede113e9cd3b826fd21474a8146494dec3cb70bba7f8ed2c11db86028a9260"
 "franka_description/fr3_visual.json" = "b2a29edac4de7e97cad85675709f6deb8ad7b4a51bb5d79285563ae4a99095d6"
 "franka_description/robots/fr3/dynamics.yaml" = "e65e145114b431bd17cdebc58b88c43505f0658472cca6ffbc9c32b7a198f79b"
 "franka_description/robots/fr3/joint_limits.yaml" = "42e999184f37689568b58f320d062859053f03c62c8b49bf00a00d69f20d7a65"
 "libfranka/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"libfranka/NOTICE" = "a7dcae538ac4983582406437c91e87c9100e7027420a8c1f275053de9f4289cf"
 "libfranka/examples/generate_joint_position_motion.cpp" = "93cf0071edcfe19025e27d5c74034b08040fb8fadd3aadaf225b292221623920"
 "libfranka/include/franka/rate_limiting.h" = "dc5b5af00882e90363298f12df8d62ed5a135e6a9ff0f92999384d39f499cd15"
 "libfranka/include/franka/robot.h" = "73560ff227b14670f258a92dccf83426b1a64de4d41b0e62814d0e434ec42856"
