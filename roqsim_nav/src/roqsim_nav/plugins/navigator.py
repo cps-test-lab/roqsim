@@ -553,7 +553,7 @@ class NavigatorPlugin(Plugin):
 
         params = NavParams.from_spec(cfg, float(cfg.get("radius", 0.3)))
         # A fresh generator PER DRAW, not one captured here. `rng_for` is counter-based and keyed on
-        # `(seed, episode, sim_time, name)`, so a dwell drawn at the moment of arrival is a pure
+        # `(seed, run, sim_time, name)`, so a dwell drawn at the moment of arrival is a pure
         # function of when the mover arrived. A generator held from here would be a stateful stream
         # whose position depends on how many draws preceded it, and would draw at configure time --
         # before this plugin's own arrival, and before a driver need have resolved the seed.
@@ -669,7 +669,7 @@ class NavigatorPlugin(Plugin):
         z_lo, z_hi = float(band[0]), float(band[1])
         resolution = float(cfg.get("resolution", DEFAULT_RESOLUTION))
         resting = self._parked_props(ctx)
-        key = f"{grid_key(resolution, z_lo, z_hi, resting)}:{ctx.episode}"
+        key = f"{grid_key(resolution, z_lo, z_hi, resting)}:{ctx.reset_count}"
         grid = ctx.blackboard.get(key)
         if grid is None:
             mujoco.mj_forward(ctx.model, ctx.data)  # geom_xpos must be valid to read footprints

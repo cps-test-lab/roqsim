@@ -228,8 +228,9 @@ def _deaf_to_stop_signals(logger: logging.Logger):
 def _tick(engine: Engine, pacer: Pacer) -> bool:
     """Honor run-control; return True if a physics step was taken this iteration."""
     c = engine.ctx.control
-    if c.take_reset():
-        engine.reset()
+    request = c.take_reset()
+    if request is not None:
+        engine.reset(run=request.run)
         pacer.reset()
     if c.state == ctl.QUITTING:
         return False

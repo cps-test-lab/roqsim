@@ -337,6 +337,7 @@ def test_f1_is_the_one_key_shared_with_simulate_on_purpose():
 class _Ctx:
     def __init__(self, model, data):
         self.model, self.data = model, data
+        self.run = "#0"
 
     @property
     def sim_time(self):

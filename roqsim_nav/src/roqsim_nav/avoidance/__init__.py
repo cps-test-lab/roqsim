@@ -128,7 +128,7 @@ class AvoidanceService:
         self.ref = ref
         self.params = dict(params or {})
         self._solved_step = -1
-        self._reset_episode = -1
+        self._reset_generation = -1
 
     def ensure_solved(self, ctx) -> None:
         step = round(ctx.sim_time / ctx.dt) if ctx.dt else 0
@@ -138,16 +138,16 @@ class AvoidanceService:
         self.model.solve(float(ctx.dt))
 
     def ensure_reset(self, ctx) -> None:
-        """Reset the model once per episode, whichever mover gets here first.
+        """Reset the model once per reset of the world, whichever mover gets here first.
 
         Stamped like the solve, and for the same reason: every navigator resets, and the shared
         model must be cleared exactly once -- not once per mover, which would wipe the state of the
         movers that reset before it.
         """
-        episode = int(getattr(ctx, "episode", 0))
-        if episode == self._reset_episode:
+        generation = int(ctx.reset_count)
+        if generation == self._reset_generation:
             return
-        self._reset_episode = episode
+        self._reset_generation = generation
         self.reset()
 
     def reset(self) -> None:

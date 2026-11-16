@@ -1597,12 +1597,12 @@ or an override)::
        name: step_timers
        enabled: false
 
-Every ``every_s`` of simulated time it appends a row: ``t``, ``episode``, ``wall_s`` (since
+Every ``every_s`` of simulated time it appends a row: ``t``, ``run``, ``wall_s`` (since
 ``configure``), then each timer's cumulative ``<timer>_us`` and ``<timer>_n`` (``step_us``,
 ``forward_us``, ``pos_collision_us``, ...), with a final row at shutdown. A relative ``path`` lands
 in the run's output directory (``RUN_OUTPUT_DIR``, then ``OUTPUT_DIR``, then the working directory),
 the way ``roqsim sim`` anchors its recording. Values are cumulative and a reset zeroes them, so a
-window's share is the difference of two rows of one episode. Forward dynamics outside the timed
+window's share is the difference of two rows of one run. Forward dynamics outside the timed
 sub-stages -- for a flex under a discrete integrator, the smooth-acceleration solve -- shows as
 ``FORWARD`` minus its children; a step taken in two halves (a mechanism whose weight the engine
 routes through a moving base) records no ``FORWARD``. ``wall_s`` minus ``step_us`` is the time no

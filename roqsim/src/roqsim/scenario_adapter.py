@@ -78,6 +78,7 @@ from . import env
 from .config import load_config, overrides_from_files
 from .context import SimContext
 from .engine import Engine
+from .runs import RunNames
 from .seed import SEED_ENV, resolve_seed
 from .viewer import DisplayError, PassiveViewer, has_display
 
@@ -266,6 +267,10 @@ class MujocoSim(_Base):
         #: or different overrides, and a seed that changed mid-scenario would make the single seed
         #: each recording carries a lie. An explicit or config-stated seed is re-read every build.
         self._drawn_seed: int | None = None
+        #: The names of the process's runs, held here rather than by an engine: a rebuild for a new
+        #: world hands the new engine this one, so the unnamed runs keep counting across it and
+        #: no two runs of the process share a name -- or the draws the name keys.
+        self._runs = RunNames()
         self._built_overrides = _UNBUILT
         self._logger = None
         self._engine: Engine | None = None
@@ -294,6 +299,7 @@ class MujocoSim(_Base):
         # resolved after this point would reach the tick-time consumers and silently miss the
         # configure-time ones.
         engine.ctx.seed = self._seed_for(cfg)
+        engine.runs = self._runs
         # A setup that raises has shut down what it configured; held only once it succeeded, so
         # the next call builds afresh instead of stepping an engine that never set up.
         engine.setup()

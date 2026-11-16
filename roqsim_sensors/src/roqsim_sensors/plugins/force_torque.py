@@ -129,7 +129,7 @@ them has accumulated -- which is why a contact task tares at the pose it is abou
 ``bias_*`` (a constant per episode) and ``drift_*`` (a rate per episode, the offset growing
 linearly from zero at the episode's start) are added to the raw pair, and a tare captures them with
 it. Both are drawn once per episode and per channel, uniformly within the stated bound, from
-``ctx.rng_for(..., per_episode=True)``: a function of the run's seed and the episode, so a value at
+``ctx.rng_for(..., per_run=True)``: a function of the run's seed and its name, so a value at
 any sim time is reproducible from that time alone, as the noise is. Linear rather than a random
 walk for that reason -- a walk's value depends on every step before it -- and because a trial lasts
 minutes, over which a thermal drift is close to a line. ``range_*`` saturates each raw channel, bias
@@ -222,9 +222,10 @@ class ForceTorquePlugin(Plugin):
         rf, rt = self.config.get("range_force"), self.config.get("range_torque")
         self.range_f = None if rf is None else float(rf)
         self.range_t = None if rt is None else float(rt)
-        #: This episode's draws: (bias force, bias torque, drift force, drift torque), each [3].
+        #: This run's draws: (bias force, bias torque, drift force, drift torque), each [3].
         self._transducer: tuple[np.ndarray, ...] | None = None
-        self._transducer_episode = -1
+        #: The reset (``ctx.reset_count``) the draws were made after.
+        self._transducer_reset = -1
         tare_at = self.config.get("tare_at_s")
         self.tare_at_s = None if tare_at is None else float(tare_at)
         #: The captured zero, in the RAW sensor frame and before the sign convention is applied --
@@ -460,7 +461,7 @@ class ForceTorquePlugin(Plugin):
             force = force - rot.T @ f_world
             torque = torque - rot.T @ m_world
         if self.bias_f or self.bias_t or self.drift_f or self.drift_t:
-            bias_f, bias_t, drift_f, drift_t = self._episode_transducer()
+            bias_f, bias_t, drift_f, drift_t = self._run_transducer()
             t = self._ctx.sim_time
             force = force + bias_f + drift_f * t
             torque = torque + bias_t + drift_t * t
@@ -470,18 +471,18 @@ class ForceTorquePlugin(Plugin):
             torque = np.clip(torque, -self.range_t, self.range_t)
         return force, torque
 
-    def _episode_transducer(self) -> tuple[np.ndarray, ...]:
-        """This episode's bias and drift rate per channel, drawn once from the episode's key."""
-        episode = int(self._ctx.episode)
-        if self._transducer is None or self._transducer_episode != episode:
-            rng = self._ctx.rng_for(self.draw_key("transducer"), per_episode=True)
+    def _run_transducer(self) -> tuple[np.ndarray, ...]:
+        """This run's bias and drift rate per channel, drawn once per reset from the run's key."""
+        reset = int(self._ctx.reset_count)
+        if self._transducer is None or self._transducer_reset != reset:
+            rng = self._ctx.rng_for(self.draw_key("transducer"), per_run=True)
             self._transducer = (
                 rng.uniform(-self.bias_f, self.bias_f, 3),
                 rng.uniform(-self.bias_t, self.bias_t, 3),
                 rng.uniform(-self.drift_f, self.drift_f, 3),
                 rng.uniform(-self.drift_t, self.drift_t, 3),
             )
-            self._transducer_episode = episode
+            self._transducer_reset = reset
         return self._transducer
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
