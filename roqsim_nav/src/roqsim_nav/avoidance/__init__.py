@@ -64,7 +64,7 @@ class AvoidanceModel(ABC):
       models is refused at load rather than ignored at runtime.
     * ``present`` honours :mod:`roqsim.presence`, so an entity made absent stops deflecting others,
       exactly as it stops being seen by every raycaster.
-    * :meth:`reset` exists because episodes do: agents and walls survive one, velocities must not.
+    * :meth:`reset` exists because runs do: agents and walls survive one, velocities must not.
 
     **The one known limit, stated rather than smuggled:** an agent is a **disc**. A long cart is its
     circumscribed circle. Widening to footprints is a real interface change -- a new ``add_agent``
@@ -109,7 +109,7 @@ class AvoidanceModel(ABC):
         """
 
     def reset(self) -> None:
-        """Drop per-episode state. Agents and static geometry survive; velocities do not."""
+        """Drop per-run state. Agents and static geometry survive; velocities do not."""
 
 
 class AvoidanceService:

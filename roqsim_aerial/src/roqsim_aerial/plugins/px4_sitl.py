@@ -432,7 +432,7 @@ class Px4SitlPlugin(Plugin):
         self._last_gps = float("-inf")
         self._controls_arrived.clear()
         # `_ever_answered` is NOT cleared: PX4 did not reboot, so the lockstep it is already
-        # driving must stay armed across an episode boundary.
+        # driving must stay armed across a run boundary.
         # The armed state and the last controls are NOT cleared: PX4 is a separate process that did
         # not reset, and pretending it disarmed would command zero thrust to a vehicle its
         # autopilot still believes is flying.

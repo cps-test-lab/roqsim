@@ -18,7 +18,7 @@ Config::
     output_dir: ""         # where scenario-execution writes its test.xml; none by default
 
 One entry serves a world: scenario-execution keeps a scenario's flags by its name and one output
-directory per process, so a second would read the first's. Each episode parses the file again and
+directory per process, so a second would read the first's. Each run parses the file again and
 builds a new tree, since a tree holds a run's state. The tree is ticked once per physics step, after
 the plugins listed before this entry, in its ``post_step``. The file is parsed there too, and only in
 a run: a world compiled to look at it (``SimContext.preview``: rendering, replaying, checking, a settled
@@ -27,7 +27,7 @@ package to know the entry.
 
 A scenario that fails stops the run with an error and a non-zero exit. One the run ends before it does
 is written to ``test.xml`` as failed and reported to the driver (``ctx.report_unfinished``), so
-``roqsim sim`` exits non-zero; a reset that cuts it short logs that as an error, and the next episode
+``roqsim sim`` exits non-zero; a reset that cuts it short logs that as an error, and the next run
 runs it again.
 
 The other way to run a scenario is scenario-execution owning the loop (:mod:`roqsim.scenario_adapter`),

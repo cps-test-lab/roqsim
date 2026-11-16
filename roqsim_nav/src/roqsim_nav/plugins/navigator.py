@@ -702,7 +702,7 @@ class NavigatorPlugin(Plugin):
         Robots are NOT in this set even when they are motionless, and that is the distinction that
         matters: the subject stands still at spawn because nothing is driving it *yet*. Baking it
         into the grid would make every opponent plan around where the robot under test was parked at
-        t = 0, for the whole episode. Traffic is the business of caution and avoidance, which can
+        t = 0, for the whole run. Traffic is the business of caution and avoidance, which can
         watch it move; the grid only gets what will still be true in a minute.
         """
         model = ctx.model
@@ -727,7 +727,7 @@ class NavigatorPlugin(Plugin):
         self._state.pos = np.array([x, y], dtype=float)
         self._state.yaw = yaw
         self._state.waypoints[0] = (x, y)
-        # Built again on the first tick, against this episode's world.
+        # Built again on the first tick, against this run's world.
         self._core.planner = None
         self._pose_snapshot = (x, y, yaw)
         # First point at which every entity in the document has registered, so `caution.ignore` can
@@ -736,7 +736,7 @@ class NavigatorPlugin(Plugin):
         self._caution.reset()
         self._accum = 0.0
         self._started = bool(self.config.get("autostart", True))
-        # Episode N must not inherit episode N-1's route, nor its completion latch.
+        # Run N must not inherit run N-1's route, nor its completion latch.
         self._commanded = False
         st = self._state
         st.waypoints = np.asarray([(x, y), *self._configured_goals], dtype=float)
@@ -748,7 +748,7 @@ class NavigatorPlugin(Plugin):
         # What `status()` and the handle's `pose` answer before the first tick.
         self._core.observe(ctx.sim_time, (x, y), None)
         self._seq.apply(0)
-        # Re-plan next tick: an episode may make a different set of obstacles present, and a grid
+        # Re-plan next tick: a run may make a different set of obstacles present, and a grid
         # carried over from the last one would route around whichever were present then.
         self._plan_pending = True
         self._join_avoidance(ctx)
@@ -757,9 +757,9 @@ class NavigatorPlugin(Plugin):
         self._output.stop(ctx)
 
     def pre_step(self, ctx: SimContext) -> None:
-        # Ahead of the decimation gate, and only ever true once per episode: the route must be
+        # Ahead of the decimation gate, and only ever true once per run: the route must be
         # planned on the FIRST tick rather than a decimation period later, so that a route the
-        # planner cannot solve surfaces at the start of the episode instead of whenever the mover
+        # planner cannot solve surfaces at the start of the run instead of whenever the mover
         # happens to first be ticked. One boolean test on the hot path, False ever after.
         if self._plan_pending:
             self._plan_pending = False

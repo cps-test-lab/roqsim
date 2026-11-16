@@ -3193,7 +3193,7 @@ entity and name (``show``, ``hide``, ``set`` for one of an ``exclusive`` group),
 ``shown``/``hidden`` event::
 
    - part_state:
-       shown: {strip_*: [plain]}            # at the start of every episode, by name or pattern
+       shown: {strip_*: [plain]}            # at the start of every run, by name or pattern
        exclusive: {strip_*: [[plain, hole]]}
 
 A state's bodies are **massless**: one with mass is refused, naming the body, because showing a state

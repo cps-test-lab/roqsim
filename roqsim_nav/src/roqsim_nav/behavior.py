@@ -124,7 +124,7 @@ class NavCore:
         #: as one rather than as an arrival.
         self.failure = ""
         if self.planner is not None:
-            # An episode plans against the world as built, never against what the last one ran into.
+            # A run plans against the world as built, never against what the last one ran into.
             self.planner.forget_blockages()
 
     def observe(self, t, pos, blocker) -> None:

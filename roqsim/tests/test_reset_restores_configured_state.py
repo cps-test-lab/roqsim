@@ -781,7 +781,7 @@ _MEASURED_ONCE = (
 EXEMPT: dict[str, dict[str | None, str]] = {
     "px4_sitl": {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
-        "keeps its link, arming and last controls across the episode boundary to match it",
+        "keeps its link, arming and last controls across the run boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
     "fzi_cartesian_controllers": {

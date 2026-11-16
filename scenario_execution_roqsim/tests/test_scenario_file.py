@@ -125,7 +125,7 @@ def test_a_scenario_that_fails_stops_the_run_naming_why(tmp_path):
         engine.shutdown()
 
 
-def test_each_episode_runs_the_scenario_again(tmp_path):
+def test_each_run_runs_the_scenario_again(tmp_path):
     engine = _engine(tmp_path, GOOD)
     try:
         _until_stop(engine)

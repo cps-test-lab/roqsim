@@ -579,7 +579,7 @@ class Engine:
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
-            # in one episode would still be in the room at the start of the next.
+            # in one run would still be in the room at the start of the next.
             plugin.apply_declared_presence(self.ctx)
         # Once more, after every plugin has written its part of the initial state -- a pose, a
         # command, a presence: until the next step, the derived quantities (site poses, sensor data,
