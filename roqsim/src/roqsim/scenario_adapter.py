@@ -31,6 +31,13 @@ configuration -- can also declare a ``world`` parameter and select the world its
 makes that one scenario instead of N. Ordinary scenarios declare neither and stay
 simulator-agnostic: the world then comes from ``ROQSIM_WORLD``, set by whoever deployed the run.
 
+Each ``reset()`` starts a **run**, named by its ``run`` argument where the runner gives one -- a
+parameter document's ``_reset`` mapping carries it -- and otherwise by ``ROQSIM_RUN`` for the first
+run and the process's next unnamed name for the others (:mod:`roqsim.runs`). The name and the seed
+key every draw of the run, so the runs of a campaign never draw the same values, whichever process
+they share and however many worlds it rebuilds, and the same seed and name repeat a run in any
+process: ``roqsim sim <world> --seed S --run NAME`` draws what the run of that name drew.
+
 A runner that executes several scenarios in one process hands ``reset()`` each scenario's own
 output directory (scenario-execution's ``output_dir`` reset argument). The recording and the scene
 export then roll with it: the scenario before is finished and the next one records and exports its
@@ -78,7 +85,7 @@ from . import env
 from .config import load_config, overrides_from_files
 from .context import SimContext
 from .engine import Engine
-from .runs import RunNames
+from .runs import RUN_ENV, RunNames, check_run
 from .seed import SEED_ENV, resolve_seed
 from .viewer import DisplayError, PassiveViewer, has_display
 
@@ -270,7 +277,9 @@ class MujocoSim(_Base):
         #: The names of the process's runs, held here rather than by an engine: a rebuild for a new
         #: world hands the new engine this one, so the unnamed runs keep counting across it and
         #: no two runs of the process share a name -- or the draws the name keys.
-        self._runs = RunNames()
+        #: ``ROQSIM_RUN`` names the first run where its reset names none: a deployment that runs
+        #: one run per process names it there.
+        self._runs = RunNames(first=env.get(RUN_ENV) or None)
         self._built_overrides = _UNBUILT
         self._logger = None
         self._engine: Engine | None = None
@@ -511,8 +520,19 @@ class MujocoSim(_Base):
         self._output_dir = kwargs.get("output_dir")
 
     def reset(
-        self, world=None, world_overrides=None, headless=None, output_dir=None, **kwargs
+        self, world=None, world_overrides=None, headless=None, output_dir=None, run=None, **kwargs
     ) -> None:
+        """Start a run: build or rebuild the world it names, reset it, and start its recording.
+
+        ``run`` names the run (:mod:`roqsim.runs`), as a runner gives it in a parameter
+        document's ``_reset`` mapping. With the seed it keys every draw the run makes, so the runs
+        of one campaign never draw the same values, whichever process they share. Without it, the
+        first run is ``ROQSIM_RUN`` and the others are the process's next unnamed ones, counted
+        across rebuilds.
+        """
+        # Before anything is built: a name that cannot be one is the input's fault.
+        if run is not None:
+            check_run(run)
         self._build(
             world or self._default_world,
             world_overrides if world_overrides is not None else self._default_overrides,
@@ -524,7 +544,7 @@ class MujocoSim(_Base):
             self._run_dir = output_dir
             self._scene_export_pending = True
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
-        self._engine.reset(**kwargs)
+        self._engine.reset(run=run, **kwargs)
         if self._scene_export_pending:
             self._export_scene()
         # After reset, so the first sample is the world as the scenario starts rather than as it

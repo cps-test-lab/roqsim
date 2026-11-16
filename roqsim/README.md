@@ -184,7 +184,10 @@ so it can be replayed). Plugins draw noise from `ctx.rng_for(name)`, which is **
 than stateful: its draws are a pure function of `(seed, run, sim_time, name)`, so a value is reproducible
 without replaying the stream that preceded it — and a sensor re-run from a recording produces the same
 noise the live run published. See the docstring on `SimContext.rng_for` for why a shared stateful
-generator cannot do this.
+generator cannot do this. The run is a name: a runner gives it (`reset(run="cfg-a/3")` on the scenario
+adapter, from a parameter document's `_reset` mapping), `roqsim sim --run NAME` or `ROQSIM_RUN` gives
+it by hand, and a reset that names none is `#0`, `#1`, ... -- so `roqsim sim <world> --seed S --run NAME`
+draws what the run of that name drew, in whatever process it ran.
 
 Under scenario-execution the scenario owns when a run ends, and a trial publishes its outcome for the
 scenario to condition on. Standalone, `ctx.request_stop(reason)` ends a `roqsim sim` run when the

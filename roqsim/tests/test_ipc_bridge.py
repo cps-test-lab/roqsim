@@ -474,6 +474,25 @@ def test_describe_names_the_endpoint_on_the_other_transports(uri):
         assert entry["bridges"] == {"wire": {"topic": "/resolved/odom"}}
 
 
+def test_a_reset_names_the_run_it_starts_and_the_state_says_which(uri):
+    with Sim(uri) as run, Client(uri) as sim:
+        assert sim.state()["run"] == "#0"
+        assert sim.reset(run="cfg-a/4")["run"] == "cfg-a/4"
+        assert run.engine.ctx.run == "cfg-a/4" and sim.state()["run"] == "cfg-a/4"
+        assert sim.reset()["run"] == "cfg-a/4#1", (
+            "an unnamed reset continues the named run's series"
+        )
+
+
+def test_ctl_names_a_run_only_for_reset(capsys):
+    from roqsim.control_cli.ctl import main as ctl_main
+
+    with pytest.raises(SystemExit) as exc:
+        ctl_main(["pause", "--run", "x", "--control", "ipc:///nonexistent.sock"])
+    assert exc.value.code == 2
+    assert "pause names no run" in capsys.readouterr().err
+
+
 def test_ctl_refuses_a_count_only_step_takes(capsys):
     from roqsim.control_cli.ctl import main as ctl_main
 
