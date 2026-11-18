@@ -33,8 +33,8 @@ because the compiled model would say one thing, the first tick another, and the 
 would record the value that was immediately overwritten. State the mean flow in ``steady:``.
 
 **Randomness comes from ``ctx.rng_for``**, like every other stochastic plugin, so turbulence is a
-pure function of ``(sim.seed, episode, sim_time)`` and this plugin has no ``seed`` key of its own.
-Because ``episode`` is part of the key, repetitions of one configuration see *different* turbulence:
+pure function of ``(sim.seed, run, sim_time)`` and this plugin has no ``seed`` key of its own.
+Because the run is part of the key, the runs of one configuration see *different* turbulence:
 repetitions are samples of the weather, not copies of it, which is what makes averaging over them
 mean anything.
 

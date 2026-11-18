@@ -540,7 +540,7 @@ def test_a_timer_that_wins_over_a_route_stops_the_mover():
         engine.shutdown()
 
 
-def test_a_reset_does_not_stop_a_mover_for_the_next_episode():
+def test_a_reset_does_not_stop_a_mover_for_the_next_run():
     engine = _engine(
         {"scenario_fixtures:FakeWalker": {"route_s": 5.0}, "name": "worker"},
         {"scenario_fixtures:RouteLosesToATimer": {}, "name": "scene"},

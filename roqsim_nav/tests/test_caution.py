@@ -512,7 +512,7 @@ def test_a_momentary_gap_does_not_re_arm_the_yield_window(tmp_path):
 def test_a_mover_does_not_wait_before_it_has_ever_been_blocked(tmp_path):
     """`clear_time` settles a way that has REOPENED, so it must not run from a cold start.
 
-    Otherwise every mover holds for `clear_time` at the beginning of every episode, having never
+    Otherwise every mover holds for `clear_time` at the beginning of every run, having never
     met anything -- the timer starts from an unset value and reads as "the way only just cleared".
     """
     engine = Engine(_world(tmp_path))  # nothing in the way at all

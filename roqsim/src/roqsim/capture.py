@@ -660,7 +660,7 @@ class StateRecorder:
         self._absent: tuple | None = None
         self._ctx = ctx
         #: How many of ``ctx.events`` are on the ``events`` channel already, or were emitted before
-        #: this recording began (an earlier take's, an earlier episode's): those are not its own.
+        #: this recording began (an earlier take's, an earlier run's): those are not its own.
         events = getattr(ctx, "events", None)
         self._events_written = events.start_of_now() if events is not None else 0
         self._writer: ChunkedWriter | None = None
@@ -684,12 +684,12 @@ class StateRecorder:
         self._provenance = {
             "format_version": FORMAT_VERSION,
             # The seed belongs in the provenance because it is what makes a *sensor* replay exact: a
-            # recomputed lidar scan needs the same noise the live run drew. The episode travels with
-            # it for the same reason and is useless without it: the noise key is (seed, episode,
-            # sim_time, sensor), so a recording of the third trial replayed as the first would draw
-            # a different -- and entirely plausible-looking -- scan.
+            # recomputed lidar scan needs the same noise the live run drew. The run travels with it
+            # for the same reason and is useless without it: the noise key is (seed, run,
+            # sim_time, sensor), so a recording of one run replayed as another would draw a
+            # different -- and entirely plausible-looking -- scan.
             "seed": getattr(ctx, "seed", None),
-            "episode": int(getattr(ctx, "episode", 0)),
+            "run": ctx.run,
             "world": world,
             # The recipe: what a reader needs to see how this run was asked for, and what an external
             # consumer uses as world identity. Replay does NOT re-interpret it -- see `world_model`.

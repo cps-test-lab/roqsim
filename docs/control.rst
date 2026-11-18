@@ -54,6 +54,7 @@ From another shell, in the same directory or anywhere else on the machine::
    $ roqsim ctl pause
    $ roqsim ctl step 100                             # returns once the 100 steps ran
    $ roqsim ctl resume
+   $ roqsim ctl reset --run cfg-a/1                  # a new run, named; without --run the next unnamed one
 
 A command that names a confirmation replies with it. ``model_override``'s ``override`` is confirmed
 by its report, so a fault reports whether it landed::

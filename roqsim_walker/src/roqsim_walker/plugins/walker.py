@@ -412,7 +412,7 @@ class WalkerPlugin(Plugin):
         ``mj_resetData`` parks every mocap body at the origin, so the skeleton has to be re-posed
         whatever else happens. Doing it here rather than in the navigator is what makes the ordering
         work: components reset after their owner, so the navigator reads a body that is already home
-        rather than one still standing where the last episode left it.
+        rather than one still standing where the last run left it.
         """
         st = self._anim
         st.pos = st.start[:2].copy()
@@ -435,7 +435,7 @@ class WalkerPlugin(Plugin):
             self.motion.play(**{"loop": True, **entry})
         # Posed straight from the idle clip at phase 0, not through the blendspace: running one
         # animation frame here would advance the idle clock and settle the body a couple of
-        # millimetres off the pose every previous episode started from.
+        # millimetres off the pose every previous run started from.
         joint_rot, root_z = st.idle.sample(0.0)
         poses = forward_kinematics(
             [st.pos[0], st.pos[1], st.skeleton.root_height + root_z],

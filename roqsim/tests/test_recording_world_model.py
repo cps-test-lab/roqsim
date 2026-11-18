@@ -148,5 +148,6 @@ def test_a_world_that_declares_no_gains_still_records_what_ran(tmp_path):
 
 def test_the_format_is_the_mcap_one():
     """`Recording` reads `world_model` by name and ignores keys it does not know; the version moves
-    only when the file's shape does, and the shape is the mcap layout of format 3."""
-    assert FORMAT_VERSION == 3
+    only when the file's shape does, and the shape is the mcap layout of format 4, whose provenance
+    and events name the run."""
+    assert FORMAT_VERSION == 4
