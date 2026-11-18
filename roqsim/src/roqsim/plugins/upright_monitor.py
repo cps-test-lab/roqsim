@@ -65,7 +65,7 @@ Endpoint ``upright`` (out) reads an :class:`UprightReport`. ROS carries its ``up
 ``settle_s`` buys. A body spawned twenty centimetres above the floor drops onto it, and measuring
 against the spawn would call that drop a departure -- flagging every world whose author did not
 place a body to the millimetre, which is a monitor people turn off. Nothing is judged and no
-reference is taken until ``settle_s``; it is measured per episode, so a repetition compares
+reference is taken until ``settle_s``; it is measured per run, so a repetition compares
 against its own start.
 
 The cost is that a body already broken at t=0 is not reported for half a second. That is the right

@@ -9,8 +9,9 @@ A. set up, reset, record the per-trial state;
 B. use it -- write every ``in`` endpoint of the world, step, call the case's setters (a
    controller's case switches every controller), step -- then reset and record again.
 
-A trial that used a plugin must leave nothing behind, so A and B must be equal. The episode counter
-is put back before the second reset, so a draw keyed on it is the same draw in both.
+A trial that used a plugin must leave nothing behind, so A and B must be equal. Both resets start
+the same run, and the reset count is put back before the second, so a draw keyed on the run and a
+plugin keyed on the reset see the same in both.
 
 **What is compared.** The plugin's instance attributes, followed into the objects it owns (roqsim
 types, dataclasses, containers, numpy arrays, generators' bit state), plus two things a plugin can
@@ -18,7 +19,7 @@ change that it does not own: the run's stop request on the context, and each con
 the controller registry. A third-party object is compared by its type alone: its insides are that
 library's bookkeeping. Not followed, because they are shared rather than the plugin's own: the
 context and its registries, the entities, other plugins, MuJoCo objects (``model``, ``data``, a
-scratch ``MjData``, a renderer), loggers, locks, threads and callables. Values are compared exactly:
+scratch ``MjData``, a renderer, a ray-cast backend), loggers, locks, threads and callables. Values are compared exactly:
 both records are taken after the same reset, so a difference is a difference, not float noise.
 
 A plugin that keeps some state across a reset on purpose is listed in :data:`EXEMPT` with the reason,
@@ -55,6 +56,7 @@ from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegist
 from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.raycast import Raycaster, RaycastService
 from roqsim.rendering import RenderService
 from roqsim.types import JointState
 
@@ -412,6 +414,37 @@ def _use_fanuc_driver(engine: Engine) -> None:
     eps["fanuc_gpio_controller.switch_control_state"].write({"status": 0})
 
 
+def _run_franka_motion(engine: Engine) -> None:
+    """An in-process torque motion through the FR3's FCI handle, still running when the trial
+    resets; the reset ends it as aborted (the network side answers a client's Move the same way)."""
+
+    def law(state, period):
+        return {"tau_J_d": [0.0] * 7}
+
+    engine.ctx.blackboard.get("franka_fci:fr3").control(law)
+
+
+def _set_every_franka_setting(engine: Engine) -> None:
+    """Every setter a client can call, each to a value other than the world's: a reset returns
+    the controller to the world's configuration, so none of them may outlast the run."""
+    fci = engine.ctx.blackboard.get("franka_fci:fr3")
+    fci.set_load(1.5, [0.02, 0.0, 0.08], np.diag([2e-3, 2e-3, 1e-3]))
+    assert fci.set_joint_impedance([100.0] * 7)
+    assert fci.set_cartesian_impedance([200.0, 200.0, 200.0, 20.0, 20.0, 20.0])
+    assert fci.set_collision_behavior({key: [v * 2 for v in vs] for key, vs in _FRANKA_CB.items()})
+    fci.set_k([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.05], [0, 0, 0, 1]])
+    fci.set_ee([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.1], [0, 0, 0, 1]])
+
+
+#: franka_fci's required setting: the robot's start-up thresholds are unpublished.
+_FRANKA_CB = {
+    "lower_torque": [20.0] * 7,
+    "upper_torque": [40.0] * 7,
+    "lower_force": [20.0] * 6,
+    "upper_force": [60.0] * 6,
+}
+
+
 def _needs_file(path_of: Callable[[], Path], what: str) -> Callable[[], str | None]:
     def check() -> str | None:
         return None if path_of().exists() else f"{what} is not present ({path_of()})"
@@ -469,6 +502,8 @@ CASES: dict[str, Case] = {
     # core
     "dummy": _static({"dummy": {}}),
     "ceiling": _static({"ceiling": {}}),
+    # No bake there: the world loads unbaked, the plugin holds what it read at the build.
+    "baked_lighting": Case(lambda tmp: _world({"baked_lighting": {"path": str(tmp / "none.bake")}})),
     "part_state": Case(_part_with_states),
     "zone_trigger": _static({"zone_trigger": {"size": [0.5, 0.5, 0.5]}, "name": "zone"}),
     "spawn_model": _static(
@@ -572,6 +607,17 @@ CASES: dict[str, Case] = {
         use=(_use_fanuc_driver,),
     ),
     "ur_rtde": Case(lambda _: _arm({"ur_rtde": {"ft": "ft"}}), use=(_run_rtde_program,)),
+    "franka_fci": Case(
+        lambda _: _world(
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "fr3_"},
+                "name": "fr3",
+                "components": [{"franka_fci": {"collision_behavior": _FRANKA_CB}}],
+            },
+            timestep=0.001,
+        ),
+        use=(_set_every_franka_setting, _run_franka_motion),
+    ),
     "fzi_cartesian_controllers": Case(
         lambda _: _arm(
             {
@@ -774,10 +820,16 @@ _MEASURED_ONCE = (
 )
 
 #: Plugins, or attribute paths of a plugin, that keep state across a reset on purpose.
+#: franka_fci's FCI state counter, and the last state, which carries it.
+_FCI_MESSAGE_ID = (
+    "the FCI's state counter: libfranka discards a state not newer than the last one it read, so a "
+    "client connected across a reset needs the robot to keep counting, as a robot does"
+)
+
 EXEMPT: dict[str, dict[str | None, str]] = {
     "px4_sitl": {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
-        "keeps its link, arming and last controls across the episode boundary to match it",
+        "keeps its link, arming and last controls across the run boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
     "fzi_cartesian_controllers": {
@@ -791,6 +843,7 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     # The clips a walker has read, by file: a cache of files that do not change during a run.
     "walker": {"motion._clips": "the clips read so far, by file, which a reset does not change"},
     "humanoid": {"body.motion._clips": "the walker's clips read so far, by file (as for walker)"},
+    "franka_fci": {"_message_id": _FCI_MESSAGE_ID, "_last_state['message_id']": _FCI_MESSAGE_ID},
     "navigator": {
         "_radius": _MEASURED_ONCE,
         "_caution._radius": _MEASURED_ONCE,
@@ -827,6 +880,9 @@ _SHARED = (
     Engine,
     # The world's render service, which every camera's view belongs to and the engine resets.
     RenderService,
+    # A ray-cast backend, which every sensor that chose it shares, and the world's raycast service.
+    Raycaster,
+    RaycastService,
     Plugin,
     Blackboard,
     EntityRegistry,
@@ -1007,7 +1063,7 @@ def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
     try:
         if not _plugins(engine, name):
             pytest.fail(f"the world for {name!r} does not contain it")
-        engine.reset()
+        engine.reset(run="trial")
         configured = _state(engine, name)
 
         _write_every_in_endpoint(engine)
@@ -1018,8 +1074,8 @@ def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
         for _ in range(STEPS // 2):
             engine.step()
 
-        engine.ctx.episode -= 1
-        engine.reset()
+        engine.ctx.reset_count -= 1
+        engine.reset(run="trial")
         used = _state(engine, name)
     finally:
         engine.shutdown()

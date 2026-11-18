@@ -7,10 +7,11 @@ Lifecycle::
 
     setup()   -> build phase: plugin.build(spec) for all, then plugin.build_late(spec) for all;
                  spec.compile(); make data;
-                 plugin.configure(ctx)
+                 plugin.configure(ctx); mj_forward (the initial state's poses, no time advance)
     reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
-                 (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base)
+                 (mj_step1, GravityReaction, mj_step2 when a drive holds a mechanism on a moving base);
+                 refused until a reset() has run since setup()
     idle()    -> drain posted commands; mj_forward if any ran (a paused driver, no time advance)
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
@@ -22,6 +23,9 @@ A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leav
     with engine:
         engine.reset()
         ...
+
+A trial starts at :meth:`reset`, so :meth:`step` raises until one has run since :meth:`setup`: a set-up
+engine is posed for inspection, but no plugin's ``on_reset`` has restored its initial state.
 
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
 wall-time), so is the physics step itself (the ``<physics>`` row: ``mj_step``, or ``mj_step1``,
@@ -37,6 +41,7 @@ import copy
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 
 try:
     import mujoco
@@ -53,6 +58,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from . import entity_pose
 from .actuators import GravityReaction
 from .assets import deduplicate_assets
+from .conditions import write_to_spec as write_conditions
 from .config import (
     SIM_OPTION_KEYS,
     SimConfig,
@@ -69,6 +75,7 @@ from .lights import undrawn_lights
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .rendering import RenderService
+from .runs import RunNames
 from .seed import PREVIEW_SEED
 from .solref import floor_rule, floor_text, solref_floor
 from .world import build_world, world_file
@@ -191,7 +198,13 @@ class Engine:
             # of one world are the same picture.
             self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
+        #: The names of this engine's runs (:mod:`roqsim.runs`). A driver that outlives the engine
+        #: -- one that rebuilds it for a new world -- assigns the one it holds, so the unnamed runs
+        #: of its process keep counting across the rebuild.
+        self.runs = RunNames()
         self._setup_done = False
+        # Whether a reset() has completed since setup(): step() refuses an engine without one.
+        self._reset_done = False
         #: The integrator the model was compiled with and why (:class:`roqsim.flex.IntegratorChoice`);
         #: set by :meth:`setup`, before compile.
         self.integrator: IntegratorChoice | None = None
@@ -241,7 +254,14 @@ class Engine:
 
     # -- lifecycle ----------------------------------------------------------------------------
     def setup(self) -> None:
-        """Build the scene from all plugins, compile, create data, and configure plugins."""
+        """Build the scene from all plugins, compile, create data, and configure plugins.
+
+        ``data`` then describes the model's initial state: ``mj_forward`` has run on it, so body,
+        geom, site and camera poses, sensor data and contacts are computed, while ``data.time``
+        stays 0. ``configure`` runs before that pass, so a plugin reading a pose there runs its own.
+        No plugin's ``on_reset`` has run, so :meth:`step` waits for a :meth:`reset`.
+        """
+        self._reset_done = False
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
@@ -295,6 +315,9 @@ class Engine:
             world_name = self.config.sim.get("world")
             self._check_one_world(world_name)
             world_path = world_file(world_name, self.config.base_dir)
+            # Where the world came from, for a plugin that keeps files beside it (baked lighting).
+            self.ctx.world_path = Path(world_path) if world_path else None
+            self.ctx.world_source = getattr(self.config, "source", None)
             if world_path is not None:
                 spec = mujoco.MjSpec.from_file(world_path)
             else:
@@ -387,6 +410,10 @@ class Engine:
         # the ones that declare an absent entity: any entity can be deleted at run time.
         arm_gravity_compensation(spec)
 
+        # Into the model, so whatever holds only the model (a renderer, a recording's reader) can
+        # say how the world loaded. After every build hook, which is where conditions are raised.
+        write_conditions(spec, self.ctx.conditions)
+
         with self._span("compile"):
             self.ctx.model = spec.compile()
         with self._span("make_data"):
@@ -439,9 +466,15 @@ class Engine:
             # Every camera has registered: a renderer that cannot give what one asks for fails the
             # load here, naming it, rather than at its first frame.
             self.ctx.render.check()
+            # Last, once every plugin has written its part: a world inspected before its first reset
+            # -- a geometry check, an export, a test -- reads body, geom, site and camera
+            # poses, sensor data and contacts of the initial state, not MjData's zeros, which put
+            # every part at the origin. No time passes, and reset() starts from mj_resetData.
+            mujoco.mj_forward(self.ctx.model, self.ctx.data)
         except BaseException:
             self._shutdown_plugins(configured, " after a configure failed")
             self.ctx.render.close()
+            self._close_raycast()
             raise
 
     def _apply_contact_override(self, spec) -> None:
@@ -504,10 +537,14 @@ class Engine:
             f"or state {shown} s or more."
         )
 
-    def reset(self, **params) -> None:
-        """Reset physics and let plugins restore initial state.
+    def reset(self, *, run: str | None = None, **params) -> None:
+        """Reset physics and let plugins restore initial state: the start of a run.
 
-        ``params`` describe the trial being started: they are set on the blackboard as
+        ``run`` names the run it starts (:mod:`roqsim.runs`); without one it is the next unnamed
+        name of :attr:`runs`. The name keys the run's random draws, so it is set before any
+        plugin's ``on_reset``, and one that is not a run name raises before anything is reset.
+
+        ``params`` describe the run being started: they are set on the blackboard as
         ``reset_params`` before any plugin's ``on_reset``, an empty mapping when none are given.
         The scenario-execution adapter forwards the scenario parameters it does not consume here.
 
@@ -515,16 +552,21 @@ class Engine:
         (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
         :attr:`interpenetrations` and logged as one WARNING naming the deepest pairs. Nothing is
         refused, and the state is not touched.
+
+        It is what :meth:`step` waits for after :meth:`setup`. One that raises leaves the engine
+        un-reset, so stepping it raises until a reset completes.
         """
         self._require_setup()
+        name = self.runs.next(run)
+        self._reset_done = False
         # Flush any pending commands so nothing targets the pre-reset state.
         self.ctx.drain_commands()
-        # A new trial, and the sensors' noise key says so. Advanced BEFORE the plugins are
-        # reset, so anything that starts a recording in its own on_reset stamps the episode
-        # it is actually about to record. `mj_resetData` puts `data.time` back to zero and
-        # `rng_for` is keyed on simulated time, so without this every trial after the first
-        # would replay the first one's noise exactly.
-        self.ctx.episode += 1
+        # A new run, and the draws' key says so. Set BEFORE the plugins are reset, so anything
+        # that starts a recording or draws in its own on_reset has the run it is about to run.
+        # `mj_resetData` puts `data.time` back to zero and `rng_for` is keyed on simulated time,
+        # so without it every run after the first would replay the first one's noise exactly.
+        self.ctx.run = name
+        self.ctx.reset_count += 1
         # A stop request ends the trial that made it, not the next one.
         self.ctx.stop_requested = False
         self.ctx.stop_reason = ""
@@ -537,7 +579,7 @@ class Engine:
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
-            # in one episode would still be in the room at the start of the next.
+            # in one run would still be in the room at the start of the next.
             plugin.apply_declared_presence(self.ctx)
         # Once more, after every plugin has written its part of the initial state -- a pose, a
         # command, a presence: until the next step, the derived quantities (site poses, sensor data,
@@ -551,10 +593,15 @@ class Engine:
             self.logger.warning("%s", summary(self.interpenetrations))
         for gate in self.ctx.gates():
             gate.reset()
+        self._reset_done = True
 
     def step(self) -> None:
-        """Advance one physics step through the plugin pipeline."""
-        self._require_setup()
+        """Advance one physics step through the plugin pipeline.
+
+        Raises :class:`RuntimeError` on an engine that has not been reset since :meth:`setup`:
+        a trial starts from the state :meth:`reset` leaves, with every plugin's ``on_reset`` run.
+        """
+        self._require_reset()
         # 1) apply all externally-posted mutations on this (physics) thread.
         self.ctx.drain_commands()
         # 2) controllers write actuators.
@@ -617,7 +664,15 @@ class Engine:
         self._shutdown_plugins(self.plugins, "")
         # After the plugins, which may still read a frame in their shutdown.
         self.ctx.render.close()
+        self._close_raycast()
         self._setup_done = False
+        self._reset_done = False
+
+    def _close_raycast(self) -> None:
+        """Close the ray-cast backends the sensors opened (a device scene, for a GPU one)."""
+        if self.ctx.raycast is not None:
+            self.ctx.raycast.close()
+            self.ctx.raycast = None
 
     def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
         for plugin in reversed(plugins):
@@ -728,3 +783,11 @@ class Engine:
     def _require_setup(self) -> None:
         if not self._setup_done:
             raise RuntimeError("Engine.setup() must be called before reset()/step()")
+
+    def _require_reset(self) -> None:
+        self._require_setup()
+        if not self._reset_done:
+            raise RuntimeError(
+                "Engine.step() on an engine that was set up but not reset: call engine.reset() "
+                "first, so every plugin's on_reset has put the world in its initial state"
+            )

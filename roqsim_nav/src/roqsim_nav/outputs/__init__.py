@@ -75,7 +75,7 @@ class NavOutput(ABC):
     def stop(self, ctx) -> None:
         """Come to rest with no time passing: a reset, or a shutdown.
 
-        Deliberately timeless. A reset has just placed the body where the episode starts, and
+        Deliberately timeless. A reset has just placed the body where the run starts, and
         advancing an embodiment's own clocks here would move it off that pose -- by a millimetre for
         a walker, which is enough to make two runs of the same world differ.
         """

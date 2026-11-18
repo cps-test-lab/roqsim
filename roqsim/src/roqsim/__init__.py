@@ -26,10 +26,14 @@ from .config import (
 )
 from .context import Entity, RobotHandle, SimContext
 from .engine import Engine
+from .mujoco_log import route_warnings
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .rendering import WALK_KEYS, FrameRenderer, default_free_camera, walk_delta
 from .runner import config_for_input
+
+# MuJoCo's warnings go to logging rather than to MUJOCO_LOG.TXT in the current directory.
+route_warnings()
 
 __all__ = [
     "WALK_KEYS",

@@ -93,6 +93,7 @@ def _write(engine, name, payload):
 def test_named_parameters_reach_the_method_and_its_result_the_future():
     engine, _ = _engine()
     with engine:
+        engine.reset()
         assert _write(engine, "set_speed", {"vx": 0.3}) is True
         assert _write(engine, "set_speed", {"vx": 0, "w": 0}) is False  # ints pass for floats
         assert _write(engine, "tare", None) is None  # no parameters: None or {}
@@ -125,6 +126,7 @@ def test_a_misfit_is_refused_into_the_future_before_anything_is_queued(payload, 
 def test_a_bare_value_is_the_only_parameter_and_refused_otherwise():
     engine, drive = _engine()
     with engine:
+        engine.reset()
         # One parameter: a bare value is that parameter, on a command and on a stream.
         assert _write(engine, "joints/left/speed", 0.5) == "left"
         assert drive.speeds == {"left": 0.5}
@@ -162,6 +164,7 @@ def test_every_misfit_is_named_at_once():
 def test_a_stream_checks_on_the_callers_side_and_coerces_an_array():
     engine, drive = _engine()
     with engine:
+        engine.reset()
         write = engine.ctx.interface.find("box", "target").write
         with pytest.raises(ParameterError, match=r"must have shape \(3\), got \(2,\)"):
             write({"pos": [1.0, 2.0]})
@@ -233,6 +236,7 @@ def test_plugins_describe_carries_the_signature_of_a_migrated_plugin():
 def test_a_family_makes_one_endpoint_per_configured_item():
     engine, drive = _engine(joints=["a", "b", "c"])
     with engine:
+        engine.reset()
         names = sorted(e.name for e in engine.ctx.interface.all() if e.owner == "box")
         assert names == sorted(
             [

@@ -136,6 +136,10 @@ class RendererCapabilities:
     non_square_pixels: bool = False
     #: Whether it draws the moving bodies alone for a camera that asks (:attr:`CameraSpec.bodies`).
     moving_only: bool = False
+    #: Whether it draws a world drawn with baked lighting (:mod:`roqsim.bake`): surfaces whose
+    #: textures hold their light already, divided by the bake's run-time rig of classic lights. A
+    #: renderer that lights them itself would light the bake a second time.
+    baked_lighting: bool = False
 
     def missing(
         self,
@@ -178,6 +182,7 @@ class RendererCapabilities:
             "principal_point": self.principal_point,
             "non_square_pixels": self.non_square_pixels,
             "moving_only": self.moving_only,
+            "baked_lighting": self.baked_lighting,
         }
 
 

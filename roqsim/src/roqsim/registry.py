@@ -15,7 +15,8 @@ Resolution order: an entry-point name wins; otherwise, if the string contains ``
 is treated as a file path when it exists on disk, else as a module path. Failures raise
 :class:`PluginError` naming the form attempted and why it failed.
 
-Renderers resolve the same way, from the ``roqsim.renderers`` group (:func:`resolve_renderer`).
+Renderers resolve the same way, from the ``roqsim.renderers`` group (:func:`resolve_renderer`), and
+ray-cast backends from the ``roqsim.raycasters`` group (:func:`resolve_raycaster`).
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from .plugin import Plugin, PluginError
 ENTRY_POINT_GROUP = "roqsim.plugins"
 #: Where a renderer registers (:mod:`roqsim.render_api`).
 RENDERER_GROUP = "roqsim.renderers"
+#: Where a ray-cast backend registers (:mod:`roqsim.raycast`).
+RAYCASTER_GROUP = "roqsim.raycasters"
 
 
 def _load_from_entry_point(name: str, group: str = ENTRY_POINT_GROUP, check=None) -> type | None:
@@ -39,7 +42,7 @@ def _load_from_entry_point(name: str, group: str = ENTRY_POINT_GROUP, check=None
     if len(named) > 1:
         # Which one the metadata lists first depends on the install, so taking it would let a world
         # load another plugin than its author's without a word.
-        kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
+        kind = {ENTRY_POINT_GROUP: "plugin", RAYCASTER_GROUP: "raycaster"}.get(group, "renderer")
         by = "; ".join(f"{v} ({_distribution(ep)})" for v, ep in sorted(named.items()))
         raise PluginError(
             f"{kind} {name!r} is registered by more than one installed package: {by}. Uninstall "
@@ -56,7 +59,9 @@ def _load_from_entry_point(name: str, group: str = ENTRY_POINT_GROUP, check=None
             # callers distinguish "cannot resolve" from "resolved to something wrong" by this type
             # alone: `drop_transport_plugins` drops an unresolvable ref (a geometry-only export
             # needs no transport), and a raw ImportError sailed past it and killed the export.
-            kind = "plugin" if group == ENTRY_POINT_GROUP else "renderer"
+            kind = {ENTRY_POINT_GROUP: "plugin", RAYCASTER_GROUP: "raycaster"}.get(
+                group, "renderer"
+            )
             raise PluginError(
                 f"{kind} {name!r} is registered by an installed package but could not be "
                 f"imported: {err}"
@@ -191,3 +196,40 @@ def resolve_renderer(ref: str, base_dir: Path | None = None) -> type:
     if left.endswith(".py") or candidate.exists():
         return _load_from_file(candidate, cls_name, ref, _check_is_renderer)
     return _load_from_module(left, cls_name, ref, _check_is_renderer)
+
+
+def _check_is_raycaster(obj, where: str) -> None:
+    from .raycast import Raycaster  # noqa: PLC0415 -- the plugin path never needs it
+
+    if not (isinstance(obj, type) and issubclass(obj, Raycaster)):
+        raise PluginError(f"{where} does not resolve to a roqsim.raycast.Raycaster subclass")
+
+
+def raycaster_names() -> list[str]:
+    """The ray-cast backends installed: every name registered under :data:`RAYCASTER_GROUP`."""
+    return sorted({ep.name for ep in _entry_points(RAYCASTER_GROUP)})
+
+
+def resolve_raycaster(ref: str, base_dir: Path | None = None) -> type:
+    """Resolve ``ref`` to a :class:`roqsim.raycast.Raycaster` subclass, in the three plugin forms.
+
+    An unknown name lists the backends installed, so the fix is in the message.
+    """
+    if ":" not in ref:
+        cls = _load_from_entry_point(ref, RAYCASTER_GROUP, _check_is_raycaster)
+        if cls is not None:
+            return cls
+        installed = ", ".join(raycaster_names()) or "(none)"
+        raise PluginError(
+            f"unknown raycaster {ref!r}: no package installed registers it under "
+            f"'{RAYCASTER_GROUP}'. Installed: {installed}. A backend from another package is "
+            f"installed with that package (e.g. roqsim_raycast_{ref}), or named as "
+            f"'module.path:Class' or 'path/to/file.py:Class'."
+        )
+    left, cls_name = _split_ref(ref)
+    candidate = Path(left)
+    if not candidate.is_absolute() and base_dir is not None:
+        candidate = base_dir / candidate
+    if left.endswith(".py") or candidate.exists():
+        return _load_from_file(candidate, cls_name, ref, _check_is_raycaster)
+    return _load_from_module(left, cls_name, ref, _check_is_raycaster)

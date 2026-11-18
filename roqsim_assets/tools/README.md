@@ -113,8 +113,11 @@ roqsim assets inspect-prop models/<name>/              # report (exit non-zero o
 roqsim assets inspect-prop models/<name>/ --fix-origin # centre footprint on (0,0), base to z=0
 ```
 The deterministic sanity gate of the pipeline. Checks origin (footprint centred on the
-floor), scale plausibility, up-axis, single-mesh, textured MJCF, single material, licence, and leftover
-intermediates. Under CC BY the licence check also asks `CREDITS.txt` to say what was changed: `import`
+floor), scale plausibility, up-axis, single-mesh, textured MJCF, shared faces, single material, licence,
+and leftover intermediates. *Shared faces* fails where two drawn parts show an outward face in one
+plane, or one curved surface: they flicker in renders as the camera moves (z-fighting), though a still
+render often looks right. Inset the touching part by about 1 mm; the report names each pair and where
+they touch (`roqsim_assets/README.md`, *Props: two drawn parts in one face*). Under CC BY the licence check also asks `CREDITS.txt` to say what was changed: `import`
 adds that once it has converted the model (`roqsim_assets.sketchfab.MODIFIED`); after the steps by hand,
 add it yourself, or a line that begins "Changed for roqsim", "Changes:" or "Changes here:". **This is the only place geometry facts come from.** MuJoCo recentres a mesh to its centre
 of mass at compile time, so anything measured off a *compiled* model reports a nicely centred box even for

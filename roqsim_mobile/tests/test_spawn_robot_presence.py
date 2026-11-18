@@ -80,7 +80,7 @@ def test_an_absent_robot_does_not_sink_through_the_floor():
     assert float(engine.ctx.data.subtree_com[bid][2]) == pytest.approx(before, abs=1e-3)
 
 
-def test_a_robot_spawned_in_one_episode_is_absent_again_in_the_next():
+def test_a_robot_spawned_in_one_run_is_absent_again_in_the_next():
     engine = _engine(present=False)
     engine.setup()
     entity = _entity(engine)

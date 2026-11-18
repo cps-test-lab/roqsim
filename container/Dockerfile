@@ -31,7 +31,7 @@ WORKDIR /build
 
 # 1) Stable layer: third-party runtime deps (pinned loosely, mirrors the sub-package pyproject deps).
 RUN pip install --no-cache-dir \
-        "mujoco>=3.14,<3.15" \
+        "mujoco>=4.0,<4.1" \
         "numpy>=1.24" \
         "pyyaml>=6.0" \
         "click>=8.1" \

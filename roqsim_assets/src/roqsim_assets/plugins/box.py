@@ -37,7 +37,7 @@ entity without a free ``base_joint``).
 
 Teleporting is how an obstacle *appears* mid-trial. roqsim never recompiles the model at runtime, so
 there is no spawning: a box that must show up on cue is compiled in at build time, kept out of the
-way, and moved into place by the scenario when the moment comes. Between episodes ``on_reset`` puts
+way, and moved into place by the scenario when the moment comes. Between runs ``on_reset`` puts
 it back at its declared pose, so a trial never inherits the previous trial's obstacle position.
 
 A teleport states the box's **centre**, and no part of it may be inside the floor. The z this file's
@@ -265,7 +265,7 @@ class BoxPlugin(Plugin):
             if jid < 0:
                 raise RuntimeError(f"box: free joint {self._base_joint!r} not found")
             adr = int(ctx.model.jnt_qposadr[jid])
-            # Remember the spawn pose so on_reset re-seats the box between episodes instead of
+            # Remember the spawn pose so on_reset re-seats the box between runs instead of
             # leaving it wherever the last trial pushed (or teleported) it.
             self._spawn_qpos = [adr, *(float(v) for v in ctx.model.qpos0[adr : adr + 7])]
 

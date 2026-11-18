@@ -287,14 +287,16 @@ def test_wall_pieces_cuts_floor_and_adds_a_lintel_on_the_door_line():
         {"id": 2, "x0_m": 4.0, "y0_m": 0.0, "x1_m": 4.0, "y1_m": 3.0},
     ]
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]  # centred on line 1
-    pieces = fw.wall_pieces(lines, doors, ceiling_h=2.5, opening_h=2.0)
+    pieces = fw.wall_pieces(lines, doors, ceiling_h=2.5, opening_h=2.0, thickness=0.1)
     # line 1: two floor pieces around the opening + one lintel over it; line 2: one full-height piece.
     assert len(pieces) == 4
     floor = [p for p in pieces if p[2] == 0.0]
     lintels = [p for p in pieces if p[2] == 2.0]
-    assert ((0.0, 0.0), (1.55, 0.0), 0.0, 2.5) in floor
-    assert ((2.45, 0.0), (4.0, 0.0), 0.0, 2.5) in floor
-    assert ((4.0, 0.0), (4.0, 3.0), 0.0, 2.5) in floor  # untouched wall, full height
+    assert floor[0] == ((0.0, 0.0), (1.55, 0.0), 0.0, 2.5)
+    # The two walls meet at (4, 0): each runs on past the corner to 1 mm inside the other's outer
+    # face, and the second, overlapping the first there, stands 1 mm lower.
+    assert _flat(floor[1]) == pytest.approx([2.45, 0.0, 4.049, 0.0, 0.0, 2.5])
+    assert _flat(floor[2]) == pytest.approx([4.0, -0.049, 4.0, 3.0, 0.0, 2.499])
     assert lintels == [
         ((1.55, 0.0), (2.45, 0.0), 2.0, 2.5)
     ]  # beam over the 0.9 m opening at z 2..2.5
@@ -303,16 +305,80 @@ def test_wall_pieces_cuts_floor_and_adds_a_lintel_on_the_door_line():
 def test_wall_pieces_no_lintel_when_opening_reaches_ceiling():
     lines = [{"id": 1, "x0_m": 0.0, "y0_m": 0.0, "x1_m": 4.0, "y1_m": 0.0}]
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]
-    pieces = fw.wall_pieces(lines, doors, ceiling_h=2.5, opening_h=2.5)  # opening_h == ceiling
+    pieces = fw.wall_pieces(
+        lines, doors, ceiling_h=2.5, opening_h=2.5, thickness=0.1
+    )  # opening_h == ceiling
     assert all(p[2] == 0.0 for p in pieces)  # only floor pieces, no lintel
 
 
 def test_wall_pieces_per_door_height_overrides_the_global():
     lines = [{"id": 1, "x0_m": 0.0, "y0_m": 0.0, "x1_m": 4.0, "y1_m": 0.0}]
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9, "height_m": 1.2}]
-    pieces = fw.wall_pieces(lines, doors, ceiling_h=2.5, opening_h=2.0)
+    pieces = fw.wall_pieces(lines, doors, ceiling_h=2.5, opening_h=2.0, thickness=0.1)
     lintels = [p for p in pieces if p[2] != 0.0]
     assert lintels == [((1.55, 0.0), (2.45, 0.0), 1.2, 2.5)]  # bottom at the door's own height
+
+
+def _flat(piece):
+    (x0, y0), (x1, y1), z0, z1 = piece
+    return [x0, y0, x1, y1, z0, z1]
+
+
+def _line(i, a, b):
+    return {"id": i, "x0_m": a[0], "y0_m": a[1], "x1_m": b[0], "y1_m": b[1]}
+
+
+def test_wall_pieces_in_line_or_on_another_wall_end_where_they_were_drawn():
+    # Walls in line meet end to end; a wall ending on another's length (a T) already ends inside
+    # it, and so do three walls ending at one point: none runs on past its end.
+    for lines in (
+        [_line(1, (0, 0), (2, 0)), _line(2, (2, 0), (4, 0))],
+        [_line(1, (0, 0), (4, 0)), _line(2, (2, 0), (2, 3))],
+        [_line(1, (0, 0), (2, 0)), _line(2, (2, 0), (4, 0)), _line(3, (2, 0), (2, 3))],
+    ):
+        pieces = fw.wall_pieces(lines, [], ceiling_h=2.5, opening_h=2.0, thickness=0.1)
+        assert [(p0, p1) for p0, p1, _, _ in pieces] == fw.line_segments(lines)
+
+
+def test_wall_pieces_at_an_angle_run_on_only_inside_the_other_wall():
+    # Walls at 135 degrees: each runs on by ((t/2)(1 - |cos a|) - 1 mm) / sin a, so its end face
+    # stays inside the other wall and nothing reaches past the other's outer face.
+    lines = [_line(1, (0, 0), (3, 0)), _line(2, (3, 0), (5, 2))]
+    (a, b) = fw.wall_pieces(lines, [], ceiling_h=2.5, opening_h=2.0, thickness=0.1)
+    run_on = (0.05 * (1 - math.cos(math.pi / 4)) - 0.001) / math.sin(math.pi / 4)
+    assert a[1] == pytest.approx((3 + run_on, 0.0))
+    assert b[0] == pytest.approx((3 - run_on * math.sqrt(0.5), -run_on * math.sqrt(0.5)))
+    assert (a[3], b[3]) == pytest.approx((2.5, 2.499))
+
+
+def test_wall_pieces_step_every_box_it_overlaps_down():
+    # Two walls crossing and a third through their crossing: each overlaps the other two, so each
+    # takes its own step, a millimetre apart.
+    lines = [
+        _line(1, (-2, 0), (2, 0)),
+        _line(2, (0, -2), (0, 2)),
+        _line(3, (-2, -2), (2, 2)),
+    ]
+    pieces = fw.wall_pieces(lines, [], ceiling_h=2.5, opening_h=2.0, thickness=0.1)
+    assert [p[3] for p in pieces] == pytest.approx([2.5, 2.499, 2.498])
+
+
+def test_wall_pieces_lift_a_lintel_overlapping_another():
+    # A door in each wall at their shared corner: the lintels overlap there, so the second one's
+    # top steps down and its underside up, and the two show neither face in one plane.
+    lines = [_line(1, (0, 0), (4, 0)), _line(2, (4, 0), (4, 3))]
+    doors = [
+        {"id": 1, "line_id": 1, "t": 1.0, "width_m": 0.9},
+        {"id": 2, "line_id": 2, "t": 0.0, "width_m": 0.9},
+    ]
+    pieces = fw.wall_pieces(lines, doors, ceiling_h=2.5, opening_h=2.0, thickness=0.1)
+    lintels = [p for p in pieces if p[2] > 0.0]
+    assert [z for p in lintels for z in p[2:]] == pytest.approx([2.0, 2.5, 2.001, 2.499])
+
+
+def test_wall_pieces_need_a_positive_thickness():
+    with pytest.raises(ValueError, match="thickness"):
+        fw.wall_pieces([_line(1, (0, 0), (4, 0))], [], 2.5, 2.0, thickness=0.0)
 
 
 def test_assign_doors_errors_on_unknown_line():

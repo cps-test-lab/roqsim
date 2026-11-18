@@ -43,6 +43,7 @@ def _pose(engine, name="box"):
 
 def test_the_pose_is_the_bodys_world_state():
     with _engine() as engine:
+        engine.reset()
         for _ in range(50):
             engine.step()
         ep = _pose(engine)
@@ -79,6 +80,7 @@ def test_nothing_is_computed_without_a_reader(monkeypatch):
         entity_pose.mujoco, "mj_objectVelocity", lambda *a: calls.append(1) or real(*a)
     )
     with _engine() as engine:
+        engine.reset()
         for _ in range(20):
             engine.step()
         assert calls == []

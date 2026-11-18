@@ -1,6 +1,6 @@
 """A model with a ``<flexcomp>`` works as a prop: spawned, scaled, weighed, hidden, and refused by name.
 
-Two halves, as in ``test_flex_rules.py``. The first pins the MuJoCo 3.14 behaviours
+Two halves, as in ``test_flex_rules.py``. The first pins the MuJoCo 4.0 behaviours
 :mod:`roqsim.flex` records for a flex inside an attached model (rules 4 and 5), so a MuJoCo that
 changes one fails here. The second is ``spawn_model`` and :mod:`roqsim.presence` on such a model,
 measured on the running simulation -- where a vertex rests, what the floor carries, what a contact
@@ -112,7 +112,7 @@ def _floor_load(model, data) -> float:
     return total
 
 
-# -- what MuJoCo 3.14 does with a flex in an attached model ---------------------------------------
+# -- what MuJoCo 4.0 does with a flex in an attached model ----------------------------------------
 
 
 def _attach(child):
@@ -122,9 +122,18 @@ def _attach(child):
     return spec.compile()
 
 
-def test_attach_drops_a_flex_pinned_to_the_models_world_body():
-    """Rule 4: silently -- the model compiles, with no flex in it."""
-    assert _attach(mujoco.MjSpec.from_string(TOP_LEVEL_PINNED)).nflex == 0
+def test_attach_leaves_a_flex_pinned_to_the_models_world_body_on_the_world():
+    """Rule 4: silently -- attached under a free body, the flex's pins stay on the world."""
+    spec = mujoco.MjSpec()
+    spec.option.integrator = mujoco.mjtIntegrator.mjINT_DISCRETE
+    flange = spec.worldbody.add_body(name="flange", pos=[0, 0, 1])
+    flange.add_freejoint()
+    flange.add_geom(size=[0.05, 0, 0])
+    spec.attach(mujoco.MjSpec.from_string(TOP_LEVEL_PINNED), prefix="p_", frame=flange.add_frame())
+    model = spec.compile()
+    assert model.nflex == 1
+    pins = {model.body(int(b)).name for b in model.flex_vertbodyid} & {"world", "flange"}
+    assert pins == {"world"}
 
 
 def test_lifted_the_pinned_flex_survives_the_attach():
@@ -301,7 +310,7 @@ def test_two_flex_props_rest_on_each_other_through_a_flex_flex_contact(tmp_path)
 
     The lower block is pinned to its welded base plate, the upper one free and dropped onto it: it
     must come to rest on the lower flex rather than fall through it, and the contact that carries it
-    names both flexes -- by element on each side, as a flex-flex contact does in MuJoCo 3.14.
+    names both flexes -- by element on each side, as a flex-flex contact does in MuJoCo 4.0.
     """
     cfg = load_config_from_dict(
         {

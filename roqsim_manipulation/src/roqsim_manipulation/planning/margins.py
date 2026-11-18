@@ -62,6 +62,9 @@ class ArmDynamics:
             # kept, which for a part of a few hundred grams at the gripper is the smaller term.
             m.body_ipos[body] = (m0 * c0 + mass * pos) / total
             m.body_mass[body] = total
+            # A body compiled with its centre of mass at its frame is marked as sharing it, and
+            # MuJoCo then ignores body_ipos: the payload would weigh at the body's origin.
+            m.body_sameframe[body] = mujoco.mjtSameFrame.mjSAMEFRAME_NONE
         self.model = m
         self.data = mujoco.MjData(m)
         if data is not None:

@@ -1065,7 +1065,7 @@ def test_a_timeout_that_is_no_number_fails_the_program():
         engine.shutdown()
 
 
-def test_a_filtered_servo_starts_an_episode_at_home():
+def test_a_filtered_servo_starts_a_run_at_home():
     engine = _engine(
         [{"machine_fixtures:FilteredLift": {"home": {"z": 0.3}}, "name": "lift"}], gravity=False
     )

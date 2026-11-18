@@ -53,7 +53,7 @@ so is a ``shown:`` naming two. A shown state's inertia moves the physics but not
 Config::
 
     part_state:
-      shown:                 # shown at the start of every episode, by entity name or fnmatch
+      shown:                 # shown at the start of every run, by entity name or fnmatch
         strip_1: [plain]     #   pattern ("strip_*"); every other state of every entity starts hidden
         press_1: [lamp_off]
       exclusive:             # by entity name or pattern: groups of which at most one is shown;

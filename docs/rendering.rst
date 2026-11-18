@@ -38,6 +38,70 @@ the same choice is one flag, which is ``--set sim.renderer=NAME`` applied last::
    roqsim sim world.yaml --renderer mujoco
    roqsim render world.yaml --out shot.png --renderer mujoco
 
+MuJoCo's physically based renderer: ``filament``
+-------------------------------------------------
+
+``sim.renderer: filament`` draws through MuJoCo's Filament renderer: per-pixel light from any number
+of lights, soft shadows, image-based light, metallic-roughness materials, ambient occlusion and colour
+grading. It reads all of these from the model, so a world turns them on in its MJCF:
+
+.. code-block:: xml
+
+   <asset>
+     <texture name="sky" type="skybox" file="room_sky.png"/>        <!-- the light around the room -->
+     <material name="oak" texture="oak" roughness="0.6" metallic="0"/>
+   </asset>
+   <custom>
+     <text name="filament.shadows.type" data="pcss"/>     <!-- soft shadows -->
+     <numeric name="filament.cg.exposure" data="-0.5"/>   <!-- colour grading, in stops -->
+   </custom>
+   <worldbody>
+     <light type="image" texture="sky" intensity="20000"/>
+     <light pos="0 0 2.9" dir="0 0 -1" intensity="900" bulbradius="0.3"/>  <!-- candela -->
+   </worldbody>
+
+MuJoCo's rendering documentation lists every ``filament.*`` flag. **One light with a positive
+``intensity`` switches the whole model to photometric light**: every light then gives exactly its own
+intensity (lights left at zero go dark), the headlight is off and nothing lights the scene but the
+lights and an ``image`` light. A model with none is drawn the way MuJoCo draws a model authored for
+the classic renderer: a default environment light, the headlight (``visual/headlight``: on unless
+``active="0"``; MuJoCo 4.0's ``auto`` is on) and the model's lights sharing a fixed intensity.
+
+.. code-block:: yaml
+
+   sim:
+     renderer: filament
+     renderers:
+       filament:
+         shadows: true          # draw shadows (their kind: the model's filament.shadows.type)
+         post_processing: true  # tone mapping, grading, ambient occlusion, anti-aliasing, bloom
+         reflections: true
+         colour_textures: srgb  # a colour texture is read as sRGB, as the classic renderer
+                                # shows it; `model`: by its colorspace
+         software: false        # allow a CPU rasteriser where a GPU was given
+
+It gives colour, depth and segmentation through pinhole, orthographic and free cameras, an off-centre
+principal point, non-square pixels and a camera's own geom groups. It does not draw MuJoCo
+decorations or the moving bodies alone, and a camera asking for either is refused at load.
+
+- **Colour textures look as they do under the classic renderer.** The classic renderer shows a
+  texture's bytes as display colours, and MuJoCo compiles a texture file left at
+  ``colorspace="auto"`` to linear unless the file says otherwise; Filament honours the colourspace,
+  and would draw such a texture lighter and paler than the same colour given as ``rgba``. So a
+  material's colour texture is read as sRGB; a world whose textures are authored linear (for a
+  physically based renderer) sets ``colour_textures: model``. Data textures (normal, roughness, ...)
+  are always read by their colourspace.
+- **It needs Vulkan.** It runs headless through Vulkan, never through EGL or a display: in a container
+  the GPU's Vulkan driver must be mounted (for NVIDIA the ``graphics`` driver capability). Where no
+  Vulkan context opens, the world fails to load with Filament's own words. A process given an NVIDIA
+  GPU that would draw on a CPU rasteriser (lavapipe) is refused unless ``software: true``.
+- **A frame is a function of the state only without post-processing.** Filament's dithering and
+  ambient occlusion change from frame to frame by a few levels; ``post_processing: false`` draws
+  identical frames for identical states, without ambient occlusion and tone mapping.
+- **Its contexts live as long as the process.** Each open renderer holds a Vulkan context of its
+  own, given back for the next world on its thread when it closes, and never destroyed: destroying
+  one ends MuJoCo's own renderer in the same process (:doc:`architecture` §8).
+
 What is installed, and what each takes
 --------------------------------------
 
@@ -111,3 +175,59 @@ server's capabilities, overrides ``scene_blobs`` to send the scene in the form i
 (written from the same walk ``roqsim export gltf`` uses), and states with ``open_timeout_s`` how long
 its server may take to start -- the service waits for that, where it is longer than
 ``sim.render.timeout_s``, before it names the renderer as hung.
+
+Choosing a ray caster
+---------------------
+
+The lidars do not render: they cast rays, through :mod:`roqsim.raycast`. Which backend casts them is
+chosen the way a renderer is, for the world and per sensor. A world that says nothing needs nothing:
+``auto`` puts each lidar on the backend that is faster for it, here::
+
+   sim:
+     raycaster: auto         # auto (the default) | cpu | mjwarp: every ray-cast sensor's backend
+     raycasters:             # one settings block per backend
+       mjwarp: {device: "cuda:0", auto_min_rays: 2000}
+
+   components:
+     - spawn_sensor: {model: mid360, frame_id: livox_frame}
+       components:
+         - livox_mid360: {raycaster: cpu}   # this lidar only: overrides sim.raycaster
+
+- **auto** casts a lidar on the GPU (``mjwarp``) where all of these hold, and on the CPU otherwise:
+  ``roqsim_raycast_mjwarp`` is installed, a CUDA device and a Warp build the host's driver runs are
+  there, MuJoCo Warp takes the model (``mjw.put_model``), and the lidar casts at least
+  ``auto_min_rays`` rays per sweep (2,000 by default: a 3D lidar, not a 2D scanner, whose few hundred
+  rays are cheaper on the CPU in a small room).
+- **cpu** forces MuJoCo's ``mj_multiRay`` on the CPU.
+- **mjwarp** forces the GPU, and **never falls back**: without MuJoCo Warp, without a CUDA device,
+  with a Warp build the host's driver cannot run (PyPI's Warp is the CUDA 13 build; Warp's release
+  page has a CUDA 12 build of each release), or with a model MuJoCo Warp refuses, the world fails to
+  load, naming the lidar, the backend and the reason.
+
+**auto is never silent.** Each lidar's choice is logged when the world loads and raised as an
+``info`` condition with the code ``raycaster`` (:mod:`roqsim.conditions`): its details hold what was
+asked for, the backend, the ray count and the reason -- the threshold, or why the GPU could not run.
+A recording's provenance and the run's ``roqsim_conditions.json``, which a campaign collects, carry it.
+
+``sim.raycaster`` reaches every sensor built on the ray-cast base (``lidar``, ``livox_mid360``,
+``seyond_robin_w1g``); the other callers of :mod:`roqsim.raycast` (a moving box's look-ahead, the
+coverage tool, the navigator's caution check) cast on the CPU.
+
+``mjwarp`` casts on a CUDA GPU through MuJoCo Warp (``pip install 'roqsim_raycast_mjwarp[mjwarp]'``;
+its README). It builds a device copy of the scene once, when the first lidar that takes it is
+configured, and every lidar on it shares it: the geom poses go to the device and its BVH is
+refitted once per tick, whichever lidar casts first. It honours what the CPU cast honours -- the
+visible geom groups, an absent entity, the excluded body -- and the lidars add their range window and
+noise after the cast, as on the CPU. Its hits are the CPU's but for float32's few rays: a ray
+grazing an edge, a tie between two geoms at one distance (its parity test bounds each). The noise is
+drawn per ray, so such a ray changes its own point and no other.
+
+It pays for a 3D lidar, and for any lidar in a mesh-heavy world: each sweep costs a fixed hand-over
+to the device, about the cost of a 2D sweep on the CPU in a small room. In a mesh-heavy world even a
+2D scanner is cheaper on the GPU; ``auto_min_rays`` lowers the threshold for such a world, or a
+lidar names ``mjwarp``.
+
+A backend of your own subclasses :class:`roqsim.raycast.Raycaster` (``open``, ``cast``,
+``cast_many``, ``close``, its ``SETTINGS``) and registers under the ``roqsim.raycasters`` entry
+point, or is named as ``module.path:Class``. One that declares ``auto = True`` and
+``auto_min_rays(settings)`` is a candidate for ``auto``.

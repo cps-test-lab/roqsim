@@ -727,7 +727,7 @@ def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None)
 
     **The drive supplies the term, so the weight stays on the ground.** Each hinge or slide of a
     compensated body that a holding actuator drives through a joint transmission (every such
-    actuator, in the whole-mechanism form) gets ``actuatorgravcomp``. MuJoCo 3.14 then adds that
+    actuator, in the whole-mechanism form) gets ``actuatorgravcomp``. MuJoCo then adds that
     joint's rows of ``qfrc_gravcomp`` to ``qfrc_actuator`` in ``mj_fwdActuation`` instead of to
     ``qfrc_passive``, *after* each actuator's own ``forcerange`` has clamped ``actuator_force``, and
     clamps the sum by the joint's ``actuatorfrcrange`` -- the only limit that sees the gravity term.

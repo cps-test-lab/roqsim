@@ -25,7 +25,7 @@ dependencies = [
 # scenario-execution from PyPI, for an environment that does not already provide it; see the note
 # above for why it is not a hard dependency.
 osc = ["scenario-execution>=1.8"]
-test = ["pytest>=7.0", "mujoco>=3.14,<3.15"]
+test = ["pytest>=7.0", "mujoco>=4.0,<4.1"]
 
 # A world entry that runs an OpenSCENARIO file (`- scenario: {file: x.osc}`).
 [project.entry-points."roqsim.plugins"]

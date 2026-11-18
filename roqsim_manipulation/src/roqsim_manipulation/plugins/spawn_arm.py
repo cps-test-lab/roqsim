@@ -684,8 +684,9 @@ class SpawnArmPlugin(Plugin):
         ee_asset = resolve_model(self.ee_model, base_dir=self.base_dir)
         ee = mujoco.MjSpec.from_file(str(ee_asset.path))
         apply_assets(ee, ee_asset)
-        # A tool whose <flexcomp> sits under <worldbody> and pins vertices there would lose the flex
-        # in the attach below (roqsim.flex, rule 4); this puts it in a body on the flange instead.
+        # A tool whose <flexcomp> sits under <worldbody> and pins vertices there would keep them on
+        # the world after the attach below (roqsim.flex, rule 4); this puts them in a body on the
+        # flange instead.
         ee = lift_top_level_flexes(ee, ee_asset.path.stem)
         # Before the graft, on the gripper's own spec, for the reason `actuators:` is resolved on
         # the arm's before it: each block names the actuators its own model declares.

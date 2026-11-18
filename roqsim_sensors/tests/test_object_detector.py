@@ -55,9 +55,6 @@ def _engine(**config) -> Engine:
     # stays reproducible.
     eng.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     eng.setup()
-    # Populate xpos/xmat: the detector reads body world poses, and without a forward they are zero,
-    # which reads as "every object is exactly at the robot" rather than as an error.
-    mujoco.mj_forward(eng.ctx.model, eng.ctx.data)
     return eng
 
 

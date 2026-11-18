@@ -355,9 +355,9 @@ def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_convent
     (tf,) = [vars(t) for t in frames.read().transforms]
     assert (tf["parent"], tf["child"]) == ("world", "livox_frame")
     np.testing.assert_allclose(tf["translation"], [0.0, 0.0, 1.0], atol=1e-9)
-    m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
-    np.testing.assert_allclose(d.site_xpos[plugin._site_id], [0.0, 0.0, 1.0], atol=1e-9)
+    np.testing.assert_allclose(
+        engine.ctx.data.site_xpos[plugin._site_id], [0.0, 0.0, 1.0], atol=1e-9
+    )
 
 
 def test_the_device_publishes_one_point_per_ray_with_nothing_in_range():

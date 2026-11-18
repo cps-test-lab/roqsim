@@ -78,10 +78,10 @@ def test_rows_carry_nonzero_step_and_forward(tmp_path):
     assert float(last["step_us"]) > 0.0 and int(last["step_n"]) == STEPS
     assert float(last["forward_us"]) > 0.0 and int(last["forward_n"]) >= STEPS
     assert float(last["wall_s"]) > 0.0
-    # Cumulative within an episode: a later row never reports less.
+    # Cumulative within a run: a later row never reports less.
     steps = [float(r["step_us"]) for r in rows]
     assert steps == sorted(steps)
-    columns = {"episode", "position_us", "constraint_us", "pos_collision_us", "col_narrow_n"}
+    columns = {"run", "position_us", "constraint_us", "pos_collision_us", "col_narrow_n"}
     assert columns <= set(last)
 
 
