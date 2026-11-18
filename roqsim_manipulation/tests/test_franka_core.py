@@ -539,6 +539,90 @@ def test_a_setting_that_is_not_finite_is_refused_and_the_run_goes_on():
         engine.shutdown()
 
 
+def test_a_client_that_cancels_its_motion_has_it_preempted_and_the_run_goes_on():
+    """libfranka cancels a motion whose control callback threw: it sends StopMove, answers no
+    further state, and waits for the reply. The strict wait for its command ends on that
+    StopMove, the motion is preempted, and the run goes on instead of timing out."""
+    import socket
+    import threading
+    import time
+
+    from roqsim_manipulation.franka import protocol as P
+
+    address = "127.0.0.13"
+    cfg = {"collision_behavior": CB, "bind": address, "client_timeout_s": 2.0}
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "left_"},
+                "name": "left",
+                "components": [{"franka_fci": cfg}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    heard: list = []
+
+    def client():
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.bind(("127.0.0.1", 0))
+        udp.settimeout(5)
+        tcp = socket.create_connection((address, P.COMMAND_PORT), timeout=10)
+        try:
+            c = P.CONNECT_REQUEST.pack(P.VERSION, udp.getsockname()[1])
+            tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 1, P.HEADER.size + len(c)) + c)
+            _read_reply(tcp, P.HEADER, P.CONNECT_RESPONSE)
+            move = P.MOVE_REQUEST.pack(
+                P.MoveControllerMode.JOINT_IMPEDANCE,
+                P.MoveMotionGeneratorMode.JOINT_POSITION,
+                *([10.0] * 6),
+                False,
+                *([2.0] * 7),
+            )
+            tcp.sendall(P.HEADER.pack(P.Command.MOVE, 2, P.HEADER.size + len(move)) + move)
+            _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)  # motion started
+            answered = 0
+            while answered < 20:
+                data, server = udp.recvfrom(65536)
+                state = P.unpack_robot_state(data)
+                if state["robot_mode"] != P.RobotMode.MOVE:
+                    continue
+                command = {"message_id": state["message_id"], "q_c": state["q_d"]}
+                udp.sendto(P.pack_robot_command(command), server)
+                answered += 1
+            while P.unpack_robot_state(udp.recvfrom(65536)[0])["robot_mode"] != P.RobotMode.MOVE:
+                pass  # the next state: the callback throws on it instead of answering
+            tcp.sendall(P.HEADER.pack(P.Command.STOP_MOVE, 3, P.HEADER.size))
+            tcp.settimeout(5)
+            data = b""
+            deadline = time.monotonic() + 5
+            while len(heard) < 2 and time.monotonic() < deadline:
+                data += tcp.recv(256)
+                while len(data) >= P.HEADER.size + 1:
+                    command, command_id, size = P.HEADER.unpack(data[: P.HEADER.size])
+                    heard.append((P.Command(command), command_id, data[P.HEADER.size]))
+                    data = data[size:]
+        finally:
+            tcp.close()
+            udp.close()
+
+    thread = threading.Thread(target=client, daemon=True)
+    thread.start()
+    start = time.monotonic()
+    try:
+        while thread.is_alive() and time.monotonic() - start < 15:
+            engine.step()
+    finally:
+        thread.join(5)
+        engine.shutdown()
+    assert (P.Command.STOP_MOVE, 3, P.StopMoveStatus.SUCCESS) in heard, heard
+    assert (P.Command.MOVE, 2, P.MoveStatus.PREEMPTED) in heard, heard
+
+
 def test_the_handle_takes_no_settings_while_a_motion_runs():
     """As the robot refuses a setting over the network while it moves, the handle raises."""
     engine = _engine()

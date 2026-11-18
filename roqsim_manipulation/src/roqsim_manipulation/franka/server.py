@@ -194,6 +194,13 @@ class FCIServer:
             pass
         self.requests.put(Request(Command.STOP_MOVE, -1, b""))  # a motion without a client ends
 
+    def _stop_queued_by(self, conn: socket.socket) -> bool:
+        """Whether *conn* has a ``StopMove`` waiting in the queue for the physics thread."""
+        with self.requests.mutex:
+            return any(
+                r.command == Command.STOP_MOVE and r.conn is conn for r in self.requests.queue
+            )
+
     def is_current(self, req: Request) -> bool:
         """Whether *req* is the server's own or came from the client connected now: libfranka
         numbers its commands from 0 on every connection, so a dropped client's request carried
@@ -249,7 +256,9 @@ class FCIServer:
         ``None`` when none came within ``first_command_wait_s`` (not strict), or when ``owner`` is
         no longer the connected client (either way): dropped or replaced, its motion ends through
         the ``StopMove`` the drop queues, and the run goes on, as a robot whose client went away
-        does. A client that replaced it is not waited for: it did not start the motion.
+        does. A client that replaced it is not waited for: it did not start the motion. ``None``
+        too once ``owner`` has queued a ``StopMove``: libfranka cancels a motion whose control
+        callback threw by sending one and answering no further state, and waits for its reply.
         """
         with self._conn_lock:
             owner = self._conn if owner is None else owner
@@ -258,6 +267,8 @@ class FCIServer:
         last_send = start
         limit = client_timeout_s if strict else self.first_command_wait_s
         while target is not None and self._conn is owner:
+            if self._stop_queued_by(owner):
+                return None
             now = time.monotonic()
             if now - start > limit:
                 if strict:
