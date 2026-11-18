@@ -1257,7 +1257,9 @@ class HumanoidPlugin(MachinePlugin):
         free, behind = self._clear_behind(held, back_max)
         n = int(math.floor(back_max / BACK_STEP + 1e-9))
         for k in range(1, n + 1):
-            back = k * BACK_STEP
+            # rounded, so a k * BACK_STEP that lands a hair past back_max in floating point is
+            # still the step back_max allows
+            back = round(k * BACK_STEP, 9)
             if back > free:
                 return (
                     0.0,

@@ -1030,3 +1030,20 @@ def test_a_look_at_a_new_target_ends_only_once_the_head_is_on_it(sim):
 
     f = quat_rotate(sim.d.mocap_quat[head], [1.0, 0.0, 0.0])
     assert abs(math.atan2(f[1], f[0]) - math.atan2(to[1], to[0])) < math.radians(3)
+
+
+@pytest.mark.parametrize("back_max", [0.15, 0.3, 0.35, 0.6, 0.7])
+def test_a_step_back_of_back_max_itself_is_tried(back_max):
+    """With nothing behind the body, a step of ``back_max`` is taken where only that much clears
+    the sweep, though ``k * BACK_STEP`` lands a hair past it in floating point."""
+    from types import SimpleNamespace
+
+    from roqsim_motion.moves import BACK_STEP, HumanoidPlugin
+
+    clears_at = back_max - BACK_STEP / 2
+    plugin = SimpleNamespace(
+        _clear_behind=lambda held, reach: (reach, ""),
+        _swept=lambda held, way, back=0.0: None if back > clears_at else "post_box",
+    )
+    back, way, why = HumanoidPlugin._back_for(plugin, 0, (1.0,), back_max)
+    assert (back, way, why) == (back_max, 1.0, ""), (back, way, why)
