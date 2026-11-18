@@ -335,3 +335,130 @@ def test_a_move_in_a_mode_the_protocol_does_not_define_is_refused():
         tcp.close()
         udp.close()
         engine.shutdown()
+
+
+def _ramp(t, duration=1.0):
+    """0 to 1 over *duration*, at rest at both ends."""
+    return 0.5 * (1.0 - np.cos(np.pi * min(t, duration) / duration))
+
+
+def _cartesian_position(s0, t):
+    T = list(s0["O_T_EE"])
+    T[12] += 0.05 * _ramp(t)  # O_T_EE is column-major: x of the translation
+    return {"O_T_EE_c": T}
+
+
+def _cartesian_velocity(s0, t):
+    return {"O_dP_EE_c": [0.05 * np.pi / 2 * np.sin(np.pi * min(t, 1.0)), 0, 0, 0, 0, 0]}
+
+
+def _joint_position(s0, t):
+    q = list(s0["q"])
+    q[3] += 0.2 * _ramp(t)
+    return {"q_c": q}
+
+
+def _joint_velocity(s0, t):
+    return {"dq_c": [0, 0, 0, 0.2 * np.pi / 2 * np.sin(np.pi * min(t, 1.0)), 0, 0, 0]}
+
+
+@pytest.mark.parametrize(
+    ("controller", "generator", "command", "moves"),
+    [
+        ("cartesian_impedance", "cartesian_position", _cartesian_position, "x"),
+        ("joint_impedance", "cartesian_position", _cartesian_position, "x"),
+        ("cartesian_impedance", "cartesian_velocity", _cartesian_velocity, "x"),
+        ("joint_impedance", "cartesian_velocity", _cartesian_velocity, "x"),
+        ("joint_impedance", "joint_position", _joint_position, "q4"),
+        ("cartesian_impedance", "joint_position", _joint_position, "q4"),
+        ("joint_impedance", "joint_velocity", _joint_velocity, "q4"),
+    ],
+)
+def test_each_generator_under_each_controller_moves_the_arm_as_commanded(
+    controller, generator, command, moves
+):
+    """A 50 mm step along x of the end effector, or 0.2 rad of joint 4, over one second, ends
+    with success where it was commanded; the internal impedance leaves a few millimetres."""
+    engine = _engine()
+    handle = _handle(engine)
+    s0 = handle.state()
+    ticks = {"n": 0}
+
+    def law(state, period):
+        ticks["n"] += 1
+        out = command(s0, ticks["n"] * 1e-3)
+        if ticks["n"] >= 1000:
+            out["motion_generation_finished"] = True
+        return out
+
+    motion = handle.control(law, controller=controller, generator=generator)
+    _steps(engine, 1100)
+    s = handle.state()
+    engine.shutdown()
+    assert motion.done and motion.ending.status == MoveStatus.SUCCESS, motion.ending
+    dp = np.array(s["O_T_EE"])[12:15] - np.array(s0["O_T_EE"])[12:15]
+    dq = np.array(s["q"]) - np.array(s0["q"])
+    if moves == "x":
+        assert dp[0] == pytest.approx(0.05, abs=0.006)
+        assert np.all(np.abs(dp[1:]) < 0.002)
+    else:
+        assert dq[3] == pytest.approx(0.2, abs=0.015)
+        assert np.all(np.abs(np.delete(dq, 3)) < 0.015)
+
+
+def test_an_external_controller_ignores_its_generators_motion():
+    """Torque control with a joint-position generator: the commanded torque moves the arm, and
+    the generator's q_c does not."""
+    engine = _engine()
+    handle = _handle(engine)
+    s0 = handle.state()
+    ticks = {"n": 0}
+
+    def law(state, period):
+        ticks["n"] += 1
+        out = {**_joint_position(s0, ticks["n"] * 1e-3), "tau_J_d": [0.0] * 7}
+        if ticks["n"] >= 500:
+            out["motion_generation_finished"] = True
+        return out
+
+    motion = handle.control(law, controller="external", generator="joint_position")
+    _steps(engine, 600)
+    s = handle.state()
+    engine.shutdown()
+    assert motion.done and motion.ending.status == MoveStatus.SUCCESS, motion.ending
+    assert np.all(np.abs(np.array(s["q"]) - np.array(s0["q"])) < 1e-3)
+
+
+def test_every_error_flag_is_raised_or_named_as_not_raised():
+    """``NOT_RAISED`` is what the docs say the simulated robot leaves out: every other flag of
+    libfranka's must be named where the core or the plugin raises it."""
+    import ast
+    import inspect
+
+    from roqsim_manipulation.franka import core
+    from roqsim_manipulation.franka.protocol import ERRORS
+    from roqsim_manipulation.plugins import franka_fci
+
+    named = set()
+    for module in (core, franka_fci):
+        tree = ast.parse(inspect.getsource(module))
+        skip = {
+            id(n.value)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "NOT_RAISED" for t in n.targets)
+        }
+        stack = [tree]
+        while stack:
+            node = stack.pop()
+            if id(node) in skip:
+                continue
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                named.add(node.value)
+            stack.extend(ast.iter_child_nodes(node))
+    not_raised = set(core.NOT_RAISED)
+    assert not_raised <= set(ERRORS), sorted(not_raised - set(ERRORS))
+    assert len(not_raised) == len(core.NOT_RAISED), "a flag is named twice"
+    assert not (not_raised & named), f"raised and named as not raised: {sorted(not_raised & named)}"
+    missing = [e for e in ERRORS if e not in not_raised and e not in named]
+    assert not missing, f"neither raised nor named as not raised: {missing}"

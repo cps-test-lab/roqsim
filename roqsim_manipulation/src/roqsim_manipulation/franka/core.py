@@ -37,7 +37,10 @@ torques. It knows no socket: the FCI server (:mod:`.server`) and an in-process l
   the arm holds where it is, the flag is latched until ``automaticErrorRecovery``.
 
 Not served, and refused or absent: guiding mode, the robot's own path planner (``PTPMotion``),
-power and self-collision limits, packet loss (no late answer can happen in lock-step).
+power and self-collision limits, and packet loss. Of libfranka's error flags, those the core never
+raises are :data:`NOT_RAISED`, grouped by what they leave out -- among them every check the robot
+makes of a Cartesian motion beyond the start pose and the rate limits. A program that passes here
+can still trip one of those on the arm.
 """
 
 from __future__ import annotations
@@ -59,6 +62,47 @@ from .protocol import (
     RobotMode,
 )
 from .robot_model import RobotModel, combine_loads
+
+#: libfranka's error flags (``errors.h``) the simulated robot never raises. A test holds this to
+#: the code: every other flag is raised somewhere in it.
+NOT_RAISED = (
+    # Cartesian motions: the Cartesian limits, the elbow, and the joint motion the robot's own
+    # inverse kinematics would make of the command.
+    "cartesian_position_limits_violation",
+    "cartesian_velocity_violation",
+    "cartesian_velocity_profile_safety_violation",
+    "cartesian_position_motion_generator_invalid_frame",
+    "cartesian_motion_generator_elbow_limit_violation",
+    "cartesian_motion_generator_elbow_sign_inconsistent",
+    "cartesian_motion_generator_start_elbow_invalid",
+    "start_elbow_sign_inconsistent",
+    "cartesian_motion_generator_joint_position_limits_violation",
+    "cartesian_motion_generator_joint_velocity_limits_violation",
+    "cartesian_motion_generator_joint_velocity_discontinuity",
+    "cartesian_motion_generator_joint_acceleration_discontinuity",
+    # Joint motions: the start pose and the direction of a motion.
+    "joint_position_motion_generator_start_pose_invalid",
+    "joint_move_in_wrong_direction",
+    # A Move request's goal and path deviations, which it unpacks and ignores.
+    "max_goal_pose_deviation_violation",
+    "max_path_pose_deviation_violation",
+    # The robot's planner (PTPMotion and its kin) and its force controller, which are not served.
+    "joint_p2p_insufficient_torque_for_planning",
+    "joint_via_motion_generator_planning_joint_limit_violation",
+    "cartesian_spline_motion_generator_violation",
+    "force_control_safety_violation",
+    "force_controller_desired_force_tolerance_violation",
+    # Safety functions that are not modelled: power and self-collision limits.
+    "power_limit_violation",
+    "self_collision_avoidance_violation",
+    # The hardware: the torque sensors' range, instability, the base accelerometer.
+    "tau_j_range_violation",
+    "instability_detected",
+    "base_acceleration_initialization_timeout",
+    "base_acceleration_invalid_reading",
+    # Lock-step: every command arrives, so the success rate is always 1.
+    "communication_constraints_violation",
+)
 
 #: libfranka ``examples/examples_common.cpp`` ``setDefaultBehavior``: the impedances its examples
 #: set. The robot's own defaults are unpublished; these are the documented example values.

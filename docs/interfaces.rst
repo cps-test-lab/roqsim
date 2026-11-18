@@ -1003,7 +1003,11 @@ law that coordinates them sees one clock. In process, the handle ``franka_fci:<a
 ``law(state, period) -> command`` with libfranka's field names. What Franka does not publish -- the
 estimator's filter, the internal impedance laws, when the "acceleration" thresholds apply -- is a
 stated assumption in the plugin's docstring, and absent are guiding mode, ``PTPMotion``, power and
-self-collision limits, the gripper, and late answers (none can happen in lock-step). The tests
+self-collision limits and the gripper. The error flags the robot raises and the simulated one never
+does are ``roqsim_manipulation.franka.core.NOT_RAISED``; among them are the robot's checks of a
+Cartesian motion beyond its start pose and the rate limits (the Cartesian limits, the elbow, the
+joint motion its inverse kinematics makes), so a Cartesian program that runs here can still fail on
+the arm. The tests
 (``roqsim_manipulation/tests/test_franka_*.py``) read Franka's files at the pinned commits
 (``external/franka_upstream.py``) and build and run the real libfranka against the server::
 
