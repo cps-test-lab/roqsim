@@ -271,6 +271,10 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   picks the drawer side, `superstructure: false` leaves a bare table. The uprights and light frame are
   floor-referenced; the tool panel and monitor mount ride with the worktop (0.20 m / 0.40 m above it,
   the catalogue's mounting positions), so the reach ergonomics hold at either column setting.
+- **`curtain`** — a pleated curtain hung from a bar on clamps: `width`, `height` (the bar), `hem`,
+  `pleats` and `pleat_depth`, `rgba`. Visual scenery that collides with nothing, matte black by
+  default — the backdrop a camera sees a cell against. Origin on the floor under the bar's centre;
+  seen from −Y.
 - **`floor_marking`** — paint on the floor: a line, the outline of a rectangle (`band`) or the
   whole rectangle (`band: 0`), in one of three patterns. `solid` (the default) and `dashed` paint one
   `color` — a lane's edge, a walkway's edge, a bay's outline; `dashed` cuts each painted side into

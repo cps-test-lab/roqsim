@@ -74,6 +74,8 @@ press = "roqsim_assets.plugins.press:PressPlugin"
 sliding_door = "roqsim_assets.plugins.sliding_door:SlidingDoorPlugin"
 window = "roqsim_assets.plugins.window:WindowPlugin"
 workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
+# A pleated curtain on a bar: visual, matte; a backdrop a camera sees a cell against.
+curtain = "roqsim_assets.plugins.curtain:CurtainPlugin"
 # What a hand works: a button it presses, drawers it pulls, a tote it carries by its handles.
 push_button = "roqsim_assets.plugins.push_button:PushButtonPlugin"
 drawer_cabinet = "roqsim_assets.plugins.drawer_cabinet:DrawerCabinetPlugin"
