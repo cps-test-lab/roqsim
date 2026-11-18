@@ -184,17 +184,14 @@ class FCIServer:
             return
         log.info("fci %s: %s", self.bind, why)
         self._conn, self.client_udp = None, None
-        # A reply in flight finishes on the socket before it closes. Shutdown wakes the
-        # connection's blocked recv, so its thread ends; close alone does not.
-        with self._send_lock:
-            try:
-                conn.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                conn.close()
-            except OSError:
-                pass
+        try:  # shutdown wakes the connection's blocked recv, so its thread ends; close alone does not
+            conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            conn.close()
+        except OSError:
+            pass
         self.requests.put(Request(Command.STOP_MOVE, -1, b""))  # a motion without a client ends
 
     def is_current(self, req: Request) -> bool:
@@ -224,10 +221,13 @@ class FCIServer:
 
     # -- UDP ----------------------------------------------------------------------------------------
 
-    def send_state(self, data: bytes) -> None:
-        if self.client_udp is not None:
+    def send_state(self, data: bytes, to: tuple[str, int] | None = None) -> None:
+        """Stream a state to ``to``, or to the connected client; a client the TCP thread drops
+        meanwhile gets nothing, and the physics goes on."""
+        target = self.client_udp if to is None else to  # one read: the TCP thread may clear it
+        if target is not None:
             try:
-                self._udp.sendto(data, self.client_udp)
+                self._udp.sendto(data, target)
             except OSError:
                 pass
 
@@ -267,7 +267,7 @@ class FCIServer:
                     )
                 return None
             if strict and now - last_send > self.resend_s:
-                self.send_state(state)
+                self.send_state(state, to=target)  # to the motion's own client, not a successor
                 last_send = now
             ready, _, _ = select.select([self._udp], [], [], min(0.005, self.resend_s))
             if not ready:

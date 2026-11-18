@@ -228,3 +228,28 @@ def test_a_strict_wait_ends_when_its_client_is_replaced(server):
     assert result == {"cmd": None}, result
     old.close()
     new.close()
+
+
+def test_a_state_sent_as_the_client_drops_is_dropped_and_raises_nothing():
+    """The TCP thread clears the client's address when it drops; the physics thread reads it once,
+    so a drop between its check and its send is a state not sent, not an error."""
+
+    class Dropping(FCIServer):
+        """The address is there on the first read and gone on every later one."""
+
+        _reads = 0
+
+        @property
+        def client_udp(self):
+            self._reads += 1
+            return ("127.0.0.1", 9) if self._reads == 1 else None
+
+        @client_udp.setter
+        def client_udp(self, value):
+            pass
+
+    s = Dropping("127.0.0.5", "<robot name='fr3'/>")
+    try:
+        s.send_state(_state(1))
+    finally:
+        s.close()
