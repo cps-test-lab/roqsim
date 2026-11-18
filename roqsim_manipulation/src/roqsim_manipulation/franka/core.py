@@ -45,6 +45,7 @@ can still trip one of those on the arm.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 
 import mujoco
@@ -264,7 +265,7 @@ class FrankaCore:
     def _settings(self) -> dict:
         """Every value a setter changes, as copies."""
         return {
-            "collision": self.collision,
+            "collision": copy.deepcopy(self.collision),
             "K_theta": self.K_theta.copy(),
             "K_x": self.K_x.copy(),
             "m_load": self.m_load,
@@ -342,7 +343,7 @@ class FrankaCore:
         """The controller as the world configured it, at rest at *q*: a setter a client called in
         the run before is undone, so a run does not depend on what ran before it."""
         for name, value in self._configured.items():
-            setattr(self, name, value.copy() if isinstance(value, np.ndarray) else value)
+            setattr(self, name, copy.deepcopy(value))
         self._apply_load()
         q = np.asarray(q, float)
         self.q = q.copy()

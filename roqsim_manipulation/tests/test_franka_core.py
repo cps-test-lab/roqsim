@@ -295,6 +295,57 @@ def test_a_reset_answers_a_running_network_motion_as_aborted():
         engine.shutdown()
 
 
+def test_a_setting_still_queued_at_a_reset_is_refused_and_does_not_reach_the_next_run():
+    """A client's setLoad the physics has not yet taken when the world resets: the reset answers
+    it as refused, and the next run carries the world's configured load."""
+    import socket
+    import time
+
+    from roqsim_manipulation.franka import protocol as P
+
+    address = "127.0.0.8"
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "left_"},
+                "name": "left",
+                "components": [{"franka_fci": {"collision_behavior": CB, "bind": address}}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    fci = _handle(engine)
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    tcp = socket.create_connection((address, P.COMMAND_PORT), timeout=5)
+    try:
+        connect = P.CONNECT_REQUEST.pack(P.VERSION, udp.getsockname()[1])
+        tcp.sendall(P.HEADER.pack(P.Command.CONNECT, 1, P.HEADER.size + len(connect)) + connect)
+        _, (status, _) = _read_reply(tcp, P.HEADER, P.CONNECT_RESPONSE)
+        assert status == P.ConnectStatus.SUCCESS
+        load = P.SET_LOAD_REQUEST.pack(2.0, 0.0, 0.0, 0.1, *np.eye(3).reshape(9) * 1e-3)
+        tcp.sendall(P.HEADER.pack(P.Command.SET_LOAD, 2, P.HEADER.size + len(load)) + load)
+        (plugin,) = [p for p in engine.plugins if type(p).__name__ == "FrankaFCIPlugin"]
+        deadline = time.monotonic() + 5
+        while plugin.server.requests.empty():  # the server's thread queues it; no step takes it
+            assert time.monotonic() < deadline, "the server never queued the request"
+            time.sleep(0.001)
+        engine.reset()
+        (command, command_id, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE)
+        assert (command, command_id) == (P.Command.SET_LOAD, 2)
+        assert status == P.GetterSetterStatus.COMMAND_NOT_POSSIBLE_REJECTED
+        _steps(engine, 3)
+        assert fci.core.m_load == 0.0
+    finally:
+        tcp.close()
+        udp.close()
+        engine.shutdown()
+
+
 def test_a_move_in_a_mode_the_protocol_does_not_define_is_refused():
     """As the robot refuses it, rather than raising on the physics thread and ending the run."""
     import socket

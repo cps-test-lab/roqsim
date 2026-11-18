@@ -316,10 +316,30 @@ class FrankaFCIPlugin(Plugin):
         if self._inproc is not None and self._inproc.ending is None:
             self._inproc.ending = Ending(None, MoveStatus.ABORTED, [])  # no reflex: the reset
         self._inproc = None
+        self._answer_queued_at_reset()
         self.core.reset(ctx.data.qpos[self._qadr])
         self._net_motion = False
         self._step = 0
         self._last_state = self.core.state(self._message_id)
+
+    def _answer_queued_at_reset(self) -> None:
+        """Answer every request a client sent before the reset and the physics has not yet taken:
+        none of them reaches the next run, which starts from the world's configuration. A Move is
+        aborted, as a running one is; a stop or an error recovery succeeds, since the reset leaves
+        the arm at rest and without errors; a setting is refused."""
+        if self.server is None:
+            return
+        while not self.server.requests.empty():
+            req = self.server.requests.get_nowait()
+            if req.command == Command.MOVE:
+                status = MoveStatus.ABORTED
+            elif req.command == Command.STOP_MOVE:
+                status = StopMoveStatus.SUCCESS
+            elif req.command == Command.AUTOMATIC_ERROR_RECOVERY:
+                status = AutomaticErrorRecoveryStatus.SUCCESS
+            else:
+                status = GetterSetterStatus.COMMAND_NOT_POSSIBLE_REJECTED
+            self.server.reply(req.command, req.command_id, STATUS_RESPONSE.pack(status))
 
     def shutdown(self, ctx: SimContext | None = None) -> None:
         if self.server is not None:
