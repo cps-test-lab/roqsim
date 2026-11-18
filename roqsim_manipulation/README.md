@@ -49,6 +49,10 @@ robot itself. Each value is held to Franka's published files, never typed from t
   and load.
 - `limits` holds the joint and Cartesian limits libfranka enforces, including its
   position-dependent velocity limits.
+- `protocol` is the Franka Control Interface's wire format at protocol version 10, byte for byte
+  as libfranka-common defines it.
+- `server` is the robot's side of that protocol on the network: the TCP command port and the UDP
+  state stream, in lock-step with the physics.
 
 The Franka files the model is built from and checked against are vendored under
 `tests/upstream/franka/`, pinned by commit and sha256 in `SOURCES.toml`. In a roqsim checkout,
