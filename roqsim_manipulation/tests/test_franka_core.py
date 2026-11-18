@@ -623,6 +623,30 @@ def test_a_client_that_cancels_its_motion_has_it_preempted_and_the_run_goes_on()
     assert (P.Command.MOVE, 2, P.MoveStatus.PREEMPTED) in heard, heard
 
 
+def test_a_command_that_is_not_finite_ends_the_motion_and_the_arm_holds():
+    """Every limit check is a comparison, which NaN passes; such a command ends the motion as
+    aborted, naming the field, instead of reaching the actuators."""
+    engine = _engine()
+    handle = _handle(engine)
+    q0 = np.array(handle.state()["q"])
+    ticks = {"n": 0}
+
+    def law(state, period):
+        ticks["n"] += 1
+        q = list(state["q_d"])
+        if ticks["n"] == 5:
+            q[3] = float("nan")
+        return {"q_c": q}
+
+    motion = handle.control(law, controller="joint_impedance", generator="joint_position")
+    _steps(engine, 200)
+    assert motion.done and motion.ending.status == MoveStatus.ABORTED, motion.ending
+    assert any("q_c" in e for e in motion.ending.errors), motion.ending.errors
+    assert np.all(np.isfinite(engine.ctx.data.ctrl))
+    assert np.abs(np.array(handle.state()["q"]) - q0).max() < 2e-3
+    engine.shutdown()
+
+
 def test_the_handle_takes_no_settings_while_a_motion_runs():
     """As the robot refuses a setting over the network while it moves, the handle raises."""
     engine = _engine()

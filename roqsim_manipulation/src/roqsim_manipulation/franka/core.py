@@ -46,6 +46,7 @@ can still trip one of those on the arm.
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field
 
 import mujoco
@@ -63,6 +64,8 @@ from .protocol import (
     RobotMode,
 )
 from .robot_model import RobotModel, combine_loads
+
+log = logging.getLogger(__name__)
 
 #: libfranka's error flags (``errors.h``) the simulated robot never raises. A test holds this to
 #: the code: every other flag is raised somewhere in it.
@@ -553,9 +556,24 @@ class FrankaCore:
         return True
 
     def apply(self, cmd: dict) -> None:
-        """One ``RobotCommand`` (protocol field names) for the running motion."""
+        """One ``RobotCommand`` (protocol field names) for the running motion. A command with a
+        value that is not finite ends the motion as aborted and the arm holds: every limit check
+        is a comparison, which NaN passes, and MuJoCo would zero the controls unseen."""
         motion = self.motion
         if motion is None:
+            return
+        bad = [
+            name
+            for name, value in cmd.items()
+            if not isinstance(value, bool)
+            and isinstance(value, (int, float, list, tuple, np.ndarray))
+            and not np.all(np.isfinite(np.asarray(value, float)))
+        ]
+        if bad:
+            why = f"a command that is not finite: {', '.join(sorted(bad))}"
+            log.warning("franka_fci: %s; the motion ends", why)
+            self._finish(MoveStatus.ABORTED, [why])
+            self.robot_mode = RobotMode.IDLE
             return
         dt = limits.DELTA_T
         gen, ctrl = motion.generator, motion.controller
