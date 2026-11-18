@@ -59,6 +59,17 @@ model a motion planner actually reasons about comes from the URDF/planning scene
 geoms -- so making them solid would add a contact the planner cannot see. Model the real structure as
 scene geometry if the cell needs it.
 
+**On an adapter plate (``adapter_plate:``)**
+An arm on a table usually stands on a plate that adapts its base's bolt pattern to the table's: a
+disc of some millimetres between the base and the top. ``adapter_plate: {diameter, height}`` draws
+it as a collision cylinder under the base, its top face at the arm's ``pose`` (so ``pose`` stays
+where the base is, and a world raises it by the plate's height above the surface), centred on the
+base origin or ``offset`` from it in the base frame. The plate belongs to what the arm stands on --
+the world, or a ``mount``'s body -- so it does not collide with that support or with the base, and
+everything else meets it -- an arm's own link that dips below its base face too, as it
+would the real plate. Unlike ``pedestal`` it does not reach the floor; a floor-standing column
+is ``pedestal``'s. Not with ``rail``.
+
 **Mounting on a mobile base (``mount:``)**
 This is what turns a base + an arm into a **mobile manipulator** without a per-combination MJCF: the
 arm is attached to the base's body rather than to ``worldbody``, so it rides the base's free joint.
@@ -250,6 +261,22 @@ MOUNT = {
     ),
 }
 
+#: ``adapter_plate:`` -- the plate the arm's base is bolted to. See the module docstring.
+ADAPTER_PLATE = {
+    "diameter": Field(float, required=True, minimum=0.0, unit="m", doc="the plate's diameter"),
+    "height": Field(
+        float, required=True, minimum=0.0, unit="m", doc="its thickness; its top face is the pose"
+    ),
+    "offset": Field(
+        list,
+        default=[0.0, 0.0],
+        length=2,
+        unit="m",
+        doc="the plate's centre from the base origin, in the base frame (x, y)",
+    ),
+    "rgba": Field(list, default=[0.06, 0.06, 0.07, 1.0], length=4, doc="its colour"),
+}
+
 #: ``end_effector:`` -- the tool welded onto the arm. See the module docstring.
 END_EFFECTOR = {
     "model": Field(
@@ -331,6 +358,11 @@ class SpawnArmPlugin(Plugin):
         ),
         "pedestal_half_width": Field(
             float, default=0.1, unit="m", doc="half-width of the pedestal's square footprint"
+        ),
+        "adapter_plate": Field(
+            dict,
+            schema=ADAPTER_PLATE,
+            doc="a round plate under the base, between it and its support",
         ),
         "rail": Field(dict, schema=RAIL, doc="carry the arm on a linear axis (gantry, track)"),
         "mount": Field(
@@ -493,6 +525,19 @@ class SpawnArmPlugin(Plugin):
                     "carriage, while 'mount' welds the arm to a body that already exists"
                 )
 
+        plate = config.get("adapter_plate")
+        if isinstance(plate, dict) and plate:
+            view = settings.adapter_plate
+            for key in ("diameter", "height"):
+                value = getattr(view, key)
+                if _numbers([value], 1) and value <= 0:
+                    errors.append(f"'adapter_plate.{key}' must be > 0, in metres")
+            if config.get("rail"):
+                # A plate is bolted to what carries the arm; on a rail that is the carriage, whose
+                # geometry this plugin draws as visual-only -- a solid plate on it would collide
+                # with the beam it rides.
+                errors.append("'adapter_plate' is for an arm on a fixed support; not with 'rail'")
+
         if isinstance(mount, dict) and mount.get("robot") and not config.get("prefix"):
             # An empty prefix makes arm_controller's and _apply_home's prefix scan claim the
             # base's wheel joints as well -- position targets written into torque/velocity
@@ -555,6 +600,9 @@ class SpawnArmPlugin(Plugin):
         frame = parent.add_frame()
         frame.pos = self.pos
         frame.quat = self.quat
+        plate = self._stated("adapter_plate")
+        if plate is not None:
+            self._add_adapter_plate(parent, frame, plate)
         if self.rail:
             # The carriage replaces the mount frame as the arm's parent, so the arm attaches at the
             # carriage origin and `pose` keeps meaning "where the axis sits, how it is oriented".
@@ -571,6 +619,20 @@ class SpawnArmPlugin(Plugin):
             r = self.settings.pedestal_half_width
             g.size = [r, r, self.pos[2] / 2.0]
             g.rgba = [0.25, 0.25, 0.27, 1.0]
+
+    def _add_adapter_plate(self, parent, frame, plate) -> None:
+        """The plate under the base: a cylinder in the mount frame, its top face at the base origin.
+
+        It belongs to what the arm stands on (the world, or the mount's body), not to the arm, so it
+        collides with everything but that support and the arm's base, which share its body.
+        """
+        g = parent.add_geom()
+        g.name = f"{self.prefix}adapter_plate"
+        g.type = mujoco.mjtGeom.mjGEOM_CYLINDER
+        g.size = [plate.diameter / 2.0, plate.height / 2.0, 0.0]
+        g.pos = [float(plate.offset[0]), float(plate.offset[1]), -plate.height / 2.0]
+        g.rgba = [float(v) for v in plate.rgba]
+        g.set_frame(frame)
 
     def _entity_body(self, child: mujoco.MjSpec) -> str:
         """The body the arm's entity is registered at: ``base_body``, else the model's root body.
