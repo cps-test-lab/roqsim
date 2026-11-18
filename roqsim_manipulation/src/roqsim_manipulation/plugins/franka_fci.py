@@ -97,7 +97,11 @@ class InProcessMotion:
 
 @dataclass
 class FrankaHandle:
-    """What ``franka_fci:<arm>`` offers in process (all calls on the physics thread, e.g. from a plugin)."""
+    """What ``franka_fci:<arm>`` offers in process (all calls on the physics thread, e.g. from a plugin).
+
+    A setter called while a motion runs raises ``RuntimeError``: the robot takes no settings while
+    it moves, and refuses them over the network the same way.
+    """
 
     arm: str
     state: Callable[[], dict]
@@ -109,6 +113,7 @@ class FrankaHandle:
     set_cartesian_impedance: Callable[[list], bool]
     set_joint_impedance: Callable[[list], bool]
     set_k: Callable[[list], None]
+    set_ee: Callable[[list], None]
     core: FrankaCore
 
 
@@ -282,17 +287,30 @@ class FrankaFCIPlugin(Plugin):
                 control=self.control,
                 stop=self._stop_inproc,
                 recover=self.core.automatic_error_recovery,
-                set_load=self.core.set_load,
-                set_collision_behavior=lambda cb: self.core.set_collision_behavior(
-                    CollisionBehavior.from_config(cb)
+                set_load=self._idle(self.core.set_load),
+                set_collision_behavior=self._idle(
+                    lambda cb: self.core.set_collision_behavior(CollisionBehavior.from_config(cb))
                 ),
-                set_cartesian_impedance=self.core.set_cartesian_impedance,
-                set_joint_impedance=self.core.set_joint_impedance,
-                set_k=lambda T: self.core.set_k(_matrix(T, "EE_T_K")),
+                set_cartesian_impedance=self._idle(self.core.set_cartesian_impedance),
+                set_joint_impedance=self._idle(self.core.set_joint_impedance),
+                set_k=self._idle(lambda T: self.core.set_k(_matrix(T, "EE_T_K"))),
+                set_ee=self._idle(lambda T: self.core.set_ee(_matrix(T, "NE_T_EE"))),
                 core=self.core,
             ),
         )
         self._last_state = self.core.state(0)
+
+    def _idle(self, setter: Callable) -> Callable:
+        """*setter*, refused while a motion runs, as the network path refuses it."""
+
+        def call(*args, **kwargs):
+            if self.core.motion is not None:
+                raise RuntimeError(
+                    f"franka_fci {self.address}: the robot takes no settings while it moves"
+                )
+            return setter(*args, **kwargs)
+
+        return call
 
     @staticmethod
     def _end_effector(ee: dict | None) -> dict | None:

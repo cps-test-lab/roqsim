@@ -433,7 +433,7 @@ def _set_every_franka_setting(engine: Engine) -> None:
     assert fci.set_cartesian_impedance([200.0, 200.0, 200.0, 20.0, 20.0, 20.0])
     assert fci.set_collision_behavior({key: [v * 2 for v in vs] for key, vs in _FRANKA_CB.items()})
     fci.set_k([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.05], [0, 0, 0, 1]])
-    fci.core.set_ee(np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.1], [0, 0, 0, 1.0]]))
+    fci.set_ee([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.1], [0, 0, 0, 1]])
 
 
 #: franka_fci's required setting: the robot's start-up thresholds are unpublished.

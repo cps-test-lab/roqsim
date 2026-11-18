@@ -405,6 +405,21 @@ def test_a_dropped_clients_queued_setting_neither_applies_nor_answers_the_next_c
         engine.shutdown()
 
 
+def test_the_handle_takes_no_settings_while_a_motion_runs():
+    """As the robot refuses a setting over the network while it moves, the handle raises."""
+    engine = _engine()
+    handle = _handle(engine)
+    law, _ = _hold_law(0.1)
+    handle.control(law)
+    _steps(engine, 2)
+    with pytest.raises(RuntimeError, match="no settings while it moves"):
+        handle.set_load(1.0, [0, 0, 0], np.eye(3) * 1e-3)
+    _steps(engine, 150)
+    handle.set_load(1.0, [0, 0, 0], np.eye(3) * 1e-3)  # idle again: taken
+    assert handle.core.m_load == 1.0
+    engine.shutdown()
+
+
 def test_a_move_in_a_mode_the_protocol_does_not_define_is_refused():
     """As the robot refuses it, rather than raising on the physics thread and ending the run."""
     import socket
