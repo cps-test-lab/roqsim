@@ -175,7 +175,9 @@ class ScenarioFilePlugin(Plugin):
         self._started = True
 
     def _choose(self, scenarios: list, file: str):
-        trees = {tree.name: tree for tree, _params, _dir in scenarios}
+        # An entry is (tree, params, dir) or, where scenario-execution passes each document's
+        # `_reset` mapping on, (tree, params, dir, reset); the tree is first in both.
+        trees = {tree.name: tree for tree, *_ in scenarios}
         wanted = self.config.get("scenario")
         if wanted:
             if wanted not in trees:
