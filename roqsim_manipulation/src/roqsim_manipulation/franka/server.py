@@ -51,6 +51,8 @@ class Request:
     command: Command
     command_id: int
     payload: bytes
+    #: The connection that sent it; None for the server's own StopMove when a client drops.
+    conn: socket.socket | None = None
 
 
 class FCIServer:
@@ -167,7 +169,7 @@ class FCIServer:
                     expected.size,
                 )
                 continue
-            self.requests.put(Request(command, command_id, payload))
+            self.requests.put(Request(command, command_id, payload, conn))
         with self._conn_lock:
             self._drop_client("the client closed the connection", conn)
 
@@ -188,9 +190,19 @@ class FCIServer:
             pass
         self.requests.put(Request(Command.STOP_MOVE, -1, b""))  # a motion without a client ends
 
-    def reply(self, command: Command, command_id: int, payload: bytes) -> None:
+    def is_current(self, req: Request) -> bool:
+        """Whether *req* is the server's own or came from the client connected now: libfranka
+        numbers its commands from 0 on every connection, so a dropped client's request carried
+        out for the next one would answer an id the next client uses itself."""
+        return req.conn is None or req.conn is self._conn
+
+    def reply(
+        self, command: Command, command_id: int, payload: bytes, to: socket.socket | None = None
+    ) -> None:
+        """Answer *command_id* on the connection *to* that sent it, if it is still connected; a
+        reply never reaches a client that did not ask."""
         conn = self._conn
-        if conn is None or command_id < 0:
+        if conn is None or command_id < 0 or (to is not None and to is not conn):
             return
         msg = HEADER.pack(int(command), command_id, HEADER.size + len(payload)) + payload
         with self._send_lock:

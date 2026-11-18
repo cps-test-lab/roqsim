@@ -190,6 +190,7 @@ class FrankaFCIPlugin(Plugin):
         self.core: FrankaCore | None = None
         self._inproc: InProcessMotion | None = None
         self._net_motion = False
+        self._motion_conn = None  # the connection whose Move the network motion answers
         self._first_command = False
         self._message_id = 0
         self._step = 0
@@ -311,14 +312,17 @@ class FrankaFCIPlugin(Plugin):
         motion = self.core.motion
         if self._net_motion and self.server is not None and motion is not None:
             self.server.reply(
-                Command.MOVE, motion.command_id, STATUS_RESPONSE.pack(MoveStatus.ABORTED)
+                Command.MOVE,
+                motion.command_id,
+                STATUS_RESPONSE.pack(MoveStatus.ABORTED),
+                to=self._motion_conn,
             )
         if self._inproc is not None and self._inproc.ending is None:
             self._inproc.ending = Ending(None, MoveStatus.ABORTED, [])  # no reflex: the reset
         self._inproc = None
         self._answer_queued_at_reset()
         self.core.reset(ctx.data.qpos[self._qadr])
-        self._net_motion = False
+        self._net_motion, self._motion_conn = False, None
         self._step = 0
         self._last_state = self.core.state(self._message_id)
 
@@ -331,6 +335,8 @@ class FrankaFCIPlugin(Plugin):
             return
         while not self.server.requests.empty():
             req = self.server.requests.get_nowait()
+            if not self.server.is_current(req):
+                continue  # its client is gone, and no other may take its answer
             if req.command == Command.MOVE:
                 status = MoveStatus.ABORTED
             elif req.command == Command.STOP_MOVE:
@@ -339,7 +345,9 @@ class FrankaFCIPlugin(Plugin):
                 status = AutomaticErrorRecoveryStatus.SUCCESS
             else:
                 status = GetterSetterStatus.COMMAND_NOT_POSSIBLE_REJECTED
-            self.server.reply(req.command, req.command_id, STATUS_RESPONSE.pack(status))
+            self.server.reply(
+                req.command, req.command_id, STATUS_RESPONSE.pack(status), to=req.conn
+            )
 
     def shutdown(self, ctx: SimContext | None = None) -> None:
         if self.server is not None:
@@ -426,7 +434,12 @@ class FrankaFCIPlugin(Plugin):
         replies: list = []
         if self.server is not None:
             while not self.server.requests.empty():
-                self._execute(self.server.requests.get_nowait(), replies)
+                req = self.server.requests.get_nowait()
+                if not self.server.is_current(req):
+                    continue  # a dropped client's: carried out, it would act for the next one
+                answers: list = []
+                self._execute(req, answers)
+                replies += [(*answer, req.conn) for answer in answers]
         core.measure(d.qpos[self._qadr], d.qvel[self._dofs], self._tau_J(ctx))
         self._settle_endings()
         self._message_id += 1
@@ -436,8 +449,8 @@ class FrankaFCIPlugin(Plugin):
         if self.server is not None:
             self.server.send_state(data)
             # A setting's reply follows the state that shows it, so a client reading on finds it.
-            for reply in replies:
-                self.server.reply(*reply)
+            for command, command_id, payload, conn in replies:
+                self.server.reply(command, command_id, payload, to=conn)
         if core.motion is None:
             return
         if self._inproc is not None:
@@ -462,9 +475,12 @@ class FrankaFCIPlugin(Plugin):
                 self._inproc = None
             elif self.server is not None:
                 self.server.reply(
-                    Command.MOVE, ending.command_id, STATUS_RESPONSE.pack(ending.status)
+                    Command.MOVE,
+                    ending.command_id,
+                    STATUS_RESPONSE.pack(ending.status),
+                    to=self._motion_conn,
                 )
-                self._net_motion = False
+                self._net_motion, self._motion_conn = False, None
         core.endings.clear()
 
     # -- the FCI's commands, on the physics thread --------------------------------------------------
@@ -493,6 +509,7 @@ class FrankaFCIPlugin(Plugin):
                 # blocks on it), and the outcome when the motion ends (_settle_endings).
                 replies.append((c, req.command_id, STATUS_RESPONSE.pack(MoveStatus.MOTION_STARTED)))
                 self._net_motion, self._first_command = True, False
+                self._motion_conn = req.conn
             return
         if c == Command.STOP_MOVE:
             if self._net_motion:
