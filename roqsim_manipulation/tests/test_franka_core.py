@@ -489,8 +489,9 @@ def test_a_dropped_clients_move_outcome_does_not_reach_the_next_client():
 
 
 def test_a_setting_that_is_not_finite_is_refused_and_the_run_goes_on():
-    """NaN in a client's setting is refused as an invalid argument: taken, it would stop the
-    physics (a load's inertia, a frame) or make MuJoCo reset its data unseen (an impedance)."""
+    """NaN in a client's setting, or a negative load mass, is refused as an invalid argument:
+    taken, it would stop the physics (a load's inertia, a frame) or make MuJoCo reset its data
+    unseen (an impedance)."""
     from roqsim_manipulation.franka import protocol as P
 
     address = "127.0.0.12"
@@ -515,6 +516,7 @@ def test_a_setting_that_is_not_finite_is_refused_and_the_run_goes_on():
     requests = [
         (P.Command.SET_LOAD, P.SET_LOAD_REQUEST.pack(1.0, 0.0, 0.0, 0.1, *([nan] * 9))),
         (P.Command.SET_LOAD, P.SET_LOAD_REQUEST.pack(nan, 0.0, 0.0, 0.1, *([0.0] * 9))),
+        (P.Command.SET_LOAD, P.SET_LOAD_REQUEST.pack(-1.0, 0.0, 0.0, 0.1, *([0.0] * 9))),
         (P.Command.SET_NE_TO_EE, P.SET_NE_TO_EE_REQUEST.pack(*([nan] + eye[1:]))),
         (P.Command.SET_EE_TO_K, P.SET_EE_TO_K_REQUEST.pack(*([nan] + eye[1:]))),
         (P.Command.SET_JOINT_IMPEDANCE, P.SET_JOINT_IMPEDANCE_REQUEST.pack(*([nan] * 7))),
@@ -719,3 +721,14 @@ def test_every_error_flag_is_raised_or_named_as_not_raised():
     assert not (not_raised & named), f"raised and named as not raised: {sorted(not_raised & named)}"
     missing = [e for e in ERRORS if e not in not_raised and e not in named]
     assert not missing, f"neither raised nor named as not raised: {missing}"
+
+
+def test_a_load_of_no_mass_is_taken_and_a_negative_one_refused():
+    engine = _engine()
+    handle = _handle(engine)
+    assert handle.set_load(0.0, [0, 0, 0], np.zeros((3, 3)))
+    assert not handle.set_load(-0.5, [0, 0, 0], np.zeros((3, 3)))
+    assert handle.core.m_load == 0.0
+    engine.shutdown()
+    with pytest.raises(ValueError, match="cannot be negative"):
+        _engine(load={"mass": -1.0})

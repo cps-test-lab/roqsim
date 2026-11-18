@@ -255,6 +255,8 @@ class FrankaCore:
         self.I_load = np.asarray(load.get("inertia", np.zeros(9)), float).reshape(3, 3)
         if not all(np.all(np.isfinite(v)) for v in (self.m_load, self.F_x_Cload, self.I_load)):
             raise ValueError("franka_fci: load: mass, com and inertia must be finite")
+        if self.m_load < 0:
+            raise ValueError(f"franka_fci: load: a mass of {self.m_load} kg; it cannot be negative")
         self.NE_T_EE = np.eye(4)
         self.EE_T_K = np.eye(4)
         self.observer_gain = float(observer_gain)
@@ -289,10 +291,13 @@ class FrankaCore:
         self.model.set_load(m, c, inertia)
 
     def set_load(self, mass: float, com, inertia) -> bool:
-        """The configured load; refused (``False``) unless every value is finite."""
+        """The configured load; refused (``False``) unless every value is finite and the mass is not
+        negative. A mass of zero is no load."""
         com = np.asarray(com, float)
         inertia = np.asarray(inertia, float).reshape(3, 3)  # symmetric: row- or column-major alike
         if not (np.isfinite(mass) and np.all(np.isfinite(com)) and np.all(np.isfinite(inertia))):
+            return False
+        if mass < 0:
             return False
         self.m_load, self.F_x_Cload, self.I_load = float(mass), com, inertia
         self._apply_load()

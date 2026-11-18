@@ -114,6 +114,8 @@ class FrankaHandle:
     set_joint_impedance: Callable[[list], bool]
     set_k: Callable[[list], bool]
     set_ee: Callable[[list], bool]
+    #: The controller itself, to read; a call on it bypasses the handle's checks (a setting
+    #: taken while the arm moves, for one), which the robot would refuse.
     core: FrankaCore
 
 
