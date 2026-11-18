@@ -14,6 +14,10 @@ This mirrors how :mod:`camera_common` + :mod:`depth_camera` already layer the ca
 for the same reason: duplicated copies diverge in ways that are bugs rather than choices. Two rules
 are written once here.
 
+**Noise is drawn per ray.** A frame's range noise is one draw per ray from ``ctx.rng_for``, in ray
+order, whether or not the ray returned, so ray *i*'s noise depends on the sensor, the state's time
+and *i* alone: a ray that hits something else, or nothing, changes its own value and no other.
+
 **A return is classified against the physical detection limits, once, here.** A cast hit nearer
 than :attr:`RayCastSensorPlugin.detection_min` is *too close*: the device cannot measure it. A hit
 beyond :attr:`RayCastSensorPlugin.detection_max`, or no hit at all, is *no return*. What each becomes
@@ -47,6 +51,16 @@ Config (every ray-cast device; each device's module adds its ray pattern and dat
       emit_static_tf: true       # publish tf_parent -> frame_id; false where the mount publishes it
       tf_parent: ""              # body the static TF hangs from (default: the carrier's root body)
       lazy: false                # cast and publish only while something subscribes
+      raycaster: auto            # the backend this device casts through: auto (the GPU where it
+                                 #   runs and is faster for this ray count, else the CPU), cpu or
+                                 #   mjwarp (default: sim.raycaster, else auto); see
+                                 #   docs/rendering.rst, "Choosing a ray caster"
+
+**The cast goes through the backend the device chose** (:class:`roqsim.raycast.RaycastService`):
+``auto`` unless the device or the world names one: MuJoCo Warp on the GPU (``mjwarp``,
+``roqsim_raycast_mjwarp``) where it is installed, can run and is faster for the device's ray count,
+else MuJoCo's ``mj_multiRay`` on the CPU. The choice and its reason are logged and recorded. The range window, the noise and its draws from
+``ctx.rng_for`` are applied here, after the cast, whatever the backend.
 """
 
 from __future__ import annotations
@@ -114,6 +128,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         "exclude_body": "it is resolved to a body id at configure.",
         "emit_static_tf": "the static TF is published once, at configure.",
         "tf_parent": "the static TF is published once, at configure.",
+        "raycaster": "the backend is opened at configure, and its device scene with it.",
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -152,6 +167,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # A robot manifest sets it on the small sensors only its own stack reads, so a world that
         # never launches that stack pays nothing for them.
         self.lazy = bool(self.config.get("lazy", False))
+        # The backend the rays are cast through; None takes the world's `sim.raycaster`.
+        self.raycaster = self.config.get("raycaster")
+        self._raycaster: raycast.Raycaster | None = None
         self._endpoint: Endpoint | None = None
         self._site_id = -1
         self._bodyexclude = -1
@@ -229,6 +247,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             errors.append("'range_resolution' must be >= 0")
         if not 0.0 <= float(config.get("dropout_percent", 0.0)) <= 100.0:
             errors.append("'dropout_percent' must be in [0, 100]")
+        raycaster = config.get("raycaster")
+        if raycaster is not None and (not isinstance(raycaster, str) or not raycaster):
+            errors.append(f"'raycaster' must be a raycaster name, got {raycaster!r}")
         return errors + self._validate_extra(config) + self.validate_fault(config)
 
     def configure(self, ctx: SimContext) -> None:
@@ -244,6 +265,14 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # Allocated once, so the per-cast path does not allocate -- this fires at rate_hz for the
         # life of the run, and for a 3D lidar it is 20k+ rays a frame.
         self._hits = raycast.buffers(self.num_rays)
+        # Opened once per world and shared by every device that chose it; one that cannot run here
+        # fails the load, naming this device, rather than casting on the CPU instead.
+        self._raycaster = raycast.RaycastService.of(ctx).get(
+            self.raycaster,
+            who=f"{self.PLUGIN_LABEL} {self.address}",
+            rays=self.num_rays,
+            source=self.address,
+        )
 
         if self.emit_static_tf:
             self._static_tf = self._mount_tf(m, prefix, entity)
@@ -386,7 +415,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         rot = d.site_xmat[self._site_id].reshape(3, 3)
         # Site-frame directions rotated into the world. `_local_dirs @ rot.T` is the world direction
         # of each ray; the payload is built back in the site frame, so both live off one array.
-        raycast.cast(
+        self._raycaster.cast(
             m,
             d,
             origin,
@@ -424,8 +453,14 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
                 if self.range_stddev_relative > 0.0:
                     far = true >= self.range_stddev_relative_from
                     sigma[far] = self.range_stddev_relative * true[far]
-                # A measured distance is never negative, however near the surface and wide the sigma.
-                dist[hit] = np.maximum(true + rng.standard_normal(true.shape) * sigma, 0.0)
+                # One draw per RAY, in ray order, whether or not the ray returned: ray i takes the
+                # i-th draw of the frame's stream, so its noise is a function of (key, time, i)
+                # alone. Drawn per return instead, a ray that returns on one run and not on another
+                # (a grazed edge, another ray-cast backend) would hand every later return its
+                # neighbour's draw. A measured distance is never negative, however near the surface
+                # and wide the sigma.
+                draws = rng.standard_normal(self.num_rays)[hit]
+                dist[hit] = np.maximum(true + draws * sigma, 0.0)
             if self.dropout_percent > 0.0:
                 # Randomly drop this percentage of the potential returns per frame: a dropped ray is
                 # no return, whatever it would have been.

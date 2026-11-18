@@ -210,7 +210,7 @@ def test_a_motor_command_of_the_wrong_length_is_refused(caplog):
 
 
 def test_reset_clears_the_external_torque():
-    """Leaving a stale xfrc_applied across a reset starts the next episode under a phantom torque."""
+    """Leaving a stale xfrc_applied across a reset starts the next run under a phantom torque."""
     ctx, plugin = _harness({"spin": [1, 1, 1, 1]})
     plugin.set_normalized([1.0] * 4)
     _settle(ctx, plugin, 0.5)

@@ -201,7 +201,12 @@ to a seeded floorplan) — there is no overall room size. It returns a **finishe
 
 * **lines** — independent wall segments, each with its own two endpoints and a **stable, monotonic
   id** (a split keeps the first half's id and mints a new one), so a reference like "line 3" survives
-  edits. Coordinates are metres, y measured from the bottom, 2 decimals.
+  edits. Coordinates are metres, y measured from the bottom, 2 decimals. The generator builds one wall
+  box per line, centred on it; where walls meet, no two boxes show a face in one place (which flickers
+  in every render): at a corner of two walls each runs on past the corner point until its end lies
+  1 mm inside the other wall, closing the corner's outside at a right angle and narrowing it at others,
+  and of two boxes that overlap one stands 1 mm lower. Two lines drawn over each other along their
+  length still show their sides in one plane.
 * **rooms** — the closed loops the walls enclose, auto-detected (planar faces), listed biggest-first
   and **nameable** (default ``room N``). Metadata for naming/lookup; the bake builds geometry from
   ``lines``.

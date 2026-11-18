@@ -105,7 +105,6 @@ def _compiled(model, pos, rpy, prefix="cam_"):
     )
     engine = Engine(cfg)
     engine.setup()
-    mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
     return engine
 
 

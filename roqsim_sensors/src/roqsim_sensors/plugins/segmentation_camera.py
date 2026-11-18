@@ -382,6 +382,16 @@ class SegmentationCameraPlugin(CameraPlugin):
                         self._class_of_geom[geom] = class_id
                         self._instance_of_geom[geom] = instance
 
+        # A world drawn with baked lighting draws a baked geom by a visual mesh of its own
+        # (``<geom>__baked``) and hides the geom: its drawn surface takes the geom's class and
+        # instance, so a class named by the geom's name labels what the camera sees of it.
+        from roqsim.bake.compose import baked_sources  # noqa: PLC0415
+
+        for visual, source in baked_sources(m).items():
+            if self._class_of_geom[visual] == BACKGROUND:
+                self._class_of_geom[visual] = self._class_of_geom[source]
+                self._instance_of_geom[visual] = self._instance_of_geom[source]
+
     def _entity_subtree(self, ctx: SimContext, m, name: str, class_id: int) -> list[int]:
         entity = ctx.entities.get(name)
         if entity is None or not entity.body:

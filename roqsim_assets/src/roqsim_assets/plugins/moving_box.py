@@ -47,7 +47,7 @@ Config::
         bounds: [x0, y0, x1, y1]   # optional axis-aligned box the centre must stay inside
         turn_deg: [60, 300]     # heading change sampled uniformly from this range, in degrees
 
-``pose`` is where the box is at ``on_reset``, every episode: a trial never inherits the previous
+``pose`` is where the box is at ``on_reset``, every run: a trial never inherits the previous
 trial's obstacle position. Nothing else carries over either, since no generator is held between draws.
 """
 

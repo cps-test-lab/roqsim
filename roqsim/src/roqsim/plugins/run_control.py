@@ -8,8 +8,8 @@ control plane of its own::
     sim/run_control/pause     command   stop stepping; commands still run (Engine.idle)
     sim/run_control/resume    command   step again, paced from now
     sim/run_control/step      command   take N steps while paused; replies once they ran
-    sim/run_control/reset     command   reset the world; replies once it has
-    sim/run_control/state     out       playing/paused/..., sim time and episode
+    sim/run_control/reset     command   reset the world, starting the run it names; replies once it has
+    sim/run_control/state     out       playing/paused/..., sim time and run
 
 ``pause``, ``step`` and ``reset`` return a :class:`~roqsim.context.CommandFuture` of their own,
 which a bridge waits on in turn: their answer is the state after the step in flight, the steps or
@@ -30,6 +30,7 @@ from .. import control as ctl
 from .. import endpoint
 from ..context import CommandFuture, SimContext
 from ..plugin import Plugin
+from ..runs import check_run
 from ..types import Duration
 
 
@@ -40,12 +41,12 @@ class RunState:
     Attributes:
         state: playing, paused, stopped or quitting
         sim_time: simulated time
-        episode: the episode, counted by resets
+        run: the run, by name (roqsim.runs)
     """
 
     state: str
     sim_time: Duration
-    episode: int
+    run: str
 
 
 @dataclass
@@ -69,11 +70,11 @@ class ResetDone:
 
     Attributes:
         sim_time: simulated time after the reset
-        episode: the episode it started
+        run: the run it started
     """
 
     sim_time: Duration
-    episode: int
+    run: str
 
 
 class RunControlPlugin(Plugin):
@@ -92,12 +93,12 @@ class RunControlPlugin(Plugin):
 
     @endpoint.out(ros2=None)
     def state(self) -> RunState:
-        """The run's state (playing, paused, stopped, quitting), its sim time and its episode."""
+        """The run's state (playing, paused, stopped, quitting), its sim time and its name."""
         ctx = self._ctx
         return RunState(
             ctl.STATE_NAMES.get(ctx.control.state, str(ctx.control.state)),
             float(ctx.sim_time),
-            int(ctx.episode),
+            ctx.run,
         )
 
     @endpoint.command(ros2=None)
@@ -146,17 +147,22 @@ class RunControlPlugin(Plugin):
         return done
 
     @endpoint.command(ros2=None)
-    def reset(self) -> CommandFuture[ResetDone]:
-        """Reset the world to its initial state; the reply comes once the reset has run."""
+    def reset(self, run: str = "") -> CommandFuture[ResetDone]:
+        """Reset the world to its initial state; the reply comes once the reset has run.
+
+        Args:
+            run: the name of the run it starts; empty for the next unnamed one (roqsim.runs)
+        """
+        name = check_run(run) if run else None
         done = CommandFuture()
         self._reset_waiters.append(done)
-        self._ctx.control.request_reset()
+        self._ctx.control.request_reset(name)
         return done
 
     def on_reset(self, ctx: SimContext) -> None:
         waiters, self._reset_waiters = self._reset_waiters, []
         for done in waiters:
-            done._resolve(ResetDone(float(ctx.sim_time), int(ctx.episode)))
+            done._resolve(ResetDone(float(ctx.sim_time), ctx.run))
 
     def validate_config(self, config: dict) -> list[str]:
         return [f"run_control takes no config, got {sorted(config)}"] if config else []

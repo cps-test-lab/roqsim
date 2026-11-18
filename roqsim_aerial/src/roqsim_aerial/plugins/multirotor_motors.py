@@ -279,7 +279,7 @@ class MultirotorMotorsPlugin(Plugin):
         self._cmd = np.zeros_like(self._cmd)
         self._state = np.zeros_like(self._state)
         if ctx.data is not None and self._bid >= 0:
-            # A stale external force surviving a reset is a real bug class: the next episode starts
+            # A stale external force surviving a reset is a real bug class: the next run starts
             # with a torque nobody commanded, and it looks like a physics difference between
             # repetitions rather than like leftover state.
             ctx.data.xfrc_applied[self._bid] = 0.0

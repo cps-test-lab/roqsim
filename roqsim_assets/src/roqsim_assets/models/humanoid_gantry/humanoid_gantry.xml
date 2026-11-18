@@ -33,18 +33,21 @@
   <worldbody>
     <body name="humanoid_gantry">
       <!-- Base frame: closed rectangle of steel tubing (0.84 x 0.84 m footprint) resting on the
-           four caster top plates (plate at z=0.160; rail centre-line at 0.185). Collidable. -->
+           four caster top plates (plate at z=0.160; rail centre-line at 0.185). Collidable. The back
+           and front rails are 1 mm thinner above and below, so their tops and bottoms sit just
+           inside the side rails' where they cross, not in one plane with them. -->
       <geom name="rail_left"  type="box" size="0.025 0.42 0.025"  pos=" 0.42  0     0.185" material="steel"/>
       <geom name="rail_right" type="box" size="0.025 0.42 0.025"  pos="-0.42  0     0.185" material="steel"/>
-      <geom name="rail_back"  type="box" size="0.42  0.025 0.025" pos=" 0    -0.42  0.185" material="steel"/>
-      <geom name="rail_front" type="box" size="0.42  0.025 0.025" pos=" 0     0.42  0.185" material="steel"/>
+      <geom name="rail_back"  type="box" size="0.42  0.025 0.024" pos=" 0    -0.42  0.185" material="steel"/>
+      <geom name="rail_front" type="box" size="0.42  0.025 0.024" pos=" 0     0.42  0.185" material="steel"/>
 
       <!-- Vertical mast at the back edge, rising to 2.05 m. Collidable (a swinging robot may touch it). -->
       <geom name="mast" type="box" size="0.03 0.03 0.9325" pos="0 -0.42 1.1175" material="steel"/>
 
       <!-- Cantilever boom: horizontal arm from the mast top forward to over the base centre (y=0),
-           top face at ~2.0 m. Collidable. -->
-      <geom name="boom" type="box" size="0.03 0.24 0.03" pos="0 -0.18 1.97" material="steel"/>
+           top face at ~2.0 m. Collidable. 1 mm narrower each side than the mast, so its sides sit
+           just inside the mast's, not in one plane with them. -->
+      <geom name="boom" type="box" size="0.029 0.24 0.03" pos="0 -0.18 1.97" material="steel"/>
 
       <!-- Diagonal tension brace from upper mast to the boom tip (decorative, echoes the reference).
            Non-colliding thin strut. -->

@@ -59,6 +59,7 @@ import numpy as np
 
 from . import exit_status, logging_setup
 from .capture import CaptureError
+from .conditions import of_model as conditions_of_model
 from .config import _VIEW_KEYS, PluginError, assignments_from_mapping, overrides_from_dotlist
 from .exit_status import NO_GL
 from .models import ModelError
@@ -739,6 +740,9 @@ def _base_record(out: Path, width: int, height: int, model, cam) -> dict:
         "nbody": int(model.nbody),
         "ngeom": int(model.ngeom),
         "camera": _camera_record(cam),
+        # How the world loaded (an unbaked world drawn without its bake, say), read from the model
+        # it was drawn from, so the image's record says it (roqsim.conditions).
+        "conditions": conditions_of_model(model),
     }
 
 
@@ -1346,7 +1350,10 @@ def main(argv: list | None = None) -> int:
             exit_status.BAD_INPUT,
             exit_status.NO_GL,
             exit_status.RECORDING,
-            note="Stdout is one JSON line on success; every failure is one line on stderr.",
+            note="Stdout is one JSON line on success; every failure is one line on stderr. A world "
+            "drawn flat, or whose shadows look wrong, is lit by the classic renderer's few lamps: "
+            "its baked_lighting component (roqsim bake) draws bounced light and soft shadows, and "
+            "the JSON line's `conditions` say whether an image was drawn baked.",
         ),
     )
     parser.add_argument(

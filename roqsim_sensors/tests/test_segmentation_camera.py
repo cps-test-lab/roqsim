@@ -357,3 +357,60 @@ def test_a_class_may_name_geoms_beside_bodies():
 def test_a_class_naming_none_of_the_three_selectors_is_refused():
     with pytest.raises(Exception, match="'geoms'"):
         _engine(classes=[{"class_id": 3, "name": "board"}])
+
+
+class _BakedScene(_Scene):
+    """The scene as baked lighting draws it: ``board_0`` hidden in group 3 and drawn by a visual
+    mesh of its own in the window group, recorded as drawing it (``roqsim.bake.compose``)."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        import json
+
+        from roqsim.bake.compose import DRAWN_FOR_TEXT
+        from roqsim.presence import WINDOW_GEOM_GROUP
+
+        super().build(spec, ctx)
+        board = spec.geom("board_0")
+        board.group = 3
+        visual = spec.body("rack").add_geom(
+            name="board_0__baked",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=list(board.size),
+            pos=list(board.pos),
+            contype=0,
+            conaffinity=0,
+            group=WINDOW_GEOM_GROUP,
+            density=0.0,
+        )
+        assert visual is not None
+        spec.add_text(name=DRAWN_FOR_TEXT, data=json.dumps({"board_0__baked": ["rack", 0]}))
+
+
+def test_a_geom_class_labels_the_surface_baked_lighting_draws_it_by():
+    """Baked, a geom is hidden and drawn by its visual mesh: a class naming the geom labels that."""
+    from roqsim.engine import Engine
+
+    entry = {
+        "segmentation_camera": {"classes": [{"class_id": 3, "name": "board", "geoms": ["board_0"]}]}
+    }
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [{f"{__name__}:_BakedScene": {}, "name": "robot", "components": [entry]}],
+        }
+    )
+    engine = Engine(cfg)
+    engine.setup()
+    engine.reset()
+    engine.step()
+    plugin = _plugin(engine)
+    m = engine.ctx.model
+    visual = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "board_0__baked")
+    source = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "board_0")
+    assert plugin._class_of_geom[visual] == 3
+    assert (
+        plugin._instance_of_geom[visual]
+        == plugin._instance_of_geom[source]
+        == _body_id(engine, "rack")
+    )
+    assert (plugin._labels == 3).sum() > 100

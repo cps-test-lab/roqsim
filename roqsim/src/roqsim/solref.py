@@ -24,7 +24,7 @@ tolerance cannot disagree about where it lies.
 
 With ``refsafe`` disabled there is no floor. A ``solref`` whose entries are not both positive is
 MuJoCo's direct ``(-stiffness, -damping)`` form, which has none either; callers pass only the
-standard form. Measured on MuJoCo 3.14.0 by reading the stiffness the solver uses (``efc_KBIP``)
+standard form. Measured on MuJoCo 4.0.0 by reading the stiffness the solver uses (``efc_KBIP``)
 and pinned by ``tests/test_solref_floor.py``.
 
 This is not a flex rule -- it applies to every contact -- which is why it lives here rather than

@@ -64,7 +64,9 @@ def test_an_unknown_renderer_names_the_installed_ones_and_the_package_that_adds_
         load_config_from_dict({"sim": {"renderer": "splats"}, "components": []})
     message = str(err.value)
     assert "unknown renderer 'splats'" in message
-    assert "Installed: mujoco, socket, splat" in message
+    # Every renderer installed is named; which others are installed is not this package's to say.
+    installed = message.split("Installed: ", 1)[1].split(". ", 1)[0].split(", ")
+    assert {"mujoco", "splat"} <= set(installed)
     assert "roqsim_render_splats" in message
 
 
@@ -185,3 +187,36 @@ def test_the_shipped_example_room_is_what_the_generator_makes(tmp_path):
     shipped = EXAMPLE_PLY.parent
     assert ply.read_bytes() == (shipped / "room.ply").read_bytes()
     assert xml.read_text() == (shipped / "collision.xml").read_text()
+
+
+def test_gsplat_without_its_built_kernels_is_named_not_met_at_the_first_frame(monkeypatch):
+    import sys
+    import types
+
+    from roqsim_render_splat.renderer import gsplat_cuda_missing
+
+    monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", types.SimpleNamespace(_C=None))
+    assert "kernels are not built" in gsplat_cuda_missing()
+    monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", types.SimpleNamespace(_C=object()))
+    assert gsplat_cuda_missing() is None
+
+
+def test_a_gsplat_backend_that_fails_to_load_is_named_not_raised_raw(monkeypatch):
+    import sys
+
+    from roqsim_render_splat.renderer import gsplat_cuda_missing
+
+    monkeypatch.setitem(sys.modules, "gsplat.cuda._backend", None)  # an import error
+    assert "did not load" in gsplat_cuda_missing()
+
+    class FailingCompile:
+        """A finder that stands in for gsplat's backend, whose compile fails."""
+
+        @staticmethod
+        def find_spec(name, path=None, target=None):
+            if name == "gsplat.cuda._backend":
+                raise RuntimeError("Error building extension 'gsplat_cuda'")
+
+    monkeypatch.delitem(sys.modules, "gsplat.cuda._backend")
+    monkeypatch.setattr(sys, "meta_path", [FailingCompile, *sys.meta_path])
+    assert "RuntimeError: Error building extension" in gsplat_cuda_missing()

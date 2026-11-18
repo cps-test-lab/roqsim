@@ -1,0 +1,129 @@
+# The Franka upstream files roqsim's simulated FR3 is built from and checked against, at the commits
+# it is held to. Fetched and checked by external/franka_upstream.py;
+# never edited by hand. Each directory carries its repository's LICENSE (Apache-2.0) and NOTICE.
+#
+# The pins: libfranka 0.21.3 (needs FR3 system >= 5.9.0, robot server version 10), the
+# libfranka-common commit it pins as its `common` submodule (the FCI wire format, kVersion 10),
+# franka_description 2.9.0 and franka_ros2 v3.6.1 (Jazzy), the pair each compatibility table names.
+
+[[repo]]
+dir = "libfranka"
+url = "https://github.com/frankarobotics/libfranka"
+tag = "0.21.3"
+commit = "85912fe02258d8cb811d3eff1f11e52ce89e3217"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "NOTICE",
+  "include/franka/rate_limiting.h",
+  "include/franka/robot.h",
+  "include/franka/errors.h",
+  "include/franka/robot_state.h",
+  "src/joint_velocity_limits.cpp",
+  "src/errors.cpp",
+  "examples/generate_joint_position_motion.cpp",
+  "examples/examples_common.cpp",
+  "docs/compatibility_matrix.rst",
+]
+
+[[repo]]
+dir = "libfranka-common"
+url = "https://github.com/frankarobotics/libfranka-common"
+tag = "(libfranka 0.21.3's common submodule)"
+commit = "2e090a65e51c94a98f9fc82b6ec3d1aa54d0f85f"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "NOTICE",
+  "include/research_interface/robot/service_types.h",
+  "include/research_interface/robot/rbk_types.h",
+  "include/research_interface/robot/error.h",
+]
+
+[[repo]]
+dir = "franka_description"
+url = "https://github.com/frankarobotics/franka_description"
+tag = "2.9.0"
+commit = "7aeeddc449edf8d62b594f9e36a81da53e7796f9"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "NOTICE",
+  "robots/fr3/joint_limits.yaml",
+  "robots/fr3/dynamics.yaml",
+]
+
+[[repo]]
+dir = "franka_ros2"
+url = "https://github.com/frankarobotics/franka_ros2"
+tag = "v3.6.1"
+commit = "8c946641bdedaf20c35604d8bc5a809117e4ed6c"
+license = "Apache-2.0"
+files = [
+  "LICENSE",
+  "NOTICE",
+  "franka_ros2/doc/compatibility_matrix.rst",
+]
+
+# `robots/fr3/fr3.urdf.xacro hand:=false`, processed by xacro: the arm without the Franka Hand, under
+# franka_description's names (fr3_link0..8, fr3_joint1..7), the names franka_ros2 uses.
+[[generated]]
+dir = "franka_description"
+file = "fr3.urdf"
+xacro = "robots/fr3/fr3.urdf.xacro"
+mappings = { hand = "false" }
+
+# The same with `no_prefix:=true` (link0..8, joint1..7): the names libfranka's Model looks up in the
+# URDF the robot serves (src/robot_model.h, kLastLinkName "link8"), so the one the simulated robot
+# serves through GetRobotModel.
+[[generated]]
+dir = "franka_description"
+file = "fr3_no_prefix.urdf"
+xacro = "robots/fr3/fr3.urdf.xacro"
+mappings = { hand = "false", no_prefix = "true" }
+serve = "roqsim_manipulation_assets/src/roqsim_manipulation_assets/models/fr3/fr3.robot_model.urdf"
+
+# What the converted visual meshes are held to (visual_digest in external/franka_upstream.py):
+# per primitive of each DAE, in file order, its material and colours, triangle count, bounds, open
+# edges and area-weighted normal. The DAE files themselves are too large to vendor.
+[[digest]]
+dir = "franka_description"
+file = "fr3_visual.json"
+meshes = [
+  "meshes/robots/fr3/visual/link0.dae",
+  "meshes/robots/fr3/visual/link1.dae",
+  "meshes/robots/fr3/visual/link2.dae",
+  "meshes/robots/fr3/visual/link3.dae",
+  "meshes/robots/fr3/visual/link4.dae",
+  "meshes/robots/fr3/visual/link5.dae",
+  "meshes/robots/fr3/visual/link6.dae",
+  "meshes/robots/fr3/visual/link7.dae",
+]
+
+[sha256]
+"franka_description/LICENSE" = "4b25434e6ec2012e28a484f1d7924a0fd1a8bf232c2be2d50d584d299d04d6d6"
+"franka_description/NOTICE" = "13991525876741e3dc94c46e0afce111dc0a5c6156c89bbbefd06547b84738fd"
+"franka_description/fr3.urdf" = "ba2974294bd62c9d501066251eefe93591e96d440ff6868d4cb221195c61d895"
+"franka_description/fr3_no_prefix.urdf" = "89ede113e9cd3b826fd21474a8146494dec3cb70bba7f8ed2c11db86028a9260"
+"franka_description/fr3_visual.json" = "b2a29edac4de7e97cad85675709f6deb8ad7b4a51bb5d79285563ae4a99095d6"
+"franka_description/robots/fr3/dynamics.yaml" = "e65e145114b431bd17cdebc58b88c43505f0658472cca6ffbc9c32b7a198f79b"
+"franka_description/robots/fr3/joint_limits.yaml" = "42e999184f37689568b58f320d062859053f03c62c8b49bf00a00d69f20d7a65"
+"franka_ros2/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"franka_ros2/NOTICE" = "edf4d327f25582a1c18c2c733ea6014c31b41974dc3f8567dbf9bbc0332f333a"
+"franka_ros2/franka_ros2/doc/compatibility_matrix.rst" = "4275881506d91cf1a617ae0f89cfa3fdb0bc881e59824b02ac675cfad42bad00"
+"libfranka-common/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"libfranka-common/NOTICE" = "554fdb0be2ee54be816a4fe33b33bc95656e5c1813e05a0533973a48c278638c"
+"libfranka-common/include/research_interface/robot/error.h" = "23701ab61c37332c4158fed55d3e4ad3dba1f5db9492b3ab70034cb5ef137b7a"
+"libfranka-common/include/research_interface/robot/rbk_types.h" = "975f007782d2ad416634e5e764d6a2de1be02e6089e26d58e94a461caaaf10f3"
+"libfranka-common/include/research_interface/robot/service_types.h" = "e9af4e13a4f6db43676337368528a1c394a2daf8e32171f767c3314fa69deefb"
+"libfranka/LICENSE" = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+"libfranka/NOTICE" = "a7dcae538ac4983582406437c91e87c9100e7027420a8c1f275053de9f4289cf"
+"libfranka/docs/compatibility_matrix.rst" = "b571a312536a170fee17c03e6539719c23971e00335692ce96cbedd8bc7db8af"
+"libfranka/examples/examples_common.cpp" = "cab122051fa0fae0c75e3295867fa7d5ae65ed2a0dad499ecae0f31a14c328f2"
+"libfranka/examples/generate_joint_position_motion.cpp" = "93cf0071edcfe19025e27d5c74034b08040fb8fadd3aadaf225b292221623920"
+"libfranka/include/franka/errors.h" = "b8af6514aa2d6e78440fc2430856c927fe06a80082007049d062c5cb1f2c58ed"
+"libfranka/include/franka/rate_limiting.h" = "dc5b5af00882e90363298f12df8d62ed5a135e6a9ff0f92999384d39f499cd15"
+"libfranka/include/franka/robot.h" = "73560ff227b14670f258a92dccf83426b1a64de4d41b0e62814d0e434ec42856"
+"libfranka/include/franka/robot_state.h" = "a1be5118af87ea1c779282f2f153268a17efb7b4bf2fcd3171a0f6285fee9376"
+"libfranka/src/errors.cpp" = "10afba3a4d8d376cf51975cfc926b2c3eca00526ca8e27417f8f30b98d10b4a9"
+"libfranka/src/joint_velocity_limits.cpp" = "087194e90e4b19fd1f424274567f4205433b1fa1a7329dbc908ab22578fe2e57"

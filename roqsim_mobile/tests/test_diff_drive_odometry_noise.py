@@ -83,8 +83,8 @@ def test_the_same_seed_reproduces_and_another_does_not():
     assert not np.allclose(a, c)
 
 
-def test_a_second_episode_draws_new_noise():
-    """reset() restarts sim time; the episode in the key keeps trial 2 from replaying trial 1."""
+def test_a_second_run_draws_new_noise():
+    """reset() restarts sim time; the run in the key keeps trial 2 from replaying trial 1."""
     engine = _engine(NOISE)
     try:
         first, _ = _drive(engine)

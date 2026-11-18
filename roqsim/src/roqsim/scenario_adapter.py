@@ -31,6 +31,13 @@ configuration -- can also declare a ``world`` parameter and select the world its
 makes that one scenario instead of N. Ordinary scenarios declare neither and stay
 simulator-agnostic: the world then comes from ``ROQSIM_WORLD``, set by whoever deployed the run.
 
+Each ``reset()`` starts a **run**, named by its ``run`` argument where the runner gives one -- a
+parameter document's ``_reset`` mapping carries it -- and otherwise by ``ROQSIM_RUN`` for the first
+run and the process's next unnamed name for the others (:mod:`roqsim.runs`). The name and the seed
+key every draw of the run, so the runs of a campaign never draw the same values, whichever process
+they share and however many worlds it rebuilds, and the same seed and name repeat a run in any
+process: ``roqsim sim <world> --seed S --run NAME`` draws what the run of that name drew.
+
 A runner that executes several scenarios in one process hands ``reset()`` each scenario's own
 output directory (scenario-execution's ``output_dir`` reset argument). The recording and the scene
 export then roll with it: the scenario before is finished and the next one records and exports its
@@ -39,8 +46,9 @@ per scenario rather than one file for all of them. The engine is not rebuilt for
 what separates two scenarios.
 
 Because the world is *compiled* when the engine is built (not on ``reset``), the engine is built
-lazily -- on the first of ``reset()``/``dt``/``step()`` -- so it is constructed with the world and
-overrides in place. A later ``reset()`` naming a different world, or different overrides, rebuilds.
+lazily -- on the first of ``reset()``/``dt`` -- so it is constructed with the world and overrides
+in place. A later ``reset()`` naming a different world, or different overrides, rebuilds. ``step()``
+before the first ``reset()`` raises, naming it: a trial starts from the state a reset leaves.
 
 The deployment may also supply overrides without the scenario mentioning them, through
 ``ROQSIM_WORLD_OVERRIDES`` (a path to the same YAML document ``roqsim sim --override``
@@ -77,6 +85,7 @@ from . import env
 from .config import load_config, overrides_from_files
 from .context import SimContext
 from .engine import Engine
+from .runs import RUN_ENV, RunNames, check_run
 from .seed import SEED_ENV, resolve_seed
 from .viewer import DisplayError, PassiveViewer, has_display
 
@@ -265,6 +274,12 @@ class MujocoSim(_Base):
         #: or different overrides, and a seed that changed mid-scenario would make the single seed
         #: each recording carries a lie. An explicit or config-stated seed is re-read every build.
         self._drawn_seed: int | None = None
+        #: The names of the process's runs, held here rather than by an engine: a rebuild for a new
+        #: world hands the new engine this one, so the unnamed runs keep counting across it and
+        #: no two runs of the process share a name -- or the draws the name keys.
+        #: ``ROQSIM_RUN`` names the first run where its reset names none: a deployment that runs
+        #: one run per process names it there.
+        self._runs = RunNames(first=env.get(RUN_ENV) or None)
         self._built_overrides = _UNBUILT
         self._logger = None
         self._engine: Engine | None = None
@@ -293,9 +308,14 @@ class MujocoSim(_Base):
         # resolved after this point would reach the tick-time consumers and silently miss the
         # configure-time ones.
         engine.ctx.seed = self._seed_for(cfg)
+        engine.runs = self._runs
         # A setup that raises has shut down what it configured; held only once it succeeded, so
         # the next call builds afresh instead of stepping an engine that never set up.
         engine.setup()
+        # How the world loaded, into this run's own output directory, which the campaign collects.
+        from .conditions import write_run_file
+
+        write_run_file(engine.ctx.conditions, self._conditions_dir())
         self._engine = engine
         self._world = world
         self._built_overrides = overrides
@@ -354,21 +374,17 @@ class MujocoSim(_Base):
         Opt-in via the ``ROQSIM_SCENE_EXPORT_DIR`` environment variable: when set, the compiled
         world is exported as :data:`SCENE_FILE` into that directory -- a relative path is resolved
         by :meth:`_resolve_out`, like the recording, so the exact simulated scene, world_overrides
-        included, ships as a run artifact for viewers. Called after ``engine.reset()`` so
-        mocap-driven bodies (walkers) and re-seated robot bases are captured at their true initial
-        pose; the forward pass propagates the re-posed mocap into ``data.xpos`` first (mirrors
-        ``scene_source.compile_world``).
+        included, ships as a run artifact for viewers. Called after ``engine.reset()``, whose
+        closing forward pass has every plugin's ``on_reset`` in it, so mocap-driven bodies (walkers)
+        and re-seated robot bases are captured at their true initial pose.
         """
         self._scene_export_pending = False
         out = env.get("ROQSIM_SCENE_EXPORT_DIR")
         if not out:
             return
-        import mujoco
-
         from .export_gltf import export_gltf
         from .scene_source import declared_cameras
 
-        mujoco.mj_forward(self._engine.ctx.model, self._engine.ctx.data)
         # NOT self._logger: the runner may hand us a non-stdlib logger (e.g. scenario-execution's
         # RosLogger), whose info() lacks %-style lazy formatting that the export uses.
         export_gltf(
@@ -379,6 +395,12 @@ class MujocoSim(_Base):
             cameras=declared_cameras(self._engine),
             log=logging.getLogger(__name__),
         )
+
+    def _conditions_dir(self) -> Path | None:
+        """Where this run's :data:`roqsim.conditions.RUN_FILE` goes: the run's directory, as
+        :meth:`_resolve_out` anchors a relative path, or ``None`` when nothing names one."""
+        base = self._run_dir or os.environ.get("RUN_OUTPUT_DIR") or self._output_dir
+        return Path(base) if base else None
 
     def _resolve_out(self, value: str) -> Path:
         """Resolve a relative output path against THIS RUN's directory.
@@ -498,8 +520,19 @@ class MujocoSim(_Base):
         self._output_dir = kwargs.get("output_dir")
 
     def reset(
-        self, world=None, world_overrides=None, headless=None, output_dir=None, **kwargs
+        self, world=None, world_overrides=None, headless=None, output_dir=None, run=None, **kwargs
     ) -> None:
+        """Start a run: build or rebuild the world it names, reset it, and start its recording.
+
+        ``run`` names the run (:mod:`roqsim.runs`), as a runner gives it in a parameter
+        document's ``_reset`` mapping. With the seed it keys every draw the run makes, so the runs
+        of one campaign never draw the same values, whichever process they share. Without it, the
+        first run is ``ROQSIM_RUN`` and the others are the process's next unnamed ones, counted
+        across rebuilds.
+        """
+        # Before anything is built: a name that cannot be one is the input's fault.
+        if run is not None:
+            check_run(run)
         self._build(
             world or self._default_world,
             world_overrides if world_overrides is not None else self._default_overrides,
@@ -511,7 +544,7 @@ class MujocoSim(_Base):
             self._run_dir = output_dir
             self._scene_export_pending = True
         # scenario-execution injects matching OSC params by name; forward the rest to the engine.
-        self._engine.reset(**kwargs)
+        self._engine.reset(run=run, **kwargs)
         if self._scene_export_pending:
             self._export_scene()
         # After reset, so the first sample is the world as the scenario starts rather than as it
@@ -534,7 +567,12 @@ class MujocoSim(_Base):
             )
 
     def step(self) -> None:
-        self._ensure_built().step()
+        if self._engine is None:
+            raise RuntimeError(
+                "MujocoSim.step() before reset(): call reset() first, which builds the world and "
+                "puts it in its initial state"
+            )
+        self._engine.step()
         if self._recorder is not None:
             self._recorder.sample(self._engine.ctx)
         if self._viewer is not None:

@@ -33,7 +33,7 @@ Config::
         orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       length: 2.442         # optional full belt length (X, m); default keeps the base model
       width: 0.58           # optional full belt width  (Y, m); default keeps the base model
-      home: {speed: 0.1}    # belt speed at the start of each episode (m/s); negative reverses
+      home: {speed: 0.1}    # belt speed at the start of each run (m/s); negative reverses
       ramp: 0.5             # acceleration of run/stop (m/s^2); unset: the speed changes at once
       friction: 0.6         # optional belt<->package sliding friction override
       roller_radius: 0.0275
@@ -74,6 +74,9 @@ class ConveyorPlugin(MachinePlugin):
     _SLAB_OVER = 0.029  # drive-slab overhang past belt end (belt_surface 1.25 - belt_visual 1.221)
     _RAIL_OFF = 0.006  # rail centre offset past belt edge (0.296 - 0.29); == rail half-thickness
     _SURF_Z = 0.9425  # belt-surface height inside the model (rail/roller z), fixed
+    # Roller ends sit this far inside the belt's sides: flush, the two faces would flicker in a
+    # render (roqsim_assets.shared_faces).
+    _ROLLER_INSET = 0.001
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -153,6 +156,10 @@ class ConveyorPlugin(MachinePlugin):
                 continue
             if value <= 0:
                 errors.append(f"'{key}' must be > 0")
+            elif key == "width" and value / 2 <= self._ROLLER_INSET:
+                errors.append(
+                    f"'width' must be > {2 * self._ROLLER_INSET} m: the rollers end inside it"
+                )
         if "ramp" in config:
             try:
                 if float(config["ramp"]) <= 0:
@@ -200,10 +207,11 @@ class ConveyorPlugin(MachinePlugin):
             g = child.geom(rail)
             g.size = [L, self._RAIL_OFF, 0.03]
             g.pos = [0.0, side * (W + self._RAIL_OFF), z]
-        # End rollers: at each belt end (radius fixed), cylinder half-length spans the width.
+        # End rollers: at each belt end (radius fixed), cylinder half-length spans the width, its
+        # ends just inside the belt's sides.
         for roller, side in (("roller_a", -1.0), ("roller_b", 1.0)):
             child.body(roller).pos = [side * L, 0.0, z]
-            child.geom(roller + "_geom").size = [self.roller_radius, W, 0.0]
+            child.geom(roller + "_geom").size = [self.roller_radius, W - self._ROLLER_INSET, 0.0]
         # Decorative feet: proportional scale (never inverts), so they stay under the belt corners.
         fx, fy = L / self._L0, W / self._W0
         for name in ("conv_leg_1", "conv_leg_2", "conv_leg_3", "conv_leg_4"):
@@ -317,7 +325,7 @@ class ConveyorPlugin(MachinePlugin):
         return self.goal("speed")
 
     def on_reset(self, ctx: SimContext) -> None:
-        # A speed set through the endpoint or the handle belongs to the episode that set it.
+        # A speed set through the endpoint or the handle belongs to the run that set it.
         super().on_reset(ctx)
         ctx.data.qpos[self._belt_qadr] = 0.0
         if self._pkg_qadr >= 0:

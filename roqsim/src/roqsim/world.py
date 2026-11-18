@@ -146,10 +146,13 @@ def _add_ground_and_light(spec: mujoco.MjSpec, size: float) -> None:
     light.specular = [0.1, 0.1, 0.1]
 
 
-#: Wall thickness (m) and height (m). Walls are tall enough to sit above a standing humanoid's lidar
-#: (~1.1 m) so the scan actually returns the walls rather than passing over them.
+#: Wall thickness (m) and height (m; the y walls are _CORNER_INSET lower). Walls are tall enough to
+#: sit above a standing humanoid's lidar (~1.1 m) so the scan actually returns the walls rather than
+#: passing over them.
 _WALL_THICKNESS = 0.1
 _WALL_HEIGHT = 2.0
+#: m: how far a wall's end and the y walls' tops stay inside the wall they meet at a corner.
+_CORNER_INSET = 0.001
 
 
 def _add_walls(spec: mujoco.MjSpec, half: float) -> None:
@@ -159,12 +162,17 @@ def _add_walls(spec: mujoco.MjSpec, half: float) -> None:
     t = _WALL_THICKNESS / 2.0
     hz = _WALL_HEIGHT / 2.0
     # Each wall is centred just outside +-half so its inner face is on the room boundary; the long
-    # half-extent runs the full side plus the thickness so the corners close.
+    # half-extent runs the full side plus the thickness, less _CORNER_INSET, so the corners close
+    # with each wall's end just inside the other's outer face. The y walls also top out
+    # _CORNER_INSET lower. Flush, the faces two walls share at a corner would flicker in a render
+    # (roqsim_assets.shared_faces).
+    long = half + 2 * t - _CORNER_INSET
+    hy = hz - _CORNER_INSET / 2
     walls = [
-        ("wall_px", [half + t, 0.0, hz], [t, half + 2 * t, hz]),
-        ("wall_nx", [-half - t, 0.0, hz], [t, half + 2 * t, hz]),
-        ("wall_py", [0.0, half + t, hz], [half + 2 * t, t, hz]),
-        ("wall_ny", [0.0, -half - t, hz], [half + 2 * t, t, hz]),
+        ("wall_px", [half + t, 0.0, hz], [t, long, hz]),
+        ("wall_nx", [-half - t, 0.0, hz], [t, long, hz]),
+        ("wall_py", [0.0, half + t, hy], [long, t, hy]),
+        ("wall_ny", [0.0, -half - t, hy], [long, t, hy]),
     ]
     for name, pos, size in walls:
         wall = spec.worldbody.add_geom()

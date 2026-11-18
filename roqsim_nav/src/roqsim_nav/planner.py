@@ -82,7 +82,7 @@ class GridPlanner:
         return True
 
     def forget_blockages(self) -> None:
-        """Drop every mark. Called on reset: an episode does not inherit the last one's obstacles."""
+        """Drop every mark. Called on reset: a run does not inherit the last one's obstacles."""
         self._marks.clear()
 
     def live_marks(self, now: float):

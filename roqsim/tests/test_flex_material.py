@@ -175,7 +175,9 @@ def test_a_plugin_built_flex_declared_before_the_material(tmp_path):
 def test_a_material_declared_before_its_flex_is_refused_naming_the_order(tmp_path):
     material = FlexMaterialPlugin({"flex": "built_beam", "young": 3.0e5})
     engine = _engine(tmp_path, [], plugins=[material, _BeamBuilder()])
-    with pytest.raises(PluginError, match=r"no flex named 'built_beam'.*YAML order.*after the component"):
+    with pytest.raises(
+        PluginError, match=r"no flex named 'built_beam'.*YAML order.*after the component"
+    ):
         engine.setup()
 
 
@@ -333,3 +335,40 @@ def test_flex_contact_softness_at_run_time_lets_a_block_sink(tmp_path, field, to
     nominal = lowest(_run(_engine(tmp_path, [], world=world), 1.0))
     softened = lowest(_run(_engine(tmp_path, [_override(field, to)], world=world), 1.0))
     assert nominal - softened > 0.005, (nominal, softened)
+
+
+_ROPE = """
+<flexcomp name="rope" type="grid" count="11 1 1" spacing=".02 .02 .02" dim="1" mass=".05"
+          radius=".003">
+  <edge equality="true"/>
+  <contact contype="0" conaffinity="0"/>
+  <pin id="0 1"/>
+</flexcomp>
+"""
+
+
+def test_young_bends_a_rope_its_mjcf_makes_elastic(tmp_path):
+    """MuJoCo integrates a rope's bending: the modulus set here changes where its free end hangs.
+
+    The rope is clamped at one end and starts straight. Written with a modulus, it has a twist joint
+    per edge and the discrete integrator; a second on, its tip is 0.868 m high at a negligible
+    modulus and 0.828 m at 1e7 Pa (measured on MuJoCo 4.0.0).
+    """
+    rope = _ROPE.replace("<edge", '<elasticity young="1"/><edge')
+    world = _world_mjcf(tmp_path, f'<body name="holder" pos="0 0 1">{rope}</body>')
+    soft = _engine(tmp_path, [], world=world)
+    stiff = _engine(tmp_path, [{"flex_material": {"flex": "rope", "young": 1.0e7}}], world=world)
+    soft_tip = _run(soft, 1.0)[-1, -1, 2]
+    stiff_tip = _run(stiff, 1.0)[-1, -1, 2]
+    assert stiff.integrator.resolved == "discrete"
+    assert stiff.ctx.model.joint("rope_twist_1").type == mujoco.mjtJoint.mjJNT_HINGE
+    assert soft_tip == pytest.approx(0.868, abs=0.003)
+    assert stiff_tip == pytest.approx(0.828, abs=0.003)
+
+
+def test_young_on_a_rope_its_mjcf_leaves_inelastic_is_refused(tmp_path):
+    """Set after parsing, the modulus would bend the rope with no twist joints to twist it."""
+    world = _world_mjcf(tmp_path, f'<body name="holder" pos="0 0 1">{_ROPE}</body>')
+    engine = _engine(tmp_path, [{"flex_material": {"flex": "rope", "young": 1.0e7}}], world=world)
+    with pytest.raises(PluginError, match=r"rope 'rope'.*twist joint per edge.*<elasticity young"):
+        engine.setup()

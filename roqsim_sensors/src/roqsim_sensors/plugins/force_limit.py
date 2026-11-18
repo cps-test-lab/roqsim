@@ -147,7 +147,7 @@ class ForceLimitPlugin(Plugin):
         return self._report
 
     def on_reset(self, ctx: SimContext) -> None:
-        # A trip carried into the next episode is a measurement of the previous one, and
+        # A trip carried into the next run is a measurement of the previous one, and
         # repetitions of a trial would not be repetitions.
         self._report = LimitReport()
 

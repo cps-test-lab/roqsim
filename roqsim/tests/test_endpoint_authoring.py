@@ -190,6 +190,7 @@ def test_the_engine_registers_after_configure():
 def test_a_stream_takes_the_fields_of_its_type_it_names():
     engine, base = _engine()
     with engine:
+        engine.reset()
         ep = _eps(engine)["cmd_vel"]
         assert ep.payload_type.cls is T.Twist
         ep.write({"vx": 0.2, "wz": -0.1})
@@ -239,6 +240,7 @@ def test_a_custom_dataclass_is_described_and_checked_like_a_core_type():
 
     engine, base = _engine()
     with engine:
+        engine.reset()
         follow = _eps(engine)["follow"]
         refused = follow.write({"plan": {"waypoints": [[0, 0]], "speed": 1.0}})
         with pytest.raises(endpoint.ParameterError, match=r"must have shape \(\*, 3\)"):

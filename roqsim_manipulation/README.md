@@ -40,6 +40,34 @@ the timed knots to `ArmHandle.follow_trajectory` and closes the gripper with `Ar
 `roqsim arm margins` reads a recording and reports each named pose's margins and the run's peak
 torques. The module docstrings carry the reasoning (`python -m pydoc roqsim_manipulation.planning`).
 
+## The Franka Research 3's own side
+
+`roqsim_manipulation.franka` holds what a simulated Franka Research 3 (the `fr3` model) needs of the
+robot itself. Each value is held to Franka's published files, never typed from them:
+
+- `robot_model` is the robot's own model of the arm: the nominal arm plus the configured end effector
+  and load.
+- `limits` holds the joint and Cartesian limits libfranka enforces, including its
+  position-dependent velocity limits.
+- `protocol` is the Franka Control Interface's wire format at protocol version 10, byte for byte
+  as libfranka-common defines it.
+- `server` is the robot's side of that protocol on the network: the TCP command port and the UDP
+  state stream, in lock-step with the physics.
+- `core` is the robot's controller: the motion-generator checks, the internal impedance
+  controllers, the reflexes and the external-torque estimate. The error flags it never raises are
+  `NOT_RAISED`.
+
+The `franka_fci` plugin, a component of an `fr3`'s `spawn_arm` entry, runs the core on the physics
+and, with `bind:` set, serves it to libfranka over that protocol; in process, the handle
+`franka_fci:<arm>` runs a law with libfranka's field names. `docs/interfaces.rst` describes the arm
+under libfranka.
+
+The Franka files the model is built from and checked against are vendored under
+`tests/upstream/franka/`, pinned by commit and sha256 in `SOURCES.toml`. In a roqsim checkout,
+`make franka-upstream-check` verifies them offline, and `make franka-upstream` fetches them again at
+the pins. It also writes the URDF the simulated robot serves, and the digest of Franka's visual
+meshes that the `fr3` model's tests read.
+
 ## Run standalone (no ROS)
 
 The demo worlds ship with the models, in `roqsim_manipulation_assets`:

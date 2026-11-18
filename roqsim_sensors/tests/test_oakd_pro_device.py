@@ -50,7 +50,6 @@ def _compiled(model, pos, rpy):
     )
     engine = Engine(cfg)
     engine.setup()
-    mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
     return engine
 
 

@@ -44,7 +44,10 @@ CASES = {
     # Returns off base_link, which carries the 12-DoF model's welded shoulders and arms: the field
     # reaches -55 deg below the horizon, and the arms hang inside it.
     "unitree_g1": (0.002, "robot.mid360.livox_mid360", {"base_link": 777}),
-    # The same mount riding the waist chain: shoulders, wrists and grippers below the head.
+    # The same mount riding the waist chain: shoulders, wrists and grippers below the head. The
+    # finger counts are the ones mj_multiRay gives, whose culling misses a mesh that mj_ray hits on
+    # a fraction of the rays (112 of this fan's 20160, most of them on the fingers), so they move
+    # when a MuJoCo release changes that set.
     "unitree_g1_dex1": (
         0.002,
         "robot.mid360.livox_mid360",
@@ -58,9 +61,9 @@ CASES = {
             "left_dex1_base_link": 55,
             "right_dex1_base_link": 56,
             "left_dex1_finger_link_1": 16,
-            "right_dex1_finger_link_1": 9,
-            "left_dex1_finger_link_2": 4,
-            "right_dex1_finger_link_2": 1,
+            "right_dex1_finger_link_1": 13,
+            "left_dex1_finger_link_2": 12,
+            "right_dex1_finger_link_2": 14,
         },
     ),
     # The waist is a jointed link, not the pelvis, so its surface 0.062 m out around the whole fan is
@@ -98,7 +101,9 @@ RANGE_SENSORS = ("LidarPlugin", "LivoxMid360Plugin")
 
 def _spawn(model: str, timestep: float) -> Engine:
     world = {
-        "sim": {"timestep": timestep},
+        # The CPU cast, which this test repeats from the plugin's own rays: where a GPU backend
+        # is installed, `auto` would put a 3D lidar on it, whose ties name another geom.
+        "sim": {"timestep": timestep, "raycaster": "cpu"},
         "components": [{"spawn_robot": {"model": model, "prefix": PREFIX}, "name": "robot"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))

@@ -137,9 +137,16 @@ def test_a_variable_set_outside_the_prefix_is_not_ours():
 
 def test_every_roqsim_name_in_the_repository_is_registered():
     """A name the code or the docs spell is one roqsim reads; one the registry lacks would be refused."""
+    from installed_requirements import not_testable
+
     seen: dict[str, Path] = {}
     for pattern in SCANNED:
         for path in REPO.glob(pattern):
+            rel = path.relative_to(REPO)
+            # A package left out of this run (tools/test_packages.py) registers its names through an
+            # entry point that is not installed here; they are checked in a run where it is.
+            if len(rel.parts) > 1 and not_testable(rel.parts[0]):
+                continue
             for name in _NAME.findall(path.read_text(errors="replace")):
                 seen.setdefault(name, path.relative_to(REPO))
     assert seen, "the scan found no ROQSIM_* name at all; the globs no longer match the tree"

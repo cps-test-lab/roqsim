@@ -376,6 +376,9 @@ class SimConfig:
     unresolved: list[tuple[str, str]] = field(default_factory=list)
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
+    #: The world YAML this config was loaded from (``None`` for one built from a dict): what a message
+    #: names when it tells the user a command to run on the world.
+    source: Path | None = None
     #: ``sim`` values the engine settled at setup where the document left the choice to it --
     #: ``integrator``, which ``auto`` resolves once the model's flexes are known. Overlaid on ``sim``
     #: in :meth:`as_record`, so a run's provenance states what ran rather than what was delegated.
@@ -751,12 +754,14 @@ def load_config(
     raw = _resolve_inheritance(raw, path.parent, where=str(path))
     if transport:
         raw = with_transport(raw, **transport)
-    return _from_dict(
+    cfg = _from_dict(
         raw,
         base_dir=path.parent,
         assignments=assignments_from_mapping(overrides or {}),
         where=str(path),
     )
+    cfg.source = path
+    return cfg
 
 
 def world_sources(path: str | Path, *, skipped: list | None = None) -> list[Path]:
@@ -1245,6 +1250,8 @@ SIM_KEYS = frozenset(
         "integrator",
         "name",
         "pacing",
+        "raycaster",
+        "raycasters",
         "render",
         "renderer",
         "renderers",
@@ -1432,6 +1439,43 @@ def validate_render(sim: dict, base_dir: Path | None) -> None:
             raise PluginError("; ".join(f"sim.renderers.{name}: {e}" for e in errors))
 
 
+def validate_raycast(sim: dict, base_dir: Path | None) -> None:
+    """Refuse a ``sim.raycaster`` / ``sim.raycasters`` a run could not use, at load.
+
+    Every backend the world names is resolved (an unknown one lists those installed) and its
+    settings block validated; ``auto`` and ``cpu`` are always there. Whether a backend can *run*
+    here (a GPU, a driver) is decided when the first sensor takes it: a named one fails the load
+    naming that sensor, and ``auto`` casts on the CPU, saying why.
+    """
+    from .raycast import AUTO_RAYCASTER, CPU_RAYCASTER  # noqa: PLC0415
+    from .registry import resolve_raycaster  # noqa: PLC0415 -- only worlds that name one pay
+
+    raycaster = sim.get("raycaster")
+    if raycaster is not None and (not isinstance(raycaster, str) or not raycaster):
+        raise PluginError(f"sim.raycaster: a raycaster name, got {raycaster!r}")
+    blocks = sim.get("raycasters")
+    if blocks is not None and not isinstance(blocks, dict):
+        raise PluginError(
+            f"sim.raycasters: a mapping of raycaster name to its settings, got {blocks!r}"
+        )
+    named = dict(blocks or {})
+    if raycaster is not None:
+        named.setdefault(raycaster, None)
+    for name, settings in named.items():
+        if name in (CPU_RAYCASTER, AUTO_RAYCASTER) and settings is None:
+            continue
+        if name == AUTO_RAYCASTER:
+            raise PluginError(
+                "sim.raycasters.auto: auto takes no settings; a backend's own block (such as "
+                "sim.raycasters.mjwarp) holds what auto reads of it"
+            )
+        if settings is not None and not isinstance(settings, dict):
+            raise PluginError(f"sim.raycasters.{name}: a mapping of settings, got {settings!r}")
+        errors = resolve_raycaster(str(name), base_dir).validate_config(settings or {})
+        if errors:
+            raise PluginError("; ".join(f"sim.raycasters.{name}: {e}" for e in errors))
+
+
 def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
     """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
 
@@ -1517,6 +1561,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None, where: str | None = 
         _validate_pacing(raw["sim"]["pacing"])
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
     validate_render(raw.get("sim") or {}, base_dir)
+    validate_raycast(raw.get("sim") or {}, base_dir)
 
     component_assignments = [a for a in assignments if _is_component(a)]
     plugins = flatten_specs(

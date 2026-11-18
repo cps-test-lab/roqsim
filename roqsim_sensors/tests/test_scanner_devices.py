@@ -411,7 +411,6 @@ def test_scan_site_is_the_manifest_frame_at_the_declared_scan_plane_offset(devic
     # In the compiled world: the scan site is the frame site spawn_sensor adds, moved by the offset.
     engine = _engine(device)
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
     scan = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "scan")
     framed = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, FRAME_ID)
     assert scan >= 0 and framed >= 0

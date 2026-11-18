@@ -35,7 +35,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
+from .capture import (
+    STATE_SPEC,
+    STATE_SPEC_WITHOUT_PLASTIC,
+    RecordingError,
+    RecordingNotFoundError,
+    record_dtype,
+)
 from .document import check_version
 from .mcap_format import (
     CHANNEL_CLOCK,
@@ -154,6 +160,18 @@ class Recording:
 
     def __len__(self) -> int:
         return len(self._samples)
+
+    @property
+    def run(self) -> str:
+        """The run this is a recording of, by name (:mod:`roqsim.runs`): with the seed, the key of
+        every draw the live run made."""
+        run = self.meta.get("run")
+        if not isinstance(run, str) or not run:
+            raise RecordingError(
+                f"{self.path} names no run, which a v{self.READER_VERSION} recording does: it "
+                f"cannot say which draws its run made. Re-record the run."
+            )
+        return run
 
     @property
     def times(self) -> np.ndarray:
@@ -325,7 +343,7 @@ class Recording:
     def events(self) -> list[dict]:
         """Every event the run's plugins emitted (:mod:`roqsim.events`), in the order they happened.
 
-        Each is ``{"t", "episode", "source", "event", ...}`` with the fields its source added. A
+        Each is ``{"t", "run", "source", "event", ...}`` with the fields its source added. A
         recording made before the channel existed has none.
         """
         return [json.loads(m.data) for m in self.event_messages]
@@ -395,10 +413,10 @@ class Recording:
         # not applying it made every replayed scan differ while looking perfectly plausible.
         if ctx is not None and self.meta.get("seed") is not None:
             ctx.seed = int(self.meta["seed"])
-        # The episode is half of the same key, and restoring one without the other reproduces the
-        # bug in miniature: the right seed at the wrong episode draws noise that never happened.
+        # The run is half of the same key, and restoring one without the other reproduces the
+        # bug in miniature: the right seed at the wrong run draws noise that never happened.
         if ctx is not None:
-            ctx.episode = int(self.meta.get("episode") or 0)
+            ctx.run = self.run
         self._model, self._ctx, self._data, self._view = model, ctx, data, view
         self._buf = np.empty(int(self.meta["state_size"]))
         return model, ctx
@@ -426,7 +444,14 @@ class Recording:
         told the world does not match when the world is fine and the format is not.
         """
         spec = int(self.meta.get("state_spec", 0))
-        if spec != STATE_SPEC:
+        plastic = mujoco.mj_stateSize(model, int(mujoco.mjtState.mjSTATE_PLASTIC))
+        if spec == STATE_SPEC_WITHOUT_PLASTIC and plastic:
+            raise RecordingError(
+                f"{self.path} was recorded without the plastic state, and {ref} carries {plastic} "
+                "values of it (an elastic rope's reference frames, or an elasto-plastic spring's or "
+                "flex's yield), so it cannot be replayed faithfully. Re-record it."
+            )
+        if spec not in (STATE_SPEC, STATE_SPEC_WITHOUT_PLASTIC):
             extra = ""
             if spec == int(mujoco.mjtState.mjSTATE_FULLPHYSICS):
                 extra = (
