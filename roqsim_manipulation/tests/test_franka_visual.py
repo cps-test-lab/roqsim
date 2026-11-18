@@ -163,9 +163,8 @@ def _first_hits(model, data, rng, rays: int) -> tuple[np.ndarray, np.ndarray]:
 def test_the_colliders_stand_where_the_arm_is_drawn(model):
     """Along rays from outside, a contact meets a collider within 20 mm of the drawn surface.
 
-    A link's whole STL collides as one hull, which bridges the elbow's and the wrist's recesses: a
-    third of such rays met a collider more than 20 mm proud of the arm. Where franka_description's
-    STL leaves a drawn part out (the base's rear strip, a recess on links 3 and 4), the ray meets
+    A link's whole STL as one hull would bridge the elbow's and the wrist's recesses, so each link
+    collides as convex pieces. Where franka_description's STL leaves a drawn part out (the base's rear strip, a recess on links 3 and 4), the ray meets
     the drawing first; that stays a small share.
     """
     data = mujoco.MjData(model)

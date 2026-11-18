@@ -54,13 +54,16 @@ class RobotModel:
         for key in list(spec.keys):
             spec.delete(key)
         self.model = spec.compile()
+        self._load = self.model.body("__configured_load").id
+        # Compiled with its inertia at its origin, the load body is marked as sharing its frame,
+        # and MuJoCo then ignores body_ipos and body_iquat: set_load writes both.
+        self.model.body_sameframe[self._load] = 0
         self.model.opt.gravity[:] = gravity_in_base
         self.model.dof_armature[:] = 0.0
         self.model.dof_damping[:] = 0.0
         self.model.dof_frictionloss[:] = 0.0
         self.data = mujoco.MjData(self.model)
         self._still = mujoco.MjData(self.model)  # the same pose at rest: its bias is gravity alone
-        self._load = self.model.body("__configured_load").id
         self._flange = self.model.body("fr3_link8").id
         self.nv = self.model.nv
         self.set_load(0.0, np.zeros(3), np.zeros((3, 3)))

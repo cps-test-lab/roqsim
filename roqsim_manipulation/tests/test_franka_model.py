@@ -89,6 +89,36 @@ def test_kinematics_mass_matrix_and_gravity_match_pinocchio(pinocchio_model):
         assert np.allclose(robot.gravity(), pin.computeGeneralizedGravity(pm, pd, q), atol=1e-6)
 
 
+def test_a_configured_load_off_the_flange_matches_pinocchio(pinocchio_model):
+    """Two parts, both off the flange's axis and one with a rotated inertia, as setLoad and Desk
+    configure them: gravity, mass matrix and Coriolis torque are those of the arm carrying them."""
+    from roqsim_manipulation.franka.robot_model import combine_loads
+
+    pm, _ = pinocchio_model
+    R = pin.rpy.rpyToMatrix(0.3, -0.5, 0.8)
+    parts = [
+        (0.7, np.array([0.02, -0.03, 0.05]), np.diag([2e-3, 1e-3, 3e-3])),
+        (1.2, np.array([0.08, 0.0, 0.11]), R @ np.diag([4e-3, 6e-3, 2e-3]) @ R.T),
+    ]
+    robot = RobotModel(MJCF, np.array([0.0, 0.0, -9.81]))
+    robot.set_load(*combine_loads(parts))
+
+    loaded = pin.Model(pm)
+    frame = loaded.frames[loaded.getFrameId("fr3_link8")]
+    for m, c, inertia in parts:
+        loaded.appendBodyToJoint(frame.parentJoint, pin.Inertia(m, c, inertia), frame.placement)
+    ld = loaded.createData()
+    rng = np.random.default_rng(11)
+    for _ in range(10):
+        q, dq = _q(rng), rng.uniform(-1.0, 1.0, 7)
+        robot.update(q, dq)
+        g = pin.computeGeneralizedGravity(loaded, ld, q)
+        assert np.allclose(robot.gravity(), g, atol=1e-5)
+        assert np.allclose(robot.mass(), pin.crba(loaded, ld, q), atol=1e-6)
+        coriolis = pin.rnea(loaded, ld, q, dq, np.zeros(7)) - g
+        assert np.allclose(robot.coriolis(), coriolis, atol=1e-5)
+
+
 def test_the_served_urdf_is_upstreams():
     served = MJCF.with_suffix(".robot_model.urdf").read_text(encoding="utf-8")
     assert served == text(DESCRIPTION / "fr3_no_prefix.urdf")

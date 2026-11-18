@@ -10,9 +10,10 @@ visuals beside it (``fr3_visual.json``, ``test_franka_visual.py``), so a rebuild
 them.
 
 Passed through from the URDF by MuJoCo's own URDF compiler: every link offset, mass, centre of mass,
-full inertia tensor, joint axis and position limit, the effort limit (as the actuator's force range),
-and the flange (``fr3_link8``, 0.107 m beyond link 7). The accelerometer frames (massless, no
-geometry) are dropped.
+full inertia tensor, joint axis and position limit, the effort limit (as the joint's
+``actuatorfrcrange``), and the flange (``fr3_link8``, 0.107 m beyond link 7). The accelerometer
+frames (massless, no geometry) are dropped. The motors' force range is ``EFFORT``, which
+``test_franka_model.py`` holds to the URDF's effort limits.
 
 Not from the URDF, and said so in ``CREDITS.txt``:
 
