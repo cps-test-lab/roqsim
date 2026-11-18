@@ -253,6 +253,8 @@ class FrankaCore:
         self.m_load = float(load["mass"]) if load else 0.0
         self.F_x_Cload = np.asarray(load.get("com", [0, 0, 0]), float)
         self.I_load = np.asarray(load.get("inertia", np.zeros(9)), float).reshape(3, 3)
+        if not all(np.all(np.isfinite(v)) for v in (self.m_load, self.F_x_Cload, self.I_load)):
+            raise ValueError("franka_fci: load: mass, com and inertia must be finite")
         self.NE_T_EE = np.eye(4)
         self.EE_T_K = np.eye(4)
         self.observer_gain = float(observer_gain)
@@ -286,24 +288,36 @@ class FrankaCore:
         self.m_total, self.F_x_Ctotal, self.I_total = m, c, inertia
         self.model.set_load(m, c, inertia)
 
-    def set_load(self, mass: float, com, inertia) -> None:
-        self.m_load = float(mass)
-        self.F_x_Cload = np.asarray(com, float)
-        self.I_load = np.asarray(inertia, float).reshape(
-            3, 3
-        )  # symmetric: row- or column-major alike
+    def set_load(self, mass: float, com, inertia) -> bool:
+        """The configured load; refused (``False``) unless every value is finite."""
+        com = np.asarray(com, float)
+        inertia = np.asarray(inertia, float).reshape(3, 3)  # symmetric: row- or column-major alike
+        if not (np.isfinite(mass) and np.all(np.isfinite(com)) and np.all(np.isfinite(inertia))):
+            return False
+        self.m_load, self.F_x_Cload, self.I_load = float(mass), com, inertia
         self._apply_load()
+        return True
 
-    def set_ee(self, NE_T_EE) -> None:
-        self.NE_T_EE = np.asarray(NE_T_EE, float).reshape(4, 4)
+    def set_ee(self, NE_T_EE) -> bool:
+        """``setEE``'s frame; refused (``False``) unless every value is finite."""
+        T = np.asarray(NE_T_EE, float).reshape(4, 4)
+        if not np.all(np.isfinite(T)):
+            return False
+        self.NE_T_EE = T
+        return True
 
-    def set_k(self, EE_T_K) -> None:
-        self.EE_T_K = np.asarray(EE_T_K, float).reshape(4, 4)
+    def set_k(self, EE_T_K) -> bool:
+        """``setK``'s frame; refused (``False``) unless every value is finite."""
+        T = np.asarray(EE_T_K, float).reshape(4, 4)
+        if not np.all(np.isfinite(T)):
+            return False
+        self.EE_T_K = T
+        return True
 
     def set_joint_impedance(self, K) -> bool:
         K = np.asarray(K, float)
         lo, hi = limits.JOINT_IMPEDANCE_RANGE
-        if K.shape != (7,) or np.any(K < lo) or np.any(K > hi):
+        if K.shape != (7,) or not np.all(np.isfinite(K)) or np.any(K < lo) or np.any(K > hi):
             return False
         self.K_theta = K
         return True
@@ -314,6 +328,7 @@ class FrankaCore:
         rl, rh = limits.CARTESIAN_ROTATIONAL_STIFFNESS_RANGE
         if (
             K.shape != (6,)
+            or not np.all(np.isfinite(K))
             or np.any(K[:3] < tl)
             or np.any(K[:3] > th)
             or np.any(K[3:] < rl)

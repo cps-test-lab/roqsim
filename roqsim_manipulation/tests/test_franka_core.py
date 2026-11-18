@@ -488,6 +488,55 @@ def test_a_dropped_clients_move_outcome_does_not_reach_the_next_client():
         engine.shutdown()
 
 
+def test_a_setting_that_is_not_finite_is_refused_and_the_run_goes_on():
+    """NaN in a client's setting is refused as an invalid argument: taken, it would stop the
+    physics (a load's inertia, a frame) or make MuJoCo reset its data unseen (an impedance)."""
+    from roqsim_manipulation.franka import protocol as P
+
+    address = "127.0.0.12"
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "left_"},
+                "name": "left",
+                "components": [{"franka_fci": {"collision_behavior": CB, "bind": address}}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    core = _handle(engine).core
+    K_theta, K_x = core.K_theta.copy(), core.K_x.copy()
+    nan = float("nan")
+    eye = list(np.eye(4).T.reshape(16))
+    requests = [
+        (P.Command.SET_LOAD, P.SET_LOAD_REQUEST.pack(1.0, 0.0, 0.0, 0.1, *([nan] * 9))),
+        (P.Command.SET_LOAD, P.SET_LOAD_REQUEST.pack(nan, 0.0, 0.0, 0.1, *([0.0] * 9))),
+        (P.Command.SET_NE_TO_EE, P.SET_NE_TO_EE_REQUEST.pack(*([nan] + eye[1:]))),
+        (P.Command.SET_EE_TO_K, P.SET_EE_TO_K_REQUEST.pack(*([nan] + eye[1:]))),
+        (P.Command.SET_JOINT_IMPEDANCE, P.SET_JOINT_IMPEDANCE_REQUEST.pack(*([nan] * 7))),
+        (P.Command.SET_CARTESIAN_IMPEDANCE, P.SET_CARTESIAN_IMPEDANCE_REQUEST.pack(*([nan] * 6))),
+    ]
+    tcp, udp = _connect(address, P)
+    try:
+        for command_id, (command, payload) in enumerate(requests, start=2):
+            tcp.sendall(P.HEADER.pack(command, command_id, P.HEADER.size + len(payload)) + payload)
+            (c, i, _), (status,) = _read_reply(tcp, P.HEADER, P.STATUS_RESPONSE, engine)
+            assert (c, i) == (command, command_id)
+            assert status == P.GetterSetterStatus.INVALID_ARGUMENT_REJECTED, command
+        _steps(engine, 5)
+        assert core.m_load == 0.0 and np.array_equal(core.NE_T_EE, np.eye(4))
+        assert np.array_equal(core.EE_T_K, np.eye(4))
+        assert np.array_equal(core.K_theta, K_theta) and np.array_equal(core.K_x, K_x)
+    finally:
+        tcp.close()
+        udp.close()
+        engine.shutdown()
+
+
 def test_the_handle_takes_no_settings_while_a_motion_runs():
     """As the robot refuses a setting over the network while it moves, the handle raises."""
     engine = _engine()

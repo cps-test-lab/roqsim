@@ -108,12 +108,12 @@ class FrankaHandle:
     control: Callable[..., InProcessMotion]
     stop: Callable[[], None]
     recover: Callable[[], bool]
-    set_load: Callable[..., None]
+    set_load: Callable[..., bool]
     set_collision_behavior: Callable[[dict], bool]
     set_cartesian_impedance: Callable[[list], bool]
     set_joint_impedance: Callable[[list], bool]
-    set_k: Callable[[list], None]
-    set_ee: Callable[[list], None]
+    set_k: Callable[[list], bool]
+    set_ee: Callable[[list], bool]
     core: FrankaCore
 
 
@@ -495,7 +495,7 @@ class FrankaFCIPlugin(Plugin):
             if self._inproc is not None and ending.command_id is None:
                 self._inproc.ending = ending
                 self._inproc = None
-            elif self.server is not None:
+            elif self.server is not None and ending.command_id is not None:
                 self.server.reply(
                     Command.MOVE,
                     ending.command_id,
@@ -573,12 +573,18 @@ class FrankaFCIPlugin(Plugin):
                 else bad
             )
         elif c == Command.SET_EE_TO_K:
-            core.set_k(np.asarray(SET_EE_TO_K_REQUEST.unpack(p)).reshape(4, 4).T)
+            status = (
+                ok if core.set_k(np.asarray(SET_EE_TO_K_REQUEST.unpack(p)).reshape(4, 4).T) else bad
+            )
         elif c == Command.SET_NE_TO_EE:
-            core.set_ee(np.asarray(SET_NE_TO_EE_REQUEST.unpack(p)).reshape(4, 4).T)
+            status = (
+                ok
+                if core.set_ee(np.asarray(SET_NE_TO_EE_REQUEST.unpack(p)).reshape(4, 4).T)
+                else bad
+            )
         elif c == Command.SET_LOAD:
             v = SET_LOAD_REQUEST.unpack(p)
-            core.set_load(v[0], v[1:4], np.asarray(v[4:13]).reshape(3, 3))
+            status = ok if core.set_load(v[0], v[1:4], np.asarray(v[4:13]).reshape(3, 3)) else bad
         else:  # SetGuidingMode: guiding is not served
             status = busy
         replies.append((c, req.command_id, STATUS_RESPONSE.pack(status)))
