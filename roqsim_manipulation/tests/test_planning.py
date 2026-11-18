@@ -378,3 +378,29 @@ def test_roqsim_arm_margins_says_n_a_for_a_measure_the_arm_has_none_of():
     from roqsim_manipulation.cli.margins import _num
 
     assert (_num(None, ".2f"), _num(0.123, ".2f")) == ("n/a", "0.12")
+
+
+_ONE_LINK = """
+<mujoco>
+  <worldbody>
+    <body name="link">
+      <joint name="j" type="hinge" axis="0 1 0"/>
+      <inertial pos="0 0 0" mass="2" diaginertia="0.01 0.01 0.01"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_a_payload_weighs_where_it_is_held_on_a_body_with_its_mass_at_its_frame():
+    """A body compiled with its centre of mass at its frame is one MuJoCo marks as sharing it;
+    a payload 0.5 m out along x still loads the joint by its weight times 0.5 m, and the world's
+    model is left as it was."""
+    model = mujoco.MjModel.from_xml_string(_ONE_LINK)
+    body = model.body("link").id
+    assert model.body_sameframe[body] != 0, "compiled with its mass at its frame"
+    dyn = ArmDynamics(model, [model.joint("j").id], payload=(body, 1.0, [0.5, 0.0, 0.0]))
+    # Gravity along -z on 1 kg at +x turns the hinge about +y positively; the drive holds it
+    # with -m g x.
+    assert dyn.torque([0.0])[0] == pytest.approx(-1.0 * 9.81 * 0.5, rel=1e-9)
+    assert model.body_sameframe[body] != 0 and model.body_mass[body] == pytest.approx(2.0)
