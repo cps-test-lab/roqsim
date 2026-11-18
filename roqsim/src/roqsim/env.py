@@ -58,6 +58,7 @@ VARIABLES: dict[str, str] = {
     "ROQSIM_RECORD_TRACKS": "bodies and joints the recording's decoded channels carry",
     "ROQSIM_ROS": "the scenario adapter publishes the world over ROS 2",
     "ROQSIM_SCENE_EXPORT_DIR": "the scenario adapter exports the built world here, as scene.glb",
+    "ROQSIM_RUN": "names the first run of the scenario adapter or roqsim sim (roqsim.runs)",
     "ROQSIM_SEED": "the scenario adapter's noise seed",
     "ROQSIM_SIM_CONTROL": "the scenario adapter also serves the simulation_interfaces control plane",
     "ROQSIM_TF_NAMESPACE": "the scenario adapter publishes TF under this namespace",

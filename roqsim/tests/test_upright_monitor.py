@@ -184,7 +184,7 @@ def test_settle_zero_judges_from_the_first_step():
 
 
 def test_a_reset_forgets_the_verdict_and_the_reference():
-    """A repetition compares against its own start, like every other per-episode state."""
+    """A repetition compares against its own start, like every other per-run state."""
     ctx = _ctx()
     plugin = _plugin(ctx)
     ctx.data.qpos[3:7] = [math.cos(math.pi / 4), math.sin(math.pi / 4), 0.0, 0.0]
@@ -216,7 +216,7 @@ def test_a_fallen_body_stays_fallen():
     report = _run(ctx, plugin, 0.05)
 
     assert report.upright is False
-    assert report.tilt_deg < 5.0, "the CURRENT tilt is small; the verdict is about the episode"
+    assert report.tilt_deg < 5.0, "the CURRENT tilt is small; the verdict is about the run"
 
 
 def test_latch_false_reports_the_current_state():

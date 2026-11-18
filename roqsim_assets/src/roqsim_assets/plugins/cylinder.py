@@ -275,7 +275,7 @@ class CylinderPlugin(Plugin):
             if jid < 0:
                 raise RuntimeError(f"cylinder: free joint {self._base_joint!r} not found")
             adr = int(ctx.model.jnt_qposadr[jid])
-            # Remember the spawn pose so on_reset re-seats the cylinder between episodes instead of
+            # Remember the spawn pose so on_reset re-seats the cylinder between runs instead of
             # leaving it wherever the last trial pushed (or teleported) it.
             self._spawn_qpos = [adr, *(float(v) for v in ctx.model.qpos0[adr : adr + 7])]
 

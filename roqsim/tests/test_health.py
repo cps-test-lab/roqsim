@@ -97,7 +97,7 @@ def test_the_recording_is_readable_while_the_recorder_is_still_open(tmp_path, mo
     )
 
     class Ctx:
-        pass
+        run = "#0"
 
     ctx = Ctx()
     ctx.model = model
@@ -968,7 +968,7 @@ def test_the_recorder_writes_the_roster_and_follows_a_change(tmp_path, monkeypat
     )
 
     class Ctx:
-        pass
+        run = "#0"
 
     ctx = Ctx()
     ctx.model = model
@@ -1011,7 +1011,7 @@ def test_the_recorder_needs_no_registry(tmp_path, monkeypatch):
     )
 
     class Ctx:
-        pass
+        run = "#0"
 
     ctx = Ctx()
     ctx.model = model

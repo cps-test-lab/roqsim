@@ -9,8 +9,9 @@ A. set up, reset, record the per-trial state;
 B. use it -- write every ``in`` endpoint of the world, step, call the case's setters (a
    controller's case switches every controller), step -- then reset and record again.
 
-A trial that used a plugin must leave nothing behind, so A and B must be equal. The episode counter
-is put back before the second reset, so a draw keyed on it is the same draw in both.
+A trial that used a plugin must leave nothing behind, so A and B must be equal. Both resets start
+the same run, and the reset count is put back before the second, so a draw keyed on the run and a
+plugin keyed on the reset see the same in both.
 
 **What is compared.** The plugin's instance attributes, followed into the objects it owns (roqsim
 types, dataclasses, containers, numpy arrays, generators' bit state), plus two things a plugin can
@@ -816,7 +817,7 @@ _FCI_MESSAGE_ID = (
 EXEMPT: dict[str, dict[str | None, str]] = {
     "px4_sitl": {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
-        "keeps its link, arming and last controls across the episode boundary to match it",
+        "keeps its link, arming and last controls across the run boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
     "fzi_cartesian_controllers": {
@@ -1050,7 +1051,7 @@ def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
     try:
         if not _plugins(engine, name):
             pytest.fail(f"the world for {name!r} does not contain it")
-        engine.reset()
+        engine.reset(run="trial")
         configured = _state(engine, name)
 
         _write_every_in_endpoint(engine)
@@ -1061,8 +1062,8 @@ def test_a_used_plugin_resets_to_its_configured_state(name, tmp_path):
         for _ in range(STEPS // 2):
             engine.step()
 
-        engine.ctx.episode -= 1
-        engine.reset()
+        engine.ctx.reset_count -= 1
+        engine.reset(run="trial")
         used = _state(engine, name)
     finally:
         engine.shutdown()

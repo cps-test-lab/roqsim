@@ -136,7 +136,7 @@ def test_the_settle_window_ignores_the_reset_transient():
 
 
 def test_a_trip_does_not_survive_a_reset():
-    """An offset carried into the next episode is a measurement of the previous one."""
+    """An offset carried into the next run is a measurement of the previous one."""
     m = _monitor(ft=_Wrench(force=(0.0, 0.0, -99.0)))
     m.post_step(_Ctx())
     assert m.read_state().tripped

@@ -85,7 +85,7 @@ class WalkerOutput(NavOutput):
         ``dt = 0`` rather than a frame's worth, and the difference is visible. Stopping happens on
         reset -- right after the owning plugin has posed the skeleton at its start -- so animating a
         frame here would advance the idle clip and settle the body a millimetre off the pose every
-        previous episode began from. It also happens when traffic blocks the walker, where holding
+        previous run began from. It also happens when traffic blocks the walker, where holding
         the current pose is what standing still means; the blendspace eases into idle on the next
         real tick because the speed it is driven by has fallen to zero.
         """

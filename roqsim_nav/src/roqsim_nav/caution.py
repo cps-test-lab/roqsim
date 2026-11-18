@@ -188,7 +188,7 @@ class CautionProbe:
         """Resolve ``ignore`` once every entity in the world has registered itself.
 
         Called from the navigator's ``on_reset``, which is the first point at which the whole
-        document has been configured. Idempotent, so the repeat on every later episode is free.
+        document has been configured. Idempotent, so the repeat on every later run is free.
         """
         if self._resolved:
             return
@@ -258,7 +258,7 @@ class CautionProbe:
         self.blocker_points = []
         if self._clear_since is None:
             # Never blocked, so there is nothing to settle after. Without this a mover holds for
-            # `clear_time` at the start of every episode -- the timer would start from a cold
+            # `clear_time` at the start of every run -- the timer would start from a cold
             # `None` and read as "the way only just cleared" when in fact it was never shut.
             self._clear_since = now
             if not self._was_blocked:

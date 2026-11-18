@@ -162,6 +162,18 @@ class Recording:
         return len(self._samples)
 
     @property
+    def run(self) -> str:
+        """The run this is a recording of, by name (:mod:`roqsim.runs`): with the seed, the key of
+        every draw the live run made."""
+        run = self.meta.get("run")
+        if not isinstance(run, str) or not run:
+            raise RecordingError(
+                f"{self.path} names no run, which a v{self.READER_VERSION} recording does: it "
+                f"cannot say which draws its run made. Re-record the run."
+            )
+        return run
+
+    @property
     def times(self) -> np.ndarray:
         """Simulated seconds, one per sample -- the axis every selector works in."""
         return self._samples["t"]
@@ -331,7 +343,7 @@ class Recording:
     def events(self) -> list[dict]:
         """Every event the run's plugins emitted (:mod:`roqsim.events`), in the order they happened.
 
-        Each is ``{"t", "episode", "source", "event", ...}`` with the fields its source added. A
+        Each is ``{"t", "run", "source", "event", ...}`` with the fields its source added. A
         recording made before the channel existed has none.
         """
         return [json.loads(m.data) for m in self.event_messages]
@@ -401,10 +413,10 @@ class Recording:
         # not applying it made every replayed scan differ while looking perfectly plausible.
         if ctx is not None and self.meta.get("seed") is not None:
             ctx.seed = int(self.meta["seed"])
-        # The episode is half of the same key, and restoring one without the other reproduces the
-        # bug in miniature: the right seed at the wrong episode draws noise that never happened.
+        # The run is half of the same key, and restoring one without the other reproduces the
+        # bug in miniature: the right seed at the wrong run draws noise that never happened.
         if ctx is not None:
-            ctx.episode = int(self.meta.get("episode") or 0)
+            ctx.run = self.run
         self._model, self._ctx, self._data, self._view = model, ctx, data, view
         self._buf = np.empty(int(self.meta["state_size"]))
         return model, ctx

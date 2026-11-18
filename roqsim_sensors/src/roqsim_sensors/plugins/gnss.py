@@ -44,7 +44,7 @@ metres over a minute. The bias here is an Ornstein-Uhlenbeck process with correl
 ``bias_time``; the white term rides on top.
 
 **Randomness comes from ``ctx.rng_for``**, like every other stochastic plugin, so the fix is a pure
-function of ``(sim.seed, episode, sim_time)`` and this plugin has no ``seed`` key of its own.
+function of ``(sim.seed, run, sim_time)`` and this plugin has no ``seed`` key of its own.
 
 **The fix is held between updates.** At ``rate`` Hz the value changes 10 times a second and is
 constant in between, because that is what the sensor does -- a consumer that interpolated it would

@@ -75,6 +75,7 @@ from .lights import undrawn_lights
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .rendering import RenderService
+from .runs import RunNames
 from .seed import PREVIEW_SEED
 from .solref import floor_rule, floor_text, solref_floor
 from .world import build_world, world_file
@@ -197,6 +198,10 @@ class Engine:
             # of one world are the same picture.
             self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
+        #: The names of this engine's runs (:mod:`roqsim.runs`). A driver that outlives the engine
+        #: -- one that rebuilds it for a new world -- assigns the one it holds, so the unnamed runs
+        #: of its process keep counting across the rebuild.
+        self.runs = RunNames()
         self._setup_done = False
         # Whether a reset() has completed since setup(): step() refuses an engine without one.
         self._reset_done = False
@@ -532,10 +537,14 @@ class Engine:
             f"or state {shown} s or more."
         )
 
-    def reset(self, **params) -> None:
-        """Reset physics and let plugins restore initial state.
+    def reset(self, *, run: str | None = None, **params) -> None:
+        """Reset physics and let plugins restore initial state: the start of a run.
 
-        ``params`` describe the trial being started: they are set on the blackboard as
+        ``run`` names the run it starts (:mod:`roqsim.runs`); without one it is the next unnamed
+        name of :attr:`runs`. The name keys the run's random draws, so it is set before any
+        plugin's ``on_reset``, and one that is not a run name raises before anything is reset.
+
+        ``params`` describe the run being started: they are set on the blackboard as
         ``reset_params`` before any plugin's ``on_reset``, an empty mapping when none are given.
         The scenario-execution adapter forwards the scenario parameters it does not consume here.
 
@@ -548,15 +557,16 @@ class Engine:
         un-reset, so stepping it raises until a reset completes.
         """
         self._require_setup()
+        name = self.runs.next(run)
         self._reset_done = False
         # Flush any pending commands so nothing targets the pre-reset state.
         self.ctx.drain_commands()
-        # A new trial, and the sensors' noise key says so. Advanced BEFORE the plugins are
-        # reset, so anything that starts a recording in its own on_reset stamps the episode
-        # it is actually about to record. `mj_resetData` puts `data.time` back to zero and
-        # `rng_for` is keyed on simulated time, so without this every trial after the first
-        # would replay the first one's noise exactly.
-        self.ctx.episode += 1
+        # A new run, and the draws' key says so. Set BEFORE the plugins are reset, so anything
+        # that starts a recording or draws in its own on_reset has the run it is about to run.
+        # `mj_resetData` puts `data.time` back to zero and `rng_for` is keyed on simulated time,
+        # so without it every run after the first would replay the first one's noise exactly.
+        self.ctx.run = name
+        self.ctx.reset_count += 1
         # A stop request ends the trial that made it, not the next one.
         self.ctx.stop_requested = False
         self.ctx.stop_reason = ""
@@ -569,7 +579,7 @@ class Engine:
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
-            # in one episode would still be in the room at the start of the next.
+            # in one run would still be in the room at the start of the next.
             plugin.apply_declared_presence(self.ctx)
         # Once more, after every plugin has written its part of the initial state -- a pose, a
         # command, a presence: until the next step, the derived quantities (site poses, sensor data,

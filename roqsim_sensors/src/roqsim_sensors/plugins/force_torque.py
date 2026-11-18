@@ -43,15 +43,15 @@ sits rather than a config key::
                                 #   the blackboard reader says which it is in `measures`, so a
                                 #   consumer never has to assume.
       tare_at_s: null           # sim time (s) at which to capture the zero offset, once per
-                                #   episode; null (default) never tares. The `tare` service and
+                                #   run; null (default) never tares. The `tare` service and
                                 #   `WrenchReader.tare()` are the better doors -- see "Taring"
                                 #   below, and note the offset is only valid at the pose it was
                                 #   captured at.
       noise_force_stddev: 0.0   # N, additive Gaussian white noise on the three force channels
       noise_torque_stddev: 0.0  # Nm, likewise on the three torque channels
-      bias_force: 0.0           # N, bound of a per-episode zero offset, uniform per channel
+      bias_force: 0.0           # N, bound of a per-run zero offset, uniform per channel
       bias_torque: 0.0          # Nm, likewise
-      drift_force: 0.0          # N/s, bound of a per-episode linear drift rate, uniform per channel
+      drift_force: 0.0          # N/s, bound of a per-run linear drift rate, uniform per channel
       drift_torque: 0.0         # Nm/s, likewise
       range_force: null         # N, the measuring range: each force channel saturates at +-range
       range_torque: null        # Nm, likewise for torque; null (default) never saturates
@@ -90,7 +90,7 @@ to press the button. Prefer one of the first two: a time is a number that has to
 a scenario's own timing, and if the approach runs long it fires mid-motion and zeroes against a
 contact.
 
-All three re-arm on ``on_reset``: an offset carried into the next episode is a measurement of the
+All three re-arm on ``on_reset``: an offset carried into the next run is a measurement of the
 previous one, and repetitions of a trial would not be repetitions.
 
 **A tare is not gravity compensation, and the difference is a trap.** The offset is captured in
@@ -126,10 +126,10 @@ refused: its contacts cannot be assigned to one side of the cut.
 **Bias, drift and range are the transducer's, so they come before the tare.** A real sensor's zero
 offset and its slow thermal drift are in what it measures, and its zero button removes whatever of
 them has accumulated -- which is why a contact task tares at the pose it is about to press in. So
-``bias_*`` (a constant per episode) and ``drift_*`` (a rate per episode, the offset growing
-linearly from zero at the episode's start) are added to the raw pair, and a tare captures them with
-it. Both are drawn once per episode and per channel, uniformly within the stated bound, from
-``ctx.rng_for(..., per_episode=True)``: a function of the run's seed and the episode, so a value at
+``bias_*`` (a constant per run) and ``drift_*`` (a rate per run, the offset growing
+linearly from zero at the run's start) are added to the raw pair, and a tare captures them with
+it. Both are drawn once per run and per channel, uniformly within the stated bound, from
+``ctx.rng_for(..., per_run=True)``: a function of the run's seed and its name, so a value at
 any sim time is reproducible from that time alone, as the noise is. Linear rather than a random
 walk for that reason -- a walk's value depends on every step before it -- and because a trial lasts
 minutes, over which a thermal drift is close to a line. ``range_*`` saturates each raw channel, bias
@@ -222,9 +222,10 @@ class ForceTorquePlugin(Plugin):
         rf, rt = self.config.get("range_force"), self.config.get("range_torque")
         self.range_f = None if rf is None else float(rf)
         self.range_t = None if rt is None else float(rt)
-        #: This episode's draws: (bias force, bias torque, drift force, drift torque), each [3].
+        #: This run's draws: (bias force, bias torque, drift force, drift torque), each [3].
         self._transducer: tuple[np.ndarray, ...] | None = None
-        self._transducer_episode = -1
+        #: The reset (``ctx.reset_count``) the draws were made after.
+        self._transducer_reset = -1
         tare_at = self.config.get("tare_at_s")
         self.tare_at_s = None if tare_at is None else float(tare_at)
         #: The captured zero, in the RAW sensor frame and before the sign convention is applied --
@@ -446,7 +447,7 @@ class ForceTorquePlugin(Plugin):
 
     def _raw(self) -> tuple[np.ndarray, np.ndarray]:
         """The transducer's pair in the sensor frame: MuJoCo's site pair with the flex contacts it
-        leaves out added, then this episode's bias and drift, saturated at the range.
+        leaves out added, then this run's bias and drift, saturated at the range.
 
         MuJoCo's site sensor reports the subtree's balance as ``-(external wrench)``, so a missing
         external contact wrench ``(F, M)`` (world, at the site) is subtracted, rotated into the site.
@@ -460,7 +461,7 @@ class ForceTorquePlugin(Plugin):
             force = force - rot.T @ f_world
             torque = torque - rot.T @ m_world
         if self.bias_f or self.bias_t or self.drift_f or self.drift_t:
-            bias_f, bias_t, drift_f, drift_t = self._episode_transducer()
+            bias_f, bias_t, drift_f, drift_t = self._run_transducer()
             t = self._ctx.sim_time
             force = force + bias_f + drift_f * t
             torque = torque + bias_t + drift_t * t
@@ -470,18 +471,18 @@ class ForceTorquePlugin(Plugin):
             torque = np.clip(torque, -self.range_t, self.range_t)
         return force, torque
 
-    def _episode_transducer(self) -> tuple[np.ndarray, ...]:
-        """This episode's bias and drift rate per channel, drawn once from the episode's key."""
-        episode = int(self._ctx.episode)
-        if self._transducer is None or self._transducer_episode != episode:
-            rng = self._ctx.rng_for(self.draw_key("transducer"), per_episode=True)
+    def _run_transducer(self) -> tuple[np.ndarray, ...]:
+        """This run's bias and drift rate per channel, drawn once per reset from the run's key."""
+        reset = int(self._ctx.reset_count)
+        if self._transducer is None or self._transducer_reset != reset:
+            rng = self._ctx.rng_for(self.draw_key("transducer"), per_run=True)
             self._transducer = (
                 rng.uniform(-self.bias_f, self.bias_f, 3),
                 rng.uniform(-self.bias_t, self.bias_t, 3),
                 rng.uniform(-self.drift_f, self.drift_f, 3),
                 rng.uniform(-self.drift_t, self.drift_t, 3),
             )
-            self._transducer_episode = episode
+            self._transducer_reset = reset
         return self._transducer
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
@@ -490,7 +491,7 @@ class ForceTorquePlugin(Plugin):
         if not self._tared and self.tare_at_s is not None and self._ctx.sim_time >= self.tare_at_s:
             # Captured here, from the raw pair, so the offset is the reading's MEAN: the noise is
             # added below and is what remains after the subtraction. A tare taken after the noise
-            # would bake one sample's draw into every reading for the rest of the episode.
+            # would bake one sample's draw into every reading for the rest of the run.
             self._offset_force, self._offset_torque = force.copy(), torque.copy()
             self._tared = True
         force = force - self._offset_force
@@ -543,11 +544,11 @@ class ForceTorquePlugin(Plugin):
         self._tared = True
 
     def on_reset(self, ctx: SimContext) -> None:
-        """Forget the zero, so the next episode captures its own.
+        """Forget the zero, so the next run captures its own.
 
-        An offset carried across a reset is a measurement of the previous episode, and the whole
+        An offset carried across a reset is a measurement of the previous run, and the whole
         point of a repetition is that it repeats -- the same reason the noise is keyed on the
-        episode. A `tare_at_s` sensor re-arms and tares again at that time.
+        run. A `tare_at_s` sensor re-arms and tares again at that time.
         """
         self._offset_force = np.zeros(3)
         self._offset_torque = np.zeros(3)

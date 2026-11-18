@@ -645,7 +645,7 @@ class CartesianAdmittancePlugin(Plugin):
         if active and not self._active:
             # Activating starts from the arm's state NOW, which is what makes the hand-over a
             # well-defined instant: a controller resuming with a stale integrator, a stale joint
-            # target and an equilibrium from wherever the episode began would command a step change
+            # target and an equilibrium from wherever the run began would command a step change
             # the moment it took over. Real hardware does the same on activation.
             self._anchor_here()
             self._twist = np.zeros(6)
@@ -671,7 +671,7 @@ class CartesianAdmittancePlugin(Plugin):
                 self._registered, ACTIVE if active else INACTIVE, ctx.sim_time
             )
         self._twist = np.zeros(6)
-        # A commanded frame belongs to the episode that commanded it: carrying one across a reset
+        # A commanded frame belongs to the run that commanded it: carrying one across a reset
         # would make a repetition start where the previous one left off.
         self._goal_pos = None
         self._goal_mat = None

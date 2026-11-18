@@ -434,7 +434,7 @@ class G1LocomotionPlugin(Plugin):
         self._action[:] = 0.0
         self._target_q = self._default_angles.copy()
         self._counter = 0
-        # Re-arm on the next tick at the freshly placed base pose, not the previous episode's.
+        # Re-arm on the next tick at the freshly placed base pose, not the previous run's.
         self._hold = None
 
     # -- control loop -------------------------------------------------------------------------

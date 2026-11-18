@@ -55,7 +55,7 @@ def test_every_event_is_read_back_in_order_at_its_own_time(tmp_path):
     # Off the 0.1 s sample grid: each event keeps the time it was emitted at, not its sample's.
     assert all(e["t"] == pytest.approx(e["at"], abs=1e-9) for e in events)
     assert [e["n"] for e in events] == list(range(len(events)))
-    assert len({e["episode"] for e in events}) == 1
+    assert {e["run"] for e in events} == {"#0"}
     assert {e["source"] for e in events} == {"emitter"}
 
 
@@ -73,8 +73,8 @@ def test_a_long_run_keeps_its_events_across_chunks(tmp_path):
 
 
 def test_an_event_field_must_be_json_and_not_shadow_the_events_own():
-    log = EventLog(lambda: 1.5, lambda: 2)
-    assert log.emit("a", "b", x=1) == {"t": 1.5, "episode": 2, "source": "a", "event": "b", "x": 1}
+    log = EventLog(lambda: 1.5, run=lambda: "cfg/2", generation=lambda: 3)
+    assert log.emit("a", "b", x=1) == {"t": 1.5, "run": "cfg/2", "source": "a", "event": "b", "x": 1}
     with pytest.raises(TypeError):
         log.emit("a", "b", x=object())
     with pytest.raises(ValueError, match="'t'"):
@@ -94,8 +94,8 @@ def test_a_decimated_copy_keeps_every_event(tmp_path):
 
 
 def test_a_recording_starting_now_owns_only_the_events_from_now_on():
-    clock = {"t": 0.0, "episode": 0}
-    log = EventLog(lambda: clock["t"], lambda: clock["episode"])
+    clock = {"t": 0.0, "run": "a", "resets": 1}
+    log = EventLog(lambda: clock["t"], run=lambda: clock["run"], generation=lambda: clock["resets"])
     log.emit("a", "reset")
     # a recording that starts at the reset owns the reset's events
     assert log.start_of_now() == 0
@@ -106,6 +106,10 @@ def test_a_recording_starting_now_owns_only_the_events_from_now_on():
     assert log.start_of_now() == 2
     log.emit("a", "now")
     assert log.since(log.start_of_now()) == [log.all()[-1]]
-    # an earlier episode's events are not the new episode's, whatever their time
-    clock["episode"], clock["t"] = 1, 0.0
+    # an earlier reset's events are not the new run's, whatever their time
+    clock["run"], clock["resets"], clock["t"] = "b", 2, 0.0
     assert log.start_of_now() == 3
+    # nor are they when the reset starts the same run again
+    log.emit("a", "reset")
+    clock["resets"], clock["t"] = 3, 0.0
+    assert log.start_of_now() == 4

@@ -11,6 +11,7 @@ adapter ignores this object); ``GetSimulatorFeatures`` should reflect that.
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 
 STOPPED = 0
 PLAYING = 1
@@ -21,12 +22,22 @@ QUITTING = 3
 STATE_NAMES = {STOPPED: "stopped", PLAYING: "playing", PAUSED: "paused", QUITTING: "quitting"}
 
 
+@dataclass(frozen=True)
+class ResetRequest:
+    """A reset the driver is asked for: ``run`` names the run it starts, ``None`` the next
+    unnamed one."""
+
+    run: str | None = None
+
+
 class RunControl:
     def __init__(self, state: int = PLAYING):
         self._lock = threading.Lock()
         self._state = state
         self._pending_steps = 0
         self._reset_requested = False
+        #: The run a requested reset names, or ``None`` for the next unnamed one.
+        self._reset_run: str | None = None
         # Called once the requested steps have been taken, or dropped by a change of state.
         self._on_steps_done: list = []
         # Called at the driver's next loop, after the step in flight (if any) has run.
@@ -42,7 +53,7 @@ class RunControl:
         with self._lock:
             self._state = state
             if state == STOPPED:
-                self._reset_requested = True
+                self._reset_requested, self._reset_run = True, None
             # Steps are taken only while paused, so leaving the pause drops the ones not yet taken.
             if state != PAUSED:
                 self._pending_steps = 0
@@ -71,15 +82,20 @@ class RunControl:
         with self._lock:
             self._next_loop.append(fn)
 
-    def request_reset(self) -> None:
+    def request_reset(self, run: str | None = None) -> None:
+        """Ask the driver to reset; ``run`` names the run it starts (:mod:`roqsim.runs`)."""
         with self._lock:
             self._reset_requested = True
+            self._reset_run = run
 
-    def take_reset(self) -> bool:
-        """Consume a pending reset request (called by the driver)."""
+    def take_reset(self) -> ResetRequest | None:
+        """Consume a pending reset request (called by the driver): ``None`` when there is none."""
         with self._lock:
-            r, self._reset_requested = self._reset_requested, False
-            return r
+            if not self._reset_requested:
+                return None
+            request = ResetRequest(self._reset_run)
+            self._reset_requested, self._reset_run = False, None
+            return request
 
     def should_step(self) -> bool:
         """True if the driver should advance one physics step now."""
