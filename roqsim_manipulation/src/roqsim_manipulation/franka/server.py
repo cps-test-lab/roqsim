@@ -184,14 +184,17 @@ class FCIServer:
             return
         log.info("fci %s: %s", self.bind, why)
         self._conn, self.client_udp = None, None
-        try:  # shutdown wakes the connection's blocked recv, so its thread ends; close alone does not
-            conn.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        try:
-            conn.close()
-        except OSError:
-            pass
+        # A reply in flight finishes on the socket before it closes. Shutdown wakes the
+        # connection's blocked recv, so its thread ends; close alone does not.
+        with self._send_lock:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                conn.close()
+            except OSError:
+                pass
         self.requests.put(Request(Command.STOP_MOVE, -1, b""))  # a motion without a client ends
 
     def is_current(self, req: Request) -> bool:
@@ -229,21 +232,32 @@ class FCIServer:
                 pass
 
     def await_command(
-        self, message_id: int, state: bytes, *, strict: bool, client_timeout_s: float
+        self,
+        message_id: int,
+        state: bytes,
+        *,
+        strict: bool,
+        client_timeout_s: float,
+        owner: socket.socket | None = None,
     ) -> dict | None:
-        """The ``RobotCommand`` answering ``message_id``, from the connected client's address.
+        """The ``RobotCommand`` answering ``message_id``, from ``owner``'s address: the connection
+        whose motion it is (the one connected now, by default).
 
         ``strict``: wait for it, re-sending ``state`` every ``resend_s``, and raise after
         ``client_timeout_s`` of wall time; otherwise wait at most ``first_command_wait_s``.
 
-        ``None`` when none came within ``first_command_wait_s`` (not strict), or when the client
-        disconnected meanwhile (either way). A disconnect ends the motion through the ``StopMove``
-        it queues, and the run goes on, as a robot whose client went away does.
+        ``None`` when none came within ``first_command_wait_s`` (not strict), or when ``owner`` is
+        no longer the connected client (either way): dropped or replaced, its motion ends through
+        the ``StopMove`` the drop queues, and the run goes on, as a robot whose client went away
+        does. A client that replaced it is not waited for: it did not start the motion.
         """
+        with self._conn_lock:
+            owner = self._conn if owner is None else owner
+            target = self.client_udp if owner is self._conn else None
         start = time.monotonic()
         last_send = start
         limit = client_timeout_s if strict else self.first_command_wait_s
-        while self.client_udp is not None:
+        while target is not None and self._conn is owner:
             now = time.monotonic()
             if now - start > limit:
                 if strict:
@@ -259,7 +273,7 @@ class FCIServer:
             if not ready:
                 continue
             data, sender = self._udp.recvfrom(4096)
-            if sender != self.client_udp or len(data) != ROBOT_COMMAND.size:
+            if sender != target or len(data) != ROBOT_COMMAND.size:
                 continue
             cmd = unpack_robot_command(data)
             if cmd["message_id"] == message_id:

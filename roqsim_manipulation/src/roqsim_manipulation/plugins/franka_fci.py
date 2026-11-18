@@ -476,6 +476,7 @@ class FrankaFCIPlugin(Plugin):
                 data,
                 strict=self._first_command,
                 client_timeout_s=float(self.config.get("client_timeout_s", 30.0)),
+                owner=core.motion.owner,
             )
             if cmd is not None:
                 self._first_command = True

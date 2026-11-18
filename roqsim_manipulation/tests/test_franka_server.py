@@ -197,3 +197,34 @@ def test_a_reply_to_a_replaced_connection_never_reaches_its_successor(server):
     assert (command, command_id) == (P.Command.GET_ROBOT_MODEL, 8)
     old.close()
     new.close()
+
+
+def test_a_strict_wait_ends_when_its_client_is_replaced(server):
+    """The physics waits for the command of the client whose motion it is. A client that replaces
+    it did not start the motion: its command is not taken, and the wait ends at once rather
+    than running into the client timeout."""
+    old, _ = _connect(P.VERSION, _udp())
+    owner = server._conn
+    result: dict = {}
+
+    def wait():
+        try:
+            result["cmd"] = server.await_command(
+                5, _state(5), strict=True, client_timeout_s=5, owner=owner
+            )
+        except TimeoutError as exc:
+            result["error"] = exc
+
+    t = threading.Thread(target=wait)
+    t.start()
+    new_udp = _udp()
+    new, (status, _) = _connect(P.VERSION, new_udp)
+    assert status == P.ConnectStatus.SUCCESS
+    new_udp.sendto(
+        P.pack_robot_command({"message_id": 5, "tau_J_d": [1] * 7}), server._udp.getsockname()
+    )
+    t.join(timeout=2)
+    assert not t.is_alive(), "the wait ran on after its client was replaced"
+    assert result == {"cmd": None}, result
+    old.close()
+    new.close()

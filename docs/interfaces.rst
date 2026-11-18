@@ -1007,7 +1007,13 @@ self-collision limits and the gripper. The error flags the robot raises and the 
 does are ``roqsim_manipulation.franka.core.NOT_RAISED``; among them are the robot's checks of a
 Cartesian motion beyond its start pose and the rate limits (the Cartesian limits, the elbow, the
 joint motion its inverse kinematics makes), so a Cartesian program that runs here can still fail on
-the arm. The tests
+the arm. A world reset returns the controller to the world's configuration: a load, collision
+behaviour, impedance or frame a client set in the run before is undone, a request still queued is
+answered there (a Move as aborted, a setting as refused), and only a request still on its way
+over the network is taken in the next run. One client is served at a time, as by the robot; each
+request is carried out and answered only for the connection that sent it, and a motion waits only
+for its own client's commands, so a client that replaces another hears nothing of the old one's
+and the old one's motion ends as preempted. The tests
 (``roqsim_manipulation/tests/test_franka_*.py``) read Franka's files at the pinned commits
 (``external/franka_upstream.py``) and build and run the real libfranka against the server::
 
