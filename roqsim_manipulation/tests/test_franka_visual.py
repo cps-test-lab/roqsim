@@ -164,8 +164,9 @@ def test_the_colliders_stand_where_the_arm_is_drawn(model):
     """Along rays from outside, a contact meets a collider within 20 mm of the drawn surface.
 
     A link's whole STL as one hull would bridge the elbow's and the wrist's recesses, so each link
-    collides as convex pieces. Where franka_description's STL leaves a drawn part out (the base's rear strip, a recess on links 3 and 4), the ray meets
-    the drawing first; that stays a small share.
+    collides as convex pieces. Where franka_description's STL leaves a drawn part out (the base's
+    rear strip, a recess on links 3 and 4), the ray meets the drawing first; that stays a small
+    share.
     """
     data = mujoco.MjData(model)
     data.qpos[:] = HOME
