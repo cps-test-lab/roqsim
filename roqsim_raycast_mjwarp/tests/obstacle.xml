@@ -1,0 +1,12 @@
+<!-- The parity tests' obstacle: a box with a material of its own, so presence hides it by the
+     absent group and the material's alpha both. -->
+<mujoco model="obstacle">
+  <asset>
+    <material name="obstacle_mat" rgba="0.8 0.3 0.2 1"/>
+  </asset>
+  <worldbody>
+    <body name="obstacle">
+      <geom name="obstacle_box" type="box" size="0.15 0.25 0.5" pos="0 0 0.5" material="obstacle_mat"/>
+    </body>
+  </worldbody>
+</mujoco>

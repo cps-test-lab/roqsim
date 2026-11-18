@@ -32,8 +32,8 @@ Four of them can ALSO change during a run, on a trigger: ``flex_damping``, ``fle
 ``end_effector`` carries it -- since plugins build in YAML order; a flex that comes from the world
 MJCF is there before any plugin builds. A name that matches no flex is refused, listing the flexes
 the model has and naming that order; a key the flex would not
-read is refused too -- elasticity on a rigid flex, on a ``dim=1`` flex, or on a shell left at
-``elastic2d: none``, and a shell key on a flex that is not one. The integrator is chosen after this
+read is refused too -- elasticity on a rigid flex, on a shell left at ``elastic2d: none``, or on
+a rope its MJCF leaves without elasticity, and a shell key on a flex that is not one. The integrator is chosen after this
 runs, so a flex made elastic here gets ``discrete`` under ``sim.integrator: auto``.
 
 **Write an exponent with a dot and a sign.** The world is YAML 1.1, which reads ``5e5`` as the

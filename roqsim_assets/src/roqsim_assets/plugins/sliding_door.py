@@ -98,7 +98,8 @@ class SlidingDoorPlugin(MachinePlugin):
         for name, half, pos in (
             ("post_a", [0.04, 0.04, h / 2 + 0.02], [-w / 2 - 0.04, 0, h / 2 + 0.02]),
             ("post_b", [0.04, 0.04, h / 2 + 0.02], [w / 2 + 0.04, 0, h / 2 + 0.02]),
-            ("lintel", [w + 0.08, 0.05, 0.04], [self.slide * w / 2, n["offset"], h + 0.06]),
+            # 1 mm short of the posts' outer faces: two faces in one plane flicker in every render
+            ("lintel", [w + 0.079, 0.05, 0.04], [self.slide * w / 2, n["offset"], h + 0.06]),
         ):
             geom = frame_body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=half, pos=pos)
             geom.name = name

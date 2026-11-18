@@ -92,9 +92,17 @@ def run(name: str, argv: list | None, doc: str) -> int:
         parser.add_argument(
             "n", nargs="?", type=int, default=None, help="steps, for step (default 1)"
         )
+        parser.add_argument(
+            "--run",
+            default=None,
+            metavar="NAME",
+            help="for reset: the name of the run it starts (default: the next unnamed one)",
+        )
     args = parser.parse_args(argv)
     if name == "ctl" and args.n is not None and args.action != "step":
         parser.error(f"{args.action} takes no count; only step does")
+    if name == "ctl" and args.run is not None and args.action != "reset":
+        parser.error(f"{args.action} names no run; only reset does")
     if name == "ls":
         return _ls()
     from ..control_client import Client
@@ -224,9 +232,12 @@ def _sub(sim, args) -> int:
 
 def _ctl(sim, args) -> int:
     action = args.action
-    result = (
-        sim.step(1 if args.n is None else args.n) if action == "step" else getattr(sim, action)()
-    )
+    if action == "step":
+        result = sim.step(1 if args.n is None else args.n)
+    elif action == "reset":
+        result = sim.reset(run=args.run)
+    else:
+        result = getattr(sim, action)()
     print(json.dumps(wire.plain(result), indent=2))
     return exit_status.OK
 

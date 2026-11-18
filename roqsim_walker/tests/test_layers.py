@@ -173,7 +173,7 @@ def test_a_world_states_the_clips_a_walker_plays_from_the_start(tmp_path):
     engine = Engine(_world(layers=[{"clip": clip, "joints": ["arm_r"], "fade": 0.0}]))
     engine.setup()
     try:
-        for _ in range(2):  # every episode
+        for _ in range(2):  # every run
             engine.reset()
             _run(engine, 0.3)
             shoulder = _part(engine, "ped", "shoulder_r")[0][2]

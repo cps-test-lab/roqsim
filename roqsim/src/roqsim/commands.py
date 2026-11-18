@@ -348,6 +348,7 @@ cli.add_command(tool("roqsim.renderers", "renderers"))
 cli.add_command(tool("roqsim.catalog", "catalog"))
 cli.add_command(tool("roqsim.health", "health"))
 cli.add_command(tool("roqsim.check", "check"))
+cli.add_command(tool("roqsim.bake.run", "bake"))
 
 # A running simulation, reached over its control socket (roqsim.ipc).
 for _name in ("ls", "endpoints", "describe", "read", "call", "sub", "ctl"):

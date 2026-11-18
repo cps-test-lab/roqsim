@@ -64,7 +64,6 @@ def _frames(engine):
 def test_frames_become_prefixed_sites_at_their_composed_pose(tmp_path):
     engine = _engine(_robot(tmp_path))
     m, d = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(m, d)
     sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "r_laser")
     assert sid >= 0
     body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[sid]))

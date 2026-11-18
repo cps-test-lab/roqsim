@@ -125,7 +125,7 @@ def test_a_scenario_that_fails_stops_the_run_naming_why(tmp_path):
         engine.shutdown()
 
 
-def test_each_episode_runs_the_scenario_again(tmp_path):
+def test_each_run_runs_the_scenario_again(tmp_path):
     engine = _engine(tmp_path, GOOD)
     try:
         _until_stop(engine)
@@ -187,6 +187,22 @@ def test_which_scenario_of_a_file_is_said_or_refused(tmp_path, config, said):
             engine.step()
     finally:
         engine.shutdown()
+
+
+class _Tree:
+    def __init__(self, name):
+        self.name = name
+
+
+@pytest.mark.parametrize("entry", [(), ({},)], ids=["without-reset", "with-reset"])
+def test_a_scenario_is_chosen_whatever_an_entry_carries_after_its_tree(entry):
+    from scenario_execution_roqsim.scenario_file import ScenarioFilePlugin
+
+    good, bad = _Tree("good"), _Tree("bad")
+    scenarios = [(good, {}, "/d", *entry), (bad, {}, "/d", *entry)]
+    plugin = ScenarioFilePlugin({"file": "f.osc", "scenario": "good"})
+    assert plugin._choose(scenarios, "f.osc") is good
+    assert ScenarioFilePlugin({"file": "f.osc"})._choose(scenarios[:1], "f.osc") is good
 
 
 def test_a_named_scenario_is_the_one_run(tmp_path):

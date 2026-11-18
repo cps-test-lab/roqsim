@@ -30,6 +30,7 @@ DOORS = [
     {"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9},
     {"id": 2, "line_id": 4, "t": 0.5, "width_m": 1.2, "height_m": 2.06},
 ]
+THICKNESS = 0.1
 FLOORPLAN = {
     "description": "one room",
     "rooms": [{"id": 1, "name": "office", "line_ids": [1, 2, 3, 4]}],
@@ -55,14 +56,24 @@ def test_plan_walls_agree_with_the_baker():
     # The baker's floor-standing pieces (z0 == 0) are the solid wall spans; lintels sit above openings.
     baked = [
         (p0, p1)
-        for p0, p1, z0, _ in fw.wall_pieces(LINES, DOORS, ceiling_h=2.5, opening_h=2.0)
+        for p0, p1, z0, _ in fw.wall_pieces(
+            LINES, DOORS, ceiling_h=2.5, opening_h=2.0, thickness=THICKNESS
+        )
         if z0 == 0.0
     ]
-    drawn = [(w.point_at(t0), w.point_at(t1)) for w in walls for t0, t1 in w.solid]
+    drawn = [(w, t0, t1, w.point_at(t0), w.point_at(t1)) for w in walls for t0, t1 in w.solid]
     assert len(drawn) == len(baked)
-    for (a0, a1), (b0, b1) in zip(drawn, baked, strict=True):
-        assert a0 == pytest.approx(b0)
-        assert a1 == pytest.approx(b1)
+    for (w, t0, t1, a0, a1), (b0, b1) in zip(drawn, baked, strict=True):
+        # Cut at the same openings; at a corner the baked box runs on past the line's end, along
+        # the line and by less than half the thickness, to close the corner's outside.
+        for t, a, b in ((t0, a0, b0), (t1, a1, b1)):
+            if 0.0 < t < w.length:
+                assert a == pytest.approx(b)
+            else:
+                ux, uy = w.direction
+                run_on = (b[0] - a[0]) * ux + (b[1] - a[1]) * uy
+                assert b == pytest.approx((a[0] + ux * run_on, a[1] + uy * run_on))
+                assert 0.0 <= (run_on if t > 0.0 else -run_on) < THICKNESS / 2
 
 
 def test_openings_keep_their_door_ids_and_heights():

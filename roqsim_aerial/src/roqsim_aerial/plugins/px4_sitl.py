@@ -123,7 +123,7 @@ between two actuator updates then depends on host load and OS scheduling, so two
 identical world with the identical seed diverge, and repetitions stop being samples of anything.
 Non-lockstep exists only for interactive flying, where a stall in one process should not freeze the
 other. (The sensor noise itself is reproducible either way -- it draws from ``ctx.rng_for``, keyed
-on ``(seed, episode, sim_time)`` per section 9, like every other stochastic plugin here. It is the
+on ``(seed, run, sim_time)`` per section 9, like every other stochastic plugin here. It is the
 *coupling* that lockstep makes deterministic.)
 
 **MAVLink encoding is pymavlink's.** Imported lazily in :meth:`configure` so that loading a world
@@ -432,7 +432,7 @@ class Px4SitlPlugin(Plugin):
         self._last_gps = float("-inf")
         self._controls_arrived.clear()
         # `_ever_answered` is NOT cleared: PX4 did not reboot, so the lockstep it is already
-        # driving must stay armed across an episode boundary.
+        # driving must stay armed across a run boundary.
         # The armed state and the last controls are NOT cleared: PX4 is a separate process that did
         # not reset, and pretending it disarmed would command zero thrust to a vehicle its
         # autopilot still believes is flying.

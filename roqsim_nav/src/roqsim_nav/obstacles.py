@@ -49,7 +49,7 @@ def wall_polygons(
 
     ``resting_roots`` are weld-root body ids the caller has judged to be undriven props; each is
     included as a wall for this call only while it is moving slower than :data:`RESTING_SPEED`. The
-    test is per call, so the same prop is a wall in one episode's grid and not in the next.
+    test is per call, so the same prop is a wall in one run's grid and not in the next.
     """
     resting = frozenset(int(b) for b in resting_roots)
     polys = []

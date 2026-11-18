@@ -63,6 +63,14 @@ serial path if a parallel run ever looks flaky:
    make test JOBS=1           # serial; the fallback when a parallel run looks wrong
    make test-roqsim_sensors   # just one package, for the edit/run loop
 
+``make test`` tests the packages installed in ``.venv`` with everything they declare. A package that
+is not installed, or is installed without a requirement it declares (an image built without network,
+``pip install --no-deps``), is left out by name: ``tools/test_packages.py`` prints ``NOT TESTED
+<package>: <what it lacks>`` before the run and again after it, with their count, and a test that reads the
+whole tree (the README's counts, the plugin guard) leaves out what that package would register.
+Without ``pytest-xdist`` the run is serial and says so. ``make venv`` installs every package with
+what it declares, after which nothing is left out.
+
 ``roqsim export gltf`` is checked by the Khronos glTF Validator, a Node.js program pinned in
 ``tools/gltf_validator``. ``make test`` runs it over an export of a small world when it is installed
 and reports a skip when it is not; ``make test-gltf`` installs it (``npm ci``), requires it, and holds
@@ -71,6 +79,15 @@ an export of every world ``roqsim_scenes`` ships to no error and no warning:
 .. code-block:: bash
 
    make test-gltf             # needs node and npm on PATH
+
+The simulated FR3's FCI is held to Franka's own client library: ``make test-franka`` builds libfranka
+at the release ``roqsim_manipulation/tests/upstream/franka/SOURCES.toml`` pins, with its own
+CMake build, and runs it against the simulated arm. It needs a C++ toolchain, CMake, Eigen3, Poco
+and fmt, so ``make test`` leaves it out. It fails, rather than skips, when libfranka cannot be built:
+
+.. code-block:: bash
+
+   make test-franka           # needs g++, cmake, libeigen3-dev, libpoco-dev, libfmt-dev
 
 scenario-execution is ``scenario_execution_roqsim``'s ``[osc]`` extra, so ``make venv`` leaves it
 out and ``make test`` skips every test that needs it. ``make test-osc`` runs those tests -- the OSC
@@ -119,7 +136,8 @@ a path or which package a tool lives in:
    python -m pydoc roqsim_scenes.cli.sdf_to_scene   # the reasoning behind it
 
 The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a world, ``roqsim render``
-draws one, ``rebuild`` produces a recorded run's sensor streams, and ``state``, ``check``, ``health``,
+draws one, ``bake`` bakes its lighting with Blender (:doc:`baked_lighting`), ``rebuild`` produces a
+recorded run's sensor streams, and ``state``, ``check``, ``health``,
 ``catalog``, ``plugins`` and ``renderers`` read a world, a run or the
 registries; the core's exporters are the ``roqsim export`` group. Every package tool is
 ``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).

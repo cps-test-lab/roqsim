@@ -191,7 +191,7 @@ def test_autostart_false_holds_at_the_start_until_started(tmp_path):
 def test_the_route_is_planned_before_anything_triggers_it(tmp_path):
     """An armed route is planned on the first tick, not when it is started.
 
-    So a route the planner cannot solve surfaces at the start of the episode rather than at the
+    So a route the planner cannot solve surfaces at the start of the run rather than at the
     moment a scenario finally triggers it, minutes in. Planning is deliberately NOT done in
     `configure`: that runs before any presence has been applied, so the grid would contain the
     obstacles a world compiled in precisely so they could appear mid-trial, and the mover would route
@@ -211,7 +211,7 @@ def test_the_route_is_planned_before_anything_triggers_it(tmp_path):
 
 
 def test_reset_re_arms_an_unstarted_route(tmp_path):
-    """Episode two must not inherit episode one's trigger."""
+    """Run two must not inherit run one's trigger."""
     engine = _engine(tmp_path, autostart=False)
     engine.setup()
     engine.reset()
@@ -222,7 +222,7 @@ def test_reset_re_arms_an_unstarted_route(tmp_path):
         assert np.linalg.norm(_xy(engine) - np.asarray(START)) > 0.5
 
         engine.reset()
-        assert not nav.started, "it stayed started into the next episode"
+        assert not nav.started, "it stayed started into the next run"
         _track(engine, seconds=3.0)
         assert _xy(engine) == pytest.approx(START, abs=1e-9)
     finally:

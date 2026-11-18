@@ -344,6 +344,23 @@ An unmapped marker is a hard error — props are never silently dropped. So is a
 marker or door the floorplan does not have, or a key the generator does not read (`--doors-map`
 lists its keys in `--help`): nothing would read it, so it would be ignored.
 
+## Better light: baked lighting
+
+A generated or imported world is drawn by MuJoCo's classic renderer under the few lamps its scene gives it: one
+overhead light, hard shadows, every wall about as bright as the next, nothing darker under a table,
+and with a lamp that casts shadows, a hard band across the walls. For a world that should look real,
+add the core `baked_lighting` component and bake it once:
+
+```yaml
+- baked_lighting: {}     # roqsim bake <world.yaml> writes <mjcf stem>.bake beside the MJCF
+```
+
+`roqsim bake` path-traces the world's light (its emitting materials, else its `<light>`s, else an
+overcast default) with Blender into light maps of a few MB, on a CPU in minutes; the world then draws
+bounced light, soft contact shadows and ambient occlusion, and a robot in it is lit live. A world
+whose bake is missing or stale still loads, unbaked, and says so. [Baked
+lighting](../docs/baked_lighting.rst) has the rest.
+
 ## Look at a floorplan: `roqsim-floorplan-to-png`
 
 A floorplan is 40 wall segments as numbers; nobody — human or agent — reads a layout out of that.

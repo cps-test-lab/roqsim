@@ -6,7 +6,7 @@
   <a href="https://github.com/cps-test-lab/roqsim/actions"><img src="https://github.com/cps-test-lab/roqsim/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/MuJoCo-3.14-orange.svg" alt="MuJoCo 3.14">
+  <img src="https://img.shields.io/badge/MuJoCo-4.0-orange.svg" alt="MuJoCo 4.0">
 </p>
 
 **roqsim** — **ro**bots, **q**uickly **sim**ulated (in [MuJoCo](https://mujoco.org)) — is a
@@ -28,10 +28,10 @@ hand-assemble.
 
 - **One YAML file per world.** Robots, sensors, props and scene declared together; plugins hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
-- **43 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
+- **44 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
   Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, ROX-Diff, LGDXRobot2,
-  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 14 arms and 3 grippers (UR10e, UR5e, UR30,
-  Panda, Gen3, xArm7, LBR iiwa 7 and 14, M1013, FANUC M-20iD/25 and CRX-25iA, OpenManipulator-X,
+  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 15 arms and 3 grippers (UR10e, UR5e, UR30,
+  Panda, FR3, Gen3, xArm7, LBR iiwa 7 and 14, M1013, FANUC M-20iD/25 and CRX-25iA, OpenManipulator-X,
   ViperX 300s, WidowX 250s; Robotiq
   2F-85 and Hand-E, Schunk PG+70), 2 mobile manipulators (TIAGo Pro, Frankie), 4 humanoids (Unitree G1,
   G1 + Dex1, LimX Oli, AgiBot G2), Boston Dynamics Spot, the Crazyflie 2 and an X500 — each
@@ -45,6 +45,9 @@ hand-assemble.
   where?*
 - **Scenes from what you already have.** Import Gazebo SDF, USD or CAD — or draw a floorplan in a window
   and get a world back.
+- **Light that looks real.** Baked lighting: a world's bounced light, soft contact shadows and ambient
+  occlusion path-traced once with Blender (`roqsim bake`, minutes on a CPU), kept with the world and
+  drawn by MuJoCo's renderer, while robots are lit live and throw their shadows into it.
 - **People as dynamic obstacles.** Kinematic pedestrians with A\* and behaviour-tree navigation, plus
   optional ORCA local avoidance, for the case your robot has to share a corridor.
 - **Runs where you need it.** Viewer by default, headless for CI and containers; real-time, scaled, or
@@ -89,6 +92,7 @@ start with [getting started](docs/getting_started.rst), then:
 | [Installation](docs/installation.rst) | packages, the venv, ROS 2 |
 | [Quickstart](docs/quickstart.rst) · [Plugins](docs/plugins.rst) | writing a world; every built-in plugin |
 | [Models](docs/models.rst) · [Textures](docs/textures.rst) | the robot/prop catalog; surfaces and floors |
+| [Rendering](docs/rendering.rst) · [Baked lighting](docs/baked_lighting.rst) | renderers; realistic light and shadows |
 | [Interfaces](docs/interfaces.rst) | ROS 2, scenario-execution, your own code |
 | [Scene builder](docs/scene_builder.rst) · [Coverage](docs/coverage.rst) | building worlds; sensor placement |
 | [nav2 example](docs/nav2_example.rst) · [Ground truth](docs/ground_truth.rst) | navigation; getting numbers out |
@@ -121,3 +125,5 @@ Nothing under a non-commercial (`CC-*-NC`) or no-derivatives (`CC-*-ND`) license
 The splat renderer (`roqsim_render_splat`) draws through gsplat (Apache-2.0) and PyTorch
 (BSD-3-Clause), installed as its dependencies; the reference 3DGS rasteriser, whose licence is
 non-commercial, is neither a dependency nor used.
+The GPU ray-cast backend (`roqsim_raycast_mjwarp`) casts through MuJoCo Warp and NVIDIA Warp (both
+Apache-2.0), installed only with its `[mjwarp]` extra.

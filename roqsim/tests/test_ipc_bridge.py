@@ -12,8 +12,8 @@ import pytest
 
 zmq = pytest.importorskip("zmq")
 
+from roqsim import conditions, endpoint, ipc, runner  # noqa: E402
 from roqsim import control as ctl  # noqa: E402
-from roqsim import endpoint, ipc, runner  # noqa: E402
 from roqsim.bridge import BridgeBase  # noqa: E402
 from roqsim.clock import Pacer  # noqa: E402
 from roqsim.config import load_config_from_dict  # noqa: E402
@@ -384,7 +384,10 @@ def test_the_default_socket_does_not_depend_on_a_runners_output_directory(
     assert (
         f"control: ipc://{tmp_path / 'roqsim' / f'{os.getpid()}.sock'}" in capsys.readouterr().out
     )
-    assert not (tmp_path / "out").exists()
+    # Nothing of the socket's is there; what the run writes there is the run's (its conditions).
+    out = tmp_path / "out"
+    assert not [p for p in out.rglob("*") if "sock" in p.name]
+    assert (out / "config" / "0" / conditions.RUN_FILE).is_file()
 
 
 def test_roqsim_control_names_the_address_for_the_simulator(tmp_path, monkeypatch, capsys):
@@ -469,6 +472,25 @@ def test_describe_names_the_endpoint_on_the_other_transports(uri):
     with Sim(uri, Hinted({}, entity="box", label="base"), Wire({})), Client(uri) as sim:
         entry = sim.describe("box/base/odom")
         assert entry["bridges"] == {"wire": {"topic": "/resolved/odom"}}
+
+
+def test_a_reset_names_the_run_it_starts_and_the_state_says_which(uri):
+    with Sim(uri) as run, Client(uri) as sim:
+        assert sim.state()["run"] == "#0"
+        assert sim.reset(run="cfg-a/4")["run"] == "cfg-a/4"
+        assert run.engine.ctx.run == "cfg-a/4" and sim.state()["run"] == "cfg-a/4"
+        assert sim.reset()["run"] == "cfg-a/4#1", (
+            "an unnamed reset continues the named run's series"
+        )
+
+
+def test_ctl_names_a_run_only_for_reset(capsys):
+    from roqsim.control_cli.ctl import main as ctl_main
+
+    with pytest.raises(SystemExit) as exc:
+        ctl_main(["pause", "--run", "x", "--control", "ipc:///nonexistent.sock"])
+    assert exc.value.code == 2
+    assert "pause names no run" in capsys.readouterr().err
 
 
 def test_ctl_refuses_a_count_only_step_takes(capsys):

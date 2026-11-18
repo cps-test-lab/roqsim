@@ -27,6 +27,15 @@ so a scene round-trips back to a floorplan JSON via ``scene_to_floorplan.py``. T
 intent an agent reads when choosing props; edit them in ``floorplan.json`` -- they are not baked into
 geometry, so a description-only change takes effect with no re-run.
 
+Where walls meet, no two drawn wall parts show a face in one place, which would flicker in every
+render as the camera moves (:func:`roqsim.floorplan_geometry.wall_pieces`): at a corner of two walls
+each runs on past the corner point until its end face lies 1 mm inside the other wall, which closes
+the corner's outside at a right angle (and narrows it at others) and leaves the inner faces and the
+outer size as drawn; and of two parts that
+overlap -- at a corner, a T, a crossing, or a lintel there -- one stands 1 mm lower (a lintel's
+underside 1 mm higher). Each wall part is its own convex collider, so collision follows the same
+boxes.
+
 Reuses ``scene_mesh_io`` (``box``/``transform``/``write_obj``) for the geometry and ``scene_to_mjcf.py``
 for the bake, so the generated world sits on exactly the same collision/material/lighting path as the
 imported scenes.
@@ -509,7 +518,9 @@ def generate(
     check_doors_map(floorplan.get("doors") or [], doors_map or {})
 
     # Doors are openings attached to a line: cut each wall into floor pieces + a lintel above.
-    pieces = wall_pieces(lines, floorplan.get("doors") or [], ceiling_h, opening_h)
+    pieces = wall_pieces(
+        lines, floorplan.get("doors") or [], ceiling_h, opening_h, thickness=wall_thickness
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_geometry(out_dir, bbox, wall_thickness, pieces, ceiling_h if ceiling else None)
     # The floorplan is the single source of truth: write it verbatim beside scene.json and reference

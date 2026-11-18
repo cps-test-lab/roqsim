@@ -1,4 +1,4 @@
-"""``force_torque``'s transducer: a per-episode bias, a linear drift and a measuring range.
+"""``force_torque``'s transducer: a per-run bias, a linear drift and a measuring range.
 
 The scene is ``test_force_torque``'s hanging link, static after settling, so any change in the
 reading over time is the transducer's and nothing else.
@@ -24,7 +24,7 @@ def test_defaults_leave_the_reading_alone():
     assert force[2] == pytest.approx(EXPECTED_FZ, abs=1e-6)
 
 
-def test_a_bias_is_constant_in_an_episode_and_within_its_bound():
+def test_a_bias_is_constant_in_a_run_and_within_its_bound():
     engine = _settled(frame="sensor", invert=False, bias_force=0.5, bias_torque=0.1)
     f1, t1, _ = _read_at(engine, 0)
     f2, t2, _ = _read_at(engine, 500)
@@ -34,7 +34,7 @@ def test_a_bias_is_constant_in_an_episode_and_within_its_bound():
     assert np.allclose(f1, f2, atol=1e-6) and np.allclose(t1, t2, atol=1e-6)
 
 
-def test_a_bias_follows_the_seed_and_is_redrawn_per_episode():
+def test_a_bias_follows_the_seed_and_is_redrawn_per_run():
     def offset(engine):
         return _plugin(engine).read()[0] - np.array([0.0, 0.0, EXPECTED_FZ])
 
@@ -45,10 +45,10 @@ def test_a_bias_follows_the_seed_and_is_redrawn_per_episode():
     a.reset()
     for _ in range(200):
         a.step()
-    assert not np.allclose(offset(a), first, atol=1e-6)  # a new episode draws its own
+    assert not np.allclose(offset(a), first, atol=1e-6)  # a new run draws its own
 
 
-def test_drift_grows_linearly_from_the_episode_start():
+def test_drift_grows_linearly_from_the_run_start():
     engine = _settled(frame="sensor", invert=False, drift_force=0.2)
     f1, _, t1 = _read_at(engine, 0)
     f2, _, t2 = _read_at(engine, 1000)

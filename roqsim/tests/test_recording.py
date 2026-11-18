@@ -28,6 +28,7 @@ from roqsim import capture, exit_status
 from roqsim.capture import (
     STATE_FIELDS,
     STATE_SPEC,
+    STATE_SPEC_WITHOUT_PLASTIC,
     CaptureRate,
     StateRecorder,
     camera_from_row,
@@ -152,10 +153,11 @@ def test_the_spec_is_not_a_preset():
 
 
 class _Ctx:
-    """The three members StateRecorder touches, so a test needs no Engine."""
+    """The members StateRecorder touches, so a test needs no Engine."""
 
     def __init__(self, model, data):
         self.model, self.data = model, data
+        self.run = "#0"
 
     @property
     def sim_time(self) -> float:
@@ -635,6 +637,60 @@ def test_a_newer_format_version_is_refused(tmp_path, moving):
         open_recording(tmp_path / "next.mcap")
 
 
+def test_an_older_format_version_is_refused_by_name(tmp_path, moving):
+    """A v3 recording numbers its run where v4 names it, and the draws are keyed on the name: a
+    sensor rebuilt from it would draw values the run never drew, so it is refused, not guessed."""
+    model, data = moving
+    size = mujoco.mj_stateSize(model, STATE_SPEC)
+    samples = np.zeros(3, record_dtype(size, False))
+    samples["t"] = [0.0, 0.04, 0.08]
+    meta = {
+        "format_version": FORMAT_VERSION - 1,
+        "episode": 2,
+        "state_size": size,
+        "capture_fps": [25, 1],
+        "camera_track": False,
+        "state_spec": STATE_SPEC,
+    }
+    write_state_recording(tmp_path / "older.mcap", meta, samples)
+    with pytest.raises(RecordingError, match=f"format v{FORMAT_VERSION - 1}.*Re-record the run"):
+        open_recording(tmp_path / "older.mcap")
+
+
+def test_a_recording_names_the_run_it_recorded(tmp_path, moving):
+    """The run is half of the draws' key, so it is in the provenance beside the seed."""
+    model, data = moving
+    ctx = _Ctx(model, data)
+    ctx.run = "cfg-a/2"
+    rec = StateRecorder(ctx, tmp_path / "run.mcap", snap_fps(25, model.opt.timestep), world="w")
+    for _ in range(50):
+        mujoco.mj_step(model, data)
+        rec.sample(ctx)
+    rec.close()
+    with open_recording(tmp_path / "run.mcap") as opened:
+        assert opened.meta["run"] == "cfg-a/2" and opened.run == "cfg-a/2"
+
+
+def test_a_recording_that_names_no_run_cannot_say_which_draws_it_made(tmp_path, moving):
+    model, data = moving
+    size = mujoco.mj_stateSize(model, STATE_SPEC)
+    samples = np.zeros(2, record_dtype(size, False))
+    samples["t"] = [0.0, 0.04]
+    meta = {
+        "run": None,
+        "state_size": size,
+        "capture_fps": [25, 1],
+        "camera_track": False,
+        "state_spec": STATE_SPEC,
+    }
+    write_state_recording(tmp_path / "nameless.mcap", meta, samples)
+    with (
+        open_recording(tmp_path / "nameless.mcap") as opened,
+        pytest.raises(RecordingError, match="names no run"),
+    ):
+        _ = opened.run
+
+
 def test_a_layout_that_disagrees_with_the_provenance_is_refused(tmp_path):
     """The file and its declared layout must agree, or a reader silently misreads columns."""
     samples = np.zeros(3, record_dtype(4, False))
@@ -671,10 +727,46 @@ def test_a_fullphysics_recording_is_refused_not_rendered(tmp_path, moving):
     with pytest.raises(RecordingError) as err:
         opened._check_size(model, "w")
     message = str(err.value)
-    assert "8223" in message, "the offending spec must be named"
+    assert str(int(mujoco.mjtState.mjSTATE_FULLPHYSICS)) in message, (
+        "the offending spec must be named"
+    )
     assert "frozen at its compile-time pose" in message, "and what it would have done"
     # Must NOT blame the world: the model dimensions are identical, only the format differs.
     assert "does not match this recording" not in message
+
+
+_ROPE_XML = """
+<mujoco><option integrator="discrete"/><worldbody><body name="h" pos="0 0 1">
+  <flexcomp name="rope" type="grid" count="5 1 1" spacing=".02 .02 .02" dim="1" mass=".05"
+            radius=".003"><elasticity young="1e6"/><edge equality="true"/><pin id="0 1"/></flexcomp>
+</body></worldbody></mujoco>
+"""
+
+
+@pytest.mark.parametrize("rope", [False, True], ids=["no_plastic_state", "elastic_rope"])
+def test_a_recording_without_the_plastic_state_is_read_only_where_there_is_none(
+    tmp_path, moving, rope
+):
+    """A recording written before the spec carried ``plastic`` has the same layout where a model
+    has no plastic state, so it replays there; an elastic rope has some, so it is refused."""
+    model, data = moving
+    if rope:
+        model = mujoco.MjModel.from_xml_string(_ROPE_XML)
+        data = mujoco.MjData(model)
+        assert mujoco.mj_stateSize(model, int(mujoco.mjtState.mjSTATE_PLASTIC)) > 0
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(ctx, tmp_path / "older.mcap", snap_fps(25, 0.002), world="w")
+    rec._provenance["state_spec"] = STATE_SPEC_WITHOUT_PLASTIC
+    for _ in range(50):
+        mujoco.mj_step(model, data)
+        rec.sample(ctx)
+    rec.close()
+    opened = open_recording(tmp_path / "older.mcap")
+    if rope:
+        with pytest.raises(RecordingError, match="recorded without the plastic state"):
+            opened._check_size(model, "w")
+    else:
+        opened._check_size(model, "w")
 
 
 # -- selecting a moment ----------------------------------------------------------------------------

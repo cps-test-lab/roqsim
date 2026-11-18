@@ -24,6 +24,7 @@ from test_flex_rules import CASES, _mjcf
 
 from roqsim import flex_modes as flexlib
 from roqsim.check import _render_text, check_world, main
+from roqsim.flex import edge_stiff_ropes
 from roqsim.flex_modes import (
     MAX_OMEGA_DT,
     FlexTooLarge,
@@ -195,6 +196,25 @@ _SHORTFALL = [
 ]
 
 
+def test_a_solid_flex_is_the_material_its_young_and_poisson_state():
+    """MuJoCo 4.0 gives a 3D flex the Lame constants of its ``young`` and ``poisson``.
+
+    MuJoCo 3.14 stretched a 3D flex with twice the first Lame constant: the block, at E = 1e5 Pa and
+    nu = 0.2, rang at 11.45, 12.95 and 22.36 Hz there and rings at 10.88, 12.23 and 22.33 Hz here.
+    The remap MuJoCo 4.0's changelog gives for the earlier material, nu' = 2 nu / (1 + 2 nu) and
+    E' = E (1 + nu') / (1 + nu), rings at the 3.14 figures, so the shift is that change alone.
+    """
+
+    def hz(xml):
+        derived, _ = explain_flex(mujoco.MjModel.from_xml_string(xml), 0, n=3)
+        return [mode["hz"] for mode in derived["modes"]]
+
+    assert hz(_block()) == pytest.approx([10.88, 12.23, 22.33], abs=0.01)
+    nu = 2 * 0.2 / (1 + 2 * 0.2)
+    earlier = _block(young=1e5 * (1 + nu) / 1.2).replace('poisson="0.2"', f'poisson="{nu}"')
+    assert hz(earlier) == pytest.approx([11.45, 12.95, 22.36], abs=0.01)
+
+
 @pytest.mark.parametrize(("omega_dt", "zeta_short", "omega_short"), _SHORTFALL)
 def test_check_warns_where_its_figures_stop_being_the_ones_that_run(
     omega_dt, zeta_short, omega_short
@@ -218,7 +238,7 @@ def test_check_warns_where_its_figures_stop_being_the_ones_that_run(
     if not within:
         (warning,) = timestep_warnings
         assert set(warning) == {"check", "message", "hint", "flex"}
-        assert warning["message"].startswith("flex 'blk': mode 1 (11.4 Hz) is under-resolved")
+        assert warning["message"].startswith("flex 'blk': mode 1 (10.9 Hz) is under-resolved")
         assert f"omega * timestep = {omega_dt:.2g}, above 0.3" in warning["message"]
         assert "not the ones that run" in warning["message"]
         assert f"sim.timestep <= {derived['max_timestep_resolved']:g} s" in warning["hint"]
@@ -292,8 +312,13 @@ def test_a_solref_below_the_floor_is_a_warning():
 # -- the inventory --------------------------------------------------------------------------------
 @pytest.mark.parametrize("case", sorted(CASES))
 def test_elastic_is_whether_the_flex_pushes_back(case):
-    """``is_elastic`` reads compiled fields; the behaviour it stands for is a passive restoring force."""
-    model = mujoco.MjModel.from_xml_string(_mjcf(CASES[case][0], option='integrator="discrete"'))
+    """``is_elastic`` reads compiled fields; the behaviour it stands for is a passive restoring force.
+
+    Each case runs under ``discrete``, except a rope's edge stiffness or damping, which only the other
+    integrators run (``roqsim.flex``, rule 2)."""
+    flex = CASES[case][0]
+    integrator = "Euler" if edge_stiff_ropes(mujoco.MjSpec.from_string(_mjcf(flex))) else "discrete"
+    model = mujoco.MjModel.from_xml_string(_mjcf(flex, option=f'integrator="{integrator}"'))
     data = mujoco.MjData(model)
     data.qpos[:] = model.qpos0 + 1e-4 * np.random.default_rng(0).standard_normal(model.nq)
     mujoco.mj_forward(model, data)
@@ -388,8 +413,8 @@ def test_check_marks_an_under_resolved_mode(tmp_path):
     assert [(w["check"], w["flex"]) for w in report["warnings"]] == [("flex-timestep", "blk")]
 
     text = _render_text(report)
-    assert "WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved" in text
-    assert "modes 11.4, 13*, 22.4* Hz; damping ratio 0.288, 0.326*, 0.562*" in text
+    assert "WARN  [flex-timestep] flex 'blk': mode 2 (12.2 Hz) is under-resolved" in text
+    assert "modes 10.9, 12.2*, 22.3* Hz; damping ratio 0.274, 0.307*, 0.561*" in text
     assert "* under-resolved (omega * timestep above 0.3): a run damps" in text
 
 
