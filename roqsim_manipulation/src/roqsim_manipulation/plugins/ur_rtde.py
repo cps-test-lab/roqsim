@@ -102,7 +102,7 @@ _MEASURES = ("environment_on_tool", "tool_on_environment")
 
 
 class RTDEError(RuntimeError):
-    """The interface is gone: the episode was reset, the script stopped, or the simulation ended."""
+    """The interface is gone: the run was reset, the script stopped, or the simulation ended."""
 
 
 def _rotvec(R: np.ndarray) -> np.ndarray:
@@ -791,8 +791,8 @@ class URRTDEPlugin(Plugin):
             self._thread = None
 
     def on_reset(self, ctx: SimContext) -> None:
-        # A program belongs to the episode that started it: a reset ends it, and its next call
-        # raises RTDEError rather than steering the next episode.
+        # A program belongs to the run that started it: a reset ends it, and its next call
+        # raises RTDEError rather than steering the next run.
         self._close("reset")
         self._link = _Link()
         self._reset_motion()

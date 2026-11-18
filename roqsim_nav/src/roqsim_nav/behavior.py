@@ -83,7 +83,7 @@ class NavCore:
 
     Pass something that draws **freshly on each call** --
     ``lambda lo, hi: ctx.rng_for(name).uniform(lo, hi)`` -- not a bound method of one generator held
-    for the run. ``rng_for`` is keyed on ``(seed, episode, sim_time, name)``, so a per-call draw is a
+    for the run. ``rng_for`` is keyed on ``(seed, run, sim_time, name)``, so a per-call draw is a
     pure function of the moment the mover arrived and replays exactly under the same seed. A held
     generator is a stateful stream instead: its position depends on how many draws preceded it, and
     the draw happens when this object is constructed rather than when the dwell is needed.
@@ -124,7 +124,7 @@ class NavCore:
         #: as one rather than as an arrival.
         self.failure = ""
         if self.planner is not None:
-            # An episode plans against the world as built, never against what the last one ran into.
+            # A run plans against the world as built, never against what the last one ran into.
             self.planner.forget_blockages()
 
     def observe(self, t, pos, blocker) -> None:

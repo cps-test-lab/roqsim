@@ -34,12 +34,12 @@ def write_state_recording(
 ) -> Path:
     """A recording holding ``samples`` (a ``record_dtype`` array) on its ``state`` channel.
 
-    ``meta`` is completed with the format version. The JSON channels carry one message per sample
-    too, so a reader that wants them finds the shape the recorder writes: a ``clock`` pair, and
-    empty ``poses``/``joints`` documents.
+    ``meta`` is completed with the format version and a run. The JSON channels carry one message
+    per sample too, so a reader that wants them finds the shape the recorder writes: a ``clock``
+    pair, and empty ``poses``/``joints`` documents.
     """
     path = Path(path)
-    meta = {"format_version": FORMAT_VERSION, **meta}
+    meta = {"format_version": FORMAT_VERSION, "run": "#0", **meta}
     writer = ChunkedWriter(path)
     writer.start(PROFILE, library="synthetic")
     writer.add_json_metadata(META_RECORDING, meta)
@@ -87,7 +87,7 @@ class RowWriter:
         self.writer = ChunkedWriter(self.path)
         self.writer.start(PROFILE, library="synthetic")
         self.writer.add_json_metadata(
-            META_RECORDING, {"format_version": FORMAT_VERSION, **(meta or {})}
+            META_RECORDING, {"format_version": FORMAT_VERSION, "run": "#0", **(meta or {})}
         )
         if roster is not None:
             self.writer.add_json_metadata(META_ENTITIES, {"entities": roster})

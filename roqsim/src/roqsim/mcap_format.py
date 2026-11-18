@@ -45,7 +45,7 @@ PROFILE = "roqsim"
 
 #: The recording's own format version, carried in the ``roqsim.recording`` metadata. It is the only
 #: one with a reader: any other version is refused by name.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 #: The suffix a recording carries. What ``is_recording`` tests and what a bare ``--record out``
 #: is completed with.
@@ -145,11 +145,11 @@ EVENTS_SCHEMA = {
     "type": "object",
     "properties": {
         "t": {**_NUMBER, "description": "simulated seconds"},
-        "episode": {"type": "integer", "description": "the trial within the process, from 0"},
+        "run": {"type": "string", "description": "the run it belongs to, by name (roqsim.runs)"},
         "source": {"type": "string", "description": "who emitted it, usually a plugin's address"},
         "event": {"type": "string", "description": "what happened"},
     },
-    "required": ["t", "episode", "source", "event"],
+    "required": ["t", "run", "source", "event"],
     "additionalProperties": True,
 }
 

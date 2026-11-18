@@ -182,7 +182,7 @@ def test_an_empty_route_is_refused(sim):
 
 
 def test_reset_clears_a_commanded_route(tmp_path):
-    """Episode N must not inherit the route episode N-1 was given."""
+    """Run N must not inherit the route run N-1 was given."""
     engine = _engine(tmp_path, goals=[[1.0, 0.0]])
     engine.setup()
     engine.reset()

@@ -53,8 +53,11 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
   into a driver, do not let isort merge it (the root `pyproject.toml` E402 per-file-ignore), do not let
   `roqsim/src/roqsim/gl.py` import mujoco. Tests without a camera cannot catch a regression. Architecture §8.
 - **Draw randomness from `ctx.rng_for(name)`**, once per (sensor, step), never from `np.random` or a
-  held generator. It is keyed on `(seed, episode, sim_time, name)`, so a draw is a function of the world
-  and not of how many draws came before; that keeps a value reproducible and a replay exact. Pass
+  held generator. It is keyed on `(seed, run, sim_time, name)`, so a draw is a function of the world
+  and not of how many draws came before; that keeps a value reproducible and a replay exact. The run is
+  the name the runner gives `reset(run=...)` (`roqsim.runs`), never a count of resets, so no two runs
+  draw the same values whichever process they share; a plugin that needs to see a reset compares
+  `ctx.reset_count`, not the run. Pass
   `self.draw_key(what)` as `name` (`robot/lidar/noise`): it is built from the address, where
   `self.name` is the class name on every instance without a `name:`, and two instances sharing a key
   draw one stream twice.

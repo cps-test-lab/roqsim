@@ -12,10 +12,10 @@ Any plugin emits one on the physics thread::
 
     ctx.events.emit("press_1", "door_close", part="strip_3")
 
-and gets back the event as a dict: ``{"t": <sim seconds>, "episode": <n>, "source": "press_1",
-"event": "door_close", "part": "strip_3"}``. Extra fields must be JSON values (a ``TypeError`` at
-the emit, not a broken file at the end). The log keeps every event of the process, across resets;
-``episode`` tells the trials apart.
+and gets back the event as a dict: ``{"t": <sim seconds>, "run": <the run's name>, "source":
+"press_1", "event": "door_close", "part": "strip_3"}``. Extra fields must be JSON values (a
+``TypeError`` at the emit, not a broken file at the end). The log keeps every event of the process,
+across resets; ``run`` tells the runs apart (:mod:`roqsim.runs`).
 
 A recording (:class:`roqsim.capture.StateRecorder`) writes each event as one message on its
 ``events`` channel, with the event's own time as the message's log time, so an event between two
@@ -28,16 +28,27 @@ import json
 from collections.abc import Callable
 
 #: The keys an event carries whatever its source adds; an emit may not use them for fields.
-RESERVED = ("t", "episode", "source", "event")
+RESERVED = ("t", "run", "source", "event")
 
 
 class EventLog:
     """The events of a run, in the order they were emitted."""
 
-    def __init__(self, clock: Callable[[], float], episode: Callable[[], int]) -> None:
+    def __init__(
+        self,
+        clock: Callable[[], float],
+        *,
+        run: Callable[[], str],
+        generation: Callable[[], int],
+    ) -> None:
+        """``run`` names the run an event belongs to; ``generation`` counts the resets, which is
+        what tells two resets of one run apart (``start_of_now``) and is not written anywhere."""
         self._clock = clock
-        self._episode = episode
+        self._run = run
+        self._generation = generation
         self._events: list[dict] = []
+        #: The reset generation each event was emitted in, beside ``_events``.
+        self._generations: list[int] = []
 
     def emit(self, source: str, event: str, **fields) -> dict:
         """Record that ``source`` did ``event`` now; ``fields`` are JSON values describing it."""
@@ -46,27 +57,28 @@ class EventLog:
             raise ValueError(f"event fields may not be named {clash}: they are the event's own")
         record = {
             "t": float(self._clock()),
-            "episode": int(self._episode()),
+            "run": str(self._run()),
             "source": str(source),
             "event": str(event),
             **fields,
         }
         json.dumps(record)  # a field that is no JSON value fails here, at its source
         self._events.append(record)
+        self._generations.append(int(self._generation()))
         return record
 
     def __len__(self) -> int:
         return len(self._events)
 
     def start_of_now(self) -> int:
-        """The index of the first event of the current episode emitted at or after the current time:
-        what a recording starting now owns, its episode's reset events included when it starts at the
-        reset, and nothing an earlier take or episode emitted."""
-        now, episode = float(self._clock()), int(self._episode())
+        """The index of the first event since the last reset emitted at or after the current time:
+        what a recording starting now owns, its run's reset events included when it starts at the
+        reset, and nothing an earlier take or an earlier reset emitted."""
+        now, generation = float(self._clock()), int(self._generation())
         index = len(self._events)
         while (
             index
-            and self._events[index - 1]["episode"] == episode
+            and self._generations[index - 1] == generation
             and self._events[index - 1]["t"] >= now
         ):
             index -= 1

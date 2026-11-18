@@ -150,16 +150,16 @@ def test_the_seed_is_recorded_in_a_recordings_provenance(world, tmp_path):
     assert open_recording(tmp_path / "r.mcap").meta["seed"] == 4242
 
 
-# -- episodes ---------------------------------------------------------------
+# -- runs ---------------------------------------------------------------
 #
 # A process that serves several trials resets between them rather than restarting, and
 # `mj_resetData` puts `data.time` back to zero. Since the noise is a pure function of
-# (seed, sim_time, sensor), an unchanged seed would make every episode replay the SAME
+# (seed, sim_time, sensor), an unchanged seed would make every run replay the SAME
 # noise sequence -- so repeated trials of one configuration would be identical in everything
 # the sensors contribute, while looking like independent repetitions.
 
 
-def _scans_over_episodes(world, seed, episodes=3, steps=120):
+def _scans_over_runs(world, seed, runs=3, steps=120):
     """One process, several trials, resetting between them -- what a packed job does."""
     engine = Engine(load_config_from_dict(world))
     engine.ctx.seed = seed
@@ -169,7 +169,7 @@ def _scans_over_episodes(world, seed, episodes=3, steps=120):
     )
     out = []
     try:
-        for _ in range(episodes):
+        for _ in range(runs):
             engine.reset()
             for _ in range(steps):
                 engine.step()
@@ -179,31 +179,30 @@ def _scans_over_episodes(world, seed, episodes=3, steps=120):
         engine.shutdown()
 
 
-def test_consecutive_episodes_do_not_replay_the_same_noise(world):
+def test_consecutive_runs_do_not_replay_the_same_noise(world):
     """What this guards: repetitions that are duplicates dressed as samples."""
-    first, second, third = _scans_over_episodes(world, seed=7)
+    first, second, third = _scans_over_runs(world, seed=7)
     assert not np.array_equal(first, second)
     assert not np.array_equal(second, third)
 
 
-def test_the_whole_episode_sequence_is_reproducible_from_the_seed(world):
-    """Varying between episodes must not cost reproducibility: the same base seed
-    replays the same series of episodes."""
-    a = _scans_over_episodes(world, seed=7)
-    b = _scans_over_episodes(world, seed=7)
+def test_the_whole_run_sequence_is_reproducible_from_the_seed(world):
+    """Varying between runs must not cost reproducibility: the same base seed
+    replays the same series of runs."""
+    a = _scans_over_runs(world, seed=7)
+    b = _scans_over_runs(world, seed=7)
     assert all(np.array_equal(x, y) for x, y in zip(a, b, strict=True))
 
 
-def test_episode_n_is_shared_across_runs_with_one_base_seed(world):
-    """Common random numbers, which is what makes two configurations comparable
-    run-for-run instead of only in distribution: episode i of one process and episode i
-    of another draw the same noise when the base seed matches."""
-    a = _scans_over_episodes(world, seed=11, episodes=3)
-    b = _scans_over_episodes(world, seed=11, episodes=3)
+def test_a_run_draws_the_same_noise_in_another_process_under_the_same_seed(world):
+    """The draws are keyed on the run's name, not on how many runs came before: run #2 of
+    one process and run #2 of another draw the same noise when the base seed matches."""
+    a = _scans_over_runs(world, seed=11, runs=3)
+    b = _scans_over_runs(world, seed=11, runs=3)
     assert np.array_equal(a[2], b[2])
 
 
-def test_a_different_base_seed_changes_every_episode(world):
-    a = _scans_over_episodes(world, seed=11)
-    b = _scans_over_episodes(world, seed=12)
+def test_a_different_base_seed_changes_every_run(world):
+    a = _scans_over_runs(world, seed=11)
+    b = _scans_over_runs(world, seed=12)
     assert all(not np.array_equal(x, y) for x, y in zip(a, b, strict=True))

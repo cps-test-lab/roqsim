@@ -53,12 +53,12 @@ def _engine():
 
 @pytest.fixture
 def sim(_engine):
-    """A fresh episode on one shared engine.
+    """A fresh run on one shared engine.
 
     Building the engine is cheap (~0.1 s); its FIRST ``reset()`` is not (~0.9 s -- the character
     meshes and the CARLA locomotion clips load lazily there). A second reset on the same engine is
     about a millisecond, so ten tests each building their own engine would pay that boot ten times.
-    ``reset()`` is the engine's episode boundary, so a test still starts from the route's start with
+    ``reset()`` is the engine's run boundary, so a test still starts from the route's start with
     every plugin's ``on_reset`` having run.
     """
     _engine.reset()
@@ -427,7 +427,7 @@ def test_a_start_that_is_not_a_walker_pose_is_refused(overrides, expect):
     assert any(re.search(expect, e) for e in errors), errors
 
 
-def test_a_goal_driven_walker_starts_at_its_pose_heading_every_episode():
+def test_a_goal_driven_walker_starts_at_its_pose_heading_every_run():
     from roqsim_walker.output import STATE_KEY
 
     pose = {"position": {"x": 1.0, "y": -1.0}, "orientation": {"yaw": 1.2}}
@@ -456,7 +456,7 @@ def _standing_engine():
 
 @pytest.fixture
 def standing(_standing_engine):
-    """A walker standing at (1, 1) facing +x with the default navigator, in a fresh episode."""
+    """A walker standing at (1, 1) facing +x with the default navigator, in a fresh run."""
     _standing_engine.reset()
     return _standing_engine
 

@@ -678,14 +678,15 @@ file:
 ``clock``
    ``{"wall_ts", "sim_ts"}`` -- the pair a reader outside the process relates its own stamps to.
 ``events``
-   ``{"t", "episode", "source", "event", ...}`` -- not one per sample but one per **event** a plugin
+   ``{"t", "run", "source", "event", ...}`` -- not one per sample but one per **event** a plugin
    emitted (``ctx.events.emit(source, event, **fields)``, :mod:`roqsim.events`): a machine starting a
    stroke, a controller beginning a move. Its ``log_time`` is the event's own simulated time, so an
    event between two samples keeps its exact time; ``Recording.events`` reads them back in order.
 
 And two metadata records, each a JSON document under the key ``json``: ``roqsim.recording``, the
 provenance (world, overrides, the resolved component tree, actuator gains, endpoint rates, package
-versions, the state layout, the seed, and ``presence``: from which sample on which entities were
+versions, the state layout, the seed and the run (together the key of every draw the run made),
+and ``presence``: from which sample on which entities were
 absent), written at the start, again whenever the absent set changes, and again at close; and
 ``roqsim.entities``, the roster of what the pose entries *are* -- each entity's name, ``kind``,
 ``body`` and whether it is currently ``present``, from the registry. A body name does not say whether
@@ -1077,7 +1078,7 @@ element of a vector field — an odometry endpoint gives ``odom.position.0`` to 
 wrench ``wrench.force.0`` to ``wrench.torque.2``. Text fields (joint names) have no column, and a
 vector field wider than 32 values is refused; ``--joint`` reads joints from the state instead.
 A re-run sensor is deterministic and gets the noise that moment would have had
-(the recording carries the run's seed), but it is not bit-identical to what the live run published at
+(the recording carries the run's seed and its name), but it is not bit-identical to what the live run published at
 that timestamp — live, the sensor fires between recorded samples, so the value published then was
 computed a moment earlier.
 A selected sensor whose plugin raises while re-running on a sample is refused, naming it and the

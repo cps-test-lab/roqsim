@@ -188,8 +188,10 @@ class Client:
         """Take *n* steps while paused; returns once they ran, with the sim time reached."""
         return self.call("sim/run_control/step", {"n": int(n)}, timeout=timeout)["result"]
 
-    def reset(self, *, timeout: float | None = None) -> dict:
-        return self.call("sim/run_control/reset", timeout=timeout)["result"]
+    def reset(self, *, run: str | None = None, timeout: float | None = None) -> dict:
+        """Reset the world; ``run`` names the run it starts, ``None`` the next unnamed one."""
+        value = {"run": run} if run is not None else None
+        return self.call("sim/run_control/reset", value, timeout=timeout)["result"]
 
 
 class Subscription:

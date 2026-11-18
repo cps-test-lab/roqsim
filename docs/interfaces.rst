@@ -256,6 +256,16 @@ comes from ``mujoco.viewer``'s own glfw context regardless. A base image may wel
 ``DISPLAY=:0`` unconditionally, so trusting it would make a headless run choose ``glfw`` and fail
 against an X server that was never started.
 
+MuJoCo's warnings
+-----------------
+
+Without a warning handler, MuJoCo prints each warning and appends it to ``MUJOCO_LOG.TXT`` in the
+current directory. ``import roqsim`` installs one (:func:`roqsim.mujoco_log.route_warnings`) that
+logs the warning at ``WARNING`` on the ``roqsim.mujoco`` logger, so no file is written. A handler
+installed before ``import roqsim`` is kept, one installed after replaces it, and
+``mujoco.set_mju_user_warning(None)`` restores MuJoCo's own file. MuJoCo's errors are not routed:
+the bindings raise each as ``mujoco.FatalError``.
+
 Listing what a world is made of
 -------------------------------
 

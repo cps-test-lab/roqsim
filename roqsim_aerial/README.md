@@ -92,7 +92,7 @@ MuJoCo's own drag terms do the work; nothing here applies a force of its own. Th
   the compiled model would say one thing and the first tick another, and the run's provenance would
   record the value that was immediately overwritten. State the mean flow in `steady:`.
 - **Turbulence draws from the run's seed** through `ctx.rng_for`, so there is no `seed` key here and
-  the whole world reproduces together. Because the episode is part of the key, repetitions of one
+  the whole world reproduces together. Because the run is part of the key, the runs of one
   configuration see *different* turbulence — samples of the weather, not copies of it.
 - **Wind is inert in a vacuum**, for the same reason the drone is undamped in one: it acts through
   the density and viscosity drag terms. With both at 0 the plugin has no effect at all, and warns.
