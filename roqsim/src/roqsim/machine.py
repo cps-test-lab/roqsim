@@ -212,7 +212,7 @@ class _Run:
 MACHINE_SCHEMA = {
     "home": Field(
         dict,
-        doc="where an actuator or setpoint stands at the start of an episode and after a reset, "
+        doc="where an actuator or setpoint stands at the start of a run and after a reset, "
         "over the class's HOME",
     ),
     "on_error": Field(
@@ -238,7 +238,7 @@ class MachinePlugin(Plugin):
 
     Config (every machine; a subclass adds its own keys)::
 
-        home: {ram: 0.054}   # where an actuator or setpoint stands at the start of an episode and
+        home: {ram: 0.054}   # where an actuator or setpoint stands at the start of a run and
                              #   after a reset, over the class's HOME; inside the actuator's range.
                              #   A machine with HOME_KEYS names its start state in those instead
                              #   (a door: home: {openness: 0.5}). Every start state is stated here.
@@ -252,7 +252,7 @@ class MachinePlugin(Plugin):
     ACTUATORS: tuple[str, ...] = ()
     #: Plugin-owned quantities that ramp like actuators, by name -> unit; the plugin applies them.
     SETPOINTS: dict[str, str] = {}
-    #: Where the actuators and setpoints stand at the start of an episode; a world's ``home:``
+    #: Where the actuators and setpoints stand at the start of a run; a world's ``home:``
     #: overrides it per name. An actuator named in neither stands at 0, clamped into its range.
     HOME: dict[str, float] = {}
     #: The quantities a world's ``home:`` names where the machine's start state is not an actuator
@@ -291,7 +291,7 @@ class MachinePlugin(Plugin):
         #: name -> (goal, speed): a target ramping toward its goal
         self._ramps: dict[str, tuple[float, float]] = {}
         self._lock = threading.Lock()
-        #: Sequence numbers, counting across episodes so a stale one never matches.
+        #: Sequence numbers, counting across runs so a stale one never matches.
         self._counter = itertools.count(1)
         #: A start not applied yet: its number, program, arguments and token.
         self._pending: tuple[int, str, dict, str] | None = None
@@ -563,7 +563,7 @@ class MachinePlugin(Plugin):
             if act is not None:
                 d.ctrl[act.aid] = value
                 # A filtered servo's force follows its activation, not its control: left at 0, it
-                # would pull toward 0 at the start of every episode.
+                # would pull toward 0 at the start of every run.
                 adr = int(ctx.model.actuator_actadr[act.aid])
                 if adr >= 0:
                     d.act[adr] = value

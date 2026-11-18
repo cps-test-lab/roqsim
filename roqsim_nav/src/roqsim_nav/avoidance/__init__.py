@@ -64,7 +64,7 @@ class AvoidanceModel(ABC):
       models is refused at load rather than ignored at runtime.
     * ``present`` honours :mod:`roqsim.presence`, so an entity made absent stops deflecting others,
       exactly as it stops being seen by every raycaster.
-    * :meth:`reset` exists because episodes do: agents and walls survive one, velocities must not.
+    * :meth:`reset` exists because runs do: agents and walls survive one, velocities must not.
 
     **The one known limit, stated rather than smuggled:** an agent is a **disc**. A long cart is its
     circumscribed circle. Widening to footprints is a real interface change -- a new ``add_agent``
@@ -109,7 +109,7 @@ class AvoidanceModel(ABC):
         """
 
     def reset(self) -> None:
-        """Drop per-episode state. Agents and static geometry survive; velocities do not."""
+        """Drop per-run state. Agents and static geometry survive; velocities do not."""
 
 
 class AvoidanceService:
@@ -128,7 +128,7 @@ class AvoidanceService:
         self.ref = ref
         self.params = dict(params or {})
         self._solved_step = -1
-        self._reset_episode = -1
+        self._reset_generation = -1
 
     def ensure_solved(self, ctx) -> None:
         step = round(ctx.sim_time / ctx.dt) if ctx.dt else 0
@@ -138,16 +138,16 @@ class AvoidanceService:
         self.model.solve(float(ctx.dt))
 
     def ensure_reset(self, ctx) -> None:
-        """Reset the model once per episode, whichever mover gets here first.
+        """Reset the model once per reset of the world, whichever mover gets here first.
 
         Stamped like the solve, and for the same reason: every navigator resets, and the shared
         model must be cleared exactly once -- not once per mover, which would wipe the state of the
         movers that reset before it.
         """
-        episode = int(getattr(ctx, "episode", 0))
-        if episode == self._reset_episode:
+        generation = int(ctx.reset_count)
+        if generation == self._reset_generation:
             return
-        self._reset_episode = episode
+        self._reset_generation = generation
         self.reset()
 
     def reset(self) -> None:

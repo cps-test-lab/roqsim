@@ -2,7 +2,7 @@
 
 What is worth pinning: it is a MOCAP body (physics may not move it), it travels at exactly the
 configured speed, the random walk stays out of walls, `on_reset` restores the pose, and the walk
-draws through ``ctx.rng_for`` -- a function of the run's seed, the mover's address, the episode and
+draws through ``ctx.rng_for`` -- a function of the run's seed, the mover's address, the run and
 sim time, with no seed of its own -- so repetition N of a campaign cell is independent of whatever
 ran before it.
 """
@@ -207,36 +207,37 @@ def test_random_walk_moves_at_the_configured_speed():
 # --------------------------------------------------------------------------- reset semantics
 
 
-def _reset(plugin, ctx, *, next_episode=True):
-    """What Engine.reset does around the plugin: a new episode, data back to its initial state."""
-    if next_episode:
-        ctx.episode += 1
+def _reset(plugin, ctx, *, run):
+    """What Engine.reset does around the plugin: a run named ``run``, data back to its initial
+    state."""
+    ctx.run = run
+    ctx.reset_count += 1
     mujoco.mj_resetData(ctx.model, ctx.data)
     plugin.on_reset(ctx)
 
 
-def test_reset_restores_the_pose_and_a_repeated_episode_repeats_the_walk():
+def test_reset_restores_the_pose_and_a_repeated_run_repeats_the_walk():
     """Repetition N must not inherit repetition N-1's obstacle position, and the walk is a function
-    of (run seed, episode, sim time) -- so the same episode replayed is the same walk."""
+    of (run seed, run, sim time) -- so the same run replayed is the same walk."""
     _, data, plugin, ctx = _build(
         **_cfg(pose={"position": {"x": 1.0, "y": 2.0}}, speed=0.5, random_walk={})
     )
     first = _run(plugin, ctx, 5.0)
-    _reset(plugin, ctx, next_episode=False)
+    _reset(plugin, ctx, run=ctx.run)
     assert data.mocap_pos[0][:2] == pytest.approx([1.0, 2.0])
     again = _run(plugin, ctx, 5.0)
-    assert np.allclose(first, again), "the same episode at the same seed walked differently"
+    assert np.allclose(first, again), "the same run at the same seed walked differently"
 
 
-def test_each_episode_walks_its_own_path():
-    """The walk draws through ctx.rng_for, keyed on the episode: repetitions of a trial in one
+def test_each_run_walks_its_own_path():
+    """The walk draws through ctx.rng_for, keyed on the run: repetitions of a trial in one
     process are samples, not one walk replayed."""
     walls = ((0, 2.15, 4.6, 0.3), (0, -2.15, 4.6, 0.3), (2.15, 0, 0.3, 4.6), (-2.15, 0, 0.3, 4.6))
     _, _, plugin, ctx = _build(walls, **_cfg(speed=0.4, random_walk={"clearance": 0.3}))
     first = _run(plugin, ctx, 20.0)
-    _reset(plugin, ctx)
+    _reset(plugin, ctx, run="#1")
     second = _run(plugin, ctx, 20.0)
-    assert not np.allclose(first, second), "episode 2 replayed episode 1's walk"
+    assert not np.allclose(first, second), "run #1 replayed run #0's walk"
 
 
 def test_the_runs_seed_varies_the_walk():

@@ -304,8 +304,8 @@ def test_current_pose_reads_back_as_position_and_quaternion(tmp_path):
 
 def test_activating_anchors_on_the_arm_state_now(tmp_path):
     """The hand-over instant is only well defined if the controller starts from where the arm IS.
-    An equilibrium captured once per episode would make a controller activated later pull the tool
-    back to wherever the episode began."""
+    An equilibrium captured once per run would make a controller activated later pull the tool
+    back to wherever the run began."""
     engine = Engine(_world(tmp_path, {"initial_state": "inactive"}))
     engine.setup()
     engine.reset()

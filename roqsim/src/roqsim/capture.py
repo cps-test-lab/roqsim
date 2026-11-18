@@ -187,10 +187,12 @@ def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
 #: The state a recording stores, and **not** ``mjSTATE_FULLPHYSICS``.
 #:
 #: This is MuJoCo's *own* notion of a saved state: ``mjModel``'s keyframe fields are exactly
-#: ``key_time, key_qpos, key_qvel, key_act, key_ctrl, key_mpos, key_mquat``, so one sample here is one
-#: MuJoCo keyframe, plus ``plugin`` and ``eq_active`` (both change the pose solution and both are state
-#: MuJoCo exposes). ``mjSTATE_FULLPHYSICS`` is the thing that *deviates* from that notion: it is
-#: ``time|qpos|qvel|act|plugin`` and drops ``ctrl`` and the mocap fields.
+#: ``key_time, key_qpos, key_qvel, key_act, key_ctrl, key_mpos, key_mquat, key_plastic``, so one sample
+#: here is one MuJoCo keyframe, plus ``plugin`` and ``eq_active`` (both change the pose solution and
+#: both are state MuJoCo exposes). ``plastic`` is the state an elasto-plastic spring or flex and an
+#: elastic rope carry besides their pose -- a rope's per-edge reference frames and twists -- and is
+#: empty in a model with neither. ``mjSTATE_FULLPHYSICS`` is the thing that *deviates* from that
+#: notion: it is ``time|qpos|qvel|act|plugin|plastic`` and drops ``ctrl`` and the mocap fields.
 #:
 #: Dropping them is a **correctness bug, not an optimisation**, because this substrate drives a lot
 #: through mocap and ``ctrl``: ``walker`` uses one mocap body per skeleton joint (17 per pedestrian),
@@ -212,7 +214,13 @@ STATE_SPEC = int(
     | mujoco.mjtState.mjSTATE_MOCAP_QUAT
     | mujoco.mjtState.mjSTATE_PLUGIN
     | mujoco.mjtState.mjSTATE_EQ_ACTIVE
+    | mujoco.mjtState.mjSTATE_PLASTIC
 )
+
+#: :data:`STATE_SPEC` without ``plastic``, the spec of an older recording. Its layout is
+#: :data:`STATE_SPEC`'s in a model whose ``plastic`` state is empty, so it is read there and refused
+#: elsewhere (the reader's spec check).
+STATE_SPEC_WITHOUT_PLASTIC = STATE_SPEC & ~int(mujoco.mjtState.mjSTATE_PLASTIC)
 
 #: The spec's fields in the order ``mj_getState`` packs them, recorded in the provenance so a reader
 #: never has to guess a layout, and so a MuJoCo release that reorders or extends the packing is
@@ -223,10 +231,11 @@ STATE_FIELDS = (
     "qvel",
     "act",
     "ctrl",
+    "eq_active",
     "mocap_pos",
     "mocap_quat",
     "plugin",
-    "eq_active",
+    "plastic",
 )
 
 #: What ``w`` is measured from. **Elapsed seconds, never a Unix timestamp**: the origin is the moment
@@ -651,7 +660,7 @@ class StateRecorder:
         self._absent: tuple | None = None
         self._ctx = ctx
         #: How many of ``ctx.events`` are on the ``events`` channel already, or were emitted before
-        #: this recording began (an earlier take's, an earlier episode's): those are not its own.
+        #: this recording began (an earlier take's, an earlier run's): those are not its own.
         events = getattr(ctx, "events", None)
         self._events_written = events.start_of_now() if events is not None else 0
         self._writer: ChunkedWriter | None = None
@@ -675,12 +684,12 @@ class StateRecorder:
         self._provenance = {
             "format_version": FORMAT_VERSION,
             # The seed belongs in the provenance because it is what makes a *sensor* replay exact: a
-            # recomputed lidar scan needs the same noise the live run drew. The episode travels with
-            # it for the same reason and is useless without it: the noise key is (seed, episode,
-            # sim_time, sensor), so a recording of the third trial replayed as the first would draw
-            # a different -- and entirely plausible-looking -- scan.
+            # recomputed lidar scan needs the same noise the live run drew. The run travels with it
+            # for the same reason and is useless without it: the noise key is (seed, run,
+            # sim_time, sensor), so a recording of one run replayed as another would draw a
+            # different -- and entirely plausible-looking -- scan.
             "seed": getattr(ctx, "seed", None),
-            "episode": int(getattr(ctx, "episode", 0)),
+            "run": ctx.run,
             "world": world,
             # The recipe: what a reader needs to see how this run was asked for, and what an external
             # consumer uses as world identity. Replay does NOT re-interpret it -- see `world_model`.
@@ -728,6 +737,9 @@ class StateRecorder:
             # Which entities were absent from which sample on: a model field the state cannot hold.
             # The list itself, so every write of the provenance carries the changes so far.
             "presence": self._presence,
+            # How the world loaded (roqsim.conditions): a recording of a world drawn without its bake,
+            # say, says so, so a result made from it can be told from one made with it.
+            "conditions": list(getattr(ctx, "conditions", []) or []),
             "model": {
                 "name": _model_name(ctx.model),
                 "nbody": int(ctx.model.nbody),

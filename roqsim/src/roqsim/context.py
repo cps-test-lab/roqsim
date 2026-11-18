@@ -545,6 +545,9 @@ class SimContext:
         #: The render service every image comes through (:class:`roqsim.rendering.RenderService`):
         #: set by the engine at setup, or made on first use (:meth:`RenderService.of`).
         self.render = None
+        #: The ray-cast backends its sensors chose (:class:`roqsim.raycast.RaycastService`), made on
+        #: first use (:meth:`RaycastService.of`) and closed by the engine with the world.
+        self.raycast = None
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of
         #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``
@@ -574,20 +577,26 @@ class SimContext:
         # "draw one and record it", which is the driver's job, not this object's. `rng_for` raises on
         # `None` rather than standing in a default -- see its docstring for why.
         self.seed: int | None = None
-        #: Which trial this is within the process, counted from 0 and advanced by
-        #: :meth:`roqsim.engine.Engine.reset`. It is part of the noise key: a reset puts
-        #: ``data.time`` back to zero, so without it every trial after the first would
-        #: replay the *same* noise sequence -- repetitions that are duplicates wearing
-        #: the clothes of samples. Keyed rather than re-seeded so the whole series stays
-        #: reproducible from one base seed, and so trial *i* of two different runs draws
-        #: the same noise when their seeds match (common random numbers).
-        self.episode: int = 0
+        #: The run this is: its name, as the runner gave it or as :class:`roqsim.runs.RunNames`
+        #: made it, set by :meth:`roqsim.engine.Engine.reset`. It is part of the draws' key: a
+        #: reset puts ``data.time`` back to zero, so without it every run after the first would
+        #: replay the *same* noise -- repetitions that are duplicates wearing the clothes of
+        #: samples. It is the run's name and not a count of resets, so two runs of one campaign
+        #: never draw the same values whichever process they share, and the same seed and run
+        #: draw the same values in any process (:mod:`roqsim.runs`).
+        self.run: str = "#0"
+        #: How many resets this context has seen. Not part of any key or format: what a plugin
+        #: compares to tell that a reset happened, which the run's name cannot say -- one run may
+        #: be reset twice under the same name.
+        self.reset_count: int = 0
 
         #: What happened when, on simulated time (:mod:`roqsim.events`): any plugin emits, a
         #: recording carries every event on its ``events`` channel.
         from .events import EventLog
 
-        self.events = EventLog(lambda: self.sim_time, lambda: self.episode)
+        self.events = EventLog(
+            lambda: self.sim_time, run=lambda: self.run, generation=lambda: self.reset_count
+        )
 
         # Run-control (play/pause/step/reset); consulted by the standalone driver.
         from .control import RunControl
@@ -608,6 +617,15 @@ class SimContext:
         # the run's result and nothing reads it.
         self.unfinished: list[str] = []
 
+        # How the world loaded where that is weaker than asked for, or worth stating with a result:
+        # one plain-data condition each (:mod:`roqsim.conditions`), raised during the build. The
+        # engine writes them into the compiled model, so they travel with it.
+        self.conditions: list[dict] = []
+        # The world's MJCF file (``sim.world``, when it names one) and the YAML it was loaded from:
+        # set by the engine at setup, ``None`` where there is none.
+        self.world_path = None
+        self.world_source = None
+
         # Thread-safe command queue: external threads post, the physics thread drains. A deque's
         # append and popleft are atomic, so neither side takes a lock; the one consumer is the
         # physics thread, so a non-empty check followed by popleft cannot race another reader.
@@ -626,16 +644,16 @@ class SimContext:
     # -- deterministic randomness -------------------------------------------------------------
 
     def rng_for(
-        self, name: str, *, per_episode: bool = False, at: float | None = None
+        self, name: str, *, per_run: bool = False, at: float | None = None
     ):  # -> numpy.random.Generator
-        """A generator whose draws are a pure function of ``(seed, episode, sim_time, name)``.
+        """A generator whose draws are a pure function of ``(seed, run, sim_time, name)``.
 
         ``at`` is the sim time to key the draw on, when it is not now: a camera frame rendered off
         the physics thread is stamped with its snapshot's time and draws its noise there, so the
         picture is the same whichever tick it is published in.
 
-        ``per_episode=True`` drops ``sim_time`` from the key: the draw is the episode's, the same
-        whenever in the episode it is made. That is the generator for a quantity a trial holds
+        ``per_run=True`` drops ``sim_time`` from the key: the draw is the run's, the same
+        whenever in the run it is made. That is the generator for a quantity a trial holds
         constant -- a sensor's bias, a drift rate -- which a time-keyed draw would make depend on
         the moment it was first read. It has a counter slot of its own, so it never repeats the
         time-keyed draw of the same name at ``sim_time`` 0.
@@ -688,7 +706,7 @@ class SimContext:
                 "there is no run to reproduce and a picture is not a measurement."
             )
         seed = int(self.seed)
-        if per_episode or self.model is None or self.data is None:
+        if per_run or self.model is None or self.data is None:
             step = 0
         else:
             step = round((self.sim_time if at is None else float(at)) / self.dt)
@@ -697,13 +715,15 @@ class SimContext:
         import zlib
 
         stream = zlib.crc32(name.encode()) & 0xFFFFFFFF
-        # The episode occupies a counter slot rather than perturbing the key, which keeps the key
+        # The run occupies a counter slot rather than perturbing the key, which keeps the key
         # meaning exactly "the run's seed" and leaves the generator randomly accessible: (seed,
-        # episode, step) addresses a draw directly, with no stream to replay. A reset restarts
-        # `sim_time`, so without this slot trial 2 would re-draw trial 1's noise step for step.
+        # run, step) addresses a draw directly, with no stream to replay. A reset restarts
+        # `sim_time`, so without this slot run 2 would re-draw run 1's noise step for step.
+        from .runs import run_key
+
         return np.random.Generator(
             np.random.Philox(
-                key=seed, counter=[step, stream, int(self.episode), 1 if per_episode else 0]
+                key=seed, counter=[step, stream, run_key(self.run), 1 if per_run else 0]
             )
         )
 

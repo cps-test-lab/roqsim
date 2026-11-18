@@ -73,6 +73,16 @@ class _FixedScene(_RobotScene):
     welded = True
 
 
+class _MocapScene(_RobotScene):
+    """The same box on a mocap mount, which a plugin drives by writing its pose."""
+
+    welded = True
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        spec.body("base_link").mocap = True
+
+
 class _FallingScene(_RobotScene):
     """The same robot dropped from high enough that it is still in free fall when read."""
 
@@ -313,11 +323,10 @@ def test_config_errors_are_reported_by_name(config, expected):
 
 
 def test_a_body_welded_to_the_world_still_reads_one_g():
-    """MuJoCo computes no acceleration for a body with no dofs, so it would read free fall.
+    """A body that cannot move has proper acceleration exactly -g in the sensor frame.
 
-    The substitute is not a model of anything: a body that cannot move has proper acceleration
-    exactly -g in the sensor frame. A fixed camera mount is the common case (every standalone
-    `spawn_sensor` is one), and reporting zero there tells a stack its sensor is falling.
+    A fixed camera mount is the common case (every standalone `spawn_sensor` is one), and reading
+    zero there would tell a stack its sensor is falling.
     """
     reading = _plugin(_engine(f"{__name__}:_FixedScene", steps=20)).read()
     accel = np.asarray(reading.linear_acceleration)
@@ -330,12 +339,15 @@ def test_a_body_welded_to_the_world_still_reads_one_g():
     assert np.asarray(rolled.linear_acceleration)[1] == pytest.approx(GRAVITY, rel=1e-6)
 
 
-def test_a_jointed_body_is_left_to_mujoco():
-    """Only the zero-dof case is substituted -- a robot resting on the floor is MuJoCo's own reading,
-    which is what makes the substitution a closed form rather than a second physics."""
-    assert _plugin(_engine()).config is not None  # the free-jointed scene
-    assert _plugin(_engine())._world_fixed is False
-    assert _plugin(_engine(f"{__name__}:_FixedScene", steps=5))._world_fixed is True
+def test_a_body_on_a_mocap_mount_reads_gravity_alone():
+    """MuJoCo gives a mocap body no acceleration of its own: driven sideways, it still reads 1 g."""
+    engine = _engine(f"{__name__}:_MocapScene", steps=1)
+    plugin = _plugin(engine)
+    for step in range(50):
+        engine.ctx.data.mocap_pos[0][0] = 0.5 * step**2 * engine.ctx.dt**2 * 100.0  # 100 m/s^2
+        engine.step()
+    accel = np.asarray(plugin.read().linear_acceleration)
+    np.testing.assert_allclose(accel, [0.0, 0.0, GRAVITY], atol=1e-9)
 
 
 # -- nothing is computed for nobody -----------------------------------------------------------

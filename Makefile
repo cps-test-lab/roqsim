@@ -103,6 +103,9 @@ EXTRAS_roqsim_scenes  := [test,preview]
 # `roqsim assets collision` measures a prop against its own mesh; its tests exercise the measurement,
 # so the dev venv carries the extra even though placing a prop never needs it.
 EXTRAS_roqsim_assets  := [test,collision]
+# The GPU ray-cast backend's parity tests need MuJoCo Warp and Warp; with them in the venv they run
+# wherever a CUDA device and a driver for PyPI's Warp build are, and skip with the reason elsewhere.
+EXTRAS_roqsim_raycast_mjwarp := [test,mjwarp]
 
 .DEFAULT_GOAL := help
 
@@ -113,7 +116,13 @@ help:  ## Show this help
 
 .PHONY: venv
 venv:  ## Create .venv (--system-site-packages) and install packages + dev tooling
-	python3 -m venv --system-site-packages $(VENV)
+	# A Python without ensurepip (Debian's, without python3-venv) cannot create a venv with pip in
+	# it; with --system-site-packages the venv still sees the system's pip, which then installs the
+	# venv's own.
+	python3 -m venv --system-site-packages $(VENV) || { \
+		echo "venv: no ensurepip here; creating $(VENV) without pip and installing pip with the system's"; \
+		python3 -m venv --system-site-packages --without-pip --clear $(VENV) && \
+		$(PY) -m pip install --upgrade pip; }
 	$(PIP) install --upgrade pip
 	# Install PyTorch from the CPU wheel index first. roqsim_quadruped/roqsim_humanoid depend on
 	# torch, and the default PyPI wheel drags in multi-GB CUDA libraries this MuJoCo/EGL sim never uses
@@ -154,9 +163,29 @@ build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
 		echo "ROS not sourced; skipping colcon build."; \
 	fi
 
+# The interpreter `make test` runs, made by `make venv` where it does not exist yet -- a fresh
+# checkout tests with one command. A PY given on the command line that does not exist fails.
+.PHONY: venv-ready
+venv-ready:
+	@if [ ! -x "$(PY)" ] && ! command -v "$(PY)" >/dev/null 2>&1; then \
+		if [ "$(PY)" = "$(VENV)/bin/python" ]; then $(MAKE) venv; \
+		else echo "make test: PY=$(PY) does not exist"; exit 1; fi; \
+	fi
+
 .PHONY: test
-test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
-	$(PYTEST) $(PKGS) tools/tests -q -rs $(XDIST)
+# A package not installed with everything it declares is left out by name, never silently: its tests
+# cannot pass for a reason that is the installation's, and run anyway they stop the whole suite at
+# collection (conftest.py). tools/test_packages.py names each one and what it lacks, before the run
+# and again after it. Without pytest-xdist the run is serial, and says so.
+test: venv-ready  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
+	@pkgs="$$($(PY) tools/test_packages.py $(PKGS))" || exit 1; \
+	xdist="$(XDIST)"; \
+	if [ -n "$$xdist" ] && ! $(PY) -c "import xdist" 2>/dev/null; then \
+		echo "make test: pytest-xdist is not installed -> running serially"; xdist=""; \
+	fi; \
+	$(PYTEST) $$pkgs tools/tests -q -rs $$xdist --ignore=$(FRANKA_TESTS); status=$$?; \
+	$(PY) tools/test_packages.py $(PKGS) >/dev/null; \
+	exit $$status
 	@if [ -n "$$ROS_DISTRO" ]; then \
 		echo "ROS sourced -> building ros2_ws and running its tests"; \
 		$(MAKE) build-ros; \
@@ -164,6 +193,16 @@ test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when R
 	else \
 		echo "ROS not sourced -> skipped the ros2_ws tests (source ROS to include them)."; \
 	fi
+
+# The libfranka in-sync test builds Franka's own client library at its pinned release and runs it
+# against the simulated FR3's FCI (roqsim_manipulation/tests/franka_build.py). That needs a C++
+# toolchain, CMake, Eigen3, Poco and fmt, so it is not part of `make test`: this target runs it, and
+# fails rather than skips when libfranka cannot be built.
+FRANKA_TESTS := roqsim_manipulation/tests/test_franka_libfranka.py
+
+.PHONY: test-franka
+test-franka: venv-ready  ## libfranka 0.21.3, built from source, against the simulated FCI (needs C++, Eigen3, Poco, fmt)
+	$(PYTEST) $(FRANKA_TESTS) -q -rs --confcutdir=$(CURDIR)
 
 # The Khronos glTF Validator is a Node.js program, so it is not part of `make test`: there, the export
 # gltf test of a small world runs only when the validator is installed, and says so when it is not.
@@ -211,7 +250,7 @@ test-osc:  ## The scenario-execution tests, in a venv with the [osc] extra; noth
 # package as for all: a package installed without what it declares fails naming it.
 .PHONY: test-%
 test-%:
-	$(PYTEST) $* -q --confcutdir=$(CURDIR)
+	$(PYTEST) $* -q --confcutdir=$(CURDIR) --ignore=$(FRANKA_TESTS)
 
 .PHONY: smoke
 smoke:  ## Headless-run every shipped world; a world with a scene must finish it (tools/smoke.py)
@@ -269,6 +308,13 @@ external-resources:  ## Fetch + convert external assets into their (git-ignored)
 .PHONY: external-sync-gitignore
 external-sync-gitignore:  ## Rewrite the managed .gitignore block from external_assets.yaml
 	$(EXTERNAL) sync-gitignore
+
+.PHONY: franka-upstream franka-upstream-check
+franka-upstream:  ## Re-fetch the vendored Franka files at the pins in their SOURCES.toml
+	$(PY) external/franka_upstream.py
+
+franka-upstream-check:  ## Check the vendored Franka files against their SOURCES.toml, offline
+	$(PY) external/franka_upstream.py --check
 
 .PHONY: add-external-resource
 add-external-resource:  ## Append a resource to external_assets.yaml + .gitignore (see `$(EXTERNAL) add -h`)

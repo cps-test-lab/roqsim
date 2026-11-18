@@ -256,8 +256,14 @@ def test_fk_round_trip(qh, qs):
 # ``v = sum_k w_k * T_k * inv(B_k) * v_bind`` -- evaluated here in numpy against MuJoCo's vertices.
 
 
-def _flex_world(flexcomp: str, holder_joint: str = '<freejoint name="holder_free"/>') -> str:
-    """One flex declared in a body named ``holder``, which is free unless told otherwise."""
+def _flex_world(flexcomp: str, holder_joint: str | None = None) -> str:
+    """One flex declared in a body named ``holder``, turned out of the world frame.
+
+    The holder is free where the flex pins a vertex to it, and static otherwise, unless told: MuJoCo
+    refuses an unpinned flex in a body that has joints.
+    """
+    if holder_joint is None:
+        holder_joint = '<freejoint name="holder_free"/>' if "<pin" in flexcomp else ""
     return f"""
     <mujoco>
       <worldbody>

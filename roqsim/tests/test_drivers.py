@@ -208,6 +208,19 @@ def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, mon
     assert sim.context is None
 
     monkeypatch.setattr(Engine, "setup", real_setup)
+    sim.reset()
+    sim.step()
+    assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
+    sim.shutdown()
+
+
+def test_scenario_adapter_step_before_reset_raises_and_builds_nothing(tmp_path: Path):
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    with pytest.raises(RuntimeError, match=r"call reset\(\) first"):
+        sim.step()
+    assert sim.context is None
+    sim.reset()
     sim.step()
     assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
     sim.shutdown()
@@ -238,7 +251,9 @@ def test_scenario_adapter_records_each_scenario_into_its_own_directory(tmp_path:
     assert not (tmp_path / "out" / "run.mcap").exists()
 
 
-def test_scenario_adapter_exports_the_scene_into_each_scenarios_directory(tmp_path: Path, monkeypatch):
+def test_scenario_adapter_exports_the_scene_into_each_scenarios_directory(
+    tmp_path: Path, monkeypatch
+):
     """A reset() into a new scenario directory exports the scene there too, though the world is
     not rebuilt; a reset() in the same directory does not export it again."""
     world = _write_world(tmp_path)
@@ -277,3 +292,153 @@ def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path
     sim.reset()
     sim.shutdown()
     assert (root / "scene" / "scene.glb").is_file()
+
+
+# -- a run's name, as the runner gives it ------------------------------------------------------
+
+PROBE = '''
+from roqsim.plugin import Plugin
+
+
+class Probe(Plugin):
+    """Emits the draws a plugin of this world makes: one held for the run, two keyed on time."""
+
+    def on_reset(self, ctx):
+        values = ctx.rng_for("probe", per_run=True).standard_normal(3).tolist()
+        ctx.events.emit("probe", "drawn", values=values)
+
+    def post_step(self, ctx):
+        if round(ctx.sim_time / ctx.dt) in (1, 5):
+            ctx.events.emit("probe", "drawn", values=ctx.rng_for("probe").standard_normal(3).tolist())
+'''
+
+
+def _probe_worlds(tmp_path: Path) -> dict[str, str]:
+    """Two worlds that differ only in their probe's name, which its draw key does not carry:
+    nothing but the run tells their draws apart."""
+    (tmp_path / "probe.py").write_text(PROBE)
+    worlds = {}
+    for name in ("a", "b"):
+        path = tmp_path / f"{name}.yaml"
+        path.write_text(
+            f"sim:\n  timestep: 0.005\ncomponents:\n  - probe.py:Probe: {{}}\n    name: {name}\n"
+        )
+        worlds[name] = str(path)
+    return worlds
+
+
+def _drawn(ctx, run: str) -> list:
+    return [e["values"] for e in ctx.events.all() if e["event"] == "drawn" and e["run"] == run]
+
+
+def _run_documents(sim, worlds, documents) -> dict[str, list]:
+    """Run each ``(world, run)`` as scenario-execution runs a parameter file: a reset, then steps."""
+    drawn = {}
+    for world, name in documents:
+        sim.reset(world=worlds[world], run=name)
+        for _ in range(6):
+            sim.step()
+        drawn[sim.context.run] = _drawn(sim.context, sim.context.run)
+    return drawn
+
+
+def test_runs_of_two_worlds_in_one_process_never_draw_the_same_values(tmp_path, monkeypatch):
+    """The worst case: one seed for the whole process, and a world rebuilt between configurations.
+    Only the run's name tells the runs apart, so every draw of every run must differ."""
+    monkeypatch.setenv("ROQSIM_SEED", "7")
+    monkeypatch.delenv("ROQSIM_RUN", raising=False)
+    worlds = _probe_worlds(tmp_path)
+    documents = [("a", "a/0"), ("a", "a/1"), ("b", "b/0"), ("b", "b/1"), ("a", "a/2")]
+    sim = MujocoSim(world=worlds["a"])
+    sim.setup()
+    try:
+        drawn = _run_documents(sim, worlds, documents)
+    finally:
+        sim.shutdown()
+    assert list(drawn) == [run for _, run in documents]
+    values = [tuple(v) for draws in drawn.values() for v in draws]
+    assert len(values) == 3 * len(documents)
+    assert len(set(values)) == len(values), "two draws of the process were the same"
+
+
+def test_unnamed_runs_keep_counting_across_a_rebuild(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROQSIM_SEED", "7")
+    monkeypatch.delenv("ROQSIM_RUN", raising=False)
+    worlds = _probe_worlds(tmp_path)
+    sim = MujocoSim(world=worlds["a"])
+    sim.setup()
+    try:
+        drawn = _run_documents(sim, worlds, [(w, None) for w in ("a", "a", "b", "b", "a")])
+    finally:
+        sim.shutdown()
+    assert list(drawn) == ["#0", "#1", "#2", "#3", "#4"]
+    values = [tuple(v) for draws in drawn.values() for v in draws]
+    assert len(set(values)) == len(values)
+
+
+def test_the_same_seed_and_run_repeat_a_run_in_another_process(tmp_path, monkeypatch):
+    """What a packed process drew for run b/1, a fresh adapter and `roqsim sim --run b/1` draw
+    again, whatever ran before it."""
+    monkeypatch.setenv("ROQSIM_SEED", "7")
+    monkeypatch.delenv("ROQSIM_RUN", raising=False)
+    worlds = _probe_worlds(tmp_path)
+    packed = MujocoSim(world=worlds["a"])
+    packed.setup()
+    try:
+        drawn = _run_documents(packed, worlds, [("a", "a/0"), ("b", "b/0"), ("b", "b/1")])
+    finally:
+        packed.shutdown()
+
+    alone = MujocoSim(world=worlds["b"])
+    alone.setup()
+    try:
+        again = _run_documents(alone, worlds, [("b", "b/1")])
+    finally:
+        alone.shutdown()
+    assert again["b/1"] == drawn["b/1"]
+
+    engine = run(worlds["b"], headless=True, pacing="asap", max_steps=6, seed=7, run_name="b/1")
+    assert _drawn(engine.ctx, "b/1") == drawn["b/1"]
+
+
+def test_a_reset_s_own_name_beats_the_deployment_s(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROQSIM_RUN", "job/0")
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    try:
+        sim.reset()
+        assert sim.context.run == "job/0", "ROQSIM_RUN names the first run"
+        sim.reset()
+        assert sim.context.run == "job/0#1"
+        sim.reset(run="cfg/3")
+        assert sim.context.run == "cfg/3", "a document's run beats the deployment's"
+    finally:
+        sim.shutdown()
+
+
+def test_a_run_name_that_cannot_be_one_is_refused_before_anything_is_built(tmp_path):
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    with pytest.raises(ValueError, match="empty"):
+        sim.reset(run="")
+    assert sim._engine is None
+    sim.shutdown()
+
+
+def test_roqsim_sim_names_its_run_from_the_flag_else_the_deployment(tmp_path, monkeypatch):
+    world = _write_world(tmp_path)
+    monkeypatch.setenv("ROQSIM_RUN", "job/7")
+    assert run(world, headless=True, pacing="asap", max_steps=2, seed=1).ctx.run == "job/7"
+    named = run(world, headless=True, pacing="asap", max_steps=2, seed=1, run_name="x/1")
+    assert named.ctx.run == "x/1"
+    monkeypatch.delenv("ROQSIM_RUN")
+    assert run(world, headless=True, pacing="asap", max_steps=2, seed=1).ctx.run == "#0"
+
+
+def test_roqsim_sim_refuses_a_run_name_that_cannot_be_one(tmp_path, capsys):
+    from roqsim.runner import main
+
+    with pytest.raises(SystemExit) as exc:
+        main([_write_world(tmp_path), "--headless", "--steps", "1", "--run", ""])
+    assert exc.value.code == 2
+    assert "empty" in capsys.readouterr().err

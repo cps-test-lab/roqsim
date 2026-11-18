@@ -33,6 +33,7 @@ import mujoco
 import numpy as np
 
 from . import raycast
+from .conditions import of_model as conditions_of_model
 from .exit_status import NO_GL
 from .plugin import PluginError
 from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, WINDOW_GEOM_GROUP, subtree_body_ids
@@ -54,6 +55,7 @@ from .render_api import (
     image_mismatch,
     validate_renderer_config,
 )
+from .scene_content import resolved_rgba
 
 _logger = logging.getLogger(__name__)
 
@@ -636,21 +638,29 @@ def set_clip_planes(scene: mujoco.MjvScene, near: float | None, far: float | Non
     """Move the clip planes of *scene*'s GL cameras to *near*/*far* metres, keeping the view.
 
     ``mjv_updateScene`` fills each ``MjvGLCamera`` from the model's planes; this overrides them in
-    the scene alone. A perspective frustum's sides are given at the near plane, so they scale with
-    it, which keeps the field of view; an orthographic one's are absolute. ``None`` keeps a plane.
+    the scene alone (:func:`set_camera_planes`). ``None`` keeps a plane.
     """
     for cam in scene.camera:
-        if near is not None:
-            old = float(cam.frustum_near)
-            if not cam.orthographic:
-                scale = near / old
-                cam.frustum_bottom *= scale
-                cam.frustum_top *= scale
-                cam.frustum_center *= scale
-                cam.frustum_width *= scale
-            cam.frustum_near = near
-        if far is not None:
-            cam.frustum_far = far
+        set_camera_planes(cam, near, far)
+
+
+def set_camera_planes(cam: mujoco.MjvGLCamera, near: float | None, far: float | None) -> None:
+    """Move *cam*'s clip planes to *near*/*far* metres, keeping its view.
+
+    A perspective frustum's sides are given at the near plane, so they scale with it, which keeps
+    the field of view; an orthographic one's are absolute. ``None`` keeps a plane.
+    """
+    if near is not None:
+        old = float(cam.frustum_near)
+        if not cam.orthographic:
+            scale = near / old
+            cam.frustum_bottom *= scale
+            cam.frustum_top *= scale
+            cam.frustum_center *= scale
+            cam.frustum_width *= scale
+        cam.frustum_near = near
+    if far is not None:
+        cam.frustum_far = far
 
 
 def linear_depth(
@@ -800,6 +810,19 @@ def _vopt(geomgroup) -> mujoco.MjvOption:
             vopt.geomgroup[group] = 1 if group in geomgroup else 0
         vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
     return vopt
+
+
+def drawn_by_default(model: mujoco.MjModel, g: int) -> bool:
+    """Whether a render that names no groups shows geom ``g``.
+
+    Its group is drawn by the options :class:`FrameRenderer` uses when no groups are named
+    (MuJoCo's default 0-2, and a window), and the colour it is drawn in (:func:`roqsim.scene_content.resolved_rgba`: the material's, where the geom keeps the
+    default colour) is not fully transparent. A collision-only part (group 3), an absent one, or one
+    hidden with alpha 0 is not shown.
+    """
+    if not _vopt(None).geomgroup[int(model.geom_group[g])]:
+        return False
+    return resolved_rgba(model, int(model.geom_matid[g]), model.geom_rgba[g])[3] > 0
 
 
 #: The names of the GL error codes ``glGetError`` returns.
@@ -978,6 +1001,7 @@ class MujocoRenderer(Renderer):
         principal_point=True,
         non_square_pixels=True,
         moving_only=True,
+        baked_lighting=True,
     )
     SETTINGS = {
         "atlas": Setting(
@@ -1000,6 +1024,8 @@ class MujocoRenderer(Renderer):
         self._private = False
         self._gl = None
         self._con: mujoco.MjrContext | None = None
+        #: The single-sampled context of the label pass under MSAA (:meth:`_label_context`).
+        self._label_con: mujoco.MjrContext | None = None
         self._scene: mujoco.MjvScene | None = None
         self._atlas: _Atlas | None = None
         self._clear_geoms = False
@@ -1055,6 +1081,9 @@ class MujocoRenderer(Renderer):
         self._atlas = None
         if con is not None:
             con.free()
+        label, self._label_con = self._label_con, None
+        if label is not None:
+            label.free()
         if gl is not None:
             gl.free()
         self._scene = None
@@ -1194,17 +1223,45 @@ class MujocoRenderer(Renderer):
         if "segmentation" in request.images:
             frame.segmentation = self._segmentation(rect, flip)
 
+    def _label_context(self) -> mujoco.MjrContext:
+        """The context the label pass draws in: single-sampled.
+
+        Under MSAA the offscreen buffer averages a pixel's samples when it is read, so at an edge
+        two geoms' id colours blend into a third geom's id, or one past the last (a wrong label, or
+        an index out of range). A model drawn with MSAA (``visual/quality/offsamples``, MuJoCo's
+        default 4) therefore gets a second context for its labels, made once, whose offscreen
+        buffer is made again without samples; the model is not written. ``mjr_resizeOffscreen``
+        keeps a buffer of the size asked for as it is, so the buffer is made at another size first.
+        """
+        con = self._con
+        if con.offSamples == 0:
+            return con
+        if self._label_con is None:
+            label = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150.value)
+            width, height = int(con.offWidth), int(con.offHeight)
+            label.offSamples = 0
+            mujoco.mjr_resizeOffscreen(width, height + 1, label)
+            mujoco.mjr_resizeOffscreen(width, height, label)
+            self._label_con = label
+        return self._label_con
+
     def _flat_pass(self, rect, rgb=None, depth=None) -> None:
-        """Draw with flat ID colours, as ``mujoco.Renderer`` does for depth and segmentation."""
+        """Draw with flat ID colours, as ``mujoco.Renderer`` does for depth and segmentation; the
+        labels (*rgb*) in a single-sampled context (:meth:`_label_context`)."""
         scene = self._scene
+        con = self._label_context() if rgb is not None else self._con
         flags = scene.flags.copy()
         scene.flags[mujoco.mjtRndFlag.mjRND_SEGMENT] = True
         scene.flags[mujoco.mjtRndFlag.mjRND_IDCOLOR] = True
         try:
-            mujoco.mjr_render(rect, scene, self._con)
-            mujoco.mjr_readPixels(rgb, depth, rect, self._con)
+            if con is not self._con:
+                mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, con)
+            mujoco.mjr_render(rect, scene, con)
+            mujoco.mjr_readPixels(rgb, depth, rect, con)
         finally:
             np.copyto(scene.flags, flags)
+            if con is not self._con:
+                mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, self._con)
         self.stats["draws"] += 1
         self.stats["readbacks"] += 1
 
@@ -1636,12 +1693,23 @@ class RenderService:
         """Refuse, naming the camera, a view its renderer cannot give; resolves every renderer.
 
         Called when the world loads, and raises the world-load error (:class:`PluginError`). A
-        renderer that cannot give what a camera asks for is never stood in for by another.
+        renderer that cannot give what a camera asks for is never stood in for by another. Nor
+        does one draw a world drawn with baked lighting that does not declare it draws the bake
+        (:attr:`RendererCapabilities.baked_lighting`): its images would be lit twice.
         """
+        baked = any(c.get("code") == "bake_used" for c in conditions_of_model(self.model))
         problems = []
         for view in self.views:
             cls = self.renderer_class(view.renderer)
             caps = cls.capabilities_for(self.settings.get(view.renderer, {}))
+            if baked and caps.draws_static and not caps.baked_lighting:
+                problems.append(
+                    f"camera {view.id!r}: renderer {view.renderer!r} does not draw baked lighting, "
+                    "and this world is drawn with its bake (the classic renderer 'mujoco' draws "
+                    "it); choose renderer: mujoco, or load the world unbaked with "
+                    "disable: [baked_lighting]"
+                )
+                continue
             missing = view.spec.missing_from(caps)
             if missing:
                 problems.append(

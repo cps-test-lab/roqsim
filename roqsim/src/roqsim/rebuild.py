@@ -9,7 +9,7 @@ is a function of that state -- a rendered frame, a ray cast -- need not be produ
 the run happens. This produces it afterwards, **as the sensor itself would have**: each sample is
 restored and the sensor plugin's own :meth:`~roqsim.plugin.Plugin.capture` runs on it, with its
 intrinsics, resolution, frame ids, depth encoding, point-cloud layout and its noise, which is keyed on
-the run's seed, episode and sim time (:meth:`roqsim.context.SimContext.rng_for`) and so is the noise
+the run's seed, its name and sim time (:meth:`roqsim.context.SimContext.rng_for`) and so is the noise
 the live run drew. A sensor declares that it can be rebuilt (:attr:`roqsim.plugin.Plugin.rebuild_cost`);
 nothing here names one.
 
@@ -83,7 +83,7 @@ from .recording import Recording, open_recording
 log = logging.getLogger(__name__)
 
 #: The version of the manifest's shape.
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 #: The metadata record a written mcap carries its manifest under.
 META_REBUILD = "roqsim.rebuild"
@@ -418,7 +418,7 @@ class Streams:
                 "sha256": _sha256(rec.path),
                 "world": rec.world,
                 "seed": rec.meta.get("seed"),
-                "episode": rec.meta.get("episode") or 0,
+                "run": rec.meta.get("run"),
                 "fps": float(self.fps),
                 "samples": len(rec),
                 "span": list(rec.span),

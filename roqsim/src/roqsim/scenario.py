@@ -148,7 +148,7 @@ class ScenarioPlugin(Plugin):
         self._done = False
         #: Set when a task raised: the run stops, and the scene never reports done.
         self._failed = False
-        #: Whether the program has taken a step in this episode, so the run's end can cut it short.
+        #: Whether the program has taken a step in this run, so the run's end can cut it short.
         self._started = False
 
     # -- the scene ----------------------------------------------------------------------------
@@ -188,7 +188,7 @@ class ScenarioPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         """Resolve the handles and start the program from its beginning."""
         self._say_unjoined(ctx)
-        # A reset ends what the tasks started as well, so a cancel must not reach the next episode.
+        # A reset ends what the tasks started as well, so a cancel must not reach the next run.
         self._resetting = True
         for task in self._tasks:
             task.cancel()

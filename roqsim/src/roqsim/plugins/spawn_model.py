@@ -56,7 +56,7 @@ left it.
 a box a robot can pick up. It also registers the joint as the entity's
 ``base_joint``, which is what lets ``simulation_interfaces``' ``SetEntityState`` teleport or re-seat it
 (the service rejects any entity without one), and what ``on_reset`` uses to put it back at its spawn
-pose between episodes instead of leaving it wherever the last run dropped it.
+pose between runs instead of leaving it wherever the last run dropped it.
 
 The prop must end up with mass. MuJoCo derives it from geom volume x density (default 1000), so an
 ordinary prop is fine as-is; a geom carrying ``density="0"`` -- the convention for visual-only
@@ -96,7 +96,7 @@ properties of the prop, not of where it is.
 control plane does not list it, until ``SpawnEntity`` brings it in at the pose that call states. This
 is how a world provides the spares for an obstacle that must *appear* mid-trial -- roqsim never
 recompiles, so everything a trial may bring in is declared up front (see :mod:`roqsim.presence`). The
-declared value is restored on ``on_reset``, so a spare spawned in one episode is a spare again in the
+declared value is restored on ``on_reset``, so a spare spawned in one run is a spare again in the
 next; without that, repetitions after the first would begin with an obstacle already in the room.
 
 It is not a way to leave a prop out: ``enabled: false`` does that, and does it properly, by never
@@ -393,7 +393,7 @@ class SpawnModelPlugin(Plugin):
         # folder is included as a fallback), so compilation does not depend on CWD.
         apply_assets(child, asset)
         # A flexcomp under <worldbody> gets a body of its own, so the prop has a root to register,
-        # hide and weld (and a world pin survives the attach -- roqsim.flex, rule 4).
+        # hide and weld (and a world pin moves with it -- roqsim.flex, rule 4).
         child = lift_top_level_flexes(child, asset.path.stem)
         if self.scale != 1.0:
             _scale_spec(child, self.scale)
@@ -602,7 +602,7 @@ class SpawnModelPlugin(Plugin):
             meta["flexes"] = [flex_label(ctx.model, f) for f in flexes]
         if self._freejoint:
             # simulation_interfaces' SetEntityState only accepts an entity whose base_joint is a free
-            # joint, so without this a movable prop could not be teleported or reset between episodes.
+            # joint, so without this a movable prop could not be teleported or reset between runs.
             meta["base_joint"] = self._base_joint
         if self.mocap:
             # `mocap` in the meta is how a component nested under this entry -- a `navigator`, say --
@@ -697,7 +697,7 @@ class SpawnModelPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         """Re-seat a free prop at its spawn pose, and stop it moving.
 
-        A welded prop cannot drift, but a ``free`` one is wherever the last episode left it -- on the
+        A welded prop cannot drift, but a ``free`` one is wherever the last run left it -- on the
         floor, if the robot knocked it off the table -- so repetitions of a trial would not be
         repetitions.
 

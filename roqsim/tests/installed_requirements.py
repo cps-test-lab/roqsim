@@ -6,7 +6,10 @@ A test that loads every ``roqsim.plugins`` entry or every ``roqsim`` command gro
 meets each of its packages, and a package installed without its declared requirements (``pip install
 --no-deps``, a partial image) fails its import for a reason that is the installation's, not the
 code's. Those tests fail naming the requirement it lacks, so the fix is the one the message asks
-for; none of them skips it, so a run never ends green having checked less. Only a requirement the
+for; none of them skips it, so a run never ends green having checked less. A package that is not
+installed at all, or is installed without what it declares, is left out of ``make test`` by name
+(``tools/test_packages.py``); a test over the whole tree asks :func:`not_testable` for the packages
+it then cannot meet. Only a requirement the
 distribution itself (or one it requires, in turn) **declares** counts: an import that fails for any
 other reason fails as it does. Another repository's packages, installed beside this one's, are that
 repository's to check (:func:`ours`).
@@ -123,3 +126,32 @@ def ours(ep) -> bool:
     distribution (registered by hand) counts as this repository's."""
     dist = getattr(ep, "dist", None)
     return dist is None or canonicalize_name(dist.name) in _ours()
+
+
+def not_testable(package_dir: str | Path) -> str:
+    """Why the tree package at *package_dir* (``roqsim_walker``, relative to the repository's root,
+    or absolute) is left out of ``make test`` here, or ``""``: not installed, or installed without a
+    requirement it declares (``tools/test_packages.py`` names each one at the start of the run)."""
+    pyproject = ROOT / package_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return ""
+    name = project_name(pyproject)
+    if name is None:
+        return ""
+    if _installed(name) is None:
+        return f"{name} is not installed"
+    missing = missing_requirements(name)
+    return f"{name} lacks {', '.join(missing)}" if missing else ""
+
+
+@functools.cache
+def tree_plugins() -> dict[str, str]:
+    """Every ``roqsim.plugins`` entry this repository's packages declare, name -> package directory,
+    read from the ``pyproject.toml`` files rather than the installation, so a plugin whose package is
+    not installed is still known as this repository's."""
+    out: dict[str, str] = {}
+    for pyproject in sorted(ROOT.glob("*/pyproject.toml")):
+        eps = tomllib.loads(pyproject.read_text()).get("project", {}).get("entry-points", {})
+        for name in eps.get("roqsim.plugins", {}):
+            out.setdefault(name, pyproject.parent.name)
+    return out

@@ -51,6 +51,7 @@ from .capture import (
     snap_fps,
 )
 from .clock import Pacer
+from .conditions import write_run_file as write_conditions_file
 from .config import (
     drop_transport,
     load_config,
@@ -66,6 +67,7 @@ from .override_options import add_override_options, add_renderer_option, overrid
 from .plugin import PluginError
 from .rendering import GLBackendError
 from .replay import is_recording
+from .runs import RUN_ENV, RunNames, check_run
 from .seed import resolve_seed
 from .splash import clear_loading_overlay, show_loading_overlay
 from .view_save import SaveViewKey, save_current_view
@@ -227,8 +229,9 @@ def _deaf_to_stop_signals(logger: logging.Logger):
 def _tick(engine: Engine, pacer: Pacer) -> bool:
     """Honor run-control; return True if a physics step was taken this iteration."""
     c = engine.ctx.control
-    if c.take_reset():
-        engine.reset()
+    request = c.take_reset()
+    if request is not None:
+        engine.reset(run=request.run)
         pacer.reset()
     if c.state == ctl.QUITTING:
         return False
@@ -588,6 +591,14 @@ def _warn_no_transport(dropped: list[str]) -> None:
     )
 
 
+def _run_name(value: str) -> str:
+    """``--run``'s value as a run name, or the reason it cannot be one."""
+    try:
+        return check_run(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err)) from None
+
+
 def run(
     target: str,
     *,
@@ -607,6 +618,7 @@ def run(
     video: str | None = None,
     video_size: str = "960x540",
     seed: int | None = None,
+    run_name: str | None = None,
     transport: dict | None = None,
     no_transport: bool = False,
     control: str | None = None,
@@ -648,6 +660,11 @@ def run(
     installed. The run is then mute -- it publishes and receives nothing -- which the loop says out
     loud, because a mute simulation is a different experiment rather than a quieter one.
 
+    ``run_name`` names the first run (:mod:`roqsim.runs`): with the seed, the key of every draw it
+    makes, so the same seed and name repeat a run made anywhere else, by any driver. Without it,
+    ``ROQSIM_RUN`` names it, and without that it is ``#0``; a reset over the control socket may name
+    the run it starts.
+
     ``control`` is a control URI (:mod:`roqsim.ipc`): the run serves every endpoint there, with
     pause/resume/step/reset as ``sim/run_control/*`` and entity placement and presence as
     ``sim/entities/set_state`` / ``set_presence``, and prints ``control: <uri>`` once it does.
@@ -679,6 +696,9 @@ def run(
         record_tracks = env.get(RECORD_TRACKS_VAR) or None
     if record_exclude is None:
         record_exclude = env.get(RECORD_EXCLUDE_VAR) or None
+    # The run's name, checked here with the other inputs: a name that cannot be one fails before
+    # the world compiles. The flag, else the deployment's, as for the seed.
+    runs = RunNames(first=run_name if run_name is not None else (env.get(RUN_ENV) or None))
 
     # Parse the world before any GL: a bad target (missing YAML, unknown model ref, a schema error) is
     # a millisecond away and must fail as a plain message, not behind a window that then has to be torn
@@ -727,13 +747,18 @@ def run(
             engine.ctx.seed = resolve_seed(
                 seed, logger or log, config_seed=getattr(cfg, "seed", None)
             )
+            engine.runs = runs
             stack.enter_context(engine)
+            # How the world loaded, beside the run's other artifacts, where a campaign collects them.
+            write_conditions_file(engine.ctx.conditions)
             if control:
                 # Once the socket is bound: a client started on this line finds it.
                 print(f"control: {control}", flush=True)
             if profile:
                 print(engine.format_load_report(), file=sys.stderr)
             engine.reset()
+            # Beside the seed it is reported with: the two values that repeat this run.
+            (logger or log).info("run: %s", engine.ctx.run)
 
             dt = engine.dt
             pacer = Pacer.from_config(pacing if pacing is not None else cfg.pacing, dt)
@@ -928,6 +953,7 @@ def _replay(args, parser) -> int:
         "--seconds": "seconds",
         "--pacing": "pacing",
         "--seed": "seed",
+        "--run": "run_name",
         "--manual-control": "manual_control",
         "--ros": "ros",
         "--sim-control": "sim_control",
@@ -1160,6 +1186,15 @@ def main(argv: list | None = None) -> int:
         help="seed the sensor noise, making the run reproducible (default: drawn and reported)",
     )
     parser.add_argument(
+        "--run",
+        dest="run_name",
+        type=_run_name,
+        default=None,
+        metavar="NAME",
+        help="name the run: with the seed it keys every draw, so the same seed and name repeat a "
+        "run made by any driver (default: $ROQSIM_RUN, else #0)",
+    )
+    parser.add_argument(
         "--video",
         nargs="?",
         const=_DEFAULT_VIDEO,
@@ -1269,6 +1304,7 @@ def main(argv: list | None = None) -> int:
             video=args.video,
             video_size=args.video_size,
             seed=args.seed,
+            run_name=args.run_name,
             transport=transport,
             no_transport=args.no_communication,
             control=control,

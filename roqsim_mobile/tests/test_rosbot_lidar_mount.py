@@ -126,7 +126,6 @@ def test_the_scan_frame_is_the_vendor_chain():
     engine = _engine()
     try:
         m, d = engine.ctx.model, engine.ctx.data
-        mujoco.mj_forward(m, d)
         pos, rot = _vendor_laser_pose(engine)
         for site in ("rplidar_scan", "rplidar_laser"):
             sid = named(m, mujoco.mjtObj.mjOBJ_SITE, PREFIX + site)
