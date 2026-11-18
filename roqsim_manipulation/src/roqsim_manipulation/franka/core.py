@@ -187,6 +187,7 @@ class FrankaCore:
         joint_impedance=EXAMPLE_JOINT_IMPEDANCE,
         cartesian_impedance=EXAMPLE_CARTESIAN_IMPEDANCE,
         end_effector: dict | None = None,
+        load: dict | None = None,
         observer_gain: float = 200.0,
         accel_switch: float = 1.0,
         singular_threshold: float = 0.01,
@@ -201,16 +202,33 @@ class FrankaCore:
         self.F_x_Cee = np.asarray(ee.get("com", [0, 0, 0]), float)
         self.I_ee = np.asarray(ee.get("inertia", np.zeros(9)), float).reshape(3, 3)
         self.F_T_NE = np.asarray(ee.get("F_T_NE", np.eye(4)), float).reshape(4, 4)
-        self.m_load, self.F_x_Cload, self.I_load = 0.0, np.zeros(3), np.zeros((3, 3))
+        load = load or {}
+        self.m_load = float(load["mass"]) if load else 0.0
+        self.F_x_Cload = np.asarray(load.get("com", [0, 0, 0]), float)
+        self.I_load = np.asarray(load.get("inertia", np.zeros(9)), float).reshape(3, 3)
         self.NE_T_EE = np.eye(4)
         self.EE_T_K = np.eye(4)
         self.observer_gain = float(observer_gain)
         self.accel_switch = float(accel_switch)
         self.singular_threshold = float(singular_threshold)
-        self._apply_load()
+        # What the world configured; a reset returns every setter's value to it.
+        self._configured = self._settings()
         self.reset(np.zeros(7))
 
     # -- configuration (the setters libfranka sends) ----------------------------------------------
+
+    def _settings(self) -> dict:
+        """Every value a setter changes, as copies."""
+        return {
+            "collision": self.collision,
+            "K_theta": self.K_theta.copy(),
+            "K_x": self.K_x.copy(),
+            "m_load": self.m_load,
+            "F_x_Cload": self.F_x_Cload.copy(),
+            "I_load": self.I_load.copy(),
+            "NE_T_EE": self.NE_T_EE.copy(),
+            "EE_T_K": self.EE_T_K.copy(),
+        }
 
     def _apply_load(self) -> None:
         # The load is given about its own centre of mass in the flange frame, as libfranka's
@@ -277,6 +295,11 @@ class FrankaCore:
     # -- lifecycle ----------------------------------------------------------------------------------
 
     def reset(self, q) -> None:
+        """The controller as the world configured it, at rest at *q*: a setter a client called in
+        the run before is undone, so a run does not depend on what ran before it."""
+        for name, value in self._configured.items():
+            setattr(self, name, value.copy() if isinstance(value, np.ndarray) else value)
+        self._apply_load()
         q = np.asarray(q, float)
         self.q = q.copy()
         self.dq = np.zeros(7)

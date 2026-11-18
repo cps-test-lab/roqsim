@@ -424,6 +424,18 @@ def _run_franka_motion(engine: Engine) -> None:
     engine.ctx.blackboard.get("franka_fci:fr3").control(law)
 
 
+def _set_every_franka_setting(engine: Engine) -> None:
+    """Every setter a client can call, each to a value other than the world's: a reset returns
+    the controller to the world's configuration, so none of them may outlast the run."""
+    fci = engine.ctx.blackboard.get("franka_fci:fr3")
+    fci.set_load(1.5, [0.02, 0.0, 0.08], np.diag([2e-3, 2e-3, 1e-3]))
+    assert fci.set_joint_impedance([100.0] * 7)
+    assert fci.set_cartesian_impedance([200.0, 200.0, 200.0, 20.0, 20.0, 20.0])
+    assert fci.set_collision_behavior({key: [v * 2 for v in vs] for key, vs in _FRANKA_CB.items()})
+    fci.set_k([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.05], [0, 0, 0, 1]])
+    fci.core.set_ee(np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.1], [0, 0, 0, 1.0]]))
+
+
 #: franka_fci's required setting: the robot's start-up thresholds are unpublished.
 _FRANKA_CB = {
     "lower_torque": [20.0] * 7,
@@ -491,7 +503,9 @@ CASES: dict[str, Case] = {
     "dummy": _static({"dummy": {}}),
     "ceiling": _static({"ceiling": {}}),
     # No bake there: the world loads unbaked, the plugin holds what it read at the build.
-    "baked_lighting": Case(lambda tmp: _world({"baked_lighting": {"path": str(tmp / "none.bake")}})),
+    "baked_lighting": Case(
+        lambda tmp: _world({"baked_lighting": {"path": str(tmp / "none.bake")}})
+    ),
     "part_state": Case(_part_with_states),
     "zone_trigger": _static({"zone_trigger": {"size": [0.5, 0.5, 0.5]}, "name": "zone"}),
     "spawn_model": _static(
@@ -604,7 +618,7 @@ CASES: dict[str, Case] = {
             },
             timestep=0.001,
         ),
-        use=(_run_franka_motion,),
+        use=(_set_every_franka_setting, _run_franka_motion),
     ),
     "fzi_cartesian_controllers": Case(
         lambda _: _arm(

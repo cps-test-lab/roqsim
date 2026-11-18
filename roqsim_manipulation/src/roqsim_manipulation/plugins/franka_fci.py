@@ -258,14 +258,10 @@ class FrankaFCIPlugin(Plugin):
                 else {}
             ),
             end_effector=self._end_effector(cfg.get("end_effector")),
+            load=cfg.get("load"),
             observer_gain=float(cfg.get("observer_gain", 200.0)),
             accel_switch=float(cfg.get("accel_switch", 1.0)),
         )
-        load = cfg.get("load")
-        if load:
-            self.core.set_load(
-                load["mass"], load.get("com", [0, 0, 0]), load.get("inertia", np.zeros(9))
-            )
         self._noise = np.broadcast_to(np.asarray(cfg.get("tau_J_noise", 0.0), float), (7,)).copy()
         self._offset = np.broadcast_to(np.asarray(cfg.get("tau_J_offset", 0.0), float), (7,)).copy()
         self.core.reset(ctx.data.qpos[self._qadr])
