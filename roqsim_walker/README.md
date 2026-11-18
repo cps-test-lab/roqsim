@@ -114,7 +114,7 @@ with its head and right arm, or a clip of the whole body plays while it stands:
 ```yaml
 - walker:
     walker: MaleVisitorWalk
-    layers:                                     # played from the start of every episode
+    layers:                                     # played from the start of every run
       - {clip: phone_call, joints: [arm_r, head], loop: true}
 ```
 

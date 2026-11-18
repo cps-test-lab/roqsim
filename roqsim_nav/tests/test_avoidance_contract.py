@@ -259,7 +259,7 @@ def test_reset_clears_the_models_state(tmp_path):
         before = _stub(engine).resets
         engine.reset()
         assert _stub(engine).resets == before + 1
-        # Agents and walls survive an episode; only their velocities do not.
+        # Agents and walls survive a run; only their velocities do not.
         assert _stub(engine).agents and _stub(engine).statics
     finally:
         engine.shutdown()

@@ -445,7 +445,7 @@ class Plugin:
 
         Run after ``configure`` AND after every ``on_reset``, because presence lives in ``model``
         while ``mj_resetData`` restores ``data``: an entity a trial spawned is still present when
-        the next episode begins, and a world that declares a spare means it every episode.
+        the next run begins, and a world that declares a spare means it every run.
 
         Driven from the engine rather than from each plugin's own hooks, so a plugin registering an
         entity gets this by declaring that it does. The alternative is the same three lines copied

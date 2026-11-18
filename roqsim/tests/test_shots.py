@@ -27,10 +27,11 @@ components:
 
 
 class _Ctx:
-    """The three members StateRecorder touches, so a test needs no Engine."""
+    """The members StateRecorder touches, so a test needs no Engine."""
 
     def __init__(self, model, data):
         self.model, self.data = model, data
+        self.run = "#0"
 
     @property
     def sim_time(self) -> float:

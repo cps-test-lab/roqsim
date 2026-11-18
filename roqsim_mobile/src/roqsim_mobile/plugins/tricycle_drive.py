@@ -491,7 +491,7 @@ class TricycleDrivePlugin(Plugin):
         self._steer = 0.0
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
         self.watchdog.clear()
-        # The reset pose, not the previous episode's last one, until the first step.
+        # The reset pose, not the previous run's last one, until the first step.
         self._read_joints(ctx.model, ctx.data)
 
     def _read_joints(self, m, d) -> None:

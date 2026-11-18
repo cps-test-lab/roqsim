@@ -46,7 +46,7 @@ class ButtonHandle:
 
     @property
     def presses(self) -> int:
-        """How many times it was pressed this episode."""
+        """How many times it was pressed this run."""
         return self._p.count
 
 

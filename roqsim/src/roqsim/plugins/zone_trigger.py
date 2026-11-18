@@ -26,9 +26,9 @@ pattern that matches no entity at the first reset is logged once as a warning, n
 **What it reports.** Each step, on the physics thread: an ``entered`` event with the entity, a
 ``dwelled`` event once it has been inside for ``dwell`` seconds, and a ``left`` event with how long
 it was inside. A :class:`ZoneHandle` under ``zone:<address>`` reads the same: who is inside, in the
-order they entered, since when, who dwelt, the counts since the episode began. ``occupied`` (a
+order they entered, since when, who dwelt, the counts since the run began. ``occupied`` (a
 ``bool``, ``std_msgs/Bool`` on ROS) is the barrier's signal for a stack or an OpenSCENARIO monitor;
-``occupancy`` lists who is inside and who has been this episode.
+``occupancy`` lists who is inside and who has been this run.
 
 Config::
 
@@ -66,7 +66,7 @@ _KEYS = {"body", "pose", "size", "entities", "point", "dwell"}
 
 @dataclass(frozen=True)
 class ZoneCounts:
-    """How many entities entered and left since the episode began."""
+    """How many entities entered and left since the run began."""
 
     entered: int = 0
     left: int = 0
@@ -74,7 +74,7 @@ class ZoneCounts:
 
 @dataclass(frozen=True)
 class ZoneOccupancy:
-    """Who is inside a zone, and who has been this episode.
+    """Who is inside a zone, and who has been this run.
 
     Attributes:
         inside: the entities inside, in the order they entered
@@ -108,7 +108,7 @@ class ZoneHandle:
         self._inside: dict[str, float] = {}
         self._dwelt: list[str] = []
         self._counts = ZoneCounts()
-        #: ``(sim time, entity)`` of each entry and each dwell this episode.
+        #: ``(sim time, entity)`` of each entry and each dwell this run.
         self._entries: list[tuple[float, str]] = []
         self._dwells: list[tuple[float, str]] = []
 
@@ -323,7 +323,7 @@ class ZoneTriggerPlugin(Plugin):
 
     @endpoint.out(rate=10.0, ros2=None)
     def occupancy(self) -> ZoneOccupancy:
-        """Who is inside the zone, and who has been this episode."""
+        """Who is inside the zone, and who has been this run."""
         h, inside = self.handle, self.handle.inside()
         return ZoneOccupancy(
             inside=inside,

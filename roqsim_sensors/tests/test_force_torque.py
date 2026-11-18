@@ -277,7 +277,7 @@ def test_tare_at_s_fires_once_the_clock_reaches_it():
 
 
 def test_a_tare_is_forgotten_on_reset():
-    """An offset carried into the next episode is a measurement of the previous one.
+    """An offset carried into the next run is a measurement of the previous one.
 
     The same rule the noise follows, and for the same reason: a repetition that starts from the
     last trial's zero is not a repetition.

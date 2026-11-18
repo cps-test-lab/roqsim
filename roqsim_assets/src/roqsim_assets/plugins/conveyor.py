@@ -33,7 +33,7 @@ Config::
         orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   #   or a quaternion x/y/z/w
       length: 2.442         # optional full belt length (X, m); default keeps the base model
       width: 0.58           # optional full belt width  (Y, m); default keeps the base model
-      home: {speed: 0.1}    # belt speed at the start of each episode (m/s); negative reverses
+      home: {speed: 0.1}    # belt speed at the start of each run (m/s); negative reverses
       ramp: 0.5             # acceleration of run/stop (m/s^2); unset: the speed changes at once
       friction: 0.6         # optional belt<->package sliding friction override
       roller_radius: 0.0275
@@ -325,7 +325,7 @@ class ConveyorPlugin(MachinePlugin):
         return self.goal("speed")
 
     def on_reset(self, ctx: SimContext) -> None:
-        # A speed set through the endpoint or the handle belongs to the episode that set it.
+        # A speed set through the endpoint or the handle belongs to the run that set it.
         super().on_reset(ctx)
         ctx.data.qpos[self._belt_qadr] = 0.0
         if self._pkg_qadr >= 0:

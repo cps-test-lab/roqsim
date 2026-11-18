@@ -33,11 +33,11 @@ replacing it and leaving the other owner reading this plugin's clock. The callba
 clock; it changes no physics, so a run with the plugin steps through the same states as one without.
 
 Every ``every_s`` of simulated time it appends one row to a CSV (``path``, default
-``step_timers.csv``): the simulated time, the episode, the wall seconds since ``configure``, then
+``step_timers.csv``): the simulated time, the run, the wall seconds since ``configure``, then
 every timer's cumulative duration (``<timer>_us``, µs) and call count (``<timer>_n``), the timer named
 in lower case without its ``mjTIMER_`` prefix. ``shutdown`` writes a final row. The values are
 cumulative, so a stage's share of a window is the difference of two rows; a reset zeroes them with
-the rest of ``mjData``, which is why each row carries its episode. A relative ``path`` lands in the
+the rest of ``mjData``, which is why each row carries its run. A relative ``path`` lands in the
 run's output directory, anchored the way ``roqsim sim`` anchors its other session outputs
 (``RUN_OUTPUT_DIR``, then ``OUTPUT_DIR``, then the working directory). A world compiled to look at
 it (``ctx.preview``) installs no callback and opens no file.
@@ -57,6 +57,7 @@ entry-level ``enabled: false`` sibling, and a run that wants the split turns it 
 
 from __future__ import annotations
 
+import csv
 import time
 
 import mujoco
@@ -125,7 +126,7 @@ class StepTimersPlugin(Plugin):
         out = _session_path(self.path)
         out.parent.mkdir(parents=True, exist_ok=True)
         self._fh = out.open("w")
-        columns = ["t", "episode", "wall_s"]
+        columns = ["t", "run", "wall_s"]
         columns += [f"{s}_us" for s in _STEMS] + [f"{s}_n" for s in _STEMS]
         self._fh.write(",".join(columns) + "\n")
         mujoco.set_mjcb_time(_clock_us)
@@ -137,7 +138,7 @@ class StepTimersPlugin(Plugin):
         )
 
     def on_reset(self, ctx: SimContext) -> None:
-        # mj_resetData zeroed the timers; the next row starts the new episode's series.
+        # mj_resetData zeroed the timers; the next row starts the new run's series.
         self._next = ctx.sim_time
 
     def post_step(self, ctx: SimContext) -> None:
@@ -165,5 +166,6 @@ class StepTimersPlugin(Plugin):
         timer = ctx.data.timer
         durations = [f"{timer[i].duration:.6g}" for i in range(len(_TIMERS))]
         counts = [str(int(timer[i].number)) for i in range(len(_TIMERS))]
-        head = [f"{ctx.sim_time:.9g}", str(ctx.episode), f"{time.perf_counter() - self._wall0:.6g}"]
-        self._fh.write(",".join(head + durations + counts) + "\n")
+        head = [f"{ctx.sim_time:.9g}", ctx.run, f"{time.perf_counter() - self._wall0:.6g}"]
+        # The run is a name its runner chose, so it is quoted where it needs to be.
+        csv.writer(self._fh, lineterminator="\n").writerow(head + durations + counts)
