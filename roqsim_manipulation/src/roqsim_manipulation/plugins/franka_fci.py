@@ -299,6 +299,8 @@ class FrankaFCIPlugin(Plugin):
             ),
         )
         self._last_state = self.core.state(0)
+        if self.server is not None:  # a client connecting before the first step hears the arm
+            self.server.send_state(pack_robot_state(self._last_state))
 
     def _idle(self, setter: Callable) -> Callable:
         """*setter*, refused while a motion runs, as the network path refuses it."""

@@ -86,8 +86,15 @@ class FCIServer:
         self._send_lock = threading.Lock()
         self.client_udp: tuple[str, int] | None = None
         self._closed = False
+        # The last state streamed, and when: kept alive while the physics does not step.
+        self._last_state: bytes | None = None
+        self._last_sent = 0.0
         self._thread = threading.Thread(target=self._accept, name=f"fci:{bind}", daemon=True)
         self._thread.start()
+        self._keeper = threading.Thread(
+            target=self._keep_alive, name=f"fci:{bind}:keep-alive", daemon=True
+        )
+        self._keeper.start()
 
     # -- TCP ----------------------------------------------------------------------------------------
 
@@ -230,7 +237,9 @@ class FCIServer:
 
     def send_state(self, data: bytes, to: tuple[str, int] | None = None) -> None:
         """Stream a state to ``to``, or to the connected client; a client the TCP thread drops
-        meanwhile gets nothing, and the physics goes on."""
+        meanwhile gets nothing, and the physics goes on. The state is kept, for
+        :meth:`_keep_alive` to send again while no newer one comes."""
+        self._last_state, self._last_sent = data, time.monotonic()
         target = self.client_udp if to is None else to  # one read: the TCP thread may clear it
         if target is not None:
             try:
@@ -291,6 +300,24 @@ class FCIServer:
                 return cmd
         return None
 
+    def _keep_alive(self) -> None:
+        """Send the last state again every ``resend_s`` while the physics sends none: a paused
+        run, one stepped on request, a slow tick, the time before the first step. libfranka ends
+        a client that hears no state for its UDP timeout (1 s), and discards a state that is not
+        newer than the last it read, so the repeat keeps it connected and changes nothing else."""
+        while not self._closed:
+            time.sleep(self.resend_s)
+            data = self._last_state
+            if data is None or time.monotonic() - self._last_sent < self.resend_s:
+                continue
+            target = self.client_udp
+            if target is not None:
+                try:
+                    self._udp.sendto(data, target)
+                except OSError:
+                    pass
+                self._last_sent = time.monotonic()
+
     def close(self) -> None:
         """Release the port: a blocked ``accept`` and ``recv`` wake on shutdown, not on close."""
         self._closed = True
@@ -306,3 +333,4 @@ class FCIServer:
             except OSError:
                 pass
         self._thread.join(timeout=5)
+        self._keeper.join(timeout=5)

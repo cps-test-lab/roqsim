@@ -980,7 +980,9 @@ FCI. With ``bind:`` set it serves the robot's side of the network protocol (libf
 headers, protocol version 10, libfranka 0.21.3), so an unmodified libfranka program, pylibfranka and
 franka_ros2's hardware interface (``robot_ip:=<bind>``) connect to the simulated arm as to a robot,
 and in lock-step: one control callback per millisecond of simulated time, the physics waiting for
-each command, however slow it is. One wait is bounded in wall time: libfranka reads one state of a
+each command, however slow it is. While the physics does not step -- a paused run, one stepped on
+request, a slow tick -- the last state is sent again every 0.1 s, so libfranka's 1 s UDP timeout
+does not end the client; a state that is not newer changes nothing for it. One wait is bounded in wall time: libfranka reads one state of a
 motion before it sends its first command, so the simulation waits for that command at most 20 ms
 of wall time and steps on without it. The tick a motion's first command lands on can
 therefore depend on how fast the client answers; from that command on, a run is reproducible.

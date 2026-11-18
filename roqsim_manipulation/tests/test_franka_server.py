@@ -253,3 +253,20 @@ def test_a_state_sent_as_the_client_drops_is_dropped_and_raises_nothing():
         s.send_state(_state(1))
     finally:
         s.close()
+
+
+def test_the_last_state_is_kept_alive_while_the_physics_sends_none(server):
+    """A paused run sends no state; libfranka would end its client after its 1 s UDP timeout.
+    The last state is sent again every resend_s, and nothing newer is made up."""
+    import time
+
+    udp = _udp()
+    tcp, _ = _connect(P.VERSION, udp)
+    server.send_state(_state(7))
+    udp.recvfrom(4096)  # the one the physics sent
+    udp.settimeout(1)
+    start, seen = time.monotonic(), []
+    while time.monotonic() - start < 0.5:
+        seen.append(P.unpack_robot_state(udp.recvfrom(4096)[0])["message_id"])
+    assert len(seen) >= 5 and set(seen) == {7}, seen
+    tcp.close()

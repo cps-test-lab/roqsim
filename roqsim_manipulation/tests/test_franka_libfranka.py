@@ -176,6 +176,31 @@ def test_a_push_above_the_threshold_ends_the_motion_with_a_cartesian_reflex(clie
     assert not out["ok"] and "cartesian_reflex" in out["error"]
 
 
+def test_a_run_that_pauses_longer_than_libfrankas_udp_timeout_keeps_its_client(client, sim):
+    """A paused run, or one stepped on request, sends no state while it does not step; libfranka
+    ends a client that hears none for 1 s. The server keeps the last state alive meanwhile, so a
+    pause of 1.5 s in the middle of a motion leaves the control loop running, one callback per
+    millisecond of simulated time."""
+    import time
+
+    paused = {"done": False}
+
+    def pause(engine):
+        if (
+            not paused["done"]
+            and engine.ctx.sim_time > 0.3
+            and engine.ctx.blackboard.get("franka_fci:left").core.motion is not None
+        ):
+            paused["done"] = True
+            time.sleep(1.5)  # the driver idles: no step, no tick, no state from the physics
+
+    sim.hooks.append(pause)
+    out = run(client, "torque_hold", "127.0.0.2", 1500)
+    assert paused["done"]
+    assert out["ok"] and out["callbacks"] == 1500, out
+    assert out["max_period"] == pytest.approx(0.001)
+
+
 def test_a_client_of_another_protocol_version_is_refused(sim):
     with socket.create_connection(("127.0.0.2", 1337), timeout=5) as s:
         s.sendall(
