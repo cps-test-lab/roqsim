@@ -28,10 +28,10 @@ hand-assemble.
 
 - **One YAML file per world.** Robots, sensors, props and scene declared together; plugins hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
-- **43 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
+- **44 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
   Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, ROX-Diff, LGDXRobot2,
-  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 14 arms and 3 grippers (UR10e, UR5e, UR30,
-  Panda, Gen3, xArm7, LBR iiwa 7 and 14, M1013, FANUC M-20iD/25 and CRX-25iA, OpenManipulator-X,
+  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 15 arms and 3 grippers (UR10e, UR5e, UR30,
+  Panda, FR3, Gen3, xArm7, LBR iiwa 7 and 14, M1013, FANUC M-20iD/25 and CRX-25iA, OpenManipulator-X,
   ViperX 300s, WidowX 250s; Robotiq
   2F-85 and Hand-E, Schunk PG+70), 2 mobile manipulators (TIAGo Pro, Frankie), 4 humanoids (Unitree G1,
   G1 + Dex1, LimX Oli, AgiBot G2), Boston Dynamics Spot, the Crazyflie 2 and an X500 — each

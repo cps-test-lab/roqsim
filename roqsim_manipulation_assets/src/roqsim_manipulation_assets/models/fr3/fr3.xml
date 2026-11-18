@@ -1,0 +1,336 @@
+<mujoco model="fr3">
+  <!--
+    Franka Research 3 without a hand, with seven torque motors and no gravity compensation.
+
+    Built by external/convert/build_fr3_mjcf.py from franka_description 2.9.0 (Apache-2.0);
+    collision pieces by CoACD 1.0.14, threshold 0.05, seed 0.
+    See CREDITS.txt.
+  -->
+  <compiler angle="radian" meshdir="meshes"/>
+
+  <asset>
+    <material name="fr3_64_64_64" specular="0.3" rgba="0.0382043 0.0497065 0.0561285 1"/>
+    <material name="fr3_255_66_6" specular="0.2" rgba="1 0.0722716 0.0395463 1"/>
+    <material name="fr3_255_255_255"/>
+    <material name="fr3_202_209_238" specular="0.015"/>
+    <material name="fr3_192_192_192" specular="0.85"/>
+    <material name="fr3_0_174_255" emission="0.5"/>
+    <material name="fr3_0_0_0" rgba="0.0185002 0.0185002 0.0185002 1"/>
+    <material name="fr3_255_255_255_link5" specular="0.3"/>
+    <material name="fr3_8_159_255" emission="0.5" rgba="0.0241568 0.445201 0.737911 1"/>
+    <material name="fr3_255_255_255_link6" emission="0.5"/>
+    <material name="fr3_255_0_0" emission="0.5" rgba="0.520996 0.00802306 0.0137021 1"/>
+    <material name="fr3_210_210_239" specular="0.435" rgba="0.863156 0.863156 0.863157 1"/>
+    <material name="fr3_128_255_128" emission="0.5" rgba="0.102241 0.571125 0.102242 1"/>
+    <mesh name="link0_0" content_type="model/obj" file="link0_0.obj"/>
+    <mesh name="link0_1" content_type="model/obj" file="link0_1.obj"/>
+    <mesh name="link0_2" content_type="model/obj" file="link0_2.obj"/>
+    <mesh name="link0_3" content_type="model/obj" file="link0_3.obj"/>
+    <mesh name="link0_4" content_type="model/obj" file="link0_4.obj"/>
+    <mesh name="link0_5" content_type="model/obj" file="link0_5.obj"/>
+    <mesh name="link0_6" content_type="model/obj" file="link0_6.obj"/>
+    <mesh name="link1_0" content_type="model/obj" file="link1_0.obj"/>
+    <mesh name="link2_0" content_type="model/obj" file="link2_0.obj"/>
+    <mesh name="link3_0" content_type="model/obj" file="link3_0.obj"/>
+    <mesh name="link3_1" content_type="model/obj" file="link3_1.obj"/>
+    <mesh name="link4_0" content_type="model/obj" file="link4_0.obj"/>
+    <mesh name="link4_1" content_type="model/obj" file="link4_1.obj"/>
+    <mesh name="link5_0" content_type="model/obj" file="link5_0.obj"/>
+    <mesh name="link5_1" content_type="model/obj" file="link5_1.obj"/>
+    <mesh name="link5_2" content_type="model/obj" file="link5_2.obj"/>
+    <mesh name="link6_0" content_type="model/obj" file="link6_0.obj"/>
+    <mesh name="link6_1" content_type="model/obj" file="link6_1.obj"/>
+    <mesh name="link6_2" content_type="model/obj" file="link6_2.obj"/>
+    <mesh name="link6_3" content_type="model/obj" file="link6_3.obj"/>
+    <mesh name="link6_4" content_type="model/obj" file="link6_4.obj"/>
+    <mesh name="link6_5" content_type="model/obj" file="link6_5.obj"/>
+    <mesh name="link6_6" content_type="model/obj" file="link6_6.obj"/>
+    <mesh name="link6_7" content_type="model/obj" file="link6_7.obj"/>
+    <mesh name="link7_0" content_type="model/obj" file="link7_0.obj"/>
+    <mesh name="link7_1" content_type="model/obj" file="link7_1.obj"/>
+    <mesh name="link7_2" content_type="model/obj" file="link7_2.obj"/>
+    <mesh name="link7_3" content_type="model/obj" file="link7_3.obj"/>
+    <mesh name="link0_collision_0" content_type="model/obj" file="link0_collision_0.obj"/>
+    <mesh name="link0_collision_1" content_type="model/obj" file="link0_collision_1.obj"/>
+    <mesh name="link0_collision_2" content_type="model/obj" file="link0_collision_2.obj"/>
+    <mesh name="link0_collision_3" content_type="model/obj" file="link0_collision_3.obj"/>
+    <mesh name="link0_collision_4" content_type="model/obj" file="link0_collision_4.obj"/>
+    <mesh name="link0_collision_5" content_type="model/obj" file="link0_collision_5.obj"/>
+    <mesh name="link0_collision_6" content_type="model/obj" file="link0_collision_6.obj"/>
+    <mesh name="link0_collision_7" content_type="model/obj" file="link0_collision_7.obj"/>
+    <mesh name="link0_collision_8" content_type="model/obj" file="link0_collision_8.obj"/>
+    <mesh name="link0_collision_9" content_type="model/obj" file="link0_collision_9.obj"/>
+    <mesh name="link0_collision_10" content_type="model/obj" file="link0_collision_10.obj"/>
+    <mesh name="link0_collision_11" content_type="model/obj" file="link0_collision_11.obj"/>
+    <mesh name="link0_collision_12" content_type="model/obj" file="link0_collision_12.obj"/>
+    <mesh name="link0_collision_13" content_type="model/obj" file="link0_collision_13.obj"/>
+    <mesh name="link0_collision_14" content_type="model/obj" file="link0_collision_14.obj"/>
+    <mesh name="link0_collision_15" content_type="model/obj" file="link0_collision_15.obj"/>
+    <mesh name="link0_collision_16" content_type="model/obj" file="link0_collision_16.obj"/>
+    <mesh name="link0_collision_17" content_type="model/obj" file="link0_collision_17.obj"/>
+    <mesh name="link0_collision_18" content_type="model/obj" file="link0_collision_18.obj"/>
+    <mesh name="link0_collision_19" content_type="model/obj" file="link0_collision_19.obj"/>
+    <mesh name="link1_collision_0" content_type="model/obj" file="link1_collision_0.obj"/>
+    <mesh name="link1_collision_1" content_type="model/obj" file="link1_collision_1.obj"/>
+    <mesh name="link1_collision_2" content_type="model/obj" file="link1_collision_2.obj"/>
+    <mesh name="link1_collision_3" content_type="model/obj" file="link1_collision_3.obj"/>
+    <mesh name="link1_collision_4" content_type="model/obj" file="link1_collision_4.obj"/>
+    <mesh name="link2_collision_0" content_type="model/obj" file="link2_collision_0.obj"/>
+    <mesh name="link2_collision_1" content_type="model/obj" file="link2_collision_1.obj"/>
+    <mesh name="link2_collision_2" content_type="model/obj" file="link2_collision_2.obj"/>
+    <mesh name="link2_collision_3" content_type="model/obj" file="link2_collision_3.obj"/>
+    <mesh name="link2_collision_4" content_type="model/obj" file="link2_collision_4.obj"/>
+    <mesh name="link3_collision_0" content_type="model/obj" file="link3_collision_0.obj"/>
+    <mesh name="link3_collision_1" content_type="model/obj" file="link3_collision_1.obj"/>
+    <mesh name="link3_collision_2" content_type="model/obj" file="link3_collision_2.obj"/>
+    <mesh name="link3_collision_3" content_type="model/obj" file="link3_collision_3.obj"/>
+    <mesh name="link3_collision_4" content_type="model/obj" file="link3_collision_4.obj"/>
+    <mesh name="link3_collision_5" content_type="model/obj" file="link3_collision_5.obj"/>
+    <mesh name="link3_collision_6" content_type="model/obj" file="link3_collision_6.obj"/>
+    <mesh name="link3_collision_7" content_type="model/obj" file="link3_collision_7.obj"/>
+    <mesh name="link3_collision_8" content_type="model/obj" file="link3_collision_8.obj"/>
+    <mesh name="link3_collision_9" content_type="model/obj" file="link3_collision_9.obj"/>
+    <mesh name="link3_collision_10" content_type="model/obj" file="link3_collision_10.obj"/>
+    <mesh name="link3_collision_11" content_type="model/obj" file="link3_collision_11.obj"/>
+    <mesh name="link3_collision_12" content_type="model/obj" file="link3_collision_12.obj"/>
+    <mesh name="link3_collision_13" content_type="model/obj" file="link3_collision_13.obj"/>
+    <mesh name="link3_collision_14" content_type="model/obj" file="link3_collision_14.obj"/>
+    <mesh name="link4_collision_0" content_type="model/obj" file="link4_collision_0.obj"/>
+    <mesh name="link4_collision_1" content_type="model/obj" file="link4_collision_1.obj"/>
+    <mesh name="link4_collision_2" content_type="model/obj" file="link4_collision_2.obj"/>
+    <mesh name="link4_collision_3" content_type="model/obj" file="link4_collision_3.obj"/>
+    <mesh name="link4_collision_4" content_type="model/obj" file="link4_collision_4.obj"/>
+    <mesh name="link4_collision_5" content_type="model/obj" file="link4_collision_5.obj"/>
+    <mesh name="link4_collision_6" content_type="model/obj" file="link4_collision_6.obj"/>
+    <mesh name="link4_collision_7" content_type="model/obj" file="link4_collision_7.obj"/>
+    <mesh name="link4_collision_8" content_type="model/obj" file="link4_collision_8.obj"/>
+    <mesh name="link4_collision_9" content_type="model/obj" file="link4_collision_9.obj"/>
+    <mesh name="link4_collision_10" content_type="model/obj" file="link4_collision_10.obj"/>
+    <mesh name="link4_collision_11" content_type="model/obj" file="link4_collision_11.obj"/>
+    <mesh name="link4_collision_12" content_type="model/obj" file="link4_collision_12.obj"/>
+    <mesh name="link4_collision_13" content_type="model/obj" file="link4_collision_13.obj"/>
+    <mesh name="link4_collision_14" content_type="model/obj" file="link4_collision_14.obj"/>
+    <mesh name="link5_collision_0" content_type="model/obj" file="link5_collision_0.obj"/>
+    <mesh name="link5_collision_1" content_type="model/obj" file="link5_collision_1.obj"/>
+    <mesh name="link5_collision_2" content_type="model/obj" file="link5_collision_2.obj"/>
+    <mesh name="link5_collision_3" content_type="model/obj" file="link5_collision_3.obj"/>
+    <mesh name="link6_collision_0" content_type="model/obj" file="link6_collision_0.obj"/>
+    <mesh name="link6_collision_1" content_type="model/obj" file="link6_collision_1.obj"/>
+    <mesh name="link6_collision_2" content_type="model/obj" file="link6_collision_2.obj"/>
+    <mesh name="link6_collision_3" content_type="model/obj" file="link6_collision_3.obj"/>
+    <mesh name="link6_collision_4" content_type="model/obj" file="link6_collision_4.obj"/>
+    <mesh name="link6_collision_5" content_type="model/obj" file="link6_collision_5.obj"/>
+    <mesh name="link6_collision_6" content_type="model/obj" file="link6_collision_6.obj"/>
+    <mesh name="link6_collision_7" content_type="model/obj" file="link6_collision_7.obj"/>
+    <mesh name="link6_collision_8" content_type="model/obj" file="link6_collision_8.obj"/>
+    <mesh name="link6_collision_9" content_type="model/obj" file="link6_collision_9.obj"/>
+    <mesh name="link6_collision_10" content_type="model/obj" file="link6_collision_10.obj"/>
+    <mesh name="link6_collision_11" content_type="model/obj" file="link6_collision_11.obj"/>
+    <mesh name="link6_collision_12" content_type="model/obj" file="link6_collision_12.obj"/>
+    <mesh name="link7_collision_0" content_type="model/obj" file="link7_collision_0.obj"/>
+    <mesh name="link7_collision_1" content_type="model/obj" file="link7_collision_1.obj"/>
+    <mesh name="link7_collision_2" content_type="model/obj" file="link7_collision_2.obj"/>
+    <mesh name="link7_collision_3" content_type="model/obj" file="link7_collision_3.obj"/>
+    <mesh name="link7_collision_4" content_type="model/obj" file="link7_collision_4.obj"/>
+    <mesh name="link7_collision_5" content_type="model/obj" file="link7_collision_5.obj"/>
+    <mesh name="link7_collision_6" content_type="model/obj" file="link7_collision_6.obj"/>
+    <mesh name="link7_collision_7" content_type="model/obj" file="link7_collision_7.obj"/>
+    <mesh name="link7_collision_8" content_type="model/obj" file="link7_collision_8.obj"/>
+    <mesh name="link7_collision_9" content_type="model/obj" file="link7_collision_9.obj"/>
+    <mesh name="link7_collision_10" content_type="model/obj" file="link7_collision_10.obj"/>
+    <mesh name="link7_collision_11" content_type="model/obj" file="link7_collision_11.obj"/>
+    <mesh name="link7_collision_12" content_type="model/obj" file="link7_collision_12.obj"/>
+    <mesh name="link7_collision_13" content_type="model/obj" file="link7_collision_13.obj"/>
+    <mesh name="link7_collision_14" content_type="model/obj" file="link7_collision_14.obj"/>
+    <mesh name="link7_collision_15" content_type="model/obj" file="link7_collision_15.obj"/>
+    <mesh name="link7_collision_16" content_type="model/obj" file="link7_collision_16.obj"/>
+    <mesh name="link7_collision_17" content_type="model/obj" file="link7_collision_17.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="base">
+      <body name="fr3_link0">
+        <inertial pos="-0.0172 0.0004 0.0745" quat="0.661377 -0.250161 -0.250161 0.661377" mass="2.3966" diaginertia="0.0115 0.0107656 0.00673444"/>
+        <geom name="fr3_link0_0_visual" pos="6.76542e-17 2.98156e-19 -1.02696e-15" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_64_64_64" mesh="link0_0"/>
+        <geom name="fr3_link0_1_visual" pos="1.52656e-16 -5.20417e-17 -2.77556e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_255_66_6" mesh="link0_1"/>
+        <geom name="fr3_link0_2_visual" pos="-1.31839e-16 -1.16552e-18 -6.80012e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_255_255_255" mesh="link0_2"/>
+        <geom name="fr3_link0_3_visual" pos="2.70617e-16 -6.91179e-19 -3.88578e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link0_3"/>
+        <geom name="fr3_link0_4_visual" pos="2.42861e-16 1.249e-16 -2.56739e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_192_192_192" mesh="link0_4"/>
+        <geom name="fr3_link0_5_visual" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_0_174_255" mesh="link0_5"/>
+        <geom name="fr3_link0_6_visual" pos="2.91434e-16 2.29851e-17 -2.77556e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_0_0_0" mesh="link0_6"/>
+        <geom name="fr3_link0_collision_0" pos="4.33681e-17 -8.94467e-19 -1.01308e-15" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_0"/>
+        <geom name="fr3_link0_collision_1" pos="4.30211e-16 5.69206e-19 -4.85723e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_1"/>
+        <geom name="fr3_link0_collision_2" pos="1.42247e-16 2.05998e-18 -6.80012e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_2"/>
+        <geom name="fr3_link0_collision_3" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_3"/>
+        <geom name="fr3_link0_collision_4" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_4"/>
+        <geom name="fr3_link0_collision_5" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_5"/>
+        <geom name="fr3_link0_collision_6" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_6"/>
+        <geom name="fr3_link0_collision_7" pos="4.57967e-16 -4.44523e-18 -2.01228e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_7"/>
+        <geom name="fr3_link0_collision_8" pos="6.38378e-16 -4.02456e-16 -1.37043e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_8"/>
+        <geom name="fr3_link0_collision_9" pos="6.38378e-16 1.16226e-16 -1.31839e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_9"/>
+        <geom name="fr3_link0_collision_10" pos="-1.07553e-16 7.86047e-19 -3.26128e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_10"/>
+        <geom name="fr3_link0_collision_11" pos="4.30211e-16 4.98733e-18 -3.19189e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_11"/>
+        <geom name="fr3_link0_collision_12" pos="5.27356e-16 5.55112e-16 -4.3715e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_12"/>
+        <geom name="fr3_link0_collision_13" pos="2.84495e-16 3.26128e-16 -1.94289e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_13"/>
+        <geom name="fr3_link0_collision_14" pos="8.04912e-16 2.28983e-16 -8.1532e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_14"/>
+        <geom name="fr3_link0_collision_15" pos="6.80012e-16 3.88578e-16 -9.02056e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_15"/>
+        <geom name="fr3_link0_collision_16" pos="1.2837e-16 4.11997e-18 -2.70617e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_16"/>
+        <geom name="fr3_link0_collision_17" pos="1.2837e-16 3.88578e-16 -3.33067e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_17"/>
+        <geom name="fr3_link0_collision_18" pos="5.41234e-16 2.35922e-16 -5.72459e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_18"/>
+        <geom name="fr3_link0_collision_19" pos="4.57967e-16 4.85723e-16 -3.1225e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link0_collision_19"/>
+        <body name="fr3_link1" pos="0 0 0.333">
+          <inertial pos="4.128e-07 -0.0181251 -0.0386036" quat="0.998098 -0.0605364 0.00380489 0.0110109" mass="2.92747" diaginertia="0.0239286 0.0227246 0.00610634"/>
+          <joint name="fr3_joint1" range="-2.9007 2.9007" actuatorfrcrange="-87 87" armature="0.195" damping="0.21" frictionloss="1.137"/>
+          <geom name="fr3_link1_0_visual" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link1_0"/>
+          <geom name="fr3_link1_collision_0" pos="7.58942e-19 3.46945e-16 1.77809e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link1_collision_0"/>
+          <geom name="fr3_link1_collision_1" pos="-9.75782e-19 1.35308e-16 6.80012e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link1_collision_1"/>
+          <geom name="fr3_link1_collision_2" pos="3.38813e-19 1.10589e-17 8.60423e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link1_collision_2"/>
+          <geom name="fr3_link1_collision_3" pos="-2.1684e-18 3.67761e-16 4.57967e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link1_collision_3"/>
+          <geom name="fr3_link1_collision_4" pos="-3.1984e-18 3.40006e-16 5.96745e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link1_collision_4"/>
+          <body name="fr3_link2" quat="0.707107 -0.707107 0 0">
+            <inertial pos="0.00318289 -0.0743222 0.00881461" quat="0.5026 0.584436 -0.465998 0.434365" mass="2.93554" diaginertia="0.0629567 0.0411924 0.0246371"/>
+            <joint name="fr3_joint2" range="-1.8361 1.8361" actuatorfrcrange="-87 87" armature="0.195" damping="0.21" frictionloss="1.137"/>
+            <geom name="fr3_link2_0_visual" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link2_0"/>
+            <geom name="fr3_link2_collision_0" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link2_collision_0"/>
+            <geom name="fr3_link2_collision_1" pos="-1.16552e-17 2.77556e-16 -3.81639e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link2_collision_1"/>
+            <geom name="fr3_link2_collision_2" pos="-2.87991e-20 5.55112e-16 -3.46945e-18" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link2_collision_2"/>
+            <geom name="fr3_link2_collision_3" pos="6.62719e-18 3.33067e-16 -2.63678e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link2_collision_3"/>
+            <geom name="fr3_link2_collision_4" pos="-6.91179e-19 4.16334e-16 -2.28983e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link2_collision_4"/>
+            <body name="fr3_link3" pos="0 -0.316 0" quat="0.707107 0.707107 0 0">
+              <inertial pos="0.0407016 -0.00482006 -0.0289731" quat="0.921025 -0.244161 0.155272 0.260745" mass="2.2449" diaginertia="0.0267409 0.0189869 0.0171587"/>
+              <joint name="fr3_joint3" range="-2.9007 2.9007" actuatorfrcrange="-87 87" armature="0.195" damping="0.21" frictionloss="1.137"/>
+              <geom name="fr3_link3_0_visual" pos="-4.44089e-16 -4.57967e-16 1.34441e-17" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_64_64_64" mesh="link3_0"/>
+              <geom name="fr3_link3_1_visual" pos="-3.60822e-16 -1.63064e-16 4.64906e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link3_1"/>
+              <geom name="fr3_link3_collision_0" pos="-2.77556e-16 -2.498e-16 1.12757e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_0"/>
+              <geom name="fr3_link3_collision_1" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_1"/>
+              <geom name="fr3_link3_collision_2" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_2"/>
+              <geom name="fr3_link3_collision_3" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_3"/>
+              <geom name="fr3_link3_collision_4" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_4"/>
+              <geom name="fr3_link3_collision_5" pos="-2.28983e-16 -4.30211e-16 6.41848e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_5"/>
+              <geom name="fr3_link3_collision_6" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_6"/>
+              <geom name="fr3_link3_collision_7" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_7"/>
+              <geom name="fr3_link3_collision_8" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_8"/>
+              <geom name="fr3_link3_collision_9" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_9"/>
+              <geom name="fr3_link3_collision_10" pos="-2.498e-16 -3.40006e-16 1.70003e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_10"/>
+              <geom name="fr3_link3_collision_11" pos="-1.249e-16 -8.32667e-17 4.02456e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_11"/>
+              <geom name="fr3_link3_collision_12" pos="-1.59595e-16 -9.71445e-17 3.05311e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_12"/>
+              <geom name="fr3_link3_collision_13" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_13"/>
+              <geom name="fr3_link3_collision_14" pos="-1.94289e-16 -1.35308e-16 2.91434e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link3_collision_14"/>
+              <body name="fr3_link4" pos="0.0825 0 0" quat="0.707107 0.707107 0 0">
+                <inertial pos="-0.0459101 0.0630493 -0.00851879" quat="0.438018 0.803311 0.00937812 0.403414" mass="2.6156" diaginertia="0.05139 0.0372717 0.0160047"/>
+                <joint name="fr3_joint4" range="-3.077 -0.1169" actuatorfrcrange="-87 87" armature="0.195" damping="0.21" frictionloss="1.137"/>
+                <geom name="fr3_link4_0_visual" pos="4.85723e-17 -3.81639e-17 -7.07767e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_64_64_64" mesh="link4_0"/>
+                <geom name="fr3_link4_1_visual" pos="3.67761e-16 -3.40006e-16 -1.14492e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link4_1"/>
+                <geom name="fr3_link4_collision_0" pos="-4.68375e-17 -6.50521e-18 -4.44089e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_0"/>
+                <geom name="fr3_link4_collision_1" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_1"/>
+                <geom name="fr3_link4_collision_2" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_2"/>
+                <geom name="fr3_link4_collision_3" pos="3.05311e-16 -2.35922e-16 -2.03288e-19" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_3"/>
+                <geom name="fr3_link4_collision_4" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_4"/>
+                <geom name="fr3_link4_collision_5" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_5"/>
+                <geom name="fr3_link4_collision_6" pos="2.35922e-16 -7.80626e-17 -4.16334e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_6"/>
+                <geom name="fr3_link4_collision_7" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_7"/>
+                <geom name="fr3_link4_collision_8" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_8"/>
+                <geom name="fr3_link4_collision_9" pos="2.22045e-16 -3.60822e-16 8.67362e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_9"/>
+                <geom name="fr3_link4_collision_10" pos="2.15106e-16 -3.64292e-17 -3.33067e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_10"/>
+                <geom name="fr3_link4_collision_11" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_11"/>
+                <geom name="fr3_link4_collision_12" pos="1.80411e-16 -2.51535e-17 -4.44089e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_12"/>
+                <geom name="fr3_link4_collision_13" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_13"/>
+                <geom name="fr3_link4_collision_14" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link4_collision_14"/>
+                <body name="fr3_link5" pos="-0.0825 0.384 0" quat="0.707107 -0.707107 0 0">
+                  <inertial pos="-0.00160396 0.0292536 -0.0972966" quat="0.919031 0.125604 0.0751531 -0.366003" mass="2.32712" diaginertia="0.0579335 0.0449144 0.0130634"/>
+                  <joint name="fr3_joint5" range="-2.8763 2.8763" actuatorfrcrange="-12 12" armature="0.074" damping="0.21" frictionloss="0.763"/>
+                  <geom name="fr3_link5_0_visual" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_64_64_64" mesh="link5_0"/>
+                  <geom name="fr3_link5_1_visual" pos="3.1225e-17 -3.33067e-16 3.46945e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_255_255_255_link5" mesh="link5_1"/>
+                  <geom name="fr3_link5_2_visual" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link5_2"/>
+                  <geom name="fr3_link5_collision_0" pos="2.43945e-19 -3.05311e-16 1.30104e-17" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link5_collision_0"/>
+                  <geom name="fr3_link5_collision_1" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link5_collision_1"/>
+                  <geom name="fr3_link5_collision_2" pos="-9.48677e-19 -3.33067e-16 5.27356e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link5_collision_2"/>
+                  <geom name="fr3_link5_collision_3" pos="7.45389e-19 -7.28584e-17 1.22125e-15" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link5_collision_3"/>
+                  <body name="fr3_link6" quat="0.707107 0.707107 0 0">
+                    <inertial pos="0.0597131 -0.0410295 -0.0101693" quat="0.621301 0.552665 0.510011 0.220081" mass="1.81704" diaginertia="0.0175039 0.0161123 0.00193529"/>
+                    <joint name="fr3_joint6" range="0.4398 4.6216" actuatorfrcrange="-12 12" armature="0.074" damping="0.21" frictionloss="0.44"/>
+                    <geom name="fr3_link6_0_visual" pos="-5.96745e-16 -4.71845e-16 1.5551e-22" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_8_159_255" mesh="link6_0"/>
+                    <geom name="fr3_link6_1_visual" pos="-3.747e-16 -2.60209e-16 -2.01228e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_64_64_64" mesh="link6_1"/>
+                    <geom name="fr3_link6_2_visual" pos="-5.13478e-16 -4.44089e-16 -1.35525e-20" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_255_255_255_link6" mesh="link6_2"/>
+                    <geom name="fr3_link6_3_visual" pos="-2.35922e-16 -2.08167e-16 -6.59195e-17" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_255_0_0" mesh="link6_3"/>
+                    <geom name="fr3_link6_4_visual" pos="5.42101e-18 -5.42101e-19 -4.23273e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_210_210_239" mesh="link6_4"/>
+                    <geom name="fr3_link6_5_visual" pos="-5.41234e-16 -3.98986e-17 -3.25261e-17" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link6_5"/>
+                    <geom name="fr3_link6_6_visual" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_192_192_192" mesh="link6_6"/>
+                    <geom name="fr3_link6_7_visual" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_128_255_128" mesh="link6_7"/>
+                    <geom name="fr3_link6_collision_0" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_0"/>
+                    <geom name="fr3_link6_collision_1" pos="-2.498e-16 -5.89806e-17 4.33681e-18" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_1"/>
+                    <geom name="fr3_link6_collision_2" pos="-4.30211e-16 2.28983e-16 8.0231e-18" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_2"/>
+                    <geom name="fr3_link6_collision_3" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_3"/>
+                    <geom name="fr3_link6_collision_4" pos="-2.498e-16 9.02056e-17 3.03577e-18" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_4"/>
+                    <geom name="fr3_link6_collision_5" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_5"/>
+                    <geom name="fr3_link6_collision_6" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_6"/>
+                    <geom name="fr3_link6_collision_7" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_7"/>
+                    <geom name="fr3_link6_collision_8" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_8"/>
+                    <geom name="fr3_link6_collision_9" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_9"/>
+                    <geom name="fr3_link6_collision_10" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_10"/>
+                    <geom name="fr3_link6_collision_11" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_11"/>
+                    <geom name="fr3_link6_collision_12" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link6_collision_12"/>
+                    <body name="fr3_link7" pos="0.088 0 0" quat="0.707107 0.707107 0 0">
+                      <inertial pos="0.00452258 0.00862619 -0.0161633" quat="0.727579 0.0978683 -0.24906 0.63168" mass="0.627143" diaginertia="0.000223836 0.000223642 5.64132e-07"/>
+                      <joint name="fr3_joint7" range="-3.0508 3.0508" actuatorfrcrange="-12 12" armature="0.074" damping="0.21" frictionloss="0.248"/>
+                      <geom name="fr3_link7_0_visual" pos="-4.02456e-16 -4.02456e-16 -8.18789e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_64_64_64" mesh="link7_0"/>
+                      <geom name="fr3_link7_1_visual" pos="-2.35922e-16 -2.35922e-16 -4.85723e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_202_209_238" mesh="link7_1"/>
+                      <geom name="fr3_link7_2_visual" pos="1.17094e-17 1.12757e-17 -3.46945e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_192_192_192" mesh="link7_2"/>
+                      <geom name="fr3_link7_3_visual" pos="2.91434e-16 2.91434e-16 -7.21645e-16" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="2" density="0" material="fr3_0_0_0" mesh="link7_3"/>
+                      <geom name="fr3_link7_collision_0" pos="-2.28983e-16 -7.86047e-19 -3.40006e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_0"/>
+                      <geom name="fr3_link7_collision_1" pos="3.25261e-19 2.23617e-19 -4.44089e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_1"/>
+                      <geom name="fr3_link7_collision_2" pos="-2.22045e-16 -1.249e-16 -2.91434e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_2"/>
+                      <geom name="fr3_link7_collision_3" pos="-1.45717e-16 -9.02056e-17 -2.498e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_3"/>
+                      <geom name="fr3_link7_collision_4" pos="1.43115e-17 -3.90313e-18 -3.19189e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_4"/>
+                      <geom name="fr3_link7_collision_5" pos="-1.45717e-16 -2.15106e-16 -3.19189e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_5"/>
+                      <geom name="fr3_link7_collision_6" pos="-1.45717e-16 -4.57967e-16 -6.93889e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_6"/>
+                      <geom name="fr3_link7_collision_7" pos="1.38778e-16 -4.11997e-18 -3.46945e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_7"/>
+                      <geom name="fr3_link7_collision_8" pos="-1.9082e-16 -5.20417e-16 -6.10623e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_8"/>
+                      <geom name="fr3_link7_collision_9" pos="9.32414e-18 -2.25514e-17 -4.02456e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_9"/>
+                      <geom name="fr3_link7_collision_10" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_10"/>
+                      <geom name="fr3_link7_collision_11" pos="-1.31839e-16 -4.33681e-19 -2.77556e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_11"/>
+                      <geom name="fr3_link7_collision_12" pos="-7.80626e-18 1.56125e-17 -4.996e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_12"/>
+                      <geom name="fr3_link7_collision_13" pos="9.36751e-17 9.02056e-17 -2.91434e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_13"/>
+                      <geom name="fr3_link7_collision_14" pos="1.17961e-16 1.17961e-16 -2.91434e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_14"/>
+                      <geom name="fr3_link7_collision_15" pos="-4.33681e-17 -2.01228e-16 -3.88578e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_15"/>
+                      <geom name="fr3_link7_collision_16" pos="-1.11022e-16 -1.52656e-16 -3.46945e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_16"/>
+                      <geom name="fr3_link7_collision_17" pos="-4.33681e-18 -1.66533e-16 -3.88578e-16" quat="1 0 0 0" type="mesh" group="3" rgba="0.6 0.6 0.6 1" density="0" mesh="link7_collision_17"/>
+                      <body name="fr3_link8" pos="0 0 0.107">
+                        <site name="flange" group="4"/>
+                        <site name="attachment_site" size="0.001" group="4"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="fr3_link0" body2="fr3_link1"/>
+    <exclude body1="fr3_link1" body2="fr3_link2"/>
+    <exclude body1="fr3_link2" body2="fr3_link3"/>
+    <exclude body1="fr3_link3" body2="fr3_link4"/>
+    <exclude body1="fr3_link4" body2="fr3_link5"/>
+    <exclude body1="fr3_link5" body2="fr3_link6"/>
+    <exclude body1="fr3_link6" body2="fr3_link7"/>
+  </contact>
+
+  <actuator>
+    <general name="fr3_joint1" joint="fr3_joint1" ctrllimited="false" forcelimited="true" forcerange="-87 87"/>
+    <general name="fr3_joint2" joint="fr3_joint2" ctrllimited="false" forcelimited="true" forcerange="-87 87"/>
+    <general name="fr3_joint3" joint="fr3_joint3" ctrllimited="false" forcelimited="true" forcerange="-87 87"/>
+    <general name="fr3_joint4" joint="fr3_joint4" ctrllimited="false" forcelimited="true" forcerange="-87 87"/>
+    <general name="fr3_joint5" joint="fr3_joint5" ctrllimited="false" forcelimited="true" forcerange="-12 12"/>
+    <general name="fr3_joint6" joint="fr3_joint6" ctrllimited="false" forcelimited="true" forcerange="-12 12"/>
+    <general name="fr3_joint7" joint="fr3_joint7" ctrllimited="false" forcelimited="true" forcerange="-12 12"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 -0.785398 0 -2.35619 0 1.5708 0.785398"/>
+  </keyframe>
+</mujoco>

@@ -57,8 +57,22 @@ def _ft_site(arm: str) -> str:
     )
 
 
+def _torque_driven(arm: str) -> bool:
+    """Every actuator a torque motor: such an arm holds no pose without its controller (an ``fr3``
+    without one falls), and what is measured here is where the wrench is read."""
+    m = mujoco.MjModel.from_xml_path(str(MODELS_DIR / arm / f"{arm}.xml"))
+    return m.nu > 0 and all(int(b) == int(mujoco.mjtBias.mjBIAS_NONE) for b in m.actuator_biastype)
+
+
 def _engine(tmp_path: Path, arm: str, *, tool=TOOL, ee=None, ft=None) -> Engine:
     spawn: dict = {"model": arm, "prefix": "a_"}
+    if _torque_driven(arm):
+        spawn["actuators"] = {
+            "control": "position",
+            "p": 4500.0,
+            "d": 450.0,
+            "ctrlrange": [-6.2832, 6.2832],
+        }
     if tool is not None:
         (tmp_path / "tool.xml").write_text(tool, encoding="utf-8")
         spawn["end_effector"] = {"model": "tool.xml", **(ee or {})}

@@ -8,7 +8,7 @@ ship with that experiment, so what is here is what any user of the substrate can
 
 | kind | models |
 |---|---|
-| arms | `ur10e`, `ur5e`, `ur30` (UR's kinematics, masses and torque limits; the ur10e's meshes reshaped to it), `panda`, `gen3` (7-DOF + integrated Robotiq 2F-85), `xarm7`, `lbr_iiwa7`, `lbr_iiwa14` (KUKA LBR iiwa 7 R800 / 14 R820, with lbr_fri_ros2_stack's ROS 2 interface), `m1013`, `m20id25` (FANUC M-20iD/25) and `crx25ia` (FANUC CRX-25iA, built from FANUC's `crx30ia`, the CRX-30iA's description, which FANUC names the official one for it), both from FANUC's own description and answering ROS 2 as FANUC's driver does, `vx300s`, `wx250s`, `open_manipulator_x` |
+| arms | `ur10e`, `ur5e`, `ur30` (UR's kinematics, masses and torque limits; the ur10e's meshes reshaped to it), `panda`, `fr3` (Franka Research 3 without a hand, from Franka's own description, torque-driven, with gravity left to the controller as on the robot), `gen3` (7-DOF + integrated Robotiq 2F-85), `xarm7`, `lbr_iiwa7`, `lbr_iiwa14` (KUKA LBR iiwa 7 R800 / 14 R820, with lbr_fri_ros2_stack's ROS 2 interface), `m1013`, `m20id25` (FANUC M-20iD/25) and `crx25ia` (FANUC CRX-25iA, built from FANUC's `crx30ia`, the CRX-30iA's description, which FANUC names the official one for it), both from FANUC's own description and answering ROS 2 as FANUC's driver does, `vx300s`, `wx250s`, `open_manipulator_x` |
 | grippers | `robotiq_2f85` (85 mm), `robotiq_hande` (50 mm), `schunk_pg70` (61 mm) — standalone and attachable to any flange |
 
 ```sh
