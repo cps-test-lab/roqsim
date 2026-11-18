@@ -176,3 +176,24 @@ def test_a_client_gone_during_a_strict_wait_ends_the_wait(server):
     tcp.close()
     assert server.await_command(1, _state(1), strict=True, client_timeout_s=5) is None
     assert server.requests.get(timeout=5).command == P.Command.STOP_MOVE
+
+
+def test_a_reply_to_a_replaced_connection_never_reaches_its_successor(server):
+    """A reply goes to the connection that asked: the replaced client's answer, whether its own
+    thread or the physics sends it late, is not delivered to the client that replaced it."""
+    old, _ = _connect(P.VERSION, _udp())
+    old_conn = server._conn
+    new, (status, _) = _connect(P.VERSION, _udp())
+    assert status == P.ConnectStatus.SUCCESS and server._conn is not old_conn
+    server.reply(P.Command.GET_ROBOT_MODEL, 7, b"\x00stale", to=old_conn)
+    server.reply(P.Command.GET_ROBOT_MODEL, 8, b"\x00own", to=server._conn)
+    data = b""
+    new.settimeout(5)
+    while len(data) < P.HEADER.size + 4:
+        chunk = new.recv(64)
+        assert chunk, "the new client was dropped"
+        data += chunk
+    command, command_id, _ = P.HEADER.unpack(data[: P.HEADER.size])
+    assert (command, command_id) == (P.Command.GET_ROBOT_MODEL, 8)
+    old.close()
+    new.close()

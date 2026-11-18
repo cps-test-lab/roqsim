@@ -142,7 +142,9 @@ class FCIServer:
                 version, udp_port = CONNECT_REQUEST.unpack(payload)
                 ok = version == VERSION
                 if ok:  # streaming to the client before it hears the reply it may act on
-                    self.client_udp = (host, udp_port)
+                    with self._conn_lock:  # a replaced client's late Connect redirects nothing
+                        if conn is self._conn:
+                            self.client_udp = (host, udp_port)
                 self.reply(
                     command,
                     command_id,
@@ -150,6 +152,7 @@ class FCIServer:
                         ConnectStatus.SUCCESS if ok else ConnectStatus.INCOMPATIBLE_LIBRARY_VERSION,
                         VERSION,
                     ),
+                    to=conn,
                 )
                 continue
             if command == Command.GET_ROBOT_MODEL:
@@ -157,6 +160,7 @@ class FCIServer:
                     command,
                     command_id,
                     STATUS_RESPONSE.pack(CommandStatus.SUCCESS) + self.urdf.encode(),
+                    to=conn,
                 )
                 continue
             expected = REQUESTS[command]

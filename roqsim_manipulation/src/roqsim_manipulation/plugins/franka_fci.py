@@ -194,8 +194,6 @@ class FrankaFCIPlugin(Plugin):
         self.server: FCIServer | None = None
         self.core: FrankaCore | None = None
         self._inproc: InProcessMotion | None = None
-        self._net_motion = False
-        self._motion_conn = None  # the connection whose Move the network motion answers
         self._first_command = False
         self._message_id = 0
         self._step = 0
@@ -328,19 +326,18 @@ class FrankaFCIPlugin(Plugin):
         # outcome (libfranka's throwOnMotionError) and would otherwise wait for it forever.
         self._settle_endings()
         motion = self.core.motion
-        if self._net_motion and self.server is not None and motion is not None:
+        if self._net_motion and self.server is not None:
             self.server.reply(
                 Command.MOVE,
                 motion.command_id,
                 STATUS_RESPONSE.pack(MoveStatus.ABORTED),
-                to=self._motion_conn,
+                to=motion.owner,
             )
         if self._inproc is not None and self._inproc.ending is None:
             self._inproc.ending = Ending(None, MoveStatus.ABORTED, [])  # no reflex: the reset
         self._inproc = None
         self._answer_queued_at_reset()
         self.core.reset(ctx.data.qpos[self._qadr])
-        self._net_motion, self._motion_conn = False, None
         self._step = 0
         self._last_state = self.core.state(self._message_id)
 
@@ -485,6 +482,12 @@ class FrankaFCIPlugin(Plugin):
                 core.apply(cmd)
         self._settle_endings()
 
+    @property
+    def _net_motion(self) -> bool:
+        """A network client's Move is running: a motion with a Move's id (an in-process one has none)."""
+        motion = self.core.motion if self.core is not None else None
+        return motion is not None and motion.command_id is not None
+
     def _settle_endings(self) -> None:
         core = self.core
         for ending in core.endings:
@@ -496,9 +499,8 @@ class FrankaFCIPlugin(Plugin):
                     Command.MOVE,
                     ending.command_id,
                     STATUS_RESPONSE.pack(ending.status),
-                    to=self._motion_conn,
+                    to=ending.owner,
                 )
-                self._net_motion, self._motion_conn = False, None
         core.endings.clear()
 
     # -- the FCI's commands, on the physics thread --------------------------------------------------
@@ -519,18 +521,19 @@ class FrankaFCIPlugin(Plugin):
             elif self._inproc is not None:
                 status = MoveStatus.COMMAND_NOT_POSSIBLE_REJECTED
             else:
-                status = core.start_motion(*modes, req.command_id)
+                status = core.start_motion(*modes, req.command_id, req.conn)
             if status is not None:
                 replies.append((c, req.command_id, STATUS_RESPONSE.pack(status)))
             else:
                 # The robot answers a Move twice: "motion started" now (libfranka's executeCommand
                 # blocks on it), and the outcome when the motion ends (_settle_endings).
                 replies.append((c, req.command_id, STATUS_RESPONSE.pack(MoveStatus.MOTION_STARTED)))
-                self._net_motion, self._first_command = True, False
-                self._motion_conn = req.conn
+                self._first_command = False
             return
         if c == Command.STOP_MOVE:
-            if self._net_motion:
+            # A client stops its own motion; the server's StopMove for a dropped client (no
+            # connection) stops the network motion it left.
+            if self._net_motion and (req.conn is None or core.motion.owner is req.conn):
                 core.stop()
             replies.append((c, req.command_id, STATUS_RESPONSE.pack(StopMoveStatus.SUCCESS)))
             return

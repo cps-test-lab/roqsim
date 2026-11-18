@@ -367,7 +367,7 @@ def test_a_dropped_clients_queued_setting_neither_applies_nor_answers_the_next_c
 
     from roqsim_manipulation.franka import protocol as P
 
-    address = "127.0.0.9"
+    address = "127.0.0.11"
     world = {
         "sim": {"timestep": 0.001},
         "components": [
@@ -399,6 +399,89 @@ def test_a_dropped_clients_queued_setting_neither_applies_nor_answers_the_next_c
         (command, command_id, _), _ = _read_reply(b_tcp, P.HEADER, P.STATUS_RESPONSE, engine)
         assert (command, command_id) == (P.Command.AUTOMATIC_ERROR_RECOVERY, 2)
         assert fci.core.m_load == 0.0
+    finally:
+        b_tcp.close()
+        b_udp.close()
+        engine.shutdown()
+
+
+def _messages(tcp, P, n, engine, tries=300):
+    """Up to *n* messages off the command connection, stepping *engine* while none is there."""
+    out, data = [], b""
+    tcp.settimeout(0.01)
+    for _ in range(tries):
+        while len(data) >= P.HEADER.size:
+            command, command_id, size = P.HEADER.unpack(data[: P.HEADER.size])
+            if len(data) < size:
+                break
+            out.append((P.Command(command), command_id, data[P.HEADER.size : size]))
+            data = data[size:]
+        if len(out) >= n:
+            break
+        try:
+            chunk = tcp.recv(4096)
+        except TimeoutError:
+            engine.step()
+            continue
+        if not chunk:
+            break
+        data += chunk
+    return out
+
+
+def test_a_dropped_clients_move_outcome_does_not_reach_the_next_client():
+    """A client's Move runs and the client drops; the next one connects and sends a Move under
+    the same id (libfranka numbers from 0 again) before the physics takes the stop. The next
+    client hears only its own Move, and its motion is the one the FCI serves."""
+    import time
+
+    from roqsim_manipulation.franka import protocol as P
+
+    address = "127.0.0.10"
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "left_"},
+                "name": "left",
+                "components": [{"franka_fci": {"collision_behavior": CB, "bind": address}}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    (plugin,) = [p for p in engine.plugins if type(p).__name__ == "FrankaFCIPlugin"]
+    move = P.MOVE_REQUEST.pack(
+        P.MoveControllerMode.JOINT_IMPEDANCE,
+        P.MoveMotionGeneratorMode.JOINT_POSITION,
+        *([10.0] * 6),
+        False,
+        *([2.0] * 7),
+    )
+    a_tcp, a_udp = _connect(address, P)
+    a_tcp.sendall(P.HEADER.pack(P.Command.MOVE, 2, P.HEADER.size + len(move)) + move)
+    (command, command_id, _), (status,) = _read_reply(a_tcp, P.HEADER, P.STATUS_RESPONSE, engine)
+    assert (command, command_id, status) == (P.Command.MOVE, 2, P.MoveStatus.MOTION_STARTED)
+    _steps(engine, 3)
+    a_tcp.close()
+    a_udp.close()
+    deadline = time.monotonic() + 5
+    while plugin.server.requests.empty():  # the server's own StopMove for the dropped client
+        assert time.monotonic() < deadline, "the server never noticed the drop"
+        time.sleep(0.001)
+    b_tcp, b_udp = _connect(address, P)
+    try:
+        b_tcp.sendall(P.HEADER.pack(P.Command.MOVE, 2, P.HEADER.size + len(move)) + move)
+        deadline = time.monotonic() + 5
+        while plugin.server.requests.qsize() < 2:
+            assert time.monotonic() < deadline, "the server never queued the Move"
+            time.sleep(0.001)
+        heard = _messages(b_tcp, P, 2, engine, tries=30)
+        statuses = [P.MoveStatus(P.STATUS_RESPONSE.unpack(p[:1])[0]) for _, _, p in heard]
+        assert statuses == [P.MoveStatus.MOTION_STARTED], statuses
+        assert plugin.core.motion is not None and plugin.core.motion.owner is plugin.server._conn
     finally:
         b_tcp.close()
         b_udp.close()

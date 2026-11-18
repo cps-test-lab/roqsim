@@ -201,6 +201,7 @@ class Motion:
     controller: ControllerMode
     generator: MotionGeneratorMode
     command_id: int | None = None  # the TCP Move's id, answered when the motion ends
+    owner: object = None  # who started it (the FCI's connection), answered and nobody else
     q_c: np.ndarray | None = None
     dq_c: np.ndarray | None = None
     ddq_c: np.ndarray | None = None
@@ -219,6 +220,7 @@ class Ending:
     command_id: int | None
     status: MoveStatus
     errors: list[str] = field(default_factory=list)
+    owner: object = None  # the motion's owner, to whom the ending goes
 
 
 class FrankaCore:
@@ -467,8 +469,10 @@ class FrankaCore:
         controller: MoveControllerMode,
         generator: MoveMotionGeneratorMode,
         command_id: int | None = None,
+        owner: object = None,
     ) -> MoveStatus | None:
-        """A ``Move``: ``None`` when it started (the reply comes when it ends), else the refusal."""
+        """A ``Move``: ``None`` when it started (the reply comes when it ends), else the refusal.
+        ``owner`` travels with the motion onto its :class:`Ending`."""
         if self.robot_mode == RobotMode.REFLEX or self.errors.any():
             return MoveStatus.COMMAND_REJECTED_DUE_TO_ACTIVATED_SAFETY_FUNCTIONS
         if self.motion is not None:
@@ -480,7 +484,7 @@ class FrankaCore:
             and controller != MoveControllerMode.EXTERNAL_CONTROLLER
         ):
             return MoveStatus.INVALID_ARGUMENT_REJECTED
-        self.motion = Motion(_CTRL_MAP[controller], _GEN_MAP[generator], command_id)
+        self.motion = Motion(_CTRL_MAP[controller], _GEN_MAP[generator], command_id, owner)
         self.robot_mode = RobotMode.MOVE
         self.q_d, self.dq_d, self.ddq_d = self.q.copy(), np.zeros(7), np.zeros(7)
         self.T_d = self._pose(self.F_T_EE)
@@ -495,7 +499,14 @@ class FrankaCore:
         self.hold_q = self.q.copy()
         self.q_d, self.dq_d, self.ddq_d = self.q.copy(), np.zeros(7), np.zeros(7)
         self.tau_J_d = np.zeros(7)
-        self.endings.append(Ending(motion.command_id if motion else None, status, list(errors)))
+        self.endings.append(
+            Ending(
+                motion.command_id if motion else None,
+                status,
+                list(errors),
+                motion.owner if motion else None,
+            )
+        )
 
     def stop(self) -> None:
         """``StopMove``: the motion ends where it is, preempted."""
