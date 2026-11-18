@@ -56,7 +56,7 @@ roqsim_manipulation_assets = [
     # checkout is not there to paper over it.
     "models/*/*.xml",
     "models/*/*.manifest.yaml",
-    # The robot description a model's controller serves to its client library, as the robot does.
+    # The URDF a simulated controller serves as the robot does (franka_fci's GetRobotModel).
     "models/*/*.urdf",
     "models/*/meshes/*.obj",
     "models/*/meshes/*.stl",

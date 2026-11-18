@@ -176,3 +176,97 @@ def test_a_client_gone_during_a_strict_wait_ends_the_wait(server):
     tcp.close()
     assert server.await_command(1, _state(1), strict=True, client_timeout_s=5) is None
     assert server.requests.get(timeout=5).command == P.Command.STOP_MOVE
+
+
+def test_a_reply_to_a_replaced_connection_never_reaches_its_successor(server):
+    """A reply goes to the connection that asked: the replaced client's answer, whether its own
+    thread or the physics sends it late, is not delivered to the client that replaced it."""
+    old, _ = _connect(P.VERSION, _udp())
+    old_conn = server._conn
+    new, (status, _) = _connect(P.VERSION, _udp())
+    assert status == P.ConnectStatus.SUCCESS and server._conn is not old_conn
+    server.reply(P.Command.GET_ROBOT_MODEL, 7, b"\x00stale", to=old_conn)
+    server.reply(P.Command.GET_ROBOT_MODEL, 8, b"\x00own", to=server._conn)
+    data = b""
+    new.settimeout(5)
+    while len(data) < P.HEADER.size + 4:
+        chunk = new.recv(64)
+        assert chunk, "the new client was dropped"
+        data += chunk
+    command, command_id, _ = P.HEADER.unpack(data[: P.HEADER.size])
+    assert (command, command_id) == (P.Command.GET_ROBOT_MODEL, 8)
+    old.close()
+    new.close()
+
+
+def test_a_strict_wait_ends_when_its_client_is_replaced(server):
+    """The physics waits for the command of the client whose motion it is. A client that replaces
+    it did not start the motion: its command is not taken, and the wait ends at once rather
+    than running into the client timeout."""
+    old, _ = _connect(P.VERSION, _udp())
+    owner = server._conn
+    result: dict = {}
+
+    def wait():
+        try:
+            result["cmd"] = server.await_command(
+                5, _state(5), strict=True, client_timeout_s=5, owner=owner
+            )
+        except TimeoutError as exc:
+            result["error"] = exc
+
+    t = threading.Thread(target=wait)
+    t.start()
+    new_udp = _udp()
+    new, (status, _) = _connect(P.VERSION, new_udp)
+    assert status == P.ConnectStatus.SUCCESS
+    new_udp.sendto(
+        P.pack_robot_command({"message_id": 5, "tau_J_d": [1] * 7}), server._udp.getsockname()
+    )
+    t.join(timeout=2)
+    assert not t.is_alive(), "the wait ran on after its client was replaced"
+    assert result == {"cmd": None}, result
+    old.close()
+    new.close()
+
+
+def test_a_state_sent_as_the_client_drops_is_dropped_and_raises_nothing():
+    """The TCP thread clears the client's address when it drops; the physics thread reads it once,
+    so a drop between its check and its send is a state not sent, not an error."""
+
+    class Dropping(FCIServer):
+        """The address is there on the first read and gone on every later one."""
+
+        _reads = 0
+
+        @property
+        def client_udp(self):
+            self._reads += 1
+            return ("127.0.0.1", 9) if self._reads == 1 else None
+
+        @client_udp.setter
+        def client_udp(self, value):
+            pass
+
+    s = Dropping("127.0.0.5", "<robot name='fr3'/>")
+    try:
+        s.send_state(_state(1))
+    finally:
+        s.close()
+
+
+def test_the_last_state_is_kept_alive_while_the_physics_sends_none(server):
+    """A paused run sends no state; libfranka would end its client after its 1 s UDP timeout.
+    The last state is sent again every resend_s, and nothing newer is made up."""
+    import time
+
+    udp = _udp()
+    tcp, _ = _connect(P.VERSION, udp)
+    server.send_state(_state(7))
+    udp.recvfrom(4096)  # the one the physics sent
+    udp.settimeout(1)
+    start, seen = time.monotonic(), []
+    while time.monotonic() - start < 0.5:
+        seen.append(P.unpack_robot_state(udp.recvfrom(4096)[0])["message_id"])
+    assert len(seen) >= 5 and set(seen) == {7}, seen
+    tcp.close()

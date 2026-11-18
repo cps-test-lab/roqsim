@@ -53,6 +53,14 @@ robot itself. Each value is held to Franka's published files, never typed from t
   as libfranka-common defines it.
 - `server` is the robot's side of that protocol on the network: the TCP command port and the UDP
   state stream, in lock-step with the physics.
+- `core` is the robot's controller: the motion-generator checks, the internal impedance
+  controllers, the reflexes and the external-torque estimate. The error flags it never raises are
+  `NOT_RAISED`.
+
+The `franka_fci` plugin, a component of an `fr3`'s `spawn_arm` entry, runs the core on the physics
+and, with `bind:` set, serves it to libfranka over that protocol; in process, the handle
+`franka_fci:<arm>` runs a law with libfranka's field names. `docs/interfaces.rst` describes the arm
+under libfranka.
 
 The Franka files the model is built from and checked against are vendored under
 `tests/upstream/franka/`, pinned by commit and sha256 in `SOURCES.toml`. In a roqsim checkout,

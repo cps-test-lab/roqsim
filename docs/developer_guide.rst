@@ -80,6 +80,15 @@ an export of every world ``roqsim_scenes`` ships to no error and no warning:
 
    make test-gltf             # needs node and npm on PATH
 
+The simulated FR3's FCI is held to Franka's own client library: ``make test-franka`` builds libfranka
+at the release ``roqsim_manipulation/tests/upstream/franka/SOURCES.toml`` pins, with its own
+CMake build, and runs it against the simulated arm. It needs a C++ toolchain, CMake, Eigen3, Poco
+and fmt, so ``make test`` leaves it out. It fails, rather than skips, when libfranka cannot be built:
+
+.. code-block:: bash
+
+   make test-franka           # needs g++, cmake, libeigen3-dev, libpoco-dev, libfmt-dev
+
 scenario-execution is ``scenario_execution_roqsim``'s ``[osc]`` extra, so ``make venv`` leaves it
 out and ``make test`` skips every test that needs it. ``make test-osc`` runs those tests -- the OSC
 actions and library, a world running a scenario, the reset test's ``scenario`` case, the handling

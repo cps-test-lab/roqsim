@@ -414,6 +414,37 @@ def _use_fanuc_driver(engine: Engine) -> None:
     eps["fanuc_gpio_controller.switch_control_state"].write({"status": 0})
 
 
+def _run_franka_motion(engine: Engine) -> None:
+    """An in-process torque motion through the FR3's FCI handle, still running when the trial
+    resets; the reset ends it as aborted (the network side answers a client's Move the same way)."""
+
+    def law(state, period):
+        return {"tau_J_d": [0.0] * 7}
+
+    engine.ctx.blackboard.get("franka_fci:fr3").control(law)
+
+
+def _set_every_franka_setting(engine: Engine) -> None:
+    """Every setter a client can call, each to a value other than the world's: a reset returns
+    the controller to the world's configuration, so none of them may outlast the run."""
+    fci = engine.ctx.blackboard.get("franka_fci:fr3")
+    fci.set_load(1.5, [0.02, 0.0, 0.08], np.diag([2e-3, 2e-3, 1e-3]))
+    assert fci.set_joint_impedance([100.0] * 7)
+    assert fci.set_cartesian_impedance([200.0, 200.0, 200.0, 20.0, 20.0, 20.0])
+    assert fci.set_collision_behavior({key: [v * 2 for v in vs] for key, vs in _FRANKA_CB.items()})
+    fci.set_k([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.05], [0, 0, 0, 1]])
+    fci.set_ee([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.1], [0, 0, 0, 1]])
+
+
+#: franka_fci's required setting: the robot's start-up thresholds are unpublished.
+_FRANKA_CB = {
+    "lower_torque": [20.0] * 7,
+    "upper_torque": [40.0] * 7,
+    "lower_force": [20.0] * 6,
+    "upper_force": [60.0] * 6,
+}
+
+
 def _needs_file(path_of: Callable[[], Path], what: str) -> Callable[[], str | None]:
     def check() -> str | None:
         return None if path_of().exists() else f"{what} is not present ({path_of()})"
@@ -576,6 +607,17 @@ CASES: dict[str, Case] = {
         use=(_use_fanuc_driver,),
     ),
     "ur_rtde": Case(lambda _: _arm({"ur_rtde": {"ft": "ft"}}), use=(_run_rtde_program,)),
+    "franka_fci": Case(
+        lambda _: _world(
+            {
+                "spawn_arm": {"model": "fr3", "prefix": "fr3_"},
+                "name": "fr3",
+                "components": [{"franka_fci": {"collision_behavior": _FRANKA_CB}}],
+            },
+            timestep=0.001,
+        ),
+        use=(_set_every_franka_setting, _run_franka_motion),
+    ),
     "fzi_cartesian_controllers": Case(
         lambda _: _arm(
             {
@@ -778,6 +820,12 @@ _MEASURED_ONCE = (
 )
 
 #: Plugins, or attribute paths of a plugin, that keep state across a reset on purpose.
+#: franka_fci's FCI state counter, and the last state, which carries it.
+_FCI_MESSAGE_ID = (
+    "the FCI's state counter: libfranka discards a state not newer than the last one it read, so a "
+    "client connected across a reset needs the robot to keep counting, as a robot does"
+)
+
 EXEMPT: dict[str, dict[str | None, str]] = {
     "px4_sitl": {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
@@ -795,6 +843,7 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     # The clips a walker has read, by file: a cache of files that do not change during a run.
     "walker": {"motion._clips": "the clips read so far, by file, which a reset does not change"},
     "humanoid": {"body.motion._clips": "the walker's clips read so far, by file (as for walker)"},
+    "franka_fci": {"_message_id": _FCI_MESSAGE_ID, "_last_state['message_id']": _FCI_MESSAGE_ID},
     "navigator": {
         "_radius": _MEASURED_ONCE,
         "_caution._radius": _MEASURED_ONCE,

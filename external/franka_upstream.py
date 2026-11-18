@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch, or check, the Franka upstream files the simulated FR3 is built from and checked against.
 
-The simulated Franka Research 3 (the ``fr3`` model) is held to Franka's own
+The simulated Franka Research 3 (``franka_fci``, the ``fr3`` model) is held to Franka's own
 releases by tests that read Franka's files, never a copy typed from them. Those files, and the
 ones the model's converter and the ``franka`` modules cite, are vendored
 under ``roqsim_manipulation/tests/upstream/franka/``, one directory per repository at the pinned
