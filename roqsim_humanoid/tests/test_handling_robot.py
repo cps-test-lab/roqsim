@@ -144,3 +144,35 @@ def test_the_robots_legs_walk_while_its_navigator_moves_it():
             )
     finally:
         engine.shutdown()
+
+
+def test_a_physical_robot_plans_its_carries_with_the_lag_its_table_states():
+    """Physical, the G1's base hangs on an anchor the navigator moves and trails it; its table
+    states by how much, measured (``physical: {follow_error}``), and its carries plan with that
+    margin -- the box swap's ``planned`` events say so, and the scene still ends with both totes
+    where they go. Kinematic, the base is set to the nav root: no margin."""
+    engine = _run("handling_box_swap_g1")
+    try:
+        body = engine.ctx.blackboard.get("humanoid_body:g1")
+        assert body.follow_error(1.0) == pytest.approx(0.04)
+        margins = {
+            ev["margin"]
+            for ev in engine.ctx.events.all()
+            if ev["source"].startswith("g1") and ev["event"] == "planned"
+        }
+        assert margins == {0.04}, margins
+        # and the base kept within it of the anchor all the way
+        d = engine.ctx.data
+        assert np.hypot(*(d.site("g1/base").xpos[:2] - d.site("g1/anchor").xpos[:2])) < 0.04
+    finally:
+        engine.shutdown()
+    engine = Engine(load_config(WORLDS / "handling_box_swap_g1.yaml"))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        robot = engine.ctx.blackboard.get("humanoid_body:g1")
+        robot.p.config["drive"] = "kinematic"
+        assert robot.follow_error(1.0) == 0.0
+    finally:
+        engine.shutdown()

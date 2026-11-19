@@ -105,6 +105,15 @@ class RobotBody(HumanoidBody):
         x, y, yaw = self.p.root
         return float(x), float(y), float(yaw)
 
+    def follow_error(self, speed: float) -> float:
+        """Kinematic, the base is set to the nav root: none. Physical, the base hangs on a soft weld
+        to an anchor the nav root moves and trails it: by what the model's retargeting table states,
+        measured, as ``physical: {follow_error}`` (m), and none where it states nothing -- a figure
+        a model has not been measured for is not guessed."""
+        if self.p.config["drive"] != "physical":
+            return 0.0
+        return float((self.p.table.physical or {}).get("follow_error", 0.0))
+
     def face(self, yaw):
         self.facing = None if yaw is None else float(yaw)
 

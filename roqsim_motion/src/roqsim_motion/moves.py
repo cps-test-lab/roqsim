@@ -723,7 +723,14 @@ class HumanoidPlugin(MachinePlugin):
         name = ", ".join(
             mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}" for b in held
         )
-        return Footprint(pieces, margin=self.body.follow_error), sorted(roots | own - {0}), name
+        margin = self.body.follow_error(self._nav_speed())
+        return Footprint(pieces, margin=margin), sorted(roots | own - {0}), name
+
+    def _nav_speed(self) -> float:
+        """The speed the body's navigator walks it at (m/s); 1 where it states none."""
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}")
+        config = getattr(nav, "config", None) or {}
+        return float(config.get("speed", 1.0))
 
     def _dock(self, target, held) -> list:
         """The bodies a body may stand against at ``target``: the target's own (its body and
@@ -775,6 +782,11 @@ class HumanoidPlugin(MachinePlugin):
                 dock=self._dock(what, [h.obj_body for h in self.holding.values() if h is not None]),
             )
         except NoWay as err:
+            if fp.margin > 0.0:
+                self.fail(
+                    f"{err}; planned {fp.margin:.3f} m clear of everything, how far the body "
+                    "strays from its way"
+                )
             self.fail(str(err))
         self.step("planned", **way.summary())
         tol = FOLLOW_TOL + fp.margin
@@ -791,7 +803,7 @@ class HumanoidPlugin(MachinePlugin):
                     )
                 yield from self._spin(seg.angle, each)
             elif seg.kind == "back":
-                yield from self._step_back(seg.distance, each)
+                yield from self._step_back(seg.distance, each, label, tol)
         yield from self._face(yaw, what, each)
         yield from self._come_to_rest(what, each)
         self.step(
@@ -1421,11 +1433,13 @@ class HumanoidPlugin(MachinePlugin):
         p[2] = float(self._extent(held)[0][2])
         return p
 
-    def _step_back(self, distance: float, each=None):
-        """Step straight back by ``distance`` (m), keeping the heading, on the navigator, calling
-        ``each`` every step; then come to rest. A navigator stops within its arrival radius of a
-        goal, so a step that falls short is aimed on by what it lacks (:data:`BACK_TRIES` at most),
-        to stand within a centimetre of where the sweep was judged from."""
+    def _step_back(self, distance: float, each, what: str, tol: float):
+        """Step straight back by ``distance`` (m), keeping the heading, on the navigator exactly
+        (unplanned, unsteered), calling ``each`` every step and failing where the body leaves the
+        straight step by more than ``tol`` -- the step the way was checked on; then come to rest. A
+        navigator stops within its arrival radius of a goal, so a step that falls short is aimed on
+        by what it lacks (:data:`BACK_TRIES` at most), to stand within a centimetre of where the
+        way goes on from."""
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to step back with")
@@ -1438,8 +1452,10 @@ class HumanoidPlugin(MachinePlugin):
             aim = distance
             for _ in range(BACK_TRIES):
                 goal = (x0 + aim * back[0], y0 + aim * back[1])
-                yield from self._route(nav, goal, "a step back", each)
-                yield from self._come_to_rest("a step back", each)
+                line = np.array([(x0, y0), goal])
+                check = lambda line=line: self._on_leg(line, tol, what, each)  # noqa: E731
+                yield from self._route(nav, goal, "a step back", check, exact=True)
+                yield from self._come_to_rest("a step back", check)
                 x, y, _ = self.body.root()
                 short = distance - float(np.dot([x - x0, y - y0], back))
                 if short < 0.01:
