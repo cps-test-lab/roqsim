@@ -396,6 +396,64 @@ def test_a_carry_walks_through_a_gentle_bend_of_its_way_without_stopping(sim):
     assert slowest > 0.3, slowest  # m/s: walking through, not stopped at the bend
 
 
+def test_a_carry_stops_at_a_gentle_bend_its_load_would_not_swing_clear_of():
+    """A post just outside a bend of 33 degrees, where walking through it would swing the tote out
+    into the post: the body stops at the bend and turns there instead, and the tote never touches
+    the post."""
+    corner = np.array([1.8, 0.0])
+    at = corner + 0.7 * np.array([math.cos(math.radians(-10)), math.sin(math.radians(-10))])
+    world = _world()
+    world["components"][0]["walker"]["pose"] = {
+        "position": {"x": 0.0, "y": 0.0},
+        "orientation": {"yaw": 0.0},
+    }
+    world["components"] = [c for c in world["components"] if c.get("name") != "tote_1"] + [
+        {
+            "tote": {"pose": {"position": {"x": 0.6, "y": 0.0}, "orientation": {"yaw": 1.5708}}},
+            "name": "tote_1",
+        },
+        {
+            "box": {
+                "prefix": "post_",
+                "pose": {"position": {"x": float(at[0]), "y": float(at[1])}},
+                "size": [0.1, 0.1, 1.8],
+                "motion": "static",
+            },
+            "name": "post",
+        },
+    ]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        to = corner + 2.0 * np.array([math.cos(math.radians(33)), math.sin(math.radians(33))])
+        seq = sim.h.carry(
+            {"position": {"x": float(to[0]), "y": float(to[1]), "z": 0.0}},
+            standoff=0.6,
+            via=[corner.tolist()],
+        )
+        m = sim.m
+        post = m.body("post_box").id
+        tote = m.body_weldid[m.body("tote_1").id]
+        touched, t0 = 0, sim.e.ctx.sim_time
+        while True:
+            sim.e.step()
+            for c in sim.d.contact[: sim.d.ncon]:
+                b1, b2 = m.geom_bodyid[c.geom1], m.geom_bodyid[c.geom2]
+                if post in (b1, b2) and tote in (m.body_weldid[b1], m.body_weldid[b2]):
+                    touched += 1
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+            assert sim.e.ctx.sim_time - t0 < 60.0, "the carry did not end"
+        assert st.error == "", st.error
+        assert touched == 0, touched
+    finally:
+        engine.shutdown()
+
+
 def test_carrying_it_turns_the_way_its_load_sweeps_clear():
     """A post stands where the short way round would swing the tote, and the carry may not step
     back but may turn the long way: the body turns the long way, says so, and the tote never meets

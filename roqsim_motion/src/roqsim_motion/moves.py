@@ -108,8 +108,9 @@ SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: A carry walks through a point of its way where the way bends by this much or less (rad), the
-#: body turning at its carrying pace as it walks on; at a sharper corner it stops and turns on the
-#: spot.
+#: body turning at its carrying pace as it walks on, if what it holds swings clear there
+#: (:meth:`HumanoidPlugin._swung`); at a sharper corner, or one it would not swing clear at, it
+#: stops and turns on the spot.
 WALK_THROUGH = math.radians(45)
 #: A carried turn this near half a turn (rad) is a tie: both ways turn as far, and the side is
 #: chosen by what the load sweeps and where the body walks next, never by the sign of a rounding
@@ -597,9 +598,11 @@ class HumanoidPlugin(MachinePlugin):
             self.fail(f"back_max: a distance of 0 m or more, not {back_max!r}")
         return float(back_max)
 
-    def _stretches(self, legs) -> list:
+    def _stretches(self, legs, speed: float | None = None) -> list:
         """``legs`` (floor points, walked from where the body stands) split where the way bends by
-        more than :data:`WALK_THROUGH`: lists of their indices, each walked without stopping."""
+        more than :data:`WALK_THROUGH`, or where what the hands hold would not swing clear walking
+        through at ``speed`` (m/s; ``None``: at every bend): lists of their indices, each walked
+        without stopping."""
         x, y, _ = self.body.root()
         stretches, prev, heading = [[]], (x, y), None
         for i, p in enumerate(legs):
@@ -608,12 +611,68 @@ class HumanoidPlugin(MachinePlugin):
                 continue
             h = math.atan2(p[1] - prev[1], p[0] - prev[0])
             if heading is not None and stretches[-1]:
-                bend = abs(math.atan2(math.sin(h - heading), math.cos(h - heading)))
-                if bend > WALK_THROUGH:
+                bend = math.atan2(math.sin(h - heading), math.cos(h - heading))
+                if (
+                    abs(bend) > WALK_THROUGH
+                    or speed is None
+                    or self._swung(prev, heading, bend, speed) is not None
+                ):
                     stretches.append([])
             stretches[-1].append(i)
             prev, heading = p, h
         return [s for s in stretches if s]
+
+    def _swing_speed(self, nav) -> float | None:
+        """The speed (m/s) a walked-through bend is judged at: the navigator's, or ``None`` where it
+        does not say, and no bend is walked through."""
+        return None if getattr(nav, "speed", None) is None else float(nav.speed())
+
+    def _swung(self, at, heading: float, bend: float, speed: float) -> str | None:
+        """What the held object would swing through walking through the point ``at`` from
+        ``heading`` (rad) on round a bend of ``bend`` (rad, signed) at ``speed`` (m/s): the body
+        walks on along the new way while its heading follows at :data:`CARRY_TURN`, so what it
+        holds in front swings out over the outside of the bend. The name of the first body a point
+        of its footprint meets on the way, at its underside, its middle or its top -- or ``None``;
+        ``None`` too where nothing is held."""
+        held = next(
+            (h.obj_body for s, h in self.holding.items() if h is not None and not self._riding[s]),
+            None,
+        )
+        if held is None:
+            return None
+        d = self._d
+        x, y, h0 = self.body.root()
+        lo, hi = self._extent(held)
+        c, s = math.cos(-h0), math.sin(-h0)
+        unturn = np.array([[c, -s], [s, c]])
+        rels = [
+            unturn @ (d.xpos[held][:2] + off[:2] - [x, y]) for off in self._footprint(held, 0.04)
+        ]
+        out = np.array([math.cos(heading + bend), math.sin(heading + bend)])
+        span = abs(bend) / CARRY_TURN
+        steps = max(2, int(math.ceil(abs(bend) / math.radians(5))))
+        poses = []
+        for k in range(steps + 1):
+            t = span * k / steps
+            h = heading + bend * k / steps
+            poses.append((np.array(at[:2], float) + speed * t * out, h))
+        skip = self._sweep_skip(held)
+        for z in (lo[2] + 0.02, 0.5 * (lo[2] + hi[2]), hi[2] - 0.02):
+            for rel in rels:
+                prev = None
+                for root, h in poses:
+                    c, s = math.cos(h), math.sin(h)
+                    nxt = root + np.array([[c, -s], [s, c]]) @ rel
+                    if prev is not None:
+                        chord = nxt - prev
+                        length = float(np.linalg.norm(chord))
+                        if length > 1e-9:
+                            vec = np.array([chord[0] / length, chord[1] / length, 0.0])
+                            hit = self._first_hit([prev[0], prev[1], z], vec, length, skip, held)
+                            if hit is not None:
+                                return hit[1]
+                    prev = nxt
+        return None
 
     @staticmethod
     def _next_heading(legs, i: int, yaw: float) -> float:
@@ -654,7 +713,7 @@ class HumanoidPlugin(MachinePlugin):
             # turns on the spot, so what it carries in front stays over the way it walks rather
             # than swinging out of it round the corner.
             legs = [*via, (float(stand[0]), float(stand[1]))]
-            for k, stretch in enumerate(self._stretches(legs)):
+            for k, stretch in enumerate(self._stretches(legs, self._swing_speed(nav))):
                 point = legs[stretch[0]]
                 x, y, _ = self.body.root()
                 if k and math.hypot(point[0] - x, point[1] - y) > 0.05:

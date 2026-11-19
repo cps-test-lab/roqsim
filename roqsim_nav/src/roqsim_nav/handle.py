@@ -57,6 +57,8 @@ class NavHandle:
     #: read the model. Uniform across embodiments, which a post-emit refresh would not be -- a driven
     #: base has not moved yet when its twist is commanded, while a written pose has.
     pose: Callable[[], tuple[float, float, float]]
+    #: The speed (m/s) a route is followed at; ``None`` where the navigator does not say.
+    speed: Callable[[], float] | None = None
 
 
 class Sequencer:
