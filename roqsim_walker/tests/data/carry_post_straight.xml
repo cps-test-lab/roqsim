@@ -1,0 +1,11 @@
+<!-- The walker carries a tote along a straight stretch past a post beside it: a disc of its
+     radius passes the post, the tote across its body does not (test_carry_way.py). -->
+<mujoco model="carry_post_straight">
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <geom name="wall_n" type="box" pos="2 1.0 0.9" size="3.5 0.05 0.9"/>
+    <geom name="wall_s" type="box" pos="2 -1.0 0.9" size="3.5 0.05 0.9"/>
+    <geom name="post" type="box" pos="2.0 0.3 0.9" size="0.05 0.05 0.9"/>
+  </worldbody>
+</mujoco>

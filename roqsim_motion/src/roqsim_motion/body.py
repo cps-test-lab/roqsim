@@ -50,6 +50,10 @@ class HumanoidBody:
     #: How far in front of its root the body keeps clear of anything solid when it comes to take
     #: something by its handles (m): its front, and its knees where it crouches.
     stand_clear = 0.2
+    #: How far the body may stray from the way it is walked along (m): a body posed where the
+    #: navigator puts it, none; a robot's base hanging on an anchor, what it lags by. A way planned
+    #: for the body keeps that much further off what it would meet (``roqsim_nav.lattice``).
+    follow_error = 0.0
 
     def __init__(self, name: str):
         self.name = name
@@ -176,6 +180,11 @@ class HumanoidBody:
 
     def face(self, yaw) -> None:
         """Turn the standing body to ``yaw`` (world, rad); ``None``: wherever it walks."""
+        raise NotImplementedError
+
+    def keep_heading(self, yaw) -> None:
+        """Keep the body at heading ``yaw`` (world, rad) while it walks, whichever way it goes -- a
+        step back; ``None``: it faces where it walks again."""
         raise NotImplementedError
 
     def settled(self, side: str) -> bool:

@@ -225,78 +225,42 @@ def test_a_carry_whose_first_via_point_is_where_it_stands_sets_off_toward_the_ne
     assert st.error == "" and nearest < 0.1
 
 
-def test_a_carry_along_a_way_turns_at_its_corners_so_the_load_stays_over_the_way(sim):
-    """Carrying, the body turns at a carrying pace; along a way it stops and turns at each point,
-    so the tote in front of it stays over the way's legs instead of swinging out at a corner."""
+def test_a_carry_along_a_way_passes_its_points_and_its_load_meets_nothing(sim):
+    """Carrying, the body walks a way planned for it and what it holds through the floor points of
+    ``via``, in order; the tote touches nothing but the hands on the way."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
     x, y, _ = sim.body.root()
-    corner = (x, y + 1.6)  # straight north, then a right angle east toward the bench's side
-    seq = sim.h.carry(
-        "bench", standoff=0.55, facing=math.pi / 2, via=[list(corner), [-0.2, corner[1]]]
-    )
+    corner = (x, y + 1.3)  # north, then east toward the bench's side
+    points = [corner, (-0.6, corner[1])]
+    t0 = sim.e.ctx.sim_time
+    seq = sim.h.carry("bench", standoff=0.55, facing=math.pi / 2, via=[list(p) for p in points])
     tote = sim.m.body("tote_1").id
-    off = 0.0
+    nearest = [math.inf, math.inf]
+    touched = []
     while True:
         sim.e.step()
-        p = sim.d.xpos[tote]
-        if y + 0.6 < p[1] < corner[1] - 0.1 and p[0] < x + 0.3:  # along the first leg: over it
-            off = max(off, abs(p[0] - x))
-        elif p[1] > corner[1] - 0.1:  # past the corner: over the second leg
-            off = max(off, abs(p[1] - corner[1]) if x + 0.6 < p[0] < -0.5 else 0.0)
+        bx, by, _ = sim.body.root()
+        for i, p in enumerate(points):
+            nearest[i] = min(nearest[i], math.hypot(bx - p[0], by - p[1]))
+        if [
+            ev
+            for ev in sim.e.ctx.events.all()[sim._first :]
+            if ev["event"] == "lifted" and ev["t"] >= t0
+        ]:
+            for c in sim.d.contact[: sim.d.ncon]:
+                bodies = {int(sim.m.geom_bodyid[c.geom1]), int(sim.m.geom_bodyid[c.geom2])}
+                if tote in bodies and c.dist < -1e-4:
+                    other = (bodies - {tote}).pop() if len(bodies) > 1 else tote
+                    if not sim.body.owns(sim.m, other):
+                        touched.append(sim.m.body(other).name)
         st = sim.h.status()
         if st.seq == seq and st.finished:
             break
-    assert st.error == "" and off < 0.12, off
-
-
-def test_carrying_it_turns_the_way_its_load_sweeps_clear():
-    """A post stands where the short way round would swing the tote: the body turns the long way,
-    and the tote never meets the post."""
-    world = _world()
-    world["components"][0]["walker"]["pose"] = {
-        "position": {"x": 0.0, "y": 0.0},
-        "orientation": {"yaw": 0.0},
-    }
-    world["components"] = [c for c in world["components"] if c.get("name") != "tote_1"] + [
-        {
-            "tote": {"pose": {"position": {"x": 0.6, "y": 0.0}, "orientation": {"yaw": 1.5708}}},
-            "name": "tote_1",
-        },
-        {
-            "box": {
-                "prefix": "post_",
-                "pose": {"position": {"x": 0.1, "y": 0.6}},
-                "size": [0.1, 0.1, 1.8],
-                "motion": "static",
-            },
-            "name": "post",
-        },
-    ]
-    engine = _engine(world)
-    try:
-        engine.reset()
-        sim = Sim(engine)
-        sim.ok("approach", target="tote_1", standoff=0.45)
-        sim.ok("grasp", hand="both", target="tote_1")
-        x, y, _ = sim.body.root()
-        to = {"position": {"x": x - 1.6, "y": y + 0.9, "z": 0.0}}
-        seq = sim.h.carry(to, standoff=0.6)
-        post = sim.m.body("post_box").id
-        tote = sim.m.body("tote_1").id
-        nearest = math.inf
-        while True:
-            sim.e.step()
-            nearest = min(
-                nearest, float(np.linalg.norm(sim.d.xpos[tote][:2] - sim.d.xpos[post][:2]))
-            )
-            st = sim.h.status()
-            if st.seq == seq and st.finished:
-                break
-        assert st.error == "", st.error
-        assert nearest > 0.3, nearest
-    finally:
-        engine.shutdown()
+    assert st.error == "", st.error
+    assert max(nearest) < 0.06, nearest
+    assert touched == [], touched[:5]
+    assert "planned" in sim.events(t0)
 
 
 def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
@@ -461,6 +425,13 @@ def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     assert st.error.startswith("via: a point is [x, y]")
     st = sim.run("approach", target="start/button", via=[[1.0, 2.0, 3.0]])
     assert st.error.startswith("via: a point is [x, y]")
+
+
+def test_a_back_max_that_is_no_distance_fails_naming_it(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    st = sim.run("carry", to="bench", back_max=-0.1)
+    assert st.error.startswith("back_max: a distance"), st.error
 
 
 def test_approach_to_nothing_fails_naming_it(sim):
