@@ -122,6 +122,7 @@ FRONT_PANEL = {
 
 _BOARD_T = 0.018
 _TRAY_WALL = 0.012
+_PANEL_FRAME = 0.02  # the front panel frame's profile
 
 
 class ProfileCartPlugin(Plugin):
@@ -207,6 +208,16 @@ class ProfileCartPlugin(Plugin):
             )
         if s.front_panel.enabled and s.front_panel.carried_by == "drawer" and not drawer.enabled:
             errors.append(f"{where}: front_panel.carried_by: drawer needs the drawer")
+        if s.front_panel.enabled:
+            panel_bottom = shelf.height if shelf.enabled else frame_bottom
+            if (
+                under_top - panel_bottom <= 2 * _PANEL_FRAME
+                or fl / 2 - frame.profile <= _PANEL_FRAME
+            ):
+                errors.append(
+                    f"{where}: the front panel's {_PANEL_FRAME:g} m frame does not fit between "
+                    "the posts and from the shelf (or the bottom frame) to the top frame"
+                )
         if drawer.enabled:
             if not shelf.enabled:
                 errors.append(f"{where}: the drawer stands on the shelf; enable the shelf")
@@ -447,7 +458,7 @@ class ProfileCartPlugin(Plugin):
         drawer_out = s.drawer.open if s.front_panel.carried_by == "drawer" else 0.0
         y = -fd / 2 - 0.012 - drawer_out
         half_x = fl / 2 - p
-        fw = 0.02  # the panel frame's profile
+        fw = _PANEL_FRAME
         self._box(
             body,
             "front_panel",

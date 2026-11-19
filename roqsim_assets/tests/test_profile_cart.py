@@ -153,6 +153,7 @@ def test_the_entity_records_the_top_and_the_slots(cart):
         ({"drawer": {"height": 0.6}}, "drawer does not fit"),
         ({"shelf": {"enabled": False}}, "enable the shelf"),
         ({"slots": {"count": 40}}, "do not fit"),
+        ({"shelf": {"height": 0.79}}, "front panel's 0.02 m frame does not fit"),
         (
             {"front_panel": {"carried_by": "drawer"}, "drawer": {"enabled": False}},
             "needs the drawer",
