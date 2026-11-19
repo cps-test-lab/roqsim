@@ -39,6 +39,13 @@ _MAX_GOALS_PER_TICK = 16
 #: A centimetre is far below any sensible ``arrival_radius`` and far above float noise.
 _PROGRESS_EPS = 0.01
 
+#: A route sent ``exact``: how near its last point the mover stops (m), not ``arrival_radius``;
+#: how far ahead on the leg it steers (m), never past the leg's end; and from how far off its last
+#: point it slows, to no less than a tenth of its speed, so it stops there rather than past it.
+EXACT_ARRIVE = 0.01
+EXACT_AHEAD = 0.15
+EXACT_SLOW = 0.3
+
 
 @dataclass
 class NavParams:
@@ -217,7 +224,9 @@ class NavCore:
 
     def needs_recovery(self) -> bool:
         """True while the recovery branch should own the tick: a backup already in progress, or
-        freshly detected stuck."""
+        freshly detected stuck. Never on a route sent ``exact``: a recovery leaves the route."""
+        if self.exact:
+            return False
         return self.recovery_active() or self.is_stuck()
 
     def recovery_vel(self):
@@ -317,6 +326,49 @@ class NavCore:
         to = tgt - self._pos
         dist = float(np.linalg.norm(to))
         self.pref_vel = (to / dist * st.speed) if dist > 1e-6 else np.zeros(2)
+        return True
+
+    def follow_exact(self, depth: int = 0) -> bool:
+        """Walk a route sent ``exact`` as given: along each straight leg from the point before to
+        the next, steering at a point :data:`EXACT_AHEAD` on along the leg and never past its end,
+        so no corner is cut; a point is passed once the mover's projection on its leg reaches it,
+        not within a radius of it; and the last is stopped at within :data:`EXACT_ARRIVE`, the
+        mover slowing over the last :data:`EXACT_SLOW`, not at ``arrival_radius``."""
+        st = self.st
+        if not st.path:
+            self.pref_vel = np.zeros(2)
+            return False
+        a = np.asarray(self._anchor(), dtype=float)
+        b = np.asarray(st.path[st.path_idx], dtype=float)
+        leg = b - a
+        length = float(np.linalg.norm(leg))
+        along = 1.0 if length < 1e-9 else float(np.dot(self._pos - a, leg)) / length
+        last = self._goal_after() is None and st.path_idx == len(st.path) - 1
+        if (last and float(np.linalg.norm(b - self._pos)) < EXACT_ARRIVE) or (
+            not last and along >= length - 1e-6
+        ):
+            if st.path_idx < len(st.path) - 1:
+                st.path_idx += 1
+            else:
+                self._recover_count = 0
+                if not self._advance_goal():
+                    self.pref_vel = np.zeros(2)
+                    return True
+                st.path = None
+                st.path_idx = 0
+                if not self.ensure_path():
+                    return False
+            if depth >= _MAX_GOALS_PER_TICK:
+                self.pref_vel = np.zeros(2)
+                return True
+            return self.follow_exact(depth=depth + 1)
+        ahead = b if length < 1e-9 else a + leg * min(1.0, (along + EXACT_AHEAD) / length)
+        to = ahead - self._pos
+        dist = float(np.linalg.norm(to))
+        speed = st.speed
+        if last:
+            speed *= min(1.0, max(0.1, float(np.linalg.norm(b - self._pos)) / EXACT_SLOW))
+        self.pref_vel = (to / dist * speed) if dist > 1e-9 else np.zeros(2)
         return True
 
     def follow_path_pure_pursuit(self, lookahead: float, depth: int = 0) -> bool:
@@ -571,7 +623,8 @@ class _EnsurePath(_Leaf):
 class _FollowPath(_Leaf):
     def update(self):
         s = py_trees.common.Status
-        return s.SUCCESS if self.core.follow_path() else s.FAILURE
+        follow = self.core.follow_exact if self.core.exact else self.core.follow_path
+        return s.SUCCESS if follow() else s.FAILURE
 
 
 class _FollowPathPurePursuit(_Leaf):
@@ -581,6 +634,8 @@ class _FollowPathPurePursuit(_Leaf):
 
     def update(self):
         s = py_trees.common.Status
+        if self.core.exact:
+            return s.SUCCESS if self.core.follow_exact() else s.FAILURE
         return s.SUCCESS if self.core.follow_path_pure_pursuit(self.lookahead) else s.FAILURE
 
 
