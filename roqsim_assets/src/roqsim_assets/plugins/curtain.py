@@ -8,18 +8,6 @@ backdrop is, so a renderer draws it without highlights.
 
 Origin: the curtain's centre on the floor, under the bar; the cloth spans X, its folds in Y, and
 the side it is seen from is -Y. A pose places and turns it.
-
-Config::
-
-    curtain:
-      pose: {position: {x: 0.0, y: 1.0}, orientation: {yaw: 0.0}}
-      width: 3.0          # m, along X
-      height: 2.0         # m, the bar above the floor
-      hem: 0.02           # m, the cloth's lower edge above the floor
-      pleats: 24          # folds across the width
-      pleat_depth: 0.06   # m, front to back of a fold
-      rgba: [0.025, 0.025, 0.03, 1.0]
-      bar: true           # the rod and its clamps
 """
 
 from __future__ import annotations

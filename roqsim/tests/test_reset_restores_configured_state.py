@@ -765,6 +765,7 @@ CASES: dict[str, Case] = {
     "window": _static({"window": {}, "name": "window"}),
     "shelf": _static({"shelf": {}, "name": "shelf"}),
     "workbench": _static({"workbench": {}, "name": "bench"}),
+    "curtain": _static({"curtain": {}, "name": "curtain"}),
     "push_button": _static(
         {"push_button": {"pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}}, "name": "button"}
     ),
