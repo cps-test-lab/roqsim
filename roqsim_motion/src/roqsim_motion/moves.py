@@ -99,6 +99,10 @@ LEVEL = 0.015
 #: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
 #: drawer's stops, a comb's teeth, a lip round what it stood on.
 LIFT_FREE = 0.06
+#: A load in one hand alone is carried at the body's side (:meth:`HumanoidBody.hang_height`): the
+#: hand how far ahead of the root, and how far out beside its shoulder (m).
+ONE_HAND_AHEAD = 0.05
+ONE_HAND_OUT = 0.08
 #: How near the place (m) what is set down comes over it before it is lowered: a drawer's deck
 #: holds a box in stops with millimetres to spare, a centimetre from the fence over it.
 OVER_AT = 0.004
@@ -1865,7 +1869,10 @@ class HumanoidPlugin(MachinePlugin):
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
         rel = {}
-        for s in [s for s in sides if not self._riding[s] and not self._kept(s)]:
+        carrying = [s for s in sides if not self._riding[s] and not self._kept(s)]
+        if len(carrying) == 1 and len(sides) == 1:
+            rel = self._one_hand_lift(carrying[0], height)
+        for s in [] if rel else carrying:
             p, q = self.body.grip(d, s)
             # in front of the body, at the carrying height, the hands as far apart as they are
             ahead = float(np.dot(p - [x, y, 0.0], heading))
@@ -1894,6 +1901,25 @@ class HumanoidPlugin(MachinePlugin):
         yield from self._walk_way(
             stand, yaw, to, carried, via=points, back_max=back_max, long_way=bool(long_way)
         )
+
+    def _one_hand_lift(self, side: str, height: float) -> dict:
+        """Where a hand that holds a load alone carries it: at the body's side, beside its shoulder
+        and a little ahead, the palm forward and the fingers down, so the load is ahead of the hand
+        -- a box carried by its end. In front of the body, as two hands carry, one hand would have
+        to hold it palm forward at the chest, which an arm cannot make. No lower than the hand hangs
+        standing (:meth:`HumanoidBody.hang_height`), not as the body bent to take the load."""
+        d = self._d
+        x, y, yaw = self.body.root()
+        heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        out = np.array([-math.sin(yaw), math.cos(yaw), 0.0]) * (1.0 if side == "l" else -1.0)
+        sh = self.body.shoulder(d, side)
+        beside = abs(float(np.dot(sh - [x, y, 0.0], out))) + ONE_HAND_OUT
+        z = max(height, self.body.hang_height(side))
+        pos = np.array([x, y, z]) + ONE_HAND_AHEAD * heading + beside * out
+        # the grip frame: +x out of the palm toward the load, ahead; +z along the fingers, down
+        down = np.array([0.0, 0.0, -1.0])
+        quat = Q.from_matrix(np.column_stack([heading, np.cross(down, heading), down]))
+        return {side: lambda: (pos, quat)}
 
     def _extent(self, held: int):
         """The held object's world box now: its lowest and highest corners, of its solid geoms."""

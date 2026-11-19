@@ -156,6 +156,11 @@ class HumanoidBody:
         """The hands' height carrying something in front of the body (m)."""
         return 0.8
 
+    def hang_height(self, side: str) -> float:
+        """The height of ``side``'s hand carrying a load alone at the body's side, standing (m): the
+        arm hanging, the elbow a little bent. Unstated, :meth:`carry_height`."""
+        return self.carry_height()
+
     def owns(self, model, body: int) -> bool:
         """Whether ``body`` is part of this humanoid (its contact is not what it touches)."""
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) or ""

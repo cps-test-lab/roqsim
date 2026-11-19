@@ -261,9 +261,11 @@ def test_a_door_that_will_not_turn_is_stuck():
         engine.shutdown()
 
 
-def _door_in_a_wall(hinge: str):
+def _door_in_a_wall(hinge: str, toward: bool = False, extra=(), graspable=("door",)):
     """The `door` prop, moved by hand with a closer, in a 0.06 m wall along y = 0 whose ends meet the
-    opening's (x -0.45 .. 0.45), opening toward +y; the walker on the other side, before it."""
+    opening's (x -0.45 .. 0.45), opening away from the walker before it at y < 0 (toward +y), or
+    ``toward`` it."""
+    swing = 1 if hinge == "left" else -1
     wall = {"size": [2.0, 0.06, 2.4], "motion": "static"}
     world = {
         "sim": {"pacing": "asap"},
@@ -282,7 +284,7 @@ def _door_in_a_wall(hinge: str):
                     "pose": {"position": {"x": 0.0, "y": 0.0}},
                     "width": 0.9,
                     "hinge_side": hinge,
-                    "swing": 1 if hinge == "left" else -1,
+                    "swing": -swing if toward else swing,
                     "actuation": "hand",
                     "closer": {"stiffness": 15.0, "damping": 6.0},
                 },
@@ -293,11 +295,15 @@ def _door_in_a_wall(hinge: str):
                     "walker": "MaleVisitorWalk",
                     "hands": True,
                     "skin": False,
-                    "pose": {"position": {"x": 0.0, "y": -2.0}, "orientation": {"yaw": math.pi / 2}},
+                    "pose": {
+                        "position": {"x": 0.0, "y": -2.0},
+                        "orientation": {"yaw": math.pi / 2},
+                    },
                 },
                 "name": "worker",
-                "components": [{"navigator": NAV}, {"humanoid": {"graspable": ["door"]}}],
+                "components": [{"navigator": NAV}, {"humanoid": {"graspable": list(graspable)}}],
             },
+            *extra,
         ],
     }
     engine = Engine(load_config_from_dict(world))
@@ -343,3 +349,39 @@ def _root(engine):
     hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
     return hp.body.root()
 
+
+def test_a_load_in_one_hand_is_carried_at_the_side_to_a_door_the_other_hand_opens():
+    """A tote taken by one end in one hand is carried at the body's side, the load ahead of the hand,
+    so at the stance before a door's handle it is clear of the wall and the other hand takes the
+    handle. Held in front, as two hands hold a load, it would meet the wall there."""
+    tote = {"tote": {"pose": {"position": {"x": 1.0, "y": -1.2}}}, "name": "tote_1"}
+    engine = _door_in_a_wall("left", toward=True, extra=[tote], graspable=("door", "tote_1"))
+    try:
+        h = engine.ctx.blackboard.get("humanoid:worker")
+        d = engine.ctx.data
+        body = engine.ctx.model.body("tote_1").id
+
+        def run(move, **args):
+            seq = h.start(move, **args)
+            t0 = engine.ctx.sim_time
+            tilt = 0.0
+            while not (h.status().seq == seq and h.status().finished):
+                engine.step()
+                up = float(d.xmat[body].reshape(3, 3)[2, 2])
+                tilt = max(tilt, math.degrees(math.acos(min(1.0, up))))
+                assert engine.ctx.sim_time - t0 < 60.0, f"{move} did not end"
+            return h.status().error, tilt
+
+        assert run("approach", target="tote_1/grip_r")[0] == ""
+        assert run("grasp", hand="left", target="tote_1/grip_r")[0] == ""
+        error, tilt = run("carry", to="door/pull/grip", height=0.85)
+        assert error == "", error
+        assert tilt < 5.0, tilt  # level all the way
+        x, y, yaw = _root(engine)
+        grip = d.site("worker/grip_l").xpos
+        beside = -(grip[0] - x) * math.sin(yaw) + (grip[1] - y) * math.cos(yaw)
+        assert beside > 0.1, beside  # at its left side
+        # the handle is on the body's right, the other hand free for it
+        assert run("grasp", hand="right", target="door/pull/grip")[0] == ""
+    finally:
+        engine.shutdown()

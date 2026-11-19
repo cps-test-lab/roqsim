@@ -295,7 +295,12 @@ handle with the hand turned on it, fingers forward and down along the forearm th
 while it carries. A handle off the floor is taken as its frame says.
 
 `carry` lifts what the hands hold straight up off what it stood on first (6 cm), then in toward
-the body, and walks its way. `place` takes the load over the highest
+the body, and walks its way. A load one hand holds alone is carried at the body's side instead,
+beside the shoulder and a little ahead, the palm forward and the fingers down, so the load is ahead
+of the hand -- a box carried by its end -- and the other hand is free (a door's handle, a button).
+It goes no lower than the hand hangs standing, the elbow a little bent (`hang_height`), and an arm
+cannot hold it so much higher: give a one-hand carry a `height` where the place it goes to would
+lift it to the chest. `place` takes the load over the highest
 thing between where it is and the place -- read on a grid under its footprint, past what rides in
 it -- then leads it on until it is within millimetres of the place, square to the place's heading
 (a site's, a body's, or a world pose that states one; at most 20 degrees), and lowers it until it

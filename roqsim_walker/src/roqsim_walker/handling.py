@@ -35,6 +35,9 @@ from roqsim_walker.motion import blend_quats
 WEIGHT_RATE = 2.5
 #: How fast the posture may change: rad/s for turn, lean and bend, m/s for the crouch.
 POSTURE_RATE = {"turn": 1.5, "lean": 1.0, "crouch": 0.4, "bend": 1.5}
+#: How much of its reach under the shoulder a hand carrying a load alone at the body's side hangs:
+#: the elbow a little bent.
+HANG = 0.85
 _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
 
 
@@ -213,6 +216,11 @@ class WalkerBody(HumanoidBody):
 
     def carry_height(self) -> float:
         return self.desc.root_height - 0.1
+
+    def hang_height(self, side: str) -> float:
+        # under the shoulder as it stands at rest, by most of the arm's reach
+        shoulder = self.desc.fk([0.0, 0.0, self.desc.root_height], Q.IDENTITY, {})
+        return float(shoulder[f"shoulder_{side}"][0][2]) - HANG * self.arm_reach(side)
 
     def at_rest(self) -> bool:
         st = self.st
