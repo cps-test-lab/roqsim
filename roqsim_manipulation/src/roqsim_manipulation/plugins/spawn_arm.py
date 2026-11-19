@@ -66,9 +66,11 @@ it as a collision cylinder under the base, its top face at the arm's ``pose`` (s
 where the base is, and a world raises it by the plate's height above the surface), centred on the
 base origin or ``offset`` from it in the base frame. The plate belongs to what the arm stands on --
 the world, or a ``mount``'s body -- so it does not collide with that support or with the base, and
-everything else meets it, an arm's own link that dips below its base face too. That includes a
-collision geom that reaches lower than the real link does: the UR10e's shoulder capsule overlaps a
-plate under it at every reset. Unlike ``pedestal`` it does not reach the floor; with both, the
+everything else meets it. On the world, that includes an arm's own link that dips below its base
+face, and a collision geom that reaches lower than the real link does: the UR10e's shoulder capsule
+overlaps a plate under it at every reset. On a ``mount``, the arm's first link is a child of the
+plate's body, and MuJoCo leaves out contacts between a body and its parent, so the plate does not
+meet it there. Unlike ``pedestal`` it does not reach the floor; with both, the
 pedestal ends at the plate's lower face. Not with ``rail``.
 
 **Mounting on a mobile base (``mount:``)**
@@ -626,9 +628,10 @@ class SpawnArmPlugin(Plugin):
     def _add_adapter_plate(self, parent, frame, plate) -> None:
         """The plate under the base: a cylinder in the mount frame, its top face at the base origin.
 
-        It belongs to what the arm stands on (the world, or the mount's body), not to the arm. MuJoCo
-        filters contacts between a body and its parent, so it does not collide with that support, nor
-        with the arm's base, a child of the same body; it collides with everything else.
+        It belongs to what the arm stands on (the world, or the mount's body), not to the arm. The
+        arm's fixed base is welded into that body, and geoms of one body do not collide, so the plate
+        meets neither its support nor the base. On a mount, MuJoCo's parent filter also leaves out the
+        arm's first link; on the world, which that filter exempts, the plate meets it.
         """
         g = parent.add_geom()
         g.name = f"{self.prefix}adapter_plate"
