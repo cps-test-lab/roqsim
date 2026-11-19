@@ -283,6 +283,12 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   thick: a wheel rolls over it, a camera sees it, and a ray aimed at the floor returns from it. Dashes
   and stripes are cut geometry, not a texture, so they stay sharp at any distance and stripes run
   through an outline's corners.
+- **`slots`** — where a worker stands to work at a body and where its hand goes, as sites on that
+  body (`on`, by its model name): per slot a hand target (`kind: grip` → `<on>/<slot>/grip` in the
+  grip-frame convention, `place` → `<on>/<slot>` +z up, `press` → `<on>/<slot>` +x out of the face)
+  at `at` (x, y, z, yaw in the body's frame), and stances `<on>/<slot>/stand[_<k>]` at `stand`
+  (`[[x, y, yaw], ...]`). `roqsim_motion`'s `approach` and `carry` walk to a slot's nearest stance;
+  `docs/plugins.rst`, "Slots". Listed after what builds the body.
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers

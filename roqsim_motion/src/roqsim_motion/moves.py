@@ -109,6 +109,9 @@ CAUGHT = 0.03
 SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
+#: How far in front of a target a body stands to work at it, where the target states no stance and
+#: the move gives no ``standoff`` (m).
+STANDOFF = 0.6
 #: How far a carry may step straight back at a time, by default (m): the limit of a step back on
 #: its way (``roqsim_nav.lattice``); 0, never.
 BACK_MAX = 0.5
@@ -215,6 +218,7 @@ class HumanoidPlugin(MachinePlugin):
         self._force = {s: 0.0 for s in SIDES}
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}  # a second hand riding on what the first holds
+        self._stance = ""  # where the last walk stood: a stance site, or its stand-off
         self._turns = {
             s: 0.0 for s in SIDES
         }  # how far each hand turned on the handle it took (rad)
@@ -489,8 +493,38 @@ class HumanoidPlugin(MachinePlugin):
             )
         return sides
 
-    def _stand_for(self, target: str, standoff: float, facing):
-        """Where to stand, and which way to face, to work on ``target``."""
+    def _stances(self, target) -> list:
+        """The stances a target states: sites ``<target>/stand`` and ``<target>/stand_<k>`` (and
+        for a grip site ``<x>/grip``, those of ``<x>``), on the floor, their +x the way to face --
+        ``[(name, (x, y), yaw), ...]``."""
+        if not isinstance(target, str):
+            return []
+        m, d = self._m, self._d
+        bases = {target}
+        if target.rsplit("/", 1)[-1].startswith("grip") and "/" in target:
+            bases.add(target.rsplit("/", 1)[0])
+        out = []
+        for sid in range(m.nsite):
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_SITE, sid) or ""
+            base, _, last = name.rpartition("/")
+            if base in bases and (last == "stand" or last.startswith("stand_")):
+                x = d.site_xmat[sid].reshape(3, 3)[:, 0]
+                out.append((name, d.site_xpos[sid][:2].copy(), math.atan2(x[1], x[0])))
+        return out
+
+    def _stand_for(self, target: str, standoff: float | None, facing):
+        """Where to stand, and which way to face, to work on ``target``: at its stance (a slot's
+        ``…/stand`` site, the nearest of several) where it states one and neither ``standoff`` nor
+        ``facing`` is given; else ``standoff`` (0.6 m left out) from its front."""
+        stances = self._stances(target) if standoff is None and facing is None else []
+        if stances:
+            x, y, _ = self.body.root()
+            name, xy, yaw = min(stances, key=lambda s: math.hypot(s[1][0] - x, s[1][1] - y))
+            self._stance = name
+            return np.array(xy, float), yaw
+        if standoff is None:
+            standoff = STANDOFF
+        self._stance = f"{float(standoff):.2f} m from its front"
         d, m = self._d, self._m
         gl, gr = self._site_id(f"{target}/grip_l"), self._site_id(f"{target}/grip_r")
         site = self._site_id(target)
@@ -602,7 +636,9 @@ class HumanoidPlugin(MachinePlugin):
         yield from self._leg(nav, stand, what, None, via)
         yield from self._face(yaw, what, None)
         yield from self._come_to_rest(what, None)
-        self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
+        self.step(
+            "arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw), stance=self._stance
+        )
 
     def _face(self, yaw, what: str, each):
         """Turn the standing body to ``yaw`` and wait until it faces it (within 3 degrees)."""
@@ -758,7 +794,9 @@ class HumanoidPlugin(MachinePlugin):
                 yield from self._step_back(seg.distance, each)
         yield from self._face(yaw, what, each)
         yield from self._come_to_rest(what, each)
-        self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
+        self.step(
+            "arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw), stance=self._stance
+        )
 
     def _walk_leg(self, nav, poses, what: str, each, tol: float):
         """Walk one leg of a way through its poses, exactly (no plan, no steering), facing where it
@@ -859,14 +897,17 @@ class HumanoidPlugin(MachinePlugin):
     def approach(
         self,
         target: str | dict,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: list | None = None,
         back_max: float = BACK_MAX,
         long_way: bool = False,
     ):
-        """Walk to a stand-off in front of a target and face it: a grip site's or a face's front, a
-        tote's long side (its left grip on the left), or the target as seen from here. ``via``:
+        """Walk to where a target says to stand -- its stance, a slot's ``<target>/stand`` site (the
+        nearest of several), facing its +x -- or, where it states none or ``standoff`` or
+        ``facing`` is given, to ``standoff`` (0.6 m left out) in front of it facing it: a grip
+        site's or a face's front, a tote's long side (its left grip on the left), or the target as
+        seen from here. ``arrived`` says which (``stance``). ``via``:
         floor points ``[x, y]`` it walks through first, in order -- a way of the scene's, round
         what stands between. Holding something, it walks a way planned for the body and what it
         holds, as ``carry`` does: ``back_max`` and ``long_way`` as there."""
@@ -1283,7 +1324,7 @@ class HumanoidPlugin(MachinePlugin):
     def carry(
         self,
         to: str | dict,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         height: float | None = None,
         via: list | None = None,
         facing: float | None = None,
@@ -1292,9 +1333,9 @@ class HumanoidPlugin(MachinePlugin):
     ):
         """Carry what the hands hold to a target: lift it to a carrying height in front of the body
         (``height``: the hands' height, m; default a hand's breadth under the pelvis, or high enough
-        for what is held to clear the surface the target is on by :data:`CLEAR`), and walk to a
-        stand-off in front of the target holding it there, facing the target or the world yaw
-        ``facing`` as ``approach`` faces it -- on a way planned for the body and what it holds
+        for what is held to clear the surface the target is on by :data:`CLEAR`), and walk to where
+        the target says to stand, or a stand-off in front of it, holding it there, facing as
+        ``approach`` faces -- on a way planned for the body and what it holds
         (:func:`roqsim_nav.lattice.plan_way`: every pose of both checked in height layers),
         through the floor points ``via`` in order, and walked exactly. The way steps straight back
         at most ``back_max`` (m; 0: never) at a time, and turns past half a turn only with

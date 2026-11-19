@@ -63,6 +63,11 @@ def _unset_or(value, what: str, action, check) -> float | None:
     return value
 
 
+def _no_reason(value: float) -> str:
+    """A distance of 0 m or more is a stand-off; anything else is refused, saying so."""
+    return "" if value >= 0.0 else "a stand-off is a distance of 0 m or more"
+
+
 def _via(via: str):
     """``'x, y; x, y'`` -> the move's ``via``, ``[[x, y], ...]``; ``None`` for none. Raises
     ``ValueError`` for anything else."""
@@ -94,7 +99,7 @@ class HumanoidApproach(HumanoidMove):
         self,
         humanoid: str,
         target: str,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: str = "",
         back_max: float = 0.5,
@@ -115,7 +120,7 @@ class HumanoidApproach(HumanoidMove):
             humanoid,
             {
                 "target": target,
-                "standoff": float(standoff),
+                "standoff": _unset_or(standoff, "humanoid_approach: `standoff`", self, _no_reason),
                 "facing": facing,
                 "via": _via_of(self, via),
                 **({"back_max": float(back_max)} if float(back_max) != 0.5 else {}),
@@ -225,7 +230,7 @@ class HumanoidCarry(HumanoidMove):
         self,
         humanoid: str,
         to: str,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: str = "",
         back_max: float = 0.5,
@@ -246,7 +251,7 @@ class HumanoidCarry(HumanoidMove):
             humanoid,
             {
                 "to": to,
-                "standoff": float(standoff),
+                "standoff": _unset_or(standoff, "humanoid_carry: `standoff`", self, _no_reason),
                 "facing": facing,
                 "via": _via_of(self, via),
                 **({"back_max": float(back_max)} if float(back_max) != 0.5 else {}),

@@ -78,6 +78,7 @@ workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
 push_button = "roqsim_assets.plugins.push_button:PushButtonPlugin"
 drawer_cabinet = "roqsim_assets.plugins.drawer_cabinet:DrawerCabinetPlugin"
 tote = "roqsim_assets.plugins.tote:TotePlugin"
+slots = "roqsim_assets.plugins.slots:SlotsPlugin"
 # Ceiling fittings: what hangs under a soffit. All three sit above head height, so the core
 # `ceiling` plugin (roqsim) removes them together with the slab when a world opens its roof.
 ceiling_panels = "roqsim_assets.plugins.ceiling_panels:CeilingPanelsPlugin"
