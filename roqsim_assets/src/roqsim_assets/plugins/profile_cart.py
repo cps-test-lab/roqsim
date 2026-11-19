@@ -9,8 +9,9 @@ place (static scenery, no free joint and no castor joints: the cart stands still
 openings, and under each opening the T's wider head, so something slid across the slots meets the
 slot's edges and something small drops into one. With ``slots.direction: y`` (the default) the slots
 run front to back and are spaced along the cart's length; ``x`` turns them. The slots are laid out
-symmetrically about the centre: ``count`` slots at ``pitch``, by default as many as fit with half a
-pitch of land at each edge (``round(length / pitch)``).
+symmetrically about the centre: ``count`` slots at ``pitch``, by default as many as fit with at
+least half a pitch of land at each edge (``floor(across / pitch)``, across the top's length or, with
+``x``, its depth).
 
 Geometry (all metres), origin at the footprint centre on the floor (min z == 0, the wheels), so a pose
 of (x y z) drops the cart there. The cart's length runs along X, its depth along Y; the front -- the
@@ -33,6 +34,8 @@ trim a robot in this cell plans no contact against.
 """
 
 from __future__ import annotations
+
+import math
 
 import mujoco
 
@@ -68,7 +71,7 @@ SLOTS = {
     "direction": Field(
         str, default="y", choices=("x", "y"), doc="the axis the slots run along; y: front to back"
     ),
-    "count": Field(int, minimum=1, doc="how many slots; default: round(across / pitch)"),
+    "count": Field(int, minimum=1, doc="how many slots; default: floor(across / pitch)"),
 }
 FRAME = {
     "profile": Field(
@@ -105,6 +108,7 @@ FRONT_PANEL = {
 _BOARD_T = 0.018
 _TRAY_WALL = 0.012
 _PANEL_FRAME = 0.02  # the front panel frame's profile
+_TRAY_GAP = 0.01  # between the tray's walls and the posts, each side
 
 
 class ProfileCartPlugin(Plugin):
@@ -146,7 +150,11 @@ class ProfileCartPlugin(Plugin):
     def _slot_layout(s) -> tuple[float, list[float]]:
         """The extent across the slots and the slot centres along it, symmetric about 0."""
         across = s.top.length if s.slots.direction == "y" else s.top.depth
-        n = s.slots.count if s.slots.count is not None else max(1, round(across / s.slots.pitch))
+        n = (
+            s.slots.count
+            if s.slots.count is not None
+            else max(1, math.floor(across / s.slots.pitch + 1e-9))
+        )
         first = -(n - 1) * s.slots.pitch / 2
         return across, [first + i * s.slots.pitch for i in range(n)]
 
@@ -207,7 +215,7 @@ class ProfileCartPlugin(Plugin):
                 errors.append(
                     f"{where}: the drawer does not fit between the shelf and the top frame"
                 )
-            if drawer.open >= fd - 2 * frame.profile:
+            if drawer.open >= fd - 2 * (frame.profile + _TRAY_GAP):
                 errors.append(f"{where}: drawer.open must be under the drawer's own depth")
         return errors
 
@@ -414,8 +422,8 @@ class ProfileCartPlugin(Plugin):
     def _add_drawer(self, body, mats, s) -> None:
         """An open tray on the shelf, its front at the cart's front, ``open`` pulled out to -Y."""
         hx, hy = self._shelf_span(s)
-        hx -= 0.01
-        hy -= 0.01
+        hx -= _TRAY_GAP
+        hy -= _TRAY_GAP
         hz = s.drawer.height / 2
         y0 = -s.drawer.open
         z0 = s.shelf.height

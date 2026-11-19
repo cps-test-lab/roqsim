@@ -94,7 +94,7 @@ def test_the_slots_collide(cart):
 def test_the_slots_turn_with_direction(tmp_path):
     engine = _built(tmp_path, {**CELL, "slots": {**CELL["slots"], "direction": "x"}})
     gaps = _openings(engine, axis=1, z=0.85 - 0.001)
-    assert len(gaps) == round(0.70 / 0.04)
+    assert len(gaps) == 17  # 0.70 / 0.04 = 17.5: the 18th would leave no land at the edges
     engine.shutdown()
 
 
@@ -153,6 +153,7 @@ def test_the_entity_records_the_top_and_the_slots(cart):
         ({"drawer": {"height": 0.6}}, "drawer does not fit"),
         ({"shelf": {"enabled": False}}, "enable the shelf"),
         ({"slots": {"count": 40}}, "do not fit"),
+        ({"drawer": {"open": 0.58}}, "drawer's own depth"),
         ({"shelf": {"height": 0.79}}, "front panel's 0.02 m frame does not fit"),
         (
             {"front_panel": {"carried_by": "drawer"}, "drawer": {"enabled": False}},
@@ -167,6 +168,19 @@ def test_impossible_carts_are_refused(bad, says):
             config[key] = {**CELL[key], **bad[key]}
     errors = ProfileCartPlugin(config).validate_config(config)
     assert any(says in e for e in errors), errors
+
+
+def test_the_default_slot_count_leaves_half_a_pitch_of_land_and_is_never_refused():
+    # 1.26 / 0.04 = 31.5: 31 slots, never 32, which a wide head would not fit.
+    config = {
+        **CELL,
+        "top": {**CELL["top"], "length": 1.26},
+        "footprint": None,
+        "slots": {**CELL["slots"], "head_width": 0.025},
+    }
+    assert ProfileCartPlugin(config).validate_config(config) == []
+    across, centres = ProfileCartPlugin._slot_layout(ProfileCartPlugin(config).settings_for(config))
+    assert len(centres) == 31
 
 
 def test_a_panel_on_the_drawer_comes_out_with_it_and_one_on_the_frame_stays(tmp_path):
