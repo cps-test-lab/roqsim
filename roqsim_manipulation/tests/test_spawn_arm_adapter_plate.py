@@ -61,6 +61,15 @@ def test_the_plate_collides_but_not_with_the_base_it_carries(tmp_path):
     engine.shutdown()
 
 
+def test_a_pedestal_under_a_plate_ends_at_the_plate(tmp_path):
+    engine = _engine(tmp_path, extra={"pedestal": True})
+    m = engine.ctx.model
+    g = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "a_pedestal")
+    top = m.geom_pos[g][2] + m.geom_size[g][2]
+    assert top == pytest.approx(POSE["position"]["z"] - PLATE["height"])
+    engine.shutdown()
+
+
 def test_without_a_plate_there_is_none(tmp_path):
     plugins = [{"spawn_arm": {"model": "fr3", "prefix": "a_", "pose": POSE}, "name": "arm"}]
     engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))

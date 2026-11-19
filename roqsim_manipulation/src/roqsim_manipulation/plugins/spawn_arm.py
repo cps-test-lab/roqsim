@@ -66,9 +66,10 @@ it as a collision cylinder under the base, its top face at the arm's ``pose`` (s
 where the base is, and a world raises it by the plate's height above the surface), centred on the
 base origin or ``offset`` from it in the base frame. The plate belongs to what the arm stands on --
 the world, or a ``mount``'s body -- so it does not collide with that support or with the base, and
-everything else meets it -- an arm's own link that dips below its base face too, as it
-would the real plate. Unlike ``pedestal`` it does not reach the floor; a floor-standing column
-is ``pedestal``'s. Not with ``rail``.
+everything else meets it, an arm's own link that dips below its base face too. That includes a
+collision geom that reaches lower than the real link does: the UR10e's shoulder capsule overlaps a
+plate under it at every reset. Unlike ``pedestal`` it does not reach the floor; with both, the
+pedestal ends at the plate's lower face. Not with ``rail``.
 
 **Mounting on a mobile base (``mount:``)**
 This is what turns a base + an arm into a **mobile manipulator** without a per-combination MJCF: the
@@ -611,20 +612,23 @@ class SpawnArmPlugin(Plugin):
 
         # A pedestal is a floor-standing support, so it is meaningless for an arm riding a base --
         # and actively wrong: it would be welded to the world under a robot that drives away.
-        if self.settings.pedestal and self.pos[2] > 0.0 and not self.mount_robot:
+        # It ends under the adapter plate, if there is one, not inside it.
+        top = self.pos[2] - (plate.height if plate is not None else 0.0)
+        if self.settings.pedestal and top > 0.0 and not self.mount_robot:
             g = spec.worldbody.add_geom()
             g.name = f"{self.prefix}pedestal"
             g.type = mujoco.mjtGeom.mjGEOM_BOX
-            g.pos = [self.pos[0], self.pos[1], self.pos[2] / 2.0]
+            g.pos = [self.pos[0], self.pos[1], top / 2.0]
             r = self.settings.pedestal_half_width
-            g.size = [r, r, self.pos[2] / 2.0]
+            g.size = [r, r, top / 2.0]
             g.rgba = [0.25, 0.25, 0.27, 1.0]
 
     def _add_adapter_plate(self, parent, frame, plate) -> None:
         """The plate under the base: a cylinder in the mount frame, its top face at the base origin.
 
-        It belongs to what the arm stands on (the world, or the mount's body), not to the arm, so it
-        collides with everything but that support and the arm's base, which share its body.
+        It belongs to what the arm stands on (the world, or the mount's body), not to the arm. MuJoCo
+        filters contacts between a body and its parent, so it does not collide with that support, nor
+        with the arm's base, a child of the same body; it collides with everything else.
         """
         g = parent.add_geom()
         g.name = f"{self.prefix}adapter_plate"
