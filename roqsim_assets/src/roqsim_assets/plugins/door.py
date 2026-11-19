@@ -93,6 +93,23 @@ Config::
       max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
       stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
       stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
+      actuation: servo       # servo: its programs and endpoints move it; hand: only what pushes or
+                             #   pulls it does (its servo's torque is capped at nothing, its
+                             #   programs refuse)
+      closer: {stiffness: 0.0, damping: 2.0}  # a spring to shut (N*m/rad at the hinge) and the
+                             #   hinge's damping (N*m*s/rad; moved by hand, 2 left out, else 0):
+                             #   a door closer; a stiffness of 0 for none
+      friction: 0.3          # the hinge's friction (N*m), what holds a door without a closer where
+                             #   it is left
+
+**Moved by hand.** With ``actuation: hand`` the leaf turns because a hand, a robot or anything else
+pushes or pulls it, against its ``closer`` and ``friction``; ``controllable`` defaults to false and
+may not be set, and ``open``, ``close`` and ``move_to`` fail saying the door opens by hand. Every
+door with a leaf states slots for a hand (``docs/plugins.rst``, "Slots"): a lever handle's grip on
+each face of the leaf near its free edge, ``<name>/pull/grip`` on the face it opens toward and
+``<name>/push/grip`` on the other, with a stance before each -- ``<name>/push/stand`` close enough
+to the hinge that a body stepping round with the leaf passes the opening, ``<name>/pull/stand`` in
+front of the handle, outside the leaf's swing.
 
 The leaf-mesh convention (``model:``) mirrors the rest of the asset library but with one addition: a
 door model's origin is its **hinge (fixed) vertical edge** at floor level, the leaf extending along
@@ -125,13 +142,14 @@ import logging
 import math
 
 import mujoco
+import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import Entity, SimContext
 from roqsim.machine import MachinePlugin, program
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import PluginError
-from roqsim.pose import config_pose, config_pose_errors
+from roqsim.pose import config_pose, config_pose_errors, yaw_of
 
 logger = logging.getLogger("roqsim_assets.door")
 
@@ -146,6 +164,20 @@ _MESH_H = 2.0
 
 # Body name the casing arrives under (the frame model's own body, attached with a "frame_" prefix).
 _FRAME_BODY = "frame_frame"
+#: A lever handle: how far in from the leaf's free edge (m), how far out from its face (a handle's
+#: radius from the palm), at what height (m).
+_HANDLE_IN = 0.07
+#: The torque cap (N*m) of a door moved by hand: its servo there in name only. Its hinge's own
+#: damping (N*m*s/rad), where a closer states none.
+_HAND_TORQUE = 1e-6
+_HAND_DAMPING = 2.0
+_HANDLE_OUT = 0.03
+_HANDLE_HEIGHT = 1.05
+#: Where its stances stand, in the opening's frame (m): pulling, out from the wall before the handle;
+#: pushing, along the leaf from the hinge (of the width) and out from the wall.
+_PULL_OUT = 0.6
+_PUSH_ALONG = 0.53
+_PUSH_OUT = 0.38
 
 
 class DoorPlugin(MachinePlugin):
@@ -198,7 +230,16 @@ class DoorPlugin(MachinePlugin):
         self.open0 = min(max(self._float(home.get("openness"), 0.0), 0.0), 1.0)
         speed = self.config.get("speed")
         self.speed = self._float(speed, 0.0) if speed is not None else None
-        self.controllable = bool(self.config.get("controllable", True))
+        self.by_hand = str(self.config.get("actuation", "servo")) == "hand"
+        self.controllable = bool(self.config.get("controllable", not self.by_hand))
+        closer = self.config.get("closer")
+        closer = closer if isinstance(closer, dict) else {}
+        self.closer_stiffness = self._float(closer.get("stiffness"), 0.0)
+        # a hinge damps itself; a closer's damping, where it states one, is the hinge's
+        self.closer_damping = self._float(
+            closer.get("damping"), _HAND_DAMPING if self.by_hand else 0.0
+        )
+        self.friction = self._float(self.config.get("friction"), 0.3 if self.by_hand else 0.0)
         # The ROS surface needs something to command: a controllable door with a leaf.
         self.commandable = self.leaf and self.controllable
         # A cased opening has nothing to command, so it is no machine: no handle, no endpoints.
@@ -305,6 +346,29 @@ class DoorPlugin(MachinePlugin):
             errors.append(
                 "'controllable' on a door with 'leaf: false': there is no leaf to command"
             )
+        if str(config.get("actuation", "servo")) not in ("servo", "hand"):
+            errors.append("'actuation' must be 'servo' or 'hand'")
+        if str(config.get("actuation", "servo")) == "hand" and config.get("controllable"):
+            errors.append(
+                "'controllable' on a door moved by hand: nothing commands it but what pushes it"
+            )
+        closer = config.get("closer")
+        if closer is not None:
+            if not isinstance(closer, dict) or set(closer) - {"stiffness", "damping"}:
+                errors.append("'closer' is {stiffness, damping}")
+            else:
+                for key, value in closer.items():
+                    try:
+                        if float(value) < 0:
+                            errors.append(f"'closer: {{{key}}}' must be >= 0")
+                    except (TypeError, ValueError):
+                        errors.append(f"'closer: {{{key}}}' must be a number >= 0")
+        if "friction" in config:
+            try:
+                if float(config["friction"]) < 0:
+                    errors.append("'friction' must be >= 0")
+            except (TypeError, ValueError):
+                errors.append("'friction' must be a number >= 0")
         if "hinge_side" in config and str(config["hinge_side"]).lower() not in ("left", "right"):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
@@ -360,6 +424,12 @@ class DoorPlugin(MachinePlugin):
         joint.axis = [0.0, 0.0, 1.0]
         joint.range = sorted([0.0, self._span])
         joint.limited = True
+        # a closer: a spring to shut, and its damping; the hinge's own friction
+        # (MuJoCo's stiffness and damping are polynomials, their first coefficient the linear one)
+        joint.stiffness = [self.closer_stiffness, 0.0, 0.0]
+        joint.springref = 0.0
+        joint.damping = [self.closer_damping, 0.0, 0.0]
+        joint.frictionloss = self.friction
 
         self._add_leaf(child, body, leaf_dir)
         self._add_frame(child)
@@ -371,14 +441,54 @@ class DoorPlugin(MachinePlugin):
         act.target = self._JOINT
         act.ctrlrange = sorted([0.0, self._span])
         act.ctrllimited = True
-        # Gentle push: cap the hinge torque so a blocked door can't force through an obstacle.
-        act.forcerange = [-self.max_torque, self.max_torque]
+        # Gentle push: cap the hinge torque so a blocked door can't force through an obstacle. Moved
+        # by hand, the cap is a micro-newton-metre: the servo neither drives nor holds the leaf.
+        cap = _HAND_TORQUE if self.by_hand else self.max_torque
+        act.forcerange = [-cap, cap]
         act.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
 
         frame = spec.worldbody.add_frame()
         frame.pos = self.pos
         frame.quat = self.quat
         spec.attach(child, prefix=self.prefix, frame=frame)
+        self._add_slots(spec, hinge_x, leaf_dir, open_side)
+
+    def _add_slots(self, spec: mujoco.MjSpec, hinge_x: float, leaf_dir: float, open_side: float):
+        """A lever handle's grip on each face of the leaf near its free edge, and a stance before
+        each: ``<name>/pull/grip`` on the face the leaf opens toward, ``<name>/push/grip`` on the
+        other (the grip-frame convention: +x from the palm into the leaf, +z down)."""
+        leaf = spec.body(self.prefix + self._ROOT_BODY)
+        along = leaf_dir * (self.width - _HANDLE_IN)
+        for face, side in (("pull", open_side), ("push", -open_side)):
+            # columns x = (0, -side, 0), y = (-side, 0, 0), z = (0, 0, -1), row-major
+            rot = np.array([0.0, -side, 0.0, -side, 0.0, 0.0, 0.0, 0.0, -1.0])
+            quat = np.zeros(4)
+            mujoco.mju_mat2Quat(quat, rot)
+            leaf.add_site(
+                name=f"{self.door_name}/{face}/grip",
+                pos=[along, side * (self.thickness / 2 + _HANDLE_OUT), _HANDLE_HEIGHT],
+                quat=[float(v) for v in quat],
+            )
+        # stances, in the opening's frame: x along the wall, y its normal
+        yaw0 = yaw_of(self.quat)
+        c, s_ = math.cos(yaw0), math.sin(yaw0)
+        latch = hinge_x + leaf_dir * (self.width - _HANDLE_IN)
+        stances = {
+            "pull": (latch, open_side * _PULL_OUT, -open_side),
+            # near enough the hinge that stepping round with the leaf goes through the opening
+            "push": (
+                hinge_x + leaf_dir * _PUSH_ALONG * self.width,
+                -open_side * _PUSH_OUT,
+                open_side,
+            ),
+        }
+        for face, (lx, ly, facing) in stances.items():
+            yaw = yaw0 + math.atan2(facing, 0.0)
+            spec.worldbody.add_site(
+                name=f"{self.door_name}/{face}/stand",
+                pos=[self.pos[0] + c * lx - s_ * ly, self.pos[1] + s_ * lx + c * ly, 0.0],
+                quat=[math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)],
+            )
 
     def _add_leaf(self, child: mujoco.MjSpec, body, leaf_dir: float) -> None:
         """Hang the leaf on the hinge body: a textured mesh model if ``model`` is set, else a box.
@@ -511,6 +621,10 @@ class DoorPlugin(MachinePlugin):
         Args:
             openness: 0 closed to 1 fully open; clamped
         """
+        if self.by_hand:
+            self.fail(
+                f"door {self.door_name} is moved by hand: it opens and closes by what pushes it"
+            )
         target = min(max(float(openness), 0.0), 1.0)
         angle = target * self._span
         if self.speed:
@@ -610,7 +724,7 @@ class DoorPlugin(MachinePlugin):
 
     def post_step(self, ctx: SimContext) -> None:
         super().post_step(ctx)
-        if not self.leaf or self.busy or ctx.manual_control:
+        if not self.leaf or self.busy or ctx.manual_control or self.by_hand:
             self._pushed = 0.0
             return
         # An idle door pushed off its target gives way after stall_timeout rather than pressing back

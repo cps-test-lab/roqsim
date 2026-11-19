@@ -374,6 +374,7 @@ class _CSpace:
                 )
             self._obst[band] = out
         self.zones = []
+        self.tether = []
         self._memo = {}
         self._sure = {}
         self._inner = None
@@ -481,7 +482,10 @@ class _CSpace:
     def ok(self, x, y, th) -> bool:
         """The search's check: the raster's, and where the raster says blocked within one of
         ``zones`` (round the start and the goal, where a body stands close to what it works at),
-        the exact one."""
+        the exact one; and every one of ``tether`` within its reach."""
+        for tx, ty, tr in self.tether:
+            if (x - tx) ** 2 + (y - ty) ** 2 > tr * tr:
+                return False
         if self.free(x, y, th):
             return True
         i = int((x - self._ox) * self._inv) - self.i0
@@ -881,6 +885,7 @@ def plan_way(
     what: str = "what it holds",
     to: str = "",
     dock=(),
+    tether=(),
     max_states: int = MAX_STATES,
 ) -> Way:
     """A way for ``footprint`` from ``start`` ``(x, y, yaw)`` through the floor points ``via`` (any
@@ -893,7 +898,10 @@ def plan_way(
     things are not in the way of the mover's own body pieces (:attr:`Piece.body`) there: what it
     already stands against at the start, and at the goal the bodies named in ``dock`` -- the target
     it goes to work at and what that stands on, which a worker stands against. What it holds
-    meets them as anything else."""
+    meets them as anything else.
+
+    ``tether``: ``(x, y, r)`` points every pose of the way keeps its root within ``r`` of -- a hand
+    that keeps a door where it is while the body walks stays within its reach."""
     t0 = time.perf_counter()
     res = footprint.resolution
     if not (math.isfinite(float(back_max)) and back_max >= 0.0):
@@ -926,6 +934,7 @@ def plan_way(
             box = (int(ii.min()), int(jj.min()), int(ii.max()) + 1, int(jj.max()) + 1)
             cs = _CSpace(layers, footprint, box, corridor)
             cs._exact_setup()
+            cs.tether = [(float(a), float(b), float(c)) for a, b, c in tether]
             # what the body already stands against, it may go on standing against as it leaves;
             # at the goal, it may stand against what it goes to work at
             standing = cs.body_meets(*pose)

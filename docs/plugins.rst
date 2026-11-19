@@ -3267,6 +3267,10 @@ so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by cont
   (``<name>/drawer_<i>``) with a grip site on its handle, ``<name>/drawer_<i>/grip``.
 * ``tote``: a free box with a grip site at each end, ``<name>/grip_l`` and ``<name>/grip_r``, and
   with ``contents: true`` the ``look_full``/``look_empty`` bodies a ``part_state`` shows and hides.
+* ``door`` with ``actuation: hand``: a leaf that turns because it is pushed or pulled, against a
+  ``closer`` (a spring to shut and its damping) and its friction, with a lever handle's grip on
+  each face -- ``<name>/pull/grip`` on the face it opens toward, ``<name>/push/grip`` on the other --
+  and a stance before each. ``pull`` and ``push`` by an ``angle`` turn it round its hinge.
 
 A grip site states the frame a hand holds it in (``roqsim_motion.hands``): +x from the palm toward
 the object, +z along the fingers. A hold is a weld between the hand and the object, added when the

@@ -212,10 +212,29 @@ class HumanoidPull(HumanoidMove):
     MOVE = "pull"
 
     def execute(
-        self, humanoid: str, hand: str, distance: float, speed: float = 0.2, check: bool = True
+        self,
+        humanoid: str,
+        hand: str,
+        distance: float | None = None,
+        speed: float = 0.2,
+        angle: float | None = None,
+        check: bool = True,
     ):
+        what = f"humanoid_{self.MOVE}"
+        distance = _unset_or(distance, f"{what}: `distance`", self, lambda v: "")
+        angle = _unset_or(
+            angle, f"{what}: `angle`", self, lambda v: "" if v > 0 else "degrees more than 0"
+        )
+        if (distance is None) == (angle is None):
+            raise ActionError(
+                f"{what}: a `distance` (m, along a slide) or an `angle` (deg, round a hinge), "
+                "one of the two",
+                action=self,
+            )
         self._begin(
-            humanoid, {"hand": hand, "distance": float(distance), "speed": float(speed)}, check
+            humanoid,
+            {"hand": hand, "distance": distance, "angle": angle, "speed": float(speed)},
+            check,
         )
 
 
