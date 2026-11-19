@@ -36,6 +36,8 @@ from roqsim.schema import Field
 _BAR_RGBA = [0.15, 0.15, 0.16, 1.0]
 _CLAMP_RGBA = [0.08, 0.08, 0.08, 1.0]
 _CLOTH_T = 0.002
+# The cloth hangs from the clamps' centres, this far under the bar.
+_CLAMP_DROP = 0.03
 
 
 class CurtainPlugin(Plugin):
@@ -67,8 +69,11 @@ class CurtainPlugin(Plugin):
         errors = config_pose_errors(config, f"curtain {self.address}")
         try:
             s = self.settings_for(config)
-            if s.hem >= s.height:
-                errors.append(f"curtain {self.address}: 'hem' must be under 'height'")
+            if s.hem >= s.height - _CLAMP_DROP:
+                errors.append(
+                    f"curtain {self.address}: 'hem' must be under the cloth's top, "
+                    f"{_CLAMP_DROP:g} m under 'height'"
+                )
         except (TypeError, ValueError):
             pass  # the schema reports the shape
         return errors
@@ -91,7 +96,7 @@ class CurtainPlugin(Plugin):
         rise = s.pleat_depth
         length = math.hypot(run, rise)
         angle = math.atan2(rise, run)
-        z0, z1 = s.hem, s.height - 0.03
+        z0, z1 = s.hem, s.height - _CLAMP_DROP
         for i in range(n):
             x = -s.width / 2 + (i + 0.5) * run
             sign = 1.0 if i % 2 == 0 else -1.0
@@ -121,7 +126,7 @@ class CurtainPlugin(Plugin):
                 c.name = f"clamp_{i}"
                 c.type = mujoco.mjtGeom.mjGEOM_BOX
                 c.size = [0.012, 0.015, 0.03]
-                c.pos = [-s.width / 2 + i * s.width / s.pleats, 0.0, s.height - 0.03]
+                c.pos = [-s.width / 2 + i * s.width / s.pleats, 0.0, s.height - _CLAMP_DROP]
                 c.rgba = _CLAMP_RGBA
                 c.contype = 0
                 c.conaffinity = 0

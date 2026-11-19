@@ -68,6 +68,8 @@ def test_the_pose_places_it(tmp_path):
     engine.shutdown()
 
 
-def test_a_hem_above_the_bar_is_refused():
-    config = {"height": 1.0, "hem": 1.2}
+@pytest.mark.parametrize("hem", [1.2, 0.98])
+def test_a_hem_at_or_above_the_cloths_top_is_refused(hem):
+    # the cloth hangs 3 cm under the bar: a hem there or above leaves no cloth
+    config = {"height": 1.0, "hem": hem}
     assert any("'hem' must be under" in e for e in CurtainPlugin(config).validate_config(config))
