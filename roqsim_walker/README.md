@@ -64,7 +64,8 @@ or bent over something in its hands, does not jolt; it comes to rest where the n
 it moves, the drawn body trails the nav root by about `2 * body_lag * speed` (0.36 m at 0.15 s and
 1.2 m/s), so what is drawn is not where the navigator, its avoidance and a pose reading of the nav
 root place the walker. A walker with hands poses them on the drawn body, so what its hands carry
-moves with the body a viewer sees. The default, 0, draws the body on the root.
+moves with the body a viewer sees. The default, 0, draws the body on the root. A carry plans with
+the margin the lag strays by (Moves, below).
 
 ### Navigation layers
 
@@ -268,10 +269,15 @@ against what stands in its own height band -- so the tote passes over a bench it
 and meets a shelf at its own height. The way's moves are arcs forward, turns on the spot, steps
 straight back of at most `back_max` at a time, and a turn past half a turn only with `long_way`
 (saying so in `turning_long_way`); it passes through `via` in order. Its legs go to the navigator
-exactly (unplanned and unsteered, `send_goals(..., exact=True)`), its turns are made on the spot at
-a carrying pace and its steps back keep the heading, and a body that strays from a leg by more than
-3 cm (plus the margin a body that lags its way plans with, `HumanoidBody.follow_error`) stops with
-`left its way`. Where there is no way, it fails before it sets off, holding what it holds. At the
+exactly (unplanned and unsteered, `send_goals(..., exact=True)`), as are its steps back, which
+keep the heading; its turns are made on the spot at a carrying pace. A body that strays from a leg
+or a step back by more than 3 cm, plus the margin it plans with, stops with `left its way`. That
+margin is how far the body strays from its way (`HumanoidBody.follow_error`), and the way keeps
+that much further off everything: none for a walker drawn on its root; with a `body_lag`, how far
+the drawn body cuts inside the tightest arc a way has, `(speed * body_lag)**2 / 1.15 m` (2 cm at
+0.15 s and 1 m/s, 7.9 cm at 0.3 s, where the close bends of the planner's tests leave no way); for
+a humanoid robot driven physically, what its retargeting table states it measured. `planned`
+says the margin, and a carry that finds no way says what it was. Where there is no way, it fails before it sets off, holding what it holds. At the
 target, the body may stand against the target it works at and what that stands on, and as it sets
 off, against what it already stands against; what it holds may touch neither.
 
