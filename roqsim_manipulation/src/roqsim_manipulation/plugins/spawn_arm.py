@@ -68,9 +68,9 @@ base origin or ``offset`` from it in the base frame. The plate belongs to what t
 the world, or a ``mount``'s body -- so it does not collide with that support or with the base, and
 everything else meets it. On the world, that includes an arm's own link that dips below its base
 face, and a collision geom that reaches lower than the real link does: the UR10e's shoulder capsule
-overlaps a plate under it at every reset. On a ``mount``, the arm's first link is a child of the
-plate's body, and MuJoCo leaves out contacts between a body and its parent, so the plate does not
-meet it there. Unlike ``pedestal`` it does not reach the floor; with both, the
+overlaps a plate under it at every reset. On a moving ``mount``, the arm's base is welded into the
+plate's body, which makes that body its first link's parent weld body, and MuJoCo leaves out
+contacts with a parent weld body, so the plate does not meet that link there. Unlike ``pedestal`` it does not reach the floor; with both, the
 pedestal ends at the plate's lower face. Not with ``rail``.
 
 **Mounting on a mobile base (``mount:``)**
@@ -630,8 +630,8 @@ class SpawnArmPlugin(Plugin):
 
         It belongs to what the arm stands on (the world, or the mount's body), not to the arm. The
         arm's fixed base is welded into that body, and geoms of one body do not collide, so the plate
-        meets neither its support nor the base. On a mount, MuJoCo's parent filter also leaves out the
-        arm's first link; on the world, which that filter exempts, the plate meets it.
+        meets neither its support nor the base. On a moving mount, MuJoCo's parent filter also leaves
+        out the arm's first link; on the world, which that filter exempts, the plate meets it.
         """
         g = parent.add_geom()
         g.name = f"{self.prefix}adapter_plate"
