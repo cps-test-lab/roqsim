@@ -84,3 +84,51 @@ def test_the_set_is_part_of_the_grids_identity():
     """Two movers may only share a raster when they agree about what is in it."""
     assert grid_key(0.05, 0.1, 1.8, ()) != grid_key(0.05, 0.1, 1.8, (3,))
     assert grid_key(0.05, 0.1, 1.8, (3, 5)) == grid_key(0.05, 0.1, 1.8, (5, 3))
+
+
+_HOLDABLE_XML = """
+<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="8 8 .05"/>
+    <body name="hand" mocap="true" pos="0 0 1"><geom type="sphere" size=".02" contype="0" conaffinity="0"/></body>
+    <body name="tote" pos="1 0 .1"><freejoint/><geom type="box" size=".2 .15 .1"/></body>
+    <body name="crate" pos="-1 0 .3"><freejoint/><geom type="box" size=".4 .4 .3"/></body>
+  </worldbody>
+  <equality><weld name="hold" body1="hand" body2="tote" active="false"/></equality>
+</mujoco>
+"""
+
+
+def test_a_body_something_can_hold_is_holdable_and_one_nothing_can_is_not():
+    """The object of a weld equality -- a hand's hold, switched on when it is taken -- can be
+    carried away; a crate nothing can weld to stays where it is put."""
+    from roqsim_nav.obstacles import holdable_roots
+
+    model = mujoco.MjModel.from_xml_string(_HOLDABLE_XML)
+    tote = int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "tote")])
+    crate = int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "crate")])
+    assert holdable_roots(model) == {tote}
+    assert crate not in holdable_roots(model)
+
+
+def test_a_prop_something_can_hold_is_never_parked_in_the_grid():
+    """The grid is built once a run: a tote standing still at the start, baked in as a parked prop,
+    would still be there in the grid once a worker has picked it up -- and a mover carrying it would
+    plan from inside its own old footprint. A crate nothing can hold is parked as before."""
+    from types import SimpleNamespace
+
+    from roqsim_nav.plugins.navigator import NavigatorPlugin
+
+    model = mujoco.MjModel.from_xml_string(_HOLDABLE_XML)
+    entities = [
+        SimpleNamespace(name="tote", body="tote", meta={"base_joint": "tote_free"}),
+        SimpleNamespace(name="crate", body="crate", meta={"base_joint": "crate_free"}),
+    ]
+    ctx = SimpleNamespace(
+        model=model,
+        entities=SimpleNamespace(all=lambda: entities),
+        blackboard=SimpleNamespace(get=lambda key: None),
+    )
+    roots = NavigatorPlugin._parked_props(None, ctx)
+    crate = int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "crate")])
+    assert roots == (crate,)
