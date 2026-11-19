@@ -628,7 +628,12 @@ class NavigatorPlugin(Plugin):
                 cancel=self.cancel,
                 status=self.status,
                 pose=lambda: self._pose_snapshot,
-                speed=lambda: float(self._state.speed),
+                exact_speed=(
+                    (lambda: float(self._state.speed))
+                    if self.config.get("route_mode", "plan") == "exact"
+                    and self.config.get("tracker", "waypoint") == "waypoint"
+                    else None
+                ),
             ),
         )
 

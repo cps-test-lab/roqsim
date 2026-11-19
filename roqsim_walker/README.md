@@ -260,8 +260,9 @@ round the walls by its planner if it has one; `via` sends it through floor point
 first, in order -- a way laid out round a fence or a bench, for a navigator that walks its points as
 given (`route_mode: exact`). The turn before a carry faces the first of them, and a carry walks
 through a point where its way bends by 45 degrees or less, turning at its carrying pace as it walks
-on, where what it carries swings clear of what stands round the bend (walking on along the new way
-at the navigator's speed while its heading follows); at a sharper corner, or one it would not swing
+on, where its navigator walks the points as given (`route_mode: exact`, the `waypoint` tracker) and
+what it carries swings clear of what stands round the bend (walking on along the new way at the
+navigator's speed while its heading follows); at a sharper corner, or one it would not swing
 clear at, it comes to rest and turns on the spot at its carrying pace, with the step back and the
 failure of any carried turn, so what it carries in front stays over the way and does not swing out
 of it at the corner.

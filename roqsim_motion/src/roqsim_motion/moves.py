@@ -108,9 +108,9 @@ SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: A carry walks through a point of its way where the way bends by this much or less (rad), the
-#: body turning at its carrying pace as it walks on, if what it holds swings clear there
-#: (:meth:`HumanoidPlugin._swung`); at a sharper corner, or one it would not swing clear at, it
-#: stops and turns on the spot.
+#: body turning at its carrying pace as it walks on, if its navigator walks the way's points as
+#: given and what it holds swings clear there (:meth:`HumanoidPlugin._swung`); at a sharper corner,
+#: or one it would not swing clear at, it stops and turns on the spot.
 WALK_THROUGH = math.radians(45)
 #: A carried turn this near half a turn (rad) is a tie: both ways turn as far, and the side is
 #: chosen by what the load sweeps and where the body walks next, never by the sign of a rounding
@@ -623,9 +623,11 @@ class HumanoidPlugin(MachinePlugin):
         return [s for s in stretches if s]
 
     def _swing_speed(self, nav) -> float | None:
-        """The speed (m/s) a walked-through bend is judged at: the navigator's, or ``None`` where it
-        does not say, and no bend is walked through."""
-        return None if getattr(nav, "speed", None) is None else float(nav.speed())
+        """The speed (m/s) a walked-through bend is judged at: the navigator's where it walks the
+        way's points as given; ``None`` where it plans between them or cuts their corners, and no
+        bend is walked through, since where the body meets a bend is not known."""
+        speed = getattr(nav, "exact_speed", None)
+        return None if speed is None else float(speed())
 
     def _swung(self, at, heading: float, bend: float, speed: float) -> str | None:
         """What the held object would swing through walking through the point ``at`` from

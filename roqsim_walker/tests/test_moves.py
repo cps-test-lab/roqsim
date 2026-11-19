@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import mujoco
 import numpy as np
@@ -359,50 +360,83 @@ def test_a_step_back_that_would_meet_something_fails_naming_it():
         engine.shutdown()
 
 
-def test_a_carry_walks_through_a_gentle_bend_of_its_way_without_stopping(sim):
-    """A way that bends by 30 degrees is walked through: the body keeps walking past the bend,
-    turning as it goes, rather than stopping at it and turning on the spot."""
-    sim.ok("approach", target="tote_1", standoff=0.45)
-    sim.ok("grasp", hand="both", target="tote_1")
-    x, y, h = sim.body.root()
-    # back the way it came (a turn on the spot first), then a bend of 30 degrees to the left
-    back = h + math.pi
-    bend = np.array([x, y]) + 1.2 * np.array([math.cos(back), math.sin(back)])
-    on = bend + 1.2 * np.array(
-        [math.cos(back + math.radians(30)), math.sin(back + math.radians(30))]
-    )
-    far = on + 0.6 * np.array(
-        [math.cos(back + math.radians(30)), math.sin(back + math.radians(30))]
-    )
-    to = {"position": {"x": float(far[0]), "y": float(far[1]), "z": 0.0}}
-    seq = sim.h.carry(to, standoff=0.6, via=[bend.tolist()])
-    near, last, slowest, t_last = math.inf, None, math.inf, 0.0
-    while True:
-        sim.e.step()
-        p = np.array(sim.body.root()[:2])
-        t = sim.e.ctx.sim_time
-        if (
-            last is None or t - t_last >= 0.1
-        ):  # over a tenth of a second: the body is posed at its own rate
-            if last is not None and np.linalg.norm(p - bend) < 0.3:
-                slowest = min(slowest, float(np.linalg.norm(p - last)) / (t - t_last))
-            last, t_last = p, t
-        near = min(near, float(np.linalg.norm(p - bend)))
-        st = sim.h.status()
-        if st.seq == seq and st.finished:
-            break
-    assert st.error == "", st.error
-    assert near < 0.15, near
-    assert slowest > 0.3, slowest  # m/s: walking through, not stopped at the bend
+def test_a_carry_walks_through_a_gentle_bend_of_its_way_without_stopping():
+    """A navigator that walks the way as given, and a way that bends by 30 degrees: the body keeps
+    walking past the bend, turning as it goes, rather than stopping at it and turning on the
+    spot."""
+    engine = _engine(_world(navigator={**NAV, "route_mode": "exact"}))
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        x, y, h = sim.body.root()
+        # back the way it came (a turn on the spot first), then a bend of 30 degrees to the left
+        back = h + math.pi
+        bend = np.array([x, y]) + 1.2 * np.array([math.cos(back), math.sin(back)])
+        on = bend + 1.2 * np.array(
+            [math.cos(back + math.radians(30)), math.sin(back + math.radians(30))]
+        )
+        far = on + 0.6 * np.array(
+            [math.cos(back + math.radians(30)), math.sin(back + math.radians(30))]
+        )
+        to = {"position": {"x": float(far[0]), "y": float(far[1]), "z": 0.0}}
+        seq = sim.h.carry(to, standoff=0.6, via=[bend.tolist()])
+        near, last, slowest, t_last = math.inf, None, math.inf, 0.0
+        while True:
+            sim.e.step()
+            p = np.array(sim.body.root()[:2])
+            t = sim.e.ctx.sim_time
+            if (
+                last is None or t - t_last >= 0.1
+            ):  # over a tenth of a second: the body is posed at its own rate
+                if last is not None and np.linalg.norm(p - bend) < 0.3:
+                    slowest = min(slowest, float(np.linalg.norm(p - last)) / (t - t_last))
+                last, t_last = p, t
+            near = min(near, float(np.linalg.norm(p - bend)))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert near < 0.15, near
+        assert slowest > 0.3, slowest  # m/s: walking through, not stopped at the bend
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    "nav, walks_as_given",
+    [
+        ({}, False),
+        ({"route_mode": "exact"}, True),
+        ({"route_mode": "exact", "tracker": "pure_pursuit"}, False),
+    ],
+)
+def test_a_navigator_gives_its_speed_for_bends_only_where_it_walks_the_way_as_given(
+    nav, walks_as_given
+):
+    """A carry walks through a bend only on a navigator that walks the way's points as given: one
+    that plans between them, or cuts their corners, gives no speed, and a carry stops at every
+    bend."""
+    engine = _engine(_world(navigator={**NAV, **nav}))
+    try:
+        engine.reset()
+        handle = engine.ctx.blackboard.get("nav:worker:handle")
+        if walks_as_given:
+            assert handle.exact_speed() == NAV["speed"]
+        else:
+            assert handle.exact_speed is None
+    finally:
+        engine.shutdown()
 
 
 def test_a_carry_stops_at_a_gentle_bend_its_load_would_not_swing_clear_of():
-    """A post just outside a bend of 33 degrees, where walking through it would swing the tote out
-    into the post: the body stops at the bend and turns there instead, and the tote never touches
-    the post."""
+    """A navigator that walks the way as given, and a post outside a bend of 33 degrees where
+    walking through it would swing the tote out into the post: the body stops at the bend and turns
+    there instead, and the tote never touches the post."""
     corner = np.array([1.8, 0.0])
-    at = corner + 0.7 * np.array([math.cos(math.radians(-10)), math.sin(math.radians(-10))])
-    world = _world()
+    at = corner + np.array([0.7, 0.0])
+    world = _world(navigator={**NAV, "route_mode": "exact"})
     world["components"][0]["walker"]["pose"] = {
         "position": {"x": 0.0, "y": 0.0},
         "orientation": {"yaw": 0.0},
