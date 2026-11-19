@@ -296,6 +296,8 @@ action humanoid_approach:
     standoff: float = 0.6                             # metres in front of the target
     facing: float                                     # world yaw (rad) to face; left out: the target's front
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
+    back_max: float = 0.5                             # holding something: as humanoid_carry's
+    long_way: bool = false                            # holding something: as humanoid_carry's
     check: bool = true
 
 action humanoid_reach:
