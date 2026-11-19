@@ -449,6 +449,27 @@ def test_carrying_it_turns_the_way_its_load_sweeps_clear():
         engine.shutdown()
 
 
+def test_an_approach_holding_something_turns_as_a_carry_does():
+    """Holding the tote, an approach turns as a carry does: the post on the short way round, and
+    no step back allowed, it fails naming the post and ``long_way``; given ``long_way`` it takes
+    the long way and says so."""
+    engine = _engine(_post_world())
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        x, y, _ = sim.body.root()
+        to = {"position": {"x": x - 1.6, "y": y + 0.9, "z": 0.0}}
+        st = sim.run("approach", target=to, standoff=0.6, back_max=0.0)
+        assert "post_box" in st.error and "long_way" in st.error, st.error
+        since = sim.e.ctx.sim_time
+        sim.run("approach", target=to, standoff=0.6, back_max=0.0, long_way=True)
+        assert "turning_long_way" in sim.events(since)
+    finally:
+        engine.shutdown()
+
+
 def _turned(sim, seq, limit=60.0) -> float:
     """Step until the move ``seq`` ends; the body's heading change when it had first turned a
     quarter turn either way (rad, signed; left is positive)."""

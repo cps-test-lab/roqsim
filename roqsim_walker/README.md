@@ -243,7 +243,7 @@ A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an en
 
 | move | parameters | events | fails with |
 |---|---|---|---|
-| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first) | `walking`, `arrived` | `unknown target`, `no route to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …` |
+| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first), `back_max` and `long_way` (holding something: as `carry`'s) | `walking`, `stepping_back`, `turning_long_way`, `arrived` | `unknown target`, `no route to …`, `cannot face …`, `cannot turn to …` (holding something, as `carry`'s), `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …` |
 | `reach` | `hand`, `target`, `offset` (x, y, z[, r, p, y] in its frame), `orient` true, `pose` `open`, `speed` 0.8 m/s | `reached` | `out of reach: … approach first` |
 | `press` | `hand`, `target` (a site on the button's face), `max_force`, `travel`, `pose` `point` | `contact`, `pressed`, `released` | `button did not move: … at … N`, out of reach |
 | `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |

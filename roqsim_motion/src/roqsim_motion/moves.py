@@ -591,6 +591,12 @@ class HumanoidPlugin(MachinePlugin):
         x, y, _ = self.body.root()
         return next((p for p in points if math.hypot(p[0] - x, p[1] - y) > 0.05), points[-1])
 
+    def _back_max(self, back_max) -> float:
+        """``back_max`` as a distance (m), failing the move where it is none."""
+        if not (math.isfinite(float(back_max)) and float(back_max) >= 0.0):
+            self.fail(f"back_max: a distance of 0 m or more, not {back_max!r}")
+        return float(back_max)
+
     def _stretches(self, legs) -> list:
         """``legs`` (floor points, walked from where the body stands) split where the way bends by
         more than :data:`WALK_THROUGH`: lists of their indices, each walked without stopping."""
@@ -731,12 +737,16 @@ class HumanoidPlugin(MachinePlugin):
         standoff: float = 0.6,
         facing: float | None = None,
         via: list | None = None,
+        back_max: float = BACK_MAX,
+        long_way: bool = False,
     ):
         """Walk to a stand-off in front of a target and face it: a grip site's or a face's front, a
         tote's long side (its left grip on the left), or the target as seen from here. ``via``:
         floor points ``[x, y]`` it walks through first, in order -- a way of the scene's, round
-        what stands between."""
+        what stands between. Holding something, it turns as ``carry`` does: ``back_max`` and
+        ``long_way`` as there."""
         points = self._via(via)
+        back_max = self._back_max(back_max)
         stand, yaw = self._stand_for(target, standoff, facing)
         if any(h is not None for h in self.holding.values()):
             # holding something: it goes along, as in a carry
@@ -750,9 +760,17 @@ class HumanoidPlugin(MachinePlugin):
                     lambda: self._hold_carried(carried),
                     then=self._next_heading(legs, legs.index(first), yaw),
                     toward=first,
+                    back_max=back_max,
+                    long_way=bool(long_way),
                 )
             yield from self._walk(
-                stand, yaw, target, while_walking=lambda: self._hold_carried(carried), via=points
+                stand,
+                yaw,
+                target,
+                while_walking=lambda: self._hold_carried(carried),
+                via=points,
+                back_max=back_max,
+                long_way=bool(long_way),
             )
         else:
             yield from self._walk(stand, yaw, target, via=points)
@@ -1176,9 +1194,7 @@ class HumanoidPlugin(MachinePlugin):
         is in the way, or with ``long_way`` turns the long way round if that is clear, saying so in
         a ``turning_long_way`` event."""
         points = self._via(via)
-        if not (math.isfinite(float(back_max)) and float(back_max) >= 0.0):
-            self.fail(f"back_max: a distance of 0 m or more, not {back_max!r}")
-        back_max = float(back_max)
+        back_max = self._back_max(back_max)
         sides = self._held("both")
         d = self._d
         m = self._m
