@@ -247,6 +247,28 @@ def test_via_points_are_passed_through_in_order():
     assert min(math.hypot(p[0] - 1.0, p[1] + 0.3) for p in way.poses) < 0.04
 
 
+def test_a_tether_holds_the_way_within_its_reach_until_past_its_line():
+    """Tethered to a segment by the start, the goal far off is out of reach; with a line it may
+    leave the tether past, the way goes on beyond that line, and stays in reach up to it."""
+    model, data = _world("carry_post_straight")
+    seg = (0.0, 0.5, 0.6, 0.5, 1.0)
+    with pytest.raises(NoWay):
+        plan_way(model, data, _footprint(), (0.0, 0.0, 0.0), (4.0, 0.0, 0.0), tether=[seg])
+    way = plan_way(
+        model,
+        data,
+        _footprint(),
+        (0.0, 0.0, 0.0),
+        (4.0, 0.0, 0.0),
+        tether=[(*seg, 1.2, 0.0, 1.0, 0.0)],
+    )
+    assert way.poses[-1][0] > 3.9
+    before = [p for p in way.poses if p[0] < 1.2]
+    assert before and all(
+        math.hypot(p[0] - min(max(p[0], 0.0), 0.6), p[1] - 0.5) <= 1.0 + 1e-6 for p in before
+    )
+
+
 def test_a_via_point_does_not_start_a_second_step_back():
     """A step back is once between moves forward across a via point too: in a corridor too narrow
     to turn in, a via point straight behind does not let the way step back twice running, which

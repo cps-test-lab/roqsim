@@ -26,6 +26,9 @@ SIDES = ("l", "r")
 #: camera's near clip plane is taken -- a body parked far below would push that plane out and cut
 #: what a close camera sees.
 PARK = (0.0, 0.0, -1.0)
+#: The name, under its entity's, of a hand's press proxy body (:meth:`HumanoidBody.press_proxy`):
+#: what a humanoid may hold still collides with it, so a fingertip can push on a door it let go of.
+PRESS_PROXY = "press_{side}"
 
 
 class HumanoidBody:

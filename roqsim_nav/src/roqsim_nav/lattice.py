@@ -482,9 +482,14 @@ class _CSpace:
     def ok(self, x, y, th) -> bool:
         """The search's check: the raster's, and where the raster says blocked within one of
         ``zones`` (round the start and the goal, where a body stands close to what it works at),
-        the exact one; and every one of ``tether`` within its reach."""
-        for tx, ty, tr in self.tether:
-            if (x - tx) ** 2 + (y - ty) ** 2 > tr * tr:
+        the exact one; and every segment of ``tether`` within its reach."""
+        for ax, ay, bx, by, tr, past in self.tether:
+            if past is not None and (x - past[0]) * past[2] + (y - past[1]) * past[3] >= 0.0:
+                continue  # gone past its line, free of it
+            ex, ey = bx - ax, by - ay
+            n = ex * ex + ey * ey
+            t = 0.0 if n < 1e-12 else min(max(((x - ax) * ex + (y - ay) * ey) / n, 0.0), 1.0)
+            if (x - ax - t * ex) ** 2 + (y - ay - t * ey) ** 2 > tr * tr:
                 return False
         if self.free(x, y, th):
             return True
@@ -873,6 +878,21 @@ def _inside(poly, p, tol) -> bool:
     return True
 
 
+def _tether(t) -> tuple:
+    """A tether as ``(ax, ay, bx, by, r, past)``, ``past`` the line ``(px, py, nx, ny)`` beyond
+    which it holds no more, or ``None``."""
+    t = tuple(float(v) for v in t)
+    if len(t) == 3:
+        return (t[0], t[1], t[0], t[1], t[2], None)
+    if len(t) == 5:
+        return (*t, None)
+    if len(t) == 9:
+        return (*t[:5], t[5:])
+    raise ValueError(
+        f"a tether is (x, y, r), (ax, ay, bx, by, r) or that and (px, py, nx, ny), not {t!r}"
+    )
+
+
 def plan_way(
     model,
     data,
@@ -902,8 +922,11 @@ def plan_way(
     it goes to work at and what that stands on, which a worker stands against. What it holds
     meets them as anything else.
 
-    ``tether``: ``(x, y, r)`` points every pose of the way keeps its root within ``r`` of -- a hand
-    that keeps a door where it is while the body walks stays within its reach."""
+    ``tether``: ``(ax, ay, bx, by, r)`` segments, or ``(x, y, r)`` points, every pose of the way
+    keeps its root within ``r`` of -- a hand keeping a door where it is while the body walks, along
+    the stretch of its leaf it may push on, stays within its reach. A segment may carry a line
+    ``(..., r, px, py, nx, ny)``: a root past it (``(p - (px, py)) . (nx, ny) >= 0``) is free of
+    that tether -- the body has gone through the door, and the hand lets go."""
     t0 = time.perf_counter()
     res = footprint.resolution
     if not (math.isfinite(float(back_max)) and back_max >= 0.0):
@@ -939,7 +962,7 @@ def plan_way(
             box = (int(ii.min()), int(jj.min()), int(ii.max()) + 1, int(jj.max()) + 1)
             cs = _CSpace(layers, footprint, box, corridor)
             cs._exact_setup()
-            cs.tether = [(float(a), float(b), float(c)) for a, b, c in tether]
+            cs.tether = [_tether(t) for t in tether]
             # what the body already stands against, it may go on standing against as it leaves;
             # at the goal, it may stand against what it goes to work at
             standing = cs.body_meets(*pose)

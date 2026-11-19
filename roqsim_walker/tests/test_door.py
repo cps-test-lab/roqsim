@@ -12,10 +12,12 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim_walker.humanoid import COLLISION_RADIUS
 
 DATA = Path(__file__).parent / "data"
 NAV = {
@@ -78,6 +80,16 @@ class Door:
                 if self.body.owns(self.m, other):
                     self.deepest = max(self.deepest, -float(c.dist))
 
+    def leaf_to_root(self) -> float:
+        """How far the body's root is from the leaf's middle line, on the floor (m)."""
+        g = self.m.geom("gate_leaf").id
+        c, rot, half = self.d.geom_xpos[g], self.d.geom_xmat[g].reshape(3, 3), self.m.geom_size[g]
+        a, b = c - half[1] * rot[:, 1], c + half[1] * rot[:, 1]
+        x, y, _ = self.body.root()
+        e = (b - a)[:2]
+        t = min(max(float(np.dot(np.array([x, y]) - a[:2], e) / np.dot(e, e)), 0.0), 1.0)
+        return float(np.hypot(*(np.array([x, y]) - a[:2] - t * e)))
+
     def run(self, move, limit=60.0, **args):
         seq = self.h.start(move, **args)
         t0 = self.e.ctx.sim_time
@@ -134,6 +146,53 @@ def test_a_door_pushed_open_is_walked_through_kept_open_and_shuts_behind():
         for _ in range(int(4.0 / engine.ctx.dt)):
             door.step()
         assert door.angle() < 10.0, door.angle()  # the closer shut it
+        assert door.deepest < 0.01, door.deepest
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_pulled_open_is_kept_open_by_the_hand_pushing_on_it_and_walked_through():
+    """Pulled open toward the body, the handle ends at the leaf's far edge, out of reach of the
+    opening. Walking through, the hand keeps the door by contact: its hold stays on while the body
+    is behind the leaf; once the body has come round onto the face the closer pushes the leaf
+    toward, the hold goes off and the fingertip goes round the leaf's edge onto that face, the
+    closer pressing the leaf into it as the hand slides along. The door stays open while the body
+    walks through; once the body is past the line the leaf shuts onto, the hand lets go behind it,
+    and the closer shuts the door without the leaf sweeping into the body."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        assert door.run("pull", hand="right", angle=85.0).error == ""
+        opened = door.angle()
+        assert opened > 70.0, opened
+        least, nearest = opened, math.inf
+        seq = door.h.start("approach", target="gate/through")
+        t0 = engine.ctx.sim_time
+        while not (door.h.status().seq == seq and door.h.status().finished):
+            door.step()
+            if not door.events("let go"):
+                least = min(least, door.angle())
+            else:  # the leaf shutting behind the body keeps clear of it
+                nearest = min(nearest, door.leaf_to_root())
+            assert engine.ctx.sim_time - t0 < 60.0
+        st = door.h.status()
+        assert st.error == "", st.error
+        keeping = [ev for ev in door.events("keeping") if ev["t"] >= t0]
+        assert keeping and keeping[0]["how"] == "by contact", keeping
+        assert [ev for ev in door.events("pushing") if ev["t"] >= t0]
+        kept = [ev for ev in door.events("kept") if ev["t"] >= t0]
+        assert kept and kept[0]["how"] == "contact" and kept[0]["force"] > 1.0, kept
+        x, _y, _ = door.body.root()
+        assert x > 1.3, x  # through the opening, on the far side
+        assert opened - least < 15.0, (opened, least)  # kept open all the way through
+        assert [ev for ev in door.events("let go") if ev["t"] >= t0], "the hand never let go"
+        for _ in range(int(4.0 / engine.ctx.dt)):
+            door.step()
+            nearest = min(nearest, door.leaf_to_root())
+        assert nearest > COLLISION_RADIUS, nearest
+        assert door.angle() < 10.0, door.angle()  # the closer shut it behind
         assert door.deepest < 0.01, door.deepest
     finally:
         engine.shutdown()

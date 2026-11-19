@@ -18,7 +18,7 @@ import math
 
 import mujoco
 import numpy as np
-from roqsim_motion.body import HumanoidBody
+from roqsim_motion.body import PRESS_PROXY, HumanoidBody
 from roqsim_motion.description import Description
 from roqsim_motion.ik import HandGoal, Posture, solve
 
@@ -139,7 +139,7 @@ class WalkerBody(HumanoidBody):
         self._frames = {side: H.FingerFrames(layouts[side]) for side in ("l", "r")}
         self._data = None  # the run's data, set by the plugin at configure
         self._proxy = {
-            side: int(model.body_mocapid[_body(model, f"{name}/press_{side}")])
+            side: int(model.body_mocapid[_body(model, f"{name}/{PRESS_PROXY.format(side=side)}")])
             for side in ("l", "r")
         }
         super().__init__(name)

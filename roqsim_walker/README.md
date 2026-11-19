@@ -310,9 +310,13 @@ leaf's swing stays outside it. The path it would step round on is checked first 
 (what it holds included), and one that would meet something fails before anything moves. A hand
 holding something on a joint (a door, a drawer) **keeps** it where it is while the body walks on
 (`approach` holding it), and the way keeps the body within the hand's reach of it; let go, a door's
-closer shuts it. A door pushed open is walked through holding it, the handle going ahead; one
-pulled open is not -- its handle is then at the leaf's far edge, out of reach of the opening, and
-a hand that moves to the edge is not modelled.
+closer shuts it. A door pushed open is walked through holding it, the handle going ahead. One
+pulled open is kept by contact: its handle is then at the leaf's far edge, out of reach of the
+opening, so once the body has come round the leaf the hold goes off, the fingertip (the hand's press
+proxy) goes round the free edge onto the face the closer pushes the leaf toward, and slides along it
+as the body passes, the closer pressing the leaf into it. The way keeps the body within reach of
+the leaf until it is past the line the leaf shuts onto; there the hand lets go (`let go`) and the
+closer shuts the door behind it. A door that closes more than 15 degrees while kept fails the walk.
 
 `pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
 servo under the load) goes on past it until the object has, by at most half the distance; a lagging
