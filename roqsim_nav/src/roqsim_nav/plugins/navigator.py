@@ -1080,10 +1080,12 @@ class NavigatorPlugin(Plugin):
         """Replace the route with ``goals`` and run it. Returns its sequence number immediately.
 
         ``exact``: the route is walked as given -- straight legs between its points, the planner not
-        asked, and the avoidance model's steering not applied (its forward probe still stops the
-        mover). For a caller that has checked the legs itself, as a footprint way
-        (:mod:`roqsim_nav.lattice`) is checked: a planned or steered leg would leave the way that
-        was checked. It holds for this route only."""
+        asked, the avoidance model's steering not applied (its forward probe still stops the mover),
+        no recovery, no corner cut by the tracker, each point passed where its leg ends and the last
+        stopped at within 1 cm rather than at ``arrival_radius``
+        (:meth:`~roqsim_nav.behavior.NavCore.follow_exact`). For a caller that has checked the
+        legs itself, as a footprint way (:mod:`roqsim_nav.lattice`) is checked: a planned, steered
+        or cut leg would leave the way that was checked. It holds for this route only."""
         route = [tuple(float(v) for v in g)[:2] for g in goals]
         if not route:
             raise ValueError(_NO_GOALS.format(entity=self.entity))

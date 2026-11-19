@@ -194,7 +194,9 @@ navigator that finished its previous route is already "finished" when a new one 
   configured route as `roqsim_nav_interfaces/StartRoute` at `<entity>/start_route` — served only by
   a mover that has one. A nav2 goal with no poses is aborted, never read as "start".
 * in process: `ctx.blackboard.get("nav:cart:handle").send_goals([(2.0, 0.0)])`, or `.start()`;
-  `send_goals(goals, exact=True)` walks one route as given, unplanned and unsteered
+  `send_goals(goals, exact=True)` walks one route as given, unplanned and unsteered, with no
+  recovery, no corner cut, and its last point stopped at within 1 cm rather than at
+  `arrival_radius`
 
 ## Tests
 
