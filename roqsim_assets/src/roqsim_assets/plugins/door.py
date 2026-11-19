@@ -108,8 +108,10 @@ may not be set, and ``open``, ``close`` and ``move_to`` fail saying the door ope
 door with a leaf states slots for a hand (``docs/plugins.rst``, "Slots"): a lever handle's grip on
 each face of the leaf near its free edge, ``<name>/pull/grip`` on the face it opens toward and
 ``<name>/push/grip`` on the other, with a stance before each -- ``<name>/push/stand`` close enough
-to the hinge that a body stepping round with the leaf passes the opening, ``<name>/pull/stand`` in
-front of the handle, outside the leaf's swing.
+to the hinge that a body stepping round with the leaf passes between the opening's ends, for the
+hand on the handle's side, ``<name>/pull/stand`` in front of the handle, outside the leaf's swing.
+The leaf is hung ``mount_offset`` proud of the opening's centre plane; a wall thicker than twice
+that less the leaf's thickness puts the leaf's hinge end into the wall's end as it turns.
 
 The leaf-mesh convention (``model:``) mirrors the rest of the asset library but with one addition: a
 door model's origin is its **hinge (fixed) vertical edge** at floor level, the leaf extending along
@@ -174,9 +176,11 @@ _HAND_DAMPING = 2.0
 _HANDLE_OUT = 0.03
 _HANDLE_HEIGHT = 1.05
 #: Where its stances stand, in the opening's frame (m): pulling, out from the wall before the handle;
-#: pushing, along the leaf from the hinge (of the width) and out from the wall.
+#: pushing, along the leaf from the hinge (of the width) and out from the wall. A body pushing steps
+#: round with the leaf on an arc about the hinge, so the push stance is near enough the hinge that
+#: the arc passes between the opening's ends, and near enough the handle for the hand on its side.
 _PULL_OUT = 0.6
-_PUSH_ALONG = 0.53
+_PUSH_ALONG = 0.43
 _PUSH_OUT = 0.38
 
 

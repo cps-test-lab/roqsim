@@ -259,3 +259,87 @@ def test_a_door_that_will_not_turn_is_stuck():
         assert door.angle() < 35.0, door.angle()
     finally:
         engine.shutdown()
+
+
+def _door_in_a_wall(hinge: str):
+    """The `door` prop, moved by hand with a closer, in a 0.06 m wall along y = 0 whose ends meet the
+    opening's (x -0.45 .. 0.45), opening toward +y; the walker on the other side, before it."""
+    wall = {"size": [2.0, 0.06, 2.4], "motion": "static"}
+    world = {
+        "sim": {"pacing": "asap"},
+        "components": [
+            {
+                "box": {**wall, "prefix": "wall_w_", "pose": {"position": {"x": -1.45, "y": 0.0}}},
+                "name": "wall_w",
+            },
+            {
+                "box": {**wall, "prefix": "wall_e_", "pose": {"position": {"x": 1.45, "y": 0.0}}},
+                "name": "wall_e",
+            },
+            {
+                "door": {
+                    "prefix": "door_",
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    "width": 0.9,
+                    "hinge_side": hinge,
+                    "swing": 1 if hinge == "left" else -1,
+                    "actuation": "hand",
+                    "closer": {"stiffness": 15.0, "damping": 6.0},
+                },
+                "name": "door",
+            },
+            {
+                "walker": {
+                    "walker": "MaleVisitorWalk",
+                    "hands": True,
+                    "skin": False,
+                    "pose": {"position": {"x": 0.0, "y": -2.0}, "orientation": {"yaw": math.pi / 2}},
+                },
+                "name": "worker",
+                "components": [{"navigator": NAV}, {"humanoid": {"graspable": ["door"]}}],
+            },
+        ],
+    }
+    engine = Engine(load_config_from_dict(world))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    return engine
+
+
+@pytest.mark.parametrize("hinge", ["left", "right"])
+def test_a_door_in_a_wall_is_pushed_open_from_its_own_stance_and_the_body_passes(hinge):
+    """Pushed from the stance the door states, by the hand on the handle's side, the body steps round
+    with the leaf through the opening and meets neither wall: the stance is near enough the hinge
+    that the body's arc about it passes between the opening's ends."""
+    engine = _door_in_a_wall(hinge)
+    try:
+        h = engine.ctx.blackboard.get("humanoid:worker")
+        m, d = engine.ctx.model, engine.ctx.data
+        qadr = int(m.jnt_qposadr[m.joint("door_hinge").id])
+
+        def run(move, **args):
+            seq = h.start(move, **args)
+            t0 = engine.ctx.sim_time
+            while not (h.status().seq == seq and h.status().finished):
+                engine.step()
+                assert engine.ctx.sim_time - t0 < 60.0, f"{move} did not end"
+            return h.status().error
+
+        # the handle is on the body's left with the hinge on its left: the latch then is to the
+        # right of the hinge as seen from the side it is pushed from
+        hand = "right" if hinge == "left" else "left"
+        assert run("approach", target="door/push/grip") == ""
+        assert run("grasp", hand=hand, target="door/push/grip") == ""
+        assert run("push", hand=hand, angle=90.0) == ""
+        assert abs(math.degrees(float(d.qpos[qadr]))) > 80.0
+        root = _root(engine)
+        assert root[1] > 0.0, root  # through the opening
+    finally:
+        engine.shutdown()
+
+
+def _root(engine):
+    hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+    return hp.body.root()
+
