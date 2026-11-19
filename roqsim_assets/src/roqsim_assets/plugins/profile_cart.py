@@ -27,24 +27,6 @@ drawer and the panel -- faces **-Y**, as ``workbench``'s operator side does.
   - Front panel: a framed panel across the front between the shelf and the top frame, fixed to the
     frame or, with ``front_panel.carried_by: drawer``, the drawer's front, out with it by ``drawer.open``.
 
-Config::
-
-    profile_cart:
-      prefix: ""            # MJCF name prefix (distinct prefixes for >1 cart)
-      pose:                 # world placement, a geometry_msgs/Pose (roqsim.pose)
-        position: {x: 0.0, y: 0.0, z: 0.0}
-        orientation: {yaw: 0.0}
-      top: {length: 1.20, depth: 0.80, height: 0.85, thickness: 0.025}
-      slots: {pitch: 0.04, width: 0.008, depth: 0.010, head_width: 0.016, neck: 0.004,
-              direction: y, count: null}
-      footprint: null       # [length, depth] over the posts; default: the top's
-      frame: {profile: 0.045}
-      castors: {height: 0.125, wheel: 0.10}
-      shelf: {enabled: true, height: 0.30}
-      drawer: {enabled: true, height: 0.20, open: 0.0}
-      front_panel: {enabled: true, carried_by: frame}   # or drawer, the drawer's front
-      edge_covers: true     # caps over the slots' open ends, front and back
-
 What collides: the top (slab, lands, the T-heads' walls), posts, frame rails, shelf, drawer and the
 wheels. What does not: the edge covers, the front panel and its frame, the castor forks and brakes --
 trim a robot in this cell plans no contact against.
