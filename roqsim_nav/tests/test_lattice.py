@@ -247,6 +247,32 @@ def test_via_points_are_passed_through_in_order():
     assert min(math.hypot(p[0] - 1.0, p[1] + 0.3) for p in way.poses) < 0.04
 
 
+def test_a_via_point_does_not_start_a_second_step_back():
+    """A step back is once between moves forward across a via point too: in a corridor too narrow
+    to turn in, a via point straight behind does not let the way step back twice running, which
+    would reverse further than ``back_max`` without a move forward between."""
+    xml = """<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .05"/>
+      <geom name="side_n" type="box" pos="0 0.45 0.9" size="2 0.05 0.9"/>
+      <geom name="side_s" type="box" pos="0 -0.45 0.9" size="2 0.05 0.9"/>
+    </worldbody></mujoco>"""
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    way = plan_way(
+        model,
+        data,
+        _footprint(),
+        (0.0, 0.0, 0.0),
+        (-0.6, 0.0, 0.0),
+        via=[(-0.3, 0.0)],
+        back_max=0.3,
+    )
+    run = 0.0
+    for seg in way.segments:
+        run = run + seg.distance if seg.kind == "back" else run if seg.kind == "turn" else 0.0
+        assert run <= 0.3 + 1e-9, way.segments
+
+
 def test_a_way_reports_what_it_cost():
     model, data = _world("carry_three_bends")
     way = plan_way(model, data, _footprint(), (-1.0, 0.0, 0.0), (5.5, 0.92, 0.0))

@@ -690,12 +690,14 @@ class _Search:
             moves.append(("turn", (x, y, th + way), way))
         return moves
 
-    def run(self, start, goal):
+    def run(self, start, goal, flags=0):
         """A* from ``start`` ``(x, y, yaw)`` to ``goal`` ``(x, y, yaw or None)``: the moves, as
-        ``[(kind, (x, y, th), angle), ...]``, or ``None`` and the state nearest the goal."""
+        ``[(kind, (x, y, th), angle), ...]``, or ``None`` and the state nearest the goal. ``flags``:
+        the turn on the spot and the step back the way made since its last move forward, when it
+        comes from a via point."""
         cs, dth = self.cs, self.dth
         fp = cs.fp
-        s0 = (float(start[0]), float(start[1]), float(start[2]), 0)
+        s0 = (float(start[0]), float(start[1]), float(start[2]), int(flags))
 
         # states are kept apart on a coarser grid than the checks (Hybrid-A*'s closed set): a
         # state's pose stays where its moves took it, and is checked there
@@ -906,6 +908,9 @@ def plan_way(
     layers = Layers(model, data, footprint.bands, bounds, res, skip_roots)
     f = max(1, int(round(0.05 / res)))
     segments, expanded, widened, poses = [], 0, False, []
+    # a turn on the spot and a step back since the last move forward, carried across a via point:
+    # a leg that ends stepping back does not let the next one start with another
+    flags = 0
     pose = (float(start[0]), float(start[1]), float(start[2]))
     limits = f"back_max {back_max:.2f} m, long_way {'true' if long_way else 'false'}"
     target = to or f"({goals[-1][0]:.2f}, {goals[-1][1]:.2f})"
@@ -959,7 +964,7 @@ def plan_way(
             search = _Search(
                 cs, h2d, f, layers, float(back_max), bool(long_way), max_states - expanded
             )
-            moves, best = search.run(pose, gl)
+            moves, best = search.run(pose, gl, flags)
             expanded += search.expanded
             if nearest is None:
                 # where the search in the disc's own corridor got to is where a failure is
@@ -999,6 +1004,8 @@ def plan_way(
         poses.append(pose)
         for _k, p, _a in moves:
             poses.append(p)
+        for kind, _p, _a in moves:
+            flags = 0 if kind == "arc" else flags | (_TURNED if kind == "turn" else _BACKED)
         if moves:
             pose = moves[-1][1]
     return Way(
