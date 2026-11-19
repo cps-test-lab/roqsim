@@ -99,11 +99,14 @@ a robot or a task.
   heading it sweeps clear (not twice running), a step straight back up to `back_max` (once between
   moves forward), a turn past half a turn only with `long_way`, and a shot onto the goal. A* picks
   among them by time plus a cost for each kind and for passing near something.
-- **Near its ends** a pose the raster says is blocked is checked exactly, polygon on polygon: a
-  body stands close to what it works at, closer than the raster's slack. There the body's own
+- **Near its ends** a move the raster says is blocked is checked exactly, polygon on polygon and
+  across its sweep (the hull of each piece at the ends of each centimetre and degree, grown by what
+  the turn bows its corners out): a body stands close to what it works at, closer than the raster's
+  slack. There the body's own
   pieces (`Piece.body`) may stand against what they already stand against at the start, and at
   the goal against the target it goes to work at (`dock`); what it holds may not. A goal the body
-  would stand in is refused, naming what is there.
+  would stand in is refused, naming what is there. Every way found is checked so once more before it
+  is returned, and one that meets something raises a `RuntimeError`: a fault of the planner's.
 - **Search**: Hybrid-A*'s: a state's pose stays where its moves took it and is checked there, and
   two states count as one on a 10 cm, 10 degree grid. The heuristic is a disc's cost to go over
   what stands on the floor.
