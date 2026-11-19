@@ -271,6 +271,14 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   picks the drawer side, `superstructure: false` leaves a bare table. The uprights and light frame are
   floor-referenced; the tool panel and monitor mount ride with the worktop (0.20 m / 0.40 m above it,
   the catalogue's mounting positions), so the reach ergonomics hold at either column setting.
+- **`profile_cart`** — a **parametric** aluminium profile cart on castors with a **T-slot plate
+  top**: `top` (length, depth, height, thickness), `slots` (pitch, width, depth, the T's head width
+  and lips, `direction: y` front to back or `x`), `footprint`, `frame`, `castors`, `shelf`, a
+  `drawer` on the shelf (`open` pulls it out) and a `front_panel` (on the frame, or the drawer's front with `carried_by: drawer`). The slots are **collision
+  geometry** — lands between the openings and the T-heads under them — so a part slid across the
+  top meets each slot's edges; the edge covers, the front panel and the castor forks and brakes are
+  visual. Origin at the footprint centre on the floor; the front faces −Y. The entity records the
+  top, the slot centres and the footprint.
 - **`floor_marking`** — paint on the floor: a line, the outline of a rectangle (`band`) or the
   whole rectangle (`band: 0`), in one of three patterns. `solid` (the default) and `dashed` paint one
   `color` — a lane's edge, a walkway's edge, a bay's outline; `dashed` cuts each painted side into
