@@ -33,4 +33,7 @@ gaze: spine
 rest: {left_elbow_joint: 1.3, right_elbow_joint: 1.3}
 # Its arms and waist have position servos already, too soft at the wrists (gain 20) to hold a load;
 # its legs have motors. A servo is added on every mapped joint, beside the model's own.
-physical: {servos: add, kp: 400.0, kv: 20.0}
+# Its base trails the anchor the navigator moves by 3.7 cm at most, measured over the box swap
+# (handling_box_swap_g1.yaml: the horizontal distance of the `<entity>/base` site from the
+# `<entity>/anchor` site, every step after the first half second); a carry plans with that margin.
+physical: {servos: add, kp: 400.0, kv: 20.0, follow_error: 0.04}

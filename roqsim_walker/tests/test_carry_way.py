@@ -28,7 +28,7 @@ NAV = {
 }
 
 
-def _engine(world_xml, start, tote_at, yaw=0.0, size=None):
+def _engine(world_xml, start, tote_at, yaw=0.0, size=None, body_lag=0.0, nav=NAV, extra=()):
     tote = {
         "pose": {
             "position": {"x": tote_at[0], "y": tote_at[1]},
@@ -45,15 +45,17 @@ def _engine(world_xml, start, tote_at, yaw=0.0, size=None):
                     "walker": "MaleVisitorWalk",
                     "hands": True,
                     "skin": False,
+                    "body_lag": body_lag,
                     "pose": {
                         "position": {"x": start[0], "y": start[1]},
                         "orientation": {"yaw": yaw},
                     },
                 },
                 "name": "worker",
-                "components": [{"navigator": NAV}, {"humanoid": {"graspable": ["tote_1"]}}],
+                "components": [{"navigator": nav}, {"humanoid": {"graspable": ["tote_1"]}}],
             },
             {"tote": tote, "name": "tote_1"},
+            *extra,
         ],
     }
     engine = Engine(load_config_from_dict(world))
@@ -251,5 +253,127 @@ def test_an_approach_holding_something_walks_a_way_planned_as_a_carry_does():
         assert st.error == "", st.error
         assert len(sim.events("planned", t0)) == 1
         assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
+    finally:
+        engine.shutdown()
+
+
+def _case(name, **kw):
+    case = dict(CASES[name])
+    size, height = case.pop("size", None), case.pop("height", None)
+    engine = _engine(name, case["start"], case["tote_at"], size=size, **kw)
+    return engine, case, ({"height": height} if height else {})
+
+
+@pytest.mark.parametrize("name", list(CASES))
+def test_a_body_drawn_behind_its_root_plans_with_the_margin_it_strays_by_and_keeps_to_it(name):
+    """A walker with a ``body_lag`` of 0.15 s (a person's pace) is drawn on a point that trails its
+    nav root and cuts inside an arc: it plans with that margin -- ``(speed * lag)**2 / R`` at the
+    tightest arc a way has -- says so in ``planned``, and walks every review case without leaving
+    its way or the tote touching anything."""
+    engine, case, kw = _case(name, body_lag=0.15)
+    try:
+        sim = Carry(engine)
+        st, touches, t0 = sim.carry(case["to"], case["facing"], **kw)
+        assert st.error == "", st.error
+        assert touches == [], touches[:5]
+        margin = sim.events("planned", t0)[0]["margin"]
+        assert margin == pytest.approx(sim.body.follow_error(NAV["speed"]), abs=1e-3)
+        assert 0.015 < margin < 0.025, margin
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("name", "way"),
+    [
+        ("carry_post_straight", True),
+        ("carry_post_behind", True),
+        ("carry_three_bends", False),
+        ("carry_shelf_over_bench", False),
+    ],
+)
+def test_a_body_drawn_further_behind_keeps_further_off_and_says_where_that_leaves_no_way(name, way):
+    """With a ``body_lag`` of 0.3 s the margin is four times as wide (7.9 cm at 1 m/s): the
+    straight stretch and the dead end are walked within it, touching nothing; the close bends and
+    the passage beside the bench leave no way that keeps it, and the carry fails before it sets
+    off, saying how far clear it planned."""
+    engine, case, kw = _case(name, body_lag=0.3)
+    try:
+        sim = Carry(engine)
+        st, touches, t0 = sim.carry(case["to"], case["facing"], **kw)
+        if way:
+            assert st.error == "", st.error
+            assert touches == [], touches[:5]
+            assert sim.events("planned", t0)[0]["margin"] == pytest.approx(0.0785, abs=2e-3)
+        else:
+            assert st.error.startswith("no way holding tote_1 "), st.error
+            assert "planned 0.079 m clear of everything" in st.error, st.error
+            assert not sim.events("walking", t0)
+    finally:
+        engine.shutdown()
+
+
+def test_a_step_back_is_walked_on_the_line_it_was_checked_on():
+    """In the dead end the way out steps straight back: the body keeps to that line, keeping its
+    heading, and the tote touches nothing."""
+    engine, case, kw = _case("carry_post_behind")
+    try:
+        sim = Carry(engine)
+        assert sim.run("approach", target="tote_1", standoff=0.45).error == ""
+        assert sim.run("grasp", hand="both", target="tote_1").error == ""
+        t0 = sim.e.ctx.sim_time
+        seq = sim.h.carry(
+            {"position": {"x": case["to"][0], "y": case["to"][1], "z": 0.0}},
+            standoff=0.6,
+            facing=case["facing"],
+        )
+        start, worst, turned = None, 0.0, 0.0
+        while True:
+            sim.e.step()
+            if sim.body.st.keep is not None:  # stepping back, its heading kept
+                if start is None:
+                    start = sim.body.root()
+                x, y, h = sim.body.root()
+                ux, uy = math.cos(start[2]), math.sin(start[2])
+                worst = max(worst, abs((x - start[0]) * uy - (y - start[1]) * ux))
+                turned = max(
+                    turned, abs(math.atan2(math.sin(h - start[2]), math.cos(h - start[2])))
+                )
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+            assert sim.e.ctx.sim_time - t0 < 120.0
+        assert st.error == "", st.error
+        assert start is not None, "the way out of the dead end steps back"
+        assert worst < 0.01 and turned < math.radians(2), (worst, math.degrees(turned))
+    finally:
+        engine.shutdown()
+
+
+def test_a_body_that_strays_off_a_step_back_fails_saying_by_how_much():
+    """A step back is a leg of the way as a walk is: where the navigator takes the body off the
+    straight step (here every goal sent while the body keeps its heading comes out 6 cm to the
+    side, as a navigator that steers or plans round something would), the carry fails there, on the
+    step, saying how far it strayed, rather than going on from where nobody checked."""
+    engine, case, kw = _case("carry_post_behind")
+    try:
+        sim = Carry(engine)
+        nav = engine.ctx.blackboard.get("nav:worker:handle")
+        send = nav.send_goals
+
+        def aside(goals, **kw):
+            if sim.body.st.keep is not None:  # stepping back, its heading kept
+                x, y, h = sim.body.root()
+                ox, oy = -math.sin(h) * 0.06, math.cos(h) * 0.06
+                goals = [(g[0] + ox, g[1] + oy) for g in goals]
+            return send(goals, **kw)
+
+        nav.send_goals = aside
+        st, _touches, t0 = sim.carry(case["to"], case["facing"])
+        back = sim.events("stepping_back", t0)
+        assert back
+        assert st.error.startswith("left its way to where it is sent by "), st.error
+        # on the step back, not later on a leg that set off from where the stray step left it
+        assert not [ev for ev in sim.events("walking", t0) if ev["t"] > back[0]["t"]]
     finally:
         engine.shutdown()

@@ -50,10 +50,6 @@ class HumanoidBody:
     #: How far in front of its root the body keeps clear of anything solid when it comes to take
     #: something by its handles (m): its front, and its knees where it crouches.
     stand_clear = 0.2
-    #: How far the body may stray from the way it is walked along (m): a body posed where the
-    #: navigator puts it, none; a robot's base hanging on an anchor, what it lags by. A way planned
-    #: for the body keeps that much further off what it would meet (``roqsim_nav.lattice``).
-    follow_error = 0.0
 
     def __init__(self, name: str):
         self.name = name
@@ -190,6 +186,13 @@ class HumanoidBody:
     def settled(self, side: str) -> bool:
         """``side``'s goal has fully taken over from the gait (or it has none)."""
         raise NotImplementedError
+
+    def follow_error(self, speed: float) -> float:
+        """How far the body may stray from the way its root is walked along at ``speed`` (m/s),
+        at most (m): a body posed where the navigator puts it, none. A way planned for the body
+        keeps that much further off what it would meet (``roqsim_nav.lattice``), and a move
+        walking it allows that much more before it fails ``left its way``."""
+        return 0.0
 
     def at_rest(self) -> bool:
         """Whether the body has come to rest where it was walked to: a body drawn behind its nav

@@ -3,12 +3,12 @@
 A slot is sites on a body, by the convention ``roqsim_motion``'s moves read (``docs/plugins.rst``,
 "Slots"): a **hand target** and one or more **stances**.
 
-* The hand target is a site named for the slot. ``kind: grip`` makes it ``<body>/<slot>/grip``,
+* The hand target is a site named for the slot. ``kind: grip`` makes it ``<entry>/<slot>/grip``,
   in the grip-frame convention of ``roqsim_motion.hands`` (+x out of the palm toward what it takes,
-  +z along the fingers, down), so ``grasp`` takes it. ``kind: place`` makes it ``<body>/<slot>``,
+  +z along the fingers, down), so ``grasp`` takes it. ``kind: place`` makes it ``<entry>/<slot>``,
   +z up, its yaw the heading what is set there is set down at, so ``place`` sets down on it.
-  ``kind: press`` makes it ``<body>/<slot>``, +x out of the face, so ``press`` pushes along -x.
-* Each stance is a site ``<body>/<slot>/stand`` (``/stand_<k>`` for several), on the floor, +x the
+  ``kind: press`` makes it ``<entry>/<slot>``, +x out of the face, so ``press`` pushes along -x.
+* Each stance is a site ``<entry>/<slot>/stand`` (``/stand_<k>`` for several), on the floor, +x the
   way to face. ``approach`` and ``carry`` to the slot, or to its grip, walk to it -- the nearest of
   several -- where they are given no ``standoff`` or ``facing``.
 
@@ -18,18 +18,23 @@ frame (a ``box``'s origin is its centre), so a slot on a drawer moves with the d
 put at the body's origin height: what the moves read of it is where it is on the floor and its
 heading.
 
-Config::
+Nested under the entry it states slots on, whose name its sites carry::
 
-    slots:
-      on: rack_box          # the body the slots are on, by its name in the model (required)
-      slots:
-        bin_0:
-          kind: grip        # grip | place | press (default place)
-          at: [0.1, 0.0, 0.95, 3.14159]   # x, y, z, yaw in the body's frame (m, rad)
-          stand: [[0.6, 0.0, 3.14159]]    # x, y, yaw in the body's frame, on the floor
+    - box: {prefix: rack_, pose: {position: {x: 2.0, y: 0.0}}, size: [0.6, 1.2, 0.9], motion: static}
+      name: rack
+      components:
+        - slots:
+            body: rack_box      # the body the slots are on, as the model names it (required)
+            slots:
+              bin_0:
+                kind: grip      # grip | place | press (default place)
+                at: [0.1, 0.0, 0.5, 3.14159]    # x, y, z, yaw in the body's frame (m, rad)
+                stand: [[0.6, 0.0, 3.14159]]    # x, y, yaw in the body's frame, on the floor
 
-It adds sites in ``build``, so it is listed after the plugin that builds the body, and before a
-humanoid that grasps one of its grips is built (a humanoid's holds are made in ``build_late``).
+The sites are ``<entry>/<slot>/grip`` (or ``<entry>/<slot>``) and ``<entry>/<slot>/stand[_<k>]``,
+named for the entry, not for the body, so a scenario names a slot as it names the entity. It adds
+them in ``build``, after the entry it is nested under has built its body, and before a humanoid that
+grasps one of its grips is built (a humanoid's holds are made in ``build_late``).
 """
 
 from __future__ import annotations
@@ -62,8 +67,11 @@ def _grip_quat(yaw: float) -> list:
 class SlotsPlugin(Plugin):
     """Adds a body's slots -- hand targets and stances -- as sites, at build."""
 
+    #: States slots on the entry it is nested under: it belongs inside that entry's ``components:``.
+    requires_owner = True
+
     CONFIG_SCHEMA = {
-        "on": Field(str, required=True, doc="the body the slots are on, by its model name"),
+        "body": Field(str, required=True, doc="the body the slots are on, as the model names it"),
         "slots": Field(dict, required=True, doc="slot name -> {kind, at, stand}"),
     }
 
@@ -93,13 +101,14 @@ class SlotsPlugin(Plugin):
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        on = str(self.config["on"])
+        on = str(self.config["body"])
         body = spec.body(on)
         if body is None:
             raise PluginError(
-                f"slots {self.address}: no body {on!r} to state slots on -- list this after the "
-                "plugin that builds it"
+                f"slots {self.address}: no body {on!r} to state slots on -- the body of the entry "
+                f"{self.entity!r} it is nested under, as the model names it"
             )
+        owner = self.entity
         for name, slot in self.config["slots"].items():
             kind = slot.get("kind", "place")
             at = slot.get("at")
@@ -107,14 +116,14 @@ class SlotsPlugin(Plugin):
                 x, y, z = (float(v) for v in at[:3])
                 yaw = float(at[3]) if len(at) == 4 else 0.0
                 if kind == "grip":
-                    body.add_site(name=f"{on}/{name}/grip", pos=[x, y, z], quat=_grip_quat(yaw))
+                    body.add_site(name=f"{owner}/{name}/grip", pos=[x, y, z], quat=_grip_quat(yaw))
                 else:
-                    body.add_site(name=f"{on}/{name}", pos=[x, y, z], quat=_yaw_quat(yaw))
+                    body.add_site(name=f"{owner}/{name}", pos=[x, y, z], quat=_yaw_quat(yaw))
             stands = slot.get("stand", [])
             for k, (sx, sy, syaw) in enumerate(stands):
                 suffix = "stand" if len(stands) == 1 else f"stand_{k}"
                 body.add_site(
-                    name=f"{on}/{name}/{suffix}",
+                    name=f"{owner}/{name}/{suffix}",
                     pos=[float(sx), float(sy), 0.0],
                     quat=_yaw_quat(float(syaw)),
                 )
