@@ -43,6 +43,7 @@ def wall_polygons(
     z_hi: float = 1.8,
     *,
     resting_roots=(),
+    labels: bool = False,
 ):
     """CCW ``[(x, y), ...]`` footprints for every static collidable wall geom
     whose vertical extent overlaps ``[z_lo, z_hi]`` (a walking body).
@@ -50,6 +51,9 @@ def wall_polygons(
     ``resting_roots`` are weld-root body ids the caller has judged to be undriven props; each is
     included as a wall for this call only while it is moving slower than :data:`RESTING_SPEED`. The
     test is per call, so the same prop is a wall in one run's grid and not in the next.
+
+    ``labels``: each footprint as ``(polygon, body name)`` instead, so a caller that finds no way
+    can say what is in it.
     """
     resting = frozenset(int(b) for b in resting_roots)
     polys = []
@@ -69,7 +73,17 @@ def wall_polygons(
             continue
         hull = _convex_hull_2d(pts)
         if len(hull) >= 3:
-            polys.append([(float(x), float(y)) for x, y in _ccw(hull)])
+            poly = [(float(x), float(y)) for x, y in _ccw(hull)]
+            if labels:
+                # a geom on the world body is named by itself: "world" names nothing
+                name = (
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b)
+                    if b
+                    else mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
+                ) or ("the world" if not b else f"body {b}")
+                polys.append((poly, name))
+            else:
+                polys.append(poly)
     return polys
 
 

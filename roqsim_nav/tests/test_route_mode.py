@@ -102,6 +102,25 @@ def test_exact_follows_the_given_polyline_through_the_wall(tmp_path):
         engine.shutdown()
 
 
+def test_a_route_sent_exact_is_walked_as_given_and_the_next_one_is_planned_again(tmp_path):
+    """``send_goals(..., exact=True)`` makes one route exact on a navigator that plans: it walks
+    straight through the divider. The next route sent without it is planned round the divider."""
+    engine = _engine(tmp_path, autostart=False)
+    engine.setup()
+    engine.reset()
+    try:
+        nav = engine.ctx.blackboard.get("nav:cart:handle")
+        seq = nav.send_goals([GOAL], exact=True)
+        track = _track(engine, seconds=12.0)
+        assert nav.status()[0] == seq and nav.status()[1]
+        assert np.abs(track[:, 1]).max() < 0.05, "an exact route was planned round the wall"
+        nav.send_goals([START])
+        track = _track(engine, seconds=14.0)
+        assert np.abs(track[:, 1]).max() > 2.5, "the route after an exact one was not planned"
+    finally:
+        engine.shutdown()
+
+
 def _max_offset_from_polyline(track):
     """How far the track ever strays from the two legs x = -2.5 and y = 2.0."""
     return float(np.minimum(np.abs(track[:, 0] + 2.5), np.abs(track[:, 1] - 2.0)).max())

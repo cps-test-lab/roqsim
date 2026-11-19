@@ -102,6 +102,9 @@ class NavCore:
         #: Arc curvature to the pure-pursuit carrot, for a base that steers by curvature rather than
         #: by heading error. Zero for the waypoint follower, which does not compute one.
         self.curvature = 0.0
+        #: The current route is walked as given: straight legs between its points, the planner not
+        #: asked. Set by a route sent ``exact``, and dropped by the next route.
+        self.exact = False
         self.reset()
 
     # -- lifecycle -----------------------------------------------------------------------------
@@ -236,7 +239,7 @@ class NavCore:
         if st.path:
             return True
         goal = (float(st.waypoints[st.goal_idx][0]), float(st.waypoints[st.goal_idx][1]))
-        if self.planner is None:
+        if self.planner is None or self.exact:
             st.path = [goal]
         else:
             path = self.planner.plan((self._pos[0], self._pos[1]), goal, now=self._t)
