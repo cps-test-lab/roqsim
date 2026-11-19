@@ -3296,13 +3296,19 @@ where its hand goes. It is sites, by a naming convention the moves of ``roqsim_m
 target as before. ``arrived`` carries ``stance``: the stance's site, or the stand-off it used.
 
 A prop's own plugin states its slots; the ``slots`` component states them on any other body -- a
-primitive standing in for a rack, a mesh model, a body of a baked scene -- in that body's frame::
+primitive standing in for a rack, a mesh model, a body of a baked scene -- nested under the entry
+whose body it is, in that body's frame, its sites named for the entry::
 
-    - slots:
-        on: rack_box            # the body, by its model name; listed after what builds it
-        slots:
-          bin_0: {kind: grip, at: [0.1, 0.0, 0.5, 3.14159], stand: [[0.6, 0.0, 3.14159]]}
-          tray: {kind: place, at: [0.0, 0.2, 0.46]}
+    - box: {prefix: rack_, pose: {position: {x: 2.0, y: 0.0}}, size: [0.6, 1.2, 0.9], motion: static}
+      name: rack
+      components:
+        - slots:
+            body: rack_box      # as the model names it
+            slots:
+              bin_0: {kind: grip, at: [0.1, 0.0, 0.5, 3.14159], stand: [[0.6, 0.0, 3.14159]]}
+              tray: {kind: place, at: [0.0, 0.2, 0.46]}
+
+which states ``rack/bin_0/grip``, ``rack/bin_0/stand`` and ``rack/tray``.
 
 Writing your own
 ----------------

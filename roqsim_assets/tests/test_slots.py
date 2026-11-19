@@ -12,7 +12,7 @@ from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 
 
-def _world(slots, on="rack_box"):
+def _world(slots, body="rack_box"):
     return {
         "sim": {"pacing": "asap"},
         "components": [
@@ -24,8 +24,8 @@ def _world(slots, on="rack_box"):
                     "motion": "static",
                 },
                 "name": "rack",
+                "components": [{"slots": {"body": body, "slots": slots}}],
             },
-            {"slots": {"on": on, "slots": slots}, "name": "rack_slots"},
         ],
     }
 
@@ -60,19 +60,19 @@ def test_a_slot_is_a_hand_target_and_its_stances_in_the_bodys_frame():
     )
     try:
         d = engine.ctx.data
-        pos, rot = _frame(d, "rack_box/bin_0/grip")
+        pos, rot = _frame(d, "rack/bin_0/grip")
         # the box is turned a quarter turn (its -y is the world's +x), its origin at its centre
         assert np.allclose(pos, [2.1, 0.0, 1.0], atol=1e-6), pos
         assert np.allclose(rot[:, 2], [0, 0, -1], atol=1e-6)  # +z along the fingers, down
         assert np.allclose(rot[:, 0], [0, 1, 0], atol=1e-6)  # +x: the slot's yaw, in the world
-        pos, rot = _frame(d, "rack_box/bin_0/stand")
+        pos, rot = _frame(d, "rack/bin_0/stand")
         assert np.allclose(pos[:2], [2.9, 0.0], atol=1e-6)
         assert np.allclose(rot[:, 0], [-1, 0, 0], atol=1e-4)  # facing back toward it
-        assert np.allclose(_frame(d, "rack_box/tray")[1][:, 2], [0, 0, 1], atol=1e-6)
-        assert d.site("rack_box/go") is not None
+        assert np.allclose(_frame(d, "rack/tray")[1][:, 2], [0, 0, 1], atol=1e-6)
+        assert d.site("rack/go") is not None
         names = {engine.ctx.model.site(i).name for i in range(engine.ctx.model.nsite)}
-        assert {"rack_box/two/stand_0", "rack_box/two/stand_1"} <= names
-        assert "rack_box/two/stand" not in names
+        assert {"rack/two/stand_0", "rack/two/stand_1"} <= names
+        assert "rack/two/stand" not in names
     finally:
         engine.shutdown()
 
@@ -93,4 +93,13 @@ def test_a_slot_that_states_nothing_usable_is_refused_saying_why(slots, says):
 
 def test_slots_on_a_body_that_is_not_there_are_refused():
     with pytest.raises(PluginError, match="no body 'rack' to state slots on"):
-        _compiled(_world({"a": {"at": [0, 0, 1]}}, on="rack"))
+        _compiled(_world({"a": {"at": [0, 0, 1]}}, body="rack"))
+
+
+def test_slots_are_nested_under_the_entry_they_are_on():
+    world = {
+        "sim": {"pacing": "asap"},
+        "components": [{"slots": {"body": "x", "slots": {"a": {"at": [0, 0, 1]}}}}],
+    }
+    with pytest.raises(PluginError, match="components"):
+        _compiled(world)
