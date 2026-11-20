@@ -509,7 +509,12 @@ def test_a_load_in_one_hand_goes_with_the_body_as_it_steps_round_a_door_the_othe
     on a walk, so its hold keeps the tote. Left where it was, the hand would be pulled from the
     tote as the body stepped away. (Pulled further, the leaf comes round to the tote on the hinge's
     side: that is the scenario's to keep clear.)"""
-    tote = {"tote": {"pose": {"position": {"x": -1.0, "y": -1.2}}}, "name": "tote_1"}
+    # a short tote: held by its end at the side, a tote reaches ahead by its length, and the
+    # prop's own (0.4 m) ends a few centimetres from the shut leaf, which turning meets it
+    tote = {
+        "tote": {"pose": {"position": {"x": -1.0, "y": -1.2}}, "size": [0.25, 0.2, 0.15]},
+        "name": "tote_1",
+    }
     engine = _door_in_a_wall("right", toward=True, extra=[tote], graspable=("door", "tote_1"))
     try:
         h = engine.ctx.blackboard.get("humanoid:worker")
