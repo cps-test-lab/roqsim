@@ -107,6 +107,10 @@ CAUGHT = 0.03
 SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
+#: A carried turn this near half a turn (rad) is a tie: both ways turn as far, and the side is
+#: chosen by what the load sweeps and where the body walks next, never by the sign of a rounding
+#: error. With nothing to choose by, it turns right (clockwise).
+TURN_TIE = math.radians(5)
 #: The time constant (s) a hold's force is judged over.
 FORCE_TAU = 0.15
 
@@ -568,6 +572,16 @@ class HumanoidPlugin(MachinePlugin):
         x, y, _ = self.body.root()
         return next((p for p in points if math.hypot(p[0] - x, p[1] - y) > 0.05), points[-1])
 
+    @staticmethod
+    def _next_heading(legs, i: int, yaw: float) -> float:
+        """The heading the body walks on in from ``legs[i]``: toward the next of ``legs`` farther
+        than 5 cm from it, or ``yaw``, the way it faces at the end."""
+        x, y = legs[i][0], legs[i][1]
+        for p in legs[i + 1 :]:
+            if math.hypot(p[0] - x, p[1] - y) > 0.05:
+                return math.atan2(p[1] - y, p[0] - x)
+        return yaw
+
     def _leg(self, nav, stand, what: str, while_walking=None, via=()):
         """Walk through ``via`` to ``stand``, facing where it walks; carrying (``while_walking``),
         it turns at a carrying pace."""
@@ -591,7 +605,11 @@ class HumanoidPlugin(MachinePlugin):
                 x, y, _ = self.body.root()
                 if i and math.hypot(point[0] - x, point[1] - y) > 0.05:
                     yield from self._come_to_rest(what, while_walking)
-                    yield from self._turn(math.atan2(point[1] - y, point[0] - x), while_walking)
+                    yield from self._turn(
+                        math.atan2(point[1] - y, point[0] - x),
+                        while_walking,
+                        then=self._next_heading(legs, i, yaw),
+                    )
                 yield from self._leg(nav, point, what, while_walking)
         else:
             yield from self._leg(nav, stand, what, while_walking, via)
@@ -671,10 +689,13 @@ class HumanoidPlugin(MachinePlugin):
             # holding something: it goes along, as in a carry
             carried = self._carried()
             x, y, _ = self.body.root()
-            first = self._first_leg([*points, stand])
+            legs = [*points, (float(stand[0]), float(stand[1]))]
+            first = self._first_leg(legs)
             if math.hypot(first[0] - x, first[1] - y) > 0.05:
                 yield from self._turn(
-                    math.atan2(first[1] - y, first[0] - x), lambda: self._hold_carried(carried)
+                    math.atan2(first[1] - y, first[0] - x),
+                    lambda: self._hold_carried(carried),
+                    then=self._next_heading(legs, legs.index(first), yaw),
                 )
             yield from self._walk(
                 stand, yaw, target, while_walking=lambda: self._hold_carried(carried), via=points
@@ -1143,17 +1164,22 @@ class HumanoidPlugin(MachinePlugin):
         # Turn toward the way it leaves at a carrying pace first: a body turning on the spot at its
         # walking rate swings what it holds faster than a hold follows.
         x, y, heading = self.body.root()
-        first = self._first_leg([*points, stand])
+        legs = [*points, (float(stand[0]), float(stand[1]))]
+        first = self._first_leg(legs)
         leave = math.atan2(first[1] - y, first[0] - x)
-        yield from self._turn(leave, lambda: self._hold_carried(carried))
+        yield from self._turn(
+            leave,
+            lambda: self._hold_carried(carried),
+            then=self._next_heading(legs, legs.index(first), yaw),
+        )
         yield from self._walk(
             stand, yaw, to, while_walking=lambda: self._hold_carried(carried), via=points
         )
 
-    def _turn_way(self, yaw: float) -> float:
+    def _turn_way(self, yaw: float, then: float | None = None) -> float:
         """How far to turn (rad, signed) from the heading to ``yaw``: the short way, unless what the
         hands hold would sweep through something on it and the long way is clear; failing if
-        neither is."""
+        neither is. Half a turn, within :data:`TURN_TIE`, is a tie (:meth:`_tie`)."""
         heading = self.body.root()[2]
         short = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
         held = next(
@@ -1163,15 +1189,32 @@ class HumanoidPlugin(MachinePlugin):
         if held is None or abs(short) < math.radians(20):
             return short
         long = short - math.copysign(2 * math.pi, short)
+        ways = (
+            self._tie(short, long, yaw, then)
+            if abs(abs(short) - math.pi) < TURN_TIE
+            else (short, long)
+        )
         blocked = {}
-        for way in (short, long):
+        for way in ways:
             blocked[way] = self._swept(held, way)
             if blocked[way] is None:
                 return way
         self.fail(
             f"cannot turn to {math.degrees(yaw):.0f} deg: what it holds would sweep through "
-            f"{blocked[short]} one way and {blocked[long]} the other"
+            f"{blocked[ways[0]]} one way and {blocked[ways[1]]} the other"
         )
+
+    @staticmethod
+    def _tie(short: float, long: float, yaw: float, then: float | None) -> tuple:
+        """The two ways round of a half turn, the one to try first first: on in the way it turns
+        next -- toward ``then``, the heading it walks on in after facing ``yaw`` -- and right
+        (clockwise) where it walks on straight or nothing says."""
+        right, left = (short, long) if short < 0 else (long, short)
+        if then is not None:
+            on = math.atan2(math.sin(then - yaw), math.cos(then - yaw))
+            if on > math.radians(1):
+                return left, right
+        return right, left
 
     def _swept(self, held: int, turn: float) -> str | None:
         """What the held object would sweep through if the body turned on the spot by ``turn``
@@ -1249,12 +1292,13 @@ class HumanoidPlugin(MachinePlugin):
         p[2] = float(self._extent(held)[0][2])
         return p
 
-    def _turn(self, yaw: float, each=None):
+    def _turn(self, yaw: float, each=None, then: float | None = None):
         """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
         does), calling ``each`` every step; holding something, the way its load sweeps clear
-        (:meth:`_turn_way`), a quarter turn at a time."""
+        (:meth:`_turn_way`; ``then``: the heading it walks on in afterwards), a quarter turn at a
+        time."""
         heading0 = self.body.root()[2]
-        way = self._turn_way(yaw)
+        way = self._turn_way(yaw, then)
         legs = max(1, int(math.ceil(abs(way) / (math.pi / 2))))
         for k in range(1, legs + 1):
             # on through each quarter but the last, not stopping at it
