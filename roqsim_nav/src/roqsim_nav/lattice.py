@@ -660,8 +660,8 @@ class _CSpace:
             ax_, ay_ = a[0] + ca[0], a[1] + ca[1]
             bx_, by_ = b[0] + cb[0], b[1] + cb[1]
             # the centre's path bows out of its chord by at most its reach times the turn
-            bow = math.hypot(*mid) * min(abs(turn), math.pi) / 2.0
-            spread = math.hypot(bx_ - ax_, by_ - ay_) / 2.0 + bow + SWEEP_STEP
+            turn_bow = math.hypot(*mid) * min(abs(turn), math.pi) / 2.0
+            spread = math.hypot(bx_ - ax_, by_ - ay_) / 2.0 + turn_bow + SWEEP_STEP
             near = self._near_piece(
                 band, own, allowed, (ax_ + bx_) / 2.0, (ay_ + by_) / 2.0, rho + spread + bow
             )
@@ -1402,8 +1402,9 @@ def plan_way_steps(
                     f"({pose[0]:.2f}, {pose[1]:.2f}) it already meets "
                     f"{', '.join(names) if names else 'something within a few centimetres'}"
                 )
-            # with no heading given, a goal it meets something at whichever way it faces; what it
-            # may stand against there is what the zones round the goal (and the start) allow
+            # what the body may stand against at the goal is what the zones round the goal (and
+            # the start) allow; with no heading given, a goal it meets something at whichever way
+            # it faces
             here = frozenset(cs._zone_of((gl[0], gl[1])) or at_goal)
             if gl[2] is None and not any(
                 cs.exact_free(gl[0], gl[1], footprint.heading(k), here)
@@ -1419,8 +1420,8 @@ def plan_way_steps(
                     f"({gl[0]:.2f}, {gl[1]:.2f}) facing any way it meets "
                     f"{', '.join(names) if names else 'something'}"
                 )
-            if gl[2] is not None and not cs.exact_free(*gl, allowed=at_goal):
-                names = [n for n in cs.meets(*gl) if n not in at_goal]
+            if gl[2] is not None and not cs.exact_free(*gl, allowed=here):
+                names = [n for n in cs.meets(*gl) if n not in here]
                 raise NoWay(
                     f"no way holding {what} to {target}: where it would stand at "
                     f"({gl[0]:.2f}, {gl[1]:.2f}) facing {math.degrees(gl[2]):.0f} deg it meets "
