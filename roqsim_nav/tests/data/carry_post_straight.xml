@@ -1,0 +1,10 @@
+<!-- A straight stretch with a post beside it: a disc walks past, a load carried across the body
+     meets it. A test world of roqsim_nav's footprint planner (test_lattice.py). -->
+<mujoco model="carry_post_straight">
+  <worldbody>
+    <geom name="floor" type="plane" size="6 6 0.05"/>
+    <geom name="wall_n" type="box" pos="2 1.0 0.9" size="3 0.05 0.9"/>
+    <geom name="wall_s" type="box" pos="2 -1.0 0.9" size="3 0.05 0.9"/>
+    <geom name="post" type="box" pos="2.0 0.33 0.9" size="0.05 0.05 0.9"/>
+  </worldbody>
+</mujoco>

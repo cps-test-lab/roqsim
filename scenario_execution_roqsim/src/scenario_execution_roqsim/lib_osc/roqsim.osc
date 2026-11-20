@@ -296,6 +296,8 @@ action humanoid_approach:
     standoff: float = 0.6                             # metres in front of the target
     facing: float                                     # world yaw (rad) to face; left out: the target's front
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
+    back_max: float = 0.5                             # holding something: as humanoid_carry's
+    long_way: bool = false                            # holding something: as humanoid_carry's
     check: bool = true
 
 action humanoid_reach:
@@ -348,12 +350,15 @@ action humanoid_push:
     check: bool = true
 
 action humanoid_carry:
-    # Carry what the hands hold to a stand-off in front of a target, lifted clear of its surface.
+    # Carry what the hands hold to a stand-off in front of a target, lifted clear of its surface, on
+    # a way planned for the body and what it holds and walked exactly.
     humanoid: string
     to: string
     standoff: float = 0.6
     facing: float                                     # world yaw (rad) to face; left out: the target as seen
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
+    back_max: float = 0.5                             # m its way may step straight back at a time; 0: never
+    long_way: bool = false                            # may its way turn past half a turn on the spot
     check: bool = true
 
 action humanoid_place:

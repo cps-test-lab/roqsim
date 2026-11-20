@@ -60,7 +60,10 @@ controller.
 - **physical**: every mapped joint is tracked by a plain position servo -- the model's own, servos
   this plugin adds where the model has none (`servos: own`), or added beside the model's on every
   joint (`servos: add`, for an arm whose own servos are too soft to hold a load) -- and the base hangs
-  on a soft weld to an anchor the navigator moves. The body pushes and is pushed.
+  on a soft weld to an anchor the navigator moves. The body pushes and is pushed. It trails the
+  anchor; the table states by how much, measured, as `physical: {follow_error}` (m), and a carry
+  plans that much further off everything (the G1-dex1: 0.04 m, its worst over the box swap). A
+  model whose table states none plans with none: the Oli has not been measured.
 
 **No locomotion or balance controller is written, and balance is not simulated.** The base hangs on
 its anchor, the legs play a simple gait while it walks, the feet may slide or press into the floor,

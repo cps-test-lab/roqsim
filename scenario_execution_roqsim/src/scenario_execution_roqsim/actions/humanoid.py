@@ -97,6 +97,8 @@ class HumanoidApproach(HumanoidMove):
         standoff: float = 0.6,
         facing: float | None = None,
         via: str = "",
+        back_max: float = 0.5,
+        long_way: bool = False,
         check: bool = True,
     ):
         facing = _unset_or(
@@ -116,6 +118,8 @@ class HumanoidApproach(HumanoidMove):
                 "standoff": float(standoff),
                 "facing": facing,
                 "via": _via_of(self, via),
+                **({"back_max": float(back_max)} if float(back_max) != 0.5 else {}),
+                **({"long_way": True} if long_way else {}),
             },
             check,
         )
@@ -224,6 +228,8 @@ class HumanoidCarry(HumanoidMove):
         standoff: float = 0.6,
         facing: float | None = None,
         via: str = "",
+        back_max: float = 0.5,
+        long_way: bool = False,
         check: bool = True,
     ):
         facing = _unset_or(
@@ -243,6 +249,8 @@ class HumanoidCarry(HumanoidMove):
                 "standoff": float(standoff),
                 "facing": facing,
                 "via": _via_of(self, via),
+                **({"back_max": float(back_max)} if float(back_max) != 0.5 else {}),
+                **({"long_way": True} if long_way else {}),
             },
             check,
         )

@@ -154,7 +154,7 @@ scenario test_every_action:
             zone_dwelled(zone: 'gate', pattern: 'box_*', since: 0.0)
             zone_left(zone: 'gate', pattern: 'box_*')
             humanoid_approach(humanoid: 'worker', target: 'press/button', standoff: 0.5, facing: 1.5,
-                              via: '0.5, 1.0; 1.0, 1.0', check: false)
+                              via: '0.5, 1.0; 1.0, 1.0', back_max: 0.3, long_way: true, check: false)
             humanoid_reach(humanoid: 'worker', hand: 'right', target: 'press/button',
                            relative: '0.1, 0, 0', orient: false, pose: 'point', check: false)
             humanoid_press(humanoid: 'worker', hand: 'right', target: 'press/button', max_force: 30.0,
@@ -164,7 +164,7 @@ scenario test_every_action:
             humanoid_pull(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
             humanoid_push(humanoid: 'worker', hand: 'right', distance: 0.3, speed: 0.2, check: false)
             humanoid_carry(humanoid: 'worker', to: 'bench', standoff: 0.6, facing: 1.5, via: '1.0, 0.0',
-                           check: false)
+                           back_max: 0.3, long_way: true, check: false)
             humanoid_place(humanoid: 'worker', at: 'bench', release: true, check: false)
             humanoid_play(humanoid: 'worker', clip: 'wave', joints: 'arm_r, head', weight: 0.5,
                           loop: true, fade: 0.2, speed: 1.5, check: false)

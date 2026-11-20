@@ -75,8 +75,70 @@ install is two commands: `pip install Cython`, then
 `pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git`. Without a model
 declared, everyone simply executes what they wanted.
 
-Known limit, stated rather than smuggled: an agent is a **disc**. A long cart is its circumscribed
-circle. Widening to footprints is a real interface change and should be made deliberately.
+Known limit, stated rather than smuggled: to local avoidance an agent is a **disc**. A long cart is
+its circumscribed circle there. The global plan of a body that holds something is not
+(below).
+
+## A way for a body holding something
+
+`roqsim_nav.lattice` plans over position **and heading** for a body and what it holds, so what is
+checked is what the body will walk. It is the planner a carry follows; nothing in it knows a walker,
+a robot or a task.
+
+- **Footprint** (`roqsim_nav.footprint`): convex pieces in the body frame, each with the height band
+  it occupies -- the body's collision geoms, what it holds, the arms that hold it -- built once per
+  carry and rasterized once per heading bin (72 bins of 5 degrees, on a 2.5 cm grid), swept over the
+  bin. A check errs toward "blocked" only, by about two cells at the root plus the bin's sweep at a
+  piece's reach (`Footprint.slack`). `margin` grows every piece, for a body that follows its way with
+  an error.
+- **Height layers**: each piece meets only what stands in its own band -- `wall_polygons` over that
+  band, the static walls and the bodies with DOFs that stand still (a door's leaf as it stands),
+  except what is held. A load at 1.0 m passes over a 0.75 m bench and meets a shelf at its height;
+  the legs meet what stands on the floor.
+- **Moves**: arcs forward (0.1 m, the heading changing by 0 or one bin), a turn on the spot to any
+  heading it sweeps clear (not twice running), a step straight back up to `back_max` (once between
+  moves forward), a turn past half a turn only with `long_way`, and a shot onto the goal. A* picks
+  among them by time plus a cost for each kind and for passing near something.
+- **Near its ends** a move the raster says is blocked is checked exactly, polygon on polygon and
+  across its sweep (each piece posed at samples no point of it moves more than a centimetre
+  between, checked with half that and how far the move's path bows from its chord to spare): a body stands close to what it works at, closer than the raster's
+  slack. There the body's own
+  pieces (`Piece.body`) may stand against what they already stand against at the start, and at
+  the goal against the target it goes to work at (`dock`); what it holds may not. A goal the body
+  would stand in is refused, naming what is there. Every way found is checked so once more before it
+  is returned, and one that meets something raises a `RuntimeError`: a fault of the planner's.
+- **Search**: Hybrid-A*'s: a state's pose stays where its moves took it and is checked there, and
+  two states count as one on a 10 cm, 10 degree grid. The heuristic is, for the first state, a
+  disc's cost to go over what stands on the floor; past it, the cost to go over where the root may
+  stand at some heading, so what the body holds meets what stands at its height in the estimate
+  too. It is weighted (`HEURISTIC_WEIGHT`): far fewer states, ways a little longer than the
+  shortest.
+- **Corridor**: the search keeps to the disc's way (`GridPlanner`), widened by the footprint's
+  reach, and once more at twice that where nothing is found; the way says `widened`. A search
+  gives up after `MAX_STATES` states.
+- **No way**: `NoWay`, naming where it got to, how wide the way is there and between what, and what
+  the footprint meets there at every heading, with `back_max` and `long_way`.
+
+```python
+from roqsim_nav.footprint import Footprint, geom_piece
+from roqsim_nav.lattice import plan_way, NoWay
+
+way = plan_way(
+    model,
+    data,
+    Footprint(pieces),
+    (x, y, yaw),
+    (gx, gy, gyaw),
+    back_max=0.5,
+    long_way=False,
+    skip_roots=[held_root],
+)
+way.segments  # walk (poses), turn (angle), back (distance)
+way.summary()  # seconds, expanded, length, reverses, long_turns, margin, widened
+```
+
+`check_way` checks every pose of a way with the exact footprint, at every centimetre and degree.
+The test worlds of the cases it was built for are in `tests/data/carry_*.xml`.
 
 ## Routes, and stopping
 
@@ -134,7 +196,10 @@ navigator that finished its previous route is already "finished" when a new one 
 * over ROS 2: nav2's `NavigateToPose` / `NavigateThroughPoses`, served by `roqsim_nav_ros`, and the
   configured route as `roqsim_nav_interfaces/StartRoute` at `<entity>/start_route` — served only by
   a mover that has one. A nav2 goal with no poses is aborted, never read as "start".
-* in process: `ctx.blackboard.get("nav:cart:handle").send_goals([(2.0, 0.0)])`, or `.start()`
+* in process: `ctx.blackboard.get("nav:cart:handle").send_goals([(2.0, 0.0)])`, or `.start()`;
+  `send_goals(goals, exact=True)` walks one route as given, unplanned and unsteered, with no
+  recovery, no corner cut, and its last point stopped at within 1 cm rather than at
+  `arrival_radius`
 
 ## Tests
 
