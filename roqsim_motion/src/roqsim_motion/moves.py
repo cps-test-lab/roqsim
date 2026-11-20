@@ -747,9 +747,9 @@ class HumanoidPlugin(MachinePlugin):
         work."""
         m, d = self._m, self._d
         try:
-            t = self._target(target)
-        except MachineError:
-            return []
+            t = make_target(m, self._ctx.entities, target)
+        except TargetError:
+            return []  # a slot named by its stances alone: nothing to stand against but the floor
         names = set()
         if t.kind != "world" and t.body > 0:
             for b in range(1, m.nbody):
