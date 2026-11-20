@@ -512,3 +512,49 @@ def test_a_way_planned_in_steps_hands_back_while_it_searches_and_is_the_same_way
     assert [s.kind for s in way.segments] == [s.kind for s in whole.segments]
     assert way.poses == whole.poses
     assert way.seconds < whole.seconds * 3 + 0.5  # the time it ran, not the time handed back
+
+
+def _model(xml):
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def test_a_last_straight_shorter_than_a_step_stops_short_of_a_wall_at_the_goal():
+    """The straight onto the goal is checked as long as it is: a shot of 5 cm that brings the tote
+    to 2 cm short of a wall is no fault of the planner's."""
+    model, data = _model(
+        """<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .05"/>
+        <geom name="wall" type="box" pos="1.05 0 0.9" size="0.05 1.5 0.9"/></worldbody></mujoco>"""
+    )
+    fp = _footprint()  # the tote's front 0.62 m ahead of the root: 0.98 at the goal
+    for x0 in (0.31, 0.2):
+        way = plan_way(model, data, fp, (x0, 0.0, 0.0), (0.36, 0.0, 0.0), back_max=0.0)
+        assert check_way(model, data, fp, way) == []
+
+
+def test_a_via_point_whose_leg_takes_every_state_leaves_no_way_for_the_next():
+    """States run out at a via point: the next leg says there is no way, rather than failing on
+    a search it never ran."""
+    model, data = _world("carry_post_straight")
+    fp = _footprint()
+    leg = plan_way(model, data, fp, (0.0, 0.0, 0.0), (1.0, -0.3, None))
+    with pytest.raises(NoWay, match=f"it gave up after {leg.expanded} states"):
+        plan_way(
+            model,
+            data,
+            fp,
+            (0.0, 0.0, 0.0),
+            (4.0, 0.0, 0.0),
+            via=[(1.0, -0.3)],
+            max_states=leg.expanded,
+        )
+
+
+def test_a_goal_the_body_would_stand_in_at_every_heading_is_refused_naming_it():
+    """With no heading given, a goal where the body meets something whichever way it faces is
+    refused before the search, naming what is there."""
+    model, data = _world("carry_post_straight")
+    with pytest.raises(NoWay, match=r"at \(2\.00, 0\.33\) facing any way it meets post"):
+        plan_way(model, data, _footprint(), (0.0, 0.0, 0.0), (2.0, 0.33, None))
