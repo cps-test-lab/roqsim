@@ -140,3 +140,21 @@ def test_without_a_slot_an_approach_stands_off_as_it_did():
         assert _arrived(engine)["stance"] == "0.60 m from its front"
     finally:
         engine.shutdown()
+
+
+def test_an_approach_to_a_grip_a_slot_does_not_have_is_refused_before_it_walks():
+    """``rack/bin_0`` is a place slot, with stances and no grip: an approach to ``rack/bin_0/grip``
+    is refused at once, naming the slot, rather than walking to its stance for a grasp to fail."""
+    engine = _engine()
+    try:
+        t0 = engine.ctx.sim_time
+        st = _run(engine, "approach", target="rack/bin_0/grip")
+        assert "states no grip" in st.error, st.error
+        moved = [
+            ev
+            for ev in engine.ctx.events.all()
+            if ev["source"].startswith("worker") and ev["event"] == "walking" and ev["t"] >= t0
+        ]
+        assert moved == [], moved
+    finally:
+        engine.shutdown()

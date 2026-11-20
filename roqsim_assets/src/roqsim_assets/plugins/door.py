@@ -175,13 +175,14 @@ _HAND_TORQUE = 1e-6
 _HAND_DAMPING = 2.0
 _HANDLE_OUT = 0.03
 _HANDLE_HEIGHT = 1.05
-#: Where its stances stand, in the opening's frame (m): pulling, out from the wall before the handle;
-#: pushing, along the leaf from the hinge (of the width) and out from the wall. A body pushing steps
-#: round with the leaf on an arc about the hinge, so the push stance is near enough the hinge that
-#: the arc passes between the opening's ends, and near enough the handle for the hand on its side.
+#: Where its stances stand: pulling, out from the wall before the handle (m). Pushing, a body steps
+#: round with the leaf on an arc about the hinge's axis, so the push stance is on the arc that
+#: passes between the opening's ends -- of a radius the opening's width less a body's room on the
+#: latch's side (m: half a body's width at the shoulders, and to spare) -- at an angle (rad) from
+#: the wall that keeps it near enough the handle for the hand on its side.
 _PULL_OUT = 0.6
-_PUSH_ALONG = 0.43
-_PUSH_OUT = 0.38
+_PUSH_ROOM = 0.35
+_PUSH_ANGLE = math.radians(45.0)
 
 
 class DoorPlugin(MachinePlugin):
@@ -477,12 +478,14 @@ class DoorPlugin(MachinePlugin):
         yaw0 = yaw_of(self.quat)
         c, s_ = math.cos(yaw0), math.sin(yaw0)
         latch = hinge_x + leaf_dir * (self.width - _HANDLE_IN)
+        # pushing: on the arc about the hinge's axis that passes between the opening's ends, from
+        # the width; the axis hangs mount_offset proud of the wall on the swing side
+        arc = self.width - _PUSH_ROOM
         stances = {
             "pull": (latch, open_side * _PULL_OUT, -open_side),
-            # near enough the hinge that stepping round with the leaf goes through the opening
             "push": (
-                hinge_x + leaf_dir * _PUSH_ALONG * self.width,
-                -open_side * _PUSH_OUT,
+                hinge_x + leaf_dir * arc * math.cos(_PUSH_ANGLE),
+                -open_side * (arc * math.sin(_PUSH_ANGLE) - self.mount_offset),
                 open_side,
             ),
         }
