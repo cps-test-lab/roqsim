@@ -83,6 +83,7 @@ class RobotBody(HumanoidBody):
         super().reset()
         self.facing = None
         self.turn_cap = None
+        self.keep = None
 
     # -- answers ------------------------------------------------------------------------------
     def grip(self, data, side):
@@ -104,8 +105,20 @@ class RobotBody(HumanoidBody):
         x, y, yaw = self.p.root
         return float(x), float(y), float(yaw)
 
+    def follow_error(self, speed: float) -> float:
+        """Kinematic, the base is set to the nav root: none. Physical, the base hangs on a soft weld
+        to an anchor the nav root moves and trails it: by what the model's retargeting table states,
+        measured, as ``physical: {follow_error}`` (m), and none where it states nothing -- a figure
+        a model has not been measured for is not guessed."""
+        if self.p.config["drive"] != "physical":
+            return 0.0
+        return float((self.p.table.physical or {}).get("follow_error", 0.0))
+
     def face(self, yaw):
         self.facing = None if yaw is None else float(yaw)
+
+    def keep_heading(self, yaw):
+        self.keep = None if yaw is None else float(yaw)
 
     def limit_turn(self, rate):
         self.turn_cap = None if rate is None else float(rate)
@@ -421,7 +434,9 @@ class HumanoidRobotPlugin(Plugin):
         speed = float(np.hypot(v[0], v[1]))
         self.root[:2] += v * dt
         self.phase += speed * dt / STRIDE
-        if speed > 1e-3:
+        if self.body.keep is not None:
+            want = self.body.keep  # a move keeps the heading while it steps
+        elif speed > 1e-3:
             want = math.atan2(v[1], v[0])
         elif self.body.facing is not None:
             want = self.body.facing

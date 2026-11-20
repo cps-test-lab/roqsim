@@ -236,7 +236,12 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   A machine (see [Machines](#machines)) with `open`, `close` and `move_to(openness)`, ramped at
   `speed` (rad/s) where a world states one; a program ends when the leaf first comes within 0.02
   of its openness, and the leaf may still settle by a few hundredths after that. It starts at
-  `home: {openness: …}` (closed unless stated). Passive (holds its home openness) or, when
+  `home: {openness: …}` (closed unless stated). With `actuation: hand` its servo does nothing and
+  its programs refuse: the leaf turns only because something pushes or pulls it, against a `closer`
+  (`{stiffness, damping}` at the hinge: a door closer) and its `friction`. Every door with a leaf
+  states slots for a hand: a lever handle's grip on each face, `<name>/pull/grip` on the face it
+  opens toward and `<name>/push/grip` on the other, and a stance before each (`<name>/pull/stand`,
+  `<name>/push/stand`). Passive (holds its home openness) or, when
   `controllable`, an **automatic door**: `std_msgs/Float64` `openness`/`openness_state` topics + a
   `control_msgs/GripperCommand` action `openness_goal`, and it pushes only gently — stalling on an
   obstacle, then giving up, which ends its program with the error `stalled at openness …`; an idle
@@ -283,6 +288,12 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   thick: a wheel rolls over it, a camera sees it, and a ray aimed at the floor returns from it. Dashes
   and stripes are cut geometry, not a texture, so they stay sharp at any distance and stripes run
   through an outline's corners.
+- **`slots`** — where a worker stands to work at a body and where its hand goes, as sites on it:
+  nested under the entry whose `body` (as the model names it) they are on, per slot a hand target
+  (`kind: grip` → `<entry>/<slot>/grip` in the grip-frame convention, `place` → `<entry>/<slot>` +z
+  up, `press` → `<entry>/<slot>` +x out of the face) at `at` (x, y, z, yaw in the body's frame),
+  and stances `<entry>/<slot>/stand[_<k>]` at `stand` (`[[x, y, yaw], ...]`). `roqsim_motion`'s
+  `approach` and `carry` walk to a slot's nearest stance; `docs/plugins.rst`, "Slots".
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers

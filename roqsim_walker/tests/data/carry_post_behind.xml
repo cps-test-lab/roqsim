@@ -1,0 +1,15 @@
+<!-- The walker holds a tote in front of it at the end of a dead end, the alcove's sides close
+     beside it: it cannot turn round there. Stepped back out of the alcove it can, but a post
+     stands where that turn sweeps the tote after a short step back, and a second where the
+     straight way out after the turn would take the tote. -->
+<mujoco model="carry_post_behind">
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <geom name="end_wall" type="box" pos="0.95 0 0.9" size="0.05 0.6 0.9"/>
+    <geom name="side_n" type="box" pos="0.6 0.5 0.9" size="0.4 0.05 0.9"/>
+    <geom name="side_s" type="box" pos="0.6 -0.5 0.9" size="0.4 0.05 0.9"/>
+    <geom name="post" type="box" pos="-0.25 0.75 0.9" size="0.05 0.05 0.9"/>
+    <geom name="post_out" type="box" pos="-0.75 0.45 0.9" size="0.05 0.05 0.9"/>
+  </worldbody>
+</mujoco>

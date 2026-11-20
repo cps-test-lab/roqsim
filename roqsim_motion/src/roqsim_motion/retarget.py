@@ -19,7 +19,8 @@ bone lengths (:class:`~roqsim_motion.description.Description`)::
     gaze: spine                              # the joint a look would turn (head by default); no
                                              # robot body looks, so nothing reads it
     rest: {left_elbow_joint: 1.3}            # angles at rest, where the model's zero is not
-    physical: {servos: own, kp: 300.0, kv: 10.0}
+    physical: {servos: own, kp: 300.0, kv: 10.0,   # its servos, and with `drive: physical`
+               follow_error: 0.04}            # how far its base trails the anchor, measured (m)
 
 A joint's angle is its canonical local rotation decomposed in the order listed, each angle times
 ``sign`` plus ``offset``. Limits are read from the model, never restated here. A table naming a

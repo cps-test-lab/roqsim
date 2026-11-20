@@ -1,0 +1,12 @@
+<!-- A body facing east into a dead end, what it holds in front of it near the end wall, the alcove's
+     sides close beside it: it cannot turn round where it stands. Stepped back out of the alcove it
+     can, but a post stands where that turn sweeps what it holds after a short step back. -->
+<mujoco model="carry_post_behind">
+  <worldbody>
+    <geom name="floor" type="plane" size="6 6 0.05"/>
+    <geom name="end_wall" type="box" pos="0.75 0 0.9" size="0.05 0.6 0.9"/>
+    <geom name="side_n" type="box" pos="0.4 0.55 0.9" size="0.35 0.05 0.9"/>
+    <geom name="side_s" type="box" pos="0.4 -0.55 0.9" size="0.35 0.05 0.9"/>
+    <geom name="post" type="box" pos="-0.45 0.75 0.9" size="0.05 0.05 0.9"/>
+  </worldbody>
+</mujoco>

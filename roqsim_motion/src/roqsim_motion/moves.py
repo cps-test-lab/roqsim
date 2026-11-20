@@ -47,9 +47,11 @@ import numpy as np
 
 from roqsim.machine import MACHINE_SCHEMA, MachineError, MachineHandle, MachinePlugin, program
 from roqsim.schema import Field
+from roqsim_nav.footprint import Footprint, Piece, capsule_piece, convex_hull, geom_piece
+from roqsim_nav.lattice import NoWay, Segment, Way, check_way, plan_way_steps
 
 from . import quat as Q
-from .body import SIDES, HumanoidBody
+from .body import PRESS_PROXY, SIDES, HumanoidBody
 from .contact import (
     HOLD_SOLREF,
     Hold,
@@ -107,6 +109,41 @@ CAUGHT = 0.03
 SQUARE_MAX = math.radians(20)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
+#: How far in front of a target a body stands to work at it, where the target states no stance and
+#: the move gives no ``standoff`` (m).
+STANDOFF = 0.6
+#: How far a carry may step straight back at a time, by default (m): the limit of a step back on
+#: its way (``roqsim_nav.lattice``); 0, never.
+BACK_MAX = 0.5
+#: How far a body walking a way may stray from it before the move fails (m), on top of the margin
+#: the way was planned with (``HumanoidBody.follow_error``): what is checked is what is walked.
+FOLLOW_TOL = 0.03
+#: How far off upright (rad) a hinge may be for a pull or push by angle to turn what is on it.
+UPRIGHT = math.radians(15)
+#: How far of its reach a hand goes round a hinge before the body steps round with it.
+STEP_REACH = 0.9
+#: How far of its reach from the body's root a hand that keeps a door where it is may be left as the
+#: body walks on (the way keeps it within that).
+KEEP_REACH = 0.9
+#: A hand keeping a door its closer pushes shut, by contact: how near the hinge its fingertip may
+#: slide (m, from the leaf's end); how far into the face it presses at most (m: the contact's own
+#: give); how fast it slides along the face, and goes round the edge onto it (m/s); how far off the
+#: leaf's free edge it goes round, and how far in from that edge it catches the leaf (m); and how far
+#: the door may close while kept before the move fails (rad).
+EDGE_IN = 0.1
+PUSH_IN = 0.003
+SLIDE_SPEED = 0.4
+ROUND_SPEED = 1.5
+EDGE_AT = 0.03
+KEEP_SLIP = math.radians(15)
+#: The radius of a holding arm in a carry's footprint, from shoulder to hand (m), and the height
+#: (m) within which the body's geoms from the floor up make one piece of it.
+ARM_RADIUS = 0.05
+BODY_LAYER = 0.3
+#: How many times a leg or a step back that ends short of where it goes is aimed on before the move
+#: fails, and how near its end it must stand (m).
+BACK_TRIES = 3
+AT_END = 0.01
 #: The time constant (s) a hold's force is judged over.
 FORCE_TAU = 0.15
 
@@ -152,10 +189,10 @@ class HumanoidHandle(MachineHandle):
     def release(self, hand: str = "both") -> int:
         return self.start("release", hand=hand)
 
-    def pull(self, hand: str, distance: float, **kw) -> int:
+    def pull(self, hand: str, distance: float | None = None, **kw) -> int:
         return self.start("pull", hand=hand, distance=distance, **kw)
 
-    def push(self, hand: str, distance: float, **kw) -> int:
+    def push(self, hand: str, distance: float | None = None, **kw) -> int:
         return self.start("push", hand=hand, distance=distance, **kw)
 
     def carry(self, to: str | dict, **kw) -> int:
@@ -200,6 +237,16 @@ class HumanoidPlugin(MachinePlugin):
         self._force = {s: 0.0 for s in SIDES}
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}  # a second hand riding on what the first holds
+        self._stance = ""  # where the last walk stood: a stance site, or its stand-off
+        #: side -> how a hand keeps a door its closer pushes shut: "weld" (by its hold, the hand
+        #: where it is), "round" (going round the leaf's edge onto the face the closer pushes), or
+        #: "contact" (its fingertip pushing on that face, the hold off)
+        self._keep = {}
+        self._kept_at = {}  # side -> the hinge's angle when the hand first kept it (rad)
+        self._push = {}  # side -> the most the door pushed back on the hand while kept (N)
+        self._tip_goal = {}  # side -> the last goal of a hand keeping a door by contact
+        self._keep_z = {}  # side -> the height the hand keeps a door at (m)
+        self._keep_at_face = {}  # side -> whether the fingertip is on the face it pushes
         self._turns = {
             s: 0.0 for s in SIDES
         }  # how far each hand turned on the handle it took (rad)
@@ -269,8 +316,10 @@ class HumanoidPlugin(MachinePlugin):
         self._objects = objects
         # What the humanoid may hold does not collide with its own body: a box held against the
         # thighs would be pressed into them by the hold. Its hands still press buttons, which are no
-        # graspable.
-        own = [b.name for b in spec.bodies if self._own(b.name)]
+        # graspable. The fingertips a hand presses with are left to collide with it, so a hand that
+        # lets go of a door can keep it open by pushing on its face.
+        proxies = {f"{self.entity}/{PRESS_PROXY.format(side=s)}" for s in SIDES}
+        own = [b.name for b in spec.bodies if self._own(b.name) and b.name not in proxies]
         held = {spec.site(o).parent.name for o in objects}
         for obj in sorted(held):
             for b in own:
@@ -306,6 +355,16 @@ class HumanoidPlugin(MachinePlugin):
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}
         self._turns = {s: 0.0 for s in SIDES}
+        # a door kept when the run was reset is kept no more
+        for state in (
+            self._keep,
+            self._kept_at,
+            self._push,
+            self._tip_goal,
+            self._keep_z,
+            self._keep_at_face,
+        ):
+            state.clear()
 
     # -- helpers ----------------------------------------------------------------------------
     @property
@@ -448,8 +507,8 @@ class HumanoidPlugin(MachinePlugin):
         for side, h in self.holding.items():
             if h is None:
                 continue
-            if self._riding[side]:
-                continue
+            if self._riding[side] or self._keep.get(side) in ("round", "contact"):
+                continue  # riding on another hold, or keeping a door by contact: no weld to judge
             self._force[side] += a * (
                 h.force(self._d, h.slide_axis(self._m, self._d)) - self._force[side]
             )
@@ -474,8 +533,44 @@ class HumanoidPlugin(MachinePlugin):
             )
         return sides
 
-    def _stand_for(self, target: str, standoff: float, facing):
-        """Where to stand, and which way to face, to work on ``target``."""
+    def _stances(self, target) -> list:
+        """The stances a target states: sites ``<target>/stand`` and ``<target>/stand_<k>`` (and
+        for a grip site ``<x>/grip``, those of ``<x>``), on the floor, their +x the way to face --
+        ``[(name, (x, y), yaw), ...]``."""
+        if not isinstance(target, str):
+            return []
+        m, d = self._m, self._d
+        bases = {target}
+        if target.rsplit("/", 1)[-1].startswith("grip") and "/" in target:
+            bases.add(target.rsplit("/", 1)[0])
+        out = []
+        for sid in range(m.nsite):
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_SITE, sid) or ""
+            base, _, last = name.rpartition("/")
+            if base in bases and (last == "stand" or last.startswith("stand_")):
+                x = d.site_xmat[sid].reshape(3, 3)[:, 0]
+                out.append((name, d.site_xpos[sid][:2].copy(), math.atan2(x[1], x[0])))
+        return out
+
+    def _stand_for(self, target: str, standoff: float | None, facing):
+        """Where to stand, and which way to face, to work on ``target``: at its stance (a slot's
+        ``…/stand`` site, the nearest of several) where it states one and neither ``standoff`` nor
+        ``facing`` is given; else ``standoff`` (0.6 m left out) from its front. A grip site the
+        model does not have (``<slot>/grip`` of a place or press slot) is refused before anything
+        moves, not walked to by its slot's stance."""
+        if isinstance(target, str) and "/" in target and self._site_id(target) < 0:
+            base, last = target.rsplit("/", 1)
+            if last.startswith("grip") and self._stances(base):
+                self.fail(f"unknown target {target}: {base} states no grip, only where to stand")
+        stances = self._stances(target) if standoff is None and facing is None else []
+        if stances:
+            x, y, _ = self.body.root()
+            name, xy, yaw = min(stances, key=lambda s: math.hypot(s[1][0] - x, s[1][1] - y))
+            self._stance = name
+            return np.array(xy, float), yaw
+        if standoff is None:
+            standoff = STANDOFF
+        self._stance = f"{float(standoff):.2f} m from its front"
         d, m = self._d, self._m
         gl, gr = self._site_id(f"{target}/grip_l"), self._site_id(f"{target}/grip_r")
         site = self._site_id(target)
@@ -562,11 +657,11 @@ class HumanoidPlugin(MachinePlugin):
             points.append((x, y))
         return points
 
-    def _first_leg(self, points) -> tuple:
-        """The first of ``points`` the body does not stand on (farther than 5 cm), which the walk
-        sets off toward; the last if it stands on them all."""
-        x, y, _ = self.body.root()
-        return next((p for p in points if math.hypot(p[0] - x, p[1] - y) > 0.05), points[-1])
+    def _back_max(self, back_max) -> float:
+        """``back_max`` as a distance (m), failing the move where it is none."""
+        if not (math.isfinite(float(back_max)) and float(back_max) >= 0.0):
+            self.fail(f"back_max: a distance of 0 m or more, not {back_max!r}")
+        return float(back_max)
 
     def _leg(self, nav, stand, what: str, while_walking=None, via=()):
         """Walk through ``via`` to ``stand``, facing where it walks; carrying (``while_walking``),
@@ -578,40 +673,562 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _walk(self, stand, yaw, what: str, while_walking=None, via=()):
+    def _walk(self, stand, yaw, what: str, via=()):
+        """Walk empty-handed through ``via`` to ``stand``, on the navigator's own plan, and face
+        ``yaw``."""
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to walk to {what} with")
-        if while_walking is not None and via:
-            # Carrying along a way: leg by leg, turning on the spot at a carrying pace between them,
-            # so what it carries in front stays over the way it walks rather than swinging out of
-            # it round a corner the body turns at a carrying pace while walking on.
-            legs = [*via, (float(stand[0]), float(stand[1]))]
-            for i, point in enumerate(legs):
-                x, y, _ = self.body.root()
-                if i and math.hypot(point[0] - x, point[1] - y) > 0.05:
-                    yield from self._come_to_rest(what, while_walking)
-                    yield from self._turn(math.atan2(point[1] - y, point[0] - x), while_walking)
-                yield from self._leg(nav, point, what, while_walking)
-        else:
-            yield from self._leg(nav, stand, what, while_walking, via)
-        if while_walking is not None:
-            # carrying: turn at a carrying pace
-            yield from self._turn(yaw, while_walking)
+        yield from self._leg(nav, stand, what, None, via)
+        yield from self._face(yaw, what, None)
+        yield from self._come_to_rest(what, None)
+        self.step(
+            "arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw), stance=self._stance
+        )
+
+    def _face(self, yaw, what: str, each):
+        """Turn the standing body to ``yaw`` and wait until it faces it (within 3 degrees)."""
         self.body.face(yaw)
         t0 = self._ctx.sim_time
         while abs(
             math.atan2(math.sin(self.body.root()[2] - yaw), math.cos(self.body.root()[2] - yaw))
         ) > math.radians(3):
-            if while_walking is not None:
-                while_walking()
+            if each is not None:
+                each()
             if self._ctx.sim_time - t0 > 5.0:
                 self.fail(
-                    f"cannot face {what}: it turned to {math.degrees(self.body.root()[2]):.0f} deg of {math.degrees(yaw):.0f}"
+                    f"cannot face {what}: it turned to {math.degrees(self.body.root()[2]):.0f} deg "
+                    f"of {math.degrees(yaw):.0f}"
                 )
             yield
-        yield from self._come_to_rest(what, while_walking)
-        self.step("arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw))
+
+    def _footprint_now(self, keep_jointed: bool = True) -> tuple[Footprint, list, str]:
+        """The body and what its hands hold, as they are now, as a footprint in the body's frame --
+        its collision geoms, every solid geom of what it holds and of what rides in it, and each
+        holding arm from shoulder to hand -- with the weld roots of what is held (not obstacles to
+        its own way) and the name of what it holds."""
+        m, d = self._m, self._d
+        root = self.body.root()
+        x, y, yaw = root
+        c, s = math.cos(-yaw), math.sin(-yaw)
+        # what is kept on its joint (a door held open) is no part of the footprint but an obstacle
+        # as it stands, and its hand and arm stay with it
+        kept = {s for s in SIDES if keep_jointed and self._kept(s)}
+        held = sorted(
+            {h.obj_body for s, h in self.holding.items() if h is not None and s not in kept}
+        )
+        roots = {int(m.body_weldid[b]) for b in held}
+        for b in held:
+            roots |= {int(m.body_weldid[r]) for r in self._contents(b)}
+        # the body's own parts are its footprint, not obstacles to it (a robot's links have DOFs)
+        own = {int(m.body_weldid[b]) for b in range(1, m.nbody) if self.body.owns(m, b)}
+        pieces = []
+        for g in range(m.ngeom):
+            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            body = int(m.geom_bodyid[g])
+            mine = self.body.owns(m, body)
+            if not mine and int(m.body_weldid[body]) not in roots:
+                continue
+            if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE:
+                continue
+            # a part parked below the floor (a press proxy) has no piece
+            label = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, body) or f"body {body}"
+            piece = geom_piece(m, d, g, root, f"{'body' if mine else 'held'}:{label}")
+            if piece is not None:
+                piece.body = mine
+                pieces.append(piece)
+        for side, h in self.holding.items():
+            if h is None or side in kept:
+                continue
+            ends = []
+            for point in (self.body.shoulder(d, side), self.body.grip(d, side)[0]):
+                rel = np.asarray(point, float)
+                ends.append(
+                    (
+                        (rel[0] - x) * c - (rel[1] - y) * s,
+                        (rel[0] - x) * s + (rel[1] - y) * c,
+                        rel[2],
+                    )
+                )
+            pieces.append(capsule_piece(*ends, ARM_RADIUS, f"arm:{_side_word(side)}"))
+        # A few pieces, each a convex hull of parts at about one height, as tall as they are:
+        # the body's geoms grouped from the floor up (a group takes the geoms that start within
+        # BODY_LAYER of its lowest -- legs, hips, trunk), and each thing it holds whole. A hull
+        # is conservative, and a few pieces are a few rasters and polygons to check.
+        merged = []
+        body = sorted((p for p in pieces if p.what.startswith("body:")), key=lambda p: p.z[0])
+        while body:
+            lo = body[0].z[0]
+            group = [p for p in body if p.z[0] < lo + BODY_LAYER]
+            body = body[len(group) :]
+            hull = convex_hull(np.concatenate([p.polygon for p in group]))
+            merged.append(Piece(hull, (lo, max(p.z[1] for p in group)), "body", body=True))
+        held_pieces = [p for p in pieces if p.what.startswith("held:")]
+        if held_pieces:
+            hull = convex_hull(np.concatenate([p.polygon for p in held_pieces]))
+            band = (min(p.z[0] for p in held_pieces), max(p.z[1] for p in held_pieces))
+            merged.append(Piece(hull, band, "what it holds"))
+        merged += [p for p in pieces if p.what.startswith("arm:")]
+        pieces = merged
+        # what the hands hold, a door kept on its hinge included: what a failure says it holds
+        name = ", ".join(
+            mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}"
+            for b in sorted({h.obj_body for h in self.holding.values() if h is not None})
+        )
+        margin = self.body.follow_error(self._nav_speed())
+        return Footprint(pieces, margin=margin), sorted(roots | own - {0}), name
+
+    def _nav_speed(self) -> float:
+        """The speed the body's navigator walks it at (m/s); 1 where it states none. A way's legs
+        are sent ``exact``, which walks them at this speed: an avoidance model that may command a
+        body up to its ``max_speed`` does not steer an exact route."""
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}")
+        config = getattr(nav, "config", None) or {}
+        return float(config.get("speed", 1.0))
+
+    def _dock(self, target, held) -> list:
+        """The bodies a body may stand against at ``target``: the target's own (its body and
+        everything under it in the tree) and the surface under it -- what a worker stands at to
+        work."""
+        m, d = self._m, self._d
+        try:
+            t = make_target(m, self._ctx.entities, target)
+        except TargetError:
+            return []  # a slot named by its stances alone: nothing to stand against but the floor
+        names = set()
+        if t.kind != "world" and t.body > 0:
+            for b in range(1, m.nbody):
+                x = b
+                while x > 0 and x != t.body:
+                    x = int(m.body_parentid[x])
+                if x == t.body:
+                    names.add(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}")
+        point, _ = t.resolve(m, d)
+        under = held[0] if held else -1
+        _top, body = self._surface(point, under)
+        if body > 0:
+            names.add(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, body) or f"body {body}")
+        return sorted(names)
+
+    def _tethers(self) -> list:
+        """For each hand that keeps something on a joint where it is: ``(ax, ay, bx, by, r)``, the
+        root kept within ``r`` of the segment the hand may be on -- where the hand is, or along the
+        face of a door's leaf it may push on (:meth:`_keep_step`) -- so the hand stays in reach."""
+        out = []
+        x, y, _ = self.body.root()
+        for s in SIDES:
+            if not self._kept(s):
+                continue
+            sh = self.body.shoulder(self._d, s)
+            leaf = self._leaf(s) if self._can_push(s) else None
+            beyond = ()
+            if leaf is None:
+                # the hand reaches from its shoulder, which stands to the side of the root
+                r = KEEP_REACH * self.body.arm_reach(s) + math.hypot(sh[0] - x, sh[1] - y)
+                p = self.body.grip(self._d, s)[0]
+                a = b = p
+            else:
+                # a fingertip sliding along the leaf stays in reach as the body turns on the spot,
+                # which swings its shoulder round the root
+                r = KEEP_REACH * self.body.arm_reach(s)
+                c, u, _n, half, _t = leaf
+                a, b = c + (EDGE_IN - half) * u, c + (half - EDGE_IN) * u
+                # past the line the leaf shuts onto, the body has gone through: the hand lets go
+                # there (:meth:`_keep_step`), and the way is free of the leaf from then on
+                beyond = self._shut_line(s)
+            # where the body stands now is within reach, however it came to stand there
+            r = max(r, _to_segment(x, y, a[0], a[1], b[0], b[1]) + 0.02)
+            out.append((float(a[0]), float(a[1]), float(b[0]), float(b[1]), r, *beyond))
+        return out
+
+    def _closer(self, side: str):
+        """For a hand holding something on a hinge with a spring (a door's closer): the hinge's
+        joint id, and the sign the hinge turns by as the spring shuts it; else ``None``."""
+        h = self.holding[side]
+        if h is None:
+            return None
+        jnt = self._hinge(h.obj_body)
+        if jnt < 0 or float(self._m.jnt_stiffness[jnt]) <= 0.0:
+            return None
+        q = float(self._d.qpos[int(self._m.jnt_qposadr[jnt])])
+        shut = float(self._m.qpos_spring[int(self._m.jnt_qposadr[jnt])]) - q
+        return jnt, (1.0 if shut >= 0.0 else -1.0)
+
+    def _can_push(self, side: str) -> bool:
+        """Whether ``side`` keeps a door by pushing on its leaf: the door has a closer, and the body
+        touches with a fingertip proxy (a robot's own geometry is not a fingertip it can aim)."""
+        return self.body.has_proxies and self._closer(side) is not None
+
+    def _leaf(self, side: str):
+        """The leaf ``side`` holds, now: ``(centre, along, normal, half_length, half_thickness)``
+        in the world, from its largest solid geom, ``normal`` the face the closer pushes it toward
+        (its edge moves that way as the door shuts); ``None`` for what is on no hinge."""
+        m, d = self._m, self._d
+        h = self.holding[side]
+        if h is None or self._hinge(h.obj_body) < 0:
+            return None
+        best, size = -1, 0.0
+        first = int(m.body_geomadr[h.obj_body])
+        for g in range(first, first + int(m.body_geomnum[h.obj_body])):
+            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            half = m.geom_aabb[g][3:]
+            if max(half[0], half[1]) > size:
+                best, size = g, float(max(half[0], half[1]))
+        if best < 0:
+            return None
+        rot = d.geom_xmat[best].reshape(3, 3)
+        half = m.geom_aabb[best][3:]
+        centre = d.geom_xpos[best] + rot @ m.geom_aabb[best][:3]
+        a, t = (0, 1) if half[0] >= half[1] else (1, 0)
+        along, normal = rot[:, a].copy(), rot[:, t].copy()
+        along[2] = normal[2] = 0.0
+        along /= np.linalg.norm(along) + 1e-12
+        normal /= np.linalg.norm(normal) + 1e-12
+        closer = self._closer(side)
+        if closer is not None:
+            jnt, shut = closer
+            moving = shut * np.cross(d.xaxis[jnt], centre - d.xanchor[jnt])
+            if float(np.dot(moving[:2], normal[:2])) < 0.0:
+                normal = -normal
+        return centre, along, normal, float(half[a]), float(half[t])
+
+    def _let_go_kept(self, side: str) -> None:
+        """The body gone through a door ``side`` kept open by pushing: the fingertip off it, the
+        hand empty, and the door left to its closer behind the body."""
+        h = self.holding[side]
+        self._kept_event(side)
+        self.body.press_proxy(self._d, side, False)
+        self.holding[side] = None
+        self._riding[side] = False
+        for state in (self._keep, self._kept_at, self._tip_goal, self._keep_at_face):
+            state.pop(side, None)
+        self.body.set_pose(side, "open")
+        self.body.free_hand(side)
+        name = mujoco.mj_id2name(self._m, mujoco.mjtObj.mjOBJ_BODY, h.obj_body)
+        self.step("let go", hand=_side_word(side), of=name or "what it kept", behind=True)
+
+    def _kept_event(self, side: str) -> None:
+        """``kept``: how ``side`` kept its door through the walk, how far it closed, how hard the
+        hand pushed."""
+        closer = self._closer(side) if self.holding[side] is not None else None
+        if closer is None or side not in self._kept_at:
+            return
+        jnt, shut = closer
+        q = float(self._d.qpos[int(self._m.jnt_qposadr[jnt])])
+        self.step(
+            "kept",
+            hand=_side_word(side),
+            how=self._keep.get(side, "weld"),
+            closed=math.degrees(shut * (q - self._kept_at[side])),
+            force=float(self._push.get(side, 0.0)),
+        )
+
+    def _shut_line(self, side: str):
+        """The line through the hinge of the door ``side`` keeps open by pushing that its leaf
+        lies on once shut, as ``(x, y, nx, ny)``: a point and the normal away from the side the leaf
+        opened to, so a root ``p`` with ``(p - (x, y)) . (nx, ny) >= 0`` has gone through."""
+        c, u, n, _half, _t = self._leaf(side)
+        jnt, _shut = self._closer(side)
+        a = self._d.xanchor[jnt]
+        q = float(self._d.qpos[int(self._m.jnt_qposadr[jnt])])
+        r = np.zeros(4)
+        shut = float(self._m.qpos_spring[int(self._m.jnt_qposadr[jnt])])
+        mujoco.mju_axisAngle2Quat(r, self._d.xaxis[jnt], shut - q)
+        su = Q.rotate(r, u)
+        m = np.array([-su[1], su[0], 0.0])
+        if float(np.dot(c - a, m)) > 0.0:  # the open leaf is on this side: away from it
+            m = -m
+        m /= np.linalg.norm(m) + 1e-12
+        return float(a[0]), float(a[1]), float(m[0]), float(m[1])
+
+    def _through(self, side: str) -> bool:
+        """Whether the body's root has gone past the line the leaf ``side`` keeps shuts onto
+        (:meth:`_shut_line`)."""
+        px, py, nx, ny = self._shut_line(side)
+        x, y, _ = self.body.root()
+        return (x - px) * nx + (y - py) * ny >= 0.0
+
+    def _free_end(self, side: str, c, u) -> float:
+        """The sign along ``u`` of the leaf's end away from its hinge."""
+        jnt, _shut = self._closer(side)
+        return 1.0 if float(np.dot(c - self._d.xanchor[jnt], u)) >= 0.0 else -1.0
+
+    def _leaf_kept(self, side: str, c, u, n):
+        """The leaf's ``(centre, along, normal)`` from :meth:`_leaf` turned about its hinge to the
+        angle ``side`` keeps it at."""
+        jnt, _shut = self._closer(side)
+        q = float(self._d.qpos[int(self._m.jnt_qposadr[jnt])])
+        axis = self._d.xaxis[jnt]
+        r = np.zeros(4)
+        mujoco.mju_axisAngle2Quat(r, axis, self._kept_at[side] - q)
+        a = self._d.xanchor[jnt]
+        return a + Q.rotate(r, c - a), Q.rotate(r, u), Q.rotate(r, n)
+
+    def _keep_start(self) -> list:
+        """Before a walk that keeps a door: each keeping hand held where it is, by its hold; the
+        door's angle noted. Returns the keeping sides."""
+        kept = [s for s in SIDES if self._kept(s)]
+        for s in kept:
+            # from where and as the hand is: a goal it has not reached, or a hand left to turn as
+            # the arm does while the body walks round, would drag the door with it
+            self.body.set_hand(s, *self.body.grip(self._d, s))
+            if s not in self._keep:
+                self._keep[s] = "weld"
+                self._push[s] = 0.0
+                self._tip_goal.pop(s, None)
+                self._keep_at_face.pop(s, None)
+                # the angle kept: noted once, as the hand first keeps it, for every leg after
+                jnt = self._hinge(self.holding[s].obj_body)
+                if jnt >= 0:
+                    self._kept_at[s] = float(self._d.qpos[int(self._m.jnt_qposadr[jnt])])
+        return kept
+
+    def _keep_step(self) -> None:
+        """A hand keeping a door its closer pushes shut, every step of the walk: while the body is
+        behind the leaf, by its hold, the hand where it is; once its shoulder has come round onto
+        the face the closer pushes the leaf toward, or past the leaf's edge, the hold off and the
+        fingertip round the free edge onto that face, then sliding along it as the body passes --
+        the closer pressing the leaf into the finger, so the door stays open by contact. Once the
+        body has gone past the line the leaf shuts onto, the hand lets go behind it
+        (:meth:`_let_go_kept`). Fails where the door closes by more than :data:`KEEP_SLIP`."""
+        d = self._d
+        for s in list(self._keep):
+            if self.holding[s] is None or not self._can_push(s):
+                continue
+            c, u, n, half, thick = self._leaf(s)
+            sh = self.body.shoulder(d, s)
+            tip = self.body.tip(d, s)
+            mode = self._keep[s]
+            if mode == "weld":
+                beyond = abs(float(np.dot(sh - c, u))) > half  # past the leaf's edge
+                if float(np.dot(sh - c, n)) <= 0.0 and not beyond:
+                    continue  # behind the leaf: the hold keeps it, the hand where it is
+                self.holding[s].set(d, False)
+                self.body.press_proxy(d, s, True)
+                self.body.set_pose(s, "point")
+                self._keep_z[s] = float(self.body.grip(d, s)[0][2])
+                name = mujoco.mj_id2name(
+                    self._m, mujoco.mjtObj.mjOBJ_BODY, self.holding[s].obj_body
+                )
+                self.step("pushing", hand=_side_word(s), on=name or "what it keeps")
+                mode = self._keep[s] = "round" if float(np.dot(tip - c, n)) < thick else "contact"
+            if mode == "round":
+                # out past the free edge as the fingertip is, then across before the face the
+                # closer turns the leaf toward: round the edge, not through its corner
+                end = self._free_end(s, c, u)
+                out = c + end * (half + EDGE_AT) * u
+                if end * float(np.dot(tip - c, u)) < half + 0.5 * EDGE_AT:
+                    want = out + n * float(np.dot(tip - c, n))
+                else:
+                    want = out + n * (thick + EDGE_AT)
+                    if float(np.linalg.norm((want - tip)[:2])) < EDGE_AT:
+                        mode = self._keep[s] = "contact"
+            if mode == "contact" and self._through(s):
+                self._let_go_kept(s)
+                continue
+            if mode == "contact":
+                pushed = contact_force(self._m, d, self.holding[s].obj_body, exclude=None) > 0.0
+                if pushed:
+                    self._keep_at_face[s] = True
+                if self._keep_at_face.get(s):
+                    # on the face: sliding along it to stay before the shoulder as the body
+                    # passes, out to its free edge, in toward the hinge no nearer than EDGE_IN
+                    free = self._free_end(s, c, u)
+                    along = free * float(
+                        np.clip(free * np.dot(sh - c, u), EDGE_IN - half, half - EDGE_AT)
+                    )
+                else:
+                    # onto the face by the free edge it came round, fast, so the leaf that runs
+                    # from it is caught
+                    along = self._free_end(s, c, u) * (half - EDGE_AT)
+                # into the face as it is by a press's depth at most, and never past where it
+                # stood at the angle kept: a leaf that closed a little is brought back, a press
+                # at a time, and none is opened further
+                face = c + along * u + n * thick
+                kc, ku, kn = self._leaf_kept(s, c, u, n)
+                behind = float(np.dot(face - (kc + along * ku + kn * thick), n))
+                want = face - n * min(behind, PUSH_IN)
+            # the hand moved by where its fingertip should go, at the height it kept the door at,
+            # by its position alone: the fingertip is a sphere, and a hand turned to point at a
+            # face it reaches round the edge for is one the arm cannot always make
+            g, gq = self.body.grip(d, s)
+            want = want + (g - tip)
+            want[2] = self._keep_z[s]
+            # from where the last goal was, at its pace (from the hand, one that lags its goal
+            # would hardly move)
+            last = self._tip_goal.get(s, g)
+            step = want - last
+            fast = mode == "round" or not self._keep_at_face.get(s)
+            most = (ROUND_SPEED if fast else SLIDE_SPEED) * self._ctx.dt
+            if float(np.linalg.norm(step)) > most:
+                want = last + step * (most / float(np.linalg.norm(step)))
+            self._tip_goal[s] = want
+            # turned as it is, so the fingertip stays where the hand's offset to it says
+            self.body.set_hand(s, want, gq)
+            self._push[s] = max(
+                self._push[s], contact_force(self._m, d, self.holding[s].obj_body, exclude=None)
+            )
+        for s, q0 in self._kept_at.items():
+            h = self.holding.get(s)
+            closer = self._closer(s) if h is not None else None
+            if closer is None:
+                continue
+            jnt, shut = closer
+            closed = shut * (float(d.qpos[int(self._m.jnt_qposadr[jnt])]) - q0)
+            if closed > KEEP_SLIP:
+                self.fail(
+                    f"lost the door: it closed {math.degrees(closed):.0f} deg while kept "
+                    f"(at most {math.degrees(KEEP_SLIP):.0f})"
+                )
+
+    def _walk_way(self, stand, yaw, what: str, carried, via=(), back_max=BACK_MAX, long_way=False):
+        """Holding something: plan a way for the body and what it holds to ``stand`` facing
+        ``yaw`` (:func:`roqsim_nav.lattice.plan_way`), through ``via``, and walk exactly that way --
+        its legs exact on the navigator, its turns on the spot, its steps back -- what it holds
+        held in the hands all along."""
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if nav is None:
+            self.fail(f"{self.entity} has no navigator to walk to {what} with")
+        fp, skip, held = self._footprint_now()
+        label = what if isinstance(what, str) else "where it is sent"
+        each = lambda: self._hold_carried(carried)  # noqa: E731
+        # while the way is planned the body stands as it is, its heading kept: turning, it would
+        # swing what it holds
+        self.body.keep_heading(self.body.root()[2])
+        try:
+            # planned in steps, the simulation stepping on between them: the body stands holding
+            # what it holds, and no tick waits for the whole search
+            steps = plan_way_steps(
+                self._m,
+                self._d,
+                fp,
+                self.body.root(),
+                (float(stand[0]), float(stand[1]), float(yaw)),
+                via=via,
+                back_max=back_max,
+                long_way=long_way,
+                skip_roots=skip,
+                what=held,
+                to=label,
+                dock=self._dock(what, [h.obj_body for h in self.holding.values() if h is not None]),
+                tether=self._tethers(),
+            )
+            while True:
+                try:
+                    next(steps)
+                except StopIteration as done:
+                    way = done.value
+                    break
+                each()
+                yield
+        except NoWay as err:
+            if fp.margin > 0.0:
+                self.fail(
+                    f"{err}; planned {fp.margin:.3f} m clear of everything, how far the body "
+                    "strays from its way"
+                )
+            self.fail(str(err))
+        finally:
+            # however the planning ends -- a way, none, a failure while it ran, a cancel -- the
+            # heading is the body's own again
+            self.body.keep_heading(None)
+        self.step("planned", **way.summary())
+        tol = FOLLOW_TOL + fp.margin
+        kept = self._keep_start()
+        if kept:
+            how = {s: "by contact" if self._can_push(s) else "by its hold" for s in kept}
+            self.step(
+                "keeping", hand=_side_word(kept[0]) if len(kept) == 1 else "both", how=how[kept[0]]
+            )
+
+        def each():
+            self._keep_step()
+            self._hold_carried(carried)
+
+        for seg in way.segments:
+            if seg.kind == "walk":
+                yield from self._walk_leg(nav, seg.poses, label, each, tol)
+            elif seg.kind == "turn":
+                if abs(seg.angle) > math.pi + 1e-6:
+                    self.step(
+                        "turning_long_way",
+                        to=float(seg.poses[-1][2]),
+                        turn=float(seg.angle),
+                    )
+                yield from self._spin(seg.angle, each)
+            elif seg.kind == "back":
+                yield from self._step_back(seg.distance, each, label, tol)
+        yield from self._face(yaw, what, each)
+        yield from self._come_to_rest(what, each)
+        self.step(
+            "arrived", at=[float(stand[0]), float(stand[1])], yaw=float(yaw), stance=self._stance
+        )
+        for side in kept:
+            if self.holding[side] is not None:
+                self._kept_event(side)
+
+    def _walk_leg(self, nav, poses, what: str, each, tol: float):
+        """Walk one leg of a way through its poses, exactly (no plan, no steering), facing where it
+        walks at a carrying pace; fail where the body leaves the leg by more than ``tol``; then
+        stand on its end within :data:`AT_END`, aimed on by what it lacks (a body drawn behind its
+        root comes to rest short) :data:`BACK_TRIES` times at most, and fail where it still stands
+        short."""
+        points = [(float(p[0]), float(p[1])) for p in poses]
+        line = np.asarray(points)
+        end = points[-1]
+        self.body.face(None)
+        self.body.limit_turn(CARRY_TURN)
+        try:
+            check = lambda: self._on_leg(line, tol, what, each)  # noqa: E731
+            yield from self._route(nav, end, what, check, points[1:-1], exact=True)
+            for k in range(BACK_TRIES + 1):
+                yield from self._come_to_rest(what, each)
+                x, y, _ = self.body.root()
+                short = math.hypot(end[0] - x, end[1] - y)
+                if short < AT_END:
+                    break
+                if k == BACK_TRIES:
+                    self.fail(
+                        f"stopped {short:.3f} m short of a leg's end on its way to {what}, at "
+                        f"({x:.2f}, {y:.2f}), aimed on {BACK_TRIES} times"
+                    )
+                # the last few millimetres, straight on; aimed past by what it lacks
+                ux, uy = (end[0] - x) / short, (end[1] - y) / short
+                aim = (end[0] + ux * min(short, 0.04), end[1] + uy * min(short, 0.04))
+                yield from self._route(nav, aim, what, check, exact=True)
+        finally:
+            self.body.limit_turn(None)
+
+    def _on_leg(self, line, tol: float, what: str, each) -> None:
+        """Hold what is carried, and fail if the body has left ``line`` (a polyline) by ``tol``."""
+        each()
+        x, y, _ = self.body.root()
+        p = np.array([x, y])
+        a, b = line[:-1], line[1:]
+        ab = b - a
+        t = np.clip(
+            np.einsum("ij,ij->i", p - a, ab) / np.maximum(np.einsum("ij,ij->i", ab, ab), 1e-12),
+            0,
+            1,
+        )
+        off = float(np.min(np.linalg.norm(a + t[:, None] * ab - p, axis=1))) if len(a) else 0.0
+        if off > tol:
+            self.fail(
+                f"left its way to {what} by {off:.3f} m at ({x:.2f}, {y:.2f}); it keeps to "
+                f"{tol:.3f} m of it"
+            )
+
+    def _spin(self, angle: float, each):
+        """Turn on the spot by ``angle`` (rad, signed) at :data:`CARRY_TURN`, a quarter turn at a
+        time so that it goes round the way it is told, calling ``each`` every step."""
+        heading0 = self.body.root()[2]
+        legs = max(1, int(math.ceil(abs(angle) / (math.pi / 2))))
+        for k in range(1, legs + 1):
+            # on through each quarter but the last, not stopping at it
+            tol = math.radians(3 if k == legs else 25)
+            yield from self._turn_to(heading0 + angle * k / legs, each, tol)
 
     def _come_to_rest(self, what: str, while_walking):
         """Wait for a body drawn behind its root to come to rest: until then what it carries goes
@@ -625,11 +1242,12 @@ class HumanoidPlugin(MachinePlugin):
                 while_walking()
             yield
 
-    def _route(self, nav, stand, what: str, while_walking, via=()):
+    def _route(self, nav, stand, what: str, while_walking, via=(), exact: bool = False):
         """Walk the navigator through ``via`` to ``stand``. A move that ends before the route does --
         cancelled, or failed while walking -- cancels the route, so the body stops where it is rather than walking
         on without the move; a route another sender replaced is theirs and left running."""
-        seq = nav.send_goals([*via, (float(stand[0]), float(stand[1]))])
+        goals = [*via, (float(stand[0]), float(stand[1]))]
+        seq = nav.send_goals(goals, exact=True) if exact else nav.send_goals(goals)
         ended = False
         try:
             self.step("walking", to=[float(stand[0]), float(stand[1])])
@@ -657,27 +1275,28 @@ class HumanoidPlugin(MachinePlugin):
     def approach(
         self,
         target: str | dict,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: list | None = None,
+        back_max: float = BACK_MAX,
+        long_way: bool = False,
     ):
-        """Walk to a stand-off in front of a target and face it: a grip site's or a face's front, a
-        tote's long side (its left grip on the left), or the target as seen from here. ``via``:
+        """Walk to where a target says to stand -- its stance, a slot's ``<target>/stand`` site (the
+        nearest of several), facing its +x -- or, where it states none or ``standoff`` or
+        ``facing`` is given, to ``standoff`` (0.6 m left out) in front of it facing it: a grip
+        site's or a face's front, a tote's long side (its left grip on the left), or the target as
+        seen from here. ``arrived`` says which (``stance``). ``via``:
         floor points ``[x, y]`` it walks through first, in order -- a way of the scene's, round
-        what stands between."""
+        what stands between. Holding something, it walks a way planned for the body and what it
+        holds, as ``carry`` does: ``back_max`` and ``long_way`` as there."""
         points = self._via(via)
+        back_max = self._back_max(back_max)
         stand, yaw = self._stand_for(target, standoff, facing)
         if any(h is not None for h in self.holding.values()):
-            # holding something: it goes along, as in a carry
+            # holding something: it goes along, on a way planned for the body and it
             carried = self._carried()
-            x, y, _ = self.body.root()
-            first = self._first_leg([*points, stand])
-            if math.hypot(first[0] - x, first[1] - y) > 0.05:
-                yield from self._turn(
-                    math.atan2(first[1] - y, first[0] - x), lambda: self._hold_carried(carried)
-                )
-            yield from self._walk(
-                stand, yaw, target, while_walking=lambda: self._hold_carried(carried), via=points
+            yield from self._walk_way(
+                stand, yaw, target, carried, via=points, back_max=back_max, long_way=bool(long_way)
             )
         else:
             yield from self._walk(stand, yaw, target, via=points)
@@ -929,6 +1548,11 @@ class HumanoidPlugin(MachinePlugin):
             self.holding[s].set(self._d, False)
             self.holding[s] = None
             self._riding[s] = False
+            self._kept_at.pop(s, None)
+            if self._keep.pop(s, None) is not None:
+                self.body.press_proxy(self._d, s, False)
+                self._tip_goal.pop(s, None)
+                self._keep_at_face.pop(s, None)
             self.body.set_pose(s, "open")
             self.body.gripper(self._d, s, False)
         yield from self.wait(0.3)
@@ -1044,30 +1668,234 @@ class HumanoidPlugin(MachinePlugin):
         return at_stop
 
     @program
-    def pull(self, hand: str, distance: float, speed: float = 0.2, axis: list | None = None):
+    def pull(
+        self,
+        hand: str,
+        distance: float | None = None,
+        speed: float = 0.2,
+        axis: list | None = None,
+        angle: float | None = None,
+    ):
         """Pull what a hand holds toward the humanoid by ``distance`` m -- what it holds moves that far,
         the hand going on past it for a hand that lags -- along its slide joint for a drawer, else
-        straight out of its grip. A drawer that reaches its end stop first is out."""
+        straight out of its grip. A drawer that reaches its end stop first is out. What turns on a
+        hinge (a door) is pulled round it by ``angle`` (deg) instead: the hand goes round the arc the
+        hinge sets, and where the arc leaves its reach the body steps round with it."""
         sides = self._held(hand)
-        moved = yield from self._along(sides, distance, axis, speed, 1.0, "what it pulls")
+        if angle is not None:
+            turned = yield from self._round(sides, angle, speed, 1.0, "what it pulls")
+            self.step("pulled", angle=turned)
+            return
+        moved = yield from self._along(
+            sides, self._distance(distance), axis, speed, 1.0, "what it pulls"
+        )
         self.step("pulled", distance=moved)
 
     @program
-    def push(self, hand: str, distance: float, speed: float = 0.2, axis: list | None = None):
+    def push(
+        self,
+        hand: str,
+        distance: float | None = None,
+        speed: float = 0.2,
+        axis: list | None = None,
+        angle: float | None = None,
+    ):
         """Push what a hand holds away from the humanoid by ``distance`` m -- what it holds moves that
-        far, as a pull's -- a drawer shut, done when it reaches its stop."""
+        far, as a pull's -- a drawer shut, done when it reaches its stop; what turns on a hinge, round
+        it by ``angle`` (deg), as a pull's."""
         sides = self._held(hand)
-        moved = yield from self._along(sides, distance, axis, speed, -1.0, "what it pushes")
+        if angle is not None:
+            turned = yield from self._round(sides, angle, speed, -1.0, "what it pushes")
+            self.step("pushed", angle=turned)
+            return
+        moved = yield from self._along(
+            sides, self._distance(distance), axis, speed, -1.0, "what it pushes"
+        )
         self.step("pushed", distance=moved)
 
+    def _distance(self, distance) -> float:
+        if distance is None:
+            self.fail(
+                "a pull or push goes a distance (m) along a slide or an angle (deg) round a hinge"
+            )
+        return float(distance)
+
+    def _hinge(self, body: int):
+        """The hinge joint ``body`` turns on, or -1."""
+        m = self._m
+        jnt = int(m.body_jntadr[body])
+        if jnt >= 0 and int(m.jnt_type[jnt]) == mujoco.mjtJoint.mjJNT_HINGE:
+            return jnt
+        return -1
+
+    def _round(self, sides, angle: float, speed: float, sign: float, what: str):
+        """Turn what the hands hold round its hinge by ``angle`` degrees: toward the body for a pull
+        (``sign`` 1), away from it for a push (-1). The hands go round the arc the hinge sets. Where
+        that arc leaves a hand's reach, the body steps round the hinge with what it holds, keeping
+        its pose to it -- so a body outside a leaf's swing stays outside it -- on a path checked
+        first with its footprint; one that would meet something fails before it sets off, and a
+        body that leaves it by more than :data:`FOLLOW_TOL` and its margin fails there. A move that
+        would turn a shut leaf further shut fails before anything moves. Returns how far it turned
+        (deg)."""
+        m, d = self._m, self._d
+        if not (math.isfinite(float(angle)) and float(angle) > 0.0):
+            self.fail(f"angle: degrees more than 0, not {angle!r}")
+        lead = next((s for s in sides if not self._riding[s]), sides[0])
+        h0 = self.holding[lead]
+        jnt = self._hinge(h0.obj_body)
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, h0.obj_body) or what
+        for s in sides:
+            if self._keep.get(s) in ("round", "contact"):
+                self.fail(
+                    f"the {_side_word(s)} hand keeps {name} by pushing on its face, not by its "
+                    f"handle: grasp the handle again to turn it"
+                )
+        if jnt < 0:
+            self.fail(f"angle: {name} turns on no hinge; pull or push it by a distance")
+        axis = d.xaxis[jnt].copy()
+        if abs(float(axis[2])) < math.cos(UPRIGHT):
+            # a flap turns up, not round: the body has no way round its axis to step on
+            self.fail(
+                f"angle: {name} turns on a hinge that is not upright "
+                f"({math.degrees(math.acos(min(1.0, abs(float(axis[2]))))):.0f} deg off)"
+            )
+        anchor = d.xanchor[jnt].copy()
+        qadr = int(m.jnt_qposadr[jnt])
+        q0 = float(d.qpos[qadr])
+        grip = d.site_xpos[h0.obj_site].copy()
+        x0, y0, yaw0 = self.body.root()
+        tangent = np.cross(axis, grip - anchor)
+        toward = np.array([x0, y0, grip[2]]) - grip
+        direction = 1.0 if float(np.dot(tangent, toward)) > 0.0 else -1.0
+        total = sign * direction * math.radians(float(angle))
+        # the stop it is shut at: the limit nearest where the hinge hangs at rest (its spring's
+        # reference); a move toward it from there turns nothing, and is no pull or push
+        lo, hi = (float(v) for v in m.jnt_range[jnt])
+        limited = bool(m.jnt_limited[jnt])
+        rest = float(m.qpos_spring[qadr])
+        shut_lo = abs(rest - lo) <= abs(rest - hi)
+        closing = (total < 0.0) if shut_lo else (total > 0.0)
+        if limited and closing and abs(q0 - (lo if shut_lo else hi)) < math.radians(1.0):
+            word, other = ("pull", "push") if sign > 0 else ("push", "pull")
+            self.fail(
+                f"{name} is shut: a {word} from where the hand holds it turns it further shut; "
+                f"{other} it from this side to open it"
+            )
+        starts = {s: self.body.grip(d, s) for s in sides}
+        radius = float(np.linalg.norm((grip - anchor) - np.dot(grip - anchor, axis) * axis))
+
+        def turned(a: float):
+            return Q.axis_angle(axis, a)
+
+        def about(p, a: float):
+            return anchor + Q.rotate(turned(a), np.asarray(p, float) - anchor)
+
+        # where the arc leaves the lead hand's reach, the body steps from there round with it
+        shoulder = self.body.shoulder(d, lead)
+        reach = STEP_REACH * self.body.arm_reach(lead)
+        n = max(2, int(math.ceil(abs(total) / math.radians(2))))
+        steps_from = next(
+            (
+                total * k / n
+                for k in range(n + 1)
+                if np.linalg.norm(about(starts[lead][0], total * k / n) - shoulder) > reach
+            ),
+            None,
+        )
+        turn_z = float(np.sign(axis[2])) or 1.0
+        arc, arc_tol = None, FOLLOW_TOL
+        if steps_from is not None:
+            poses = []
+            for k in range(n + 1):
+                a = total * k / n
+                if abs(a) + 1e-9 < abs(steps_from):
+                    continue
+                p = about([x0, y0, 0.0], a - steps_from)
+                poses.append((float(p[0]), float(p[1]), yaw0 + turn_z * (a - steps_from)))
+            if len(poses) > 1:
+                fp, skip, _held = self._footprint_now(keep_jointed=False)
+                # walked, the step round is watched against the path that is checked here
+                arc, arc_tol = np.array([p[:2] for p in poses]), FOLLOW_TOL + fp.margin
+                hits = check_way(m, d, fp, Way([Segment("walk", poses)], 0.0, 0, 0.0, 0.0), skip)
+                if hits:
+                    hx, hy, hth, names = hits[0]
+                    self.fail(
+                        f"cannot follow {name} round: stepping round with it, the body and what it "
+                        f"holds would meet "
+                        f"{', '.join(names)} at ({hx:.2f}, {hy:.2f}), "
+                        f"{abs(math.degrees(hth - yaw0)):.0f} deg round"
+                    )
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if steps_from is not None and nav is None:
+            self.fail(f"{self.entity} has no navigator to step round {name} with")
+        self.step(
+            "moving", hand=_side_word(lead) if len(sides) == 1 else "both", angle=float(angle)
+        )
+        duration = max(abs(total) * max(radius, 0.1) / max(speed, 1e-3), 0.5)
+        t0 = self._ctx.sim_time
+        sent, stepping = None, False
+        try:
+            while True:
+                u = min((self._ctx.sim_time - t0) / duration, 1.0)
+                u = u * u * (3.0 - 2.0 * u)
+                a = total * u
+                for s in sides:
+                    self.body.set_hand(s, about(starts[s][0], a), Q.mul(turned(a), starts[s][1]))
+                if steps_from is not None and abs(a) >= abs(steps_from):
+                    if not stepping:
+                        stepping = True
+                        self.step("stepping", round=name)
+                    p = about([x0, y0, 0.0], a - steps_from)
+                    self.body.keep_heading(yaw0 + turn_z * (a - steps_from))
+                    if sent is None or math.hypot(p[0] - sent[0], p[1] - sent[1]) > 0.02:
+                        sent = (float(p[0]), float(p[1]))
+                        nav.send_goals([sent], exact=True)
+                    if arc is not None:
+                        self._on_leg(arc, arc_tol, f"round {name}", lambda: None)
+                self._check_holds()
+                q = float(d.qpos[qadr])
+                if limited and ((total > 0 and q > hi - 0.01) or (total < 0 and q < lo + 0.01)):
+                    break  # at its stop: open as far as it goes, or shut
+                if u >= 1.0:
+                    break
+                yield
+            yield from self.wait(0.3)
+            if stepping:
+                yield from self._come_to_rest(f"round {name}", None)
+        finally:
+            self.body.keep_heading(None)
+        self._check_holds()
+        for s in sides:
+            if s in self._kept_at:
+                # a door kept and turned again is kept at the angle it is turned to
+                self._kept_at[s] = float(d.qpos[qadr])
+        moved = math.degrees((float(d.qpos[qadr]) - q0) * math.copysign(1.0, total))
+        q = float(d.qpos[qadr])
+        # at a stop it turned as far as it goes: open all the way, or shut (a door shut already
+        # was refused before it moved)
+        at_stop = limited and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
+        if moved < 0.8 * float(angle) and not at_stop:
+            self.fail(f"stuck: {name} turned {moved:.0f} of {float(angle):.0f} deg")
+        return moved
+
+    def _kept(self, side: str) -> bool:
+        """Whether ``side`` holds something on a joint (a door, a drawer): it keeps it where it is
+        while the body walks, rather than carrying it along."""
+        h = self.holding[side]
+        if h is None:
+            return False
+        jnt = int(self._m.body_jntadr[h.obj_body])
+        return jnt >= 0 and int(self._m.jnt_type[jnt]) != mujoco.mjtJoint.mjJNT_FREE
+
     def _carried(self):
-        """The held hands' grip poses in the body's frame, to hold them there while it walks."""
+        """The held hands' grip poses in the body's frame, to hold them there while it walks; a hand
+        that keeps something on a joint where it is is not among them, and stays on it."""
         d = self._d
         x, y, yaw = self.body.root()
         inv = Q.axis_angle("z", -yaw)
         rel = {}
         for s in SIDES:
-            if self.holding[s] is not None and not self._riding[s]:
+            if self.holding[s] is not None and not self._riding[s] and not self._kept(s):
                 p, q = self.body.grip(d, s)
                 rel[s] = (Q.rotate(inv, p - np.array([x, y, 0.0])), Q.mul(inv, q))
         return rel
@@ -1083,18 +1911,25 @@ class HumanoidPlugin(MachinePlugin):
     def carry(
         self,
         to: str | dict,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         height: float | None = None,
         via: list | None = None,
         facing: float | None = None,
+        back_max: float = BACK_MAX,
+        long_way: bool = False,
     ):
         """Carry what the hands hold to a target: lift it to a carrying height in front of the body
         (``height``: the hands' height, m; default a hand's breadth under the pelvis, or high enough
-        for what is held to clear the surface the target is on by :data:`CLEAR`), turn toward
-        the way it leaves, walk to a stand-off in front of the target holding it there -- through
-        the floor points ``via`` first, in order, as ``approach`` does -- and face the target, or the
-        world yaw ``facing``, as ``approach`` faces it."""
+        for what is held to clear the surface the target is on by :data:`CLEAR`), and walk to where
+        the target says to stand, or a stand-off in front of it, holding it there, facing as
+        ``approach`` faces -- on a way planned for the body and what it holds
+        (:func:`roqsim_nav.lattice.plan_way`: every pose of both checked in height layers),
+        through the floor points ``via`` in order, and walked exactly. The way steps straight back
+        at most ``back_max`` (m; 0: never) at a time, and turns past half a turn only with
+        ``long_way``, saying so in a ``turning_long_way`` event. A ``planned`` event says what the
+        way cost; where there is none, it fails naming where it got to and what is in the way."""
         points = self._via(via)
+        back_max = self._back_max(back_max)
         sides = self._held("both")
         d = self._d
         m = self._m
@@ -1114,7 +1949,7 @@ class HumanoidPlugin(MachinePlugin):
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
         rel = {}
-        for s in [s for s in sides if not self._riding[s]]:
+        for s in [s for s in sides if not self._riding[s] and not self._kept(s)]:
             p, q = self.body.grip(d, s)
             # in front of the body, at the carrying height, the hands as far apart as they are
             ahead = float(np.dot(p - [x, y, 0.0], heading))
@@ -1137,88 +1972,15 @@ class HumanoidPlugin(MachinePlugin):
             rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
         )
         self._check_holds()
-        self.step("lifted", height=height)
+        # the height the hands holding came to (a riding one too): a lift ends within a few
+        # centimetres of where it aims
+        got = float(np.mean([self.body.grip(d, s)[0][2] for s in sides]))
+        self.step("lifted", height=round(got, 3))
         carried = self._carried()
         stand, yaw = self._stand_for(to, standoff, facing)
-        # Turn toward the way it leaves at a carrying pace first: a body turning on the spot at its
-        # walking rate swings what it holds faster than a hold follows.
-        x, y, heading = self.body.root()
-        first = self._first_leg([*points, stand])
-        leave = math.atan2(first[1] - y, first[0] - x)
-        yield from self._turn(leave, lambda: self._hold_carried(carried))
-        yield from self._walk(
-            stand, yaw, to, while_walking=lambda: self._hold_carried(carried), via=points
+        yield from self._walk_way(
+            stand, yaw, to, carried, via=points, back_max=back_max, long_way=bool(long_way)
         )
-
-    def _turn_way(self, yaw: float) -> float:
-        """How far to turn (rad, signed) from the heading to ``yaw``: the short way, unless what the
-        hands hold would sweep through something on it and the long way is clear; failing if
-        neither is."""
-        heading = self.body.root()[2]
-        short = math.atan2(math.sin(yaw - heading), math.cos(yaw - heading))
-        held = next(
-            (h.obj_body for s, h in self.holding.items() if h is not None and not self._riding[s]),
-            None,
-        )
-        if held is None or abs(short) < math.radians(20):
-            return short
-        long = short - math.copysign(2 * math.pi, short)
-        blocked = {}
-        for way in (short, long):
-            blocked[way] = self._swept(held, way)
-            if blocked[way] is None:
-                return way
-        self.fail(
-            f"cannot turn to {math.degrees(yaw):.0f} deg: what it holds would sweep through "
-            f"{blocked[short]} one way and {blocked[long]} the other"
-        )
-
-    def _swept(self, held: int, turn: float) -> str | None:
-        """What the held object would sweep through if the body turned on the spot by ``turn``
-        (rad): the name of the first body a point of its footprint meets on the way, at its
-        underside, its middle or its top -- or ``None``. Rays along the arc each point sweeps, so a
-        shelf above it or a surface below it is not in the way, and a post or a wall is."""
-        m, d = self._m, self._d
-        x, y, _ = self.body.root()
-        lo, hi = self._extent(held)
-        origin = d.xpos[held][:2] - [x, y]
-        offsets = self._footprint(held, 0.04)
-        inside = self._contents(held)
-        skip = {int(m.body_weldid[held])} | {int(m.body_weldid[r]) for r in inside}
-        steps = max(2, int(math.ceil(abs(turn) / math.radians(5))))
-        geomid = np.zeros(1, np.int32)
-        for z in (lo[2] + 0.02, 0.5 * (lo[2] + hi[2]), hi[2] - 0.02):
-            for off in offsets:
-                rel = origin + off[:2]
-                prev = np.array([x, y]) + rel
-                for k in range(1, steps + 1):
-                    a = turn * k / steps
-                    c, s = math.cos(a), math.sin(a)
-                    nxt = np.array([x, y]) + np.array([[c, -s], [s, c]]) @ rel
-                    chord = nxt - prev
-                    length = float(np.linalg.norm(chord))
-                    start = np.array([prev[0], prev[1], z])
-                    vec = np.array([chord[0] / length, chord[1] / length, 0.0])
-                    gone = 0.0
-                    while gone < length:
-                        dist = mujoco.mj_ray(m, d, start, vec, None, 1, held, geomid)
-                        if dist < 0 or gone + dist > length:
-                            break
-                        g = int(geomid[0])
-                        body = int(m.geom_bodyid[g])
-                        solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
-                        if (
-                            solid
-                            and int(m.body_weldid[body]) not in skip
-                            and not self.body.owns(m, body)
-                        ):
-                            return (
-                                mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, body) or "the world"
-                            )
-                        gone += dist + 1e-4
-                        start = start + (dist + 1e-4) * vec
-                    prev = nxt
-        return None
 
     def _extent(self, held: int):
         """The held object's world box now: its lowest and highest corners, of its solid geoms."""
@@ -1249,17 +2011,41 @@ class HumanoidPlugin(MachinePlugin):
         p[2] = float(self._extent(held)[0][2])
         return p
 
-    def _turn(self, yaw: float, each=None):
-        """Turn the standing body to ``yaw`` at :data:`CARRY_TURN` (its turn rate capped while it
-        does), calling ``each`` every step; holding something, the way its load sweeps clear
-        (:meth:`_turn_way`), a quarter turn at a time."""
-        heading0 = self.body.root()[2]
-        way = self._turn_way(yaw)
-        legs = max(1, int(math.ceil(abs(way) / (math.pi / 2))))
-        for k in range(1, legs + 1):
-            # on through each quarter but the last, not stopping at it
-            tol = math.radians(3 if k == legs else 25)
-            yield from self._turn_to(heading0 + way * k / legs, each, tol)
+    def _step_back(self, distance: float, each, what: str, tol: float):
+        """Step straight back by ``distance`` (m), keeping the heading, on the navigator exactly
+        (unplanned, unsteered), calling ``each`` every step and failing where the body leaves the
+        straight step by more than ``tol`` -- the step the way was checked on; then come to rest. A
+        step that falls short is aimed on by what it lacks (:data:`BACK_TRIES` times at most), to
+        stand within :data:`AT_END` of where the way goes on from; one still short then fails."""
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if nav is None:
+            self.fail(f"{self.entity} has no navigator to step back with")
+        x0, y0, h = self.body.root()
+        back = np.array([-math.cos(h), -math.sin(h)])
+        self.step("stepping_back", distance=float(distance))
+        self.body.keep_heading(h)
+        self.body.limit_turn(CARRY_TURN)
+        try:
+            aim = distance
+            for k in range(BACK_TRIES):
+                goal = (x0 + aim * back[0], y0 + aim * back[1])
+                line = np.array([(x0, y0), goal])
+                check = lambda line=line: self._on_leg(line, tol, what, each)  # noqa: E731
+                yield from self._route(nav, goal, "a step back", check, exact=True)
+                yield from self._come_to_rest("a step back", check)
+                x, y, _ = self.body.root()
+                short = distance - float(np.dot([x - x0, y - y0], back))
+                if short < AT_END:
+                    break
+                if k == BACK_TRIES - 1:
+                    self.fail(
+                        f"stepped back {distance - short:.3f} m of {distance:.3f} on its way to "
+                        f"{what}, aimed on {BACK_TRIES} times"
+                    )
+                aim += short
+        finally:
+            self.body.keep_heading(None)
+            self.body.limit_turn(None)
 
     def _turn_to(self, yaw: float, each=None, tol: float = math.radians(3)):
         self.body.limit_turn(CARRY_TURN)
@@ -1651,6 +2437,14 @@ class HumanoidPlugin(MachinePlugin):
         self._body_call("set_gaze", target or None)
         yield from self.until(self.body.looking, timeout=SETTLE * 2, what="the head turning")
         self.step("looking", target=target)
+
+
+def _to_segment(x, y, ax, ay, bx, by) -> float:
+    """How far ``(x, y)`` is from the segment ``a``-``b`` (m)."""
+    ex, ey = bx - ax, by - ay
+    n = ex * ex + ey * ey
+    t = 0.0 if n < 1e-12 else min(max(((x - ax) * ex + (y - ay) * ey) / n, 0.0), 1.0)
+    return math.hypot(x - ax - t * ex, y - ay - t * ey)
 
 
 def _graspable(site: str, pattern: str) -> bool:

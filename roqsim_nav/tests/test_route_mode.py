@@ -102,6 +102,25 @@ def test_exact_follows_the_given_polyline_through_the_wall(tmp_path):
         engine.shutdown()
 
 
+def test_a_route_sent_exact_is_walked_as_given_and_the_next_one_is_planned_again(tmp_path):
+    """``send_goals(..., exact=True)`` makes one route exact on a navigator that plans: it walks
+    straight through the divider. The next route sent without it is planned round the divider."""
+    engine = _engine(tmp_path, autostart=False)
+    engine.setup()
+    engine.reset()
+    try:
+        nav = engine.ctx.blackboard.get("nav:cart:handle")
+        seq = nav.send_goals([GOAL], exact=True)
+        track = _track(engine, seconds=12.0)
+        assert nav.status()[0] == seq and nav.status()[1]
+        assert np.abs(track[:, 1]).max() < 0.05, "an exact route was planned round the wall"
+        nav.send_goals([START])
+        track = _track(engine, seconds=14.0)
+        assert np.abs(track[:, 1]).max() > 2.5, "the route after an exact one was not planned"
+    finally:
+        engine.shutdown()
+
+
 def _max_offset_from_polyline(track):
     """How far the track ever strays from the two legs x = -2.5 and y = 2.0."""
     return float(np.minimum(np.abs(track[:, 0] + 2.5), np.abs(track[:, 1] - 2.0)).max())
@@ -439,3 +458,30 @@ def test_lookahead_without_pure_pursuit_is_refused(tmp_path):
 def test_an_unknown_tracker_is_refused(tmp_path):
     with pytest.raises(PluginError, match="tracker"):
         _engine(tmp_path, tracker="stanley")
+
+
+@pytest.mark.parametrize("tracker", ["waypoint", "pure_pursuit"])
+def test_a_route_sent_exact_keeps_to_its_legs_and_stops_at_its_last_point(tmp_path, tracker):
+    """Sent ``exact``, a route is walked as given whatever the tracker and ``arrival_radius``: its
+    corner is not cut, a point is passed where its leg ends, and the last one is stopped at within a
+    centimetre, not at the arrival radius."""
+    extra = {"lookahead": 0.6} if tracker == "pure_pursuit" else {}
+    engine = _engine(tmp_path, autostart=False, arrival_radius=0.3, tracker=tracker, **extra)
+    engine.setup()
+    engine.reset()
+    try:
+        nav = engine.ctx.blackboard.get("nav:cart:handle")
+        last = (2.5, 2.0)
+        seq = nav.send_goals([(-2.5, 2.0), last], exact=True)
+        track = []
+        for _ in range(int(20.0 / engine.ctx.dt)):
+            engine.step()
+            track.append(_xy(engine))
+            if nav.status()[0] == seq and nav.status()[1]:
+                break
+        assert nav.status()[0] == seq and nav.status()[1] and nav.status()[4] == ""
+        assert _max_offset_from_polyline(np.array(track)) < 0.03
+        # where it was when the route ended (a commanded route ended, it resumes its own)
+        assert np.linalg.norm(track[-1] - np.asarray(last)) < 0.011
+    finally:
+        engine.shutdown()

@@ -669,3 +669,108 @@ def test_an_old_start_state_is_refused_naming_home_openness(old, named):
 
     errors = DoorPlugin(old).validate_config(old)
     assert any(named in e for e in errors), errors
+
+
+# -- moved by hand ---------------------------------------------------------------------------------
+HAND = {"actuation": "hand", "max_angle": 100, "closer": {"stiffness": 15.0, "damping": 6.0}}
+
+
+def test_a_door_moved_by_hand_has_a_servo_that_does_nothing_and_a_closer(tmp_path):
+    engine = _built(tmp_path, HAND)
+    try:
+        m = engine.ctx.model
+        aid = _id(engine, mujoco.mjtObj.mjOBJ_ACTUATOR, "hinge_pos")
+        jid = _id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")
+        assert m.actuator_forcelimited[aid] and max(abs(m.actuator_forcerange[aid])) < 1e-5
+        assert m.jnt_stiffness[jid] == pytest.approx(15.0)
+        assert m.dof_damping[m.jnt_dofadr[jid]] == pytest.approx(6.0)
+        assert m.dof_frictionloss[m.jnt_dofadr[jid]] == pytest.approx(0.3)
+        # nothing commands it but what pushes it: no openness endpoints, only a machine's own
+        assert {e.name for e in _plugin_endpoints(engine)} <= {"start", "status", "cancel"}
+        door = engine.ctx.blackboard.require("machine:door")
+        st = _finish(engine, door, door.start("open"))
+        assert "is moved by hand" in st.error, st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_moved_by_hand_opens_when_pushed_and_its_closer_shuts_it(tmp_path):
+    engine = _built(tmp_path, HAND)
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+        for _ in range(int(2.0 / engine.ctx.dt)):
+            d.qfrc_applied[dof] = 30.0  # a hand on it, at the hinge
+            engine.step()
+        opened = _hinge_angle(engine)
+        assert opened > math.radians(40), math.degrees(opened)
+        d.qfrc_applied[dof] = 0.0
+        for _ in range(int(6.0 / engine.ctx.dt)):
+            engine.step()
+        # shut, as far as its friction lets the spring: 0.3 N*m against 15 N*m/rad is 1 degree
+        assert _hinge_angle(engine) < math.radians(3), math.degrees(_hinge_angle(engine))
+        # without a closer it stays where it is left
+        engine.shutdown()
+        engine = _built(tmp_path, {"actuation": "hand", "max_angle": 100})
+        m, d = engine.ctx.model, engine.ctx.data
+        for _ in range(int(0.5 / engine.ctx.dt)):
+            d.qfrc_applied[dof] = 30.0
+            engine.step()
+        d.qfrc_applied[dof] = 0.0
+        for _ in range(int(7.0 / engine.ctx.dt)):  # it coasts, off its stop, until it comes to rest
+            engine.step()
+        held = _hinge_angle(engine)
+        for _ in range(int(2.0 / engine.ctx.dt)):
+            engine.step()
+        assert held > math.radians(10) and abs(_hinge_angle(engine) - held) < math.radians(1)
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize("hinge", ["left", "right"])
+@pytest.mark.parametrize("swing", [1, -1])
+def test_a_door_states_a_handle_on_each_face_and_a_stance_before_each(tmp_path, hinge, swing):
+    """The pull grip is on the face the leaf opens toward, its +x into the leaf; its stance stands
+    on that side facing the door. The push grip and stance are on the other side."""
+    engine = _built(tmp_path, {**HAND, "hinge_side": hinge, "swing": swing})
+    try:
+        m, d = engine.ctx.model, engine.ctx.data
+        dof = m.jnt_dofadr[_id(engine, mujoco.mjtObj.mjOBJ_JOINT, "hinge")]
+        leaf = d.body("door_leaf")
+        sides = {}
+        for face in ("pull", "push"):
+            grip = d.site(f"door/{face}/grip")
+            into = grip.xmat.reshape(3, 3)[:, 0]
+            # the grip is off the leaf on one side (y, the wall's normal), pointing into it
+            off = float(grip.xpos[1] - leaf.xpos[1])
+            assert abs(off) > 0.02 and np.sign(into[1]) == -np.sign(off), (face, off, into)
+            assert grip.xmat.reshape(3, 3)[2, 2] == pytest.approx(-1.0)  # fingers down
+            stand = d.site(f"door/{face}/stand")
+            assert np.sign(stand.xpos[1]) == np.sign(off)  # on the side of its handle
+            facing = stand.xmat.reshape(3, 3)[:, 0]
+            assert np.sign(facing[1]) == -np.sign(off)  # facing the door
+            sides[face] = np.sign(off)
+        assert sides["pull"] == -sides["push"]
+        # the side the leaf opens toward is the pull side
+        for _ in range(int(0.5 / engine.ctx.dt)):
+            d.qfrc_applied[dof] = 30.0 * swing
+            engine.step()
+        tip = d.site("door/pull/grip").xpos
+        assert np.sign(tip[1]) == sides["pull"], tip
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("extra", "says"),
+    [
+        ({"actuation": "hand", "controllable": True}, "'controllable' on a door moved by hand"),
+        ({"actuation": "motor"}, "'actuation' must be 'servo' or 'hand'"),
+        ({"closer": {"stiffness": -1}}, "'closer: {stiffness}' must be >= 0"),
+        ({"closer": {"spring": 1}}, "'closer' is {stiffness, damping}"),
+        ({"friction": -0.5}, "'friction' must be >= 0"),
+    ],
+)
+def test_a_hand_door_that_cannot_be_built_is_refused_saying_why(tmp_path, extra, says):
+    with pytest.raises(PluginError, match=says.replace("{", r"\{").replace("}", r"\}")):
+        _built(tmp_path, extra)
