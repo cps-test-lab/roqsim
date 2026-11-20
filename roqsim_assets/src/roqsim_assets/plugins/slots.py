@@ -49,6 +49,15 @@ from roqsim.plugin import Plugin, PluginError
 from roqsim.schema import Field
 
 KINDS = ("grip", "place", "press")
+#: What a slot states; anything else is a mistake that would leave it without a stance or target.
+KEYS = ("kind", "at", "stand")
+
+
+def _numbers(v) -> bool:
+    """Whether ``v`` is a list of finite numbers."""
+    return isinstance(v, (list, tuple)) and all(
+        isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v
+    )
 
 
 def _yaw_quat(yaw: float) -> list:
@@ -85,15 +94,20 @@ class SlotsPlugin(Plugin):
             if not isinstance(slot, dict):
                 errors.append(f"slot {name!r}: a mapping of kind, at and stand")
                 continue
+            for key in slot:
+                if key not in KEYS:
+                    errors.append(
+                        f"slot {name!r}: unknown key {key!r}; a slot states {', '.join(KEYS)}"
+                    )
             kind = slot.get("kind", "place")
             if kind not in KINDS:
                 errors.append(f"slot {name!r}: 'kind' is one of {', '.join(KINDS)}, not {kind!r}")
             at = slot.get("at")
-            if at is not None and not (isinstance(at, (list, tuple)) and len(at) in (3, 4)):
+            if at is not None and not (_numbers(at) and len(at) in (3, 4)):
                 errors.append(f"slot {name!r}: 'at' is [x, y, z] or [x, y, z, yaw], not {at!r}")
             stand = slot.get("stand", [])
             if not isinstance(stand, (list, tuple)) or any(
-                not (isinstance(p, (list, tuple)) and len(p) == 3) for p in stand
+                not (_numbers(p) and len(p) == 3) for p in stand
             ):
                 errors.append(f"slot {name!r}: 'stand' is a list of [x, y, yaw], not {stand!r}")
             if at is None and not stand:
