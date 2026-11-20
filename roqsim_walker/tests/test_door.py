@@ -301,3 +301,19 @@ def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_b
         assert "already meets" not in st.error, st.error
     finally:
         engine.shutdown()
+
+
+def test_a_door_turned_shut_by_more_than_it_is_open_shuts_at_its_stop():
+    """Pushed open 60 deg and pulled back by 80, a door turns until it is shut, at its stop: that is
+    as far as it goes, not a door stuck at 60 of 80 deg."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=60.0).error == ""
+        st = door.run("pull", hand="right", angle=80.0)
+        assert st.error == "", st.error
+        assert abs(door.angle()) < 3.0, door.angle()
+    finally:
+        engine.shutdown()
