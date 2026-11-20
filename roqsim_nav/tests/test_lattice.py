@@ -580,3 +580,31 @@ def test_a_goal_the_body_would_stand_in_at_every_heading_is_refused_naming_it():
     model, data = _world("carry_post_straight")
     with pytest.raises(NoWay, match=r"at \(2\.00, 0\.33\) facing any way it meets post"):
         plan_way(model, data, _footprint(), (0.0, 0.0, 0.0), (2.0, 0.33, None))
+
+
+def test_a_sweep_keeps_the_bow_it_is_given_to_spare():
+    """``sweep_free`` checks a move with ``bow`` to spare, how far the path the root takes may stray
+    from the straight line between its ends (an arc from its chord): a post 3 cm beside a straight
+    move is clear of it with no bow and met with a bow of 5 cm."""
+    model, data = _model("""<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .1"/>
+      <geom name="post" type="box" pos="1.0 0.23 0.5" size="0.05 0.05 0.5"/></worldbody></mujoco>""")
+    fp = Footprint([Piece(_box(0.0, 0.0, 0.2, 0.3), (0.0, 1.0), "body")])
+    layers = L.Layers(
+        model, data, fp.bands, L._bounds(model, data, [(0, 0), (2, 0)], fp.radius), fp.resolution
+    )
+    cs = L._CSpace(layers, fp, (0, 0, *layers.shape), np.ones(layers.shape, bool))
+    cs._exact_setup()
+    assert cs.sweep_free((0.8, 0.0, 0.0), (1.2, 0.0, 0.0), frozenset(), 0.0)
+    assert not cs.sweep_free((0.8, 0.0, 0.0), (1.2, 0.0, 0.0), frozenset(), 0.05)
+
+
+def test_a_goal_facing_a_given_way_near_the_start_may_stand_against_what_the_start_does():
+    """Where the goal's zone and the start's overlap, the goal may stand against what each allows,
+    with a heading given as without one."""
+    model, data = _model("""<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .1"/>
+      <body name="bench" pos="0 0.22 0.25"><geom name="bench" type="box" size="0.6 0.1 0.25"/></body>
+      <geom name="wall" type="box" pos="0 -2 0.5" size="3 0.05 0.5"/></worldbody></mujoco>""")
+    fp = Footprint([Piece(_box(0.0, 0.0, 0.2, 0.3), (0.0, 1.0), "body", body=True)])
+    for goal in ((0.10, 0.0, None), (0.10, 0.0, 0.0)):
+        way = plan_way(model, data, fp, (0.0, 0.0, 0.0), goal)
+        assert math.hypot(way.poses[-1][0] - 0.10, way.poses[-1][1]) < 0.05, (goal, way.poses[-1])
