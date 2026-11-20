@@ -1181,7 +1181,9 @@ def _verify(cs: _CSpace, start, moves, what: str) -> None:
         p = (float(p[0]), float(p[1]), float(p[2]))
         d = math.hypot(p[0] - pose[0], p[1] - pose[1])
         db = int(round(_wrap(p[2] - pose[2]) / dth))
-        if kind == "arc" and d <= STEP + 1e-6 and abs(db) <= 1:
+        # an arc of the search is a step long; a straight shot onto the goal may be shorter, and
+        # is checked as long as it is, below
+        if kind == "arc" and STEP - 1e-3 <= d <= STEP + 1e-6 and abs(db) <= 1:
             steps, x, y = [pose], pose[0], pose[1]
             for q in range(1, 5):
                 tq = pose[2] + db * dth * (q - 0.5) / 4
@@ -1400,6 +1402,23 @@ def plan_way_steps(
                     f"({pose[0]:.2f}, {pose[1]:.2f}) it already meets "
                     f"{', '.join(names) if names else 'something within a few centimetres'}"
                 )
+            # with no heading given, a goal it meets something at whichever way it faces; what it
+            # may stand against there is what the zones round the goal (and the start) allow
+            here = frozenset(cs._zone_of((gl[0], gl[1])) or at_goal)
+            if gl[2] is None and not any(
+                cs.exact_free(gl[0], gl[1], footprint.heading(k), here)
+                for k in range(footprint.bins)
+            ):
+                names = []
+                for k in range(footprint.bins):
+                    for n in cs.meets(gl[0], gl[1], footprint.heading(k)):
+                        if n not in here and n not in names:
+                            names.append(n)
+                raise NoWay(
+                    f"no way holding {what} to {target}: where it would stand at "
+                    f"({gl[0]:.2f}, {gl[1]:.2f}) facing any way it meets "
+                    f"{', '.join(names) if names else 'something'}"
+                )
             if gl[2] is not None and not cs.exact_free(*gl, allowed=at_goal):
                 names = [n for n in cs.meets(*gl) if n not in at_goal]
                 raise NoWay(
@@ -1439,6 +1458,12 @@ def plan_way_steps(
             if moves is not None:
                 widened = widened or widen > 1.0
                 break
+        if moves is None and nearest is None:
+            raise NoWay(
+                f"no way holding {what} to {target}: it gave up after {expanded} states, before "
+                f"it set off from ({pose[0]:.2f}, {pose[1]:.2f}) toward ({gl[0]:.2f}, {gl[1]:.2f}); "
+                f"{limits}"
+            )
         if moves is None:
             x, y, th, _ = nearest
             k = int(np.argmin([math.hypot(px - x, py - y) for px, py in way]))
