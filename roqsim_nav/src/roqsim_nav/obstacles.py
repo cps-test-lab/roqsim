@@ -226,6 +226,8 @@ def _convex_hull_2d(points: np.ndarray) -> np.ndarray:
     pts = np.unique(np.round(np.asarray(points, dtype=float), 9), axis=0)
     if len(pts) < 3:
         return pts
+    if len(pts) > 16:
+        pts = _outer(pts)
     pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
 
     def half(chain_pts):
@@ -237,6 +239,25 @@ def _convex_hull_2d(points: np.ndarray) -> np.ndarray:
         return out[:-1]
 
     return np.array(half(pts) + half(pts[::-1]))
+
+
+def _outer(pts: np.ndarray) -> np.ndarray:
+    """``pts`` less those strictly inside the polygon of its extreme points in eight directions:
+    none of them is on the hull, and a mesh's points are mostly among them, so the chain that
+    follows walks a few dozen points rather than every vertex (Akl-Toussaint)."""
+    dirs = np.array([[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]], float)
+    ext = pts[np.unique(np.argmax(pts @ dirs.T, axis=0))]
+    if len(ext) < 3:
+        return pts
+    # the extreme points in the order of their directions are a convex polygon, counter-clockwise
+    centre = ext.mean(0)
+    ext = ext[np.argsort(np.arctan2(ext[:, 1] - centre[1], ext[:, 0] - centre[0]))]
+    edge = np.roll(ext, -1, axis=0) - ext
+    rel = pts[:, None, :] - ext[None, :, :]
+    inside = np.all(
+        edge[None, :, 0] * rel[:, :, 1] - edge[None, :, 1] * rel[:, :, 0] > 1e-12, axis=1
+    )
+    return pts[~inside]
 
 
 def _cross(o, a, b) -> float:

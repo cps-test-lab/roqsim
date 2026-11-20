@@ -48,7 +48,7 @@ import numpy as np
 from roqsim.machine import MACHINE_SCHEMA, MachineError, MachineHandle, MachinePlugin, program
 from roqsim.schema import Field
 from roqsim_nav.footprint import Footprint, Piece, capsule_piece, convex_hull, geom_piece
-from roqsim_nav.lattice import NoWay, Segment, Way, check_way, plan_way
+from roqsim_nav.lattice import NoWay, Segment, Way, check_way, plan_way_steps
 
 from . import quat as Q
 from .body import SIDES, HumanoidBody
@@ -791,8 +791,14 @@ class HumanoidPlugin(MachinePlugin):
             self.fail(f"{self.entity} has no navigator to walk to {what} with")
         fp, skip, held = self._footprint_now()
         label = what if isinstance(what, str) else "where it is sent"
+        each = lambda: self._hold_carried(carried)  # noqa: E731
+        # while the way is planned the body stands as it is, its heading kept: turning, it would
+        # swing what it holds
+        self.body.keep_heading(self.body.root()[2])
         try:
-            way = plan_way(
+            # planned in steps, the simulation stepping on between them: the body stands holding
+            # what it holds, and no tick waits for the whole search
+            steps = plan_way_steps(
                 self._m,
                 self._d,
                 fp,
@@ -807,16 +813,25 @@ class HumanoidPlugin(MachinePlugin):
                 dock=self._dock(what, [h.obj_body for h in self.holding.values() if h is not None]),
                 tether=self._tethers(),
             )
+            while True:
+                try:
+                    next(steps)
+                except StopIteration as done:
+                    way = done.value
+                    break
+                each()
+                yield
         except NoWay as err:
+            self.body.keep_heading(None)
             if fp.margin > 0.0:
                 self.fail(
                     f"{err}; planned {fp.margin:.3f} m clear of everything, how far the body "
                     "strays from its way"
                 )
             self.fail(str(err))
+        self.body.keep_heading(None)
         self.step("planned", **way.summary())
         tol = FOLLOW_TOL + fp.margin
-        each = lambda: self._hold_carried(carried)  # noqa: E731
         for seg in way.segments:
             if seg.kind == "walk":
                 yield from self._walk_leg(nav, seg.poses, label, each, tol)
