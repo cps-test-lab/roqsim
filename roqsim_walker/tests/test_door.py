@@ -501,3 +501,52 @@ def test_a_load_in_one_hand_is_carried_at_the_side_to_a_door_the_other_hand_open
         assert run("grasp", hand="right", target="door/pull/grip")[0] == ""
     finally:
         engine.shutdown()
+
+
+def test_a_load_in_one_hand_goes_with_the_body_as_it_steps_round_a_door_the_other_pulls():
+    """Carrying a tote at its side in the right hand, the body pulls a door with the left and
+    steps round the hinge with the leaf: the hand carrying the tote goes with the body, as it does
+    on a walk, so its hold keeps the tote. Left where it was, the hand would be pulled from the
+    tote as the body stepped away. (Pulled further, the leaf comes round to the tote on the hinge's
+    side: that is the scenario's to keep clear.)"""
+    tote = {"tote": {"pose": {"position": {"x": -1.0, "y": -1.2}}}, "name": "tote_1"}
+    engine = _door_in_a_wall("right", toward=True, extra=[tote], graspable=("door", "tote_1"))
+    try:
+        h = engine.ctx.blackboard.get("humanoid:worker")
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        d = engine.ctx.data
+        body = engine.ctx.model.body("tote_1").id
+
+        def run(move, **args):
+            seq = h.start(move, **args)
+            t0 = engine.ctx.sim_time
+            while not (h.status().seq == seq and h.status().finished):
+                engine.step()
+                assert engine.ctx.sim_time - t0 < 60.0, f"{move} did not end"
+            return h.status().error
+
+        assert run("approach", target="tote_1/grip_l") == ""
+        assert run("grasp", hand="right", target="tote_1/grip_l") == ""
+        assert run("carry", to="door/pull/grip", height=0.85) == ""
+        assert run("grasp", hand="left", target="door/pull/grip") == ""
+
+        def on_body():
+            x, y, yaw = hp.body.root()
+            g = hp.body.grip(d, "r")[0]
+            c, s_ = math.cos(-yaw), math.sin(-yaw)
+            dx, dy = g[0] - x, g[1] - y
+            return np.array([c * dx - s_ * dy, s_ * dx + c * dy, g[2]])
+
+        start, x0 = on_body(), hp.body.root()
+        seq = h.start("pull", hand="left", angle=8.0)
+        drift = 0.0
+        while not (h.status().seq == seq and h.status().finished):
+            engine.step()
+            drift = max(drift, float(np.linalg.norm(on_body() - start)))
+        assert h.status().error == "", h.status().error
+        x1 = hp.body.root()
+        assert math.hypot(x1[0] - x0[0], x1[1] - x0[1]) > 0.05  # it stepped round
+        assert drift < 0.05, drift  # the carrying hand stayed where it is on the body
+        assert d.xpos[body][2] > 0.3  # still carried
+    finally:
+        engine.shutdown()

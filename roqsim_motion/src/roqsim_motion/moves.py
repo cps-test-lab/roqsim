@@ -1712,7 +1712,8 @@ class HumanoidPlugin(MachinePlugin):
         that arc leaves a hand's reach, the body steps round the hinge with what it holds, keeping
         its pose to it -- so a body outside a leaf's swing stays outside it -- on a path checked
         first with its footprint; one that would meet something fails before it sets off, and a
-        body that leaves it by more than :data:`FOLLOW_TOL` and its margin fails there. A move that
+        body that leaves it by more than :data:`FOLLOW_TOL` and its margin fails there; a hand
+        carrying something else goes with the body, as on a walk. A move that
         would turn a shut leaf further shut fails before anything moves. Returns how far it turned
         (deg)."""
         m, d = self._m, self._d
@@ -1804,6 +1805,8 @@ class HumanoidPlugin(MachinePlugin):
         duration = max(abs(total) * max(radius, 0.1) / max(speed, 1e-3), 0.5)
         t0 = self._ctx.sim_time
         sent, stepping = None, False
+        # a hand carrying something else goes with the body as it steps round, as on a walk
+        carried = {s: v for s, v in self._carried().items() if s not in sides}
         try:
             while True:
                 u = min((self._ctx.sim_time - t0) / duration, 1.0)
@@ -1811,6 +1814,8 @@ class HumanoidPlugin(MachinePlugin):
                 a = total * u
                 for s in sides:
                     self.body.set_hand(s, about(starts[s][0], a), Q.mul(turned(a), starts[s][1]))
+                if carried:
+                    self._hold_carried(carried)
                 if steps_from is not None and abs(a) >= abs(steps_from):
                     if nav is None:
                         self.fail(f"{self.entity} has no navigator to step round {name} with")
