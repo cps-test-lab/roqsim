@@ -118,6 +118,8 @@ BACK_MAX = 0.5
 #: How far a body walking a way may stray from it before the move fails (m), on top of the margin
 #: the way was planned with (``HumanoidBody.follow_error``): what is checked is what is walked.
 FOLLOW_TOL = 0.03
+#: How far off upright (rad) a hinge may be for a pull or push by angle to turn what is on it.
+UPRIGHT = math.radians(15)
 #: How far of its reach a hand goes round a hinge before the body steps round with it.
 STEP_REACH = 0.9
 #: How far of its reach from the body's root a hand that keeps a door where it is may be left as the
@@ -1424,6 +1426,12 @@ class HumanoidPlugin(MachinePlugin):
         if jnt < 0:
             self.fail(f"angle: {name} turns on no hinge; pull or push it by a distance")
         axis = d.xaxis[jnt].copy()
+        if abs(float(axis[2])) < math.cos(UPRIGHT):
+            # a flap turns up, not round: the body has no way round its axis to step on
+            self.fail(
+                f"angle: {name} turns on a hinge that is not upright "
+                f"({math.degrees(math.acos(min(1.0, abs(float(axis[2]))))):.0f} deg off)"
+            )
         anchor = d.xanchor[jnt].copy()
         qadr = int(m.jnt_qposadr[jnt])
         q0 = float(d.qpos[qadr])
@@ -1491,6 +1499,8 @@ class HumanoidPlugin(MachinePlugin):
                         f"{abs(math.degrees(hth - yaw0)):.0f} deg round"
                     )
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if steps_from is not None and nav is None:
+            self.fail(f"{self.entity} has no navigator to step round {name} with")
         self.step(
             "moving", hand=_side_word(lead) if len(sides) == 1 else "both", angle=float(angle)
         )
@@ -1505,8 +1515,6 @@ class HumanoidPlugin(MachinePlugin):
                 for s in sides:
                     self.body.set_hand(s, about(starts[s][0], a), Q.mul(turned(a), starts[s][1]))
                 if steps_from is not None and abs(a) >= abs(steps_from):
-                    if nav is None:
-                        self.fail(f"{self.entity} has no navigator to step round {name} with")
                     if not stepping:
                         stepping = True
                         self.step("stepping", round=name)

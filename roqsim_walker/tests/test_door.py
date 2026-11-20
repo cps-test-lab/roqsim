@@ -26,9 +26,9 @@ NAV = {
 }
 
 
-def _engine(start, yaw, extra=(), graspable=("gate",)):
+def _engine(start, yaw, extra=(), graspable=("gate",), world="hinge_door.xml"):
     world = {
-        "sim": {"pacing": "asap", "world": str(DATA / "hinge_door.xml")},
+        "sim": {"pacing": "asap", "world": str(DATA / world)},
         "components": [
             {
                 "walker": {
@@ -240,5 +240,41 @@ def test_a_body_that_leaves_its_way_round_a_hinge_fails_there():
         nav.send_goals = off
         st = door.run("pull", hand="right", angle=85.0)
         assert st.error.startswith("left its way to round gate"), st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_turn_on_a_hinge_that_is_not_upright_is_refused():
+    """A flap on a level hinge turns up, not round: a pull by angle is refused before it moves,
+    saying so, rather than stepping the body round an axis it cannot walk round."""
+    engine = _engine((1.0, -0.6), math.pi / 2, graspable=("flap",), world="hinge_flap.xml")
+    try:
+        door = Door.__new__(Door)
+        door.e, door.h = engine, engine.ctx.blackboard.get("humanoid:worker")
+        door.body = engine.ctx.blackboard.get("humanoid_body:worker")
+        door.m, door.d, door.deepest = engine.ctx.model, engine.ctx.data, 0.0
+        door.leaf = door.m.body("flap").id
+        assert door.run("grasp", hand="right", target="flap/grip").error == ""
+        st = door.run("pull", hand="right", angle=30.0)
+        assert "not upright" in st.error, st.error
+        assert not door.events("moving")
+    finally:
+        engine.shutdown()
+
+
+def test_a_turn_that_needs_the_body_to_step_round_is_refused_without_a_navigator():
+    """Pulled far enough that the arc leaves the hand's reach, the body steps round with the leaf
+    on its navigator: with none, the pull fails before the door moves, not part way round."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        # as a body without one: its navigator's handle gone
+        engine.ctx.blackboard.set("nav:worker:handle", None)
+        st = door.run("pull", hand="right", angle=85.0)
+        assert "no navigator" in st.error, st.error
+        assert not door.events("moving")
+        assert abs(door.angle()) < 2.0
     finally:
         engine.shutdown()
