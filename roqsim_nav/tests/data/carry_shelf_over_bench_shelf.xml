@@ -1,0 +1,11 @@
+<!-- carry_shelf_over_bench with a shelf board at the load's height over the bench's far end:
+     the load can pass over the bench, not under the shelf. -->
+<mujoco model="carry_shelf_over_bench_shelf">
+  <worldbody>
+    <geom name="floor" type="plane" size="6 6 0.05"/>
+    <geom name="wall" type="box" pos="2 0.45 0.9" size="3 0.05 0.9"/>
+    <geom name="wall_s" type="box" pos="2 -1.6 0.9" size="3 0.05 0.9"/>
+    <geom name="bench" type="box" pos="2 -0.70 0.375" size="1.2 0.35 0.375"/>
+    <geom name="shelf" type="box" pos="2.9 -0.675 0.97" size="0.3 0.325 0.015"/>
+  </worldbody>
+</mujoco>

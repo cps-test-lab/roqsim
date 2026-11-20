@@ -42,7 +42,9 @@ class NavHandle:
     """
 
     name: str  # the ENTITY being navigated, not the component's address
-    send_goals: Callable[[list], int]  # [(x, y[, yaw]), ...] -> sequence number
+    #: ``([(x, y[, yaw]), ...], exact=False)`` -> sequence number; ``exact``: walked as given, the
+    #: planner not asked and steering not applied (``NavigatorPlugin.send_goals``).
+    send_goals: Callable[..., int]
     start: Callable[[], int]  # release an `autostart: false` route -> sequence number
     cancel: Callable[[], int]  # stop where it stands -> sequence number
     #: ``(seq, finished, goals_left, dist_left, error)``; ``error`` is ``""`` unless the route
