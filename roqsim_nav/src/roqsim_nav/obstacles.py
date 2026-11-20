@@ -73,6 +73,25 @@ def wall_polygons(
     return polys
 
 
+def holdable_roots(model) -> set:
+    """The weld roots of the bodies with DOFs something can hold: the object of a weld equality
+    (a hand's hold, a gripper's) -- active or not, as a hold is switched on when it is taken. Such
+    a body is carried away, so it is never a parked prop in a grid built once a run."""
+    out = set()
+    for eq in range(model.neq):
+        if int(model.eq_type[eq]) != mujoco.mjtEq.mjEQ_WELD:
+            continue
+        for obj in (int(model.eq_obj1id[eq]), int(model.eq_obj2id[eq])):
+            body = obj
+            if int(model.eq_objtype[eq]) == mujoco.mjtObj.mjOBJ_SITE:
+                body = int(model.site_bodyid[obj])
+            if not 0 < body < model.nbody or int(model.body_mocapid[body]) >= 0:
+                continue  # the world, or what holds (a hand posed as a mocap body)
+            if int(model.body_weldid[body]) != 0:
+                out.add(int(model.body_weldid[body]))
+    return out
+
+
 def _at_rest(model, data, body_id: int) -> bool:
     """Whether ``body_id`` is moving slower than :data:`RESTING_SPEED`.
 
