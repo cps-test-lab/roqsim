@@ -28,9 +28,9 @@ NAV = {
 }
 
 
-def _engine(start, yaw, extra=(), graspable=("gate",)):
+def _engine(start, yaw, extra=(), graspable=("gate",), world="hinge_door.xml"):
     world = {
-        "sim": {"pacing": "asap", "world": str(DATA / "hinge_door.xml")},
+        "sim": {"pacing": "asap", "world": str(DATA / world)},
         "components": [
             {
                 "walker": {
@@ -151,53 +151,6 @@ def test_a_door_pushed_open_is_walked_through_kept_open_and_shuts_behind():
         engine.shutdown()
 
 
-def test_a_door_pulled_open_is_kept_open_by_the_hand_pushing_on_it_and_walked_through():
-    """Pulled open toward the body, the handle ends at the leaf's far edge, out of reach of the
-    opening. Walking through, the hand keeps the door by contact: its hold stays on while the body
-    is behind the leaf; once the body has come round onto the face the closer pushes the leaf
-    toward, the hold goes off and the fingertip goes round the leaf's edge onto that face, the
-    closer pressing the leaf into it as the hand slides along. The door stays open while the body
-    walks through; once the body is past the line the leaf shuts onto, the hand lets go behind it,
-    and the closer shuts the door without the leaf sweeping into the body."""
-    engine = _engine((0.0, 0.8), 0.0)
-    try:
-        door = Door(engine)
-        assert door.run("approach", target="gate/pull/grip").error == ""
-        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
-        assert door.run("pull", hand="right", angle=85.0).error == ""
-        opened = door.angle()
-        assert opened > 70.0, opened
-        least, nearest = opened, math.inf
-        seq = door.h.start("approach", target="gate/through")
-        t0 = engine.ctx.sim_time
-        while not (door.h.status().seq == seq and door.h.status().finished):
-            door.step()
-            if not door.events("let go"):
-                least = min(least, door.angle())
-            else:  # the leaf shutting behind the body keeps clear of it
-                nearest = min(nearest, door.leaf_to_root())
-            assert engine.ctx.sim_time - t0 < 60.0
-        st = door.h.status()
-        assert st.error == "", st.error
-        keeping = [ev for ev in door.events("keeping") if ev["t"] >= t0]
-        assert keeping and keeping[0]["how"] == "by contact", keeping
-        assert [ev for ev in door.events("pushing") if ev["t"] >= t0]
-        kept = [ev for ev in door.events("kept") if ev["t"] >= t0]
-        assert kept and kept[0]["how"] == "contact" and kept[0]["force"] > 1.0, kept
-        x, _y, _ = door.body.root()
-        assert x > 1.3, x  # through the opening, on the far side
-        assert opened - least < 15.0, (opened, least)  # kept open all the way through
-        assert [ev for ev in door.events("let go") if ev["t"] >= t0], "the hand never let go"
-        for _ in range(int(4.0 / engine.ctx.dt)):
-            door.step()
-            nearest = min(nearest, door.leaf_to_root())
-        assert nearest > COLLISION_RADIUS, nearest
-        assert door.angle() < 10.0, door.angle()  # the closer shut it behind
-        assert door.deepest < 0.01, door.deepest
-    finally:
-        engine.shutdown()
-
-
 def test_a_door_kept_open_is_not_walked_away_from_out_of_reach():
     """Keeping the door, the body's way stays within the hand's reach of it: a stance far beyond
     has no way, and the failure says so before the body sets off."""
@@ -299,6 +252,89 @@ def test_a_body_that_leaves_its_way_round_a_hinge_fails_there():
         nav.send_goals = off
         st = door.run("pull", hand="right", angle=85.0)
         assert st.error.startswith("left its way to round gate"), st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_turn_on_a_hinge_that_is_not_upright_is_refused():
+    """A flap on a level hinge turns up, not round: a pull by angle is refused before it moves,
+    saying so, rather than stepping the body round an axis it cannot walk round."""
+    engine = _engine((1.0, -0.6), math.pi / 2, graspable=("flap",), world="hinge_flap.xml")
+    try:
+        door = Door.__new__(Door)
+        door.e, door.h = engine, engine.ctx.blackboard.get("humanoid:worker")
+        door.body = engine.ctx.blackboard.get("humanoid_body:worker")
+        door.m, door.d, door.deepest = engine.ctx.model, engine.ctx.data, 0.0
+        door.leaf = door.m.body("flap").id
+        assert door.run("grasp", hand="right", target="flap/grip").error == ""
+        st = door.run("pull", hand="right", angle=30.0)
+        assert "not upright" in st.error, st.error
+        assert not door.events("moving")
+    finally:
+        engine.shutdown()
+
+
+def test_a_turn_that_needs_the_body_to_step_round_is_refused_without_a_navigator():
+    """Pulled far enough that the arc leaves the hand's reach, the body steps round with the leaf
+    on its navigator: with none, the pull fails before the door moves, not part way round."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        # as a body without one: its navigator's handle gone
+        engine.ctx.blackboard.set("nav:worker:handle", None)
+        st = door.run("pull", hand="right", angle=85.0)
+        assert "no navigator" in st.error, st.error
+        assert not door.events("moving")
+        assert abs(door.angle()) < 2.0
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_pulled_open_is_kept_open_by_the_hand_pushing_on_it_and_walked_through():
+    """Pulled open toward the body, the handle ends at the leaf's far edge, out of reach of the
+    opening. Walking through, the hand keeps the door by contact: its hold stays on while the body
+    is behind the leaf; once the body has come round onto the face the closer pushes the leaf
+    toward, the hold goes off and the fingertip goes round the leaf's edge onto that face, the
+    closer pressing the leaf into it as the hand slides along. The door stays open while the body
+    walks through; once the body is past the line the leaf shuts onto, the hand lets go behind it,
+    and the closer shuts the door without the leaf sweeping into the body."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        assert door.run("pull", hand="right", angle=85.0).error == ""
+        opened = door.angle()
+        assert opened > 70.0, opened
+        least, nearest = opened, math.inf
+        seq = door.h.start("approach", target="gate/through")
+        t0 = engine.ctx.sim_time
+        while not (door.h.status().seq == seq and door.h.status().finished):
+            door.step()
+            if not door.events("let go"):
+                least = min(least, door.angle())
+            else:  # the leaf shutting behind the body keeps clear of it
+                nearest = min(nearest, door.leaf_to_root())
+            assert engine.ctx.sim_time - t0 < 60.0
+        st = door.h.status()
+        assert st.error == "", st.error
+        keeping = [ev for ev in door.events("keeping") if ev["t"] >= t0]
+        assert keeping and keeping[0]["how"] == "by contact", keeping
+        assert [ev for ev in door.events("pushing") if ev["t"] >= t0]
+        kept = [ev for ev in door.events("kept") if ev["t"] >= t0]
+        assert kept and kept[0]["how"] == "contact" and kept[0]["force"] > 1.0, kept
+        x, _y, _ = door.body.root()
+        assert x > 1.3, x  # through the opening, on the far side
+        assert opened - least < 15.0, (opened, least)  # kept open all the way through
+        assert [ev for ev in door.events("let go") if ev["t"] >= t0], "the hand never let go"
+        for _ in range(int(4.0 / engine.ctx.dt)):
+            door.step()
+            nearest = min(nearest, door.leaf_to_root())
+        assert nearest > COLLISION_RADIUS, nearest
+        assert door.angle() < 10.0, door.angle()  # the closer shut it behind
+        assert door.deepest < 0.01, door.deepest
     finally:
         engine.shutdown()
 
