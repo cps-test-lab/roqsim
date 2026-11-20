@@ -391,7 +391,7 @@ class _CSpace:
             self._exact_setup()
         # a search asks of one pose many times (once for each way it reached it): kept, to the
         # millimetre and the thousandth of a radian
-        key = (round(x * 1000.0), round(y * 1000.0), round(th * 1000.0), id(allowed))
+        key = (round(x * 1000.0), round(y * 1000.0), round(th * 1000.0), frozenset(allowed))
         hit = self._memo.get(key)
         if hit is not None:
             return hit
@@ -493,12 +493,11 @@ class _CSpace:
         j = int((y - self._oy) * self._inv) - self.j0
         if not (0 <= i < self._h and 0 <= j < self._w) or x < self._ox or y < self._oy:
             return False
-        for zx, zy, zr, allowed in self.zones:
-            if (x - zx) ** 2 + (y - zy) ** 2 <= zr * zr:
-                if self.surely_blocked(x, y, th):
-                    return False
-                return self.exact_free(x, y, th, allowed)
-        return False
+        # what it may stand against where zones overlap (a goal near the start): each zone's
+        allowed = self._zone_of((x, y))
+        if allowed is None or self.surely_blocked(x, y, th):
+            return False
+        return self.exact_free(x, y, th, frozenset(allowed))
 
     def move_ok(self, a, b) -> bool:
         """The search's check of a move from pose ``a`` to the next sample ``b`` of it. The
@@ -941,24 +940,43 @@ class _Search:
 
 
 def _verify(cs: _CSpace, start, moves, what: str) -> None:
-    """Every move of a way found, checked exactly across its sweep (:meth:`_CSpace.sweep_free`),
-    with what the body may stand against in the zones it passes. The search's own checks already
-    cover it; one that does not is a fault of the planner's, raised rather than walked."""
+    """Every move of a way found, checked exactly across its sweep (:meth:`_CSpace.sweep_free`) in
+    the samples the search took of it, with what the search let the body stand against there. The
+    search's own checks already cover it; one that does not is a fault of the planner's, raised
+    rather than walked."""
     dth = 2 * math.pi / cs.fp.bins
+    res = cs.L.res
     pose = (float(start[0]), float(start[1]), float(start[2]))
     for kind, p, _amount in moves:
-        steps = [pose, p]
-        if kind == "arc":
-            # the arc as the search sampled it, a quarter of it at a time
+        p = (float(p[0]), float(p[1]), float(p[2]))
+        d = math.hypot(p[0] - pose[0], p[1] - pose[1])
+        if kind == "turn":
+            n = max(1, int(math.ceil(abs(p[2] - pose[2]) / (dth / 2))))
+            steps = [(pose[0], pose[1], pose[2] + (p[2] - pose[2]) * k / n) for k in range(n + 1)]
+        elif kind == "arc" and d <= STEP + 1e-6 and abs(_wrap(p[2] - pose[2])) <= dth + 1e-6:
+            # an arc of the search's, a quarter of it at a time as the search took it
             db = int(round(_wrap(p[2] - pose[2]) / dth))
-            if math.hypot(p[0] - pose[0], p[1] - pose[1]) <= STEP + 1e-6 and abs(db) <= 1:
-                steps, x, y = [pose], pose[0], pose[1]
-                for q in range(1, 5):
-                    tq = pose[2] + db * dth * (q - 0.5) / 4
-                    x, y = x + STEP / 4 * math.cos(tq), y + STEP / 4 * math.sin(tq)
-                    steps.append((x, y, pose[2] + db * dth * q / 4))
+            steps, x, y = [pose], pose[0], pose[1]
+            for q in range(1, 5):
+                tq = pose[2] + db * dth * (q - 0.5) / 4
+                x, y = x + STEP / 4 * math.cos(tq), y + STEP / 4 * math.sin(tq)
+                steps.append((x, y, pose[2] + db * dth * q / 4))
+        else:
+            # a straight shot or a step back, a cell at a time
+            n = max(1, int(math.ceil(d / res)))
+            steps = [
+                (pose[0] + (p[0] - pose[0]) * k / n, pose[1] + (p[1] - pose[1]) * k / n, p[2])
+                for k in range(n + 1)
+            ]
         for a, b in zip(steps[:-1], steps[1:], strict=False):
-            allowed = (cs._zone_of(a) or set()) & (cs._zone_of(b) or set())
+            # where the raster says blocked, the body may stand against what the zones there
+            # allow, as the search's move_ok lets it
+            allowed = None
+            for q in (a, b):
+                if not cs.free(*q):
+                    zone = cs._zone_of(q) or set()
+                    allowed = zone if allowed is None else allowed & zone
+            allowed = allowed or set()
             if not cs.sweep_free(a, b, allowed):
                 names = [n for n in cs.meets(*b) if n not in allowed] or cs.meets(*a)
                 raise RuntimeError(
@@ -966,7 +984,7 @@ def _verify(cs: _CSpace, start, moves, what: str) -> None:
                     f"({a[0]:.2f}, {a[1]:.2f}, {math.degrees(a[2]):.0f} deg) and "
                     f"({b[0]:.2f}, {b[1]:.2f}, {math.degrees(b[2]):.0f} deg): a fault of the planner's"
                 )
-        pose = (float(p[0]), float(p[1]), float(p[2]))
+        pose = p
 
 
 def _segments(start, moves) -> list:

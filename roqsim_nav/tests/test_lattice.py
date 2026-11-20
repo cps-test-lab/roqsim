@@ -470,3 +470,21 @@ def test_a_turn_on_the_spot_of_the_tote_meets_no_thin_post_beside_it():
     except NoWay:
         return
     assert check_way(model, data, fp, way) == [], way.segments
+
+
+def test_a_way_from_one_wall_to_dock_at_another_passes_the_last_check():
+    """What the body stands against at the start it may go on standing against as it leaves, and at
+    the goal it may stand against what it docks at: the exact check every way gets before it is
+    returned allows each where the search does, on a straight shot from one to the other too."""
+    xml = """<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .05"/>
+      <body name="back"><geom name="back" type="box" pos="0.16 0 0.9" size="0.05 1.0 0.9"/></body>
+      <body name="bench"><geom name="bench" type="box" pos="-0.76 0 0.25" size="0.05 1.0 0.25"/></body>
+    </worldbody></mujoco>"""
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    fp = Footprint([Piece(_ellipse(0.12, 0.15), (0.0, 0.5), "legs", body=True)])
+    way = plan_way(
+        model, data, fp, (0.0, 0.0, math.pi), (-0.6, 0.0, math.pi), dock=["bench"], back_max=0.0
+    )
+    assert way.length > 0.55
