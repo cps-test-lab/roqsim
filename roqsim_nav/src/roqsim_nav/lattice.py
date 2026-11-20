@@ -100,6 +100,11 @@ KEY_CELL = 0.1
 KEY_TURN = math.radians(10)
 #: The most states a search expands before it gives up.
 MAX_STATES = 60_000
+#: How many states a search expands between the points where :func:`plan_way_steps` hands back,
+#: so a caller on the physics thread steps the simulation on between them.
+SLICE_STATES = 100
+#: How many heading bins' rasters it builds between those points, before its search.
+RASTERS_PER_STEP = 4
 
 _TURNED, _BACKED = 1, 2
 
@@ -315,6 +320,7 @@ class _CSpace:
         self._per = self.fp.bins / (2 * math.pi)
         self._b = [None] * self.fp.bins
         self._n = [None] * self.fp.bins
+        self._last_free = None
 
     def free(self, x, y, th) -> bool:
         """Whether the root may stand at ``(x, y)`` facing ``th``: one lookup (the hot path)."""
@@ -537,7 +543,11 @@ class _CSpace:
         blocked within a zone, the exact check covers it too, across the move's sweep
         (:meth:`sweep_free`), not at its ends alone -- a thin post between two samples' headings
         is met by the piece that sweeps across it."""
-        fa, fb = self.free(*a), self.free(*b)
+        # a move's start is most often the end of the move checked just before it
+        last = self._last_free
+        fa = last[1] if last is not None and last[0] == a else self.free(*a)
+        fb = self.free(*b)
+        self._last_free = (b, fb)
         if fa and fb:
             return True
         allowed = None
@@ -850,6 +860,11 @@ class _Search:
         ``[(kind, (x, y, th), angle), ...]``, or ``None`` and the state nearest the goal. ``flags``:
         the turn on the spot and the step back the way made since its last move forward, when it
         comes from a via point."""
+        return _drain(self.steps(start, goal, flags))
+
+    def steps(self, start, goal, flags=0):
+        """:meth:`run`, handing back (yielding) every :data:`SLICE_STATES` states it expands; it
+        returns what :meth:`run` does."""
         cs, dth = self.cs, self.dth
         fp = cs.fp
         s0 = (float(start[0]), float(start[1]), float(start[2]), int(flags))
@@ -883,6 +898,8 @@ class _Search:
         while heap:
             if self.expanded >= self.max_states:
                 break
+            if self.expanded and self.expanded % SLICE_STATES == 0:
+                yield
             _f, ngc, _, node = heapq.heappop(heap)
             s = node[1]
             gc = -ngc
@@ -1083,7 +1100,21 @@ def _inside(poly, p, tol) -> bool:
     return True
 
 
-def plan_way(
+def _drain(steps):
+    """Run a generator of steps to its end; what it returns."""
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            return done.value
+
+
+def plan_way(model, data, footprint: Footprint, start, goal, **kw) -> Way:
+    """:func:`plan_way_steps`, in one go."""
+    return _drain(plan_way_steps(model, data, footprint, start, goal, **kw))
+
+
+def plan_way_steps(
     model,
     data,
     footprint: Footprint,
@@ -1098,7 +1129,7 @@ def plan_way(
     to: str = "",
     dock=(),
     max_states: int = MAX_STATES,
-) -> Way:
+):
     """A way for ``footprint`` from ``start`` ``(x, y, yaw)`` through the floor points ``via`` (any
     heading) to ``goal`` ``(x, y, yaw)`` (``yaw`` ``None``: any). ``skip_roots``: the weld roots of
     what is held and what rides in it, which are part of the footprint and not in the world.
@@ -1111,8 +1142,13 @@ def plan_way(
     already stands against at the start, and at the goal the bodies named in ``dock`` -- the target
     it goes to work at and what that stands on, which a worker stands against. What it holds
     meets them as anything else. Every way found is checked exactly so once more before it is
-    returned; one that meets something is a fault of the planner's, raised as a ``RuntimeError``."""
-    t0 = time.perf_counter()
+    returned; one that meets something is a fault of the planner's, raised as a ``RuntimeError``.
+
+    A generator: it hands back (yields) every :data:`SLICE_STATES` states its search expands, and
+    returns the :class:`Way`; :func:`plan_way` runs it in one go. The world is read before it
+    first hands back, so a caller may step the simulation between its steps. The way's
+    ``seconds`` are the time it ran, not the time it was handed back for."""
+    ran, t0 = 0.0, time.perf_counter()
     res = footprint.resolution
     if not (math.isfinite(float(back_max)) and back_max >= 0.0):
         raise ValueError(f"back_max is a distance of 0 m or more, not {back_max!r}")
@@ -1180,7 +1216,25 @@ def plan_way(
             search = _Search(
                 cs, h2d, f, layers, float(back_max), bool(long_way), max_states - expanded
             )
-            moves, best = search.run(pose, gl, flags)
+            # the heading bins' rasters first, a few at a time between hand-backs: a search's first
+            # turn on the spot would ask for every one of them at once
+            for k in range(footprint.bins):
+                if cs._b[k] is None:
+                    cs._b[k] = cs.blocked(k)
+                if k % RASTERS_PER_STEP == RASTERS_PER_STEP - 1:
+                    ran += time.perf_counter() - t0
+                    yield
+                    t0 = time.perf_counter()
+            steps = search.steps(pose, gl, flags)
+            while True:
+                try:
+                    next(steps)
+                except StopIteration as done:
+                    moves, best = done.value
+                    break
+                ran += time.perf_counter() - t0
+                yield
+                t0 = time.perf_counter()
             expanded += search.expanded
             if nearest is None:
                 # where the search in the disc's own corridor got to is where a failure is
@@ -1227,7 +1281,7 @@ def plan_way(
             pose = moves[-1][1]
     return Way(
         segments,
-        time.perf_counter() - t0,
+        ran + time.perf_counter() - t0,
         expanded,
         footprint.margin,
         footprint.slack,
