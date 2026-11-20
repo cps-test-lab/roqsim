@@ -770,12 +770,10 @@ def _cells_inside(polygons, res: float) -> np.ndarray:
     centres = np.stack([ii.ravel() * res, jj.ravel() * res], 1)
     hit = np.zeros(len(centres), bool)
     for poly in polygons:
-        dmax = np.full(len(centres), -np.inf)
-        for k in range(len(poly)):
-            a, b = poly[k], poly[(k + 1) % len(poly)]
-            e = b - a
-            n = np.array([e[1], -e[0]]) / (np.linalg.norm(e) + 1e-12)
-            dmax = np.maximum(dmax, (centres - a) @ n)
+        # every edge's outward normal and offset at once: a centre's distance past each
+        e = np.roll(poly, -1, axis=0) - poly
+        n = np.stack([e[:, 1], -e[:, 0]], 1) / (np.linalg.norm(e, axis=1)[:, None] + 1e-12)
+        dmax = (centres @ n.T - np.einsum("ed,ed->e", poly, n)).max(1)
         hit |= dmax <= -math.sqrt(2.0) * res
     return np.stack([ii.ravel()[hit], jj.ravel()[hit]], 1)
 
