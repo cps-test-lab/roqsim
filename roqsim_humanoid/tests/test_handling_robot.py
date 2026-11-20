@@ -144,3 +144,46 @@ def test_the_robots_legs_walk_while_its_navigator_moves_it():
             )
     finally:
         engine.shutdown()
+
+
+def test_a_physical_robot_plans_its_carries_with_the_lag_its_table_states():
+    """Physical, the G1's base hangs on an anchor the navigator moves and trails it; its table
+    states by how much, measured (``physical: {follow_error}``), and its carries plan with that
+    margin -- the box swap's ``planned`` events say so, and the scene still ends with both totes
+    where they go. Kinematic, the base is set to the nav root: no margin."""
+    engine = Engine(load_config(WORLDS / "handling_box_swap_g1.yaml"))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        scene = next(p for p in engine.plugins if p.address in ("scene", "scene_osc"))
+        d = engine.ctx.data
+        trail = 0.0  # how far the base trails the anchor, every step after the first half second
+        while engine.ctx.sim_time < 120.0 and not scene.done():
+            engine.step()
+            if engine.ctx.sim_time > 0.5:
+                gap = d.site("g1/base").xpos[:2] - d.site("g1/anchor").xpos[:2]
+                trail = max(trail, float(np.hypot(*gap)))
+        assert scene.done(), "handling_box_swap_g1: the scene did not end in 120 s"
+        body = engine.ctx.blackboard.get("humanoid_body:g1")
+        assert body.follow_error(1.0) == pytest.approx(0.04)
+        margins = {
+            ev["margin"]
+            for ev in engine.ctx.events.all()
+            if ev["source"].startswith("g1") and ev["event"] == "planned"
+        }
+        assert margins == {0.04}, margins
+        # and the base kept within it of the anchor all the way
+        assert trail < 0.04, trail
+    finally:
+        engine.shutdown()
+    engine = Engine(load_config(WORLDS / "handling_box_swap_g1.yaml"))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    try:
+        robot = engine.ctx.blackboard.get("humanoid_body:g1")
+        robot.p.config["drive"] = "kinematic"
+        assert robot.follow_error(1.0) == 0.0
+    finally:
+        engine.shutdown()

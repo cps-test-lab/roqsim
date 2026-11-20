@@ -1,0 +1,16 @@
+<!-- A flap on a level hinge (along x, at 1.2 m), a lever's grip on its front and a stance before it:
+     what turns on a hinge that is not upright, which a pull or push by angle refuses
+     (test_door.py). -->
+<mujoco model="hinge_flap">
+  <compiler angle="degree"/>
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <body name="flap" pos="1.0 0 1.2">
+      <joint name="flap_hinge" type="hinge" axis="1 0 0" range="0 90"/>
+      <geom name="flap_leaf" type="box" pos="0 0 -0.2" size="0.3 0.02 0.2" mass="2"/>
+      <site name="flap/grip" pos="0 -0.05 -0.3" quat="0.7071 0 0 0.7071"/>
+    </body>
+    <site name="flap/stand" pos="1.0 -0.6 0" euler="0 0 90"/>
+  </worldbody>
+</mujoco>

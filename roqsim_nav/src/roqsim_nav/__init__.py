@@ -8,6 +8,8 @@ The global-plan / local-control split, as reusable parts:
 * :mod:`~roqsim_nav.occupancy` rasterizes those into a grid and :mod:`~roqsim_nav.grid` builds one
   per world rather than one per agent;
 * :mod:`~roqsim_nav.planner` searches it with A* and string-pulls the result to sparse waypoints;
+* :mod:`~roqsim_nav.lattice` plans over position and heading for a body holding something, its
+  :mod:`~roqsim_nav.footprint` checked piece by piece in height layers;
 * :mod:`~roqsim_nav.behavior` follows that path, advances goals, and recovers from being stuck;
 * :mod:`~roqsim_nav.state` is the eleven-attribute contract those two work against, so any
   embodiment can satisfy it.

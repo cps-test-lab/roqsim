@@ -1,0 +1,13 @@
+<!-- A passage between a wall and a bench 0.6 m high, too narrow for the walker and a tote 0.6 m long it
+     carries at 1 m unless the tote goes over the bench; and a shelf board at the
+     tote's height over the bench's far end. -->
+<mujoco model="carry_shelf_over_bench_shelf">
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <geom name="wall" type="box" pos="2 0.45 0.9" size="5 0.05 0.9"/>
+    <geom name="wall_s" type="box" pos="2 -1.6 0.9" size="3 0.05 0.9"/>
+    <geom name="bench" type="box" pos="2 -0.70 0.3" size="1.2 0.35 0.3"/>
+    <geom name="shelf" type="box" pos="2.9 -0.675 1.02" size="0.3 0.325 0.015"/>
+  </worldbody>
+</mujoco>

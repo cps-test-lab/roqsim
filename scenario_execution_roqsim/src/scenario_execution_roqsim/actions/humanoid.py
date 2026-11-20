@@ -63,6 +63,11 @@ def _unset_or(value, what: str, action, check) -> float | None:
     return value
 
 
+def _no_reason(value: float) -> str:
+    """A distance of 0 m or more is a stand-off; anything else is refused, saying so."""
+    return "" if value >= 0.0 else "a stand-off is a distance of 0 m or more"
+
+
 def _via(via: str):
     """``'x, y; x, y'`` -> the move's ``via``, ``[[x, y], ...]``; ``None`` for none. Raises
     ``ValueError`` for anything else."""
@@ -94,9 +99,11 @@ class HumanoidApproach(HumanoidMove):
         self,
         humanoid: str,
         target: str,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: str = "",
+        back_max: float = 0.5,
+        long_way: bool = False,
         check: bool = True,
     ):
         facing = _unset_or(
@@ -113,9 +120,11 @@ class HumanoidApproach(HumanoidMove):
             humanoid,
             {
                 "target": target,
-                "standoff": float(standoff),
+                "standoff": _unset_or(standoff, "humanoid_approach: `standoff`", self, _no_reason),
                 "facing": facing,
                 "via": _via_of(self, via),
+                **({"back_max": float(back_max)} if float(back_max) != 0.5 else {}),
+                **({"long_way": True} if long_way else {}),
             },
             check,
         )
@@ -203,10 +212,29 @@ class HumanoidPull(HumanoidMove):
     MOVE = "pull"
 
     def execute(
-        self, humanoid: str, hand: str, distance: float, speed: float = 0.2, check: bool = True
+        self,
+        humanoid: str,
+        hand: str,
+        distance: float | None = None,
+        speed: float = 0.2,
+        angle: float | None = None,
+        check: bool = True,
     ):
+        what = f"humanoid_{self.MOVE}"
+        distance = _unset_or(distance, f"{what}: `distance`", self, lambda v: "")
+        angle = _unset_or(
+            angle, f"{what}: `angle`", self, lambda v: "" if v > 0 else "degrees more than 0"
+        )
+        if (distance is None) == (angle is None):
+            raise ActionError(
+                f"{what}: a `distance` (m, along a slide) or an `angle` (deg, round a hinge), "
+                "one of the two",
+                action=self,
+            )
         self._begin(
-            humanoid, {"hand": hand, "distance": float(distance), "speed": float(speed)}, check
+            humanoid,
+            {"hand": hand, "distance": distance, "angle": angle, "speed": float(speed)},
+            check,
         )
 
 
@@ -221,9 +249,11 @@ class HumanoidCarry(HumanoidMove):
         self,
         humanoid: str,
         to: str,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: str = "",
+        back_max: float = 0.5,
+        long_way: bool = False,
         check: bool = True,
     ):
         facing = _unset_or(
@@ -240,9 +270,11 @@ class HumanoidCarry(HumanoidMove):
             humanoid,
             {
                 "to": to,
-                "standoff": float(standoff),
+                "standoff": _unset_or(standoff, "humanoid_carry: `standoff`", self, _no_reason),
                 "facing": facing,
                 "via": _via_of(self, via),
+                **({"back_max": float(back_max)} if float(back_max) != 0.5 else {}),
+                **({"long_way": True} if long_way else {}),
             },
             check,
         )

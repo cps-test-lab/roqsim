@@ -1,0 +1,13 @@
+<!-- Walls close round the walker and a tote in front of it, and a post on its left: little room
+     to turn round in, and none on the short way to its left. -->
+<mujoco model="carry_long_way">
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <geom name="wall_e" type="box" pos="0.69 0 0.9" size="0.05 1.0 0.9"/>
+    <geom name="wall_w" type="box" pos="-0.69 0 0.9" size="0.05 1.0 0.9"/>
+    <geom name="wall_n" type="box" pos="0 0.69 0.9" size="1.0 0.05 0.9"/>
+    <geom name="wall_s" type="box" pos="0 -0.69 0.9" size="1.0 0.05 0.9"/>
+    <geom name="post" type="box" pos="0.12 0.55 0.9" size="0.04 0.04 0.9"/>
+  </worldbody>
+</mujoco>

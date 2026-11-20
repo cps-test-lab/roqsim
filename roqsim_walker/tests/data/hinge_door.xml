@@ -1,0 +1,23 @@
+<!-- A door on a hinge in a wall along x = 1, its opening y 0 .. 0.9, the hinge at (1, 0): its leaf
+     turns because a hand pulls or pushes it, toward -x (100 degrees at most), and a closer (the
+     hinge's spring and damping) shuts it. A lever handle on each face, a stance before each, and a
+     stance through the opening on the side it opens to (test_door.py). -->
+<mujoco model="hinge_door">
+  <compiler angle="degree"/>
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <geom name="wall_s" type="box" pos="1.0 -1.05 1.0" size="0.05 1.0 1.0"/>
+    <geom name="wall_n" type="box" pos="1.0 1.95 1.0" size="0.05 1.0 1.0"/>
+    <body name="gate" pos="1.0 0 0">
+      <joint name="gate_hinge" type="hinge" axis="0 0 1" range="0 100" stiffness="15" springref="0"
+             damping="6" frictionloss="0.3"/>
+      <geom name="gate_leaf" type="box" pos="0 0.45 1.0" size="0.02 0.43 0.97" mass="15"/>
+      <site name="gate/pull/grip" pos="-0.05 0.80 1.05" quat="0 1 0 0"/>
+      <site name="gate/push/grip" pos="0.05 0.80 1.05" quat="0 0 1 0"/>
+    </body>
+    <site name="gate/pull/stand" pos="0.4 0.80 0" euler="0 0 0"/>
+    <site name="gate/push/stand" pos="1.35 0.48 0" euler="0 0 180"/>
+    <site name="gate/in/stand" pos="0.3 0.45 0" euler="0 0 180"/>
+  </worldbody>
+</mujoco>

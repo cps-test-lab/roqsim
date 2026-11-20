@@ -26,6 +26,8 @@ from roqsim.pose import yaw_to_quat
 from roqsim.presence import PARK_Z
 from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
+from roqsim_nav.footprint import BINS
+from roqsim_nav.lattice import STEP
 from roqsim_walker.humanoid import JOINT_NAMES, PRESS_RADIUS
 from roqsim_walker.motion import blend_quats
 
@@ -171,6 +173,7 @@ class WalkerBody(HumanoidBody):
         self._last_posture = None
         self.st.face = None
         self.st.turn_rate = None
+        self.st.keep = None
 
     def grip(self, data, side):
         sid = self._grip[side]
@@ -186,6 +189,18 @@ class WalkerBody(HumanoidBody):
         return 0.97 * self.desc.arm_length(side) + float(
             np.linalg.norm(self.layouts[side].grip_pos)
         )
+
+    def follow_error(self, speed: float) -> float:
+        """With a ``body_lag`` the body is drawn on a point that follows the nav root as a
+        critically damped spring of that time constant: on a straight leg it trails along the way,
+        and round an arc of radius ``R`` it cuts inside it by ``(speed * body_lag)**2 / R`` once it
+        has settled onto it (a second-order follower of a point going round a circle). Taken at the
+        tightest arc a carry's way has (``roqsim_nav.lattice``: an arc of ``STEP`` turning one
+        heading bin), that is a bound on how far the drawn body strays from its way."""
+        lag = float(self.st.body_lag)
+        if lag <= 0.0:
+            return 0.0
+        return (float(speed) * lag) ** 2 / (STEP / (2.0 * math.pi / BINS))
 
     def root(self):
         """Where the body is drawn, and its heading: with a ``body_lag`` the point that follows the
@@ -211,6 +226,9 @@ class WalkerBody(HumanoidBody):
 
     def face(self, yaw):
         self.st.face = None if yaw is None else float(yaw)
+
+    def keep_heading(self, yaw):
+        self.st.keep = None if yaw is None else float(yaw)
 
     def tip(self, data, side: str):
         wid = self._wrist[side]

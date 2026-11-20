@@ -64,7 +64,8 @@ or bent over something in its hands, does not jolt; it comes to rest where the n
 it moves, the drawn body trails the nav root by about `2 * body_lag * speed` (0.36 m at 0.15 s and
 1.2 m/s), so what is drawn is not where the navigator, its avoidance and a pose reading of the nav
 root place the walker. A walker with hands poses them on the drawn body, so what its hands carry
-moves with the body a viewer sees. The default, 0, draws the body on the root.
+moves with the body a viewer sees. The default, 0, draws the body on the root. A carry plans with
+the margin the lag strays by (Moves, below).
 
 ### Navigation layers
 
@@ -239,28 +240,48 @@ status = worker.status()                         # MachineStatus(seq, program, f
 ```
 
 A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its
-`name:` (its body), or a world pose; a hand is `left`, `right` or `both`.
+`name:` (its body), a slot (its stances and hand target, `docs/plugins.rst`, "Slots"), or a world
+pose; a hand is `left`, `right` or `both`. A target that states stances is walked to at the
+nearest of them, facing as it says, where a move is given no `standoff` or `facing`.
 
 | move | parameters | events | fails with |
 |---|---|---|---|
-| `approach` | `target`, `standoff` 0.6 m, `facing` (world yaw; default: a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first) | `walking`, `arrived` | `unknown target`, `no route to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …` |
+| `approach` | `target` (a site, body or entity, or a slot), `standoff` (left out: the target's stance, else 0.6 m), `facing` (world yaw; default: the stance's, or a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first), `back_max` and `long_way` (holding something: as `carry`'s) | `walking`, `arrived` (with `stance`: the stance site it stood at, or its stand-off); holding something, as `carry`'s | `unknown target`, `no route to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …`; holding something, `no way holding …`, `left its way …`, `stopped … short of a leg's end …`, `stepped back … m of …` and `cannot turn to …` (as `carry`'s) |
 | `reach` | `hand`, `target`, `offset` (x, y, z[, r, p, y] in its frame), `orient` true, `pose` `open`, `speed` 0.8 m/s | `reached` | `out of reach: … approach first` |
 | `press` | `hand`, `target` (a site on the button's face), `max_force`, `travel`, `pose` `point` | `contact`, `pressed`, `released` | `button did not move: … at … N`, out of reach |
 | `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |
 | `release` | `hand` `both` | `opened` | `not holding anything` |
-| `pull` / `push` | `hand`, `distance` m, `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `pulled` / `pushed` | `not holding …`, `stuck: … moved … of …`, `lost hold: …` |
-| `carry` | `to`, `standoff` 0.6 m, `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s) | `lifted`, `walking`, `arrived` | `not holding anything`, `lost hold`, `no route`, `cannot turn to …`, `cannot stand at …`, `via: a point is [x, y] …` |
+| `pull` / `push` | `hand`, `distance` m (along a slide), or `angle` deg (round a hinge), `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `stepping` (round a hinge, the body following), `pulled` / `pushed` (`distance`, or `angle`) | `not holding …`, `stuck: … moved … of …`, `stuck: … turned … of … deg`, `angle: … turns on no hinge`, `angle: … turns on a hinge that is not upright` (more than 15 deg off), `… has no navigator to step round …` (before anything moves), `cannot follow … round: …` (the path the body would step round on meets something), `left its way to round …` (stepping round, the body left that path), `… is shut: a pull … turns it further shut` (before anything moves), `lost hold: …` |
+| `carry` | `to`, `standoff` (as `approach`'s), `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s), `back_max` 0.5 m (the longest step straight back its way takes at a time; 0: never), `long_way` false (may its way turn past half a turn on the spot) | `lifted` (`height`: the hands' height it came to), `planned` (`seconds`, `expanded`, `length`, `reverses`, `long_turns`, `margin`, `widened`), `walking`, `stepping_back` (`distance`), `turning_long_way` (`to`, `turn`: rad), `arrived` | `not holding anything`, `lost hold`, `no route`, `no way holding … to …` (where it got to, how wide the way is there and between what, what the body and its load meet there at every heading, `back_max` and `long_way`), `left its way to … by … m`, `stopped … m short of a leg's end …`, `stepped back … m of …` (a leg or a step back still short after three aims), `cannot turn to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …` |
 | `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `out of reach: the hands bring it to … and no nearer`, `caught on …` (held up above the place), `nothing under it` |
 | `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
 | `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
 | `look_at` | `target` (a site, body or entity, or a world point `[x, y, z]`; empty: back) | `looking` | `unknown target …` |
 
-A move that walks (`approach`, `carry`) goes straight to its stand-off on the navigator, planned
-round the walls by its planner if it has one; `via` sends it through floor points of the scene's
-first, in order -- a way laid out round a fence or a bench, for a navigator that walks its points as
-given (`route_mode: exact`). The turn before a carry faces the first of them, and a carry walks
-them leg by leg, turning on the spot at its carrying pace at each, so what it carries in front
-stays over the way and does not swing out of it at a corner.
+A move that walks empty-handed (`approach`) goes to its stand-off on the navigator, planned round
+the walls by its planner if it has one; `via` sends it through floor points of the scene's first,
+in order -- a way laid out round a fence or a bench, for a navigator that walks its points as given
+(`route_mode: exact`).
+
+A move that walks **holding something** (`carry`, `approach` with a hold) walks a way planned for
+the body and what it holds (`roqsim_nav.lattice`), and exactly that way: what is checked is what is
+walked. Its footprint is built once, when it sets off: the body's collision geoms grouped by height,
+what it holds and what rides in it, and each holding arm from shoulder to hand, each piece checked
+against what stands in its own height band -- so the tote passes over a bench its legs walk round,
+and meets a shelf at its own height. The way's moves are arcs forward, turns on the spot, steps
+straight back of at most `back_max` at a time, and a turn past half a turn only with `long_way`
+(saying so in `turning_long_way`); it passes through `via` in order. Its legs go to the navigator
+exactly (unplanned and unsteered, `send_goals(..., exact=True)`), as are its steps back, which
+keep the heading; its turns are made on the spot at a carrying pace. A body that strays from a leg
+or a step back by more than 3 cm, plus the margin it plans with, stops with `left its way`. That
+margin is how far the body strays from its way (`HumanoidBody.follow_error`), and the way keeps
+that much further off everything: none for a walker drawn on its root; with a `body_lag`, how far
+the drawn body cuts inside the tightest arc a way has, `(speed * body_lag)**2 / 1.15 m` (2 cm at
+0.15 s and 1 m/s, 7.9 cm at 0.3 s, where the close bends of the planner's tests leave no way); for
+a humanoid robot driven physically, what its retargeting table states it measured. `planned`
+says the margin, and a carry that finds no way says what it was. Where there is no way, it fails before it sets off, holding what it holds. At the
+target, the body may stand against the target it works at and what that stands on, and as it sets
+off, against what it already stands against; what it holds may touch neither.
 
 `approach` to something a hand takes by its handles (a grip site, a tote) stands its `standoff` from
 the handles, then steps back until nothing solid is within the body's clearance in front of it,
@@ -274,14 +295,24 @@ handle with the hand turned on it, fingers forward and down along the forearm th
 while it carries. A handle off the floor is taken as its frame says.
 
 `carry` lifts what the hands hold straight up off what it stood on first (6 cm), then in toward
-the body; carrying, the body turns on the spot the way its load sweeps clear of what stands round
-it, and fails naming what is in the way if neither way is. `place` takes the load over the highest
+the body, and walks its way. `place` takes the load over the highest
 thing between where it is and the place -- read on a grid under its footprint, past what rides in
 it -- then leads it on until it is within millimetres of the place, square to the place's heading
 (a site's, a body's, or a world pose that states one; at most 20 degrees), and lowers it until it
 rests at the place's height. It fails, holding the load, where the hands cannot bring it there,
 where it would stand half off a surface or on a rim, and where something holds it up above the
 place.
+
+`pull` and `push` by `angle` turn what the hand holds round its hinge -- a door toward the body
+or away from it. The hand goes round the arc the hinge sets; where the arc leaves its reach the
+body steps round the hinge with the leaf, keeping its pose to it, so a body that stood outside the
+leaf's swing stays outside it. The path it would step round on is checked first with its footprint
+(what it holds included), and one that would meet something fails before anything moves. A hand
+holding something on a joint (a door, a drawer) **keeps** it where it is while the body walks on
+(`approach` holding it), and the way keeps the body within the hand's reach of it; let go, a door's
+closer shuts it. A door pushed open is walked through holding it, the handle going ahead; one
+pulled open is not -- its handle is then at the leaf's far edge, out of reach of the opening, and
+a hand that moves to the edge is not modelled.
 
 `pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
 servo under the load) goes on past it until the object has, by at most half the distance; a lagging
