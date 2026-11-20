@@ -353,6 +353,16 @@ class HumanoidPlugin(MachinePlugin):
         self._apart = {s: 0.0 for s in SIDES}
         self._riding = {s: False for s in SIDES}
         self._turns = {s: 0.0 for s in SIDES}
+        # a door kept when the run was reset is kept no more
+        for state in (
+            self._keep,
+            self._kept_at,
+            self._push,
+            self._tip_goal,
+            self._keep_z,
+            self._keep_at_face,
+        ):
+            state.clear()
 
     # -- helpers ----------------------------------------------------------------------------
     @property
@@ -1708,6 +1718,12 @@ class HumanoidPlugin(MachinePlugin):
         h0 = self.holding[lead]
         jnt = self._hinge(h0.obj_body)
         name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, h0.obj_body) or what
+        for s in sides:
+            if self._keep.get(s) in ("round", "contact"):
+                self.fail(
+                    f"the {_side_word(s)} hand keeps {name} by pushing on its face, not by its "
+                    f"handle: grasp the handle again to turn it"
+                )
         if jnt < 0:
             self.fail(f"angle: {name} turns on no hinge; pull or push it by a distance")
         axis = d.xaxis[jnt].copy()
@@ -1817,6 +1833,10 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.keep_heading(None)
         self._check_holds()
+        for s in sides:
+            if s in self._kept_at:
+                # a door kept and turned again is kept at the angle it is turned to
+                self._kept_at[s] = float(d.qpos[qadr])
         moved = math.degrees((float(d.qpos[qadr]) - q0) * math.copysign(1.0, total))
         q = float(d.qpos[qadr])
         # open as far as it goes is a full turn; shut, it is not
