@@ -1871,12 +1871,9 @@ class HumanoidPlugin(MachinePlugin):
                 self._kept_at[s] = float(d.qpos[qadr])
         moved = math.degrees((float(d.qpos[qadr]) - q0) * math.copysign(1.0, total))
         q = float(d.qpos[qadr])
-        # open as far as it goes is a full turn; shut, it is not
-        at_stop = (
-            limited
-            and not closing
-            and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
-        )
+        # at a stop it turned as far as it goes: open all the way, or shut (a door shut already
+        # was refused before it moved)
+        at_stop = limited and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
         if moved < 0.8 * float(angle) and not at_stop:
             self.fail(f"stuck: {name} turned {moved:.0f} of {float(angle):.0f} deg")
         return moved
