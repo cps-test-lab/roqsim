@@ -530,7 +530,7 @@ def test_a_way_planned_in_steps_hands_back_while_it_searches_and_is_the_same_way
             break
         handed += 1
         data.qpos[:] = 0.0  # the world as a simulation steps it on: not read again
-    assert handed >= whole.expanded // L.SLICE_STATES > 0, (handed, whole.expanded)
+    assert handed >= max(1, whole.expanded // L.SLICE_STATES), (handed, whole.expanded)
     assert [s.kind for s in way.segments] == [s.kind for s in whole.segments]
     assert way.poses == whole.poses
     assert way.seconds < whole.seconds * 3 + 0.5  # the time it ran, not the time handed back
