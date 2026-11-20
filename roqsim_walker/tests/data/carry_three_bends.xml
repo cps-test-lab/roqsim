@@ -1,0 +1,21 @@
+<!-- Three bends of 30 degrees close together, in a 1.1 m aisle between partitions: each bend
+     clear on its own, the three together for a load across the body only if the way is the
+     body's and not a disc's. Its centre line:
+     (-1.5, 0) (1, 0) (1.8, 0.46) (2.6, 0.46) (3.4, 0.92) (6, 0.92). -->
+<mujoco model="carry_three_bends">
+  <compiler angle="degree"/>
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 8" dir="0 0.2 -1"/>
+    <geom name="floor" type="plane" size="8 8 0.05"/>
+    <geom name="wall_l0" type="box" pos="-0.3237 0.5500 0.9" size="1.2263 0.05 0.9" euler="0 0 0.0000"/>
+    <geom name="wall_l1" type="box" pos="1.2526 0.7810 0.9" size="0.5119 0.05 0.9" euler="0 0 30.0011"/>
+    <geom name="wall_l2" type="box" pos="2.0526 1.0119 0.9" size="0.4500 0.05 0.9" euler="0 0 0.0000"/>
+    <geom name="wall_l3" type="box" pos="2.8526 1.2429 0.9" size="0.5119 0.05 0.9" euler="0 0 30.0011"/>
+    <geom name="wall_l4" type="box" pos="4.6263 1.4738 0.9" size="1.4237 0.05 0.9" euler="0 0 0.0000"/>
+    <geom name="wall_r0" type="box" pos="-0.1763 -0.5500 0.9" size="1.3737 0.05 0.9" euler="0 0 0.0000"/>
+    <geom name="wall_r1" type="box" pos="1.5474 -0.3191 0.9" size="0.5119 0.05 0.9" euler="0 0 30.0011"/>
+    <geom name="wall_r2" type="box" pos="2.3474 -0.0881 0.9" size="0.4500 0.05 0.9" euler="0 0 0.0000"/>
+    <geom name="wall_r3" type="box" pos="3.1474 0.1428 0.9" size="0.5119 0.05 0.9" euler="0 0 30.0011"/>
+    <geom name="wall_r4" type="box" pos="4.7737 0.3738 0.9" size="1.2763 0.05 0.9" euler="0 0 0.0000"/>
+  </worldbody>
+</mujoco>

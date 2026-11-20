@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
-from roqsim_motion.body import PARK
+from roqsim_motion.body import PARK, PRESS_PROXY
 
 from roqsim.pose import yaw_to_quat
 
@@ -237,7 +237,9 @@ def build_humanoid(
                 bones.append(bone)
             # The hand's press proxy: a fingertip that pushes what has a degree of freedom (a
             # button, a switch), posed while a move presses and parked below the floor otherwise.
-            proxy = spec.worldbody.add_body(name=f"{name}/press_{side}", pos=list(park), mocap=True)
+            proxy = spec.worldbody.add_body(
+                name=f"{name}/{PRESS_PROXY.format(side=side)}", pos=list(park), mocap=True
+            )
             g = proxy.add_geom()
             g.type = mujoco.mjtGeom.mjGEOM_SPHERE
             g.size = [PRESS_RADIUS, 0.0, 0.0]

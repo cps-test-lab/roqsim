@@ -614,6 +614,12 @@ differ:
   the cancel from a larger number. A machine's ``cancel`` can name the start it cancels (by its number
   or a token), and finishes that start with the error ``cancelled``.
 
+In process, the handle's ``send_goals(goals, exact=True)`` sends one route that is walked as given
+-- straight legs between its points, the planner not asked and the avoidance model's steering not
+applied, its forward probe still stopping the mover; no recovery, no corner cut by the tracker, and
+its last point stopped at within 1 cm rather than at ``arrival_radius`` -- for a caller that has checked the legs
+itself, as a way of :mod:`roqsim_nav.lattice` is checked. The next route is planned again.
+
 Carrying the route in their names, the navigator's commands stay apart from a machine's ``start`` and
 ``cancel`` on an entity that has both -- a walker with hands, moved by its navigator and running its
 ``humanoid`` -- so a scenario's ``entity_call`` names either by the entity alone.
@@ -3262,6 +3268,10 @@ so a humanoid's hand (``roqsim_motion``) or a robot's gripper works them by cont
   (``<name>/drawer_<i>``) with a grip site on its handle, ``<name>/drawer_<i>/grip``.
 * ``tote``: a free box with a grip site at each end, ``<name>/grip_l`` and ``<name>/grip_r``, and
   with ``contents: true`` the ``look_full``/``look_empty`` bodies a ``part_state`` shows and hides.
+* ``door`` with ``actuation: hand``: a leaf that turns because it is pushed or pulled, against a
+  ``closer`` (a spring to shut and its damping) and its friction, with a lever handle's grip on
+  each face -- ``<name>/pull/grip`` on the face it opens toward, ``<name>/push/grip`` on the other --
+  and a stance before each. ``pull`` and ``push`` by an ``angle`` turn it round its hinge.
 
 A grip site states the frame a hand holds it in (``roqsim_motion.hands``): +x from the palm toward
 the object, +z along the fingers. A hold is a weld between the hand and the object, added when the
@@ -3271,6 +3281,39 @@ world is built and switched on with the object where it is in the hand (``roqsim
 world is not filtered from that body's geoms, so a button sunk into its housing is held there by
 contact. ``push_button`` excludes the pair (``<contact><exclude>``); a button modelled otherwise needs
 the same.
+
+Slots: where to stand, where the hand goes
+------------------------------------------
+
+A **slot** is what a prop says about working at it: where a worker stands, which way it faces, and
+where its hand goes. It is sites, by a naming convention the moves of ``roqsim_motion`` read:
+
+* the **hand target**, named for the slot: a grip site ``<x>/<slot>/grip`` (the grip frame above),
+  which ``grasp`` takes; a place frame ``<x>/<slot>`` (+z up, its yaw the heading what is set down
+  there is set at), which ``place`` sets down on; or a press face ``<x>/<slot>`` (+x out of the
+  face), which ``press`` pushes;
+* its **stances**, ``<x>/<slot>/stand``, or ``<x>/<slot>/stand_<k>`` for several: on the floor, +x the
+  way to face. Only their floor position and heading are read.
+
+``approach`` and ``carry`` to a target that states stances -- ``<x>/<slot>`` itself, or its
+``<x>/<slot>/grip`` -- walk to the nearest of them and face as it says, unless they are given a
+``standoff`` or a ``facing``; without one they stand ``standoff`` (0.6 m left out) in front of the
+target as before. ``arrived`` carries ``stance``: the stance's site, or the stand-off it used.
+
+A prop's own plugin states its slots; the ``slots`` component states them on any other body -- a
+primitive standing in for a rack, a mesh model, a body of a baked scene -- nested under the entry
+whose body it is, in that body's frame, its sites named for the entry::
+
+    - box: {prefix: rack_, pose: {position: {x: 2.0, y: 0.0}}, size: [0.6, 1.2, 0.9], motion: static}
+      name: rack
+      components:
+        - slots:
+            body: rack_box      # as the model names it
+            slots:
+              bin_0: {kind: grip, at: [0.1, 0.0, 0.5, 3.14159], stand: [[0.6, 0.0, 3.14159]]}
+              tray: {kind: place, at: [0.0, 0.2, 0.46]}
+
+which states ``rack/bin_0/grip``, ``rack/bin_0/stand`` and ``rack/tray``.
 
 Writing your own
 ----------------

@@ -170,11 +170,20 @@ class Hold:
         return float(abs(np.dot(f, axis)))
 
     def slide_axis(self, model, data):
-        """The world axis of the slide the held object is on, or ``None`` (a free object)."""
+        """The world axis the held object moves along at its grip site, or ``None`` (a free
+        object): a slide's axis, or for a hinge the tangent of the arc its grip site goes round --
+        the rest of a hold's pull is the joint's reaction to a hand a little off that line."""
         jnt = int(model.body_jntadr[self.obj_body])
-        if jnt < 0 or model.jnt_type[jnt] != mujoco.mjtJoint.mjJNT_SLIDE:
+        if jnt < 0:
             return None
-        return data.xaxis[jnt].copy()
+        kind = int(model.jnt_type[jnt])
+        if kind == mujoco.mjtJoint.mjJNT_SLIDE:
+            return data.xaxis[jnt].copy()
+        if kind == mujoco.mjtJoint.mjJNT_HINGE:
+            tangent = np.cross(data.xaxis[jnt], data.site_xpos[self.obj_site] - data.xanchor[jnt])
+            n = float(np.linalg.norm(tangent))
+            return tangent / n if n > 1e-9 else None
+        return None
 
 
 def contact_force(model, data, body: int, exclude: set | None = None) -> float:
