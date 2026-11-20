@@ -328,6 +328,22 @@ def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
     assert drift < 0.005, drift
 
 
+def test_lifted_says_how_high_the_hands_are(sim):
+    """``lifted`` says the height the hands came to, not the one they were sent to: a lift ends
+    within a few centimetres of where it aims."""
+    sim.ok("approach", target="tote_1", standoff=0.6)
+    sim.ok("grasp", hand="both", target="tote_1")
+    seq = sim.h.carry("bench", standoff=0.55)
+    while True:
+        sim.e.step()
+        lifted = [e for e in sim.e.ctx.events.all()[sim._first :] if e["event"] == "lifted"]
+        if lifted:
+            break
+        assert not (sim.h.status().seq == seq and sim.h.status().finished)
+    hands = [sim.d.site(f"worker/grip_{s}").xpos[2] for s in "lr"]
+    assert lifted[0]["height"] == pytest.approx(float(np.mean(hands)), abs=0.002), (lifted, hands)
+
+
 def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
     """The hold is a spring: the load comes over the place a moment after the hands. It is lowered
     once it is there, so it does not come down on a rim beside the place; and it is set down only

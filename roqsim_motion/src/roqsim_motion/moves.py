@@ -523,7 +523,13 @@ class HumanoidPlugin(MachinePlugin):
     def _stand_for(self, target: str, standoff: float | None, facing):
         """Where to stand, and which way to face, to work on ``target``: at its stance (a slot's
         ``…/stand`` site, the nearest of several) where it states one and neither ``standoff`` nor
-        ``facing`` is given; else ``standoff`` (0.6 m left out) from its front."""
+        ``facing`` is given; else ``standoff`` (0.6 m left out) from its front. A grip site the
+        model does not have (``<slot>/grip`` of a place or press slot) is refused before anything
+        moves, not walked to by its slot's stance."""
+        if isinstance(target, str) and "/" in target and self._site_id(target) < 0:
+            base, last = target.rsplit("/", 1)
+            if last.startswith("grip") and self._stances(base):
+                self.fail(f"unknown target {target}: {base} states no grip, only where to stand")
         stances = self._stances(target) if standoff is None and facing is None else []
         if stances:
             x, y, _ = self.body.root()
@@ -1644,7 +1650,10 @@ class HumanoidPlugin(MachinePlugin):
             rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
         )
         self._check_holds()
-        self.step("lifted", height=height)
+        # the height the hands holding came to (a riding one too): a lift ends within a few
+        # centimetres of where it aims
+        got = float(np.mean([self.body.grip(d, s)[0][2] for s in sides]))
+        self.step("lifted", height=round(got, 3))
         carried = self._carried()
         stand, yaw = self._stand_for(to, standoff, facing)
         yield from self._walk_way(
