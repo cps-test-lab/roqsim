@@ -103,7 +103,7 @@ MAX_STATES = 60_000
 #: How many states a search expands between the points where :func:`plan_way_steps` hands back,
 #: so a caller on the physics thread steps the simulation on between them.
 SLICE_STATES = 100
-#: How many heading bins' rasters it builds between those points, before its search.
+#: How many heading bins' rasters it builds between those points, past its search's first state.
 RASTERS_PER_STEP = 4
 
 _TURNED, _BACKED = 1, 2
@@ -394,6 +394,7 @@ class _CSpace:
         self._memo = {}
         self._sweeps = {}
         self._turned = {}
+        self._turns = {}
         self._sure = {}
         self._inner = None
 
@@ -562,8 +563,11 @@ class _CSpace:
             if zone is None or self.surely_blocked(*p):
                 return False
             allowed = zone if allowed is None else allowed & zone
-        # the cheap exact check first, of the ends (kept), then the sweep between them
         allowed = frozenset(allowed)
+        if a[0] == b[0] and a[1] == b[1]:
+            # a turn on the spot: read off the turn's table at that spot
+            return self.turn_free(a[0], a[1], a[2], b[2], allowed)
+        # the cheap exact check first, of the ends (kept), then the sweep between them
         if not (self.exact_free(*a, allowed) and self.exact_free(*b, allowed)):
             return False
         return self.sweep_free(a, b, allowed)
@@ -588,6 +592,8 @@ class _CSpace:
         if not hasattr(self, "_grown"):
             self._exact_setup()
         allowed = frozenset(allowed)
+        if a[0] == b[0] and a[1] == b[1]:
+            return self.turn_free(a[0], a[1], a[2], b[2], allowed)
         key = tuple(round(v * 1000.0) for v in (*a[:3], *b[:3])) + (allowed,)
         hit = self._sweeps.get(key)
         if hit is not None:
@@ -627,6 +633,11 @@ class _CSpace:
         """Whether piece ``i`` comes within ``gap`` of one of ``near`` at any of the samples
         ``(xs, ys)`` turned by ``(c, s_)`` (cosines and sines, column vectors): the separating-axis
         check of :meth:`_hits`, every sample at once."""
+        return bool(self._sweep_mask(i, near, xs, ys, c, s_, gap, first=True).any())
+
+    def _sweep_mask(self, i: int, near, xs, ys, c, s_, gap: float, first=False) -> np.ndarray:
+        """Which of the samples of :meth:`_sweep_hits` piece ``i`` comes within ``gap`` of one of
+        ``near`` at (with ``first``, enough to tell whether any does)."""
         _band, poly, _r, _own, paxes = self._grown[i]
         # every sample's polygon and axes, (n, v, 2) and (n, a, 2)
         px, py = poly[:, 0][None, :], poly[:, 1][None, :]
@@ -635,6 +646,7 @@ class _CSpace:
         axes = np.stack([ax * c - ay * s_, ax * s_ + ay * c], -1)
         lo, hi = posed.min((0, 1)), posed.max((0, 1))
         own = None
+        hit = np.zeros(len(xs), bool)
         for q, _name, _qc, _qr, qaxes, qmin, qmax, qlo, qhi in near:
             # the cheap check first: the boxes round all its samples and round the obstacle
             if np.any(hi + gap < qlo) or np.any(qhi + gap < lo):
@@ -646,9 +658,47 @@ class _CSpace:
             apart = np.any((on_q.max(1) + gap < qmin) | (qmax + gap < on_q.min(1)), axis=1)
             on_p = np.einsum("qd,nad->nqa", q, axes)  # (n, q, a)
             apart |= np.any((on_p.max(1) + gap < pmin) | (pmax + gap < on_p.min(1)), axis=1)
-            if not apart.all():
-                return True
-        return False
+            hit |= ~apart
+            if first and hit.any():
+                break
+        return hit
+
+    def turn_free(self, x, y, th0, th1, allowed=frozenset()) -> bool:
+        """Whether the footprint turning on the spot at ``(x, y)`` from ``th0`` to ``th1`` (the way
+        it turns: unwrapped) meets nothing, exactly: read off a table of the whole turn at that
+        spot -- every heading round it, between which no point of the footprint moves more than
+        :data:`SWEEP_STEP` -- made once, the first time a turn there is asked for. A search asks
+        for many turns from one spot; each is then a look-up."""
+        if not hasattr(self, "_grown"):
+            self._exact_setup()
+        allowed = frozenset(allowed)
+        key = (round(x * 1000.0), round(y * 1000.0), allowed)
+        table = self._turns.get(key)
+        if table is None:
+            pieces, reach = [], 0.0
+            for i, (band, _poly, r, own, _axes) in enumerate(self._grown):
+                near = self._near_piece(band, own, allowed, x, y, r + SWEEP_STEP)
+                if near:
+                    pieces.append((i, near))
+                    reach = max(reach, r)
+            if not pieces:
+                table = self._turns[key] = None
+            else:
+                n = max(8, int(math.ceil(2.0 * math.pi * reach / SWEEP_STEP)))
+                hs = 2.0 * math.pi * np.arange(n) / n
+                xs, ys = np.full(n, float(x)), np.full(n, float(y))
+                c, s_ = np.cos(hs)[:, None], np.sin(hs)[:, None]
+                hit = np.zeros(n, bool)
+                for i, near in pieces:
+                    hit |= self._sweep_mask(i, near, xs, ys, c, s_, SWEEP_STEP / 2.0)
+                table = self._turns[key] = hit
+        if table is None:
+            return True
+        n = len(table)
+        lo, hi = sorted((th0, th1))
+        i0 = int(math.floor(lo / (2.0 * math.pi) * n))
+        i1 = int(math.ceil(hi / (2.0 * math.pi) * n))
+        return not bool(table[np.arange(i0, i1 + 1) % n].any())
 
     def body_meets(self, x, y, th) -> set:
         """The bodies the mover's own pieces overlap at ``(x, y, th)``, exactly."""
@@ -919,6 +969,14 @@ class _Search:
                 tail = self.shot(s, goal)
                 if tail is not None:
                     return self._moves(node) + tail, best[1]
+            if self.expanded == 1:
+                # no shot from the start onto the goal: the heading bins' rasters, a few at a time
+                # between hand-backs, before its turns on the spot ask for every one of them at once
+                for k in range(fp.bins):
+                    if cs._b[k] is None:
+                        cs._b[k] = cs.blocked(k)
+                    if k % RASTERS_PER_STEP == RASTERS_PER_STEP - 1:
+                        yield
             succ = []
             # arcs forward
             for db in (0, 1, -1):
@@ -1158,6 +1216,10 @@ def plan_way_steps(
     reach = footprint.radius
     bounds = _bounds(model, data, [start, *goals], reach)
     layers = Layers(model, data, footprint.bands, bounds, res, skip_roots)
+    # the world read, it hands back before it plans
+    ran += time.perf_counter() - t0
+    yield
+    t0 = time.perf_counter()
     f = max(1, int(round(0.05 / res)))
     segments, expanded, widened, poses = [], 0, False, []
     # a turn on the spot and a step back since the last move forward, carried across a via point:
@@ -1216,15 +1278,6 @@ def plan_way_steps(
             search = _Search(
                 cs, h2d, f, layers, float(back_max), bool(long_way), max_states - expanded
             )
-            # the heading bins' rasters first, a few at a time between hand-backs: a search's first
-            # turn on the spot would ask for every one of them at once
-            for k in range(footprint.bins):
-                if cs._b[k] is None:
-                    cs._b[k] = cs.blocked(k)
-                if k % RASTERS_PER_STEP == RASTERS_PER_STEP - 1:
-                    ran += time.perf_counter() - t0
-                    yield
-                    t0 = time.perf_counter()
             steps = search.steps(pose, gl, flags)
             while True:
                 try:
