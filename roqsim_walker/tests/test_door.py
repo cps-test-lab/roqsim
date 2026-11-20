@@ -278,3 +278,26 @@ def test_a_turn_that_needs_the_body_to_step_round_is_refused_without_a_navigator
         assert abs(door.angle()) < 2.0
     finally:
         engine.shutdown()
+
+
+def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_body_stands():
+    """A pull steps the body round with the leaf to where its hand reaches the handle, which may be
+    farther from the root than 0.9 of the arm's reach: the way of a walk keeping the door keeps the
+    root within the arm's reach from the shoulder, beside the root, and at least within where it
+    stands -- the walk is not refused where it starts."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        assert door.run("pull", hand="right", angle=40.0).error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        x, y, yaw = door.body.root()
+        ((tx, ty, r),) = hp._tethers()
+        assert math.hypot(tx - x, ty - y) < r, (x, y, tx, ty, r)
+        st = door.run(
+            "approach", target={"position": {"x": x - 0.15, "y": y, "z": 0.0}}, facing=yaw
+        )
+        assert "already meets" not in st.error, st.error
+    finally:
+        engine.shutdown()

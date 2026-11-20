@@ -783,10 +783,16 @@ class HumanoidPlugin(MachinePlugin):
         """For each hand that keeps something on a joint where it is: ``(x, y, r)``, the root kept
         within ``r`` of the hand, so the hand stays within its reach."""
         out = []
+        x, y, _ = self.body.root()
         for s in SIDES:
             if self._kept(s):
                 p = self.body.grip(self._d, s)[0]
-                out.append((float(p[0]), float(p[1]), KEEP_REACH * self.body.arm_reach(s)))
+                sh = self.body.shoulder(self._d, s)
+                # the hand reaches from its shoulder, which stands to the side of the root
+                r = KEEP_REACH * self.body.arm_reach(s) + math.hypot(sh[0] - x, sh[1] - y)
+                # where the body stands now is within reach, however it came to stand there
+                r = max(r, math.hypot(p[0] - x, p[1] - y) + 0.02)
+                out.append((float(p[0]), float(p[1]), r))
         return out
 
     def _walk_way(self, stand, yaw, what: str, carried, via=(), back_max=BACK_MAX, long_way=False):
