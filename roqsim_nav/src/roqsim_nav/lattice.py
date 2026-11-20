@@ -640,8 +640,8 @@ class _CSpace:
             ax_, ay_ = a[0] + ca[0], a[1] + ca[1]
             bx_, by_ = b[0] + cb[0], b[1] + cb[1]
             # the centre's path bows out of its chord by at most its reach times the turn
-            bow = math.hypot(*mid) * min(abs(turn), math.pi) / 2.0
-            spread = math.hypot(bx_ - ax_, by_ - ay_) / 2.0 + bow + SWEEP_STEP
+            turn_bow = math.hypot(*mid) * min(abs(turn), math.pi) / 2.0
+            spread = math.hypot(bx_ - ax_, by_ - ay_) / 2.0 + turn_bow + SWEEP_STEP
             near = self._near_piece(
                 band, own, allowed, (ax_ + bx_) / 2.0, (ay_ + by_) / 2.0, rho + spread + bow
             )
