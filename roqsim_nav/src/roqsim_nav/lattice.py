@@ -584,6 +584,33 @@ class _CSpace:
             return False
         return self.sweep_free(a, b, allowed)
 
+    def path_ok(self, points, bow: float = 0.0) -> bool:
+        """The search's check of a move it samples as ``points`` (poses, the move's start first),
+        the root's path between them straying from the straight line from first to last by at
+        most ``bow``: the raster's at each sample, and where the raster says blocked within a
+        zone, the exact one of the move as a whole, across its sweep -- one sweep, not one a sample
+        (:meth:`move_ok` checks a move between two samples)."""
+        if not all(self.tethered(p[0], p[1]) for p in points[1:]):
+            return False
+        allowed = None
+        for p in points:
+            if self.free(*p):
+                continue
+            i = int((p[0] - self._ox) * self._inv) - self.i0
+            j = int((p[1] - self._oy) * self._inv) - self.j0
+            if not (0 <= i < self._h and 0 <= j < self._w) or p[0] < self._ox or p[1] < self._oy:
+                return False
+            zone = self._zone_of(p)
+            if zone is None or self.surely_blocked(*p):
+                return False
+            allowed = zone if allowed is None else allowed & zone
+        if allowed is None:
+            return True
+        allowed = frozenset(allowed)
+        if not (self.exact_free(*points[0], allowed) and self.exact_free(*points[-1], allowed)):
+            return False
+        return self.sweep_free(points[0], points[-1], allowed, bow)
+
     def _zone_of(self, p):
         """The bodies the body may stand against at ``p`` (the zones' it is in), or ``None`` outside
         every zone."""
@@ -593,20 +620,21 @@ class _CSpace:
                 out = set(allowed) if out is None else out | set(allowed)
         return out
 
-    def sweep_free(self, a, b, allowed=frozenset()) -> bool:
+    def sweep_free(self, a, b, allowed=frozenset(), bow: float = 0.0) -> bool:
         """Whether the footprint, grown by its margin, overlaps nothing as its root moves from pose
         ``a`` to pose ``b`` (straight, turning evenly by ``b``'s heading less ``a``'s, unwrapped).
         First cheaply: only the obstacles whose bounding circle comes within a piece's reach of the
         move are looked at, and a move near none is free. Then at samples between which no point of
         the footprint moves more than :data:`SWEEP_STEP`, each checked with half of it to spare,
         so what the move sweeps between them is checked too. The body's own pieces may overlap the
-        bodies named in ``allowed``."""
+        bodies named in ``allowed``. ``bow``: how far the path the root takes may stray from the
+        straight line between ``a`` and ``b`` (an arc from its chord), checked to spare too."""
         if not hasattr(self, "_grown"):
             self._exact_setup()
         allowed = frozenset(allowed)
         if a[0] == b[0] and a[1] == b[1]:
             return self.turn_free(a[0], a[1], a[2], b[2], allowed)
-        key = tuple(round(v * 1000.0) for v in (*a[:3], *b[:3])) + (allowed,)
+        key = tuple(round(v * 1000.0) for v in (*a[:3], *b[:3])) + (allowed, round(bow * 1e4))
         hit = self._sweeps.get(key)
         if hit is not None:
             return hit
@@ -623,7 +651,7 @@ class _CSpace:
             bow = math.hypot(*mid) * min(abs(turn), math.pi) / 2.0
             spread = math.hypot(bx_ - ax_, by_ - ay_) / 2.0 + bow + SWEEP_STEP
             near = self._near_piece(
-                band, own, allowed, (ax_ + bx_) / 2.0, (ay_ + by_) / 2.0, rho + spread
+                band, own, allowed, (ax_ + bx_) / 2.0, (ay_ + by_) / 2.0, rho + spread + bow
             )
             if near:
                 pieces.append((i, near))
@@ -636,7 +664,8 @@ class _CSpace:
             ths = a[2] + turn * k
             c, s_ = np.cos(ths)[:, None], np.sin(ths)[:, None]
             free = not any(
-                self._sweep_hits(i, near, xs, ys, c, s_, SWEEP_STEP / 2.0) for i, near in pieces
+                self._sweep_hits(i, near, xs, ys, c, s_, SWEEP_STEP / 2.0 + bow)
+                for i, near in pieces
             )
         self._sweeps[key] = free
         return free
@@ -992,18 +1021,16 @@ class _Search:
             succ = []
             # arcs forward
             for db in (0, 1, -1):
-                ok, px, py, near = True, x, y, 0
+                px, py, near = x, y, 0
                 sub = 4
-                prev = (x, y, th)
+                points = [(x, y, th)]
                 for q in range(1, sub + 1):
                     tq = th + db * dth * (q - 0.5) / sub
                     px += STEP / sub * math.cos(tq)
                     py += STEP / sub * math.sin(tq)
-                    cur = (px, py, th + db * dth * q / sub)
-                    if not cs.move_ok(prev, cur):
-                        ok = False
-                        break
-                    prev = cur
+                    points.append((px, py, th + db * dth * q / sub))
+                # an arc bows out of its chord by its length times its turn over 8, at most
+                ok = cs.path_ok(points, STEP * abs(db) * dth / 8.0)
                 if ok:
                     near = cs.is_near(px, py, th + db * dth)
                     cost = STEP / SPEED + ARC_COST * abs(db) + NEAR_COST * near
@@ -1038,7 +1065,7 @@ class _Search:
                     p0 = (x - (dist - BACK_STEP) * cth, y - (dist - BACK_STEP) * sth, th)
                     mid = (x - (dist - BACK_STEP / 2) * cth, y - (dist - BACK_STEP / 2) * sth, th)
                     p1 = (x - dist * cth, y - dist * sth, th)
-                    if not (cs.move_ok(p0, mid) and cs.move_ok(mid, p1)):
+                    if not cs.path_ok([p0, mid, p1]):
                         break
                     cost = 2 * dist / SPEED + BACK_COST
                     succ.append(
