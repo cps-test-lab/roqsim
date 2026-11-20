@@ -575,3 +575,14 @@ def test_a_sweep_keeps_the_bow_it_is_given_to_spare():
     assert cs.sweep_free((0.8, 0.0, 0.0), (1.2, 0.0, 0.0), frozenset(), 0.0)
     assert not cs.sweep_free((0.8, 0.0, 0.0), (1.2, 0.0, 0.0), frozenset(), 0.05)
 
+
+def test_a_goal_facing_a_given_way_near_the_start_may_stand_against_what_the_start_does():
+    """Where the goal's zone and the start's overlap, the goal may stand against what each allows,
+    with a heading given as without one."""
+    model, data = _model("""<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .1"/>
+      <body name="bench" pos="0 0.22 0.25"><geom name="bench" type="box" size="0.6 0.1 0.25"/></body>
+      <geom name="wall" type="box" pos="0 -2 0.5" size="3 0.05 0.5"/></worldbody></mujoco>""")
+    fp = Footprint([Piece(_box(0.0, 0.0, 0.2, 0.3), (0.0, 1.0), "body", body=True)])
+    for goal in ((0.10, 0.0, None), (0.10, 0.0, 0.0)):
+        way = plan_way(model, data, fp, (0.0, 0.0, 0.0), goal)
+        assert math.hypot(way.poses[-1][0] - 0.10, way.poses[-1][1]) < 0.05, (goal, way.poses[-1])
