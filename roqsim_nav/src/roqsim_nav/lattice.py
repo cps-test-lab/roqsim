@@ -86,6 +86,8 @@ NEAR_CELLS = 2
 SHOT = 1.5
 ZONE = 0.15
 GOAL_ZONE = 0.6
+#: How many heading bins of a turn's table at a spot are made at once, the way the turn goes.
+TURN_BINS = 8
 #: How far any point of the footprint moves between two samples of an exact check of a move (m):
 #: each sample is checked with half of it to spare, so every point the move sweeps is checked.
 SWEEP_STEP = 0.01
@@ -98,6 +100,10 @@ WIDEN = 0.5
 #: The cell (m) and the turn (rad) on which two states count as one: the search's closed set.
 KEY_CELL = 0.1
 KEY_TURN = math.radians(10)
+#: How much the search weighs its estimate of the cost to go against the cost come (weighted A*):
+#: more than 1 leads it to the goal through far fewer states, at the price of ways a little longer
+#: than the shortest (within 10 % in the shipped scenes; at most that factor in theory).
+HEURISTIC_WEIGHT = 2.0
 #: The most states a search expands before it gives up.
 MAX_STATES = 60_000
 #: How many states a search expands between the points where :func:`plan_way_steps` hands back,
@@ -745,17 +751,25 @@ class _CSpace:
         order = range(i0 // per, i1 // per + 1)
         if th1 < th0:
             order = reversed(order)
+        step = -1 if th1 < th0 else 1
         for c in order:
             k = c % self._bins
             mask = chunks.get(k)
             if mask is None:
-                hs = 2.0 * math.pi * (k * per + np.arange(per)) / n
-                xs, ys = np.full(per, float(x)), np.full(per, float(y))
+                # this bin and the next few the way it turns, at once: a turn that got here
+                # mostly goes on
+                ks = [(k + step * j) % self._bins for j in range(TURN_BINS)]
+                ks = [b for b in dict.fromkeys(ks) if b not in chunks]
+                idx = (np.array(ks)[:, None] * per + np.arange(per)[None, :]).ravel()
+                hs = 2.0 * math.pi * idx / n
+                xs, ys = np.full(len(idx), float(x)), np.full(len(idx), float(y))
                 cs_, sn = np.cos(hs)[:, None], np.sin(hs)[:, None]
-                mask = np.zeros(per, bool)
+                hit = np.zeros(len(idx), bool)
                 for i, near in pieces:
-                    mask |= self._sweep_mask(i, near, xs, ys, cs_, sn, SWEEP_STEP / 2.0)
-                chunks[k] = mask
+                    hit |= self._sweep_mask(i, near, xs, ys, cs_, sn, SWEEP_STEP / 2.0)
+                for j, b in enumerate(ks):
+                    chunks[b] = hit[j * per : (j + 1) * per]
+                mask = chunks[k]
             start, stop = max(i0, c * per), min(i1, c * per + per - 1)
             if mask[start - c * per : stop - c * per + 1].any():
                 return False
@@ -827,6 +841,16 @@ def _overlap(a, b) -> bool:
 
 
 # -- the disc's way, the corridor and the heuristic -----------------------------------------------
+def _coarse_all(raster, f):
+    """``raster`` on a grid ``f`` times coarser: a cell set where every one of its cells is (past
+    the raster's edge counts as set)."""
+    h, w = raster.shape
+    H, W = (h + f - 1) // f, (w + f - 1) // f
+    pad = np.ones((H * f, W * f), bool)
+    pad[:h, :w] = raster
+    return pad.reshape(H, f, W, f).all(axis=(1, 3))
+
+
 def _coarse(raster, f):
     h, w = raster.shape
     H, W = (h + f - 1) // f, (w + f - 1) // f
@@ -910,7 +934,29 @@ class _Search:
             v = v * self.L.res * self.f / SPEED
         if goal[2] is not None:
             v = max(v, abs(_wrap(goal[2] - th)) / TURN_RATE)
-        return v
+        return HEURISTIC_WEIGHT * v
+
+    def _root_cost_to_go(self, start, goal) -> np.ndarray:
+        """The heuristic's cost to go (coarse cells), over the cells where the root may stand at
+        some heading -- every heading's raster blocked elsewhere -- and round the start and the
+        goal, where a body stands against what the raster keeps it off, over the corridor."""
+        cs, L, f = self.cs, self.L, self.f
+        blocked = np.ones(L.shape, bool)
+        blocked[cs.i0 : cs.i1, cs.j0 : cs.j1] = np.logical_and.reduce(
+            [cs._b[k] for k in range(cs._bins)]
+        )
+        corridor = np.zeros(L.shape, bool)
+        corridor[cs.i0 : cs.i1, cs.j0 : cs.j1] = cs.corridor
+        free = ~_coarse_all(blocked, f)
+        near = _coarse(corridor, f)
+        ii_, jj_ = np.ogrid[: free.shape[0], : free.shape[1]]
+        for (x, y), zone in (((goal[0], goal[1]), GOAL_ZONE), ((start[0], start[1]), ZONE)):
+            ci, cj = (v // f for v in L.cell(x, y))
+            r = int(math.ceil(zone / (L.res * f)))
+            free |= ((ii_ - ci) ** 2 + (jj_ - cj) ** 2 <= r * r) & near
+        gi, gj = (v // f for v in L.cell(goal[0], goal[1]))
+        free[min(gi, free.shape[0] - 1), min(gj, free.shape[1] - 1)] = True
+        return _cost_to_go(free, (gi, gj))
 
     def turn_way(self, x, y, th0, th1):
         """The signed angle a turn on the spot from ``th0`` to ``th1`` takes if every bin it passes
@@ -1036,6 +1082,15 @@ class _Search:
                         cs._b[k] = cs.blocked(k)
                     if k % RASTERS_PER_STEP == RASTERS_PER_STEP - 1:
                         yield
+                # every heading's raster at hand, the cost to go over where the root may stand at
+                # some heading, not over the floor alone: what the body holds meets what stands
+                # at its height too, and a search led straight at that floods round the start
+                h2d = self._root_cost_to_go(start, goal)
+                si, sj = (v // self.f for v in self.L.cell(start[0], start[1]))
+                if 0 <= si < h2d.shape[0] and 0 <= sj < h2d.shape[1] and np.isfinite(h2d[si, sj]):
+                    # (where it has no way to the goal at all, the floor's leads the search to
+                    # what is in the way, for a failure to name)
+                    self.h2d = h2d
             succ = []
             # arcs forward
             for db in (0, 1, -1):
