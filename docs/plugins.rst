@@ -614,6 +614,12 @@ differ:
   the cancel from a larger number. A machine's ``cancel`` can name the start it cancels (by its number
   or a token), and finishes that start with the error ``cancelled``.
 
+In process, the handle's ``send_goals(goals, exact=True)`` sends one route that is walked as given
+-- straight legs between its points, the planner not asked and the avoidance model's steering not
+applied, its forward probe still stopping the mover; no recovery, no corner cut by the tracker, and
+its last point stopped at within 1 cm rather than at ``arrival_radius`` -- for a caller that has checked the legs
+itself, as a way of :mod:`roqsim_nav.lattice` is checked. The next route is planned again.
+
 Carrying the route in their names, the navigator's commands stay apart from a machine's ``start`` and
 ``cancel`` on an entity that has both -- a walker with hands, moved by its navigator and running its
 ``humanoid`` -- so a scenario's ``entity_call`` names either by the entity alone.
