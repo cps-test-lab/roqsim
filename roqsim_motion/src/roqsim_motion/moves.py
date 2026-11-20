@@ -763,14 +763,16 @@ class HumanoidPlugin(MachinePlugin):
                 each()
                 yield
         except NoWay as err:
-            self.body.keep_heading(None)
             if fp.margin > 0.0:
                 self.fail(
                     f"{err}; planned {fp.margin:.3f} m clear of everything, how far the body "
                     "strays from its way"
                 )
             self.fail(str(err))
-        self.body.keep_heading(None)
+        finally:
+            # however the planning ends -- a way, none, a failure while it ran, a cancel -- the
+            # heading is the body's own again
+            self.body.keep_heading(None)
         self.step("planned", **way.summary())
         tol = FOLLOW_TOL + fp.margin
         for seg in way.segments:
