@@ -516,7 +516,13 @@ class HumanoidPlugin(MachinePlugin):
     def _stand_for(self, target: str, standoff: float | None, facing):
         """Where to stand, and which way to face, to work on ``target``: at its stance (a slot's
         ``…/stand`` site, the nearest of several) where it states one and neither ``standoff`` nor
-        ``facing`` is given; else ``standoff`` (0.6 m left out) from its front."""
+        ``facing`` is given; else ``standoff`` (0.6 m left out) from its front. A grip site the
+        model does not have (``<slot>/grip`` of a place or press slot) is refused before anything
+        moves, not walked to by its slot's stance."""
+        if isinstance(target, str) and "/" in target and self._site_id(target) < 0:
+            base, last = target.rsplit("/", 1)
+            if last.startswith("grip") and self._stances(base):
+                self.fail(f"unknown target {target}: {base} states no grip, only where to stand")
         stances = self._stances(target) if standoff is None and facing is None else []
         if stances:
             x, y, _ = self.body.root()
