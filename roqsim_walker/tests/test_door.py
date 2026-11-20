@@ -210,8 +210,8 @@ def test_a_door_kept_open_is_not_walked_away_from_out_of_reach():
         st = door.run(
             "approach", target={"position": {"x": -2.0, "y": 0.8, "z": 0.0}}, facing=math.pi
         )
-        assert st.error.startswith("no way "), st.error
-        assert door.d.body("gate") is not None
+        # naming what it holds: the door it keeps
+        assert st.error.startswith("no way holding gate to "), st.error
     finally:
         engine.shutdown()
 
@@ -257,5 +257,47 @@ def test_a_door_that_will_not_turn_is_stuck():
         if st.error.startswith("cannot follow"):
             assert "post_box" in st.error and door.angle() < 1.0, (st.error, door.angle())
         assert door.angle() < 35.0, door.angle()
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_turned_toward_its_shut_stop_fails_rather_than_reporting_it_turned():
+    """Pulled by the handle on the face it is pushed from, a shut door would turn further shut: the
+    pull fails saying so, before anything moves, rather than reporting a pull of about 0 deg."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        st = door.run("pull", hand="right", angle=30.0)
+        assert "is shut" in st.error, st.error
+        assert not door.events("moving")
+        assert abs(door.angle()) < 1.0
+    finally:
+        engine.shutdown()
+
+
+def test_a_body_that_leaves_its_way_round_a_hinge_fails_there():
+    """Stepping round the hinge with the leaf, the body is watched against the path its step was
+    checked on: a navigator that walks it 10 cm off every point it is sent (outward from the hinge)
+    leaves that path, and the pull fails saying so rather than walking a path nobody checked."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        nav = engine.ctx.blackboard.get("nav:worker:handle")
+        send = nav.send_goals
+
+        def off(goals, exact=False):
+            out = []
+            for x, y in goals:
+                r = math.hypot(x - 1.0, y) or 1.0
+                out.append((x + 0.1 * (x - 1.0) / r, y + 0.1 * y / r))
+            return send(out, exact=exact)
+
+        nav.send_goals = off
+        st = door.run("pull", hand="right", angle=85.0)
+        assert st.error.startswith("left its way to round gate"), st.error
     finally:
         engine.shutdown()

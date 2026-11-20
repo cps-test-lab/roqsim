@@ -138,9 +138,10 @@ KEEP_SLIP = math.radians(15)
 #: (m) within which the body's geoms from the floor up make one piece of it.
 ARM_RADIUS = 0.05
 BODY_LAYER = 0.3
-#: How many times a step back that falls short of its distance is aimed on (a navigator stops
-#: within its arrival radius of a goal).
+#: How many times a leg or a step back that ends short of where it goes is aimed on before the move
+#: fails, and how near its end it must stand (m).
 BACK_TRIES = 3
+AT_END = 0.01
 #: The time constant (s) a hold's force is judged over.
 FORCE_TAU = 0.15
 
@@ -752,14 +753,18 @@ class HumanoidPlugin(MachinePlugin):
             merged.append(Piece(hull, band, "what it holds"))
         merged += [p for p in pieces if p.what.startswith("arm:")]
         pieces = merged
+        # what the hands hold, a door kept on its hinge included: what a failure says it holds
         name = ", ".join(
-            mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}" for b in held
+            mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}"
+            for b in sorted({h.obj_body for h in self.holding.values() if h is not None})
         )
         margin = self.body.follow_error(self._nav_speed())
         return Footprint(pieces, margin=margin), sorted(roots | own - {0}), name
 
     def _nav_speed(self) -> float:
-        """The speed the body's navigator walks it at (m/s); 1 where it states none."""
+        """The speed the body's navigator walks it at (m/s); 1 where it states none. A way's legs
+        are sent ``exact``, which walks them at this speed: an avoidance model that may command a
+        body up to its ``max_speed`` does not steer an exact route."""
         nav = self._ctx.blackboard.get(f"nav:{self.entity}")
         config = getattr(nav, "config", None) or {}
         return float(config.get("speed", 1.0))
@@ -1131,7 +1136,9 @@ class HumanoidPlugin(MachinePlugin):
     def _walk_leg(self, nav, poses, what: str, each, tol: float):
         """Walk one leg of a way through its poses, exactly (no plan, no steering), facing where it
         walks at a carrying pace; fail where the body leaves the leg by more than ``tol``; then
-        stand on its end within a centimetre (a navigator stops within its arrival radius)."""
+        stand on its end within :data:`AT_END`, aimed on by what it lacks (a body drawn behind its
+        root comes to rest short) :data:`BACK_TRIES` times at most, and fail where it still stands
+        short."""
         points = [(float(p[0]), float(p[1])) for p in poses]
         line = np.asarray(points)
         end = points[-1]
@@ -1140,12 +1147,17 @@ class HumanoidPlugin(MachinePlugin):
         try:
             check = lambda: self._on_leg(line, tol, what, each)  # noqa: E731
             yield from self._route(nav, end, what, check, points[1:-1], exact=True)
-            for _ in range(BACK_TRIES):
+            for k in range(BACK_TRIES + 1):
                 yield from self._come_to_rest(what, each)
                 x, y, _ = self.body.root()
                 short = math.hypot(end[0] - x, end[1] - y)
-                if short < 0.01:
+                if short < AT_END:
                     break
+                if k == BACK_TRIES:
+                    self.fail(
+                        f"stopped {short:.3f} m short of a leg's end on its way to {what}, at "
+                        f"({x:.2f}, {y:.2f}), aimed on {BACK_TRIES} times"
+                    )
                 # the last few millimetres, straight on; aimed past by what it lacks
                 ux, uy = (end[0] - x) / short, (end[1] - y) / short
                 aim = (end[0] + ux * min(short, 0.04), end[1] + uy * min(short, 0.04))
@@ -1685,8 +1697,10 @@ class HumanoidPlugin(MachinePlugin):
         (``sign`` 1), away from it for a push (-1). The hands go round the arc the hinge sets. Where
         that arc leaves a hand's reach, the body steps round the hinge with what it holds, keeping
         its pose to it -- so a body outside a leaf's swing stays outside it -- on a path checked
-        first with its footprint; one that would meet something fails before it sets off. Returns
-        how far it turned (deg)."""
+        first with its footprint; one that would meet something fails before it sets off, and a
+        body that leaves it by more than :data:`FOLLOW_TOL` and its margin fails there. A move that
+        would turn a shut leaf further shut fails before anything moves. Returns how far it turned
+        (deg)."""
         m, d = self._m, self._d
         if not (math.isfinite(float(angle)) and float(angle) > 0.0):
             self.fail(f"angle: degrees more than 0, not {angle!r}")
@@ -1706,6 +1720,19 @@ class HumanoidPlugin(MachinePlugin):
         toward = np.array([x0, y0, grip[2]]) - grip
         direction = 1.0 if float(np.dot(tangent, toward)) > 0.0 else -1.0
         total = sign * direction * math.radians(float(angle))
+        # the stop it is shut at: the limit nearest where the hinge hangs at rest (its spring's
+        # reference); a move toward it from there turns nothing, and is no pull or push
+        lo, hi = (float(v) for v in m.jnt_range[jnt])
+        limited = bool(m.jnt_limited[jnt])
+        rest = float(m.qpos_spring[qadr])
+        shut_lo = abs(rest - lo) <= abs(rest - hi)
+        closing = (total < 0.0) if shut_lo else (total > 0.0)
+        if limited and closing and abs(q0 - (lo if shut_lo else hi)) < math.radians(1.0):
+            word, other = ("pull", "push") if sign > 0 else ("push", "pull")
+            self.fail(
+                f"{name} is shut: a {word} from where the hand holds it turns it further shut; "
+                f"{other} it from this side to open it"
+            )
         starts = {s: self.body.grip(d, s) for s in sides}
         radius = float(np.linalg.norm((grip - anchor) - np.dot(grip - anchor, axis) * axis))
 
@@ -1728,6 +1755,7 @@ class HumanoidPlugin(MachinePlugin):
             None,
         )
         turn_z = float(np.sign(axis[2])) or 1.0
+        arc, arc_tol = None, FOLLOW_TOL
         if steps_from is not None:
             poses = []
             for k in range(n + 1):
@@ -1738,6 +1766,8 @@ class HumanoidPlugin(MachinePlugin):
                 poses.append((float(p[0]), float(p[1]), yaw0 + turn_z * (a - steps_from)))
             if len(poses) > 1:
                 fp, skip, _held = self._footprint_now(keep_jointed=False)
+                # walked, the step round is watched against the path that is checked here
+                arc, arc_tol = np.array([p[:2] for p in poses]), FOLLOW_TOL + fp.margin
                 hits = check_way(m, d, fp, Way([Segment("walk", poses)], 0.0, 0, 0.0, 0.0), skip)
                 if hits:
                     hx, hy, hth, names = hits[0]
@@ -1753,8 +1783,6 @@ class HumanoidPlugin(MachinePlugin):
         )
         duration = max(abs(total) * max(radius, 0.1) / max(speed, 1e-3), 0.5)
         t0 = self._ctx.sim_time
-        lo, hi = (float(v) for v in m.jnt_range[jnt])
-        limited = bool(m.jnt_limited[jnt])
         sent, stepping = None, False
         try:
             while True:
@@ -1774,6 +1802,8 @@ class HumanoidPlugin(MachinePlugin):
                     if sent is None or math.hypot(p[0] - sent[0], p[1] - sent[1]) > 0.02:
                         sent = (float(p[0]), float(p[1]))
                         nav.send_goals([sent], exact=True)
+                    if arc is not None:
+                        self._on_leg(arc, arc_tol, f"round {name}", lambda: None)
                 self._check_holds()
                 q = float(d.qpos[qadr])
                 if limited and ((total > 0 and q > hi - 0.01) or (total < 0 and q < lo + 0.01)):
@@ -1789,7 +1819,12 @@ class HumanoidPlugin(MachinePlugin):
         self._check_holds()
         moved = math.degrees((float(d.qpos[qadr]) - q0) * math.copysign(1.0, total))
         q = float(d.qpos[qadr])
-        at_stop = limited and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
+        # open as far as it goes is a full turn; shut, it is not
+        at_stop = (
+            limited
+            and not closing
+            and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
+        )
         if moved < 0.8 * float(angle) and not at_stop:
             self.fail(f"stuck: {name} turned {moved:.0f} of {float(angle):.0f} deg")
         return moved
@@ -1928,9 +1963,8 @@ class HumanoidPlugin(MachinePlugin):
         """Step straight back by ``distance`` (m), keeping the heading, on the navigator exactly
         (unplanned, unsteered), calling ``each`` every step and failing where the body leaves the
         straight step by more than ``tol`` -- the step the way was checked on; then come to rest. A
-        navigator stops within its arrival radius of a goal, so a step that falls short is aimed on
-        by what it lacks (:data:`BACK_TRIES` at most), to stand within a centimetre of where the
-        way goes on from."""
+        step that falls short is aimed on by what it lacks (:data:`BACK_TRIES` times at most), to
+        stand within :data:`AT_END` of where the way goes on from; one still short then fails."""
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to step back with")
@@ -1941,7 +1975,7 @@ class HumanoidPlugin(MachinePlugin):
         self.body.limit_turn(CARRY_TURN)
         try:
             aim = distance
-            for _ in range(BACK_TRIES):
+            for k in range(BACK_TRIES):
                 goal = (x0 + aim * back[0], y0 + aim * back[1])
                 line = np.array([(x0, y0), goal])
                 check = lambda line=line: self._on_leg(line, tol, what, each)  # noqa: E731
@@ -1949,8 +1983,13 @@ class HumanoidPlugin(MachinePlugin):
                 yield from self._come_to_rest("a step back", check)
                 x, y, _ = self.body.root()
                 short = distance - float(np.dot([x - x0, y - y0], back))
-                if short < 0.01:
+                if short < AT_END:
                     break
+                if k == BACK_TRIES - 1:
+                    self.fail(
+                        f"stepped back {distance - short:.3f} m of {distance:.3f} on its way to "
+                        f"{what}, aimed on {BACK_TRIES} times"
+                    )
                 aim += short
         finally:
             self.body.keep_heading(None)

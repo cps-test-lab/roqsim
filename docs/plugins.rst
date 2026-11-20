@@ -616,7 +616,8 @@ differ:
 
 In process, the handle's ``send_goals(goals, exact=True)`` sends one route that is walked as given
 -- straight legs between its points, the planner not asked and the avoidance model's steering not
-applied, its forward probe still stopping the mover -- for a caller that has checked the legs
+applied, its forward probe still stopping the mover; no recovery, no corner cut by the tracker, and
+its last point stopped at within 1 cm rather than at ``arrival_radius`` -- for a caller that has checked the legs
 itself, as a way of :mod:`roqsim_nav.lattice` is checked. The next route is planned again.
 
 Carrying the route in their names, the navigator's commands stay apart from a machine's ``start`` and

@@ -373,3 +373,140 @@ def test_wall_polygons_with_labels_names_each_footprint():
     assert "shelf" in names and "bench" not in names, names  # the bench's top is at 0.75 m
     plain = wall_polygons(model, data, 0.9, 1.0)
     assert [p for p, _n in polys] == plain
+
+
+def _posts(points, radius=0.04):
+    """A floor with a post of ``radius`` at each point."""
+    posts = "".join(
+        f'<geom name="p{i}" type="cylinder" size="{radius} 1" pos="{x} {y} 1"/>'
+        for i, (x, y) in enumerate(points)
+    )
+    xml = f'<mujoco><worldbody><geom name="floor" type="plane" size="8 8 .1"/>{posts}</worldbody></mujoco>'
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def _broken_joins(way, bins):
+    """The moves of ``way`` that do not go on from where the move before ended: an arc that is no
+    arc of the search's from the pose before it (nor a straight shot along its heading), a turn
+    that moves, a step back that is not straight back."""
+    dth = 2 * math.pi / bins
+    out = []
+    for seg in way.segments:
+        a, b = seg.poses[0], seg.poses[-1]
+        if seg.kind == "turn":
+            if (
+                math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-6
+                or abs(L._wrap(a[2] + seg.angle - b[2])) > 1e-6
+            ):
+                out.append(("turn", a, b))
+        elif seg.kind == "back":
+            x, y = a[0] - seg.distance * math.cos(a[2]), a[1] - seg.distance * math.sin(a[2])
+            if math.hypot(x - b[0], y - b[1]) > 1e-6 or abs(L._wrap(a[2] - b[2])) > 1e-6:
+                out.append(("back", a, b))
+        else:
+            for a, b in zip(seg.poses[:-1], seg.poses[1:], strict=False):
+                arcs = []
+                for db in (0, 1, -1):
+                    x, y = a[0], a[1]
+                    for q in range(1, 5):
+                        t = a[2] + db * dth * (q - 0.5) / 4
+                        x, y = x + L.STEP / 4 * math.cos(t), y + L.STEP / 4 * math.sin(t)
+                    arcs.append((x, y, a[2] + db * dth))
+                arc = any(
+                    math.hypot(x - b[0], y - b[1]) < 1e-6 and abs(L._wrap(th - b[2])) < 1e-6
+                    for x, y, th in arcs
+                )
+                along = math.atan2(b[1] - a[1], b[0] - a[0])
+                straight = abs(L._wrap(a[2] - b[2])) < 1e-6 and abs(L._wrap(along - a[2])) < 1e-6
+                if not (arc or straight):
+                    out.append(("walk", a, b))
+    return out
+
+
+def test_every_move_of_a_way_goes_on_from_where_the_one_before_ended():
+    """The search keeps one pose per closed-set cell, the latest it reached it with; a way must
+    still join each move to the pose it was made from, not to a later one of the same cell."""
+    model, data = _posts(
+        [
+            (2.073, 0.268),
+            (2.552, 0.545),
+            (3.079, 1.017),
+            (2.841, 0.078),
+            (3.533, -0.81),
+            (0.999, -1.161),
+            (2.406, -0.345),
+            (1.283, -0.423),
+            (3.142, 0.588),
+            (3.412, -0.546),
+            (0.679, 0.734),
+            (3.057, -0.1),
+            (2.048, 0.576),
+            (3.964, -0.971),
+        ]
+    )
+    fp = _footprint()
+    way = plan_way(model, data, fp, (0.0, 0.0, 0.0), (5.0, 0.0, 0.0))
+    assert _broken_joins(way, fp.bins) == []
+
+
+def test_a_turn_by_the_start_is_checked_across_its_sweep_not_at_its_bins():
+    """By the start and the goal a pose the raster says is blocked is checked exactly. A turn on the
+    spot there is checked across its sweep, as the raster's bins are: a 1 cm post at 1 m between
+    two bins' headings is met by a rod reaching past it, though neither heading meets it."""
+    r, at = 1.0, math.radians(46.25)
+    model, data = _posts([(r * math.cos(at), r * math.sin(at))], radius=0.005)
+    fp = Footprint(
+        [
+            Piece(_ellipse(0.12, 0.15), (0.0, 0.5), "legs"),
+            Piece(_box(0.7, 0.0, 1.0, 0.02), (0.85, 1.05), "rod"),
+        ]
+    )
+    try:
+        way = plan_way(model, data, fp, (0.0, 0.0, 0.0), (0.0, 0.0, math.pi / 2), back_max=0.0)
+    except NoWay:
+        return  # nothing turns the rod a quarter turn there without meeting the post
+    assert check_way(model, data, fp, way) == [], way.segments
+
+
+def test_a_turn_on_the_spot_of_the_tote_meets_no_thin_post_beside_it():
+    """The tote's footprint turned on the spot by the start, between posts of 1 cm: every pose of the
+    way, checked exactly at every degree, meets none of them."""
+    model, data = _posts(
+        [
+            (-0.39, 0.738),
+            (0.575, -0.373),
+            (0.603, 0.728),
+            (-0.388, 0.707),
+            (-0.555, 0.605),
+            (0.693, -0.042),
+            (0.087, -0.524),
+        ],
+        radius=0.01,
+    )
+    fp = _footprint()
+    try:
+        way = plan_way(model, data, fp, (0.0, 0.0, 0.0), (0.0, 0.0, 1.86), back_max=0.0)
+    except NoWay:
+        return
+    assert check_way(model, data, fp, way) == [], way.segments
+
+
+def test_a_way_from_one_wall_to_dock_at_another_passes_the_last_check():
+    """What the body stands against at the start it may go on standing against as it leaves, and at
+    the goal it may stand against what it docks at: the exact check every way gets before it is
+    returned allows each where the search does, on a straight shot from one to the other too."""
+    xml = """<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .05"/>
+      <body name="back"><geom name="back" type="box" pos="0.16 0 0.9" size="0.05 1.0 0.9"/></body>
+      <body name="bench"><geom name="bench" type="box" pos="-0.76 0 0.25" size="0.05 1.0 0.25"/></body>
+    </worldbody></mujoco>"""
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    fp = Footprint([Piece(_ellipse(0.12, 0.15), (0.0, 0.5), "legs", body=True)])
+    way = plan_way(
+        model, data, fp, (0.0, 0.0, math.pi), (-0.6, 0.0, math.pi), dock=["bench"], back_max=0.0
+    )
+    assert way.length > 0.55
