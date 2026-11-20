@@ -26,6 +26,9 @@ SIDES = ("l", "r")
 #: camera's near clip plane is taken -- a body parked far below would push that plane out and cut
 #: what a close camera sees.
 PARK = (0.0, 0.0, -1.0)
+#: The name, under its entity's, of a hand's press proxy body (:meth:`HumanoidBody.press_proxy`):
+#: what a humanoid may hold still collides with it, so a fingertip can push on a door it let go of.
+PRESS_PROXY = "press_{side}"
 
 
 class HumanoidBody:
@@ -178,9 +181,21 @@ class HumanoidBody:
         """Turn the standing body to ``yaw`` (world, rad); ``None``: wherever it walks."""
         raise NotImplementedError
 
+    def keep_heading(self, yaw) -> None:
+        """Keep the body at heading ``yaw`` (world, rad) while it walks, whichever way it goes -- a
+        step back; ``None``: it faces where it walks again."""
+        raise NotImplementedError
+
     def settled(self, side: str) -> bool:
         """``side``'s goal has fully taken over from the gait (or it has none)."""
         raise NotImplementedError
+
+    def follow_error(self, speed: float) -> float:
+        """How far the body may stray from the way its root is walked along at ``speed`` (m/s),
+        at most (m): a body posed where the navigator puts it, none. A way planned for the body
+        keeps that much further off what it would meet (``roqsim_nav.lattice``), and a move
+        walking it allows that much more before it fails ``left its way``."""
+        return 0.0
 
     def at_rest(self) -> bool:
         """Whether the body has come to rest where it was walked to: a body drawn behind its nav
