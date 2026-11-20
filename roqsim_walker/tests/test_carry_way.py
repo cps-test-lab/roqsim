@@ -445,3 +445,30 @@ def test_a_step_back_that_ends_short_fails_rather_than_walking_on(monkeypatch):
                 engine.step()
     finally:
         engine.shutdown()
+
+
+def test_a_carry_plans_its_way_while_the_simulation_steps_on():
+    """A carry's way is planned in steps, the simulation stepping on between them: no tick waits for
+    the whole search, as it did when the way was planned in one go within one tick."""
+    import time
+
+    engine, case, kw = _case("carry_post_behind")
+    try:
+        sim = Carry(engine)
+        assert sim.run("approach", target="tote_1", standoff=0.45).error == ""
+        assert sim.run("grasp", hand="both", target="tote_1").error == ""
+        t0, to = engine.ctx.sim_time, case["to"]
+        seq = sim.h.carry(
+            {"position": {"x": to[0], "y": to[1], "z": 0.0}}, standoff=0.6, facing=case["facing"]
+        )
+        longest = 0.0
+        while not (sim.h.status().seq == seq and sim.h.status().finished):
+            a = time.perf_counter()
+            engine.step()
+            longest = max(longest, time.perf_counter() - a)
+            assert engine.ctx.sim_time - t0 < 120.0
+        assert sim.h.status().error == "", sim.h.status().error
+        planned = sim.events("planned", t0)[0]
+        assert longest < 0.5 * planned["seconds"], (longest, planned["seconds"])
+    finally:
+        engine.shutdown()
