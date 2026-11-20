@@ -81,11 +81,15 @@ LONG_COST = 2.0
 NEAR_COST = 0.1
 NEAR_CELLS = 2
 #: Within SHOT of the goal (m) the search tries the shot onto it. Within GOAL_ZONE of the goal and
-#: ZONE of the start it checks a pose the raster says is blocked exactly: where a body stands close
-#: to what it works at, the raster's slack would keep it from standing there at all.
+#: ZONE of the start it checks a move the raster says is blocked exactly, across its sweep: where a
+#: body stands close to what it works at, the raster's slack would keep it from standing there.
 SHOT = 1.5
 ZONE = 0.15
 GOAL_ZONE = 0.6
+#: The finest step an exact check of a move takes (m, rad): within it, the hull of the footprint at
+#: both ends, grown by the step's turn at the footprint's reach, covers what the move sweeps.
+SWEEP_STEP = 0.01
+SWEEP_TURN = math.radians(1.0)
 #: How near the goal a state must come (m), and within half a bin of its heading.
 ARRIVE = 0.03
 #: The disc the corridor's way is planned for (m), and how much wider than the footprint's reach the
@@ -376,6 +380,7 @@ class _CSpace:
         self.zones = []
         self.tether = []
         self._memo = {}
+        self._sweeps = {}
         self._sure = {}
         self._inner = None
 
@@ -387,7 +392,7 @@ class _CSpace:
             self._exact_setup()
         # a search asks of one pose many times (once for each way it reached it): kept, to the
         # millimetre and the thousandth of a radian
-        key = (round(x * 1000.0), round(y * 1000.0), round(th * 1000.0), id(allowed))
+        key = (round(x * 1000.0), round(y * 1000.0), round(th * 1000.0), frozenset(allowed))
         hit = self._memo.get(key)
         if hit is not None:
             return hit
@@ -483,6 +488,23 @@ class _CSpace:
         """The search's check: the raster's, and where the raster says blocked within one of
         ``zones`` (round the start and the goal, where a body stands close to what it works at),
         the exact one; and every segment of ``tether`` within its reach."""
+        if not self.tethered(x, y):
+            return False
+        if self.free(x, y, th):
+            return True
+        i = int((x - self._ox) * self._inv) - self.i0
+        j = int((y - self._oy) * self._inv) - self.j0
+        if not (0 <= i < self._h and 0 <= j < self._w) or x < self._ox or y < self._oy:
+            return False
+        # what it may stand against where zones overlap (a goal near the start): each zone's
+        allowed = self._zone_of((x, y))
+        if allowed is None or self.surely_blocked(x, y, th):
+            return False
+        return self.exact_free(x, y, th, frozenset(allowed))
+
+    def tethered(self, x, y) -> bool:
+        """Whether the root at ``(x, y)`` is within reach of every one of ``tether``: of its
+        segment, or past its line."""
         for ax, ay, bx, by, tr, past in self.tether:
             if past is not None and (x - past[0]) * past[2] + (y - past[1]) * past[3] >= 0.0:
                 continue  # gone past its line, free of it
@@ -491,18 +513,88 @@ class _CSpace:
             t = 0.0 if n < 1e-12 else min(max(((x - ax) * ex + (y - ay) * ey) / n, 0.0), 1.0)
             if (x - ax - t * ex) ** 2 + (y - ay - t * ey) ** 2 > tr * tr:
                 return False
-        if self.free(x, y, th):
-            return True
-        i = int((x - self._ox) * self._inv) - self.i0
-        j = int((y - self._oy) * self._inv) - self.j0
-        if not (0 <= i < self._h and 0 <= j < self._w) or x < self._ox or y < self._oy:
+        return True
+
+    def move_ok(self, a, b) -> bool:
+        """The search's check of a move from pose ``a`` to the next sample ``b`` of it. The
+        raster's cells and bins cover what a move sweeps between samples; where the raster says
+        blocked within a zone, the exact check covers it too, across the move's sweep
+        (:meth:`sweep_free`), not at its ends alone -- a thin post between two samples' headings
+        is met by the piece that sweeps across it."""
+        if not self.tethered(b[0], b[1]):
             return False
+        fa, fb = self.free(*a), self.free(*b)
+        if fa and fb:
+            return True
+        allowed = None
+        for p, f in ((a, fa), (b, fb)):
+            if f:
+                continue
+            i = int((p[0] - self._ox) * self._inv) - self.i0
+            j = int((p[1] - self._oy) * self._inv) - self.j0
+            if not (0 <= i < self._h and 0 <= j < self._w) or p[0] < self._ox or p[1] < self._oy:
+                return False
+            zone = self._zone_of(p)
+            if zone is None or self.surely_blocked(*p):
+                return False
+            allowed = zone if allowed is None else allowed & zone
+        return self.sweep_free(a, b, allowed)
+
+    def _zone_of(self, p):
+        """The bodies the body may stand against at ``p`` (the zones' it is in), or ``None`` outside
+        every zone."""
+        out = None
         for zx, zy, zr, allowed in self.zones:
-            if (x - zx) ** 2 + (y - zy) ** 2 <= zr * zr:
-                if self.surely_blocked(x, y, th):
-                    return False
-                return self.exact_free(x, y, th, allowed)
-        return False
+            if (p[0] - zx) ** 2 + (p[1] - zy) ** 2 <= zr * zr:
+                out = set(allowed) if out is None else out | set(allowed)
+        return out
+
+    def sweep_free(self, a, b, allowed=frozenset()) -> bool:
+        """Whether the footprint, grown by its margin, overlaps nothing as its root moves from pose
+        ``a`` to pose ``b`` (straight, turning evenly by ``b``'s heading less ``a``'s, unwrapped): in steps of at most :data:`SWEEP_STEP` and
+        :data:`SWEEP_TURN`, the hull of each piece at both ends of a step, grown by what the turn
+        bows its far corners out (its reach times ``1 - cos(turn / 2)``). The body's own pieces may
+        overlap the bodies named in ``allowed``."""
+        if not hasattr(self, "_grown"):
+            self._exact_setup()
+        allowed = frozenset(allowed)
+        key = tuple(round(v * 1000.0) for v in (*a[:3], *b[:3])) + (hash(allowed),)
+        hit = self._sweeps.get(key)
+        if hit is not None:
+            return hit
+        turn = b[2] - a[2]  # as the move turns: a turn past half a turn is not its short way
+        n = max(
+            1,
+            int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / SWEEP_STEP)),
+            int(math.ceil(abs(turn) / SWEEP_TURN)),
+        )
+        poses = [
+            (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, a[2] + turn * k / n)
+            for k in range(n + 1)
+        ]
+        bow = 1.0 - math.cos(abs(turn) / n / 2.0)
+        free = True
+        for band, poly, r, own, _axes in self._grown:
+            grow = r * bow
+            for p0, p1 in zip(poses[:-1], poses[1:], strict=False):
+                hull = _hull(np.vstack([_posed(poly, *p0), _posed(poly, *p1)]))
+                if grow > 1e-9:
+                    hull = _grown_poly(hull, grow)
+                cx, cy = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
+                for q, name, qc, qr, *_rest in self._obst.get(band, ()):
+                    if (qc[0] - cx) ** 2 + (qc[1] - cy) ** 2 > (qr + r + SWEEP_STEP) ** 2:
+                        continue
+                    if own and name in allowed:
+                        continue
+                    if _overlap(hull, q):
+                        free = False
+                        break
+                if not free:
+                    break
+            if not free:
+                break
+        self._sweeps[key] = free
+        return free
 
     def body_meets(self, x, y, th) -> set:
         """The bodies the mover's own pieces overlap at ``(x, y, th)``, exactly."""
@@ -529,6 +621,33 @@ class _CSpace:
                 if name not in names and _overlap(poly, q):
                     names.append(name)
         return names
+
+
+def _posed(poly, x, y, th) -> np.ndarray:
+    """A footprint polygon (body frame) posed at ``(x, y, th)``."""
+    c, s = math.cos(th), math.sin(th)
+    return poly @ np.array([[c, s], [-s, c]]) + [x, y]
+
+
+def _hull(points) -> np.ndarray:
+    """The convex hull of ``points`` (n, 2), counter-clockwise."""
+    pts = sorted(map(tuple, np.asarray(points, float)))
+    if len(pts) <= 2:
+        return np.array(pts)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return np.array(lower[:-1] + upper[:-1])
 
 
 def _cells_inside(polygons, res: float) -> np.ndarray:
@@ -660,15 +779,19 @@ class _Search:
             ways.append(short - math.copysign(2 * math.pi, short))
         for way in ways:
             n = max(1, int(math.ceil(abs(way) / (self.dth / 2))))
-            if all(self.cs.ok(x, y, th0 + way * s / n) for s in range(n + 1)):
+            at = [(x, y, th0 + way * s / n) for s in range(n + 1)]
+            if self.cs.ok(*at[0]) and all(
+                self.cs.move_ok(p, q) for p, q in zip(at[:-1], at[1:], strict=False)
+            ):
                 return way
         return None
 
     def straight_ok(self, x0, y0, x1, y1, th):
         d = math.hypot(x1 - x0, y1 - y0)
         n = max(1, int(math.ceil(d / self.L.res)))
-        return all(
-            self.cs.ok(x0 + (x1 - x0) * s / n, y0 + (y1 - y0) * s / n, th) for s in range(n + 1)
+        at = [(x0 + (x1 - x0) * s / n, y0 + (y1 - y0) * s / n, th) for s in range(n + 1)]
+        return self.cs.ok(*at[0]) and all(
+            self.cs.move_ok(p, q) for p, q in zip(at[:-1], at[1:], strict=False)
         )
 
     def shot(self, s, goal):
@@ -723,16 +846,22 @@ class _Search:
                 s[3],
             )
 
-        came = {key(s0): (None, s0, "start", 0.0)}
+        # each state's way back is its own chain of nodes (parent node, pose, move): the closed set
+        # keeps the latest pose of a cell, and a way joined through it to that pose would join a
+        # move to a pose it was not made from
+        root = (None, s0, "start", 0.0)
         g = {key(s0): 0.0}
-        heap = [(self.h(*s0[:3], goal), 0.0, 0, s0)]  # (f, -g: deeper first among equals, n, s)
+        heap = [
+            (self.h(*s0[:3], goal), 0.0, 0, root)
+        ]  # (f, -g: deeper first among equals, n, node)
         best = (heap[0][0], s0)
         tried = set()
         n = 0
         while heap:
             if self.expanded >= self.max_states:
                 break
-            _f, ngc, _, s = heapq.heappop(heap)
+            _f, ngc, _, node = heapq.heappop(heap)
+            s = node[1]
             gc = -ngc
             ks = key(s)
             if gc > g.get(ks, math.inf) + 1e-9:
@@ -744,24 +873,27 @@ class _Search:
                 best = (hv, s)
             d = math.hypot(goal[0] - x, goal[1] - y)
             if d <= ARRIVE and (goal[2] is None or abs(_wrap(goal[2] - th)) <= dth / 2):
-                return self._moves(came, ks), best[1]
+                return self._moves(node), best[1]
             if d < SHOT and ks[:3] not in tried:
                 tried.add(ks[:3])
                 tail = self.shot(s, goal)
                 if tail is not None:
-                    return self._moves(came, ks) + tail, best[1]
+                    return self._moves(node) + tail, best[1]
             succ = []
             # arcs forward
             for db in (0, 1, -1):
                 ok, px, py, near = True, x, y, 0
                 sub = 4
+                prev = (x, y, th)
                 for q in range(1, sub + 1):
                     tq = th + db * dth * (q - 0.5) / sub
                     px += STEP / sub * math.cos(tq)
                     py += STEP / sub * math.sin(tq)
-                    if not cs.ok(px, py, th + db * dth * q / sub):
+                    cur = (px, py, th + db * dth * q / sub)
+                    if not cs.move_ok(prev, cur):
                         ok = False
                         break
+                    prev = cur
                 if ok:
                     near = cs.is_near(px, py, th + db * dth)
                     cost = STEP / SPEED + ARC_COST * abs(db) + NEAR_COST * near
@@ -771,12 +903,15 @@ class _Search:
                 k0 = fp.bin_of(th)
                 base = _wrap(fp.heading(k0) - th)
                 for sgn in (1, -1):
+                    last = 0.0
                     for m in range(1, fp.bins):
                         way = base + sgn * m * dth
                         # a bin's cells cover its whole width, so its centre's check is the
-                        # check of every heading between it and the last
-                        if not cs.ok(x, y, th + way):
+                        # check of every heading between it and the last; an exact one covers
+                        # the turn from the last (move_ok)
+                        if not cs.move_ok((x, y, th + last), (x, y, th + way)):
                             break
+                        last = way
                         if abs(way) > math.pi + 1e-6 and not self.long_way:
                             break
                         cost = abs(way) / TURN_RATE + TURN_COST
@@ -790,12 +925,10 @@ class _Search:
                 steps = int(math.floor(self.back_max / BACK_STEP + 1e-9))
                 for m in range(1, steps + 1):
                     dist = m * BACK_STEP
-                    if not (
-                        cs.ok(
-                            x - (dist - BACK_STEP / 2) * cth, y - (dist - BACK_STEP / 2) * sth, th
-                        )
-                        and cs.ok(x - dist * cth, y - dist * sth, th)
-                    ):
+                    p0 = (x - (dist - BACK_STEP) * cth, y - (dist - BACK_STEP) * sth, th)
+                    mid = (x - (dist - BACK_STEP / 2) * cth, y - (dist - BACK_STEP / 2) * sth, th)
+                    p1 = (x - dist * cth, y - dist * sth, th)
+                    if not (cs.move_ok(p0, mid) and cs.move_ok(mid, p1)):
                         break
                     cost = 2 * dist / SPEED + BACK_COST
                     succ.append(
@@ -806,21 +939,70 @@ class _Search:
                 ng = gc + cost
                 if ng < g.get(k2, math.inf) - 1e-9:
                     g[k2] = ng
-                    came[k2] = (ks, s2, kind, amount)
                     n += 1
-                    heapq.heappush(heap, (ng + self.h(*s2[:3], goal), -ng, n, s2))
+                    heapq.heappush(
+                        heap, (ng + self.h(*s2[:3], goal), -ng, n, (node, s2, kind, amount))
+                    )
         return None, best[1]
 
     @staticmethod
-    def _moves(came, k):
+    def _moves(node):
         out = []
-        while k is not None:
-            parent, s, kind, amount = came[k]
+        while node is not None:
+            parent, s, kind, amount = node
             if kind != "start":
                 out.append((kind, (s[0], s[1], s[2]), amount))
-            k = parent
+            node = parent
         out.reverse()
         return out
+
+
+def _verify(cs: _CSpace, start, moves, what: str) -> None:
+    """Every move of a way found, checked exactly across its sweep (:meth:`_CSpace.sweep_free`) in
+    the samples the search took of it, with what the search let the body stand against there. The
+    search's own checks already cover it; one that does not is a fault of the planner's, raised
+    rather than walked."""
+    dth = 2 * math.pi / cs.fp.bins
+    res = cs.L.res
+    pose = (float(start[0]), float(start[1]), float(start[2]))
+    for kind, p, _amount in moves:
+        p = (float(p[0]), float(p[1]), float(p[2]))
+        d = math.hypot(p[0] - pose[0], p[1] - pose[1])
+        if kind == "turn":
+            n = max(1, int(math.ceil(abs(p[2] - pose[2]) / (dth / 2))))
+            steps = [(pose[0], pose[1], pose[2] + (p[2] - pose[2]) * k / n) for k in range(n + 1)]
+        elif kind == "arc" and d <= STEP + 1e-6 and abs(_wrap(p[2] - pose[2])) <= dth + 1e-6:
+            # an arc of the search's, a quarter of it at a time as the search took it
+            db = int(round(_wrap(p[2] - pose[2]) / dth))
+            steps, x, y = [pose], pose[0], pose[1]
+            for q in range(1, 5):
+                tq = pose[2] + db * dth * (q - 0.5) / 4
+                x, y = x + STEP / 4 * math.cos(tq), y + STEP / 4 * math.sin(tq)
+                steps.append((x, y, pose[2] + db * dth * q / 4))
+        else:
+            # a straight shot or a step back, a cell at a time
+            n = max(1, int(math.ceil(d / res)))
+            steps = [
+                (pose[0] + (p[0] - pose[0]) * k / n, pose[1] + (p[1] - pose[1]) * k / n, p[2])
+                for k in range(n + 1)
+            ]
+        for a, b in zip(steps[:-1], steps[1:], strict=False):
+            # where the raster says blocked, the body may stand against what the zones there
+            # allow, as the search's move_ok lets it
+            allowed = None
+            for q in (a, b):
+                if not cs.free(*q):
+                    zone = cs._zone_of(q) or set()
+                    allowed = zone if allowed is None else allowed & zone
+            allowed = allowed or set()
+            if not cs.sweep_free(a, b, allowed):
+                names = [n for n in cs.meets(*b) if n not in allowed] or cs.meets(*a)
+                raise RuntimeError(
+                    f"planned a way {what} that meets {', '.join(names) or 'something'} between "
+                    f"({a[0]:.2f}, {a[1]:.2f}, {math.degrees(a[2]):.0f} deg) and "
+                    f"({b[0]:.2f}, {b[1]:.2f}, {math.degrees(b[2]):.0f} deg): a fault of the planner's"
+                )
+        pose = p
 
 
 def _segments(start, moves) -> list:
@@ -916,11 +1098,13 @@ def plan_way(
     Raises :class:`NoWay` naming ``what`` and ``to`` where there is none. Call it with ``data``
     forwarded (positions current); it reads, never writes.
 
-    Near the start and the goal a pose the raster says is blocked is checked exactly, and two
+    Near the start and the goal a move the raster says is blocked is checked exactly, across its
+    sweep and not at its samples alone, and two
     things are not in the way of the mover's own body pieces (:attr:`Piece.body`) there: what it
     already stands against at the start, and at the goal the bodies named in ``dock`` -- the target
     it goes to work at and what that stands on, which a worker stands against. What it holds
-    meets them as anything else.
+    meets them as anything else. Every way found is checked exactly so once more before it is
+    returned; one that meets something is a fault of the planner's, raised as a ``RuntimeError``.
 
     ``tether``: ``(ax, ay, bx, by, r)`` segments, or ``(x, y, r)`` points, every pose of the way
     keeps its root within ``r`` of -- a hand keeping a door where it is while the body walks, along
@@ -1031,6 +1215,7 @@ def plan_way(
                 f"{', '.join(met) if met else 'what is round them'} at every heading there; "
                 f"{limits}{capped}"
             )
+        _verify(cs, pose, moves, f"holding {what} to {target}")
         segs = _segments(pose, moves)
         segments.extend(segs)
         poses.append(pose)
