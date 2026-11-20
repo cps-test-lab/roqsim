@@ -86,10 +86,9 @@ NEAR_CELLS = 2
 SHOT = 1.5
 ZONE = 0.15
 GOAL_ZONE = 0.6
-#: The finest step an exact check of a move takes (m, rad): within it, the hull of the footprint at
-#: both ends, grown by the step's turn at the footprint's reach, covers what the move sweeps.
+#: How far any point of the footprint moves between two samples of an exact check of a move (m):
+#: each sample is checked with half of it to spare, so every point the move sweeps is checked.
 SWEEP_STEP = 0.01
-SWEEP_TURN = math.radians(1.0)
 #: How near the goal a state must come (m), and within half a bin of its heading.
 ARRIVE = 0.03
 #: The disc the corridor's way is planned for (m), and how much wider than the footprint's reach the
@@ -358,6 +357,12 @@ class _CSpace:
                 )
             )
         self._grown = grown
+        # each piece's own centre (body frame) and the radius about it: a piece carried off the root
+        # (a tote ahead of the body) meets far fewer obstacles' circles than its reach from the root
+        self._centre = []
+        for _band, poly, _r, _own, _axes in grown:
+            mid = (poly.min(0) + poly.max(0)) / 2.0
+            self._centre.append((mid, float(np.max(np.linalg.norm(poly - mid, axis=1)))))
         self._obst = {}
         for band, polys in self.L.polygons.items():
             out = []
@@ -374,12 +379,15 @@ class _CSpace:
                         axes,
                         proj.min(0),
                         proj.max(0),
+                        q.min(0),
+                        q.max(0),
                     )
                 )
             self._obst[band] = out
         self.zones = []
         self._memo = {}
         self._sweeps = {}
+        self._turned = {}
         self._sure = {}
         self._inner = None
 
@@ -400,29 +408,53 @@ class _CSpace:
         return free
 
     def _exact(self, x, y, th, allowed) -> bool:
-        c, s = math.cos(th), math.sin(th)
-        rot = np.array([[c, s], [-s, c]])
-        for band, poly, r, own, paxes in self._grown:
-            posed = None
-            for q, name, qc, qr, qaxes, qmin, qmax in self._obst.get(band, ()):
-                if (qc[0] - x) ** 2 + (qc[1] - y) ** 2 > (qr + r) ** 2:
-                    continue
-                if own and name in allowed:
-                    continue
-                if posed is None:
-                    posed = poly @ rot + [x, y]
-                    axes = paxes @ rot
-                    pproj = posed @ axes.T
-                    pmin, pmax = pproj.min(0), pproj.max(0)
-                # its axes, then the piece's
-                on_q = posed @ qaxes.T
-                if np.any((on_q.max(0) < qmin) | (qmax < on_q.min(0))):
-                    continue
-                on_p = q @ axes.T
-                if np.any((on_p.max(0) < pmin) | (pmax < on_p.min(0))):
-                    continue
+        for i, (band, _poly, r, own, _axes) in enumerate(self._grown):
+            near = self._near_piece(band, own, allowed, x, y, r)
+            if near and self._hits(i, x, y, th, near, 0.0):
                 return False
         return True
+
+    def _near_piece(self, band, own, allowed, x, y, reach) -> list:
+        """The obstacles of ``band`` whose bounding circle comes within ``reach`` of ``(x, y)``,
+        less what the body's own pieces (``own``) may stand against: the cheap check before the
+        polygons'."""
+        return [
+            o
+            for o in self._obst.get(band, ())
+            if (o[2][0] - x) ** 2 + (o[2][1] - y) ** 2 <= (o[3] + reach) ** 2
+            and not (own and o[1] in allowed)
+        ]
+
+    def _turned_piece(self, i: int, th: float):
+        """Piece ``i``'s grown polygon and its axes turned to ``th``, and its extent along them:
+        kept per heading (to the thousandth of a radian), as a search turns to few of them."""
+        key = (i, round(th * 1000.0))
+        hit = self._turned.get(key)
+        if hit is None:
+            c, s_ = math.cos(th), math.sin(th)
+            rot = np.array([[c, s_], [-s_, c]])
+            poly = self._grown[i][1] @ rot
+            axes = self._grown[i][4] @ rot
+            proj = poly @ axes.T
+            hit = self._turned[key] = (poly, axes, proj.min(0), proj.max(0))
+        return hit
+
+    def _hits(self, i: int, x, y, th, near, gap: float) -> bool:
+        """Whether piece ``i`` at ``(x, y, th)`` comes within ``gap`` of one of ``near`` -- not
+        separated by more than ``gap`` along any axis of either (a gap of 0: overlaps)."""
+        poly, axes, pmin, pmax = self._turned_piece(i, th)
+        posed = poly + (x, y)
+        shift = axes @ (x, y)
+        pmin, pmax = pmin + shift, pmax + shift
+        for q, _name, _qc, _qr, qaxes, qmin, qmax, *_box in near:
+            on_q = posed @ qaxes.T
+            if np.any((on_q.max(0) + gap < qmin) | (qmax + gap < on_q.min(0))):
+                continue
+            on_p = q @ axes.T
+            if np.any((on_p.max(0) + gap < pmin) | (pmax + gap < on_p.min(0))):
+                continue
+            return True
+        return False
 
     def surely_blocked(self, x, y, th) -> bool:
         """Whether the footprint certainly overlaps something at ``(x, y, th)``: a cell wholly
@@ -520,6 +552,10 @@ class _CSpace:
             if zone is None or self.surely_blocked(*p):
                 return False
             allowed = zone if allowed is None else allowed & zone
+        # the cheap exact check first, of the ends (kept), then the sweep between them
+        allowed = frozenset(allowed)
+        if not (self.exact_free(*a, allowed) and self.exact_free(*b, allowed)):
+            return False
         return self.sweep_free(a, b, allowed)
 
     def _zone_of(self, p):
@@ -533,50 +569,76 @@ class _CSpace:
 
     def sweep_free(self, a, b, allowed=frozenset()) -> bool:
         """Whether the footprint, grown by its margin, overlaps nothing as its root moves from pose
-        ``a`` to pose ``b`` (straight, turning evenly by ``b``'s heading less ``a``'s, unwrapped): in steps of at most :data:`SWEEP_STEP` and
-        :data:`SWEEP_TURN`, the hull of each piece at both ends of a step, grown by what the turn
-        bows its far corners out (its reach times ``1 - cos(turn / 2)``). The body's own pieces may
-        overlap the bodies named in ``allowed``."""
+        ``a`` to pose ``b`` (straight, turning evenly by ``b``'s heading less ``a``'s, unwrapped).
+        First cheaply: only the obstacles whose bounding circle comes within a piece's reach of the
+        move are looked at, and a move near none is free. Then at samples between which no point of
+        the footprint moves more than :data:`SWEEP_STEP`, each checked with half of it to spare,
+        so what the move sweeps between them is checked too. The body's own pieces may overlap the
+        bodies named in ``allowed``."""
         if not hasattr(self, "_grown"):
             self._exact_setup()
         allowed = frozenset(allowed)
-        key = tuple(round(v * 1000.0) for v in (*a[:3], *b[:3])) + (hash(allowed),)
+        key = tuple(round(v * 1000.0) for v in (*a[:3], *b[:3])) + (allowed,)
         hit = self._sweeps.get(key)
         if hit is not None:
             return hit
         turn = b[2] - a[2]  # as the move turns: a turn past half a turn is not its short way
-        n = max(
-            1,
-            int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / SWEEP_STEP)),
-            int(math.ceil(abs(turn) / SWEEP_TURN)),
-        )
-        poses = [
-            (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, a[2] + turn * k / n)
-            for k in range(n + 1)
-        ]
-        bow = 1.0 - math.cos(abs(turn) / n / 2.0)
+        span = math.hypot(b[0] - a[0], b[1] - a[1])
+        pieces, reach = [], 0.0
+        for i, (band, _poly, r, own, _axes) in enumerate(self._grown):
+            # round the piece's own centre, at both ends of the move: what it may come near
+            mid, rho = self._centre[i]
+            ca, cb = _turn(mid, a[2]), _turn(mid, b[2])
+            ax_, ay_ = a[0] + ca[0], a[1] + ca[1]
+            bx_, by_ = b[0] + cb[0], b[1] + cb[1]
+            # the centre's path bows out of its chord by at most its reach times the turn
+            bow = math.hypot(*mid) * min(abs(turn), math.pi) / 2.0
+            spread = math.hypot(bx_ - ax_, by_ - ay_) / 2.0 + bow + SWEEP_STEP
+            near = self._near_piece(
+                band, own, allowed, (ax_ + bx_) / 2.0, (ay_ + by_) / 2.0, rho + spread
+            )
+            if near:
+                pieces.append((i, near))
+                reach = max(reach, r)
         free = True
-        for band, poly, r, own, _axes in self._grown:
-            grow = r * bow
-            for p0, p1 in zip(poses[:-1], poses[1:], strict=False):
-                hull = _hull(np.vstack([_posed(poly, *p0), _posed(poly, *p1)]))
-                if grow > 1e-9:
-                    hull = _grown_poly(hull, grow)
-                cx, cy = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
-                for q, name, qc, qr, *_rest in self._obst.get(band, ()):
-                    if (qc[0] - cx) ** 2 + (qc[1] - cy) ** 2 > (qr + r + SWEEP_STEP) ** 2:
-                        continue
-                    if own and name in allowed:
-                        continue
-                    if _overlap(hull, q):
-                        free = False
-                        break
-                if not free:
-                    break
-            if not free:
-                break
+        if pieces:
+            n = max(1, int(math.ceil((span + reach * abs(turn)) / SWEEP_STEP)))
+            k = np.arange(n + 1) / n
+            xs, ys = a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k
+            ths = a[2] + turn * k
+            c, s_ = np.cos(ths)[:, None], np.sin(ths)[:, None]
+            free = not any(
+                self._sweep_hits(i, near, xs, ys, c, s_, SWEEP_STEP / 2.0) for i, near in pieces
+            )
         self._sweeps[key] = free
         return free
+
+    def _sweep_hits(self, i: int, near, xs, ys, c, s_, gap: float) -> bool:
+        """Whether piece ``i`` comes within ``gap`` of one of ``near`` at any of the samples
+        ``(xs, ys)`` turned by ``(c, s_)`` (cosines and sines, column vectors): the separating-axis
+        check of :meth:`_hits`, every sample at once."""
+        _band, poly, _r, _own, paxes = self._grown[i]
+        # every sample's polygon and axes, (n, v, 2) and (n, a, 2)
+        px, py = poly[:, 0][None, :], poly[:, 1][None, :]
+        posed = np.stack([px * c - py * s_ + xs[:, None], px * s_ + py * c + ys[:, None]], -1)
+        ax, ay = paxes[:, 0][None, :], paxes[:, 1][None, :]
+        axes = np.stack([ax * c - ay * s_, ax * s_ + ay * c], -1)
+        lo, hi = posed.min((0, 1)), posed.max((0, 1))
+        own = None
+        for q, _name, _qc, _qr, qaxes, qmin, qmax, qlo, qhi in near:
+            # the cheap check first: the boxes round all its samples and round the obstacle
+            if np.any(hi + gap < qlo) or np.any(qhi + gap < lo):
+                continue
+            if own is None:
+                own = np.einsum("nvd,nad->nva", posed, axes)
+                pmin, pmax = own.min(1), own.max(1)
+            on_q = posed @ qaxes.T  # (n, v, b)
+            apart = np.any((on_q.max(1) + gap < qmin) | (qmax + gap < on_q.min(1)), axis=1)
+            on_p = np.einsum("qd,nad->nqa", q, axes)  # (n, q, a)
+            apart |= np.any((on_p.max(1) + gap < pmin) | (pmax + gap < on_p.min(1)), axis=1)
+            if not apart.all():
+                return True
+        return False
 
     def body_meets(self, x, y, th) -> set:
         """The bodies the mover's own pieces overlap at ``(x, y, th)``, exactly."""
@@ -605,31 +667,10 @@ class _CSpace:
         return names
 
 
-def _posed(poly, x, y, th) -> np.ndarray:
-    """A footprint polygon (body frame) posed at ``(x, y, th)``."""
+def _turn(p, th: float):
+    """The body-frame point ``p`` turned to heading ``th`` (as a posed footprint is)."""
     c, s = math.cos(th), math.sin(th)
-    return poly @ np.array([[c, s], [-s, c]]) + [x, y]
-
-
-def _hull(points) -> np.ndarray:
-    """The convex hull of ``points`` (n, 2), counter-clockwise."""
-    pts = sorted(map(tuple, np.asarray(points, float)))
-    if len(pts) <= 2:
-        return np.array(pts)
-
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    lower, upper = [], []
-    for p in pts:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    for p in reversed(pts):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return np.array(lower[:-1] + upper[:-1])
+    return (p[0] * c - p[1] * s, p[0] * s + p[1] * c)
 
 
 def _cells_inside(polygons, res: float) -> np.ndarray:
