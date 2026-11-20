@@ -158,3 +158,17 @@ def test_an_approach_to_a_grip_a_slot_does_not_have_is_refused_before_it_walks()
         assert moved == [], moved
     finally:
         engine.shutdown()
+
+
+def test_a_carry_to_a_slot_that_is_where_to_stand_alone_walks_to_its_stance():
+    """``rack/side`` states a stance and no hand target: a carry to it (at a height it is given) walks
+    there, the tote held, rather than failing for want of a target to stand against."""
+    engine = _engine()
+    try:
+        assert _run(engine, "approach", target="tote_1", standoff=0.45).error == ""
+        assert _run(engine, "grasp", hand="both", target="tote_1").error == ""
+        st = _run(engine, "carry", to="rack/side", height=0.85, limit=90.0)
+        assert st.error == "", st.error
+        assert _arrived(engine)["stance"] == "rack/side/stand"
+    finally:
+        engine.shutdown()
