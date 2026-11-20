@@ -731,8 +731,10 @@ class HumanoidPlugin(MachinePlugin):
             merged.append(Piece(hull, band, "what it holds"))
         merged += [p for p in pieces if p.what.startswith("arm:")]
         pieces = merged
+        # what the hands hold, a door kept on its hinge included: what a failure says it holds
         name = ", ".join(
-            mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}" for b in held
+            mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}"
+            for b in sorted({h.obj_body for h in self.holding.values() if h is not None})
         )
         margin = self.body.follow_error(self._nav_speed())
         return Footprint(pieces, margin=margin), sorted(roots | own - {0}), name
@@ -1393,8 +1395,10 @@ class HumanoidPlugin(MachinePlugin):
         (``sign`` 1), away from it for a push (-1). The hands go round the arc the hinge sets. Where
         that arc leaves a hand's reach, the body steps round the hinge with what it holds, keeping
         its pose to it -- so a body outside a leaf's swing stays outside it -- on a path checked
-        first with its footprint; one that would meet something fails before it sets off. Returns
-        how far it turned (deg)."""
+        first with its footprint; one that would meet something fails before it sets off, and a
+        body that leaves it by more than :data:`FOLLOW_TOL` and its margin fails there. A move that
+        would turn a shut leaf further shut fails before anything moves. Returns how far it turned
+        (deg)."""
         m, d = self._m, self._d
         if not (math.isfinite(float(angle)) and float(angle) > 0.0):
             self.fail(f"angle: degrees more than 0, not {angle!r}")
@@ -1414,6 +1418,19 @@ class HumanoidPlugin(MachinePlugin):
         toward = np.array([x0, y0, grip[2]]) - grip
         direction = 1.0 if float(np.dot(tangent, toward)) > 0.0 else -1.0
         total = sign * direction * math.radians(float(angle))
+        # the stop it is shut at: the limit nearest where the hinge hangs at rest (its spring's
+        # reference); a move toward it from there turns nothing, and is no pull or push
+        lo, hi = (float(v) for v in m.jnt_range[jnt])
+        limited = bool(m.jnt_limited[jnt])
+        rest = float(m.qpos_spring[qadr])
+        shut_lo = abs(rest - lo) <= abs(rest - hi)
+        closing = (total < 0.0) if shut_lo else (total > 0.0)
+        if limited and closing and abs(q0 - (lo if shut_lo else hi)) < math.radians(1.0):
+            word, other = ("pull", "push") if sign > 0 else ("push", "pull")
+            self.fail(
+                f"{name} is shut: a {word} from where the hand holds it turns it further shut; "
+                f"{other} it from this side to open it"
+            )
         starts = {s: self.body.grip(d, s) for s in sides}
         radius = float(np.linalg.norm((grip - anchor) - np.dot(grip - anchor, axis) * axis))
 
@@ -1436,6 +1453,7 @@ class HumanoidPlugin(MachinePlugin):
             None,
         )
         turn_z = float(np.sign(axis[2])) or 1.0
+        arc, arc_tol = None, FOLLOW_TOL
         if steps_from is not None:
             poses = []
             for k in range(n + 1):
@@ -1446,6 +1464,8 @@ class HumanoidPlugin(MachinePlugin):
                 poses.append((float(p[0]), float(p[1]), yaw0 + turn_z * (a - steps_from)))
             if len(poses) > 1:
                 fp, skip, _held = self._footprint_now(keep_jointed=False)
+                # walked, the step round is watched against the path that is checked here
+                arc, arc_tol = np.array([p[:2] for p in poses]), FOLLOW_TOL + fp.margin
                 hits = check_way(m, d, fp, Way([Segment("walk", poses)], 0.0, 0, 0.0, 0.0), skip)
                 if hits:
                     hx, hy, hth, names = hits[0]
@@ -1461,8 +1481,6 @@ class HumanoidPlugin(MachinePlugin):
         )
         duration = max(abs(total) * max(radius, 0.1) / max(speed, 1e-3), 0.5)
         t0 = self._ctx.sim_time
-        lo, hi = (float(v) for v in m.jnt_range[jnt])
-        limited = bool(m.jnt_limited[jnt])
         sent, stepping = None, False
         try:
             while True:
@@ -1482,6 +1500,8 @@ class HumanoidPlugin(MachinePlugin):
                     if sent is None or math.hypot(p[0] - sent[0], p[1] - sent[1]) > 0.02:
                         sent = (float(p[0]), float(p[1]))
                         nav.send_goals([sent], exact=True)
+                    if arc is not None:
+                        self._on_leg(arc, arc_tol, f"round {name}", lambda: None)
                 self._check_holds()
                 q = float(d.qpos[qadr])
                 if limited and ((total > 0 and q > hi - 0.01) or (total < 0 and q < lo + 0.01)):
@@ -1497,7 +1517,12 @@ class HumanoidPlugin(MachinePlugin):
         self._check_holds()
         moved = math.degrees((float(d.qpos[qadr]) - q0) * math.copysign(1.0, total))
         q = float(d.qpos[qadr])
-        at_stop = limited and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
+        # open as far as it goes is a full turn; shut, it is not
+        at_stop = (
+            limited
+            and not closing
+            and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
+        )
         if moved < 0.8 * float(angle) and not at_stop:
             self.fail(f"stuck: {name} turned {moved:.0f} of {float(angle):.0f} deg")
         return moved
