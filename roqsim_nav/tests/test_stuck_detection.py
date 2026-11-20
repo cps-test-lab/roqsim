@@ -18,6 +18,7 @@ _PERIOD = 0.05  # a navigator's default 20 Hz tick
 
 def _core(**params):
     st = NavState(name="mover", waypoints=[(0.0, 0.0), (5.0, 0.0)], speed=0.5)
+
     # `uniform` is required and only feeds a waypoint dwell, which this suite never configures --
     # so it is wired to raise rather than to a value that would hide an unexpected draw.
     def _no_draw(lo, hi):
@@ -72,3 +73,13 @@ def test_forgetting_progress_re_arms_the_window():
     assert not core.is_stuck(), "the window should start again from the rebase"
     _hold(core, 5.0)
     assert core.is_stuck(), "and fill again if the mover still does not move"
+
+
+def test_a_route_sent_exact_never_recovers_however_long_it_is_held():
+    """A recovery backs off and re-plans: on a route sent ``exact`` it would leave the route that was
+    checked, so a mover held there waits instead."""
+    core = _core()
+    core.exact = True
+    _hold(core, 5.0)
+    assert core.is_stuck()  # it is held, as anything is
+    assert not core.needs_recovery()
