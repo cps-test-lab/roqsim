@@ -1168,50 +1168,58 @@ class _Search:
 
 
 def _verify(cs: _CSpace, start, moves, what: str) -> None:
-    """Every move of a way found, checked exactly across its sweep (:meth:`_CSpace.sweep_free`) in
-    the samples the search took of it, with what the search let the body stand against there. The
-    search's own checks already cover it; one that does not is a fault of the planner's, raised
-    rather than walked."""
+    """Every move of a way found, checked once more as the search checks a move of its kind, in the
+    samples it took: an arc and a step back as one (:meth:`_CSpace.path_ok`), a turn and a straight
+    shot a sample at a time (:meth:`_CSpace.move_ok`) -- the raster's check, and where the raster
+    says blocked, the exact one across the move's sweep. The search's checks already passed it, so
+    a way that fails is one the search joined wrongly: a fault of the planner's, raised rather
+    than walked."""
     dth = 2 * math.pi / cs.fp.bins
     res = cs.L.res
     pose = (float(start[0]), float(start[1]), float(start[2]))
     for kind, p, _amount in moves:
         p = (float(p[0]), float(p[1]), float(p[2]))
         d = math.hypot(p[0] - pose[0], p[1] - pose[1])
-        if kind == "turn":
-            n = max(1, int(math.ceil(abs(p[2] - pose[2]) / (dth / 2))))
-            steps = [(pose[0], pose[1], pose[2] + (p[2] - pose[2]) * k / n) for k in range(n + 1)]
-        elif kind == "arc" and d <= STEP + 1e-6 and abs(_wrap(p[2] - pose[2])) <= dth + 1e-6:
-            # an arc of the search's, a quarter of it at a time as the search took it
-            db = int(round(_wrap(p[2] - pose[2]) / dth))
+        db = int(round(_wrap(p[2] - pose[2]) / dth))
+        if kind == "arc" and d <= STEP + 1e-6 and abs(db) <= 1:
             steps, x, y = [pose], pose[0], pose[1]
             for q in range(1, 5):
                 tq = pose[2] + db * dth * (q - 0.5) / 4
                 x, y = x + STEP / 4 * math.cos(tq), y + STEP / 4 * math.sin(tq)
                 steps.append((x, y, pose[2] + db * dth * q / 4))
-        else:
-            # a straight shot or a step back, a cell at a time
-            n = max(1, int(math.ceil(d / res)))
-            steps = [
-                (pose[0] + (p[0] - pose[0]) * k / n, pose[1] + (p[1] - pose[1]) * k / n, p[2])
-                for k in range(n + 1)
-            ]
-        for a, b in zip(steps[:-1], steps[1:], strict=False):
-            # where the raster says blocked, the body may stand against what the zones there
-            # allow, as the search's move_ok lets it
-            allowed = None
-            for q in (a, b):
-                if not cs.free(*q):
-                    zone = cs._zone_of(q) or set()
-                    allowed = zone if allowed is None else allowed & zone
-            allowed = allowed or set()
-            if not cs.sweep_free(a, b, allowed):
-                names = [n for n in cs.meets(*b) if n not in allowed] or cs.meets(*a)
-                raise RuntimeError(
-                    f"planned a way {what} that meets {', '.join(names) or 'something'} between "
-                    f"({a[0]:.2f}, {a[1]:.2f}, {math.degrees(a[2]):.0f} deg) and "
-                    f"({b[0]:.2f}, {b[1]:.2f}, {math.degrees(b[2]):.0f} deg): a fault of the planner's"
+            ok = cs.path_ok(steps, STEP * abs(db) * dth / 8.0)
+        elif kind == "back":
+            # as the search took it: a step of BACK_STEP at a time, each with its middle
+            n = max(1, int(round(d / BACK_STEP)))
+            at = [
+                (
+                    pose[0] + (p[0] - pose[0]) * k / (2 * n),
+                    pose[1] + (p[1] - pose[1]) * k / (2 * n),
+                    p[2],
                 )
+                for k in range(2 * n + 1)
+            ]
+            ok = all(cs.path_ok(at[2 * k : 2 * k + 3]) for k in range(n))
+        else:
+            if kind == "turn":
+                n = max(1, int(math.ceil(abs(p[2] - pose[2]) / (dth / 2))))
+                steps = [
+                    (pose[0], pose[1], pose[2] + (p[2] - pose[2]) * k / n) for k in range(n + 1)
+                ]
+            else:
+                n = max(1, int(math.ceil(d / res)))
+                steps = [
+                    (pose[0] + (p[0] - pose[0]) * k / n, pose[1] + (p[1] - pose[1]) * k / n, p[2])
+                    for k in range(n + 1)
+                ]
+            ok = all(cs.move_ok(a, b) for a, b in zip(steps[:-1], steps[1:], strict=False))
+        if not ok:
+            names = cs.meets(*p) or cs.meets(*pose)
+            raise RuntimeError(
+                f"planned a way {what} that meets {', '.join(names) or 'something'} between "
+                f"({pose[0]:.2f}, {pose[1]:.2f}, {math.degrees(pose[2]):.0f} deg) and "
+                f"({p[0]:.2f}, {p[1]:.2f}, {math.degrees(p[2]):.0f} deg): a fault of the planner's"
+            )
         pose = p
 
 
