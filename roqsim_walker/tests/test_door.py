@@ -292,6 +292,52 @@ def test_a_turn_that_needs_the_body_to_step_round_is_refused_without_a_navigator
         engine.shutdown()
 
 
+def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_body_stands():
+    """A pull steps the body round with the leaf to where its hand reaches the handle, which may be
+    farther from the root than 0.9 of the arm's reach: the way of a walk keeping the door keeps the
+    root within the arm's reach from the shoulder, beside the root, and at least within where it
+    stands -- the walk is not refused where it starts."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        assert door.run("pull", hand="right", angle=40.0).error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        x, y, yaw = door.body.root()
+        (tether,) = hp._tethers()
+        if len(tether) == 3:  # a point: where the hand is
+            ax, ay, r = tether
+            bx, by = ax, ay
+        else:  # the stretch of the leaf the hand may be on
+            ax, ay, bx, by, r = tether[:5]
+        ex, ey = bx - ax, by - ay
+        t = min(max(((x - ax) * ex + (y - ay) * ey) / max(ex * ex + ey * ey, 1e-12), 0.0), 1.0)
+        assert math.hypot(x - ax - t * ex, y - ay - t * ey) < r, (x, y, tether)
+        st = door.run(
+            "approach", target={"position": {"x": x - 0.15, "y": y, "z": 0.0}}, facing=yaw
+        )
+        assert "already meets" not in st.error, st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_turned_shut_by_more_than_it_is_open_shuts_at_its_stop():
+    """Pushed open 60 deg and pulled back by 80, a door turns until it is shut, at its stop: that is
+    as far as it goes, not a door stuck at 60 of 80 deg."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=60.0).error == ""
+        st = door.run("pull", hand="right", angle=80.0)
+        assert st.error == "", st.error
+        assert abs(door.angle()) < 3.0, door.angle()
+    finally:
+        engine.shutdown()
+
+
 def test_a_door_pulled_open_is_kept_open_by_the_hand_pushing_on_it_and_walked_through():
     """Pulled open toward the body, the handle ends at the leaf's far edge, out of reach of the
     opening. Walking through, the hand keeps the door by contact: its hold stays on while the body
