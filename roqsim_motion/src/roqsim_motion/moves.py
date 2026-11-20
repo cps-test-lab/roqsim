@@ -1428,7 +1428,10 @@ class HumanoidPlugin(MachinePlugin):
             rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
         )
         self._check_holds()
-        self.step("lifted", height=height)
+        # the height the hands holding came to (a riding one too): a lift ends within a few
+        # centimetres of where it aims
+        got = float(np.mean([self.body.grip(d, s)[0][2] for s in sides]))
+        self.step("lifted", height=round(got, 3))
         carried = self._carried()
         stand, yaw = self._stand_for(to, standoff, facing)
         yield from self._walk_way(
