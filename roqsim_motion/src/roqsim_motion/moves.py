@@ -1945,11 +1945,14 @@ class HumanoidPlugin(MachinePlugin):
         sides = self._held("both")
         d = self._d
         m = self._m
-        obj = self.holding[sides[0]].obj_body
+        # what is carried: what the hands hold, less what a hand keeps on its joint (a door)
+        carrying = [s for s in sides if not self._riding[s] and not self._kept(s)]
+        load = [s for s in sides if not self._kept(s)] or sides
+        obj = self.holding[load[0]].obj_body
         if height is None:
             # a hand's breadth under the pelvis, or clear of the surface it goes to
             height = self.body.carry_height()
-            lead = next(s for s in sides if not self._riding[s])
+            lead = carrying[0] if carrying else next(s for s in sides if not self._riding[s])
             dest = self._target(to)
             point, _ = dest.resolve(m, d)
             top = self._top(point, obj, self._on(dest))
@@ -1961,8 +1964,7 @@ class HumanoidPlugin(MachinePlugin):
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
         rel = {}
-        carrying = [s for s in sides if not self._riding[s] and not self._kept(s)]
-        if len(carrying) == 1 and len(sides) == 1:
+        if len(carrying) == 1 and len(load) == 1:
             rel = self._one_hand_lift(carrying[0], height)
         for s in [] if rel else carrying:
             p, q = self.body.grip(d, s)

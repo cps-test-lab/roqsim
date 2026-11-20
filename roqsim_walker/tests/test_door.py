@@ -677,3 +677,45 @@ def test_a_load_in_one_hand_goes_with_the_body_as_it_steps_round_a_door_the_othe
         assert d.xpos[body][2] > 0.3  # still carried
     finally:
         engine.shutdown()
+
+
+def test_a_load_in_one_hand_is_lifted_at_the_side_while_the_other_keeps_a_door():
+    """The other hand keeping a door open, a load the first holds alone is still carried at the
+    body's side, lifted for the tote and not for the door: the door is no load of the carry's."""
+    tote = {
+        "tote": {"pose": {"position": {"x": -1.0, "y": -1.2}}, "size": [0.25, 0.2, 0.15]},
+        "name": "tote_1",
+    }
+    engine = _door_in_a_wall("right", toward=True, extra=[tote], graspable=("door", "tote_1"))
+    try:
+        h = engine.ctx.blackboard.get("humanoid:worker")
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        d = engine.ctx.data
+
+        def run(move, **args):
+            seq = h.start(move, **args)
+            t0 = engine.ctx.sim_time
+            while not (h.status().seq == seq and h.status().finished):
+                engine.step()
+                assert engine.ctx.sim_time - t0 < 60.0, f"{move} did not end"
+            return h.status().error
+
+        assert run("approach", target="tote_1/grip_l") == ""
+        assert run("grasp", hand="right", target="tote_1/grip_l") == ""
+        assert run("carry", to="door/pull/grip", height=0.85) == ""
+        assert run("grasp", hand="left", target="door/pull/grip") == ""
+        assert run("pull", hand="left", angle=8.0) == ""
+        x, y, yaw = hp.body.root()
+        h.start("carry", to={"position": {"x": x - 0.2, "y": y - 0.3, "z": 0.0}})
+        t0 = engine.ctx.sim_time
+        while not [e for e in engine.ctx.events.all() if e["event"] == "lifted" and e["t"] >= t0]:
+            engine.step()
+            assert h.status().error == "", h.status().error
+            assert engine.ctx.sim_time - t0 < 30.0, "it was not lifted"
+        x, y, yaw = hp.body.root()
+        grip = d.site("worker/grip_r").xpos
+        beside = -(grip[0] - x) * math.sin(yaw) + (grip[1] - y) * math.cos(yaw)
+        assert beside < -0.1, beside  # at its right side
+        assert grip[2] < 1.1, grip[2]  # at a hand's height for the tote, not lifted over the door
+    finally:
+        engine.shutdown()
