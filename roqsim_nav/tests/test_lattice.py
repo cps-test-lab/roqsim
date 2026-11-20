@@ -488,3 +488,27 @@ def test_a_way_from_one_wall_to_dock_at_another_passes_the_last_check():
         model, data, fp, (0.0, 0.0, math.pi), (-0.6, 0.0, math.pi), dock=["bench"], back_max=0.0
     )
     assert way.length > 0.55
+
+
+def test_a_way_planned_in_steps_hands_back_while_it_searches_and_is_the_same_way():
+    """``plan_way_steps`` hands back every ``SLICE_STATES`` states its search expands, so a caller
+    on the physics thread steps the simulation on meanwhile; it reads the world before it first
+    hands back, so what moves after that changes nothing; and its way is :func:`plan_way`'s."""
+    model, data = _world("carry_three_bends")
+    fp = _footprint()
+    start, goal = (0.0, 0.0, 0.0), (5.5, 0.92, 0.0)
+    whole = plan_way(model, data, fp, start, goal)
+    steps = L.plan_way_steps(model, data, fp, start, goal)
+    handed, way = 0, None
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            way = done.value
+            break
+        handed += 1
+        data.qpos[:] = 0.0  # the world as a simulation steps it on: not read again
+    assert handed >= whole.expanded // L.SLICE_STATES > 0, (handed, whole.expanded)
+    assert [s.kind for s in way.segments] == [s.kind for s in whole.segments]
+    assert way.poses == whole.poses
+    assert way.seconds < whole.seconds * 3 + 0.5  # the time it ran, not the time handed back
