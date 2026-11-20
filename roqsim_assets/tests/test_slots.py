@@ -84,6 +84,9 @@ def test_a_slot_is_a_hand_target_and_its_stances_in_the_bodys_frame():
         ({"a": {"at": [0, 0]}}, "'at' is [x, y, z]"),
         ({"a": {"stand": [[0, 0]]}}, "'stand' is a list of [x, y, yaw]"),
         ({"a": {}}, "neither a hand target"),
+        ({"a": {"at": [0, 0, 1], "stands": [[0.6, 0, 3.1]]}}, "unknown key 'stands'"),
+        ({"a": {"at": [0, 0, "up"]}}, "'at' is [x, y, z]"),
+        ({"a": {"at": [0, 0, 1], "stand": [[0.6, 0, float("nan")]]}}, "'stand' is a list of"),
     ],
 )
 def test_a_slot_that_states_nothing_usable_is_refused_saying_why(slots, says):
