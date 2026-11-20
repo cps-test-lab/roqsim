@@ -1,7 +1,7 @@
 """The footprint planner: a way over position and heading on which every pose of a body and what it
 holds clears the world, in height layers.
 
-Each review case is a test world in ``data/``:
+Each case a disc's way gets wrong is a test world in ``data/``:
 
 * ``carry_post_straight``: a post beside a straight stretch, where a disc passes and a load carried
   across the body does not;
@@ -31,7 +31,7 @@ from roqsim_nav.lattice import NoWay, check_way, plan_way
 from roqsim_nav.obstacles import wall_polygons
 
 DATA = Path(__file__).parent / "data"
-#: The most a review case may take to plan (s); each takes well under half of it.
+#: The most one of these cases may take to plan (s); each takes well under half of it.
 PLAN_SECONDS = 2.0
 
 
@@ -80,7 +80,7 @@ def _disc_walked(model, data, fp, start, goal):
     bounds = L._bounds(model, data, [start, goal], fp.radius)
     layers = L.Layers(model, data, fp.bands, bounds, fp.resolution)
     way = L._disc_way(layers, start, goal, 2)
-    assert way is not None, "the disc has a way in every review world"
+    assert way is not None, "the disc has a way in every one of these worlds"
     segs, th = [], start[2]
     for (x0, y0), (x1, y1) in zip(way[:-1], way[1:], strict=False):
         if math.hypot(x1 - x0, y1 - y0) < 1e-6:
@@ -105,7 +105,7 @@ CASES = {
 
 
 @pytest.mark.parametrize("name", list(CASES))
-def test_a_review_case_the_disc_way_walked_meets_and_the_planned_way_clears(name):
+def test_a_case_the_disc_way_walked_meets_and_the_planned_way_clears(name):
     start, goal, width, disc_meets = CASES[name]
     model, data = _world(name)
     fp = _footprint(width)

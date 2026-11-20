@@ -1,12 +1,12 @@
 """A carry walks the way planned for the body and what it holds: what was checked is what is
 walked, and what it carries touches nothing on the way.
 
-The review cases, each a test world in ``data/`` (``roqsim_nav``'s planner tests have their
-twins): a post beside a straight stretch; a dead end the body steps back out of, with a post where
-a turn after a short step back would sweep the tote; three close bends of 30 degrees; and a tote
-too wide for its passage that goes over a bench beside it, and not under a shelf at its own height.
-A walker with hands takes a tote, carries it through, and every contact of the tote with anything
-but the walker is counted from the moment it is lifted.
+The cases a disc's way gets wrong, each a test world in ``data/`` (``roqsim_nav``'s planner tests
+have their twins): a post beside a straight stretch; a dead end the body steps back out of, with a
+post where a turn after a short step back would sweep the tote; three close bends of 30 degrees; and
+a tote too wide for its passage that goes over a bench beside it, and not under a shelf at its own
+height. A walker with hands takes a tote, carries it through, and every contact of the tote with
+anything but the walker is counted from the moment it is lifted.
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ CASES = {
 
 
 @pytest.mark.parametrize("name", list(CASES))
-def test_a_carry_through_a_review_case_touches_nothing(name):
+def test_a_carry_through_a_case_touches_nothing(name):
     case = dict(CASES[name])
     size, height = case.pop("size", None), case.pop("height", None)
     engine = _engine(name, case["start"], case["tote_at"], size=size)
@@ -268,8 +268,8 @@ def _case(name, **kw):
 def test_a_body_drawn_behind_its_root_plans_with_the_margin_it_strays_by_and_keeps_to_it(name):
     """A walker with a ``body_lag`` of 0.15 s (a person's pace) is drawn on a point that trails its
     nav root and cuts inside an arc: it plans with that margin -- ``(speed * lag)**2 / R`` at the
-    tightest arc a way has -- says so in ``planned``, and walks every review case without leaving
-    its way or the tote touching anything."""
+    tightest arc a way has -- says so in ``planned``, and walks every one of these cases without
+    leaving its way or the tote touching anything."""
     engine, case, kw = _case(name, body_lag=0.15)
     try:
         sim = Carry(engine)
