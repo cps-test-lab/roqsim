@@ -210,8 +210,8 @@ def test_a_door_kept_open_is_not_walked_away_from_out_of_reach():
         st = door.run(
             "approach", target={"position": {"x": -2.0, "y": 0.8, "z": 0.0}}, facing=math.pi
         )
-        assert st.error.startswith("no way "), st.error
-        assert door.d.body("gate") is not None
+        # naming what it holds: the door it keeps
+        assert st.error.startswith("no way holding gate to "), st.error
     finally:
         engine.shutdown()
 
@@ -257,6 +257,122 @@ def test_a_door_that_will_not_turn_is_stuck():
         if st.error.startswith("cannot follow"):
             assert "post_box" in st.error and door.angle() < 1.0, (st.error, door.angle())
         assert door.angle() < 35.0, door.angle()
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_turned_toward_its_shut_stop_fails_rather_than_reporting_it_turned():
+    """Pulled by the handle on the face it is pushed from, a shut door would turn further shut: the
+    pull fails saying so, before anything moves, rather than reporting a pull of about 0 deg."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        st = door.run("pull", hand="right", angle=30.0)
+        assert "is shut" in st.error, st.error
+        assert not door.events("moving")
+        assert abs(door.angle()) < 1.0
+    finally:
+        engine.shutdown()
+
+
+def test_a_body_that_leaves_its_way_round_a_hinge_fails_there():
+    """Stepping round the hinge with the leaf, the body is watched against the path its step was
+    checked on: a navigator that walks it 10 cm off every point it is sent (outward from the hinge)
+    leaves that path, and the pull fails saying so rather than walking a path nobody checked."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        nav = engine.ctx.blackboard.get("nav:worker:handle")
+        send = nav.send_goals
+
+        def off(goals, exact=False):
+            out = []
+            for x, y in goals:
+                r = math.hypot(x - 1.0, y) or 1.0
+                out.append((x + 0.1 * (x - 1.0) / r, y + 0.1 * y / r))
+            return send(out, exact=exact)
+
+        nav.send_goals = off
+        st = door.run("pull", hand="right", angle=85.0)
+        assert st.error.startswith("left its way to round gate"), st.error
+    finally:
+        engine.shutdown()
+
+
+def _where(engine):
+    """Where the walker stands and its heading."""
+    hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+    return hp.body.root()
+
+
+def _walk_through_pulled(door, engine):
+    """Pull the door open and walk through it keeping it by contact; the walk's status."""
+    assert door.run("approach", target="gate/pull/grip").error == ""
+    assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+    assert door.run("pull", hand="right", angle=85.0).error == ""
+    return door.run("approach", target="gate/through")
+
+
+def test_a_reset_in_the_middle_of_keeping_a_door_leaves_nothing_of_it():
+    """Reset while the hand keeps a door by contact, nothing of that keeping is left: the next run
+    pulls the door open and walks through it, keeping it from the start as the first did."""
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        assert door.run("pull", hand="right", angle=85.0).error == ""
+        door.h.start("approach", target="gate/through")
+        t0 = engine.ctx.sim_time
+        while not door.events("pushing"):
+            door.step()
+            assert engine.ctx.sim_time - t0 < 30.0, "it never pushed on the door"
+        engine.reset()
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        for state in ("_keep", "_kept_at", "_push", "_tip_goal", "_keep_z", "_keep_at_face"):
+            assert getattr(hp, state) == {}, (state, getattr(hp, state))
+        door = Door(engine)
+        st = _walk_through_pulled(door, engine)
+        assert st.error == "", st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_kept_door_turned_again_is_kept_at_its_new_angle():
+    """A door a hand keeps, turned again by that hand, is kept at the angle it is turned to: the
+    next walk counts how far it closes from there, not from where the first walk found it."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=60.0).error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        # as a walk keeping it by its hold leaves it
+        hp._keep["r"], hp._kept_at["r"] = "weld", math.radians(door.angle())
+        assert door.run("push", hand="right", angle=15.0).error == ""
+        assert math.degrees(hp._kept_at["r"]) == pytest.approx(door.angle(), abs=0.5)
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_kept_by_pushing_on_its_face_is_not_turned_by_its_handle():
+    """A hand that keeps a door by pushing on its face holds no handle: a pull or a push by it fails
+    before anything moves, saying to grasp the handle again."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=60.0).error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        hp._keep["r"] = "contact"  # as a walk keeping it by contact leaves it
+        st = door.run("push", hand="right", angle=15.0)
+        assert "by pushing on its face" in st.error, st.error
     finally:
         engine.shutdown()
 

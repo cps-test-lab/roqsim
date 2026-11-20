@@ -377,3 +377,71 @@ def test_a_body_that_strays_off_a_step_back_fails_saying_by_how_much():
         assert not [ev for ev in sim.events("walking", t0) if ev["t"] > back[0]["t"]]
     finally:
         engine.shutdown()
+
+
+def test_a_carry_plans_its_margin_for_the_speed_it_walks_at_under_avoidance():
+    """The margin a carry plans with is the body's stray at the speed it walks its way at. Under
+    avoidance the model may command a body up to ``max_speed``; a carry's legs are sent ``exact``,
+    the avoidance model's velocity is not taken, and the body walks at the navigator's ``speed``:
+    measured, it never goes faster, and the margin is the one for that speed."""
+    nav = {**NAV, "speed": 0.6, "max_speed": 2.0}
+    engine, case, kw = _case("carry_post_straight", body_lag=0.15, nav=nav)
+    try:
+        sim = Carry(engine)
+        assert sim.run("approach", target="tote_1", standoff=0.45).error == ""
+        assert sim.run("grasp", hand="both", target="tote_1").error == ""
+        t0 = engine.ctx.sim_time
+        to = case["to"]
+        seq = sim.h.carry(
+            {"position": {"x": to[0], "y": to[1], "z": 0.0}}, standoff=0.6, facing=case["facing"]
+        )
+        # over 0.9 s at a time: the body is drawn at its own rate (every 18 ms), not every step
+        window = int(round(0.9 / engine.ctx.dt))
+        fastest, last, k = 0.0, sim.body.root(), 0
+        while not (sim.h.status().seq == seq and sim.h.status().finished):
+            engine.step()
+            k += 1
+            if k % window == 0:
+                now = sim.body.root()
+                fastest = max(fastest, math.hypot(now[0] - last[0], now[1] - last[1]) / 0.9)
+                last = now
+            assert engine.ctx.sim_time - t0 < 120.0
+        assert sim.h.status().error == "", sim.h.status().error
+        assert fastest <= 0.6 * 1.02, fastest
+        margin = sim.events("planned", t0)[0]["margin"]
+        assert margin == pytest.approx(sim.body.follow_error(0.6), abs=1e-3)
+    finally:
+        engine.shutdown()
+
+
+def test_a_leg_that_ends_short_fails_rather_than_walking_on(monkeypatch):
+    """A navigator that stops 20 cm short of where it is sent (as one with a wide arrival radius
+    does) leaves the body short of a leg's end after every aim on: the carry fails saying so,
+    rather than walking on from where its way was not checked."""
+    from roqsim_nav import behavior
+
+    monkeypatch.setattr(behavior, "EXACT_ARRIVE", 0.2)
+    engine, case, kw = _case("carry_post_straight")
+    try:
+        st, _touches, _t0 = Carry(engine).carry(case["to"], case["facing"], **kw)
+        assert "short of a leg's end" in st.error, st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_step_back_that_ends_short_fails_rather_than_walking_on(monkeypatch):
+    """A navigator that stops a metre short of where it is sent hardly moves a body stepping back
+    0.4 m, however far on the step is aimed: after its tries the step back fails saying how far it
+    got, rather than letting the way go on from where it was not checked."""
+    from roqsim.machine import ProgramFailed
+    from roqsim_nav import behavior
+
+    monkeypatch.setattr(behavior, "EXACT_ARRIVE", 1.0)
+    engine, _case_, _kw = _case("carry_post_straight")
+    try:
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        with pytest.raises(ProgramFailed, match="stepped back 0.* m of 0.400"):
+            for _ in hp._step_back(0.4, lambda: None, "the test's goal", 0.05):
+                engine.step()
+    finally:
+        engine.shutdown()

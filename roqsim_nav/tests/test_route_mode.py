@@ -458,3 +458,30 @@ def test_lookahead_without_pure_pursuit_is_refused(tmp_path):
 def test_an_unknown_tracker_is_refused(tmp_path):
     with pytest.raises(PluginError, match="tracker"):
         _engine(tmp_path, tracker="stanley")
+
+
+@pytest.mark.parametrize("tracker", ["waypoint", "pure_pursuit"])
+def test_a_route_sent_exact_keeps_to_its_legs_and_stops_at_its_last_point(tmp_path, tracker):
+    """Sent ``exact``, a route is walked as given whatever the tracker and ``arrival_radius``: its
+    corner is not cut, a point is passed where its leg ends, and the last one is stopped at within a
+    centimetre, not at the arrival radius."""
+    extra = {"lookahead": 0.6} if tracker == "pure_pursuit" else {}
+    engine = _engine(tmp_path, autostart=False, arrival_radius=0.3, tracker=tracker, **extra)
+    engine.setup()
+    engine.reset()
+    try:
+        nav = engine.ctx.blackboard.get("nav:cart:handle")
+        last = (2.5, 2.0)
+        seq = nav.send_goals([(-2.5, 2.0), last], exact=True)
+        track = []
+        for _ in range(int(20.0 / engine.ctx.dt)):
+            engine.step()
+            track.append(_xy(engine))
+            if nav.status()[0] == seq and nav.status()[1]:
+                break
+        assert nav.status()[0] == seq and nav.status()[1] and nav.status()[4] == ""
+        assert _max_offset_from_polyline(np.array(track)) < 0.03
+        # where it was when the route ended (a commanded route ended, it resumes its own)
+        assert np.linalg.norm(track[-1] - np.asarray(last)) < 0.011
+    finally:
+        engine.shutdown()
