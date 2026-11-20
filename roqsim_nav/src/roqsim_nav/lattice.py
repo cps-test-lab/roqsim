@@ -692,16 +692,16 @@ class _CSpace:
 
     def turn_free(self, x, y, th0, th1, allowed=frozenset()) -> bool:
         """Whether the footprint turning on the spot at ``(x, y)`` from ``th0`` to ``th1`` (the way
-        it turns: unwrapped) meets nothing, exactly: read off a table of the whole turn at that
-        spot -- every heading round it, between which no point of the footprint moves more than
-        :data:`SWEEP_STEP` -- made once, the first time a turn there is asked for. A search asks
-        for many turns from one spot; each is then a look-up."""
+        it turns: unwrapped) meets nothing, exactly: read off a table of the turn at that spot --
+        headings round it between which no point of the footprint moves more than
+        :data:`SWEEP_STEP` -- made a heading bin at a time, the first time a turn there asks for
+        it. A search asks for many turns from one spot, each a bin further than the last; each is
+        then mostly a look-up."""
         if not hasattr(self, "_grown"):
             self._exact_setup()
         allowed = frozenset(allowed)
         key = (round(x * 1000.0), round(y * 1000.0), allowed)
-        table = self._turns.get(key)
-        if table is None:
+        if key not in self._turns:
             pieces, reach = [], 0.0
             for i, (band, _poly, r, own, _axes) in enumerate(self._grown):
                 near = self._near_piece(band, own, allowed, x, y, r + SWEEP_STEP)
@@ -709,23 +709,37 @@ class _CSpace:
                     pieces.append((i, near))
                     reach = max(reach, r)
             if not pieces:
-                table = self._turns[key] = None
+                self._turns[key] = None
             else:
-                n = max(8, int(math.ceil(2.0 * math.pi * reach / SWEEP_STEP)))
-                hs = 2.0 * math.pi * np.arange(n) / n
-                xs, ys = np.full(n, float(x)), np.full(n, float(y))
-                c, s_ = np.cos(hs)[:, None], np.sin(hs)[:, None]
-                hit = np.zeros(n, bool)
-                for i, near in pieces:
-                    hit |= self._sweep_mask(i, near, xs, ys, c, s_, SWEEP_STEP / 2.0)
-                table = self._turns[key] = hit
+                per = max(1, int(math.ceil(2.0 * math.pi * reach / SWEEP_STEP / self._bins)))
+                self._turns[key] = (pieces, per, {})
+        table = self._turns[key]
         if table is None:
             return True
-        n = len(table)
+        pieces, per, chunks = table
+        n = per * self._bins
         lo, hi = sorted((th0, th1))
         i0 = int(math.floor(lo / (2.0 * math.pi) * n))
         i1 = int(math.ceil(hi / (2.0 * math.pi) * n))
-        return not bool(table[np.arange(i0, i1 + 1) % n].any())
+        # the bins the turn passes, in the order it passes them
+        order = range(i0 // per, i1 // per + 1)
+        if th1 < th0:
+            order = reversed(order)
+        for c in order:
+            k = c % self._bins
+            mask = chunks.get(k)
+            if mask is None:
+                hs = 2.0 * math.pi * (k * per + np.arange(per)) / n
+                xs, ys = np.full(per, float(x)), np.full(per, float(y))
+                cs_, sn = np.cos(hs)[:, None], np.sin(hs)[:, None]
+                mask = np.zeros(per, bool)
+                for i, near in pieces:
+                    mask |= self._sweep_mask(i, near, xs, ys, cs_, sn, SWEEP_STEP / 2.0)
+                chunks[k] = mask
+            start, stop = max(i0, c * per), min(i1, c * per + per - 1)
+            if mask[start - c * per : stop - c * per + 1].any():
+                return False
+        return True
 
     def body_meets(self, x, y, th) -> set:
         """The bodies the mover's own pieces overlap at ``(x, y, th)``, exactly."""
