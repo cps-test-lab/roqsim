@@ -461,3 +461,89 @@ def test_a_door_in_a_wall_is_pushed_open_from_its_own_stance_and_the_body_passes
 def _root(engine):
     hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
     return hp.body.root()
+
+
+def _door_of_width(width: float, hinge: str, toward: bool):
+    """The `door` prop of ``width``, moved by hand with a closer, in a 0.06 m wall along y = 0 whose
+    ends meet the opening's, opening away from the walker before it at y < 0 or ``toward`` it."""
+    swing = 1 if hinge == "left" else -1
+    wall = {"size": [2.0, 0.06, 2.4], "motion": "static"}
+    ends = width / 2.0 + 1.0
+    world = {
+        "sim": {"pacing": "asap"},
+        "components": [
+            {
+                "box": {**wall, "prefix": "wall_w_", "pose": {"position": {"x": -ends, "y": 0.0}}},
+                "name": "wall_w",
+            },
+            {
+                "box": {**wall, "prefix": "wall_e_", "pose": {"position": {"x": ends, "y": 0.0}}},
+                "name": "wall_e",
+            },
+            {
+                "door": {
+                    "prefix": "door_",
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    "width": width,
+                    "hinge_side": hinge,
+                    "swing": -swing if toward else swing,
+                    "actuation": "hand",
+                    "closer": {"stiffness": 15.0, "damping": 6.0},
+                },
+                "name": "door",
+            },
+            {
+                "walker": {
+                    "walker": "MaleVisitorWalk",
+                    "hands": True,
+                    "skin": False,
+                    "pose": {
+                        "position": {"x": 0.0, "y": -2.0},
+                        "orientation": {"yaw": math.pi / 2},
+                    },
+                },
+                "name": "worker",
+                "components": [{"navigator": NAV}, {"humanoid": {"graspable": ["door"]}}],
+            },
+        ],
+    }
+    engine = Engine(load_config_from_dict(world))
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    return engine
+
+
+@pytest.mark.parametrize("move", ["push", "pull"])
+@pytest.mark.parametrize("hinge", ["left", "right"])
+@pytest.mark.parametrize("width", [0.75, 0.8, 0.85, 0.9, 1.0])
+def test_a_door_of_any_common_width_opens_from_its_own_stance(width, hinge, move):
+    """From the stance the door states for it, by the hand on the handle's side, a door of every
+    common width (0.8 m the standard) is pushed open with the body stepping round through the
+    opening, or pulled open with the body stepping back round outside the leaf's swing."""
+    engine = _door_of_width(width, hinge, toward=move == "pull")
+    try:
+        h = engine.ctx.blackboard.get("humanoid:worker")
+        d = engine.ctx.data
+        qadr = int(engine.ctx.model.jnt_qposadr[engine.ctx.model.joint("door_hinge").id])
+
+        def run(name, **args):
+            seq = h.start(name, **args)
+            t0 = engine.ctx.sim_time
+            while not (h.status().seq == seq and h.status().finished):
+                engine.step()
+                assert engine.ctx.sim_time - t0 < 60.0, f"{name} did not end"
+            return h.status().error
+
+        grip = f"door/{move}/grip"
+        assert run("approach", target=grip) == ""
+        x, _y, _ = _root(engine)
+        # facing the door (+y), the handle on the body's right is +x of it
+        hand = "right" if d.site(grip).xpos[0] > x else "left"
+        assert run("grasp", hand=hand, target=grip) == ""
+        assert run(move, hand=hand, angle=80.0) == ""
+        assert abs(math.degrees(float(d.qpos[qadr]))) > 70.0
+        y = _root(engine)[1]
+        assert (y > 0.0) if move == "push" else (y < 0.0), y  # through, or still before it
+    finally:
+        engine.shutdown()
