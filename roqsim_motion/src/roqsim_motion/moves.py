@@ -248,6 +248,9 @@ class HumanoidHandle(MachineHandle):
     def carry(self, to: str | dict, **kw) -> int:
         return self.start("carry", to=to, **kw)
 
+    def plan(self, to: str | dict, **kw) -> int:
+        return self.start("plan", to=to, **kw)
+
     def place(self, at: str | dict, **kw) -> int:
         return self.start("place", at=at, **kw)
 
@@ -862,17 +865,13 @@ class HumanoidPlugin(MachinePlugin):
                 at.append((c * dx + s_ * dy, -s_ * dx + c * dy))
         return out, at
 
-    def _walk_way(self, stand, yaw, what: str, carried, via=(), back_max=BACK_MAX, long_way=False):
-        """Holding something: plan a way for the body and what it holds to ``stand`` facing
-        ``yaw`` (:func:`roqsim_nav.lattice.plan_way`), through ``via``, and walk exactly that way --
-        its legs exact on the navigator, its turns on the spot, its steps back -- what it holds
-        held in the hands all along."""
-        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
-        if nav is None:
-            self.fail(f"{self.entity} has no navigator to walk to {what} with")
+    def _plan(self, stand, yaw, what, each, via=(), back_max=BACK_MAX, long_way=False):
+        """Plan a way for the body and what it holds, as they are now, to ``stand`` facing ``yaw``
+        (:func:`roqsim_nav.lattice.plan_way`), through ``via``, calling ``each`` every step while
+        it plans; say so in a ``planned`` event. Returns ``(way, footprint)``; fails where there is
+        none, saying where it got to and what is in the way."""
         fp, skip, held = self._footprint_now()
         label = what if isinstance(what, str) else "where it is sent"
-        each = lambda: self._hold_carried(carried)  # noqa: E731
         tethers, tether_at = self._tethers()
         # while the way is planned the body stands as it is, its heading kept: turning, it would
         # swing what it holds
@@ -916,8 +915,25 @@ class HumanoidPlugin(MachinePlugin):
             # heading is the body's own again
             self.body.keep_heading(None)
         self.step("planned", **way.summary())
+        return way, fp
+
+    def _walk_way(self, stand, yaw, what: str, carried, via=(), back_max=BACK_MAX, long_way=False):
+        """Holding something: plan a way for the body and what it holds to ``stand`` facing
+        ``yaw`` (:meth:`_plan`), through ``via``, and walk exactly that way -- its legs exact on
+        the navigator, its turns on the spot, its steps back -- what it holds held in the hands all
+        along."""
+        nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
+        if nav is None:
+            self.fail(f"{self.entity} has no navigator to walk to {what} with")
+        label = what if isinstance(what, str) else "where it is sent"
+        each = lambda: self._hold_carried(carried)  # noqa: E731
+        way, fp = yield from self._plan(stand, yaw, what, each, via, back_max, long_way)
         tol = FOLLOW_TOL + fp.margin
         for seg in way.segments:
+            # every leg starts on the heading the way planned for it, not on the one the leg
+            # before ended at (a walk ends facing where it walked): an error does not add up
+            if seg.kind != "turn" and len(seg.poses):
+                yield from self._turn_to(float(seg.poses[0][2]), each)
             if seg.kind == "walk":
                 yield from self._walk_leg(nav, seg.poses, label, each, tol)
             elif seg.kind == "turn":
@@ -1901,6 +1917,34 @@ class HumanoidPlugin(MachinePlugin):
             for poly in pieces:
                 best = min(best, _gap(poly, piece.polygon))
         return best
+
+    @program
+    def plan(
+        self,
+        to: str | dict,
+        standoff: float | None = None,
+        via: list | None = None,
+        facing: float | None = None,
+        back_max: float = BACK_MAX,
+        long_way: bool = False,
+    ):
+        """Plan the way a carry, or an approach holding something, would walk to a target, for the
+        body and what it holds as they are now, and end, saying so in a ``planned`` event: nothing
+        moves. Where there is no way it fails as the carry would, with its message. Its arguments
+        are the carry's, but the height it would lift to: what is held is planned as it is held."""
+        points = self._via(via)
+        back_max = self._back_max(back_max)
+        carried = self._carried()
+        stand, yaw = self._stand_for(to, standoff, facing)
+        yield from self._plan(
+            stand,
+            yaw,
+            to,
+            lambda: self._hold_carried(carried),
+            via=points,
+            back_max=back_max,
+            long_way=bool(long_way),
+        )
 
     def _level(self, sides, rel):
         """Hold what both hands hold level: where a hand rides on the load the hand that holds it
