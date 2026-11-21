@@ -859,6 +859,21 @@ def test_the_joint_torque_controller_is_the_link_side_one_by_default():
     engine.shutdown()
 
 
+def test_the_link_side_rotor_is_franka_descriptions_reflected_one_divided_by_six():
+    """``LINK_ARMATURE`` is held to the vendored ``dynamics.yaml``, not typed from it."""
+    import yaml
+    from _franka_upstream import DESCRIPTION, text
+    from roqsim_manipulation.plugins import franka_fci as fci
+
+    dyn = yaml.safe_load(text(DESCRIPTION / "robots/fr3/dynamics.yaml"))
+    reflected = [
+        dyn[f"joint{i}"]["dynamic"]["motor_inertia"]
+        * dyn[f"joint{i}"]["dynamic"]["gear_ratio"] ** 2
+        for i in range(1, 8)
+    ]
+    assert fci.LINK_ARMATURE == pytest.approx(np.array(reflected) / 6, abs=5e-4)
+
+
 def test_motor_keeps_the_models_own_motor_side():
     engine = _engine(joint_torque_control={"mode": "motor"})
     m, dofs = engine.ctx.model, _arm_dofs(engine)
