@@ -329,7 +329,10 @@ class HumanoidPlugin(MachinePlugin):
         self._tip_goal = {}  # side -> the last goal of a hand keeping a door by contact
         self._keep_z = {}  # side -> the height the hand keeps a door at (m)
         self._keep_at_face = {}  # side -> whether the fingertip is on the face it pushes
-        self._swept = {}  # side -> whether the body has stood where the door it keeps would shut
+        #: the way a walk keeping a door still has to go, its root poses, and the pieces of the
+        #: body and what it holds as it was planned (:meth:`_through`)
+        self._way_rest = []
+        self._way_pieces = []
         self._turns = {
             s: 0.0 for s in SIDES
         }  # how far each hand turned on the handle it took (rad)
@@ -446,9 +449,10 @@ class HumanoidPlugin(MachinePlugin):
             self._tip_goal,
             self._keep_z,
             self._keep_at_face,
-            self._swept,
         ):
             state.clear()
+        self._way_rest = []
+        self._way_pieces = []
 
     # -- helpers ----------------------------------------------------------------------------
     @property
@@ -1001,7 +1005,6 @@ class HumanoidPlugin(MachinePlugin):
             self._kept_at,
             self._tip_goal,
             self._keep_at_face,
-            self._swept,
         ):
             state.pop(side, None)
         self.body.set_pose(side, "open")
@@ -1044,18 +1047,62 @@ class HumanoidPlugin(MachinePlugin):
         return float(a[0]), float(a[1]), float(m[0]), float(m[1])
 
     def _through(self, side: str) -> bool:
-        """Whether the body, keeping the door ``side`` by contact, has gone through: it stood where
-        the leaf sweeps as it shuts and has left it, no part of it but the keeping arm there now
-        (:meth:`_in_sweep`) -- past the line the leaf shuts onto, or past its free edge."""
-        if self._in_sweep(side):
-            self._swept[side] = True
-            return False
-        return self._swept.get(side, False)
+        """Whether the body, keeping the door ``side`` by contact, is done with it: no part of it
+        but the keeping arm stands where the leaf sweeps as it shuts, or in the opening it shuts,
+        and no pose of the way still to walk takes the body or what it holds there
+        (:meth:`_sweep`)."""
+        inside, probes = self._sweep(side)
+        m, d = self._m, self._d
+        polys = []
+        arm = self._arm_bodies(side)
+        for g in range(m.ngeom):
+            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            b = int(m.geom_bodyid[g])
+            if b in arm or not self.body.owns(m, b):
+                continue
+            piece = geom_piece(m, d, g, (0.0, 0.0, 0.0))
+            if piece is not None:
+                polys.append(piece.polygon)
+        # the way still to walk: from the pose of it nearest where the body stands on
+        rest = self._way_rest
+        if rest:
+            x, y, _ = self.body.root()
+            k = min(range(len(rest)), key=lambda i: math.hypot(rest[i][0] - x, rest[i][1] - y))
+            rest = self._way_rest = rest[k:]
+        for px, py, pth in rest:
+            polys.extend(piece.posed(px, py, pth) for piece in self._way_pieces)
+        for poly in polys:
+            if any(inside(p) for p in poly) or any(
+                _in_convex(poly, p) and inside(p) for p in probes
+            ):
+                return False
+        return True
 
-    def _in_sweep(self, side: str) -> bool:
-        """Whether a part of the body, its arm keeping the door ``side`` aside, stands where the leaf
-        sweeps from where it is to shut: the sector round the hinge between the two, out to the
-        leaf's free edge and its thickness, on the floor."""
+    def _arm_bodies(self, side: str) -> set:
+        """The bodies of ``side``'s hand up to where its arm joins the other's: its arm, where the
+        body is a tree of bodies (a robot's); the hand's own body where each part stands alone."""
+        m = self._m
+
+        def chain(b):
+            out = []
+            while b > 0:
+                out.append(b)
+                b = int(m.body_parentid[b])
+            return out
+
+        other = next(o for o in SIDES if o != side)
+        hand = int(m.site_bodyid[m.site(self.body.grip_site(side)).id])
+        return set(chain(hand)) - set(
+            chain(int(m.site_bodyid[m.site(self.body.grip_site(other)).id]))
+        )
+
+    def _sweep(self, side: str):
+        """Where the leaf of the door ``side`` keeps sweeps from where it is to shut: the sector
+        round the hinge between the two, out to the leaf's free edge and its thickness, on the
+        floor, the opening it shuts along its edge. ``(inside, probes)``: whether a floor point is
+        in it, and points on its edges and arc, to find a polygon that covers part of it without a
+        corner in it."""
         m, d = self._m, self._d
         c, u, _n, half, thick = self._leaf(side)
         jnt, _shut = self._closer(side)
@@ -1089,40 +1136,12 @@ class HumanoidPlugin(MachinePlugin):
             )
             return between or near
 
-        # the bodies of the keeping hand up to where its arm joins the other's: its arm
-        def chain(b):
-            out = []
-            while b > 0:
-                out.append(b)
-                b = int(m.body_parentid[b])
-            return out
-
-        other = next(o for o in SIDES if o != side)
-        hand = int(m.site_bodyid[m.site(self.body.grip_site(side)).id])
-        arm = set(chain(hand)) - set(
-            chain(int(m.site_bodyid[m.site(self.body.grip_site(other)).id]))
-        )
         ring = [
             a + reach * np.array([math.cos(t), math.sin(t)])
             for t in np.linspace(0.0, 2.0 * math.pi, 48, endpoint=False)
         ]
         edges = [a + f * reach * v for v in (now, shut) for f in np.linspace(0.0, 1.0, 12)]
-        for g in range(m.ngeom):
-            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
-                continue
-            b = int(m.geom_bodyid[g])
-            if b in arm or not self.body.owns(m, b):
-                continue
-            piece = geom_piece(m, d, g, (0.0, 0.0, 0.0))
-            if piece is None:
-                continue
-            poly = piece.polygon
-            if any(inside(p) for p in poly):
-                return True
-            # the sector's edges and arc within the piece (a piece larger than the sweep's gaps)
-            if any(_in_convex(poly, p) and inside(p) for p in edges + ring):
-                return True
-        return False
+        return inside, edges + ring
 
     def _free_end(self, side: str, c, u) -> float:
         """The sign along ``u`` of the leaf's end away from its hinge."""
@@ -1153,7 +1172,6 @@ class HumanoidPlugin(MachinePlugin):
                 self._push[s] = 0.0
                 self._tip_goal.pop(s, None)
                 self._keep_at_face.pop(s, None)
-                self._swept.pop(s, None)
                 # the angle kept: noted once, as the hand first keeps it, for every leg after
                 jnt = self._hinge(self.holding[s].obj_body)
                 if jnt >= 0:
@@ -1333,7 +1351,10 @@ class HumanoidPlugin(MachinePlugin):
             self._keep_step()
             self._hold_carried(carried)
 
-        for seg in way.segments:
+        self._way_pieces = list(fp.pieces)
+        for k, seg in enumerate(way.segments):
+            # what is still to walk, for a hand keeping a door to know when it is done with it
+            self._way_rest = [tuple(p) for sg in way.segments[k:] for p in sg.poses]
             # every leg starts on the heading the way planned for it, not on the one the leg
             # before ended at (a walk ends facing where it walked): an error does not add up
             if seg.kind != "turn" and len(seg.poses):
@@ -1350,6 +1371,7 @@ class HumanoidPlugin(MachinePlugin):
                 yield from self._spin(seg.angle, each, to=float(seg.poses[-1][2]))
             elif seg.kind == "back":
                 yield from self._step_back(seg.distance, each, label, tol)
+        self._way_rest = []
         yield from self._face(yaw, what, each)
         yield from self._come_to_rest(what, each)
         self.step(
@@ -1748,7 +1770,6 @@ class HumanoidPlugin(MachinePlugin):
                 self.body.press_proxy(self._d, s, False)
                 self._tip_goal.pop(s, None)
                 self._keep_at_face.pop(s, None)
-                self._swept.pop(s, None)
             self.body.set_pose(s, "open")
             self.body.gripper(self._d, s, False)
         yield from self.wait(0.3)
