@@ -197,6 +197,36 @@ def test_a_door_kept_by_its_hold_keeps_the_shoulder_of_its_hand_within_reach_as_
         engine.shutdown()
 
 
+def test_a_door_pushed_into_something_behind_it_turns_as_far_as_it_goes_and_says_so():
+    """A post behind the opening stops the leaf short of the 90 degrees it is pushed: the push
+    turns it as far as it goes -- and the body steps round with it no further than it can follow
+    without meeting the post -- then ends, saying in a ``stopped`` event how far it turned and
+    what stopped it. Refused before anything moved, the door stayed shut."""
+    post = {
+        "box": {
+            "prefix": "post_",
+            "pose": {"position": {"x": 0.47, "y": 0.14, "z": 0.5}},
+            "size": [0.1, 0.1, 1.0],
+            "motion": "static",
+        },
+        "name": "post",
+    }
+    engine = _engine((2.2, 0.8), math.pi, extra=[post])
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        st = door.run("push", hand="right", angle=90.0)
+        assert st.error == "", st.error
+        stopped = door.events("stopped")
+        assert stopped and stopped[-1]["of"] == 90.0, stopped
+        assert 40.0 < door.angle() < 85.0, door.angle()
+        assert abs(stopped[-1]["angle"] - door.angle()) < 5.0, (stopped, door.angle())
+        assert door.deepest < 0.01, door.deepest
+    finally:
+        engine.shutdown()
+
+
 def test_a_door_kept_open_is_not_walked_away_from_out_of_reach():
     """Keeping the door, the body's way stays within the hand's reach of it: a stance far beyond
     has no way, and the failure says so before the body sets off."""
@@ -231,10 +261,10 @@ def test_an_angle_for_what_turns_on_no_hinge_is_refused(move):
         engine.shutdown()
 
 
-def test_a_door_that_will_not_turn_is_stuck():
-    """A post in the leaf's swing: the pull fails rather than reporting the door open -- before it
-    sets off where the body would step round with the leaf into the post, else stuck against it,
-    or its hold let go."""
+def test_a_door_that_will_not_turn_far_is_turned_as_far_as_it_goes():
+    """A post in the leaf's swing: the pull turns the door as far as it goes and says what stopped
+    it, rather than reporting it open as far as it was asked -- the body steps round no further
+    than it follows without meeting the post, and the hold is not torn off against it."""
     post = {
         "box": {
             "prefix": "post_",
@@ -250,11 +280,12 @@ def test_a_door_that_will_not_turn_is_stuck():
         assert door.run("approach", target="gate/pull/grip").error == ""
         assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
         st = door.run("pull", hand="right", angle=55.0)
-        assert st.error.startswith(
-            ("cannot follow gate round: ", "stuck: gate turned", "lost hold")
-        ), st.error
-        if st.error.startswith("cannot follow"):
+        assert st.error == "" or st.error.startswith("cannot follow gate round: "), st.error
+        if st.error:  # the post where the body would stand at once: nothing moved
             assert "post_box" in st.error and door.angle() < 1.0, (st.error, door.angle())
+        else:
+            stopped = door.events("stopped")
+            assert stopped and stopped[-1]["by"] == "post_box", stopped
         assert door.angle() < 35.0, door.angle()
     finally:
         engine.shutdown()
@@ -352,7 +383,10 @@ def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_b
         hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
         x, y, yaw = door.body.root()
         ((tx, ty, r),), ((ox, oy),) = hp._tethers()
-        sx, sy = x + ox * math.cos(yaw) - oy * math.sin(yaw), y + ox * math.sin(yaw) + oy * math.cos(yaw)
+        sx, sy = (
+            x + ox * math.cos(yaw) - oy * math.sin(yaw),
+            y + ox * math.sin(yaw) + oy * math.cos(yaw),
+        )
         assert math.hypot(tx - sx, ty - sy) < r, (sx, sy, tx, ty, r)
         st = door.run(
             "approach", target={"position": {"x": x - 0.15, "y": y, "z": 0.0}}, facing=yaw
