@@ -129,7 +129,7 @@ class RobotBody(HumanoidBody):
     def carry_height(self) -> float:
         return self.p.table.base_height * 0.95
 
-    def place_reach(self, data, side: str, height: float) -> float:
+    def place_reach(self, data, side: str, height: float, along=None) -> float:
         return 0.4
 
     def gripper(self, data, side: str, closed: bool) -> None:
