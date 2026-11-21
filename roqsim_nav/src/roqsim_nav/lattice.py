@@ -1147,6 +1147,12 @@ class _Search:
         return out
 
 
+def _holding(what: str) -> str:
+    """How a refusal names what the body holds: ``holding <what> ``, or nothing where it holds
+    nothing."""
+    return f"holding {what} " if what else ""
+
+
 def _verify(cs: _CSpace, start, moves, what: str) -> None:
     """Every move of a way found, checked once more as the search checks a move of its kind, in the
     samples it took: an arc and a step back as one (:meth:`_CSpace.path_ok`), a turn and a straight
@@ -1334,7 +1340,7 @@ def plan_way_steps(
         way = _disc_way(layers, pose, gl, f)
         if way is None:
             raise NoWay(
-                f"no way holding {what} to {target}: no route for a disc of "
+                f"no way {_holding(what)}to {target}: no route for a disc of "
                 f"{DISC_RADIUS:.2f} m from ({pose[0]:.2f}, {pose[1]:.2f}) to "
                 f"({gl[0]:.2f}, {gl[1]:.2f})"
             )
@@ -1355,7 +1361,7 @@ def plan_way_steps(
             if not cs.ok(*pose):
                 names = cs.meets(*pose)
                 raise NoWay(
-                    f"no way holding {what} to {target}: where it stands at "
+                    f"no way {_holding(what)}to {target}: where it stands at "
                     f"({pose[0]:.2f}, {pose[1]:.2f}) it already meets "
                     f"{', '.join(names) if names else 'something within a few centimetres'}"
                 )
@@ -1373,14 +1379,14 @@ def plan_way_steps(
                         if n not in here and n not in names:
                             names.append(n)
                 raise NoWay(
-                    f"no way holding {what} to {target}: where it would stand at "
+                    f"no way {_holding(what)}to {target}: where it would stand at "
                     f"({gl[0]:.2f}, {gl[1]:.2f}) facing any way it meets "
                     f"{', '.join(names) if names else 'something'}"
                 )
             if gl[2] is not None and not cs.exact_free(*gl, allowed=here):
                 names = [n for n in cs.meets(*gl) if n not in here]
                 raise NoWay(
-                    f"no way holding {what} to {target}: where it would stand at "
+                    f"no way {_holding(what)}to {target}: where it would stand at "
                     f"({gl[0]:.2f}, {gl[1]:.2f}) facing {math.degrees(gl[2]):.0f} deg it meets "
                     f"{', '.join(names) if names else 'something'}"
                 )
@@ -1418,7 +1424,7 @@ def plan_way_steps(
                 break
         if moves is None and nearest is None:
             raise NoWay(
-                f"no way holding {what} to {target}: it gave up after {expanded} states, before "
+                f"no way {_holding(what)}to {target}: it gave up after {expanded} states, before "
                 f"it set off from ({pose[0]:.2f}, {pose[1]:.2f}) toward ({gl[0]:.2f}, {gl[1]:.2f}); "
                 f"{limits}"
             )
@@ -1442,13 +1448,13 @@ def plan_way_steps(
                             met.append(n)
             capped = f" (it gave up after {expanded} states)" if expanded >= max_states else ""
             raise NoWay(
-                f"no way holding {what} to {target}: it gets no further than ({x:.2f}, {y:.2f}), "
+                f"no way {_holding(what)}to {target}: it gets no further than ({x:.2f}, {y:.2f}), "
                 f"where the way is {width:.2f} m wide between {sides[0]} and {sides[1]}; the body and "
                 f"what it holds, reaching {reach:.2f} m from where it stands, meet "
                 f"{', '.join(met) if met else 'what is round them'} at every heading there; "
                 f"{limits}{capped}"
             )
-        _verify(cs, pose, moves, f"holding {what} to {target}")
+        _verify(cs, pose, moves, f"{_holding(what)}to {target}")
         segs = _segments(pose, moves)
         segments.extend(segs)
         poses.append(pose)
