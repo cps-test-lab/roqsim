@@ -840,6 +840,55 @@ def test_a_bar_lifted_between_a_racks_arms_at_the_side_is_drawn_out_and_stepped_
         engine.shutdown()
 
 
+_BAR_TO_A_TABLE = _BAR_IN_A_RACK.replace(
+    "</worldbody>",
+    """<body name="table" pos="2.5 -0.7 0">
+  <geom name="table_top" type="box" pos="0 0 0.425" size="1.0 0.3 0.425"/>
+  <site name="table/top" pos="0.05 0.1 0.85"/>
+</body></worldbody>""",
+)
+
+
+def test_a_bar_beside_the_body_is_set_down_to_the_side_as_far_as_the_arms_reach_there(tmp_path):
+    """A bar carried at the body's side, along its heading, set down onto a table beside the body
+    whose place is 0.2 m further out than the bar is held and a few centimetres ahead, with the
+    front hand at its reach ahead already: the set-down goes out sideways by the arms' reach that
+    way, the bar comes down wholly on the table. Clamped by the hands' reach ahead, a shift that
+    was nearly all sideways was cut to nothing, and the bar came down half off the table's edge."""
+    xml = tmp_path / "bar_to_a_table.xml"
+    xml.write_text(
+        _BAR_TO_A_TABLE.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -0.6, "y": 0.0}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        here = {"position": {"x": -1.15, "y": 0.0, "z": 0.0}}
+        sim.ok("approach", target=here, standoff=0.0, facing=-math.pi / 2)
+        sim.ok("grasp", hand="both", target="bar")
+        # beside the table, along it, the bar at the right side over the table's near edge
+        sim.ok("carry", to={"position": {"x": 2.5, "y": -0.05, "z": 0.0}}, standoff=0.0, facing=0.0)
+        bar = sim.m.geom("bar_box").id
+        assert sim.d.geom_xpos[bar][1] > -0.45  # held over the edge, short of the place
+        sim.ok("place", at="table/top")
+        for _ in range(300):
+            sim.e.step()
+        rot = sim.d.geom_xmat[bar].reshape(3, 3)
+        half = sim.m.geom_size[bar]
+        corners = [
+            sim.d.geom_xpos[bar] + rot @ (half * [sx, sy, -1.0]) for sx in (-1, 1) for sy in (-1, 1)
+        ]
+        for c in corners:  # every corner of its underside over the table, resting on it
+            assert 1.5 < c[0] < 3.5 and -1.0 < c[1] < -0.4, c
+            assert abs(c[2] - 0.85) < 0.01, c
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
