@@ -933,6 +933,40 @@ def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
         engine.shutdown()
 
 
+def test_a_drawn_mark_flush_on_a_bench_does_not_hide_the_bench_from_a_place():
+    """A mark drawn on the bench's top -- a thin box that collides with nothing, lying flush on
+    it -- is no surface, and does not hide the bench under it: the tote is set down on the bench.
+    Skipped by restarting the ray just under it, the ray started inside the bench, missed it, and
+    the place read the floor."""
+    world = _world()
+    world["components"].append(
+        {
+            "box": {
+                "prefix": "mark_",
+                "pose": {"position": {"x": 0.0, "y": 2.45, "z": 0.751}},
+                "size": [0.5, 0.4, 0.002],
+                "motion": "static",
+                "collide": False,
+            },
+            "name": "mark",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=1.1, facing=math.pi / 2)
+        sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
+        sim.ok("place", at="bench")
+        for _ in range(300):
+            sim.e.step()
+        assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02, sim.d.body("tote_1").xpos
+    finally:
+        engine.shutdown()
+
+
 def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
     """What is set down stands on one thing, level: set down where the hands reach, a tote half
     over the bench's edge is refused, and one wholly on it is set down."""

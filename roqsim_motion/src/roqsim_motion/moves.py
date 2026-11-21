@@ -1754,29 +1754,59 @@ class HumanoidPlugin(MachinePlugin):
         over it, or from the height ``below`` (m) where given, so what is higher is not under it
         (a ray starting inside something does not see it), past what is held (and what is welded
         to it), what rides in or on it (:meth:`_contents`), the humanoid's own bodies, anything
-        that collides with nothing, and with ``accept`` every body it refuses."""
+        that collides with nothing, and with ``accept`` every body it refuses. The ray sees only
+        the geoms it may stop at, each tested from the ray's own start: one it passes is never in
+        the way of what lies under it, however near (a mark drawn flush on a bench)."""
         m, d = self._m, self._d
         start = np.array([point[0], point[1], point[2] + above if below is None else float(below)])
-        geomid = np.zeros(1, np.int32)
+        down = np.array([0.0, 0.0, -1.0])
         inside = self._contents(held) if inside is None else inside
-        while True:
-            dist = mujoco.mj_ray(m, d, start, np.array([0.0, 0.0, -1.0]), None, 1, held, geomid)
-            if dist < 0:
-                return np.asarray(point, float), -1
-            hit = start + [0.0, 0.0, -dist]
-            g = int(geomid[0])
+        held_weld = int(m.body_weldid[held])
+        # what stands under the point at all: a plane, or a geom whose bounding sphere covers it
+        near = np.hypot(d.geom_xpos[:, 0] - start[0], d.geom_xpos[:, 1] - start[1])
+        plane = m.geom_type == mujoco.mjtGeom.mjGEOM_PLANE
+        candidates = np.nonzero(plane | (near <= m.geom_rbound))[0]
+        best, best_g = math.inf, -1
+        for g in candidates:
+            g = int(g)
+            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
             body = int(m.geom_bodyid[g])
-            solid = bool(m.geom_contype[g] or m.geom_conaffinity[g])
-            part_of_held = int(m.body_weldid[body]) == int(m.body_weldid[held])
             if (
-                solid
-                and not part_of_held
-                and int(m.body_rootid[body]) not in inside
-                and not self.body.owns(m, body)
-                and (accept is None or accept(body))
+                int(m.body_weldid[body]) == held_weld
+                or int(m.body_rootid[body]) in inside
+                or self.body.owns(m, body)
+                or (accept is not None and not accept(body))
             ):
-                return np.array([point[0], point[1], hit[2]]), body
-            start = hit - [0.0, 0.0, 1e-4]
+                continue
+            dist = self._ray_geom(g, start, down)
+            # a ray starting inside something does not see it: inside a primitive (convex), it
+            # would also go out up; a mesh may be hollow, its parts over one another
+            if dist >= 0.0 and m.geom_type[g] not in (
+                mujoco.mjtGeom.mjGEOM_PLANE,
+                mujoco.mjtGeom.mjGEOM_MESH,
+                mujoco.mjtGeom.mjGEOM_HFIELD,
+            ):
+                if self._ray_geom(g, start, -down) >= 0.0:
+                    continue
+            if 0.0 <= dist < best:
+                best, best_g = dist, g
+        if best_g < 0:
+            return np.asarray(point, float), -1
+        return np.array([point[0], point[1], start[2] - best]), int(m.geom_bodyid[best_g])
+
+    def _ray_geom(self, g: int, start, direction) -> float:
+        """How far along ``direction`` from ``start`` the ray meets geom ``g``; -1 where it does
+        not."""
+        m, d = self._m, self._d
+        t = int(m.geom_type[g])
+        if t == mujoco.mjtGeom.mjGEOM_MESH:
+            return float(mujoco.mj_rayMesh(m, d, g, start, direction))
+        if t == mujoco.mjtGeom.mjGEOM_HFIELD:
+            return float(mujoco.mj_rayHfield(m, d, g, start, direction))
+        return float(
+            mujoco.mju_rayGeom(d.geom_xpos[g], d.geom_xmat[g], m.geom_size[g], start, direction, t)
+        )
 
     def _contents(self, held: int) -> set:
         """What rides in or on the held object: the free bodies (by their root) inside its extent,
