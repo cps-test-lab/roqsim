@@ -725,8 +725,7 @@ def _grip_quat(yaw):
 def test_a_long_bar_in_both_hands_is_held_level_and_carried_off_the_arms_it_lay_on(tmp_path):
     """The hand that holds a load the other rides on holds it level: a 1.6 m bar lifted off two arms
     by grips 0.6 m apart has its far grip within LEVEL_GRIPS of the near one before its way is
-    planned, and is carried away. Hanging from the holding hand as the arm left it, turned a few
-    degrees, the bar's far end stayed down on the arms and the way was refused where it began."""
+    planned, and is carried away."""
     xml = tmp_path / "long_bar.xml"
     xml.write_text(
         _LONG_BAR.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
@@ -892,8 +891,7 @@ def test_a_bar_beside_the_body_is_set_down_to_the_side_as_far_as_the_arms_reach_
 def test_a_step_aside_drawing_a_bar_out_that_would_meet_a_wall_fails_before_it_steps(tmp_path):
     """The step aside that draws a bar out of a rack is checked as a planned step is: with a wall
     beside the body, where the step would take the body and the bar into it, the carry fails before
-    the body moves, naming the wall. Unchecked, the body stepped 0.17 m into the wall, and the way
-    after it was refused as starting there."""
+    the body moves, naming the wall."""
     xml = tmp_path / "bar_in_a_rack.xml"
     xml.write_text(
         _BAR_IN_A_RACK.format(
@@ -1030,8 +1028,7 @@ def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
 def test_a_place_reaches_as_far_as_the_arm_solve_puts_the_hand(sim):
     """A place reaches as far ahead as the walker's arm solve puts the hand that holds the load, at
     the height it sets it down at, bending over as the solve does: standing 0.75 m from the bench's
-    middle, the tote is set down wholly on it. Held to a fixed 0.55 m, it came down half over the
-    bench's near edge, and the place was refused."""
+    middle, the tote is set down wholly on it."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
     sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
@@ -1047,8 +1044,7 @@ def test_a_place_reach_is_the_farthest_the_arm_makes_not_the_end_of_a_stretch_fr
     """Where the arm solve makes the hand is not one stretch from the root out: right beside the
     hip, at the height it sets a load down at, it may not, while further ahead it does. The reach
     is the farthest point the solve makes, looked for over the whole range: here the arm makes
-    0.3 to 0.8 m ahead and not nearer, and the reach is 0.8 m. Halving from the root out, the
-    reach came out as 0 m and the place was refused out of reach."""
+    0.3 to 0.8 m ahead and not nearer, and the reach is 0.8 m."""
     from roqsim_walker import handling
 
     sim.ok("approach", target="tote_1", standoff=0.45)
