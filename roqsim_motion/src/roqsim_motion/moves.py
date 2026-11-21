@@ -779,21 +779,27 @@ class HumanoidPlugin(MachinePlugin):
             names.add(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, body) or f"body {body}")
         return sorted(names)
 
-    def _tethers(self) -> list:
-        """For each hand that keeps something on a joint where it is: ``(x, y, r)``, the root kept
-        within ``r`` of the hand, so the hand stays within its reach."""
-        out = []
-        x, y, _ = self.body.root()
+    def _tethers(self) -> tuple[list, list]:
+        """For each hand that keeps something on a joint where it is: ``(x, y, r)`` and the point of
+        the body kept within ``r`` of it -- the hand's shoulder, in the body's frame -- so the hand
+        stays within its reach whichever way the body turns. ``r`` is the reach across the floor
+        that the arm's reach leaves at the height between the shoulder and the hand."""
+        out, at = [], []
+        x, y, yaw = self.body.root()
+        c, s_ = math.cos(yaw), math.sin(yaw)
         for s in SIDES:
             if self._kept(s):
                 p = self.body.grip(self._d, s)[0]
                 sh = self.body.shoulder(self._d, s)
-                # the hand reaches from its shoulder, which stands to the side of the root
-                r = KEEP_REACH * self.body.arm_reach(s) + math.hypot(sh[0] - x, sh[1] - y)
-                # where the body stands now is within reach, however it came to stand there
-                r = max(r, math.hypot(p[0] - x, p[1] - y) + 0.02)
+                reach = KEEP_REACH * self.body.arm_reach(s)
+                dz = float(sh[2] - p[2])
+                r = math.sqrt(max(reach * reach - dz * dz, 0.0))
+                # where the shoulder stands now is within reach, however the body came to stand there
+                r = max(r, math.hypot(p[0] - sh[0], p[1] - sh[1]) + 0.02)
                 out.append((float(p[0]), float(p[1]), r))
-        return out
+                dx, dy = float(sh[0] - x), float(sh[1] - y)
+                at.append((c * dx + s_ * dy, -s_ * dx + c * dy))
+        return out, at
 
     def _walk_way(self, stand, yaw, what: str, carried, via=(), back_max=BACK_MAX, long_way=False):
         """Holding something: plan a way for the body and what it holds to ``stand`` facing
@@ -806,6 +812,7 @@ class HumanoidPlugin(MachinePlugin):
         fp, skip, held = self._footprint_now()
         label = what if isinstance(what, str) else "where it is sent"
         each = lambda: self._hold_carried(carried)  # noqa: E731
+        tethers, tether_at = self._tethers()
         # while the way is planned the body stands as it is, its heading kept: turning, it would
         # swing what it holds
         self.body.keep_heading(self.body.root()[2])
@@ -825,7 +832,8 @@ class HumanoidPlugin(MachinePlugin):
                 what=held,
                 to=label,
                 dock=self._dock(what, [h.obj_body for h in self.holding.values() if h is not None]),
-                tether=self._tethers(),
+                tether=tethers,
+                tether_at=tether_at,
             )
             while True:
                 try:

@@ -171,6 +171,32 @@ def test_a_hand_holding_a_door_turns_about_its_grip_without_pulling_the_leaf():
         engine.shutdown()
 
 
+def test_a_door_kept_by_its_hold_keeps_the_shoulder_of_its_hand_within_reach_as_the_body_turns():
+    """The way of a walk keeping a door keeps the shoulder of the hand on the handle within the
+    arm's reach of it, at each heading: turned round on the spot, the shoulder would stand on the
+    far side, out of reach, so the turn is refused before the body moves, naming the door, and
+    the hold holds. Bounding the root alone let the body turn, and the hand slipped off."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=80.0).error == ""
+        x, y, yaw = door.body.root()
+        st = door.run(
+            "approach",
+            target={"position": {"x": x, "y": y, "z": 0.0}},
+            standoff=0.0,
+            facing=yaw + 3.0,
+        )
+        assert st.error.startswith("no way holding gate to "), st.error
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        assert hp.holding["r"] is not None  # still on the handle
+        assert math.hypot(door.body.root()[0] - x, door.body.root()[1] - y) < 0.02
+    finally:
+        engine.shutdown()
+
+
 def test_a_door_kept_open_is_not_walked_away_from_out_of_reach():
     """Keeping the door, the body's way stays within the hand's reach of it: a stance far beyond
     has no way, and the failure says so before the body sets off."""
@@ -315,8 +341,8 @@ def test_a_turn_that_needs_the_body_to_step_round_is_refused_without_a_navigator
 def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_body_stands():
     """A pull steps the body round with the leaf to where its hand reaches the handle, which may be
     farther from the root than 0.9 of the arm's reach: the way of a walk keeping the door keeps the
-    root within the arm's reach from the shoulder, beside the root, and at least within where it
-    stands -- the walk is not refused where it starts."""
+    shoulder within the arm's reach, and at least within where it stands -- the walk is not refused
+    where it starts."""
     engine = _engine((0.0, 0.8), 0.0)
     try:
         door = Door(engine)
@@ -325,8 +351,9 @@ def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_b
         assert door.run("pull", hand="right", angle=40.0).error == ""
         hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
         x, y, yaw = door.body.root()
-        ((tx, ty, r),) = hp._tethers()
-        assert math.hypot(tx - x, ty - y) < r, (x, y, tx, ty, r)
+        ((tx, ty, r),), ((ox, oy),) = hp._tethers()
+        sx, sy = x + ox * math.cos(yaw) - oy * math.sin(yaw), y + ox * math.sin(yaw) + oy * math.cos(yaw)
+        assert math.hypot(tx - sx, ty - sy) < r, (sx, sy, tx, ty, r)
         st = door.run(
             "approach", target={"position": {"x": x - 0.15, "y": y, "z": 0.0}}, facing=yaw
         )

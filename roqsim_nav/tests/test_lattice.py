@@ -192,6 +192,28 @@ def test_a_turn_past_half_a_turn_is_taken_only_with_long_way():
     assert check_way(model, data, fp, way) == []
 
 
+def test_a_tether_at_a_point_of_the_body_holds_that_point_within_reach_at_every_heading():
+    """``tether_at`` names the point of the body a tether holds, in the body's frame: a point to
+    the body's right, held within reach of a spot to its right, stays there turning a little to
+    the left, and is out of reach turned a half turn round -- which the root alone allows."""
+    xml = """<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .05"/>
+      <geom name="wall_e" type="box" pos="2 0 0.9" size="0.05 2 0.9"/>
+      <geom name="wall_w" type="box" pos="-2 0 0.9" size="0.05 2 0.9"/>
+    </worldbody></mujoco>"""
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    fp = _footprint()
+    tether, at = [(0.0, -0.3, 0.35)], [(0.0, -0.25)]
+    start = (0.0, 0.0, 0.0)
+    plan_way(model, data, fp, start, (0.0, 0.0, 0.3), tether=tether, tether_at=at)
+    plan_way(model, data, fp, start, (0.0, 0.0, math.pi), tether=tether, long_way=True)
+    with pytest.raises(NoWay):
+        plan_way(
+            model, data, fp, start, (0.0, 0.0, math.pi), tether=tether, tether_at=at, long_way=True
+        )
+
+
 def test_a_load_passes_over_a_bench_beside_the_way_and_not_under_a_shelf_at_its_height():
     """The tote is wider than the passage: the way exists only because the tote, at its height,
     passes over the bench. One band for all of it (a disc's question in a polygon's shape) finds

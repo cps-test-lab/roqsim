@@ -398,6 +398,7 @@ class _CSpace:
             self._obst[band] = out
         self.zones = []
         self.tether = []
+        self.tether_at = []
         self._memo = {}
         self._sweeps = {}
         self._turned = {}
@@ -533,7 +534,7 @@ class _CSpace:
         """The search's check: the raster's, and where the raster says blocked within one of
         ``zones`` (round the start and the goal, where a body stands close to what it works at),
         the exact one; and every one of ``tether`` within its reach."""
-        if not self.tethered(x, y):
+        if not self.tethered(x, y, th):
             return False
         if self.free(x, y, th):
             return True
@@ -547,10 +548,15 @@ class _CSpace:
             return False
         return self.exact_free(x, y, th, frozenset(allowed))
 
-    def tethered(self, x, y) -> bool:
-        """Whether the root at ``(x, y)`` is within reach of every one of ``tether``."""
-        for tx, ty, tr in self.tether:
-            if (x - tx) ** 2 + (y - ty) ** 2 > tr * tr:
+    def tethered(self, x, y, th) -> bool:
+        """Whether the body at ``(x, y, th)`` has every one of ``tether`` within reach: the point of
+        the body it holds (``tether_at``, in the body's frame, turned with ``th``; the root where it
+        names none) within its radius."""
+        c, s = math.cos(th), math.sin(th)
+        for k, (tx, ty, tr) in enumerate(self.tether):
+            ox, oy = self.tether_at[k] if k < len(self.tether_at) else (0.0, 0.0)
+            px, py = x + c * ox - s * oy, y + s * ox + c * oy
+            if (px - tx) ** 2 + (py - ty) ** 2 > tr * tr:
                 return False
         return True
 
@@ -560,7 +566,7 @@ class _CSpace:
         blocked within a zone, the exact check covers it too, across the move's sweep
         (:meth:`sweep_free`), not at its ends alone -- a thin post between two samples' headings
         is met by the piece that sweeps across it."""
-        if not self.tethered(b[0], b[1]):
+        if not self.tethered(b[0], b[1], b[2]):
             return False
         # a move's start is most often the end of the move checked just before it
         last = self._last_free
@@ -596,7 +602,7 @@ class _CSpace:
         most ``bow``: the raster's at each sample, and where the raster says blocked within a
         zone, the exact one of the move as a whole, across its sweep -- one sweep, not one a sample
         (:meth:`move_ok` checks a move between two samples)."""
-        if not all(self.tethered(p[0], p[1]) for p in points[1:]):
+        if not all(self.tethered(p[0], p[1], p[2]) for p in points[1:]):
             return False
         allowed = None
         for p in points:
@@ -1303,6 +1309,7 @@ def plan_way_steps(
     to: str = "",
     dock=(),
     tether=(),
+    tether_at=(),
     max_states: int = MAX_STATES,
 ):
     """A way for ``footprint`` from ``start`` ``(x, y, yaw)`` through the floor points ``via`` (any
@@ -1320,7 +1327,9 @@ def plan_way_steps(
     returned; one that meets something is a fault of the planner's, raised as a ``RuntimeError``.
 
     ``tether``: ``(x, y, r)`` points every pose of the way keeps its root within ``r`` of -- a hand
-    that keeps a door where it is while the body walks stays within its reach.
+    that keeps a door where it is while the body walks stays within its reach. ``tether_at``: for
+    each of them, the point of the body kept within ``r`` instead of its root, ``(x, y)`` in the
+    body's frame (a shoulder), which turns with the body's heading.
 
     A generator: it hands back (yields) every :data:`SLICE_STATES` states its search expands, and
     returns the :class:`Way`; :func:`plan_way` runs it in one go. The world is read before it
@@ -1366,6 +1375,7 @@ def plan_way_steps(
             cs = _CSpace(layers, footprint, box, corridor)
             cs._exact_setup()
             cs.tether = [(float(a), float(b), float(c)) for a, b, c in tether]
+            cs.tether_at = [(float(a), float(b)) for a, b in tether_at]
             # what the body already stands against, it may go on standing against as it leaves;
             # at the goal, it may stand against what it goes to work at
             standing = cs.body_meets(*pose)
