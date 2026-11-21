@@ -284,20 +284,28 @@ def test_a_body_drawn_behind_its_root_plans_with_the_margin_it_strays_by_and_kee
 
 
 @pytest.mark.parametrize(
-    ("name", "way"),
+    ("name", "size", "way"),
     [
-        ("carry_post_straight", True),
-        ("carry_post_behind", True),
-        ("carry_three_bends", False),
-        ("carry_shelf_over_bench", False),
+        ("carry_post_straight", None, True),
+        ("carry_post_behind", None, True),
+        ("carry_three_bends", None, True),
+        ("carry_three_bends", [0.4, 0.5, 0.2], False),
+        ("carry_shelf_over_bench", None, False),
     ],
 )
-def test_a_body_drawn_further_behind_keeps_further_off_and_says_where_that_leaves_no_way(name, way):
+def test_a_body_drawn_further_behind_keeps_further_off_and_says_where_that_leaves_no_way(
+    name, size, way
+):
     """With a ``body_lag`` of 0.3 s the margin is four times as wide (7.9 cm at 1 m/s): the
-    straight stretch and the dead end are walked within it, touching nothing; the close bends and
-    the passage beside the bench leave no way that keeps it, and the carry fails before it sets
-    off, saying how far clear it planned."""
-    engine, case, kw = _case(name, body_lag=0.3)
+    straight stretch, the dead end and the close bends are walked within it, touching nothing;
+    the close bends with a tote 0.2 m deeper than the others, and the passage beside the bench,
+    leave no way that keeps it, and the carry fails before it sets off, saying how far clear it
+    planned."""
+    if size is None:
+        engine, case, kw = _case(name, body_lag=0.3)
+    else:
+        case, kw = CASES[name], {}
+        engine = _engine(name, case["start"], case["tote_at"], size=size, body_lag=0.3)
     try:
         sim = Carry(engine)
         st, touches, t0 = sim.carry(case["to"], case["facing"], **kw)
