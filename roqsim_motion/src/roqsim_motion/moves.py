@@ -167,6 +167,16 @@ PRESS = {
 }
 
 
+def _in_convex(poly, p) -> bool:
+    """Whether the point ``p`` lies in the counter-clockwise convex polygon ``poly``."""
+    n = len(poly)
+    for i in range(n):
+        e = poly[(i + 1) % n] - poly[i]
+        if e[0] * (p[1] - poly[i][1]) - e[1] * (p[0] - poly[i][0]) < 0.0:
+            return False
+    return True
+
+
 def _side_word(side: str) -> str:
     return {"l": "left", "r": "right"}[side]
 
@@ -247,6 +257,7 @@ class HumanoidPlugin(MachinePlugin):
         self._tip_goal = {}  # side -> the last goal of a hand keeping a door by contact
         self._keep_z = {}  # side -> the height the hand keeps a door at (m)
         self._keep_at_face = {}  # side -> whether the fingertip is on the face it pushes
+        self._swept = {}  # side -> whether the body has stood where the door it keeps would shut
         self._turns = {
             s: 0.0 for s in SIDES
         }  # how far each hand turned on the handle it took (rad)
@@ -363,6 +374,7 @@ class HumanoidPlugin(MachinePlugin):
             self._tip_goal,
             self._keep_z,
             self._keep_at_face,
+            self._swept,
         ):
             state.clear()
 
@@ -902,7 +914,13 @@ class HumanoidPlugin(MachinePlugin):
         self.body.press_proxy(self._d, side, False)
         self.holding[side] = None
         self._riding[side] = False
-        for state in (self._keep, self._kept_at, self._tip_goal, self._keep_at_face):
+        for state in (
+            self._keep,
+            self._kept_at,
+            self._tip_goal,
+            self._keep_at_face,
+            self._swept,
+        ):
             state.pop(side, None)
         self.body.set_pose(side, "open")
         self.body.free_hand(side)
@@ -944,11 +962,85 @@ class HumanoidPlugin(MachinePlugin):
         return float(a[0]), float(a[1]), float(m[0]), float(m[1])
 
     def _through(self, side: str) -> bool:
-        """Whether the body's root has gone past the line the leaf ``side`` keeps shuts onto
-        (:meth:`_shut_line`)."""
-        px, py, nx, ny = self._shut_line(side)
-        x, y, _ = self.body.root()
-        return (x - px) * nx + (y - py) * ny >= 0.0
+        """Whether the body, keeping the door ``side`` by contact, has gone through: it stood where
+        the leaf sweeps as it shuts and has left it, no part of it but the keeping arm there now
+        (:meth:`_in_sweep`) -- past the line the leaf shuts onto, or past its free edge."""
+        if self._in_sweep(side):
+            self._swept[side] = True
+            return False
+        return self._swept.get(side, False)
+
+    def _in_sweep(self, side: str) -> bool:
+        """Whether a part of the body, its arm keeping the door ``side`` aside, stands where the leaf
+        sweeps from where it is to shut: the sector round the hinge between the two, out to the
+        leaf's free edge and its thickness, on the floor."""
+        m, d = self._m, self._d
+        c, u, _n, half, thick = self._leaf(side)
+        jnt, _shut = self._closer(side)
+        a = np.asarray(d.xanchor[jnt][:2], float)
+        end = c + self._free_end(side, c, u) * half * u
+        reach = float(np.linalg.norm(end[:2] - a)) + thick
+        now = (end[:2] - a) / (float(np.linalg.norm(end[:2] - a)) + 1e-12)
+        q = float(d.qpos[int(m.jnt_qposadr[jnt])])
+        r = np.zeros(4)
+        mujoco.mju_axisAngle2Quat(
+            r, d.xaxis[jnt], float(m.qpos_spring[int(m.jnt_qposadr[jnt])]) - q
+        )
+        shut = Q.rotate(r, np.array([now[0], now[1], 0.0]))[:2]
+
+        def cross(p, q):
+            return float(p[0] * q[1] - p[1] * q[0])
+
+        turn = cross(now, shut)  # the leaf turns this way to shut
+
+        def inside(p) -> bool:
+            v = np.asarray(p, float) - a
+            dist = float(np.linalg.norm(v))
+            if dist > reach:
+                return False
+            if dist < thick:
+                return True
+            # between the leaf now and shut, or within the leaf's thickness of either
+            between = cross(now, v) * turn >= 0.0 and cross(v, shut) * turn >= 0.0
+            near = min(abs(cross(now, v)), abs(cross(shut, v))) <= thick and (
+                float(np.dot(v, now)) > 0.0 or float(np.dot(v, shut)) > 0.0
+            )
+            return between or near
+
+        # the bodies of the keeping hand up to where its arm joins the other's: its arm
+        def chain(b):
+            out = []
+            while b > 0:
+                out.append(b)
+                b = int(m.body_parentid[b])
+            return out
+
+        other = next(o for o in SIDES if o != side)
+        hand = int(m.site_bodyid[m.site(self.body.grip_site(side)).id])
+        arm = set(chain(hand)) - set(
+            chain(int(m.site_bodyid[m.site(self.body.grip_site(other)).id]))
+        )
+        ring = [
+            a + reach * np.array([math.cos(t), math.sin(t)])
+            for t in np.linspace(0.0, 2.0 * math.pi, 48, endpoint=False)
+        ]
+        edges = [a + f * reach * v for v in (now, shut) for f in np.linspace(0.0, 1.0, 12)]
+        for g in range(m.ngeom):
+            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            b = int(m.geom_bodyid[g])
+            if b in arm or not self.body.owns(m, b):
+                continue
+            piece = geom_piece(m, d, g, (0.0, 0.0, 0.0))
+            if piece is None:
+                continue
+            poly = piece.polygon
+            if any(inside(p) for p in poly):
+                return True
+            # the sector's edges and arc within the piece (a piece larger than the sweep's gaps)
+            if any(_in_convex(poly, p) and inside(p) for p in edges + ring):
+                return True
+        return False
 
     def _free_end(self, side: str, c, u) -> float:
         """The sign along ``u`` of the leaf's end away from its hinge."""
@@ -979,6 +1071,7 @@ class HumanoidPlugin(MachinePlugin):
                 self._push[s] = 0.0
                 self._tip_goal.pop(s, None)
                 self._keep_at_face.pop(s, None)
+                self._swept.pop(s, None)
                 # the angle kept: noted once, as the hand first keeps it, for every leg after
                 jnt = self._hinge(self.holding[s].obj_body)
                 if jnt >= 0:
@@ -991,8 +1084,8 @@ class HumanoidPlugin(MachinePlugin):
         the face the closer pushes the leaf toward, or past the leaf's edge, the hold off and the
         fingertip round the free edge onto that face, then sliding along it as the body passes --
         the closer pressing the leaf into the finger, so the door stays open by contact. Once the
-        body has gone past the line the leaf shuts onto, the hand lets go behind it
-        (:meth:`_let_go_kept`). Fails where the door closes by more than :data:`KEEP_SLIP`."""
+        body has gone through the door, out of where the leaf sweeps as it shuts, the hand lets go
+        behind it (:meth:`_let_go_kept`). Fails where the door closes by more than :data:`KEEP_SLIP`."""
         d = self._d
         for s in list(self._keep):
             if self.holding[s] is None or not self._can_push(s):
@@ -1553,6 +1646,7 @@ class HumanoidPlugin(MachinePlugin):
                 self.body.press_proxy(self._d, s, False)
                 self._tip_goal.pop(s, None)
                 self._keep_at_face.pop(s, None)
+                self._swept.pop(s, None)
             self.body.set_pose(s, "open")
             self.body.gripper(self._d, s, False)
         yield from self.wait(0.3)

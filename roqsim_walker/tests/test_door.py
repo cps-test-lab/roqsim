@@ -385,6 +385,35 @@ def test_a_door_pulled_open_is_kept_open_by_the_hand_pushing_on_it_and_walked_th
         engine.shutdown()
 
 
+def test_a_door_pushed_open_and_walked_past_its_free_end_is_let_go_and_shuts_clear_of_the_body():
+    """Pushed open and walked through to a stance past the leaf's free end, out of its sweep: the
+    hand keeps the door while the body passes, lets go once the body is out of the sweep, and the
+    closer shuts the door behind it without the leaf touching the body."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=80.0).error == ""
+        t0 = engine.ctx.sim_time
+        st = door.run("approach", target="gate/beyond")
+        assert st.error == "", st.error
+        x, y, _ = door.body.root()
+        assert math.hypot(x - 1.0, y) > 0.9 + COLLISION_RADIUS, (x, y)  # out of the sweep
+        assert [ev for ev in door.events("let go") if ev["t"] >= t0], "the hand never let go"
+        # from here on, the shutting leaf meets no part of the body (its fingertip pushed on the
+        # leaf while it kept it)
+        door.deepest, nearest = 0.0, math.inf
+        for _ in range(int(4.0 / engine.ctx.dt)):
+            door.step()
+            nearest = min(nearest, door.leaf_to_root())
+        assert door.angle() < 10.0, door.angle()  # the closer shut it behind
+        assert nearest > COLLISION_RADIUS, nearest
+        assert door.deepest == 0.0, door.deepest
+    finally:
+        engine.shutdown()
+
+
 def _where(engine):
     """Where the walker stands and its heading."""
     hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
@@ -415,7 +444,15 @@ def test_a_reset_in_the_middle_of_keeping_a_door_leaves_nothing_of_it():
             assert engine.ctx.sim_time - t0 < 30.0, "it never pushed on the door"
         engine.reset()
         hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
-        for state in ("_keep", "_kept_at", "_push", "_tip_goal", "_keep_z", "_keep_at_face"):
+        for state in (
+            "_keep",
+            "_kept_at",
+            "_push",
+            "_tip_goal",
+            "_keep_z",
+            "_keep_at_face",
+            "_swept",
+        ):
             assert getattr(hp, state) == {}, (state, getattr(hp, state))
         door = Door(engine)
         st = _walk_through_pulled(door, engine)
