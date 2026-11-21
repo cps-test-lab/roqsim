@@ -121,8 +121,10 @@ OVER_AT = 0.004
 #: How far (m) what is lowered may stay above where the hands lower it before it counts as resting
 #: on what it touches.
 CAUGHT = 0.03
-#: The most a place turns what it sets down to stand square to the place (rad).
-SQUARE_MAX = math.radians(20)
+#: How far off square to the place (rad) what is set down may stay, and how often the hands turn
+#: it again by what it lacks before the place fails.
+SQUARE_TOL = math.radians(5)
+SQUARE_TRIES = 4
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: How far a carry may step straight back at a time, by default (m): the limit of a step back on
@@ -1963,8 +1965,8 @@ class HumanoidPlugin(MachinePlugin):
 
     def _square_to(self, target, held: int) -> float:
         """How far to turn the held object about the vertical (rad) to stand square to ``target``'s
-        frame -- the nearest quarter turn of its heading; 0 for a world pose with no heading
-        stated, or a turn of more than SQUARE_MAX, which is not a matter of squaring."""
+        frame -- the nearest quarter turn of its heading, an eighth of a turn at most; 0 for a world
+        pose with no heading stated."""
         if not target.heading:
             return 0.0
         _, tq = target.resolve(self._m, self._d)
@@ -1973,7 +1975,7 @@ class HumanoidPlugin(MachinePlugin):
         rel = math.atan2(om[1, 0], om[0, 0]) - math.atan2(tm[1, 0], tm[0, 0])
         rel = math.atan2(math.sin(rel), math.cos(rel))
         off = rel - round(rel / (math.pi / 2)) * (math.pi / 2)
-        return -off if abs(off) <= SQUARE_MAX else 0.0
+        return -off
 
     def _path_top(self, a, b, held: int, z: float, below=None) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`) with its
@@ -2100,6 +2102,21 @@ class HumanoidPlugin(MachinePlugin):
             for s in sides
         }
         yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
+        # The wrist leaves the hand short of a turn: turned on by what it lacks, until square.
+        for _ in range(SQUARE_TRIES):
+            lacks = self._square_to(target, obj)
+            if abs(lacks) <= SQUARE_TOL:
+                break
+            turn += lacks
+            spin = Q.axis_angle("z", turn)
+            yield from self._move_hands(goals, 0.3, at, rot_tol=math.radians(25), pos_tol=0.03)
+        lacks = self._square_to(target, obj)
+        if abs(lacks) > SQUARE_TOL:
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, obj) or "what it holds"
+            self.fail(
+                f"cannot set {name} square to {at}: the hands turn it no nearer than "
+                f"{math.degrees(abs(lacks)):.0f} deg"
+            )
         # The hold is a spring: what it holds comes over the place a moment after the hands do, and
         # lowered before it has, it would come down on a rim beside the place.
         # Nor do the hands always come all the way to their goals: they are led on by what is
