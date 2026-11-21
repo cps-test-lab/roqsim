@@ -500,6 +500,55 @@ def test_a_turn_ends_at_the_heading_planned_so_a_step_back_after_it_keeps_to_the
         engine.shutdown()
 
 
+def test_every_leg_of_a_way_starts_on_the_heading_planned_for_it(monkeypatch):
+    """A way of walks and steps back with no turn between them: each walk ends facing where it
+    walked, off the heading the way planned at its end (as an arc of the plan does), and each
+    step back starts by facing the heading planned for it, so it keeps to the way and the leg after
+    it sets off on its line. Stepping back along the heading the walk ended at, the error went out
+    sideways, a few centimetres at each step, and a leg after it failed leaving its way."""
+    from roqsim_motion import moves
+    from roqsim_nav.lattice import Segment, Way
+
+    engine, _case_, _kw = _case("carry_post_straight")
+    try:
+        sim = Carry(engine)
+        assert sim.run("approach", target="tote_1", standoff=0.45).error == ""
+        assert sim.run("grasp", hand="both", target="tote_1").error == ""
+        x0, y0, h0 = sim.body.root()
+
+        def ahead(p, h, d):
+            return (p[0] + d * math.cos(h), p[1] + d * math.sin(h))
+
+        segments, p, h = [], (x0, y0), h0
+        for _ in range(2):
+            # walked straight along h, planned to end turned by 0.25 rad: an arc of the plan
+            q = ahead(p, h, 0.5)
+            segments.append(Segment("walk", [(*p, h), (*q, h + 0.25)]))
+            h += 0.25
+            b = ahead(q, h, -0.3)
+            segments.append(Segment("back", [(*q, h), (*b, h)], distance=0.3))
+            p = b
+        way = Way(segments=segments, seconds=0.0, expanded=0, margin=0.0, slack=0.0)
+
+        def planned(*_args, **_kw):
+            return way
+            yield
+
+        monkeypatch.setattr(moves, "plan_way_steps", planned)
+        t0 = engine.ctx.sim_time
+        to = ahead(p, h, 0.6)
+        seq = sim.h.carry({"position": {"x": to[0], "y": to[1], "z": 0.0}}, standoff=0.6, facing=h)
+        while not (sim.h.status().seq == seq and sim.h.status().finished):
+            engine.step()
+            assert engine.ctx.sim_time - t0 < 60.0
+        assert sim.h.status().error == "", sim.h.status().error
+        assert len(sim.events("stepping_back", t0)) == 2
+        x, y, _ = sim.body.root()
+        assert math.hypot(x - p[0], y - p[1]) < 0.03, (x - p[0], y - p[1])
+    finally:
+        engine.shutdown()
+
+
 def test_a_carry_plans_its_way_while_the_simulation_steps_on():
     """A carry's way is planned in steps, the simulation stepping on between them: no tick waits for
     the whole search."""

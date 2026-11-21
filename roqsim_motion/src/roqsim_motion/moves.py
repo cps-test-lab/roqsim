@@ -833,6 +833,10 @@ class HumanoidPlugin(MachinePlugin):
         self.step("planned", **way.summary())
         tol = FOLLOW_TOL + fp.margin
         for seg in way.segments:
+            # every leg starts on the heading the way planned for it, not on the one the leg
+            # before ended at (a walk ends facing where it walked): an error does not add up
+            if seg.kind != "turn" and len(seg.poses):
+                yield from self._turn_to(float(seg.poses[0][2]), each)
             if seg.kind == "walk":
                 yield from self._walk_leg(nav, seg.poses, label, each, tol)
             elif seg.kind == "turn":
