@@ -106,8 +106,8 @@ log = logging.getLogger(__name__)
 
 #: The rotor inertia in front of the program under the robot's torque loop (kg m^2): franka_description
 #: 2.9.0 ``robots/fr3/dynamics.yaml``'s ``motor_inertia * gear_ratio**2`` (0.606, 0.606, 0.462,
-#: 0.462, 0.206, 0.206, 0.206), divided by 6. Joint 7's 0.034 is above the 0.005 that libfranka's
-#: ``joint_impedance_control`` example (damping 10 N m s/rad, 1 kHz) needs to be stable.
+#: 0.462, 0.206, 0.206, 0.206), divided by 6. Joint 7's 0.034 is above the 0.0075 that libfranka's
+#: ``joint_impedance_control`` example (joint 7 damping 15 N m s/rad, 1 kHz) needs to be stable.
 LINK_ARMATURE = (0.101, 0.101, 0.077, 0.077, 0.034, 0.034, 0.034)
 #: The viscous damping in front of the program (N m s/rad): the ``fr3`` model's 0.21, divided by 6.
 LINK_DAMPING = (0.035,) * 7
