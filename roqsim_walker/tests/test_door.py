@@ -12,10 +12,12 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim_motion import quat as Q
 
 DATA = Path(__file__).parent / "data"
 NAV = {
@@ -135,6 +137,36 @@ def test_a_door_pushed_open_is_walked_through_kept_open_and_shuts_behind():
             door.step()
         assert door.angle() < 10.0, door.angle()  # the closer shut it
         assert door.deepest < 0.01, door.deepest
+    finally:
+        engine.shutdown()
+
+
+def test_a_hand_holding_a_door_turns_about_its_grip_without_pulling_the_leaf():
+    """A hold on a door holds the hand's grip on the handle, its position only: a hand turning
+    30 deg about its grip, as an arm turns it when the body turns on the spot, leaves the leaf
+    where it is and pulls on it hardly at all. Held at a point of the hand 8 cm from its grip,
+    the turning hand moved that point, turned the leaf and pulled thousands of newtons along its
+    arc."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=30.0).error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        hold = hp.holding["r"]
+        p0, q0 = door.body.grip(door.d, "r")
+        p0, q0 = p0.copy(), np.asarray(q0, float).copy()
+        before, most = door.angle(), 0.0
+        for k in range(400):
+            turn = math.radians(30.0) * min(1.0, k / 200)
+            door.body.set_hand("r", p0, Q.mul(Q.axis_angle("z", turn), q0))
+            door.step()
+            if k > 20:
+                most = max(most, hold.force(door.d, hold.slide_axis(door.m, door.d)))
+        assert np.linalg.norm(door.body.grip(door.d, "r")[0] - p0) < 0.002  # the grip stayed
+        assert abs(door.angle() - before) < 0.2, (door.angle(), before)
+        assert most < 500.0, most
     finally:
         engine.shutdown()
 
