@@ -335,8 +335,10 @@ action humanoid_release:
     check: bool = true
 
 action humanoid_pull:
-    # Pull what a hand holds toward the humanoid: a drawer along its slide by `distance`, a door
-    # round its hinge by `angle` (the body stepping round with it where the arc leaves its reach).
+    # Pull what a hand holds toward the humanoid: a drawer along its slide by `distance` (a sliding
+    # door, its slide across the hand, along its own axis: pulled open), a door round its hinge by
+    # `angle` (the body stepping round with it where the arc leaves its reach). A door that meets
+    # something turns as far as it goes, and a `stopped` event says how far and what stopped it.
     humanoid: string
     hand: string
     distance: float                                   # metres along a slide; or
@@ -345,7 +347,8 @@ action humanoid_pull:
     check: bool = true
 
 action humanoid_push:
-    # Push what a hand holds away from the humanoid: a drawer shut, a door open away from it.
+    # Push what a hand holds away from the humanoid: a drawer shut, a sliding door shut along its
+    # own axis, a door open away from it -- as far as it goes, as humanoid_pull's turn.
     humanoid: string
     hand: string
     distance: float                                   # as humanoid_pull's
