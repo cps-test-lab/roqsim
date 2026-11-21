@@ -1035,6 +1035,31 @@ def test_a_place_reach_is_the_farthest_the_arm_makes_not_the_end_of_a_stretch_fr
     assert 0.78 <= reach <= 0.8, reach
 
 
+def test_what_is_set_down_is_turned_square_to_the_place(sim):
+    """A tote set down at a place on the bench whose heading is turned 25 degrees from how the
+    tote is held comes down square to it -- turned on by what the wrist leaves it short of, to
+    within SQUARE_TOL of a quarter turn of the place's heading. Turned only up to 20 degrees, a
+    load held further off was set down as it was held: a part taken by a grip turned in toward
+    the body came down with a corner off its tray."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.6, facing=math.pi / 2)
+    om = sim.d.body("tote_1").xmat.reshape(3, 3)
+    heading = math.atan2(om[1, 0], om[0, 0]) + math.radians(25)
+    place = {
+        "position": {"x": 0.0, "y": 2.45, "z": 0.75},
+        "orientation": {"yaw": heading},
+    }
+    sim.ok("place", at=place)
+    for _ in range(300):
+        sim.e.step()
+    om = sim.d.body("tote_1").xmat.reshape(3, 3)
+    rel = math.atan2(om[1, 0], om[0, 0]) - heading
+    off = rel - round(rel / (math.pi / 2)) * (math.pi / 2)
+    assert abs(off) < math.radians(5), math.degrees(off)
+    assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
+
+
 def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
     """A floor drawn but colliding with nothing (a hall's) is nothing to stand on: a corner over it
     is a corner over nothing."""
