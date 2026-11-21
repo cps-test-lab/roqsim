@@ -1477,13 +1477,22 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _surface(self, point, held: int, accept=None, inside=None, above: float = 1.5):
+    def _surface(
+        self,
+        point,
+        held: int,
+        accept=None,
+        inside=None,
+        above: float = 1.5,
+        below: float | None = None,
+    ):
         """The top of whatever is under ``point``, and its body: a ray cast down from ``above`` m
-        over it (a ray starting inside something does not see it), past what is held (and what is welded to it), what rides in or on it
-        (:meth:`_contents`), the humanoid's own bodies, anything that collides with nothing, and
-        with ``accept`` every body it refuses."""
+        over it, or from the height ``below`` (m) where given, so what is higher is not under it
+        (a ray starting inside something does not see it), past what is held (and what is welded
+        to it), what rides in or on it (:meth:`_contents`), the humanoid's own bodies, anything
+        that collides with nothing, and with ``accept`` every body it refuses."""
         m, d = self._m, self._d
-        start = np.array([point[0], point[1], point[2] + above])
+        start = np.array([point[0], point[1], point[2] + above if below is None else float(below)])
         geomid = np.zeros(1, np.int32)
         inside = self._contents(held) if inside is None else inside
         while True:
@@ -1598,14 +1607,18 @@ class HumanoidPlugin(MachinePlugin):
 
         return accept
 
-    def _top(self, point, held: int, accept=None, spacing: float | None = 0.04) -> float:
+    def _top(
+        self, point, held: int, accept=None, spacing: float | None = 0.04, below=None
+    ) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`, a grid at
         ``spacing``) if it stood with its origin over ``point``; with ``accept``, of the bodies it
-        accepts."""
+        accepts; with ``below``, of what is lower than that height (m)."""
         tops = []
         inside = self._contents(held)
         for off in self._footprint(held, spacing):
-            p, under = self._surface(np.asarray(point, float) + off, held, accept, inside)
+            p, under = self._surface(
+                np.asarray(point, float) + off, held, accept, inside, below=below
+            )
             if under >= 0:
                 tops.append(float(p[2]))
         return max(tops) if tops else float(point[2])
@@ -1624,14 +1637,16 @@ class HumanoidPlugin(MachinePlugin):
         off = rel - round(rel / (math.pi / 2)) * (math.pi / 2)
         return -off if abs(off) <= SQUARE_MAX else 0.0
 
-    def _path_top(self, a, b, held: int, z: float) -> float:
+    def _path_top(self, a, b, held: int, z: float, below=None) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`) with its
-        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to: in
-        steps finer than the footprint's grid, so that together they pass over a wall 2 cm thick."""
+        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to, and
+        with ``below`` lower than that height (m): in steps finer than the footprint's grid, so
+        that together they pass over a wall 2 cm thick."""
         a, b = np.asarray(a, float), np.asarray(b, float)
         steps = max(2, int(math.ceil(float(np.linalg.norm(b - a)) / 0.015)))
         return max(
-            self._top(np.array([*(a + k / steps * (b - a)), z]), held) for k in range(steps + 1)
+            self._top(np.array([*(a + k / steps * (b - a)), z]), held, below=below)
+            for k in range(steps + 1)
         )
 
     @program
@@ -1663,7 +1678,11 @@ class HumanoidPlugin(MachinePlugin):
             if out > reach and forward > 1e-9:
                 shift *= max(0.0, 1.0 - (out - reach) / forward)
         where = low()[:2] + shift
-        surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj)
+        # What it is set over is lower than it is carried, or than the place where that is higher
+        # (a shelf above a carried load): a lintel or a roof over the way is above it, not a
+        # surface to lift it over.
+        ceiling = max(float(self._extent(obj)[1][2]), float(point[2])) + CLEAR
+        surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj, below=ceiling)
         if (
             target.kind != "world"
             and under >= 0
@@ -1677,12 +1696,16 @@ class HumanoidPlugin(MachinePlugin):
         origin = d.xpos[obj][:2] + shift
         top = max(
             float(surface[2]),
-            self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)),
+            self._top(
+                np.array([origin[0], origin[1], point[2]]), obj, self._on(target), below=ceiling
+            ),
         )
         # What it is set down on is under all of it: the surfaces under its corners where it goes
         # are one, or it would stand on a drawer's wall and its deck, or half off a bench's edge.
         under_corners = [
-            self._surface(np.array([origin[0] + off[0], origin[1] + off[1], point[2]]), obj)
+            self._surface(
+                np.array([origin[0] + off[0], origin[1] + off[1], point[2]]), obj, below=ceiling
+            )
             for off in self._footprint(obj)
         ]
         # a corner over nothing solid (a floor that collides with nothing) stands on nothing
@@ -1700,7 +1723,7 @@ class HumanoidPlugin(MachinePlugin):
         # rim the target's footprint does not cover): straight up first where that is higher than
         # it is carried, then across, so it never cuts down through one.
         here = d.xpos[obj][:2].copy()
-        clear = max(top, self._path_top(here, here + shift, obj, point[2])) + CLEAR
+        clear = max(top, self._path_top(here, here + shift, obj, point[2], below=ceiling)) + CLEAR
         rise = clear - low()[2]
         if rise > 0.0:
             up = np.array([0.0, 0.0, rise])

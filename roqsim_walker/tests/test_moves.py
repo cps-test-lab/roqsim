@@ -627,6 +627,53 @@ def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
     assert abs(plugin._path_top([0.0, -2.6], [0.0, -3.4], tote, 0.0) - 0.9) < 0.01
 
 
+def _box(name, x, y, z, size):
+    return {
+        "box": {
+            "prefix": f"{name}_",
+            "pose": {"position": {"x": x, "y": y, "z": z}},
+            "size": size,
+            "motion": "static",
+        },
+        "name": name,
+    }
+
+
+def test_a_place_through_an_opening_goes_under_its_lintel_not_over_it():
+    """What is above the load on its way is not a surface it is set down over: a tote set on a
+    fixture inside a housing, through an opening above a sill, passes under the lintel and the
+    roof over the fixture, and comes down on the fixture."""
+    world = _world()
+    world["components"] += [
+        _box("bed", -3.4, 0.0, 0.4, [0.8, 1.2, 0.8]),
+        _box("sill", -2.93, 0.0, 0.425, [0.06, 1.2, 0.85]),
+        _box("lintel", -2.93, 0.0, 1.85, [0.06, 1.2, 0.5]),
+        _box("roof", -3.4, 0.0, 2.15, [1.0, 1.2, 0.1]),
+        _box("fixture", -3.2, 0.0, 0.85, [0.44, 0.8, 0.1]),
+    ]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="fixture", standoff=0.55, facing=math.pi)
+        tote = sim.m.body("tote_1").id
+        highest = 0.0
+        seq = sim.h.place("fixture", release=False)
+        while True:
+            sim.e.step()
+            highest = max(highest, float(sim.d.xpos[tote][2]))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert highest < 1.6 - 0.15  # under the lintel's underside, the tote's height below it
+        assert abs(sim.d.xpos[tote][2] - 0.9) < 0.02  # on the fixture, still in the hands
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
