@@ -674,6 +674,27 @@ def test_a_place_through_an_opening_goes_under_its_lintel_not_over_it():
         engine.shutdown()
 
 
+def test_a_shallow_load_is_lifted_clear_of_the_table_it_was_taken_from_before_its_way():
+    """A carry lifts what it holds clear of what it was taken from -- the load by CLEAR, and the
+    arms holding it, which the way checks down to the hands -- before it plans the way: a shallow
+    tote taken from a table, its grips near the table's top, is carried off it."""
+    world = _world()
+    for c in world["components"]:
+        if c.get("name") == "tote_1":
+            c["tote"]["size"] = [0.5, 0.35, 0.04]
+            c["tote"]["pose"]["position"]["z"] = 0.75
+    world["components"].append(_box("table", -1.5, -0.4, 0.375, [0.6, 1.0, 0.75]))
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(

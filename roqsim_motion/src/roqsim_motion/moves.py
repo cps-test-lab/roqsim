@@ -1355,8 +1355,12 @@ class HumanoidPlugin(MachinePlugin):
             low = self._bottom(obj)[2]
             below = self.body.grip(d, lead)[0][2] - low
             height = max(height, top + below + CLEAR)
-            # and never down into what it was lifted from
-            height = max(height, float(self.body.grip(d, lead)[0][2]) + 0.03)
+            # and clear of what it was lifted from: what it holds by CLEAR, and the arms that hold
+            # it, which the way checks as capsules of ARM_RADIUS down to the hands, as well
+            here = d.xpos[obj].copy()
+            under = self._top(np.array([here[0], here[1], low]), obj, below=low + 0.01)
+            grip_z = float(self.body.grip(d, lead)[0][2])
+            height = max(height, grip_z + 0.03, under + CLEAR + below, under + CLEAR + ARM_RADIUS)
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
         rel = {}
