@@ -84,6 +84,10 @@ CARRY_TURN_ABOVE = 0.45
 #: its hand may go to get it there, at least (m; half the distance, if that is more).
 ALONG_TOL = 0.003
 ALONG_EXTRA = 0.05
+#: A slide whose axis is within this cosine of square to the palm on its handle runs along the
+#: face the handle is on (a sliding door's), not out of it (a drawer's): pulled, it opens along its
+#: joint's axis, not toward the body.
+ACROSS = 0.5
 #: A stroke that would leave a slide this near its stop goes to the stop (m): a hand's width.
 ALONG_STOP = 0.03
 #: How far a hand reaches from the body's root before a move refuses it without trying (m).
@@ -1272,15 +1276,25 @@ class HumanoidPlugin(MachinePlugin):
         if axis is None:
             body = h0.obj_body
             jnt = int(self._m.body_jntadr[body])
-            if jnt >= 0 and self._m.jnt_type[jnt] == mujoco.mjtJoint.mjJNT_SLIDE:
+            slide = jnt >= 0 and self._m.jnt_type[jnt] == mujoco.mjtJoint.mjJNT_SLIDE
+            if slide:
                 axis = d.xaxis[jnt].copy()
             else:
                 axis = -d.site_xmat[h0.obj_site].reshape(3, 3)[:, 0]
-            # a pull comes toward the humanoid, a push goes away from it
             x, y, _ = self.body.root()
-            if np.dot(axis[:2], np.array([x, y]) - obj0[:2]) < 0:
-                axis = -axis
-            axis = sign * np.asarray(axis, float)
+            toward = np.array([x, y]) - obj0[:2]
+            palm = d.site_xmat[h0.obj_site].reshape(3, 3)[:, 0]
+            across = slide and abs(float(np.dot(axis, palm))) < ACROSS
+            if across:
+                # a slide along the face its handle is on, across the palm (a sliding door's): a
+                # pull opens it, along its joint's axis, and a push shuts it, wherever the body
+                # stands
+                axis = sign * np.asarray(axis, float)
+            else:
+                # a pull comes toward the humanoid, a push goes away from it
+                if np.dot(axis[:2], toward) < 0:
+                    axis = -axis
+                axis = sign * np.asarray(axis, float)
         axis = np.asarray(axis, float) / np.linalg.norm(axis)
         starts = {s: self.body.grip(d, s) for s in sides}
         self.step(
@@ -1379,7 +1393,9 @@ class HumanoidPlugin(MachinePlugin):
     ):
         """Pull what a hand holds toward the humanoid by ``distance`` m -- what it holds moves that far,
         the hand going on past it for a hand that lags -- along its slide joint for a drawer, else
-        straight out of its grip. A drawer that reaches its end stop first is out. What turns on a
+        straight out of its grip. A slide along the face its handle is on (a sliding door's, ACROSS)
+        is pulled along its joint's axis, the way that opens it, wherever the body stands. A
+        drawer that reaches its end stop first is out. What turns on a
         hinge (a door) is pulled round it by ``angle`` (deg) instead: the hand goes round the arc the
         hinge sets, and where the arc leaves its reach the body steps round with it."""
         sides = self._held(hand)
@@ -1402,8 +1418,9 @@ class HumanoidPlugin(MachinePlugin):
         angle: float | None = None,
     ):
         """Push what a hand holds away from the humanoid by ``distance`` m -- what it holds moves that
-        far, as a pull's -- a drawer shut, done when it reaches its stop; what turns on a hinge, round
-        it by ``angle`` (deg), as a pull's."""
+        far, as a pull's -- a drawer shut, done when it reaches its stop; a slide along the face its
+        handle is on against its joint's axis, the way that shuts it; what turns on a hinge, round it by
+        ``angle`` (deg), as a pull's."""
         sides = self._held(hand)
         if angle is not None:
             turned = yield from self._round(sides, angle, speed, -1.0, "what it pushes")

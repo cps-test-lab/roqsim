@@ -627,6 +627,44 @@ def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
     assert abs(plugin._path_top([0.0, -2.6], [0.0, -3.4], tote, 0.0) - 0.9) < 0.01
 
 
+_SLIDING = """<mujoco><worldbody>
+<geom name="floor" type="plane" size="6 6 .05"/>
+<body name="slider" pos="1.0 0 1.1">
+  <joint name="slider_slide" type="slide" axis="0 1 0" range="0 0.8" damping="20"/>
+  <geom name="slider_leaf" type="box" size="0.02 0.4 0.3" mass="8"/>
+  <site name="slider/grip" pos="-0.05 -0.32 0" quat="0 1 0 0"/>
+</body></worldbody></mujoco>"""
+
+
+@pytest.mark.parametrize("side_of_handle", [0.25, -0.25])
+def test_a_slide_along_the_face_of_its_handle_opens_pulled_and_shuts_pushed(
+    tmp_path, side_of_handle
+):
+    """A slide along the face its handle is on -- a sliding door's -- is pulled open and pushed shut
+    along its joint's axis, whichever side of the handle the body stands: toward or away from the
+    body says nothing along that face. Taken toward and away from the body, the door slid open or
+    to its shut stop by where the body happened to stand."""
+    xml = tmp_path / "sliding.xml"
+    xml.write_text(_SLIDING)
+    world = _world({"graspable": ["slider"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        stand = {"position": {"x": 0.5, "y": -0.32 + side_of_handle, "z": 0.0}}
+        sim.ok("approach", target=stand, standoff=0.0, facing=0.0)
+        sim.ok("grasp", hand="right", target="slider/grip")
+        sim.ok("pull", hand="right", distance=0.25)
+        opened = sim.qpos("slider_slide")
+        assert opened > 0.2, opened  # opened along the joint's axis
+        sim.ok("push", hand="right", distance=0.2)
+        assert sim.qpos("slider_slide") < opened - 0.15  # shut along it again
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
