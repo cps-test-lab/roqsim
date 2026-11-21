@@ -550,11 +550,11 @@ class _CSpace:
 
     def tethered(self, x, y, th) -> bool:
         """Whether the body at ``(x, y, th)`` has every one of ``tether`` within reach: the point of
-        the body it holds (``tether_at``, in the body's frame, turned with ``th``; the root where it
-        names none) within its radius."""
+        the body it holds (``tether_at``, in the body's frame, turned with ``th``) within its
+        radius."""
         c, s = math.cos(th), math.sin(th)
         for k, (tx, ty, tr) in enumerate(self.tether):
-            ox, oy = self.tether_at[k] if k < len(self.tether_at) else (0.0, 0.0)
+            ox, oy = self.tether_at[k]
             px, py = x + c * ox - s * oy, y + s * ox + c * oy
             if (px - tx) ** 2 + (py - ty) ** 2 > tr * tr:
                 return False
@@ -1335,12 +1335,18 @@ def plan_way_steps(
     ``tether``: ``(x, y, r)`` points every pose of the way keeps its root within ``r`` of -- a hand
     that keeps a door where it is while the body walks stays within its reach. ``tether_at``: for
     each of them, the point of the body kept within ``r`` instead of its root, ``(x, y)`` in the
-    body's frame (a shoulder), which turns with the body's heading.
+    body's frame (a shoulder; ``(0, 0)`` the root), which turns with the body's heading -- one
+    for each tether, or the plan is refused with a ``ValueError``.
 
     A generator: it hands back (yields) every :data:`SLICE_STATES` states its search expands, and
     returns the :class:`Way`; :func:`plan_way` runs it in one go. The world is read before it
     first hands back, so a caller may step the simulation between its steps. The way's
     ``seconds`` are the time it ran, not the time it was handed back for."""
+    if len(tether_at) != len(tether):
+        raise ValueError(
+            f"tether_at: one point of the body for each tether: {len(tether)} tether(s), "
+            f"{len(tether_at)} point(s)"
+        )
     ran, t0 = 0.0, time.perf_counter()
     res = footprint.resolution
     if not (math.isfinite(float(back_max)) and back_max >= 0.0):
