@@ -550,13 +550,13 @@ class _CSpace:
 
     def tethered(self, x, y, th) -> bool:
         """Whether the body at ``(x, y, th)`` has every one of ``tether`` within reach: the point of
-        the body it holds (``tether_at``, in the body's frame, turned with ``th``; the root where it
-        names none) within its radius of its segment, or the root past its line."""
+        the body it holds (``tether_at``, in the body's frame, turned with ``th``) within its radius
+        of its segment, or the root past its line."""
         c, s = math.cos(th), math.sin(th)
         for k, (ax, ay, bx, by, tr, past) in enumerate(self.tether):
             if past is not None and (x - past[0]) * past[2] + (y - past[1]) * past[3] >= 0.0:
                 continue  # gone past its line, free of it
-            ox, oy = self.tether_at[k] if k < len(self.tether_at) else (0.0, 0.0)
+            ox, oy = self.tether_at[k]
             px, py = x + c * ox - s * oy, y + s * ox + c * oy
             ex, ey = bx - ax, by - ay
             n = ex * ex + ey * ey
@@ -1358,12 +1358,18 @@ def plan_way_steps(
     ``(..., r, px, py, nx, ny)``: a root past it (``(p - (px, py)) . (nx, ny) >= 0``) is free of
     that tether -- the body has gone through the door, and the hand lets go. ``tether_at``: for
     each of them, the point of the body kept within ``r`` instead of its root, ``(x, y)`` in the
-    body's frame (a shoulder), which turns with the body's heading.
+    body's frame (a shoulder; ``(0, 0)`` the root), which turns with the body's heading -- one
+    for each tether, or the plan is refused with a ``ValueError``.
 
     A generator: it hands back (yields) every :data:`SLICE_STATES` states its search expands, and
     returns the :class:`Way`; :func:`plan_way` runs it in one go. The world is read before it
     first hands back, so a caller may step the simulation between its steps. The way's
     ``seconds`` are the time it ran, not the time it was handed back for."""
+    if len(tether_at) != len(tether):
+        raise ValueError(
+            f"tether_at: one point of the body for each tether: {len(tether)} tether(s), "
+            f"{len(tether_at)} point(s)"
+        )
     ran, t0 = 0.0, time.perf_counter()
     res = footprint.resolution
     if not (math.isfinite(float(back_max)) and back_max >= 0.0):
