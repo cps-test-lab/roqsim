@@ -704,6 +704,48 @@ def test_a_part_in_one_hand_is_set_on_a_board_above_the_shoulder(height):
         engine.shutdown()
 
 
+def test_a_part_in_one_hand_is_raised_over_the_bench_under_the_board_not_through_it():
+    """Brought before the shoulder to be raised onto a board over a bench, a part in one hand goes
+    up clear of the bench first: coming forward where the hand hangs, it went into the bench."""
+    world = _part_on_a_table(1.45)
+    world["components"].append(
+        {
+            "box": {
+                "prefix": "bench2_",
+                "pose": {"position": {"x": 2.0, "y": 2.45, "z": 0.475}},
+                "size": [0.8, 0.5, 0.95],
+                "motion": "static",
+            },
+            "name": "bench2",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.6, facing=math.pi / 2)
+        part, bench = sim.m.body("part_box").id, sim.m.body("bench2_box").id
+        deepest = 0.0
+        seq = sim.h.place("board", release=False)
+        while True:
+            sim.e.step()
+            for c in sim.d.contact[: sim.d.ncon]:
+                if {int(sim.m.geom_bodyid[c.geom1]), int(sim.m.geom_bodyid[c.geom2])} == {
+                    part,
+                    bench,
+                }:
+                    deepest = max(deepest, -float(c.dist))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert deepest < 0.001, deepest
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(

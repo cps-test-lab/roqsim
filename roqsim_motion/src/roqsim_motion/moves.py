@@ -2030,7 +2030,9 @@ class HumanoidPlugin(MachinePlugin):
         """Bring a load held in one hand at the body's side before its shoulder, the palm turned in
         toward the body's middle and the fingers ahead, so the hand can raise it: held palm forward
         and the fingers down, as it is carried, an arm cannot lift it to the shoulder. What it holds
-        turns with the hand, a quarter turn about the hand's way ahead."""
+        turns with the hand, a quarter turn about the hand's way ahead. Where something is under its
+        way there -- the bench it is set down over -- it turns and goes up where it is first, clear
+        of it, and comes forward over it."""
         d = self._d
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
@@ -2038,8 +2040,20 @@ class HumanoidPlugin(MachinePlugin):
         sh = self.body.shoulder(d, side)
         p, _ = self.body.grip(d, side)
         pos = np.array([sh[0], sh[1], p[2]]) + ONE_HAND_BEFORE * heading
+        # up first, clear of what is under its way there (the bench it is set down over)
+        obj = self.holding[side].obj_body
+        here = d.xpos[obj][:2].copy()
+        low = float(self._bottom(obj)[2])
+        rise = self._path_top(here, here + (pos[:2] - p[:2]), obj, low) + CLEAR - low
         # the grip frame: +x out of the palm toward the load, inward; +z along the fingers, ahead
         quat = Q.from_matrix(np.column_stack([inward, np.cross(heading, inward), heading]))
+        if rise > 0.0:
+            # turned where it is, up, then forward over it
+            up = np.array([p[0], p[1], p[2] + rise])
+            yield from self._move_hands(
+                {side: lambda: (up, quat)}, 0.3, what, rot_tol=math.radians(25), pos_tol=0.03
+            )
+            pos[2] += rise
         yield from self._move_hands(
             {side: lambda: (pos, quat)}, 0.3, what, rot_tol=math.radians(25), pos_tol=0.03
         )
