@@ -472,6 +472,44 @@ def test_a_door_pushed_open_and_walked_past_its_free_end_is_let_go_and_shuts_cle
         engine.shutdown()
 
 
+def test_a_door_kept_by_contact_is_let_go_only_once_the_way_left_keeps_out_of_its_sweep(
+    monkeypatch,
+):
+    """Pulled open toward the body, the door is kept by contact on the way back through it: the
+    hand is done with it only once neither the body nor any pose of the way still to walk, with
+    what it holds, goes where the leaf sweeps as it shuts or through the opening. Standing at the
+    pull stance, out of the sweep, with the way through still to walk, it keeps the door -- a way
+    back that starts with a step back out of the sweep let it go there, still on the wrong side,
+    and the door shut before the body had gone through; with no way left, it lets go."""
+    from roqsim_motion import moves
+
+    real, ways = moves.plan_way_steps, []
+
+    def keep(*args, **kw):
+        way = yield from real(*args, **kw)
+        ways.append(way)
+        return way
+
+    engine = _engine((0.0, 0.8), 0.0)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/pull/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/pull/grip").error == ""
+        assert door.run("pull", hand="right", angle=85.0).error == ""
+        monkeypatch.setattr(moves, "plan_way_steps", keep)
+        assert door.run("plan", to="gate/through").error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        hp._keep_start()
+        hp._keep["r"] = "contact"
+        hp._way_pieces = list(hp._footprint_now()[0].pieces)
+        hp._way_rest = [tuple(p) for sg in ways[-1].segments for p in sg.poses]
+        assert not hp._through("r")  # the way through is still to walk
+        hp._way_rest = []
+        assert hp._through("r")  # out of the sweep, nothing left to walk through it
+    finally:
+        engine.shutdown()
+
+
 def _where(engine):
     """Where the walker stands and its heading."""
     hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
@@ -509,9 +547,9 @@ def test_a_reset_in_the_middle_of_keeping_a_door_leaves_nothing_of_it():
             "_tip_goal",
             "_keep_z",
             "_keep_at_face",
-            "_swept",
         ):
             assert getattr(hp, state) == {}, (state, getattr(hp, state))
+        assert hp._way_rest == [] and hp._way_pieces == []
         door = Door(engine)
         st = _walk_through_pulled(door, engine)
         assert st.error == "", st.error
