@@ -246,7 +246,7 @@ nearest of them, facing as it says, where a move is given no `standoff` or `faci
 
 | move | parameters | events | fails with |
 |---|---|---|---|
-| `approach` | `target` (a site, body or entity, or a slot), `standoff` (left out: the target's stance, else 0.6 m), `facing` (world yaw; default: the stance's, or a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first), `back_max` and `long_way` (holding something: as `carry`'s) | `walking`, `arrived` (with `stance`: the stance site it stood at, or its stand-off); holding something, as `carry`'s; keeping a door, `keeping` (`how`: by its hold or by contact), `pushing` (the hold off, the fingertip on the face), `let go` (past the line the leaf shuts onto) and `kept` (`how`, `closed` deg, `force` N) | `unknown target`, `no route to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …`; holding something, `no way holding …`, `left its way …`, `stopped … short of a leg's end …`, `stepped back … m of …` and `cannot turn to …` (as `carry`'s); keeping a door, `lost the door: it closed … deg while kept` |
+| `approach` | `target` (a site, body or entity, or a slot), `standoff` (left out: the target's stance, else 0.6 m), `facing` (world yaw; default: the stance's, or a grip site's or a face's front, a tote's long side, or from where it stands), `via` (floor points `[x, y]` walked through first), `back_max` and `long_way` (holding something: as `carry`'s) | `walking`, `arrived` (with `stance`: the stance site it stood at, or its stand-off); holding something, as `carry`'s; keeping a door, `keeping` (`how`: by its hold or by contact), `pushing` (the hold off, the fingertip on the face), `let go` (once neither the body nor the way still to walk, the body's or what it holds, is where the leaf sweeps as it shuts or in the opening) and `kept` (`how`, `closed` deg, `force` N) | `unknown target`, `no route to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …`; holding something, `no way holding …`, `left its way …`, `stopped … short of a leg's end …`, `stepped back … m of …` and `cannot turn to …` (as `carry`'s); keeping a door, `lost the door: it closed … deg while kept` |
 | `reach` | `hand`, `target`, `offset` (x, y, z[, r, p, y] in its frame), `orient` true, `pose` `open`, `speed` 0.8 m/s | `reached` | `out of reach: … approach first` |
 | `press` | `hand`, `target` (a site on the button's face), `max_force`, `travel`, `pose` `point` | `contact`, `pressed`, `released` | `button did not move: … at … N`, out of reach |
 | `grasp` | `hand`, `target` (an entity's grip sites, or one grip site), `grip` `power` | `closing`, `held` | `nothing to grasp: … not graspable`, `… has no grip site`, `hold not made`, out of reach |
@@ -316,8 +316,10 @@ pulled open is kept by contact: its handle is then at the leaf's far edge, out o
 opening, so once the body has come round the leaf the hold goes off, the fingertip (the hand's press
 proxy) goes round the free edge onto the face the closer pushes the leaf toward, and slides along it
 as the body passes, the closer pressing the leaf into it. The way keeps the body within reach of
-the leaf until it is past the line the leaf shuts onto; there the hand lets go (`let go`) and the
-closer shuts the door behind it. A door that closes more than 15 degrees while kept fails the walk.
+the leaf until it is past the line the leaf shuts onto. The hand lets go (`let go`) once no part of
+the body but the keeping arm, and no pose of the way still to walk with what it holds, is where the
+leaf sweeps as it shuts or in the opening it shuts -- through the line, or past the leaf's free
+edge -- and the closer shuts the door behind it, clear of the body. A door that closes more than 15 degrees while kept fails the walk.
 
 `pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
 servo under the load) goes on past it until the object has, by at most half the distance; a lagging
