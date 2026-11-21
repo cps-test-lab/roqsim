@@ -728,7 +728,9 @@ def test_a_long_bar_in_both_hands_is_held_level_and_carried_off_the_arms_it_lay_
     planned, and is carried away. Hanging from the holding hand as the arm left it, turned a few
     degrees, the bar's far end stayed down on the arms and the way was refused where it began."""
     xml = tmp_path / "long_bar.xml"
-    xml.write_text(_LONG_BAR.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5)))
+    xml.write_text(
+        _LONG_BAR.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
+    )
     world = _world({"graspable": ["bar"]})
     world["sim"]["world"] = str(xml)
     world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
@@ -752,6 +754,88 @@ def test_a_long_bar_in_both_hands_is_held_level_and_carried_off_the_arms_it_lay_
                 break
         assert st.error == "", st.error
         assert level is not None and level < 0.012, level
+    finally:
+        engine.shutdown()
+
+
+_BAR_IN_A_RACK = """<mujoco><worldbody>
+<geom name="floor" type="plane" size="6 6 .05"/>
+<geom name="post_a" type="box" pos="-1.975 -0.45 1.1" size="0.075 0.075 1.1"/>
+<geom name="post_b" type="box" pos="-1.975 0.45 1.1" size="0.075 0.075 1.1"/>
+<geom name="arm_a" type="box" pos="-1.6 -0.45 0.95" size="0.3 0.04 0.03"/>
+<geom name="arm_b" type="box" pos="-1.6 0.45 0.95" size="0.3 0.04 0.03"/>
+<geom name="arm_a_up" type="box" pos="-1.6 -0.45 1.35" size="0.3 0.04 0.03"/>
+<geom name="arm_b_up" type="box" pos="-1.6 0.45 1.35" size="0.3 0.04 0.03"/>
+<body name="bar" pos="-1.5 0 1.0035"><freejoint name="bar_free"/>
+  <geom name="bar_box" type="box" size="0.0225 0.8 0.0225" mass="2.2"/>
+  <site name="bar/grip_l" pos="0.0525 -0.3 0" quat="{left}"/>
+  <site name="bar/grip_r" pos="0.0525 0.3 0" quat="{right}"/>
+</body></worldbody></mujoco>"""
+
+
+def test_a_bar_lifted_between_a_racks_arms_at_the_side_is_drawn_out_and_stepped_away_from(
+    tmp_path,
+):
+    """A bar lying across a rack's arms, taken by a body standing beside it facing along it, the
+    bar at its right side, is lifted between the arms and the ones above: no way starts from
+    there. The carry draws it out toward the body -- the hands as far as the trunk leaves room, the
+    body stepping aside, its heading kept, for the rest -- until it is clear of the arms' tips, and
+    then walks its way. The bar never comes into the trunk and leaves the arms level."""
+    xml = tmp_path / "bar_in_a_rack.xml"
+    xml.write_text(
+        _BAR_IN_A_RACK.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -0.6, "y": 0.0}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        here = {"position": {"x": -1.15, "y": 0.0, "z": 0.0}}
+        sim.ok("approach", target=here, standoff=0.0, facing=-math.pi / 2)
+        sim.ok("grasp", hand="both", target="bar")
+        bar = sim.m.body("bar").id
+        trunk = {
+            sim.m.body(f"worker/{p}").id
+            for p in ("pelvis", "spine", "chest", "neck", "head")
+            if mujoco.mj_name2id(sim.m, mujoco.mjtObj.mjOBJ_BODY, f"worker/{p}") >= 0
+        }
+        assert trunk
+        arms = {sim.m.geom(n).id for n in ("arm_a", "arm_b", "arm_a_up", "arm_b_up")}
+        near, far = sim.m.site("bar/grip_l").id, sim.m.site("bar/grip_r").id
+        seq = sim.h.carry({"position": {"x": 1.5, "y": -1.5, "z": 0.0}}, standoff=0.0, facing=0.0)
+        bar_geom = sim.m.geom("bar_box").id
+        trunk_geoms = [g for g in range(sim.m.ngeom) if int(sim.m.geom_bodyid[g]) in trunk]
+        fromto = np.zeros(6)
+        nearest, touched, tilt, out_at = 1.0, set(), 0.0, None
+        while True:
+            sim.e.step()
+            # how near the bar comes to the trunk from the draw on, by the geometry (a held
+            # load's contacts with the body that holds it are not all generated)
+            for g in trunk_geoms if "drawing_out" in sim.events() else ():
+                nearest = min(
+                    nearest, mujoco.mj_geomDistance(sim.m, sim.d, bar_geom, g, 0.2, fromto)
+                )
+            for c in sim.d.contact[: sim.d.ncon]:
+                b1, b2 = int(sim.m.geom_bodyid[c.geom1]), int(sim.m.geom_bodyid[c.geom2])
+                if bar in (b1, b2):
+                    if {int(c.geom1), int(c.geom2)} & arms and "lifted" in sim.events():
+                        touched.add(sim.m.geom(int(c.geom1) if c.geom1 in arms else c.geom2).name)
+            if "drawing_out" in sim.events() and out_at is None and "planned" in sim.events():
+                out_at = float(sim.d.xpos[bar][0])
+                tilt = abs(float(sim.d.site_xpos[far][2] - sim.d.site_xpos[near][2]))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        events = sim.events()
+        assert "drawing_out" in events and "stepping_aside" in events, events
+        assert nearest > 0.0, nearest  # drawn out and carried, the bar never came into the trunk
+        assert not touched, touched  # nor touched an arm once lifted
+        assert out_at is not None and out_at > -1.3 + 0.0225, out_at  # clear of the arms' tips
+        assert tilt < 0.012, tilt  # level as it left
     finally:
         engine.shutdown()
 

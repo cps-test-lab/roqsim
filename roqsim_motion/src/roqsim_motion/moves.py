@@ -105,6 +105,16 @@ LEVEL_GAIN = 0.5
 #: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
 #: drawer's stops, a comb's teeth, a lip round what it stood on.
 LIFT_FREE = 0.06
+#: A load lifted where it lay among what held it (a bar between a rack's arms) is drawn out before
+#: its way starts: how far clear, seen from above, of what is beside and over it it comes (m), in
+#: steps of how much, how far at most; and how near the body's trunk the hands draw it, the body
+#: stepping aside, its heading kept, for the rest.
+DRAW_CLEAR = 0.03
+DRAW_STEP = 0.01
+DRAW_MAX = 0.6
+DRAW_BODY = 0.03
+#: How near a holding arm's line from shoulder to grip a geom of the body is part of that arm (m).
+ARM_NEAR = 0.12
 #: How near the place (m) what is set down comes over it before it is lowered: a drawer's deck
 #: holds a box in stops with millimetres to spare, a centimetre from the fence over it.
 OVER_AT = 0.004
@@ -153,6 +163,47 @@ HOLD = {
 PRESS = {
     "max_force": Field(float, default=40.0, minimum=0.1, unit="N", doc="a press's force at most"),
 }
+
+
+def _gap(a, b) -> float:
+    """The distance between two convex polygons (n, 2), 0 where they overlap."""
+
+    def inside(p, poly) -> bool:
+        n = len(poly)
+        sign = 0.0
+        for i in range(n):
+            e = poly[(i + 1) % n] - poly[i]
+            c = e[0] * (p[1] - poly[i][1]) - e[1] * (p[0] - poly[i][0])
+            if sign == 0.0:
+                sign = c
+            elif c * sign < 0.0:
+                return False
+        return True
+
+    def to_edge(p, u, v) -> float:
+        e = v - u
+        t = min(max(float(np.dot(p - u, e) / max(float(np.dot(e, e)), 1e-12)), 0.0), 1.0)
+        return float(np.linalg.norm(p - u - t * e))
+
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if any(inside(p, b) for p in a) or any(inside(p, a) for p in b):
+        return 0.0
+    best = math.inf
+    for p, q in ((a, b), (b, a)):
+        for pt in p:
+            for i in range(len(q)):
+                best = min(best, to_edge(pt, q[i], q[(i + 1) % len(q)]))
+    # edges that cross without a vertex inside the other (two thin boxes in a cross)
+    for i in range(len(a)):
+        for j in range(len(b)):
+            u, v, w, z = a[i], a[(i + 1) % len(a)], b[j], b[(j + 1) % len(b)]
+            d1 = (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0])
+            d2 = (v[0] - u[0]) * (z[1] - u[1]) - (v[1] - u[1]) * (z[0] - u[0])
+            d3 = (z[0] - w[0]) * (u[1] - w[1]) - (z[1] - w[1]) * (u[0] - w[0])
+            d4 = (z[0] - w[0]) * (v[1] - w[1]) - (z[1] - w[1]) * (v[0] - w[0])
+            if d1 * d2 < 0.0 and d3 * d4 < 0.0:
+                return 0.0
+    return best
 
 
 def _side_word(side: str) -> str:
@@ -833,7 +884,7 @@ class HumanoidPlugin(MachinePlugin):
                         to=float(seg.poses[-1][2]),
                         turn=float(seg.angle),
                     )
-                yield from self._spin(seg.angle, each)
+                yield from self._spin(seg.angle, each, to=float(seg.poses[-1][2]))
             elif seg.kind == "back":
                 yield from self._step_back(seg.distance, each, label, tol)
         yield from self._face(yaw, what, each)
@@ -893,10 +944,15 @@ class HumanoidPlugin(MachinePlugin):
                 f"{tol:.3f} m of it"
             )
 
-    def _spin(self, angle: float, each):
+    def _spin(self, angle: float, each, to: float | None = None):
         """Turn on the spot by ``angle`` (rad, signed) at :data:`CARRY_TURN`, a quarter turn at a
-        time so that it goes round the way it is told, calling ``each`` every step."""
+        time so that it goes round the way it is told, calling ``each`` every step. With ``to``,
+        the heading the turn ends at: what the body faces off where the turn was planned from is
+        turned away too, so an error of a leg before does not stay on the legs after."""
         heading0 = self.body.root()[2]
+        if to is not None:
+            off = to - (heading0 + angle)
+            angle += math.atan2(math.sin(off), math.cos(off))
         legs = max(1, int(math.ceil(abs(angle) / (math.pi / 2))))
         for k in range(1, legs + 1):
             # on through each quarter but the last, not stopping at it
@@ -1445,11 +1501,156 @@ class HumanoidPlugin(MachinePlugin):
         # centimetres of where it aims
         got = float(np.mean([self.body.grip(d, s)[0][2] for s in sides]))
         self.step("lifted", height=round(got, 3))
+        yield from self._draw_out(obj, rel)
         carried = self._carried()
         stand, yaw = self._stand_for(to, standoff, facing)
         yield from self._walk_way(
             stand, yaw, to, carried, via=points, back_max=back_max, long_way=bool(long_way)
         )
+
+    def _draw_out(self, obj: int, rel):
+        """Draw a load out from among what it lay on before its way starts, as a person draws a bar
+        out of a rack's arms: where a load beside the body, lifted, is less than :data:`DRAW_CLEAR`
+        from what is beside or over it, seen from above (:meth:`_clear_of`), it goes toward the
+        body, across its heading, until it is that clear -- the hands
+        drawing it in as far as the trunk leaves room (:data:`DRAW_BODY`), the body stepping aside
+        for the rest, its heading kept. A load that would not come clear within :data:`DRAW_MAX`
+        is left where it is, for the way to say what is in it."""
+        d = self._d
+        x, y, yaw = self.body.root()
+        c = self._extent(obj)
+        mid = 0.5 * (c[0] + c[1])
+        across = np.array([-math.sin(yaw), math.cos(yaw)])
+        side = float(np.dot(np.array([x, y]) - mid[:2], across))
+        ahead = float(np.dot(mid[:2] - [x, y], [math.cos(yaw), math.sin(yaw)]))
+        lead = [s for s in rel if not self._riding[s]]
+        # a load beside the body, not one before it (that one a carry draws in by its heading)
+        if abs(side) <= abs(ahead) or self._clear_of(obj, np.zeros(3), lead) >= DRAW_CLEAR:
+            return
+        way = np.array([*(across * math.copysign(1.0, side)), 0.0])  # toward the body
+        need = None
+        for k in range(1, int(round(DRAW_MAX / DRAW_STEP)) + 1):
+            if self._clear_of(obj, k * DRAW_STEP * way, lead) >= DRAW_CLEAR:
+                need = k * DRAW_STEP
+                break
+        if need is None:
+            return
+        # the hands draw it in while it keeps DRAW_BODY from the trunk; the body steps aside for
+        # what is left
+        trunk = self._trunk(lead)
+        hands = 0.0
+        while hands + DRAW_STEP <= need + 1e-9 and (
+            self._gap_to(obj, (hands + DRAW_STEP) * way, trunk) >= DRAW_BODY
+        ):
+            hands += DRAW_STEP
+        aside = need - hands
+        self.step("drawing_out", hands=round(hands, 3), aside=round(aside, 3))
+        if hands > 0.0:
+            goals = {s: (lambda p=self.body.grip(d, s): (p[0] + hands * way, p[1])) for s in lead}
+            yield from self._move_hands(
+                goals, 0.2, "drawing it out", rot_tol=math.radians(25), pos_tol=0.03
+            )
+            self._check_holds()
+        if aside > 0.0:
+            carried = self._carried()
+
+            def each():
+                self._hold_carried(carried)
+
+            yield from self._step_back(aside, each, "drawing it out", FOLLOW_TOL, along=way[:2])
+
+    def _trunk(self, lead) -> list:
+        """The body's solid geoms but its arms: those farther than :data:`ARM_NEAR` from every
+        holding arm's line from shoulder to grip."""
+        m, d = self._m, self._d
+        lines = [(self.body.shoulder(d, s), self.body.grip(d, s)[0]) for s in lead]
+        out = []
+        for g in range(m.ngeom):
+            if not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            if not self.body.owns(m, int(m.geom_bodyid[g])):
+                continue
+            p = d.geom_xpos[g]
+            near = False
+            for a, b in lines:
+                e = b - a
+                t = min(max(float(np.dot(p - a, e) / max(float(np.dot(e, e)), 1e-12)), 0.0), 1.0)
+                if float(np.linalg.norm(p - a - t * e)) < ARM_NEAR:
+                    near = True
+            if not near:
+                out.append(g)
+        return out
+
+    def _gap_to(self, obj: int, shift, geoms) -> float:
+        """How far the held ``obj``, moved by ``shift``, stays from ``geoms`` (m, up to
+        :data:`DRAW_MAX`), its pose moved in a scratch copy of the state."""
+        m, d = self._m, self._d
+        if getattr(self, "_scratch", None) is None:
+            self._scratch = mujoco.MjData(m)
+        sd = self._scratch
+        sd.qpos[:] = d.qpos
+        sd.mocap_pos[:] = d.mocap_pos
+        sd.mocap_quat[:] = d.mocap_quat
+        root = int(m.body_rootid[obj])
+        j = int(m.body_jntadr[root])
+        if j >= 0 and m.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+            a = int(m.jnt_qposadr[j])
+            sd.qpos[a : a + 3] += np.asarray(shift, float)
+        mujoco.mj_kinematics(m, sd)
+        mine = [
+            g
+            for g in range(m.ngeom)
+            if int(m.body_rootid[m.geom_bodyid[g]]) == root
+            and (m.geom_contype[g] or m.geom_conaffinity[g])
+        ]
+        best = DRAW_MAX
+        fromto = np.zeros(6)
+        for h in geoms:
+            for g in mine:
+                gap = float(np.linalg.norm(sd.geom_xpos[g] - sd.geom_xpos[h]))
+                if gap - m.geom_rbound[g] - m.geom_rbound[h] > best:
+                    continue
+                best = min(best, float(mujoco.mj_geomDistance(m, sd, g, h, best, fromto)))
+        return best
+
+    def _clear_of(self, obj: int, shift, lead) -> float:
+        """How far, seen from above, the held ``obj`` and the hands ``lead`` holding it, moved by
+        ``shift``, stay from everything at their heights -- from the load's underside up to the
+        shoulders -- but the body and the load (m, up to :data:`DRAW_MAX`). What is under the
+        load (the arms it lay on, a table) is no obstacle to it; what is beside or over it is."""
+        m, d = self._m, self._d
+        x, y, _ = self.body.root()
+        root = (x, y, 0.0)
+        shift = np.asarray(shift, float)
+        own = {int(m.body_rootid[obj])} | {int(r) for r in self._contents(obj)}
+        low = float(self._extent(obj)[0][2])
+        high = max(float(self.body.shoulder(d, s)[2]) for s in lead)
+        pieces = []
+        for g in range(m.ngeom):
+            if int(m.body_rootid[m.geom_bodyid[g]]) in own and (
+                m.geom_contype[g] or m.geom_conaffinity[g]
+            ):
+                piece = geom_piece(m, d, g, root)
+                if piece is not None:
+                    pieces.append(piece.polygon + shift[:2])
+        for s in lead:
+            p = self.body.grip(d, s)[0][:2] - [x, y] + shift[:2]
+            pieces.append(
+                p + ARM_RADIUS * np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]])
+            )
+        best = DRAW_MAX
+        for h in range(m.ngeom):
+            if not (m.geom_contype[h] or m.geom_conaffinity[h]):
+                continue
+            b = int(m.geom_bodyid[h])
+            if int(m.body_rootid[b]) in own or self.body.owns(m, b):
+                continue
+            piece = geom_piece(m, d, h, root)
+            if piece is None or piece.z[1] <= low or piece.z[0] >= high:
+                continue
+            for poly in pieces:
+                best = min(best, _gap(poly, piece.polygon))
+        return best
 
     def _level(self, sides, rel):
         """Hold what both hands hold level: where a hand rides on the load the hand that holds it
@@ -1526,18 +1727,24 @@ class HumanoidPlugin(MachinePlugin):
         p[2] = float(self._extent(held)[0][2])
         return p
 
-    def _step_back(self, distance: float, each, what: str, tol: float):
+    def _step_back(self, distance: float, each, what: str, tol: float, along=None):
         """Step straight back by ``distance`` (m), keeping the heading, on the navigator exactly
         (unplanned, unsteered), calling ``each`` every step and failing where the body leaves the
         straight step by more than ``tol`` -- the step the way was checked on; then come to rest. A
         step that falls short is aimed on by what it lacks (:data:`BACK_TRIES` times at most), to
-        stand within :data:`AT_END` of where the way goes on from; one still short then fails."""
+        stand within :data:`AT_END` of where the way goes on from; one still short then fails.
+        With ``along`` (a floor direction), the step goes that way instead, the heading still kept:
+        a step aside."""
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if nav is None:
             self.fail(f"{self.entity} has no navigator to step back with")
         x0, y0, h = self.body.root()
-        back = np.array([-math.cos(h), -math.sin(h)])
-        self.step("stepping_back", distance=float(distance))
+        if along is None:
+            back = np.array([-math.cos(h), -math.sin(h)])
+            self.step("stepping_back", distance=float(distance))
+        else:
+            back = np.asarray(along, float)[:2] / float(np.linalg.norm(np.asarray(along)[:2]))
+            self.step("stepping_aside", distance=float(distance))
         self.body.keep_heading(h)
         self.body.limit_turn(CARRY_TURN)
         try:
