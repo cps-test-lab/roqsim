@@ -695,6 +695,59 @@ def test_a_shallow_load_is_lifted_clear_of_the_table_it_was_taken_from_before_it
         engine.shutdown()
 
 
+_LONG_BAR = """<mujoco><worldbody>
+<geom name="floor" type="plane" size="6 6 .05"/>
+<geom name="arm_a" type="box" pos="-1.6 -0.45 0.95" size="0.3 0.04 0.03"/>
+<geom name="arm_b" type="box" pos="-1.6 0.45 0.95" size="0.3 0.04 0.03"/>
+<body name="bar" pos="-1.55 0 1.0035"><freejoint name="bar_free"/>
+  <geom name="bar_box" type="box" size="0.0225 0.8 0.0225" mass="2.2"/>
+  <site name="bar/grip_l" pos="0.0525 -0.3 0" quat="{left}"/>
+  <site name="bar/grip_r" pos="0.0525 0.3 0" quat="{right}"/>
+</body></worldbody></mujoco>"""
+
+
+def _grip_quat(yaw):
+    """A grip frame pushing along ``yaw``: +x that way, +z down (``roqsim_motion.hands``)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.array([c, s, 0.0, s, -c, 0.0, 0.0, 0.0, -1.0]))
+    return " ".join(f"{v:.6f}" for v in q)
+
+
+def test_a_long_bar_in_both_hands_is_held_level_and_carried_off_the_arms_it_lay_on(tmp_path):
+    """The hand that holds a load the other rides on holds it level: a 1.6 m bar lifted off two arms
+    by grips 0.6 m apart has its far grip within LEVEL_GRIPS of the near one before its way is
+    planned, and is carried away. Hanging from the holding hand as the arm left it, turned a few
+    degrees, the bar's far end stayed down on the arms and the way was refused where it began."""
+    xml = tmp_path / "long_bar.xml"
+    xml.write_text(_LONG_BAR.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5)))
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -0.8, "y": 0.0}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        here = {"position": {"x": -1.0, "y": 0.0, "z": 0.0}}
+        sim.ok("approach", target=here, standoff=0.0, facing=math.pi)
+        sim.ok("grasp", hand="both", target="bar")
+        near, far = sim.m.site("bar/grip_l").id, sim.m.site("bar/grip_r").id
+        seq = sim.h.carry({"position": {"x": 1.5, "y": 0.0, "z": 0.0}}, standoff=0.0, facing=0.0)
+        level = None
+        while True:
+            sim.e.step()
+            if level is None and "lifted" in sim.events():
+                level = abs(float(sim.d.site_xpos[far][2] - sim.d.site_xpos[near][2]))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert level is not None and level < 0.012, level
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(

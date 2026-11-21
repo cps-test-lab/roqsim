@@ -96,6 +96,12 @@ ARRIVAL = 0.1
 #: How far apart (m) the surfaces under the corners of what is set down may be: more, and it would
 #: stand on two things, or half off one -- a drawer's wall and its deck, a bench's edge and the floor.
 LEVEL = 0.015
+#: How far the grips of a load in both hands may stand above one another (m), and how often the
+#: hand that holds it turns to bring them level before a carry fails.
+LEVEL_GRIPS = 0.01
+LEVEL_TRIES = 8
+LEVEL_SETTLE = 0.3
+LEVEL_GAIN = 0.5
 #: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
 #: drawer's stops, a comb's teeth, a lip round what it stood on.
 LIFT_FREE = 0.06
@@ -1387,6 +1393,7 @@ class HumanoidPlugin(MachinePlugin):
             rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
         )
         self._check_holds()
+        yield from self._level(sides, rel)
         # the height the hands holding came to (a riding one too): a lift ends within a few
         # centimetres of where it aims
         got = float(np.mean([self.body.grip(d, s)[0][2] for s in sides]))
@@ -1396,6 +1403,52 @@ class HumanoidPlugin(MachinePlugin):
         yield from self._walk_way(
             stand, yaw, to, carried, via=points, back_max=back_max, long_way=bool(long_way)
         )
+
+    def _level(self, sides, rel):
+        """Hold what both hands hold level: where a hand rides on the load the hand that holds it
+        does not, its far grip is no more than LEVEL_GRIPS higher or lower than the holding hand's
+        -- the holding hand turned about the way across between them until it is, LEVEL_TRIES
+        times at most, then failing naming the tilt. The load hangs from the holding hand, so the
+        hand's turn the arm leaves it, a few degrees, tilts a long load by as much at its far end."""
+        d = self._d
+        lead = [s for s in rel if not self._riding[s]]
+        riding = [s for s in sides if self._riding[s]]
+        if len(lead) != 1 or not riding:
+            return
+        s0 = lead[0]
+        near, far = self.holding[s0].obj_site, self.holding[riding[0]].obj_site
+        tilt = 0.0
+        goal_p, goal_q = rel[s0]()
+        for _ in range(LEVEL_TRIES):
+            a, b = d.site_xpos[near], d.site_xpos[far]
+            across = np.array([b[0] - a[0], b[1] - a[1], 0.0])
+            span = float(np.linalg.norm(across))
+            if span < 1e-6:
+                return
+            tilt = math.atan2(float(b[2] - a[2]), span)
+            if abs(b[2] - a[2]) <= LEVEL_GRIPS:
+                return
+            axis = np.cross(across / span, [0.0, 0.0, 1.0])
+            # its goal turned the other way about that axis, by the tilt: the far grip comes down
+            # to level, whatever turn the arm leaves the hand short of its goal by
+            goal_q = Q.mul(Q.axis_angle(axis, -LEVEL_GAIN * tilt), goal_q)
+            yield from self._move_hands(
+                {s0: lambda p=goal_p, q=goal_q: (p, q)},
+                0.3,
+                "level",
+                rot_tol=math.radians(25),
+                pos_tol=0.05,
+            )
+            yield from self.wait(LEVEL_SETTLE)  # the hand and what it holds come to rest
+            self._check_holds()
+        a, b = d.site_xpos[near], d.site_xpos[far]
+        if abs(b[2] - a[2]) > LEVEL_GRIPS:
+            name = mujoco.mj_id2name(self._m, mujoco.mjtObj.mjOBJ_BODY, self.holding[s0].obj_body)
+            self.fail(
+                f"cannot hold {name} level: its far grip stays {abs(b[2] - a[2]):.3f} m "
+                f"{'higher' if b[2] > a[2] else 'lower'} than the near one "
+                f"({math.degrees(tilt):.1f} deg)"
+            )
 
     def _extent(self, held: int):
         """The held object's world box now: its lowest and highest corners, of its solid geoms."""
