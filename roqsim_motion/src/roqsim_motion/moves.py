@@ -2718,20 +2718,35 @@ class HumanoidPlugin(MachinePlugin):
         if len(held) == 1 and point[2] > self.body.hang_height(sides[0]) + ONE_HAND_RAISE:
             yield from self._one_hand_before(sides[0], at)
         starts = {s: self.body.grip(d, s) for s in sides}
-        # Toward the target, as far as the hands reach in front of the body: set down on the near
-        # part of a surface (a body, an entity), as a worker does, not stretched out to its middle.
+        # Toward the target, as far as the hands reach: set down on the near part of a surface (a
+        # body, an entity), as a worker does, not stretched out to its middle. Ahead and to the
+        # side each by the hands' reach that way, at the height it sets it down at: a load set down
+        # beside the body goes sideways as far as the arms reach there, whatever it lacks ahead.
         x, y, yaw = self.body.root()
         ahead = np.array([math.cos(yaw), math.sin(yaw)])
+        left = np.array([-math.sin(yaw), math.cos(yaw)])
         shift = np.array([point[0], point[1]]) - low()[:2]
-        for s in sides:
-            # how far in front of the body the hand would be: a box held by its ends has its hands
-            # to the sides as well, which is no further to reach forward; how far it reaches at the
-            # height it sets it down at
-            reach = self.body.place_reach(d, s, float(point[2]) + float(starts[s][0][2] - low()[2]))
-            out = float((starts[s][0][:2] + shift - [x, y]) @ ahead)
-            forward = float(shift @ ahead)
-            if out > reach and forward > 1e-9:
-                shift *= max(0.0, 1.0 - (out - reach) / forward)
+        parts = [float(shift @ ahead), float(shift @ left)]
+        for k, axis in enumerate((ahead, left)):
+            # back toward the body is no reach
+            if abs(parts[k]) < 1e-9 or (k == 0 and parts[k] < 0.0):
+                continue
+            way = axis * math.copysign(1.0, parts[k])
+            for s in sides:
+                # how far that way the hand would be: a box held by its ends has its hands to the
+                # sides as well, which is no further to reach forward
+                reach = self.body.place_reach(
+                    d,
+                    s,
+                    float(point[2]) + float(starts[s][0][2] - low()[2]),
+                    along=None if k == 0 else way,
+                )
+                moved = parts[0] * ahead + parts[1] * left
+                out = float((starts[s][0][:2] + moved - [x, y]) @ way)
+                if out > reach:
+                    cut = min(abs(parts[k]), out - reach)
+                    parts[k] -= math.copysign(cut, parts[k])
+        shift = parts[0] * ahead + parts[1] * left
         where = low()[:2] + shift
         # What it is set over is lower than it is carried, or than the place where that is higher
         # (a shelf above a carried load): a lintel or a roof over the way is above it, not a

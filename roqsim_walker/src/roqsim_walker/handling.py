@@ -194,16 +194,20 @@ class WalkerBody(HumanoidBody):
     def shoulder(self, data, side):
         return data.mocap_pos[self.st.mocap[f"shoulder_{side}"]].copy()
 
-    def place_reach(self, data, side: str, height: float) -> float:
+    def place_reach(self, data, side: str, height: float, along=None) -> float:
         """How far ahead of the root the walker's own arm solve puts ``side``'s grip, turned as it
         is now, at ``height``, within PLACE_RESIDUAL of its goal: found by halving over the
         distance, with the clip pose and pelvis the solve last stood on -- bending, crouching and
-        leaning as it does for any goal, so what the reach takes in is what the arm makes."""
+        leaning as it does for any goal, so what the reach takes in is what the arm makes. With
+        ``along`` (a floor direction, a unit 2-vector), how far that way instead: to a side."""
         if self._solve_ctx is None:
-            return HumanoidBody.place_reach(self, data, side, height)
+            return HumanoidBody.place_reach(self, data, side, height, along)
         root, heading, local = self._solve_ctx
         x, y, yaw = self.root()
-        ahead = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        if along is None:
+            ahead = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        else:
+            ahead = np.array([float(along[0]), float(along[1]), 0.0])
         p, q = self.grip(data, side)
         across = np.array([p[0] - x, p[1] - y, 0.0])
         across -= ahead * float(across @ ahead)

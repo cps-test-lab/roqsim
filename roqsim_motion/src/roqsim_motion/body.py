@@ -150,13 +150,14 @@ class HumanoidBody:
     def gripper(self, data, side: str, closed: bool) -> None:
         """Close or open ``side``'s gripper, for a hand that has one instead of fingers."""
 
-    def place_reach(self, data, side: str, height: float) -> float:
+    def place_reach(self, data, side: str, height: float, along=None) -> float:
         """How far in front of the body's root ``side``'s hand reaches to set something down with
         the hand at ``height`` (m), at most: its shoulder's reach (:meth:`arm_reach`) across the
-        floor at that height, from where the shoulder stands. A body that bends to reach says
-        how far that takes it."""
+        floor at that height, from where the shoulder stands. With ``along`` (a floor direction,
+        a unit 2-vector), how far it reaches that way instead -- to a side. A body that bends to
+        reach says how far that takes it."""
         x, y, yaw = self.root()
-        ahead = np.array([math.cos(yaw), math.sin(yaw)])
+        ahead = np.array([math.cos(yaw), math.sin(yaw)]) if along is None else np.asarray(along)
         sh = self.shoulder(data, side)
         reach, dz = self.arm_reach(side), float(sh[2] - height)
         if abs(dz) >= reach:
