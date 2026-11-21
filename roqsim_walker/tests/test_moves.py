@@ -1312,7 +1312,11 @@ def test_a_slide_along_the_face_of_its_handle_opens_pulled_and_shuts_pushed(
 def _part_on_a_table(z_board):
     """A small part with a grip on a table, and a board at ``z_board`` (m) to set it on."""
     world = _world({"graspable": ["part"]})
-    grip = {"kind": "grip", "at": [0.0, 0.0, 0.0, -math.pi / 2], "stand": [[0.0, 0.5, -math.pi / 2]]}
+    grip = {
+        "kind": "grip",
+        "at": [0.0, 0.0, 0.0, -math.pi / 2],
+        "stand": [[0.0, 0.5, -math.pi / 2]],
+    }
     world["components"] += [
         {
             "box": {
@@ -1359,6 +1363,30 @@ def test_a_part_in_one_hand_is_carried_at_the_side_where_the_hand_hangs_to_a_hig
         sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
         part = sim.d.xpos[sim.m.body("part_box").id]
         assert part[2] < 1.2, part  # at the side, below the board
+    finally:
+        engine.shutdown()
+
+
+def test_a_part_that_would_tip_over_a_narrow_boards_edge_is_not_let_go_on_it():
+    """A part in one hand comes down on a board above the shoulder hanging tilted from the grip,
+    an edge first, and lies down flat once let go. On a board too narrow for it to lie on (0.12 m
+    deep), it would tip over the board's edge: the place fails before letting go, saying so, and
+    the part stays in the hand. Let go, it fell over the edge."""
+    world = _part_on_a_table(1.45)
+    for c in world["components"]:
+        if c.get("name") == "board":
+            c["box"]["size"][1] = 0.12
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
+        st = sim.run("place", at="board")
+        assert "would tip over the edge" in st.error, st.error
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        assert hp.holding["r"] is not None  # still in the hand
     finally:
         engine.shutdown()
 

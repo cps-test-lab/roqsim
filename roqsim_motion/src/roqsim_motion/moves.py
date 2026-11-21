@@ -137,6 +137,9 @@ CAUGHT = 0.03
 #: it again by what it lacks before the place fails.
 SQUARE_TOL = math.radians(5)
 SQUARE_TRIES = 4
+#: How far tilted (rad) what is set down may rest on an edge before a place looks where it would lie
+#: down flat once let go.
+LAND_TILT = math.radians(5)
 #: How fast a body carrying something turns on the spot (rad/s).
 CARRY_TURN = 1.0
 #: How far in front of a target a body stands to work at it, where the target states no stance and
@@ -2524,6 +2527,47 @@ class HumanoidPlugin(MachinePlugin):
             return p, p
         return np.min(corners, axis=0), np.max(corners, axis=0)
 
+    def _lands_flat(self, held: int, at: str, top: float) -> None:
+        """Fail where ``held``, resting tilted by more than LAND_TILT with an edge on what it is set
+        down on, would not lie flat on it once let go: laid level about its lowest edge, a corner
+        of its underside over something lower, or over nothing -- it would tip over the edge."""
+        m, d = self._m, self._d
+        om = d.xmat[held].reshape(3, 3)
+        k = max(range(3), key=lambda i: abs(float(om[2, i])))
+        up = om[:, k] * (1.0 if om[2, k] >= 0.0 else -1.0)
+        tilt = math.acos(min(1.0, float(up[2])))
+        if tilt <= LAND_TILT:
+            return
+        corners = []
+        for g in range(m.ngeom):
+            if int(m.geom_bodyid[g]) != held or not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            c, h = m.geom_aabb[g][:3], m.geom_aabb[g][3:]
+            rot = d.geom_xmat[g].reshape(3, 3)
+            corners += [
+                d.geom_xpos[g] + rot @ (c + h * [sx, sy, sz])
+                for sx in (-1, 1)
+                for sy in (-1, 1)
+                for sz in (-1, 1)
+            ]
+        if not corners:
+            return
+        corners = np.array(corners)
+        pivot = corners[int(np.argmin(corners[:, 2]))]
+        axis = np.cross(up, [0.0, 0.0, 1.0])
+        axis /= float(np.linalg.norm(axis)) + 1e-12
+        level = Q.axis_angle(axis, tilt)
+        flat = np.array([pivot + Q.rotate(level, c - pivot) for c in corners])
+        low = flat[flat[:, 2] <= flat[:, 2].min() + 0.003]
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, held) or "what it holds"
+        for c in low:
+            surface, under = self._surface(np.array([c[0], c[1], top]), held, below=top + LEVEL)
+            if under < 0 or abs(float(surface[2]) - top) > LEVEL:
+                self.fail(
+                    f"out of reach: {name} rests on {at} tilted {math.degrees(tilt):.0f} deg on "
+                    f"an edge, and let go it would tip over the edge of it"
+                )
+
     def _bottom(self, held: int) -> np.ndarray:
         """Where the held object stands on: its ``/bottom`` site, or under its origin at the bottom
         of its solid geoms (:meth:`_extent`), wherever its origin is."""
@@ -2980,6 +3024,9 @@ class HumanoidPlugin(MachinePlugin):
             self._check_holds()
             yield
         yield from self.wait(0.2)
+        # held tilted with an edge on it, it lies down flat once let go: about that edge, where
+        # every corner of it is to come to rest on what it was set down on
+        self._lands_flat(obj, at, top)
         self.step("set_down", at=at)
         if release:
             for s in held:
