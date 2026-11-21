@@ -31,7 +31,8 @@ two frames one.
 ## The moves
 
 A `humanoid` component, nested under a walker with `hands: true` or under a humanoid robot, gives it
-the moves `approach`, `reach`, `press`, `grasp`, `release`, `pull`, `push`, `carry` and `place`, and
+the moves `approach`, `reach`, `press`, `grasp`, `release`, `pull`, `push`, `carry` and `place`,
+`plan` (the way a carry would walk, planned and not walked), and
 `play`, `stop_clip` and `look_at` for a body that plays clips and turns its head (a walker's): the
 programs of a `MachinePlugin`, so each is started through the machine handle (`machine:<name>`, and
 `humanoid:<name>` with a method per move), waited on by its status and recorded as events. Their

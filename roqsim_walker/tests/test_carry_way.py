@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
@@ -204,6 +205,38 @@ def test_a_dead_end_without_a_step_back_has_no_way():
         assert st.error.startswith("no way holding tote_1 to "), st.error
         assert "back_max 0.00 m" in st.error, st.error
         assert any(n in st.error for n in ("side_n", "side_s", "end_wall")), st.error
+    finally:
+        engine.shutdown()
+
+
+def test_a_plan_says_what_the_carry_would_find_and_moves_nothing():
+    """``plan`` plans the way a carry would walk, for the body and what it holds as they are, and
+    ends: in the dead end without a step back it fails with the carry's own message, with one it
+    plans a way; the body and the tote do not move either time, and the carry that follows walks
+    the way it planned."""
+    case = CASES["carry_post_behind"]
+    engine = _engine("carry_post_behind", case["start"], case["tote_at"])
+    try:
+        sim = Carry(engine)
+        st, _touches, _t0 = sim.carry(case["to"], case["facing"], back_max=0.0)
+        refused = st.error
+        assert refused.startswith("no way holding tote_1 to "), refused
+        to = {"position": {"x": case["to"][0], "y": case["to"][1], "z": 0.0}}
+        tote = sim.m.body("tote_1").id
+        before = (sim.body.root(), sim.d.xpos[tote].copy())
+        t0 = engine.ctx.sim_time
+        st = sim.run("plan", to=to, standoff=0.6, facing=case["facing"], back_max=0.0)
+        assert st.error == refused, st.error
+        st = sim.run("plan", to=to, standoff=0.6, facing=case["facing"])
+        assert st.error == "", st.error
+        assert sim.events("planned", t0), "no plan said"
+        x, y, h = sim.body.root()
+        assert math.hypot(x - before[0][0], y - before[0][1]) < 0.005
+        assert abs(h - before[0][2]) < 0.01
+        assert float(np.linalg.norm(sim.d.xpos[tote] - before[1])) < 0.005
+        assert not sim.events("walking", t0) and not sim.events("stepping_back", t0)
+        st = sim.run("carry", to=to, standoff=0.6, facing=case["facing"])
+        assert st.error == "", st.error
     finally:
         engine.shutdown()
 
