@@ -96,6 +96,12 @@ ARRIVAL = 0.1
 #: How far apart (m) the surfaces under the corners of what is set down may be: more, and it would
 #: stand on two things, or half off one -- a drawer's wall and its deck, a bench's edge and the floor.
 LEVEL = 0.015
+#: How far the grips of a load in both hands may stand above one another (m), and how often the
+#: hand that holds it turns to bring them level before a carry fails.
+LEVEL_GRIPS = 0.01
+LEVEL_TRIES = 8
+LEVEL_SETTLE = 0.3
+LEVEL_GAIN = 0.5
 #: How far a carry lifts what it holds straight up before drawing it in toward the body (m): over a
 #: drawer's stops, a comb's teeth, a lip round what it stood on.
 LIFT_FREE = 0.06
@@ -1402,8 +1408,12 @@ class HumanoidPlugin(MachinePlugin):
             low = self._bottom(obj)[2]
             below = self.body.grip(d, lead)[0][2] - low
             height = max(height, top + below + CLEAR)
-            # and never down into what it was lifted from
-            height = max(height, float(self.body.grip(d, lead)[0][2]) + 0.03)
+            # and clear of what it was lifted from: what it holds by CLEAR, and the arms that hold
+            # it, which the way checks as capsules of ARM_RADIUS down to the hands, as well
+            here = d.xpos[obj].copy()
+            under = self._top(np.array([here[0], here[1], low]), obj, below=low + 0.01)
+            grip_z = float(self.body.grip(d, lead)[0][2])
+            height = max(height, grip_z + 0.03, under + CLEAR + below, under + CLEAR + ARM_RADIUS)
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
         rel = {}
@@ -1430,6 +1440,7 @@ class HumanoidPlugin(MachinePlugin):
             rel, 0.3, "the carrying height", rot_tol=math.radians(25), pos_tol=0.05
         )
         self._check_holds()
+        yield from self._level(sides, rel)
         # the height the hands holding came to (a riding one too): a lift ends within a few
         # centimetres of where it aims
         got = float(np.mean([self.body.grip(d, s)[0][2] for s in sides]))
@@ -1439,6 +1450,52 @@ class HumanoidPlugin(MachinePlugin):
         yield from self._walk_way(
             stand, yaw, to, carried, via=points, back_max=back_max, long_way=bool(long_way)
         )
+
+    def _level(self, sides, rel):
+        """Hold what both hands hold level: where a hand rides on the load the hand that holds it
+        does not, its far grip is no more than LEVEL_GRIPS higher or lower than the holding hand's
+        -- the holding hand turned about the way across between them until it is, LEVEL_TRIES
+        times at most, then failing naming the tilt. The load hangs from the holding hand, so the
+        hand's turn the arm leaves it, a few degrees, tilts a long load by as much at its far end."""
+        d = self._d
+        lead = [s for s in rel if not self._riding[s]]
+        riding = [s for s in sides if self._riding[s]]
+        if len(lead) != 1 or not riding:
+            return
+        s0 = lead[0]
+        near, far = self.holding[s0].obj_site, self.holding[riding[0]].obj_site
+        tilt = 0.0
+        goal_p, goal_q = rel[s0]()
+        for _ in range(LEVEL_TRIES):
+            a, b = d.site_xpos[near], d.site_xpos[far]
+            across = np.array([b[0] - a[0], b[1] - a[1], 0.0])
+            span = float(np.linalg.norm(across))
+            if span < 1e-6:
+                return
+            tilt = math.atan2(float(b[2] - a[2]), span)
+            if abs(b[2] - a[2]) <= LEVEL_GRIPS:
+                return
+            axis = np.cross(across / span, [0.0, 0.0, 1.0])
+            # its goal turned the other way about that axis, by the tilt: the far grip comes down
+            # to level, whatever turn the arm leaves the hand short of its goal by
+            goal_q = Q.mul(Q.axis_angle(axis, -LEVEL_GAIN * tilt), goal_q)
+            yield from self._move_hands(
+                {s0: lambda p=goal_p, q=goal_q: (p, q)},
+                0.3,
+                "level",
+                rot_tol=math.radians(25),
+                pos_tol=0.05,
+            )
+            yield from self.wait(LEVEL_SETTLE)  # the hand and what it holds come to rest
+            self._check_holds()
+        a, b = d.site_xpos[near], d.site_xpos[far]
+        if abs(b[2] - a[2]) > LEVEL_GRIPS:
+            name = mujoco.mj_id2name(self._m, mujoco.mjtObj.mjOBJ_BODY, self.holding[s0].obj_body)
+            self.fail(
+                f"cannot hold {name} level: its far grip stays {abs(b[2] - a[2]):.3f} m "
+                f"{'higher' if b[2] > a[2] else 'lower'} than the near one "
+                f"({math.degrees(tilt):.1f} deg)"
+            )
 
     def _extent(self, held: int):
         """The held object's world box now: its lowest and highest corners, of its solid geoms."""
@@ -1524,13 +1581,22 @@ class HumanoidPlugin(MachinePlugin):
         finally:
             self.body.limit_turn(None)
 
-    def _surface(self, point, held: int, accept=None, inside=None, above: float = 1.5):
+    def _surface(
+        self,
+        point,
+        held: int,
+        accept=None,
+        inside=None,
+        above: float = 1.5,
+        below: float | None = None,
+    ):
         """The top of whatever is under ``point``, and its body: a ray cast down from ``above`` m
-        over it (a ray starting inside something does not see it), past what is held (and what is welded to it), what rides in or on it
-        (:meth:`_contents`), the humanoid's own bodies, anything that collides with nothing, and
-        with ``accept`` every body it refuses."""
+        over it, or from the height ``below`` (m) where given, so what is higher is not under it
+        (a ray starting inside something does not see it), past what is held (and what is welded
+        to it), what rides in or on it (:meth:`_contents`), the humanoid's own bodies, anything
+        that collides with nothing, and with ``accept`` every body it refuses."""
         m, d = self._m, self._d
-        start = np.array([point[0], point[1], point[2] + above])
+        start = np.array([point[0], point[1], point[2] + above if below is None else float(below)])
         geomid = np.zeros(1, np.int32)
         inside = self._contents(held) if inside is None else inside
         while True:
@@ -1645,14 +1711,18 @@ class HumanoidPlugin(MachinePlugin):
 
         return accept
 
-    def _top(self, point, held: int, accept=None, spacing: float | None = 0.04) -> float:
+    def _top(
+        self, point, held: int, accept=None, spacing: float | None = 0.04, below=None
+    ) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`, a grid at
         ``spacing``) if it stood with its origin over ``point``; with ``accept``, of the bodies it
-        accepts."""
+        accepts; with ``below``, of what is lower than that height (m)."""
         tops = []
         inside = self._contents(held)
         for off in self._footprint(held, spacing):
-            p, under = self._surface(np.asarray(point, float) + off, held, accept, inside)
+            p, under = self._surface(
+                np.asarray(point, float) + off, held, accept, inside, below=below
+            )
             if under >= 0:
                 tops.append(float(p[2]))
         return max(tops) if tops else float(point[2])
@@ -1671,14 +1741,16 @@ class HumanoidPlugin(MachinePlugin):
         off = rel - round(rel / (math.pi / 2)) * (math.pi / 2)
         return -off if abs(off) <= SQUARE_MAX else 0.0
 
-    def _path_top(self, a, b, held: int, z: float) -> float:
+    def _path_top(self, a, b, held: int, z: float, below=None) -> float:
         """The highest surface under the held object's footprint (:meth:`_footprint`) with its
-        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to: in
-        steps finer than the footprint's grid, so that together they pass over a wall 2 cm thick."""
+        origin anywhere on the way from ``a`` to ``b`` (floor points), whatever it belongs to, and
+        with ``below`` lower than that height (m): in steps finer than the footprint's grid, so
+        that together they pass over a wall 2 cm thick."""
         a, b = np.asarray(a, float), np.asarray(b, float)
         steps = max(2, int(math.ceil(float(np.linalg.norm(b - a)) / 0.015)))
         return max(
-            self._top(np.array([*(a + k / steps * (b - a)), z]), held) for k in range(steps + 1)
+            self._top(np.array([*(a + k / steps * (b - a)), z]), held, below=below)
+            for k in range(steps + 1)
         )
 
     @program
@@ -1701,16 +1773,21 @@ class HumanoidPlugin(MachinePlugin):
         x, y, yaw = self.body.root()
         ahead = np.array([math.cos(yaw), math.sin(yaw)])
         shift = np.array([point[0], point[1]]) - low()[:2]
-        reach = self.body.place_reach()
         for s in sides:
             # how far in front of the body the hand would be: a box held by its ends has its hands
-            # to the sides as well, which is no further to reach forward
+            # to the sides as well, which is no further to reach forward; how far it reaches at the
+            # height it sets it down at
+            reach = self.body.place_reach(d, s, float(point[2]) + float(starts[s][0][2] - low()[2]))
             out = float((starts[s][0][:2] + shift - [x, y]) @ ahead)
             forward = float(shift @ ahead)
             if out > reach and forward > 1e-9:
                 shift *= max(0.0, 1.0 - (out - reach) / forward)
         where = low()[:2] + shift
-        surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj)
+        # What it is set over is lower than it is carried, or than the place where that is higher
+        # (a shelf above a carried load): a lintel or a roof over the way is above it, not a
+        # surface to lift it over.
+        ceiling = max(float(self._extent(obj)[1][2]), float(point[2])) + CLEAR
+        surface, under = self._surface(np.array([where[0], where[1], point[2]]), obj, below=ceiling)
         if (
             target.kind != "world"
             and under >= 0
@@ -1724,12 +1801,16 @@ class HumanoidPlugin(MachinePlugin):
         origin = d.xpos[obj][:2] + shift
         top = max(
             float(surface[2]),
-            self._top(np.array([origin[0], origin[1], point[2]]), obj, self._on(target)),
+            self._top(
+                np.array([origin[0], origin[1], point[2]]), obj, self._on(target), below=ceiling
+            ),
         )
         # What it is set down on is under all of it: the surfaces under its corners where it goes
         # are one, or it would stand on a drawer's wall and its deck, or half off a bench's edge.
         under_corners = [
-            self._surface(np.array([origin[0] + off[0], origin[1] + off[1], point[2]]), obj)
+            self._surface(
+                np.array([origin[0] + off[0], origin[1] + off[1], point[2]]), obj, below=ceiling
+            )
             for off in self._footprint(obj)
         ]
         # a corner over nothing solid (a floor that collides with nothing) stands on nothing
@@ -1747,7 +1828,7 @@ class HumanoidPlugin(MachinePlugin):
         # rim the target's footprint does not cover): straight up first where that is higher than
         # it is carried, then across, so it never cuts down through one.
         here = d.xpos[obj][:2].copy()
-        clear = max(top, self._path_top(here, here + shift, obj, point[2])) + CLEAR
+        clear = max(top, self._path_top(here, here + shift, obj, point[2], below=ceiling)) + CLEAR
         rise = clear - low()[2]
         if rise > 0.0:
             up = np.array([0.0, 0.0, rise])
