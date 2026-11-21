@@ -1946,6 +1946,11 @@ class HumanoidPlugin(MachinePlugin):
         carrying = [s for s in sides if not self._riding[s] and not self._kept(s)]
         load = [s for s in sides if not self._kept(s)] or sides
         obj = self.holding[load[0]].obj_body
+        one_hand = len(carrying) == 1 and len(load) == 1
+        if height is None and one_hand:
+            # at the side, where the hand hangs, lifted off what it stood on first (below): held
+            # palm forward beside the shoulder, a hand cannot raise it to clear where it goes
+            height = self.body.hang_height(carrying[0])
         if height is None:
             # a hand's breadth under the pelvis, or clear of the surface it goes to
             height = self.body.carry_height()
@@ -1961,7 +1966,7 @@ class HumanoidPlugin(MachinePlugin):
         x, y, yaw = self.body.root()
         heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
         rel = {}
-        if len(carrying) == 1 and len(load) == 1:
+        if one_hand:
             rel = self._one_hand_lift(carrying[0], height)
         for s in [] if rel else carrying:
             p, q = self.body.grip(d, s)
@@ -1975,7 +1980,8 @@ class HumanoidPlugin(MachinePlugin):
         # Straight up off what it stood on first, by LIFT_FREE at most, before it comes in toward the
         # body: drawn in at once, it would drag what it stands in (a drawer's stops) along with it.
         low_z = min(float(self.body.grip(d, s)[0][2]) for s in rel)
-        free = min(LIFT_FREE, max(0.0, height - low_z))
+        # a load in one hand goes down to the side from where it was taken: up off it first
+        free = LIFT_FREE if one_hand else min(LIFT_FREE, max(0.0, height - low_z))
         if free > 0.005:
             up = {s: (lambda p=self.body.grip(d, s): (p[0] + [0.0, 0.0, free], p[1])) for s in rel}
             yield from self._move_hands(

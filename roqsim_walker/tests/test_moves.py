@@ -627,6 +627,60 @@ def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
     assert abs(plugin._path_top([0.0, -2.6], [0.0, -3.4], tote, 0.0) - 0.9) < 0.01
 
 
+def _part_on_a_table(z_board):
+    """A small part with a grip on a table, and a board at ``z_board`` (m) to set it on."""
+    world = _world({"graspable": ["part"]})
+    grip = {"kind": "grip", "at": [0.0, 0.0, 0.0, -math.pi / 2], "stand": [[0.0, 0.5, -math.pi / 2]]}
+    world["components"] += [
+        {
+            "box": {
+                "prefix": "table_",
+                "pose": {"position": {"x": -1.5, "y": -0.3, "z": 0.375}},
+                "size": [0.6, 0.8, 0.75],
+                "motion": "static",
+            },
+            "name": "table",
+        },
+        {
+            "box": {
+                "prefix": "part_",
+                "pose": {"position": {"x": -1.5, "y": 0.0, "z": 0.78}},
+                "size": [0.1, 0.08, 0.06],
+                "motion": "physics",
+            },
+            "name": "part",
+            "components": [{"slots": {"body": "part_box", "slots": {"grip": grip}}}],
+        },
+        {
+            "box": {
+                "prefix": "board_",
+                "pose": {"position": {"x": 2.0, "y": 2.5, "z": z_board - 0.02}},
+                "size": [0.6, 0.4, 0.04],
+                "motion": "static",
+            },
+            "name": "board",
+        },
+    ]
+    return world
+
+
+def test_a_part_in_one_hand_is_carried_at_the_side_where_the_hand_hangs_to_a_high_board():
+    """A part taken in one hand goes to a board above the shoulder carried at the body's side
+    where the hand hangs: held palm forward beside the shoulder, lifted to clear the board, the
+    hand could not make it."""
+    engine = _engine(_part_on_a_table(1.45))
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
+        part = sim.d.xpos[sim.m.body("part_box").id]
+        assert part[2] < 1.2, part  # at the side, below the board
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
