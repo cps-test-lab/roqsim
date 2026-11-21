@@ -1726,10 +1726,11 @@ class HumanoidPlugin(MachinePlugin):
         x, y, yaw = self.body.root()
         ahead = np.array([math.cos(yaw), math.sin(yaw)])
         shift = np.array([point[0], point[1]]) - low()[:2]
-        reach = self.body.place_reach()
         for s in sides:
             # how far in front of the body the hand would be: a box held by its ends has its hands
-            # to the sides as well, which is no further to reach forward
+            # to the sides as well, which is no further to reach forward; how far it reaches at the
+            # height it sets it down at
+            reach = self.body.place_reach(d, s, float(point[2]) + float(starts[s][0][2] - low()[2]))
             out = float((starts[s][0][:2] + shift - [x, y]) @ ahead)
             forward = float(shift @ ahead)
             if out > reach and forward > 1e-9:

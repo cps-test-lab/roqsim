@@ -374,23 +374,31 @@ def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
 
 def test_a_place_beyond_reach_sets_the_load_down_as_far_forward_as_the_hands_reach(sim):
     """A load held by its ends has its hands to the sides: a place past its reach sets it down with
-    the hands as far in front of the body as they reach, not short of that by their spread."""
+    the hands as far in front of the body as they reach at the height they set it down at, not
+    short of that by their spread."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    sim.ok("carry", to="bench", standoff=0.9, facing=math.pi / 2)
     x, y, yaw = sim.body.root()
     ahead = np.array([math.cos(yaw), math.sin(yaw)])
+    # how far the hand that holds it reaches with the tote set down on the bench (0.75 m); the
+    # other rides on its grip
+    plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+    low = float(plugin._bottom(sim.m.body("tote_1").id)[2])
+    (side,) = [s for s in "lr" if not plugin._riding[s]]
+    reach = sim.body.place_reach(sim.d, side, 0.75 + float(sim.body.grip(sim.d, side)[0][2]) - low)
     seq = sim.h.place({"position": {"x": x, "y": 2.75, "z": 0.75}}, release=False)
     out = None
     while True:
         sim.e.step()
         if "lowering" in sim.events() and out is None:
-            out = max(float((sim.body.grip(sim.d, s)[0][:2] - [x, y]) @ ahead) for s in "lr")
+            out = float((sim.body.grip(sim.d, side)[0][:2] - [x, y]) @ ahead)
         st = sim.h.status()
         if st.seq == seq and st.finished:
             break
     assert st.error == "", st.error
-    assert out > sim.body.place_reach() - 0.015, out
+    assert reach > 0.7, reach  # the arm reaches farther than it stands from the bench's edge
+    assert out > reach - 0.03, (out, reach)
 
 
 def test_a_place_the_hands_cannot_bring_the_load_over_fails_holding_it(sim, monkeypatch):
@@ -797,7 +805,7 @@ def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
     over the bench's edge is refused, and one wholly on it is set down."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)  # the tote over the edge
+    sim.ok("carry", to="bench", standoff=1.1, facing=math.pi / 2)  # the tote over the edge
     st = sim.run("place", at="bench")
     assert st.error.startswith("out of reach") and "closer" in st.error, st.error
     assert sim.d.body("tote_1").xpos[2] > 0.7  # still held
@@ -808,6 +816,20 @@ def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
     assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
 
 
+def test_a_place_reaches_as_far_as_the_arm_solve_puts_the_hand(sim):
+    """A place reaches as far ahead as the walker's arm solve puts the hand that holds the load, at
+    the height it sets it down at, bending over as the solve does: standing 0.75 m from the bench's
+    middle, the tote is set down wholly on it. Held to a fixed 0.55 m, it came down half over the
+    bench's near edge, and the place was refused."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
+    sim.ok("place", at="bench")
+    for _ in range(300):
+        sim.e.step()
+    assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02  # on the bench
+
+
 def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
     """A floor drawn but colliding with nothing (a hall's) is nothing to stand on: a corner over it
     is a corner over nothing."""
@@ -815,7 +837,7 @@ def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
     saved = sim.m.geom_contype[floor].copy(), sim.m.geom_conaffinity[floor].copy()
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
+    sim.ok("carry", to="bench", standoff=1.2, facing=math.pi / 2)
     try:
         sim.m.geom_contype[floor] = 0
         sim.m.geom_conaffinity[floor] = 0
@@ -828,7 +850,7 @@ def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=1.2)
+    sim.ok("carry", to="bench", standoff=1.6)
     st = sim.run("place", at="bench")
     assert st.error.startswith("out of reach") and "not bench" in st.error
     assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
