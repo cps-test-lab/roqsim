@@ -791,7 +791,7 @@ class HumanoidPlugin(MachinePlugin):
                         to=float(seg.poses[-1][2]),
                         turn=float(seg.angle),
                     )
-                yield from self._spin(seg.angle, each)
+                yield from self._spin(seg.angle, each, to=float(seg.poses[-1][2]))
             elif seg.kind == "back":
                 yield from self._step_back(seg.distance, each, label, tol)
         yield from self._face(yaw, what, each)
@@ -849,10 +849,15 @@ class HumanoidPlugin(MachinePlugin):
                 f"{tol:.3f} m of it"
             )
 
-    def _spin(self, angle: float, each):
+    def _spin(self, angle: float, each, to: float | None = None):
         """Turn on the spot by ``angle`` (rad, signed) at :data:`CARRY_TURN`, a quarter turn at a
-        time so that it goes round the way it is told, calling ``each`` every step."""
+        time so that it goes round the way it is told, calling ``each`` every step. With ``to``,
+        the heading the turn ends at: what the body faces off where the turn was planned from is
+        turned away too, so an error of a leg before does not stay on the legs after."""
         heading0 = self.body.root()[2]
+        if to is not None:
+            off = to - (heading0 + angle)
+            angle += math.atan2(math.sin(off), math.cos(off))
         legs = max(1, int(math.ceil(abs(angle) / (math.pi / 2))))
         for k in range(1, legs + 1):
             # on through each quarter but the last, not stopping at it
