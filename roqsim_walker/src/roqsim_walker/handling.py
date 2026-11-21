@@ -40,6 +40,8 @@ _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "a
 #: root it looks for a place's reach (m).
 PLACE_RESIDUAL = 0.01
 PLACE_SEARCH = 1.2
+#: The step the range of a place's reach is looked through by (m).
+PLACE_STEP = 0.05
 
 
 def layouts_for(
@@ -193,10 +195,11 @@ class WalkerBody(HumanoidBody):
 
     def place_reach(self, data, side: str, height: float, along=None) -> float:
         """How far ahead of the root the walker's own arm solve puts ``side``'s grip, turned as it
-        is now, at ``height``, within PLACE_RESIDUAL of its goal: found by halving over the
-        distance, with the clip pose and pelvis the solve last stood on -- bending, crouching and
-        leaning as it does for any goal, so what the reach takes in is what the arm makes. With
-        ``along`` (a floor direction, a unit 2-vector), how far that way instead: to a side."""
+        is now, at ``height``, within PLACE_RESIDUAL of its goal: the farthest of the range up to
+        PLACE_SEARCH it makes, looked through in steps of PLACE_STEP and refined by halving, with
+        the clip pose and pelvis the solve last stood on -- bending, crouching and leaning as it
+        does for any goal, so what the reach takes in is what the arm makes. With ``along`` (a
+        floor direction, a unit 2-vector), how far that way instead: to a side."""
         if self._solve_ctx is None:
             return HumanoidBody.place_reach(self, data, side, height, along)
         root, heading, local = self._solve_ctx
@@ -214,9 +217,16 @@ class WalkerBody(HumanoidBody):
             sol = solve(self.desc, root, heading, local, {side: HandGoal(goal, q)}, self.layouts)
             return sol.residual.get(side, 1.0) <= PLACE_RESIDUAL
 
-        lo, hi = 0.0, PLACE_SEARCH
-        if not reaches(lo):
+        # Where the arm makes the hand is not one stretch from the root out: beside the hip, at a
+        # height, it may not; further out it does. The whole range is looked through, a step at a
+        # time, and the farthest it makes refined within that step.
+        far = None
+        for k in range(int(round(PLACE_SEARCH / PLACE_STEP)) + 1):
+            if reaches(k * PLACE_STEP):
+                far = k * PLACE_STEP
+        if far is None:
             return 0.0
+        lo, hi = far, min(far + PLACE_STEP, PLACE_SEARCH)
         while hi - lo > 0.01:
             mid = 0.5 * (lo + hi)
             lo, hi = (mid, hi) if reaches(mid) else (lo, mid)
