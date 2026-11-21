@@ -116,6 +116,52 @@ int joint_motion(franka::Robot& robot, double seconds, double jump) {
   return 0;
 }
 
+// A computed-torque law on libfranka's own Model (no rotor in it): every joint follows
+// q0 + a (1 - cos(2 pi t / T)) for `seconds`. Reports each joint's largest tracking error, and the
+// largest gap between the link-side torque the robot measures and the one it was asked for plus
+// the gravity of its model (tau_J - tau_J_d - g): what of the motor is left in front of the program.
+int ct_track(franka::Robot& robot, double seconds, double amplitude, double period_s) {
+  defaults(robot, 100.0);
+  franka::Model model = robot.loadModel();
+  const double kp = 400.0, kd = 40.0;
+  double time = 0.0;
+  std::array<double, 7> q0{}, err_max{}, gap_max{};
+  try {
+    robot.control([&](const franka::RobotState& s, franka::Duration period) -> franka::Torques {
+      time += period.toSec();
+      if (time == 0.0) q0 = s.q;
+      const double w = 2.0 * M_PI / period_s;
+      std::array<double, 49> M = model.mass(s);
+      std::array<double, 7> c = model.coriolis(s);
+      std::array<double, 7> g = model.gravity(s);
+      std::array<double, 7> u{}, tau{};
+      for (size_t i = 0; i < 7; i++) {
+        double qd = q0[i] + amplitude * (1 - std::cos(w * time));
+        double dqd = amplitude * w * std::sin(w * time);
+        double ddqd = amplitude * w * w * std::cos(w * time);
+        double e = qd - s.q[i];
+        if (time > 0.0) err_max[i] = std::max(err_max[i], std::abs(e));
+        gap_max[i] = std::max(gap_max[i], std::abs(s.tau_J[i] - s.tau_J_d[i] - g[i]));
+        u[i] = ddqd + kp * e + kd * (dqd - s.dq[i]);
+      }
+      for (size_t i = 0; i < 7; i++) {
+        tau[i] = c[i];
+        for (size_t j = 0; j < 7; j++) tau[i] += M[i + 7 * j] * u[j];  // column-major
+      }
+      franka::Torques out(tau);
+      if (time >= seconds) return franka::MotionFinished(out);
+      return out;
+    });
+  } catch (const franka::ControlException& e) {
+    std::cout << "{\"ok\":false,\"error\":" << quote(e.what()) << ",\"err_max\":" << arr(err_max)
+              << "}" << std::endl;
+    return 0;
+  }
+  std::cout << "{\"ok\":true,\"err_max\":" << arr(err_max) << ",\"gap_max\":" << arr(gap_max)
+            << "}" << std::endl;
+  return 0;
+}
+
 int recover(franka::Robot& robot) {
   robot.automaticErrorRecovery();
   franka::RobotState s = robot.readOnce();
@@ -161,6 +207,7 @@ int main(int argc, char** argv) {
     if (cmd == "torque_hold")
       return torque_hold(robot, static_cast<int>(arg(3, 1000)), arg(4, 60.0), arg(5, 0) != 0, arg(6, 0));
     if (cmd == "joint_motion") return joint_motion(robot, arg(3, 2.0), arg(4, 0.0));
+    if (cmd == "ct_track") return ct_track(robot, arg(3, 2.0), arg(4, 0.1), arg(5, 2.0));
     if (cmd == "recover") return recover(robot);
   } catch (const franka::Exception& e) {
     std::cout << "{\"exception\":" << quote(e.what()) << "}" << std::endl;
