@@ -225,10 +225,30 @@ def test_a_tether_at_a_point_of_the_body_holds_that_point_within_reach_at_every_
     tether, at = [(0.0, -0.3, 0.35)], [(0.0, -0.25)]
     start = (0.0, 0.0, 0.0)
     plan_way(model, data, fp, start, (0.0, 0.0, 0.3), tether=tether, tether_at=at)
-    plan_way(model, data, fp, start, (0.0, 0.0, math.pi), tether=tether, long_way=True)
+    plan_way(
+        model, data, fp, start, (0.0, 0.0, math.pi), tether=tether, tether_at=[(0.0, 0.0)],
+        long_way=True,
+    )
     with pytest.raises(NoWay):
         plan_way(
             model, data, fp, start, (0.0, 0.0, math.pi), tether=tether, tether_at=at, long_way=True
+        )
+
+
+@pytest.mark.parametrize("at", [[], [(0.0, -0.25), (0.0, 0.25)]])
+def test_a_tether_without_its_point_of_the_body_is_refused_before_the_plan(at):
+    """Each tether names the point of the body it holds: a plan given a tether with no point, or
+    a point with no tether, is refused at once, naming both counts, rather than holding the root
+    in its place."""
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><geom name="floor" type="plane" size="5 5 .05"/></worldbody></mujoco>'
+    )
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    with pytest.raises(ValueError, match=r"tether_at: one point of the body for each tether"):
+        plan_way(
+            model, data, _footprint(), (0.0, 0.0, 0.0), (0.0, 0.0, 0.3),
+            tether=[(0.0, -0.3, 0.35)], tether_at=at,
         )
 
 
@@ -293,7 +313,10 @@ def test_a_tether_holds_the_way_within_its_reach_until_past_its_line():
     model, data = _world("carry_post_straight")
     seg = (0.0, 0.5, 0.6, 0.5, 1.0)
     with pytest.raises(NoWay):
-        plan_way(model, data, _footprint(), (0.0, 0.0, 0.0), (4.0, 0.0, 0.0), tether=[seg])
+        plan_way(
+            model, data, _footprint(), (0.0, 0.0, 0.0), (4.0, 0.0, 0.0),
+            tether=[seg], tether_at=[(0.0, 0.0)],
+        )
     way = plan_way(
         model,
         data,
@@ -301,6 +324,7 @@ def test_a_tether_holds_the_way_within_its_reach_until_past_its_line():
         (0.0, 0.0, 0.0),
         (4.0, 0.0, 0.0),
         tether=[(*seg, 1.2, 0.0, 1.0, 0.0)],
+        tether_at=[(0.0, 0.0)],
     )
     assert way.poses[-1][0] > 3.9
     before = [p for p in way.poses if p[0] < 1.2]
