@@ -889,6 +889,50 @@ def test_a_bar_beside_the_body_is_set_down_to_the_side_as_far_as_the_arms_reach_
         engine.shutdown()
 
 
+def test_a_step_aside_drawing_a_bar_out_that_would_meet_a_wall_fails_before_it_steps(tmp_path):
+    """The step aside that draws a bar out of a rack is checked as a planned step is: with a wall
+    beside the body, where the step would take the body and the bar into it, the carry fails before
+    the body moves, naming the wall. Unchecked, the body stepped 0.17 m into the wall, and the way
+    after it was refused as starting there."""
+    xml = tmp_path / "bar_in_a_rack.xml"
+    xml.write_text(
+        _BAR_IN_A_RACK.format(
+            left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5)
+        ).replace(
+            "</worldbody>",
+            '<geom name="probe_wall" type="box" pos="-0.95 0 1.0" size="0.02 1.5 1.0"/>'
+            "</worldbody>",
+        )
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -1.15, "y": 0.0}
+    world["components"][0]["walker"]["pose"]["orientation"] = {"yaw": -math.pi / 2}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok(
+            "approach",
+            target={"position": {"x": -1.15, "y": 0.0, "z": 0.0}},
+            standoff=0.0,
+            facing=-math.pi / 2,
+        )
+        sim.ok("grasp", hand="both", target="bar")
+        st = sim.run(
+            "carry",
+            to={"position": {"x": -1.15, "y": -2.5, "z": 0.0}},
+            standoff=0.0,
+            facing=-math.pi / 2,
+        )
+        assert st.error.startswith("cannot draw bar out: stepping aside"), st.error
+        assert "probe_wall" in st.error, st.error
+        assert "stepping_aside" not in sim.events()
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
