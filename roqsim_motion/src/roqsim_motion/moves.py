@@ -2254,8 +2254,9 @@ class HumanoidPlugin(MachinePlugin):
         from what is beside or over it, seen from above (:meth:`_clear_of`), it goes toward the
         body, across its heading, until it is that clear -- the hands
         drawing it in as far as the trunk leaves room (:data:`DRAW_BODY`), the body stepping aside
-        for the rest, its heading kept. A load that would not come clear within :data:`DRAW_MAX`
-        is left where it is, for the way to say what is in it."""
+        for the rest, its heading kept, checked first as a planned step is (a step aside that would
+        meet something fails, naming it). A load that would not come clear within
+        :data:`DRAW_MAX` is left where it is, for the way to say what is in it."""
         d = self._d
         x, y, yaw = self.body.root()
         c = self._extent(obj)
@@ -2292,6 +2293,22 @@ class HumanoidPlugin(MachinePlugin):
             )
             self._check_holds()
         if aside > 0.0:
+            # the step aside checked as a planned step is, the body and what it holds along it
+            fp, skip, held = self._footprint_now()
+            x, y, yaw = self.body.root()
+            n = max(2, int(math.ceil(aside / 0.01)))
+            poses = [
+                (x + way[0] * aside * k / n, y + way[1] * aside * k / n, yaw) for k in range(n + 1)
+            ]
+            hits = check_way(
+                self._m, d, fp, Way([Segment("walk", poses)], 0.0, 0, 0.0, 0.0, poses=poses), skip
+            )
+            if hits:
+                hx, hy, _hth, names = hits[0]
+                self.fail(
+                    f"cannot draw {held or 'what it holds'} out: stepping aside {aside:.2f} m, the "
+                    f"body and what it holds would meet {', '.join(names)} at ({hx:.2f}, {hy:.2f})"
+                )
             carried = self._carried()
 
             def each():
