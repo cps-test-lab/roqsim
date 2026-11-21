@@ -1006,6 +1006,35 @@ def test_a_place_reaches_as_far_as_the_arm_solve_puts_the_hand(sim):
     assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02  # on the bench
 
 
+def test_a_place_reach_is_the_farthest_the_arm_makes_not_the_end_of_a_stretch_from_the_root(
+    sim, monkeypatch
+):
+    """Where the arm solve makes the hand is not one stretch from the root out: right beside the
+    hip, at the height it sets a load down at, it may not, while further ahead it does. The reach
+    is the farthest point the solve makes, looked for over the whole range: here the arm makes
+    0.3 to 0.8 m ahead and not nearer, and the reach is 0.8 m. Halving from the root out, the
+    reach came out as 0 m and the place was refused out of reach."""
+    from roqsim_walker import handling
+
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, yaw = sim.body.root()
+    ahead = np.array([math.cos(yaw), math.sin(yaw)])
+
+    class Solved:
+        def __init__(self, residual):
+            self.residual = residual
+
+    def solve(desc, root, heading, local, goals, layouts):
+        side, goal = next(iter(goals.items()))
+        dist = float(np.dot(goal.pos[:2] - [x, y], ahead))
+        return Solved({side: 0.0 if 0.3 <= dist <= 0.8 else 1.0})
+
+    monkeypatch.setattr(handling, "solve", solve)
+    reach = sim.body.place_reach(sim.d, "r", 1.3)
+    assert 0.78 <= reach <= 0.8, reach
+
+
 def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
     """A floor drawn but colliding with nothing (a hall's) is nothing to stand on: a corner over it
     is a corner over nothing."""
