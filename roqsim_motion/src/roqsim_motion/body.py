@@ -13,6 +13,8 @@ physics thread; the body solves and writes at its own update.
 
 from __future__ import annotations
 
+import math
+
 import mujoco
 import numpy as np
 
@@ -148,9 +150,18 @@ class HumanoidBody:
     def gripper(self, data, side: str, closed: bool) -> None:
         """Close or open ``side``'s gripper, for a hand that has one instead of fingers."""
 
-    def place_reach(self) -> float:
-        """How far in front of the body its hands set something down, at most (m)."""
-        return 0.55
+    def place_reach(self, data, side: str, height: float) -> float:
+        """How far in front of the body's root ``side``'s hand reaches to set something down with
+        the hand at ``height`` (m), at most: its shoulder's reach (:meth:`arm_reach`) across the
+        floor at that height, from where the shoulder stands. A body that bends to reach says
+        how far that takes it."""
+        x, y, yaw = self.root()
+        ahead = np.array([math.cos(yaw), math.sin(yaw)])
+        sh = self.shoulder(data, side)
+        reach, dz = self.arm_reach(side), float(sh[2] - height)
+        if abs(dz) >= reach:
+            return 0.0
+        return float((sh[:2] - [x, y]) @ ahead) + math.sqrt(reach * reach - dz * dz)
 
     def carry_height(self) -> float:
         """The hands' height carrying something in front of the body (m)."""

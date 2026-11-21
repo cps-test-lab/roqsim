@@ -17,6 +17,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim_motion import quat as Q
 from roqsim_walker.humanoid import COLLISION_RADIUS
 
 DATA = Path(__file__).parent / "data"
@@ -147,6 +148,64 @@ def test_a_door_pushed_open_is_walked_through_kept_open_and_shuts_behind():
             door.step()
         assert door.angle() < 10.0, door.angle()  # the closer shut it
         assert door.deepest < 0.01, door.deepest
+    finally:
+        engine.shutdown()
+
+
+def test_a_hand_holding_a_door_turns_about_its_grip_without_pulling_the_leaf():
+    """A hold on a door holds the hand's grip on the handle, its position only: a hand turning
+    30 deg about its grip, as an arm turns it when the body turns on the spot, leaves the leaf
+    where it is and pulls on it hardly at all. Held at a point of the hand 8 cm from its grip,
+    the turning hand moved that point, turned the leaf and pulled thousands of newtons along its
+    arc."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=30.0).error == ""
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        hold = hp.holding["r"]
+        p0, q0 = door.body.grip(door.d, "r")
+        p0, q0 = p0.copy(), np.asarray(q0, float).copy()
+        before, most = door.angle(), 0.0
+        for k in range(400):
+            turn = math.radians(30.0) * min(1.0, k / 200)
+            door.body.set_hand("r", p0, Q.mul(Q.axis_angle("z", turn), q0))
+            door.step()
+            if k > 20:
+                most = max(most, hold.force(door.d, hold.slide_axis(door.m, door.d)))
+        assert np.linalg.norm(door.body.grip(door.d, "r")[0] - p0) < 0.002  # the grip stayed
+        assert abs(door.angle() - before) < 0.2, (door.angle(), before)
+        assert most < 500.0, most
+    finally:
+        engine.shutdown()
+
+
+def test_a_door_kept_by_its_hold_keeps_the_shoulder_of_its_hand_within_reach_as_the_body_turns():
+    """The way of a walk keeping a door keeps the shoulder of the hand on the handle within the
+    arm's reach of it, at each heading: turned round on the spot, the shoulder would stand on the
+    far side, out of reach, so the turn is refused before the body moves, naming the door, and
+    the hold holds. Bounding the root alone let the body turn, and the hand slipped off. The door
+    has no closer, so the hand keeps it by its hold alone (with one, it would push on the leaf)."""
+    engine = _engine((2.2, 0.8), math.pi)
+    try:
+        engine.ctx.model.jnt_stiffness[engine.ctx.model.joint("gate_hinge").id] = 0.0
+        door = Door(engine)
+        assert door.run("approach", target="gate/push/grip").error == ""
+        assert door.run("grasp", hand="right", target="gate/push/grip").error == ""
+        assert door.run("push", hand="right", angle=80.0).error == ""
+        x, y, yaw = door.body.root()
+        st = door.run(
+            "approach",
+            target={"position": {"x": x, "y": y, "z": 0.0}},
+            standoff=0.0,
+            facing=yaw + 3.0,
+        )
+        assert st.error.startswith("no way holding gate to "), st.error
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        assert hp.holding["r"] is not None  # still on the handle
+        assert math.hypot(door.body.root()[0] - x, door.body.root()[1] - y) < 0.02
     finally:
         engine.shutdown()
 
@@ -295,8 +354,8 @@ def test_a_turn_that_needs_the_body_to_step_round_is_refused_without_a_navigator
 def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_body_stands():
     """A pull steps the body round with the leaf to where its hand reaches the handle, which may be
     farther from the root than 0.9 of the arm's reach: the way of a walk keeping the door keeps the
-    root within the arm's reach from the shoulder, beside the root, and at least within where it
-    stands -- the walk is not refused where it starts."""
+    shoulder within the arm's reach, and at least within where it stands -- the walk is not refused
+    where it starts."""
     engine = _engine((0.0, 0.8), 0.0)
     try:
         door = Door(engine)
@@ -305,15 +364,14 @@ def test_a_door_kept_open_holds_the_way_within_a_reach_that_takes_in_where_the_b
         assert door.run("pull", hand="right", angle=40.0).error == ""
         hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
         x, y, yaw = door.body.root()
-        (tether,) = hp._tethers()
-        if len(tether) == 3:  # a point: where the hand is
-            ax, ay, r = tether
-            bx, by = ax, ay
-        else:  # the stretch of the leaf the hand may be on
-            ax, ay, bx, by, r = tether[:5]
+        (tether,), ((ox, oy),) = hp._tethers()
+        ax, ay, bx, by, r = tether[:5]
+        # the point the tether holds: the shoulder of the hand, turned with the heading
+        px = x + ox * math.cos(yaw) - oy * math.sin(yaw)
+        py = y + ox * math.sin(yaw) + oy * math.cos(yaw)
         ex, ey = bx - ax, by - ay
-        t = min(max(((x - ax) * ex + (y - ay) * ey) / max(ex * ex + ey * ey, 1e-12), 0.0), 1.0)
-        assert math.hypot(x - ax - t * ex, y - ay - t * ey) < r, (x, y, tether)
+        t = min(max(((px - ax) * ex + (py - ay) * ey) / max(ex * ex + ey * ey, 1e-12), 0.0), 1.0)
+        assert math.hypot(px - ax - t * ex, py - ay - t * ey) < r, (px, py, tether)
         st = door.run(
             "approach", target={"position": {"x": x - 0.15, "y": y, "z": 0.0}}, facing=yaw
         )
