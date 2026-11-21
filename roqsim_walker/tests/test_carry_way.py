@@ -226,7 +226,10 @@ def test_a_plan_says_what_the_carry_would_find_and_moves_nothing():
         before = (sim.body.root(), sim.d.xpos[tote].copy())
         t0 = engine.ctx.sim_time
         st = sim.run("plan", to=to, standoff=0.6, facing=case["facing"], back_max=0.0)
-        assert st.error == refused, st.error
+        # the carry's refusal, to where it gets (how wide the way is there is measured on the
+        # grid as the body stands, a few centimetres either way)
+        assert st.error.split(", where")[0] == refused.split(", where")[0], st.error
+        assert st.error.endswith(refused.split("; ")[-1]), st.error
         st = sim.run("plan", to=to, standoff=0.6, facing=case["facing"])
         assert st.error == "", st.error
         assert sim.events("planned", t0), "no plan said"
