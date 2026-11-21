@@ -39,6 +39,10 @@ POSTURE_RATE = {"turn": 1.5, "lean": 1.0, "crouch": 0.4, "bend": 1.5}
 #: the elbow a little bent.
 HANG = 0.85
 _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
+#: A grip the arm solve puts within this of its goal (m) reaches it, and the farthest ahead of the
+#: root it looks for a place's reach (m).
+PLACE_RESIDUAL = 0.01
+PLACE_SEARCH = 1.2
 
 
 def layouts_for(
@@ -131,6 +135,8 @@ class WalkerBody(HumanoidBody):
         self.st = st
         self.layouts = layouts
         self.desc = description_for(st.skeleton)
+        #: The pelvis, heading and clip pose the arm solve last stood on (:meth:`place_reach`).
+        self._solve_ctx = None
         self._fingers = {
             side: np.array(
                 [int(model.body_mocapid[_body(model, f"{name}/{b}")]) for b in H.bone_names(side)]
@@ -187,6 +193,33 @@ class WalkerBody(HumanoidBody):
 
     def shoulder(self, data, side):
         return data.mocap_pos[self.st.mocap[f"shoulder_{side}"]].copy()
+
+    def place_reach(self, data, side: str, height: float) -> float:
+        """How far ahead of the root the walker's own arm solve puts ``side``'s grip, turned as it
+        is now, at ``height``, within PLACE_RESIDUAL of its goal: found by halving over the
+        distance, with the clip pose and pelvis the solve last stood on -- bending, crouching and
+        leaning as it does for any goal, so what the reach takes in is what the arm makes."""
+        if self._solve_ctx is None:
+            return HumanoidBody.place_reach(self, data, side, height)
+        root, heading, local = self._solve_ctx
+        x, y, yaw = self.root()
+        ahead = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        p, q = self.grip(data, side)
+        across = np.array([p[0] - x, p[1] - y, 0.0])
+        across -= ahead * float(across @ ahead)
+
+        def reaches(dist: float) -> bool:
+            goal = np.array([x, y, height]) + dist * ahead + across
+            sol = solve(self.desc, root, heading, local, {side: HandGoal(goal, q)}, self.layouts)
+            return sol.residual.get(side, 1.0) <= PLACE_RESIDUAL
+
+        lo, hi = 0.0, PLACE_SEARCH
+        if not reaches(lo):
+            return 0.0
+        while hi - lo > 0.01:
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if reaches(mid) else (lo, mid)
+        return lo
 
     def arm_reach(self, side: str) -> float:
         return 0.97 * self.desc.arm_length(side) + float(
@@ -331,6 +364,7 @@ class WalkerBody(HumanoidBody):
                 pos = pos - rotate(wq, self.layouts[s].grip_pos)
             goals[s] = HandGoal(pos, quat)
         heading = yaw_to_quat(st.yaw)
+        self._solve_ctx = (root.copy(), heading, {n: v.copy() for n, v in local.items()})
         sol = solve(self.desc, root, heading, local, goals, self.layouts, self.posture)
         # The posture the solver chose eases from the last one at a bounded rate: a goal that crosses
         # from bending to crouching would otherwise move the body, and what it holds, at once.

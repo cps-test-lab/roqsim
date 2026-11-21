@@ -132,9 +132,16 @@ class Hold:
             mujoco.mju_rotVecQuat(pos, data.xpos[b2] - data.xpos[b1], qi)
             quat = np.zeros(4)
             mujoco.mju_mulQuat(quat, qi, data.xquat[b2])
-            # The anchor is the hand body's origin; the pose is the hand's in the object's frame, as
-            # it is now, and stays so through a later mj_setConst.
-            set_relpose(self.model, self.eq, np.zeros(3), pos, quat)
+            # The anchor is the hand's grip site, where the hand holds: a hold of the position only
+            # keeps that point on the object and lets the hand turn about it, as a hand on a handle
+            # turns. Anchored anywhere else on the hand, a turn of the hand moves the point held.
+            # The pose is the hand's in the object's frame, as it is now, and stays so through a
+            # later mj_setConst.
+            anchor = np.zeros(3)
+            if int(self.model.site_bodyid[self.hand_site]) == b2:
+                anchor = np.array(self.model.site_pos[self.hand_site], float)
+                mujoco.mju_rotVecQuat(pos, data.site_xpos[self.hand_site] - data.xpos[b1], qi)
+            set_relpose(self.model, self.eq, anchor, pos, quat)
             self.model.eq_data[self.eq][10] = (
                 1.0 if (self.whole if whole is None else whole) else 0.0
             )

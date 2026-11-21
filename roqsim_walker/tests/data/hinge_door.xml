@@ -2,7 +2,8 @@
      turns because a hand pulls or pushes it, toward -x (100 degrees at most), and a closer (the
      hinge's spring and damping) shuts it. A lever handle on each face, a stance before each, and a
      stance past the opening on each side: gate/in on the side it opens to, gate/through on the
-     other (test_door.py). -->
+     other, and gate/beyond on the side it opens to, past the opened leaf's free end and out of
+     its sweep (test_door.py). -->
 <mujoco model="hinge_door">
   <compiler angle="degree"/>
   <worldbody>
@@ -21,5 +22,6 @@
     <site name="gate/push/stand" pos="1.35 0.48 0" euler="0 0 180"/>
     <site name="gate/in/stand" pos="0.3 0.45 0" euler="0 0 180"/>
     <site name="gate/through/stand" pos="1.45 0.4 0" euler="0 0 0"/>
+    <site name="gate/beyond/stand" pos="-0.2 0.3 0" euler="0 0 180"/>
   </worldbody>
 </mujoco>

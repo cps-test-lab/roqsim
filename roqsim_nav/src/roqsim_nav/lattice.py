@@ -398,6 +398,7 @@ class _CSpace:
             self._obst[band] = out
         self.zones = []
         self.tether = []
+        self.tether_at = []
         self._memo = {}
         self._sweeps = {}
         self._turned = {}
@@ -532,8 +533,8 @@ class _CSpace:
     def ok(self, x, y, th) -> bool:
         """The search's check: the raster's, and where the raster says blocked within one of
         ``zones`` (round the start and the goal, where a body stands close to what it works at),
-        the exact one; and every segment of ``tether`` within its reach."""
-        if not self.tethered(x, y):
+        the exact one; and every one of ``tether`` within its reach."""
+        if not self.tethered(x, y, th):
             return False
         if self.free(x, y, th):
             return True
@@ -547,16 +548,20 @@ class _CSpace:
             return False
         return self.exact_free(x, y, th, frozenset(allowed))
 
-    def tethered(self, x, y) -> bool:
-        """Whether the root at ``(x, y)`` is within reach of every one of ``tether``: of its
-        segment, or past its line."""
-        for ax, ay, bx, by, tr, past in self.tether:
+    def tethered(self, x, y, th) -> bool:
+        """Whether the body at ``(x, y, th)`` has every one of ``tether`` within reach: the point of
+        the body it holds (``tether_at``, in the body's frame, turned with ``th``; the root where it
+        names none) within its radius of its segment, or the root past its line."""
+        c, s = math.cos(th), math.sin(th)
+        for k, (ax, ay, bx, by, tr, past) in enumerate(self.tether):
             if past is not None and (x - past[0]) * past[2] + (y - past[1]) * past[3] >= 0.0:
                 continue  # gone past its line, free of it
+            ox, oy = self.tether_at[k] if k < len(self.tether_at) else (0.0, 0.0)
+            px, py = x + c * ox - s * oy, y + s * ox + c * oy
             ex, ey = bx - ax, by - ay
             n = ex * ex + ey * ey
-            t = 0.0 if n < 1e-12 else min(max(((x - ax) * ex + (y - ay) * ey) / n, 0.0), 1.0)
-            if (x - ax - t * ex) ** 2 + (y - ay - t * ey) ** 2 > tr * tr:
+            t = 0.0 if n < 1e-12 else min(max(((px - ax) * ex + (py - ay) * ey) / n, 0.0), 1.0)
+            if (px - ax - t * ex) ** 2 + (py - ay - t * ey) ** 2 > tr * tr:
                 return False
         return True
 
@@ -566,7 +571,7 @@ class _CSpace:
         blocked within a zone, the exact check covers it too, across the move's sweep
         (:meth:`sweep_free`), not at its ends alone -- a thin post between two samples' headings
         is met by the piece that sweeps across it."""
-        if not self.tethered(b[0], b[1]):
+        if not self.tethered(b[0], b[1], b[2]):
             return False
         # a move's start is most often the end of the move checked just before it
         last = self._last_free
@@ -602,7 +607,7 @@ class _CSpace:
         most ``bow``: the raster's at each sample, and where the raster says blocked within a
         zone, the exact one of the move as a whole, across its sweep -- one sweep, not one a sample
         (:meth:`move_ok` checks a move between two samples)."""
-        if not all(self.tethered(p[0], p[1]) for p in points[1:]):
+        if not all(self.tethered(p[0], p[1], p[2]) for p in points[1:]):
             return False
         allowed = None
         for p in points:
@@ -1324,6 +1329,7 @@ def plan_way_steps(
     to: str = "",
     dock=(),
     tether=(),
+    tether_at=(),
     max_states: int = MAX_STATES,
 ):
     """A way for ``footprint`` from ``start`` ``(x, y, yaw)`` through the floor points ``via`` (any
@@ -1344,7 +1350,9 @@ def plan_way_steps(
     keeps its root within ``r`` of -- a hand keeping a door where it is while the body walks, along
     the stretch of its leaf it may push on, stays within its reach. A segment may carry a line
     ``(..., r, px, py, nx, ny)``: a root past it (``(p - (px, py)) . (nx, ny) >= 0``) is free of
-    that tether -- the body has gone through the door, and the hand lets go.
+    that tether -- the body has gone through the door, and the hand lets go. ``tether_at``: for
+    each of them, the point of the body kept within ``r`` instead of its root, ``(x, y)`` in the
+    body's frame (a shoulder), which turns with the body's heading.
 
     A generator: it hands back (yields) every :data:`SLICE_STATES` states its search expands, and
     returns the :class:`Way`; :func:`plan_way` runs it in one go. The world is read before it
@@ -1390,6 +1398,7 @@ def plan_way_steps(
             cs = _CSpace(layers, footprint, box, corridor)
             cs._exact_setup()
             cs.tether = [_tether(t) for t in tether]
+            cs.tether_at = [(float(a), float(b)) for a, b in tether_at]
             # what the body already stands against, it may go on standing against as it leaves;
             # at the goal, it may stand against what it goes to work at
             standing = cs.body_meets(*pose)
