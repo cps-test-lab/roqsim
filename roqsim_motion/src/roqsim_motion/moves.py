@@ -103,6 +103,10 @@ LIFT_FREE = 0.06
 #: hand how far ahead of the root, and how far out beside its shoulder (m).
 ONE_HAND_AHEAD = 0.05
 ONE_HAND_OUT = 0.08
+#: Set down higher than this above where it hangs (m), a load in one hand is first brought before
+#: the shoulder, this far ahead of it (m), the palm turned in to raise it.
+ONE_HAND_RAISE = 0.3
+ONE_HAND_BEFORE = 0.45
 #: How near the place (m) what is set down comes over it before it is lowered: a drawer's deck
 #: holds a box in stops with millimetres to spare, a centimetre from the fence over it.
 OVER_AT = 0.004
@@ -1948,8 +1952,9 @@ class HumanoidPlugin(MachinePlugin):
         obj = self.holding[load[0]].obj_body
         one_hand = len(carrying) == 1 and len(load) == 1
         if height is None and one_hand:
-            # at the side, where the hand hangs, lifted off what it stood on first (below): held
-            # palm forward beside the shoulder, a hand cannot raise it to clear where it goes
+            # at the side, where the hand hangs, lifted off what it stood on first (below): raised
+            # to where it goes by the place, which brings it before the body -- held palm forward
+            # beside the shoulder, a hand cannot raise it
             height = self.body.hang_height(carrying[0])
         if height is None:
             # a hand's breadth under the pelvis, or clear of the surface it goes to
@@ -2020,6 +2025,24 @@ class HumanoidPlugin(MachinePlugin):
         down = np.array([0.0, 0.0, -1.0])
         quat = Q.from_matrix(np.column_stack([heading, np.cross(down, heading), down]))
         return {side: lambda: (pos, quat)}
+
+    def _one_hand_before(self, side: str, what: str):
+        """Bring a load held in one hand at the body's side before its shoulder, the palm turned in
+        toward the body's middle and the fingers ahead, so the hand can raise it: held palm forward
+        and the fingers down, as it is carried, an arm cannot lift it to the shoulder. What it holds
+        turns with the hand, a quarter turn about the hand's way ahead."""
+        d = self._d
+        x, y, yaw = self.body.root()
+        heading = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        inward = np.array([math.sin(yaw), -math.cos(yaw), 0.0]) * (1.0 if side == "l" else -1.0)
+        sh = self.body.shoulder(d, side)
+        p, _ = self.body.grip(d, side)
+        pos = np.array([sh[0], sh[1], p[2]]) + ONE_HAND_BEFORE * heading
+        # the grip frame: +x out of the palm toward the load, inward; +z along the fingers, ahead
+        quat = Q.from_matrix(np.column_stack([inward, np.cross(heading, inward), heading]))
+        yield from self._move_hands(
+            {side: lambda: (pos, quat)}, 0.3, what, rot_tol=math.radians(25), pos_tol=0.03
+        )
 
     def _extent(self, held: int):
         """The held object's world box now: its lowest and highest corners, of its solid geoms."""
@@ -2276,6 +2299,8 @@ class HumanoidPlugin(MachinePlugin):
             return self._bottom(obj)
 
         sides = [s for s in held if not self._riding[s]]
+        if len(held) == 1 and point[2] > self.body.hang_height(sides[0]) + ONE_HAND_RAISE:
+            yield from self._one_hand_before(sides[0], at)
         starts = {s: self.body.grip(d, s) for s in sides}
         # Toward the target, as far as the hands reach in front of the body: set down on the near
         # part of a surface (a body, an entity), as a worker does, not stretched out to its middle.

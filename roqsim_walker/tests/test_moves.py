@@ -681,6 +681,29 @@ def test_a_part_in_one_hand_is_carried_at_the_side_where_the_hand_hangs_to_a_hig
         engine.shutdown()
 
 
+@pytest.mark.parametrize("height", [1.3, 1.45])
+def test_a_part_in_one_hand_is_set_on_a_board_above_the_shoulder(height):
+    """Set down above where the hand hangs, a part held in one hand is first brought before the
+    shoulder, the palm turned in and the fingers ahead, and raised from there onto the board: held
+    palm forward and the fingers down, as it was carried, the hand could not raise it."""
+    engine = _engine(_part_on_a_table(height))
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
+        sim.ok("place", at="board", release=False)
+        sim.ok("release", hand="right")
+        for _ in range(500):
+            sim.e.step()
+        part = sim.d.xpos[sim.m.body("part_box").id]
+        assert height + 0.02 < part[2] < height + 0.06, part  # resting on the board
+        assert abs(part[0] - 2.0) < 0.3 and abs(part[1] - 2.5) < 0.2, part
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
