@@ -165,6 +165,24 @@ def test_a_dead_end_without_a_step_back_has_no_way_and_says_what_is_in_it():
     assert "back_max 0.00 m, long_way false" in msg, msg
 
 
+def test_a_body_that_holds_nothing_is_refused_without_naming_a_load():
+    """A way for a body that holds nothing (``what`` empty) is refused as "no way to ...", not as
+    holding a nameless something."""
+    model, data = _world("carry_post_behind")
+    with pytest.raises(NoWay) as err:
+        plan_way(
+            model,
+            data,
+            _footprint(),
+            (0.0, 0.0, 0.0),
+            (-1.8, 1.2, math.pi),
+            back_max=0.0,
+            what="",
+            to="the bench",
+        )
+    assert str(err.value).startswith("no way to the bench:"), str(err.value)
+
+
 def test_a_turn_past_half_a_turn_is_taken_only_with_long_way():
     """A post on the short way round, and walls just outside what the tote sweeps turning on the
     spot, so that it cannot shuffle round in a few turns: the only way to face three quarters of a
