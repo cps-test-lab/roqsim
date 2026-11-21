@@ -140,6 +140,9 @@ BACK_MAX = 0.5
 #: How far a body walking a way may stray from it before the move fails (m), on top of the margin
 #: the way was planned with (``HumanoidBody.follow_error``): what is checked is what is walked.
 FOLLOW_TOL = 0.03
+#: How far behind the hands (rad) a leaf turned round its hinge may fall before it counts as held
+#: back by what it meets, and the turn ends there.
+LEAF_LAG = math.radians(3)
 #: How far off upright (rad) a hinge may be for a pull or push by angle to turn what is on it.
 UPRIGHT = math.radians(15)
 #: How far of its reach a hand goes round a hinge before the body steps round with it.
@@ -2028,6 +2031,7 @@ class HumanoidPlugin(MachinePlugin):
         )
         turn_z = float(np.sign(axis[2])) or 1.0
         arc, arc_tol = None, FOLLOW_TOL
+        stopped_by = ""
         if steps_from is not None:
             poses = []
             for k in range(n + 1):
@@ -2042,13 +2046,26 @@ class HumanoidPlugin(MachinePlugin):
                 arc, arc_tol = np.array([p[:2] for p in poses]), FOLLOW_TOL + fp.margin
                 hits = check_way(m, d, fp, Way([Segment("walk", poses)], 0.0, 0, 0.0, 0.0), skip)
                 if hits:
+                    # turned as far as the body can follow, short of what it would meet: the turn
+                    # ends a step before, and says what stopped it
                     hx, hy, hth, names = hits[0]
-                    self.fail(
-                        f"cannot follow {name} round: stepping round with it, the body and what it "
-                        f"holds would meet "
-                        f"{', '.join(names)} at ({hx:.2f}, {hy:.2f}), "
-                        f"{abs(math.degrees(hth - yaw0)):.0f} deg round"
+                    reached = (
+                        steps_from
+                        + turn_z * (hth - yaw0)
+                        - math.copysign(2 * math.radians(2), total)
                     )
+                    if abs(reached) < math.radians(5) or abs(reached) <= abs(steps_from):
+                        self.fail(
+                            f"cannot follow {name} round: stepping round with it, the body and "
+                            f"what it holds would meet {', '.join(names)} at ({hx:.2f}, "
+                            f"{hy:.2f}), {abs(math.degrees(hth - yaw0)):.0f} deg round"
+                        )
+                    stopped_by = ", ".join(names)
+                    total = reached
+                    keep = [
+                        p for p in poses if abs(p[2] - yaw0) <= abs(reached - steps_from) + 1e-9
+                    ]
+                    arc = np.array([p[:2] for p in keep]) if len(keep) > 1 else None
         nav = self._ctx.blackboard.get(f"nav:{self.entity}:handle")
         if steps_from is not None and nav is None:
             self.fail(f"{self.entity} has no navigator to step round {name} with")
@@ -2076,10 +2093,27 @@ class HumanoidPlugin(MachinePlugin):
                         nav.send_goals([sent], exact=True)
                     if arc is not None:
                         self._on_leg(arc, arc_tol, f"round {name}", lambda: None)
-                self._check_holds()
                 q = float(d.qpos[qadr])
                 if limited and ((total > 0 and q > hi - 0.01) or (total < 0 and q < lo + 0.01)):
                     break  # at its stop: open as far as it goes, or shut
+                # the leaf held back by something it meets (not its own stop): turned as far as it
+                # goes, the hands brought back to where it is
+                if abs(a) - math.copysign(1.0, total) * (q - q0) > LEAF_LAG:
+                    hit = touching_body(
+                        m, d, h0.obj_body, {b for b in range(m.nbody) if self.body.owns(m, b)}
+                    )
+                    stopped_by = (
+                        mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, hit) or "something"
+                        if hit >= 0
+                        else "something"
+                    )
+                    back = q - q0
+                    for s in sides:
+                        self.body.set_hand(
+                            s, about(starts[s][0], back), Q.mul(turned(back), starts[s][1])
+                        )
+                    break
+                self._check_holds()
                 if u >= 1.0:
                     break
                 yield
@@ -2098,7 +2132,9 @@ class HumanoidPlugin(MachinePlugin):
         # at a stop it turned as far as it goes: open all the way, or shut (a door shut already
         # was refused before it moved)
         at_stop = limited and ((total > 0 and q > hi - 0.02) or (total < 0 and q < lo + 0.02))
-        if moved < 0.8 * float(angle) and not at_stop:
+        if stopped_by:
+            self.step("stopped", angle=float(moved), of=float(angle), by=stopped_by)
+        elif moved < 0.8 * float(angle) and not at_stop:
             self.fail(f"stuck: {name} turned {moved:.0f} of {float(angle):.0f} deg")
         return moved
 
