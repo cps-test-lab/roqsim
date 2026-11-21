@@ -254,7 +254,7 @@ nearest of them, facing as it says, where a move is given no `standoff` or `faci
 | `pull` / `push` | `hand`, `distance` m (along a slide), or `angle` deg (round a hinge), `speed` 0.2 m/s, `axis` (default: the held body's slide, toward / away from the walker) | `moving`, `stepping` (round a hinge, the body following), `pulled` / `pushed` (`distance`, or `angle`) | `not holding …`, `stuck: … moved … of …`, `stuck: … turned … of … deg`, `angle: … turns on no hinge`, `angle: … turns on a hinge that is not upright` (more than 15 deg off), `… has no navigator to step round …` (before anything moves), `cannot follow … round: …` (the path the body would step round on meets something), `left its way to round …` (stepping round, the body left that path), `… is shut: a pull … turns it further shut` (before anything moves), `the … hand keeps … by pushing on its face …` (grasp the handle again), `lost hold: …` |
 | `carry` | `to`, `standoff` (as `approach`'s), `height` (default: under the pelvis, or clear of the surface it goes to), `via` and `facing` (as `approach`'s), `back_max` 0.5 m (the longest step straight back its way takes at a time; 0: never), `long_way` false (may its way turn past half a turn on the spot) | `lifted` (`height`: the hands' height it came to), `planned` (`seconds`, `expanded`, `length`, `reverses`, `long_turns`, `margin`, `widened`), `walking`, `stepping_back` (`distance`), `turning_long_way` (`to`, `turn`: rad), `arrived` | `not holding anything`, `lost hold`, `no route`, `no way holding … to …` (where it got to, how wide the way is there and between what, what the body and its load meet there at every heading, `back_max` and `long_way`), `left its way to … by … m`, `stopped … m short of a leg's end …`, `stepped back … m of …` (a leg or a step back still short after three aims), `cannot turn to …`, `cannot face …`, `cannot stand at …`, `via: a point is [x, y] …`, `back_max: a distance …` |
 | `plan` | `to`, and `standoff`, `via`, `facing`, `back_max` and `long_way` as `carry`'s | `planned` (as `carry`'s) | as `carry`'s `no way holding … to …`; nothing moves either way |
-| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `out of reach: the hands bring it to … and no nearer`, `caught on …` (held up above the place), `nothing under it` |
+| `place` | `at`, `release` true, `speed` 0.15 m/s | `lowering`, `set_down`, `released` | `not holding anything`, `out of reach: under the hands' reach is …`, `out of reach: … it would stand on …` (half off an edge, on a wall and a deck), `out of reach: the hands bring it to … and no nearer`, `caught on …` (held up above the place), `nothing under it`, `out of reach: … rests on … tilted … on an edge, and let go it would tip over the edge of it` |
 | `play` | `clip`, `joints` all, `weight` 1.0, `loop` false, `fade` 0.3 s, `speed` 1.0 (as a layer's keys) | `playing`, then `played` (once) or `looping` (loop) | `no clip …`, `no joint or joint group …`; ends with the clip, a looping one once faded in; cancelled, it fades the clip out |
 | `stop_clip` | `clip` (empty: every clip) | `stopped` | -- |
 | `look_at` | `target` (a site, body or entity, or a world point `[x, y, z]`; empty: back) | `looking` | `unknown target …` |
@@ -299,15 +299,18 @@ while it carries. A handle off the floor is taken as its frame says.
 the body, and walks its way. A load one hand holds alone is carried at the body's side instead,
 beside the shoulder and a little ahead, the palm forward and the fingers down, so the load is ahead
 of the hand -- a box carried by its end -- and the other hand is free (a door's handle, a button).
-It goes no lower than the hand hangs standing, the elbow a little bent (`hang_height`), and an arm
-cannot hold it so much higher: give a one-hand carry a `height` where the place it goes to would
-lift it to the chest. `place` takes the load over the highest
+It is carried where the hand hangs standing, the elbow a little bent (`hang_height`), lifted free of
+what it was taken from first. Set down higher than that by more than 0.3 m, `place` first brings
+it before the shoulder, the palm turned in and the fingers ahead, rising over what is under its way
+there before it comes forward, so the hand can raise it to a shelf; there it hangs from the grip a
+few tens of degrees tilted, an edge first, and lies flat once let go. `place` takes the load over the highest
 thing between where it is and the place -- read on a grid under its footprint, past what rides in
 it -- then leads it on until it is within millimetres of the place, square to the place's heading
 (a site's, a body's, or a world pose that states one; at most 20 degrees), and lowers it until it
 rests at the place's height. It fails, holding the load, where the hands cannot bring it there,
-where it would stand half off a surface or on a rim, and where something holds it up above the
-place.
+where it would stand half off a surface or on a rim, where something holds it up above the
+place, and, resting tilted on an edge, where laid flat about that edge it would tip over the edge
+of what it rests on.
 
 `pull` and `push` by `angle` turn what the hand holds round its hinge -- a door toward the body
 or away from it. The hand goes round the arc the hinge sets; where the arc leaves its reach the
