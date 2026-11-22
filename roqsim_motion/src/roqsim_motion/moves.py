@@ -218,9 +218,6 @@ class HumanoidPlugin(MachinePlugin):
                 f"humanoid {spec.address}: its moves need hands -- set 'hands: true' on walker "
                 f"{owner.address}"
             )
-        if owner is not None and owner.ref == "spawn_model":
-            # a robot's bodies are named by its prefix: they are its own, as a walker's are
-            spec.config.setdefault("prefix", str((owner.config or {}).get("prefix", "")))
         navs = [c for c in (owner.children if owner is not None else []) if c.ref == "navigator"]
         for nav in navs:
             radius = float((nav.config or {}).get("arrival_radius", 0.25))

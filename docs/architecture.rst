@@ -722,7 +722,7 @@ that handle: the part's state is the part's, and the machine only asks for it to
 **A humanoid's moves are one entity's procedures, as a machine's programs are.** ``approach``,
 ``reach``, ``press``, ``grasp``, ``release``, ``pull``, ``push``, ``carry`` and ``place`` are what a
 humanoid does by itself: the ``humanoid`` plugin (``roqsim_motion``), nested under a walker with
-``hands: true`` or a humanoid robot, is a ``MachinePlugin`` whose programs are its moves, so a move
+``hands: true``, is a ``MachinePlugin`` whose programs are its moves, so a move
 is started through the same handle (``machine:<name>``, and ``humanoid:<name>`` with a method per
 move), waited on by the same status and recorded as the same events. Which moves a worker makes, in
 which order and for what -- swap a box when it is empty, press the button when the press is ready --

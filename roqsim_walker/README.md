@@ -283,14 +283,14 @@ rests at the place's height. It fails, holding the load, where the hands cannot 
 where it would stand half off a surface or on a rim, and where something holds it up above the
 place.
 
-`pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a robot's
-servo under the load) goes on past it until the object has, by at most half the distance; a lagging
+`pull` and `push` move what the hand holds by `distance`: a hand that lags its goal (a body whose
+hands are servo-driven, `HumanoidBody.hands_track_goals` false) goes on past it until the object has, by at most half the distance; a lagging
 hand's stroke that would leave a drawer within a hand's width of its stop pushes it to the stop, and
 at a stop a posed hand's goal comes back onto it while a lagging hand's stays, so neither pulls the
 drawer back.
 
 **Scenes.** Three worlds show a worker handling things, each with its scenario in Python
-(`roqsim_motion.scenes`, which the robot's box swap in `roqsim_humanoid` runs too) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
+(`roqsim_motion.scenes`) and in OpenSCENARIO (the `*_osc.yaml` twin and its `.osc`), which give one
 timeline:
 
 | world | the scene |
