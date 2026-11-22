@@ -12,6 +12,7 @@ driving it *yet*. See ``NavigatorPlugin._parked_props``.
 from __future__ import annotations
 
 import mujoco
+import pytest
 
 from roqsim_nav.grid import build_grid, grid_key
 
@@ -90,45 +91,54 @@ _HOLDABLE_XML = """
 <mujoco>
   <worldbody>
     <geom name="floor" type="plane" size="8 8 .05"/>
-    <body name="hand" mocap="true" pos="0 0 1"><geom type="sphere" size=".02" contype="0" conaffinity="0"/></body>
+    <body name="worker/hand" mocap="true" pos="0 0 1"><geom type="sphere" size=".02" contype="0" conaffinity="0"/></body>
     <body name="tote" pos="1 0 .1"><freejoint/><geom type="box" size=".2 .15 .1"/></body>
     <body name="crate" pos="-1 0 .3"><freejoint/><geom type="box" size=".4 .4 .3"/></body>
+    <body name="fixed" pos="0 2 .3"><freejoint/><geom type="box" size=".2 .2 .3"/></body>
   </worldbody>
-  <equality><weld name="hold" body1="hand" body2="tote" active="false"/></equality>
+  <equality>
+    <weld name="hold" body1="tote" body2="worker/hand" active="false"/>
+    <weld name="bolted" body1="fixed"/>
+  </equality>
 </mujoco>
 """
 
 
-def test_a_body_something_can_hold_is_holdable_and_one_nothing_can_is_not():
-    """The object of a weld equality -- a hand's hold, switched on when it is taken -- can be
-    carried away; a crate nothing can weld to stays where it is put."""
+def _root(model, name):
+    return int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)])
+
+
+def test_what_a_movers_hands_can_hold_is_holdable_for_it_alone():
+    """The other side of a weld to one of the mover's own bodies -- its hand's hold, switched on
+    when it is taken -- can be carried away by it; nobody else holds it, and a body welded to the
+    world, or a crate nothing welds to, is holdable by no one."""
     from roqsim_nav.obstacles import holdable_roots
 
     model = mujoco.MjModel.from_xml_string(_HOLDABLE_XML)
-    tote = int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "tote")])
-    crate = int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "crate")])
-    assert holdable_roots(model) == {tote}
-    assert crate not in holdable_roots(model)
+    assert holdable_roots(model, "worker") == {_root(model, "tote")}
+    assert holdable_roots(model, "cart") == set()
 
 
-def test_a_prop_something_can_hold_is_never_parked_in_the_grid():
+@pytest.mark.parametrize(
+    ("mover", "parked"), [("worker", ("crate", "fixed")), ("cart", ("tote", "crate", "fixed"))]
+)
+def test_a_prop_is_left_out_of_the_grid_only_of_the_mover_that_can_hold_it(mover, parked):
     """The grid is built once a run: a tote standing still at the start, baked in as a parked prop,
-    would stay a wall where it stood once a worker has carried it away. A crate nothing can hold is
-    parked as before."""
+    would stay a wall where it stood once a worker has carried it away -- so the worker's own grid
+    leaves it out. Every other mover keeps it a wall, as it keeps a crate nothing can hold."""
     from types import SimpleNamespace
 
     from roqsim_nav.plugins.navigator import NavigatorPlugin
 
     model = mujoco.MjModel.from_xml_string(_HOLDABLE_XML)
     entities = [
-        SimpleNamespace(name="tote", body="tote", meta={"base_joint": "tote_free"}),
-        SimpleNamespace(name="crate", body="crate", meta={"base_joint": "crate_free"}),
+        SimpleNamespace(name=n, body=n, meta={"base_joint": f"{n}_free"})
+        for n in ("tote", "crate", "fixed")
     ]
     ctx = SimpleNamespace(
         model=model,
         entities=SimpleNamespace(all=lambda: entities),
         blackboard=SimpleNamespace(get=lambda key: None),
     )
-    roots = NavigatorPlugin._parked_props(None, ctx)
-    crate = int(model.body_weldid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "crate")])
-    assert roots == (crate,)
+    roots = NavigatorPlugin._parked_props(SimpleNamespace(entity=mover), ctx)
+    assert roots == tuple(sorted(_root(model, n) for n in parked))
