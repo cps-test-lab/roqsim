@@ -752,6 +752,31 @@ CASES: dict[str, Case] = {
         {"drawer_cabinet": {"pose": {"position": {"x": 1.0, "y": 1.0}}}, "name": "cabinet"}
     ),
     "tote": _static({"tote": {"pose": {"position": {"x": 1.0, "y": -1.0}}}, "name": "tote"}),
+    "slots": _static(
+        {
+            "box": {
+                "prefix": "rack_",
+                "pose": {"position": {"x": 2.0, "y": 0.0}},
+                "size": [0.6, 1.2, 0.9],
+                "motion": "static",
+            },
+            "name": "rack",
+            "components": [
+                {
+                    "slots": {
+                        "body": "rack_box",
+                        "slots": {
+                            "bin_0": {
+                                "kind": "grip",
+                                "at": [0.3, 0.0, 0.5, 3.14159],
+                                "stand": [[0.9, 0.0, 3.14159]],
+                            }
+                        },
+                    }
+                }
+            ],
+        }
+    ),
     "palm_tree": _static({"palm_tree": {}, "name": "palm"}),
     "duct": _static({"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [3.0, 1.0], "z": 3.2}}),
     "strip_light": _static(

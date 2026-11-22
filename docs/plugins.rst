@@ -3278,6 +3278,37 @@ world is not filtered from that body's geoms, so a button sunk into its housing 
 contact. ``push_button`` excludes the pair (``<contact><exclude>``); a button modelled otherwise needs
 the same.
 
+Slots: where to stand, where the hand goes
+------------------------------------------
+
+A **slot** is what a prop says about working at it: where a worker stands, which way it faces, and
+where its hand goes. It is sites, by a naming convention:
+
+* the **hand target**, named for the slot: a grip site ``<x>/<slot>/grip`` (the grip frame above),
+  which ``grasp`` takes; a place frame ``<x>/<slot>`` (+z up, its yaw the heading what is set down
+  there is set at), which ``place`` sets down on; or a press face ``<x>/<slot>`` (+x out of the
+  face), which ``press`` pushes;
+* its **stances**, ``<x>/<slot>/stand``, or ``<x>/<slot>/stand_<k>`` for several: +x the way to
+  face. What a stance says is where it stands on the floor and its heading; the site itself is at
+  the height of its body's origin.
+
+A prop's own plugin can state its slots; the ``slots`` component states them on any other body -- a
+primitive standing in for a rack, a mesh model, a body of a baked scene -- nested under the entry
+whose body it is, in that body's frame, its sites named for the entry::
+
+    - box: {prefix: rack_, pose: {position: {x: 2.0, y: 0.0}}, size: [0.6, 1.2, 0.9], motion: static}
+      name: rack
+      components:
+        - slots:
+            body: rack_box      # as the model names it
+            slots:
+              bin_0: {kind: grip, at: [0.1, 0.0, 0.5, 3.14159], stand: [[0.6, 0.0, 3.14159]]}
+              tray: {kind: place, at: [0.0, 0.2, 0.46]}
+
+which states ``rack/bin_0/grip``, ``rack/bin_0/stand`` and ``rack/tray``. A slot's name has no
+``/`` and does not begin with ``stand`` (nor with ``grip``, but for a grip slot), and a ``kind``
+comes with its ``at``.
+
 Writing your own
 ----------------
 
