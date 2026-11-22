@@ -11,6 +11,7 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
     "roqsim",
+    "roqsim_nav",   # the way a body holding something walks (lattice, footprint)
     "mujoco>=4.0,<4.1",
     "numpy>=1.24",
     "scipy>=1.11",  # Euler decomposition of a rotation (quat.py)

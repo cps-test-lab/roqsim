@@ -3292,6 +3292,11 @@ where its hand goes. It is sites, by a naming convention:
   face. What a stance says is where it stands on the floor and its heading; the site itself is at
   the height of its body's origin.
 
+``approach`` and ``carry`` of ``roqsim_motion`` to a target that states stances -- ``<x>/<slot>``
+itself, or its ``<x>/<slot>/grip`` -- walk to the nearest of them and face as it says, unless they
+are given a ``standoff`` or a ``facing``; without one they stand ``standoff`` (0.6 m left out) in
+front of the target. ``arrived`` carries ``stance``: the stance's site, or the stand-off it used.
+
 A prop's own plugin can state its slots; the ``slots`` component states them on any other body -- a
 primitive standing in for a rack, a mesh model, a body of a baked scene -- nested under the entry
 whose body it is, in that body's frame, its sites named for the entry::

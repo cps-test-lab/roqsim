@@ -172,6 +172,16 @@ def test_approach_and_carry_walk_through_their_via_points_first(sim):
     assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
 
 
+def test_a_carry_asked_to_draw_out_a_load_before_the_body_fails_saying_so(sim):
+    """Drawing out is for a load beside the body: one before it, asked to be drawn out, fails before
+    the way rather than walking on as if it had been."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    st = sim.run("carry", to="bench", standoff=0.55, facing=math.pi / 2, draw_out=True)
+    assert st.error == "cannot draw tote_1 out: it is before the body, not beside it", st.error
+    assert "planned" not in sim.events()
+
+
 def test_a_carry_stands_facing_the_way_it_is_given(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
@@ -225,34 +235,47 @@ def test_a_carry_whose_first_via_point_is_where_it_stands_sets_off_toward_the_ne
     assert st.error == "" and nearest < 0.1
 
 
-def test_a_carry_along_a_way_turns_at_its_corners_so_the_load_stays_over_the_way(sim):
-    """Carrying, the body turns at a carrying pace; along a way it stops and turns at each point,
-    so the tote in front of it stays over the way's legs instead of swinging out at a corner."""
+def test_a_carry_along_a_way_passes_its_points_and_its_load_meets_nothing(sim):
+    """Carrying, the body walks a way planned for it and what it holds through the floor points of
+    ``via``, in order; the tote touches nothing but the hands on the way."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
     x, y, _ = sim.body.root()
-    corner = (x, y + 1.6)  # straight north, then a right angle east toward the bench's side
-    seq = sim.h.carry(
-        "bench", standoff=0.55, facing=math.pi / 2, via=[list(corner), [-0.2, corner[1]]]
-    )
+    corner = (x, y + 1.3)  # north, then east toward the bench's side
+    points = [corner, (-0.6, corner[1])]
+    t0 = sim.e.ctx.sim_time
+    seq = sim.h.carry("bench", standoff=0.55, facing=math.pi / 2, via=[list(p) for p in points])
     tote = sim.m.body("tote_1").id
-    off = 0.0
+    nearest = [math.inf, math.inf]
+    touched = []
     while True:
         sim.e.step()
-        p = sim.d.xpos[tote]
-        if y + 0.6 < p[1] < corner[1] - 0.1 and p[0] < x + 0.3:  # along the first leg: over it
-            off = max(off, abs(p[0] - x))
-        elif p[1] > corner[1] - 0.1:  # past the corner: over the second leg
-            off = max(off, abs(p[1] - corner[1]) if x + 0.6 < p[0] < -0.5 else 0.0)
+        bx, by, _ = sim.body.root()
+        for i, p in enumerate(points):
+            nearest[i] = min(nearest[i], math.hypot(bx - p[0], by - p[1]))
+        if [
+            ev
+            for ev in sim.e.ctx.events.all()[sim._first :]
+            if ev["event"] == "lifted" and ev["t"] >= t0
+        ]:
+            for c in sim.d.contact[: sim.d.ncon]:
+                bodies = {int(sim.m.geom_bodyid[c.geom1]), int(sim.m.geom_bodyid[c.geom2])}
+                if tote in bodies and c.dist < -1e-4:
+                    other = (bodies - {tote}).pop() if len(bodies) > 1 else tote
+                    if not sim.body.owns(sim.m, other):
+                        touched.append(sim.m.body(other).name)
         st = sim.h.status()
         if st.seq == seq and st.finished:
             break
-    assert st.error == "" and off < 0.12, off
+    assert st.error == "", st.error
+    assert max(nearest) < 0.06, nearest
+    assert touched == [], touched[:5]
+    assert "planned" in sim.events(t0)
 
 
 def test_carrying_it_turns_the_way_its_load_sweeps_clear():
-    """A post stands where the short way round would swing the tote: the body turns the long way,
-    and the tote never meets the post."""
+    """A post stands where the short way round would swing the tote: the body turns the way its
+    load sweeps clear, and the tote never meets the post."""
     world = _world()
     world["components"][0]["walker"]["pose"] = {
         "position": {"x": 0.0, "y": 0.0},
@@ -315,6 +338,22 @@ def test_a_carry_lifts_straight_up_before_it_draws_the_load_in(sim):
     assert drift < 0.005, drift
 
 
+def test_lifted_says_how_high_the_hands_are(sim):
+    """``lifted`` says the height the hands came to, not the one they were sent to: a lift ends
+    within a few centimetres of where it aims."""
+    sim.ok("approach", target="tote_1", standoff=0.6)
+    sim.ok("grasp", hand="both", target="tote_1")
+    seq = sim.h.carry("bench", standoff=0.55)
+    while True:
+        sim.e.step()
+        lifted = [e for e in sim.e.ctx.events.all()[sim._first :] if e["event"] == "lifted"]
+        if lifted:
+            break
+        assert not (sim.h.status().seq == seq and sim.h.status().finished)
+    hands = [sim.d.site(f"worker/grip_{s}").xpos[2] for s in "lr"]
+    assert lifted[0]["height"] == pytest.approx(float(np.mean(hands)), abs=0.002), (lifted, hands)
+
+
 def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
     """The hold is a spring: the load comes over the place a moment after the hands. It is lowered
     once it is there, so it does not come down on a rim beside the place; and it is set down only
@@ -345,23 +384,31 @@ def test_a_place_lowers_only_once_the_load_is_over_the_place(sim):
 
 def test_a_place_beyond_reach_sets_the_load_down_as_far_forward_as_the_hands_reach(sim):
     """A load held by its ends has its hands to the sides: a place past its reach sets it down with
-    the hands as far in front of the body as they reach, not short of that by their spread."""
+    the hands as far in front of the body as they reach at the height they set it down at, not
+    short of that by their spread."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    sim.ok("carry", to="bench", standoff=0.9, facing=math.pi / 2)
     x, y, yaw = sim.body.root()
     ahead = np.array([math.cos(yaw), math.sin(yaw)])
+    # how far the hand that holds it reaches with the tote set down on the bench (0.75 m); the
+    # other rides on its grip
+    plugin = next(p for p in sim.e.plugins if type(p).__name__ == "HumanoidPlugin")
+    low = float(plugin._bottom(sim.m.body("tote_1").id)[2])
+    (side,) = [s for s in "lr" if not plugin._riding[s]]
+    reach = sim.body.place_reach(sim.d, side, 0.75 + float(sim.body.grip(sim.d, side)[0][2]) - low)
     seq = sim.h.place({"position": {"x": x, "y": 2.75, "z": 0.75}}, release=False)
     out = None
     while True:
         sim.e.step()
         if "lowering" in sim.events() and out is None:
-            out = max(float((sim.body.grip(sim.d, s)[0][:2] - [x, y]) @ ahead) for s in "lr")
+            out = float((sim.body.grip(sim.d, side)[0][:2] - [x, y]) @ ahead)
         st = sim.h.status()
         if st.seq == seq and st.finished:
             break
     assert st.error == "", st.error
-    assert out > sim.body.place_reach() - 0.015, out
+    assert reach > 0.7, reach  # the arm reaches farther than it stands from the bench's edge
+    assert out > reach - 0.03, (out, reach)
 
 
 def test_a_place_the_hands_cannot_bring_the_load_over_fails_holding_it(sim, monkeypatch):
@@ -463,6 +510,13 @@ def test_a_via_that_is_no_list_of_floor_points_fails_naming_it(sim):
     assert st.error.startswith("via: a point is [x, y]")
 
 
+def test_a_back_max_that_is_no_distance_fails_naming_it(sim):
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    st = sim.run("carry", to="bench", back_max=-0.1)
+    assert st.error.startswith("back_max: a distance"), st.error
+
+
 def test_approach_to_nothing_fails_naming_it(sim):
     st = sim.run("approach", target="nowhere")
     assert "unknown target 'nowhere'" in st.error
@@ -492,6 +546,20 @@ def test_press_on_something_that_cannot_move_fails(sim):
     sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
     st = sim.run("press", hand="right", target="cab/drawer_1/grip")  # a closed drawer, pushed in
     assert st.error.startswith("button did not move")
+
+
+@pytest.mark.parametrize("move", ["pull", "push"])
+def test_a_pull_or_push_given_an_angle_and_a_distance_or_axis_is_refused_before_it_moves(sim, move):
+    """An angle goes round a hinge and a distance along a slide: a stroke given both, or an angle
+    with an axis, is refused, and what the hand holds stays where it is."""
+    sim.ok("approach", target="cab/drawer_1/grip", standoff=0.75)
+    sim.ok("grasp", hand="right", target="cab/drawer_1/grip")
+    q0 = sim.qpos("cab/drawer_1/slide")
+    st = sim.run(move, hand="right", distance=0.1, angle=30.0)
+    assert "not both: angle given with distance" in st.error
+    st = sim.run(move, hand="right", angle=30.0, axis=[1.0, 0.0, 0.0])
+    assert "not both: angle given with axis" in st.error
+    assert abs(sim.qpos("cab/drawer_1/slide") - q0) < 1e-3
 
 
 def test_grasp_pull_push_and_release_a_drawer(sim):
@@ -591,6 +659,324 @@ def test_a_place_goes_over_what_it_passes_on_the_way_not_through_it(sim):
     assert abs(plugin._path_top([0.0, -2.6], [0.0, -3.4], tote, 0.0) - 0.9) < 0.01
 
 
+def _sliding(opens: float) -> str:
+    """A sliding door shut at 0, opening along its axis (``opens`` 1: range 0 to 0.8) or against it
+    (-1: range -0.8 to 0), its handle at the edge that leads."""
+    rng = "0 0.8" if opens > 0 else "-0.8 0"
+    return f"""<mujoco><worldbody>
+<geom name="floor" type="plane" size="6 6 .05"/>
+<body name="slider" pos="1.0 0 1.1">
+  <joint name="slider_slide" type="slide" axis="0 1 0" range="{rng}" damping="20"/>
+  <geom name="slider_leaf" type="box" size="0.02 0.4 0.3" mass="8"/>
+  <site name="slider/grip" pos="-0.05 {-0.32 * opens} 0" quat="0 1 0 0"/>
+</body></worldbody></mujoco>"""
+
+
+def _box(name, x, y, z, size):
+    return {
+        "box": {
+            "prefix": f"{name}_",
+            "pose": {"position": {"x": x, "y": y, "z": z}},
+            "size": size,
+            "motion": "static",
+        },
+        "name": name,
+    }
+
+
+def test_a_place_through_an_opening_goes_under_its_lintel_not_over_it():
+    """What is above the load on its way is not a surface it is set down over: a tote set on a
+    fixture inside a housing, through an opening above a sill, passes under the lintel and the
+    roof over the fixture, and comes down on the fixture."""
+    world = _world()
+    world["components"] += [
+        _box("bed", -3.4, 0.0, 0.4, [0.8, 1.2, 0.8]),
+        _box("sill", -2.93, 0.0, 0.425, [0.06, 1.2, 0.85]),
+        _box("lintel", -2.93, 0.0, 1.85, [0.06, 1.2, 0.5]),
+        _box("roof", -3.4, 0.0, 2.15, [1.0, 1.2, 0.1]),
+        _box("fixture", -3.2, 0.0, 0.85, [0.44, 0.8, 0.1]),
+    ]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="fixture", standoff=0.55, facing=math.pi)
+        tote = sim.m.body("tote_1").id
+        highest = 0.0
+        seq = sim.h.place("fixture", release=False)
+        while True:
+            sim.e.step()
+            highest = max(highest, float(sim.d.xpos[tote][2]))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert highest < 1.6 - 0.15  # under the lintel's underside, the tote's height below it
+        assert abs(sim.d.xpos[tote][2] - 0.9) < 0.02  # on the fixture, still in the hands
+    finally:
+        engine.shutdown()
+
+
+def test_a_shallow_load_is_lifted_clear_of_the_table_it_was_taken_from_before_its_way():
+    """A carry lifts what it holds clear of what it was taken from -- the load by CLEAR, and the
+    arms holding it, which the way checks down to the hands -- before it plans the way: a shallow
+    tote taken from a table, its grips near the table's top, is carried off it."""
+    world = _world()
+    for c in world["components"]:
+        if c.get("name") == "tote_1":
+            c["tote"]["size"] = [0.5, 0.35, 0.04]
+            c["tote"]["pose"]["position"]["z"] = 0.75
+    world["components"].append(_box("table", -1.5, -0.4, 0.375, [0.6, 1.0, 0.75]))
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=0.55, facing=math.pi / 2)
+    finally:
+        engine.shutdown()
+
+
+_LONG_BAR = """<mujoco><worldbody>
+<geom name="floor" type="plane" size="6 6 .05"/>
+<geom name="arm_a" type="box" pos="-1.6 -0.45 0.95" size="0.3 0.04 0.03"/>
+<geom name="arm_b" type="box" pos="-1.6 0.45 0.95" size="0.3 0.04 0.03"/>
+<body name="bar" pos="-1.55 0 1.0035"><freejoint name="bar_free"/>
+  <geom name="bar_box" type="box" size="0.0225 0.8 0.0225" mass="2.2"/>
+  <site name="bar/grip_l" pos="0.0525 -0.3 0" quat="{left}"/>
+  <site name="bar/grip_r" pos="0.0525 0.3 0" quat="{right}"/>
+</body></worldbody></mujoco>"""
+
+
+def _grip_quat(yaw):
+    """A grip frame pushing along ``yaw``: +x that way, +z down (``roqsim_motion.hands``)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.array([c, s, 0.0, s, -c, 0.0, 0.0, 0.0, -1.0]))
+    return " ".join(f"{v:.6f}" for v in q)
+
+
+def test_a_long_bar_in_both_hands_is_held_level_and_carried_off_the_arms_it_lay_on(tmp_path):
+    """The hand that holds a load the other rides on holds it level: a 1.6 m bar lifted off two arms
+    by grips 0.6 m apart has its far grip within LEVEL_GRIPS of the near one before its way is
+    planned, and is carried away."""
+    xml = tmp_path / "long_bar.xml"
+    xml.write_text(
+        _LONG_BAR.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -0.8, "y": 0.0}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        here = {"position": {"x": -1.0, "y": 0.0, "z": 0.0}}
+        sim.ok("approach", target=here, standoff=0.0, facing=math.pi)
+        sim.ok("grasp", hand="both", target="bar")
+        near, far = sim.m.site("bar/grip_l").id, sim.m.site("bar/grip_r").id
+        seq = sim.h.carry({"position": {"x": 1.5, "y": 0.0, "z": 0.0}}, standoff=0.0, facing=0.0)
+        level = None
+        while True:
+            sim.e.step()
+            if level is None and "lifted" in sim.events():
+                level = abs(float(sim.d.site_xpos[far][2] - sim.d.site_xpos[near][2]))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert level is not None and level < 0.012, level
+    finally:
+        engine.shutdown()
+
+
+_BAR_IN_A_RACK = """<mujoco><worldbody>
+<geom name="floor" type="plane" size="6 6 .05"/>
+<geom name="post_a" type="box" pos="-1.975 -0.45 1.1" size="0.075 0.075 1.1"/>
+<geom name="post_b" type="box" pos="-1.975 0.45 1.1" size="0.075 0.075 1.1"/>
+<geom name="arm_a" type="box" pos="-1.6 -0.45 0.95" size="0.3 0.04 0.03"/>
+<geom name="arm_b" type="box" pos="-1.6 0.45 0.95" size="0.3 0.04 0.03"/>
+<geom name="arm_a_up" type="box" pos="-1.6 -0.45 1.35" size="0.3 0.04 0.03"/>
+<geom name="arm_b_up" type="box" pos="-1.6 0.45 1.35" size="0.3 0.04 0.03"/>
+<body name="bar" pos="-1.5 0 1.0035"><freejoint name="bar_free"/>
+  <geom name="bar_box" type="box" size="0.0225 0.8 0.0225" mass="2.2"/>
+  <site name="bar/grip_l" pos="0.0525 -0.3 0" quat="{left}"/>
+  <site name="bar/grip_r" pos="0.0525 0.3 0" quat="{right}"/>
+</body></worldbody></mujoco>"""
+
+
+def test_a_bar_lifted_between_a_racks_arms_at_the_side_is_drawn_out_and_stepped_away_from(
+    tmp_path,
+):
+    """A bar lying across a rack's arms, taken by a body standing beside it facing along it, the
+    bar at its right side, is lifted between the arms and the ones above: no way starts from
+    there. The carry draws it out toward the body -- the hands as far as the trunk leaves room, the
+    body stepping aside, its heading kept, for the rest -- until it is clear of the arms' tips, and
+    then walks its way. The bar never comes into the trunk and leaves the arms level."""
+    xml = tmp_path / "bar_in_a_rack.xml"
+    xml.write_text(
+        _BAR_IN_A_RACK.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -0.6, "y": 0.0}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        here = {"position": {"x": -1.15, "y": 0.0, "z": 0.0}}
+        sim.ok("approach", target=here, standoff=0.0, facing=-math.pi / 2)
+        sim.ok("grasp", hand="both", target="bar")
+        bar = sim.m.body("bar").id
+        trunk = {
+            sim.m.body(f"worker/{p}").id
+            for p in ("pelvis", "spine", "chest", "neck", "head")
+            if mujoco.mj_name2id(sim.m, mujoco.mjtObj.mjOBJ_BODY, f"worker/{p}") >= 0
+        }
+        assert trunk
+        arms = {sim.m.geom(n).id for n in ("arm_a", "arm_b", "arm_a_up", "arm_b_up")}
+        near, far = sim.m.site("bar/grip_l").id, sim.m.site("bar/grip_r").id
+        seq = sim.h.carry(
+            {"position": {"x": 1.5, "y": -1.5, "z": 0.0}}, standoff=0.0, facing=0.0, draw_out=True
+        )
+        bar_geom = sim.m.geom("bar_box").id
+        trunk_geoms = [g for g in range(sim.m.ngeom) if int(sim.m.geom_bodyid[g]) in trunk]
+        fromto = np.zeros(6)
+        nearest, touched, tilt, out_at = 1.0, set(), 0.0, None
+        while True:
+            sim.e.step()
+            # how near the bar comes to the trunk from the draw on, by the geometry (a held
+            # load's contacts with the body that holds it are not all generated)
+            for g in trunk_geoms if "drawing_out" in sim.events() else ():
+                nearest = min(
+                    nearest, mujoco.mj_geomDistance(sim.m, sim.d, bar_geom, g, 0.2, fromto)
+                )
+            for c in sim.d.contact[: sim.d.ncon]:
+                b1, b2 = int(sim.m.geom_bodyid[c.geom1]), int(sim.m.geom_bodyid[c.geom2])
+                if bar in (b1, b2):
+                    if {int(c.geom1), int(c.geom2)} & arms and "lifted" in sim.events():
+                        touched.add(sim.m.geom(int(c.geom1) if c.geom1 in arms else c.geom2).name)
+            if "drawing_out" in sim.events() and out_at is None and "planned" in sim.events():
+                out_at = float(sim.d.xpos[bar][0])
+                tilt = abs(float(sim.d.site_xpos[far][2] - sim.d.site_xpos[near][2]))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        events = sim.events()
+        assert "drawing_out" in events and "stepping_aside" in events, events
+        assert nearest > 0.0, nearest  # drawn out and carried, the bar never came into the trunk
+        assert not touched, touched  # nor touched an arm once lifted
+        assert out_at is not None and out_at > -1.3 + 0.0225, out_at  # clear of the arms' tips
+        assert tilt < 0.012, tilt  # level as it left
+    finally:
+        engine.shutdown()
+
+
+_BAR_TO_A_TABLE = _BAR_IN_A_RACK.replace(
+    "</worldbody>",
+    """<body name="table" pos="2.5 -0.7 0">
+  <geom name="table_top" type="box" pos="0 0 0.425" size="1.0 0.3 0.425"/>
+  <site name="table/top" pos="0.05 0.1 0.85"/>
+</body></worldbody>""",
+)
+
+
+def test_a_bar_beside_the_body_is_set_down_to_the_side_as_far_as_the_arms_reach_there(tmp_path):
+    """A bar carried at the body's side, along its heading, set down onto a table beside the body
+    whose place is 0.2 m further out than the bar is held and a few centimetres ahead, with the
+    front hand at its reach ahead already: the set-down goes out sideways by the arms' reach that
+    way, the bar comes down wholly on the table. Clamped by the hands' reach ahead, a shift that
+    was nearly all sideways was cut to nothing, and the bar came down half off the table's edge."""
+    xml = tmp_path / "bar_to_a_table.xml"
+    xml.write_text(
+        _BAR_TO_A_TABLE.format(left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5))
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -0.6, "y": 0.0}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        here = {"position": {"x": -1.15, "y": 0.0, "z": 0.0}}
+        sim.ok("approach", target=here, standoff=0.0, facing=-math.pi / 2)
+        sim.ok("grasp", hand="both", target="bar")
+        # beside the table, along it, the bar at the right side over the table's near edge
+        sim.ok(
+            "carry",
+            to={"position": {"x": 2.5, "y": -0.05, "z": 0.0}},
+            standoff=0.0,
+            facing=0.0,
+            draw_out=True,
+        )
+        bar = sim.m.geom("bar_box").id
+        assert sim.d.geom_xpos[bar][1] > -0.45  # held over the edge, short of the place
+        sim.ok("place", at="table/top")
+        for _ in range(300):
+            sim.e.step()
+        rot = sim.d.geom_xmat[bar].reshape(3, 3)
+        half = sim.m.geom_size[bar]
+        corners = [
+            sim.d.geom_xpos[bar] + rot @ (half * [sx, sy, -1.0]) for sx in (-1, 1) for sy in (-1, 1)
+        ]
+        for c in corners:  # every corner of its underside over the table, resting on it
+            assert 1.5 < c[0] < 3.5 and -1.0 < c[1] < -0.4, c
+            assert abs(c[2] - 0.85) < 0.01, c
+    finally:
+        engine.shutdown()
+
+
+def test_a_step_aside_drawing_a_bar_out_that_would_meet_a_wall_fails_before_it_steps(tmp_path):
+    """The step aside that draws a bar out of a rack is checked as a planned step is: with a wall
+    beside the body, where the step would take the body and the bar into it, the carry fails before
+    the body moves, naming the wall."""
+    xml = tmp_path / "bar_in_a_rack.xml"
+    xml.write_text(
+        _BAR_IN_A_RACK.format(
+            left=_grip_quat(math.pi - 0.5), right=_grip_quat(math.pi + 0.5)
+        ).replace(
+            "</worldbody>",
+            '<geom name="probe_wall" type="box" pos="-0.95 0 1.0" size="0.02 1.5 1.0"/>'
+            "</worldbody>",
+        )
+    )
+    world = _world({"graspable": ["bar"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    world["components"][0]["walker"]["pose"]["position"] = {"x": -1.15, "y": 0.0}
+    world["components"][0]["walker"]["pose"]["orientation"] = {"yaw": -math.pi / 2}
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok(
+            "approach",
+            target={"position": {"x": -1.15, "y": 0.0, "z": 0.0}},
+            standoff=0.0,
+            facing=-math.pi / 2,
+        )
+        sim.ok("grasp", hand="both", target="bar")
+        st = sim.run(
+            "carry",
+            to={"position": {"x": -1.15, "y": -2.5, "z": 0.0}},
+            standoff=0.0,
+            facing=-math.pi / 2,
+            draw_out=True,
+        )
+        assert st.error.startswith("cannot draw bar out: stepping aside"), st.error
+        assert "probe_wall" in st.error, st.error
+        assert "stepping_aside" not in sim.events()
+    finally:
+        engine.shutdown()
+
+
 def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
     world = _world()
     world["components"].append(
@@ -635,12 +1021,46 @@ def test_what_rides_in_a_held_tote_is_no_surface_to_set_it_down_on():
         engine.shutdown()
 
 
+def test_a_drawn_mark_flush_on_a_bench_does_not_hide_the_bench_from_a_place():
+    """A mark drawn on the bench's top -- a thin box that collides with nothing, lying flush on
+    it -- is no surface, and does not hide the bench under it: the tote is set down on the bench.
+    Skipped by restarting the ray just under it, the ray started inside the bench, missed it, and
+    the place read the floor."""
+    world = _world()
+    world["components"].append(
+        {
+            "box": {
+                "prefix": "mark_",
+                "pose": {"position": {"x": 0.0, "y": 2.45, "z": 0.751}},
+                "size": [0.5, 0.4, 0.002],
+                "motion": "static",
+                "collide": False,
+            },
+            "name": "mark",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="tote_1", standoff=0.45)
+        sim.ok("grasp", hand="both", target="tote_1")
+        sim.ok("carry", to="bench", standoff=1.1, facing=math.pi / 2)
+        sim.ok("approach", target="bench", standoff=0.55, facing=math.pi / 2)
+        sim.ok("place", at="bench")
+        for _ in range(300):
+            sim.e.step()
+        assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02, sim.d.body("tote_1").xpos
+    finally:
+        engine.shutdown()
+
+
 def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
     """What is set down stands on one thing, level: set down where the hands reach, a tote half
     over the bench's edge is refused, and one wholly on it is set down."""
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)  # the tote over the edge
+    sim.ok("carry", to="bench", standoff=1.1, facing=math.pi / 2)  # the tote over the edge
     st = sim.run("place", at="bench")
     assert st.error.startswith("out of reach") and "closer" in st.error, st.error
     assert sim.d.body("tote_1").xpos[2] > 0.7  # still held
@@ -651,6 +1071,72 @@ def test_a_place_that_would_leave_it_half_off_what_is_under_it_fails(sim):
     assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
 
 
+def test_a_place_reaches_as_far_as_the_arm_solve_puts_the_hand(sim):
+    """A place reaches as far ahead as the walker's arm solve puts the hand that holds the load, at
+    the height it sets it down at, bending over as the solve does: standing 0.75 m from the bench's
+    middle, the tote is set down wholly on it."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
+    sim.ok("place", at="bench")
+    for _ in range(300):
+        sim.e.step()
+    assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02  # on the bench
+
+
+def test_a_place_reach_is_the_farthest_the_arm_makes_not_the_end_of_a_stretch_from_the_root(
+    sim, monkeypatch
+):
+    """Where the arm solve makes the hand is not one stretch from the root out: right beside the
+    hip, at the height it sets a load down at, it may not, while further ahead it does. The reach
+    is the farthest point the solve makes, looked for over the whole range: here the arm makes
+    0.3 to 0.8 m ahead and not nearer, and the reach is 0.8 m."""
+    from roqsim_walker import handling
+
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    x, y, yaw = sim.body.root()
+    ahead = np.array([math.cos(yaw), math.sin(yaw)])
+
+    class Solved:
+        def __init__(self, residual):
+            self.residual = residual
+
+    def solve(desc, root, heading, local, goals, layouts):
+        side, goal = next(iter(goals.items()))
+        dist = float(np.dot(goal.pos[:2] - [x, y], ahead))
+        return Solved({side: 0.0 if 0.3 <= dist <= 0.8 else 1.0})
+
+    monkeypatch.setattr(handling, "solve", solve)
+    reach = sim.body.place_reach(sim.d, "r", 1.3)
+    assert 0.78 <= reach <= 0.8, reach
+
+
+def test_what_is_set_down_is_turned_square_to_the_place(sim):
+    """A tote set down at a place on the bench whose heading is turned 25 degrees from how the
+    tote is held comes down square to it -- turned on by what the wrist leaves it short of, to
+    within SQUARE_TOL of a quarter turn of the place's heading. Turned only up to 20 degrees, a
+    load held further off was set down as it was held: a part taken by a grip turned in toward
+    the body came down with a corner off its tray."""
+    sim.ok("approach", target="tote_1", standoff=0.45)
+    sim.ok("grasp", hand="both", target="tote_1")
+    sim.ok("carry", to="bench", standoff=0.6, facing=math.pi / 2)
+    om = sim.d.body("tote_1").xmat.reshape(3, 3)
+    heading = math.atan2(om[1, 0], om[0, 0]) + math.radians(25)
+    place = {
+        "position": {"x": 0.0, "y": 2.45, "z": 0.75},
+        "orientation": {"yaw": heading},
+    }
+    sim.ok("place", at=place)
+    for _ in range(300):
+        sim.e.step()
+    om = sim.d.body("tote_1").xmat.reshape(3, 3)
+    rel = math.atan2(om[1, 0], om[0, 0]) - heading
+    off = rel - round(rel / (math.pi / 2)) * (math.pi / 2)
+    assert abs(off) < math.radians(5), math.degrees(off)
+    assert abs(sim.d.body("tote_1").xpos[2] - 0.75) < 0.02
+
+
 def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
     """A floor drawn but colliding with nothing (a hall's) is nothing to stand on: a corner over it
     is a corner over nothing."""
@@ -658,7 +1144,7 @@ def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
     saved = sim.m.geom_contype[floor].copy(), sim.m.geom_conaffinity[floor].copy()
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=0.75, facing=math.pi / 2)
+    sim.ok("carry", to="bench", standoff=1.2, facing=math.pi / 2)
     try:
         sim.m.geom_contype[floor] = 0
         sim.m.geom_conaffinity[floor] = 0
@@ -671,7 +1157,7 @@ def test_a_place_half_over_a_floor_that_collides_with_nothing_fails_too(sim):
 def test_place_where_the_target_is_beyond_the_hands_fails_without_dropping(sim):
     sim.ok("approach", target="tote_1", standoff=0.45)
     sim.ok("grasp", hand="both", target="tote_1")
-    sim.ok("carry", to="bench", standoff=1.2)
+    sim.ok("carry", to="bench", standoff=1.6)
     st = sim.run("place", at="bench")
     assert st.error.startswith("out of reach") and "not bench" in st.error
     assert sim.d.body("tote_1").xpos[2] > 0.5  # still held
@@ -869,3 +1355,179 @@ def test_a_look_at_a_new_target_ends_only_once_the_head_is_on_it(sim):
 
     f = quat_rotate(sim.d.mocap_quat[head], [1.0, 0.0, 0.0])
     assert abs(math.atan2(f[1], f[0]) - math.atan2(to[1], to[0])) < math.radians(3)
+
+
+@pytest.mark.parametrize("opens", [1.0, -1.0])
+@pytest.mark.parametrize("side_of_handle", [0.25, -0.25])
+def test_a_slide_along_the_face_of_its_handle_opens_pulled_and_shuts_pushed(
+    tmp_path, side_of_handle, opens
+):
+    """A slide along the face its handle is on -- a sliding door's -- is pulled open and pushed shut
+    whichever side of the handle the body stands: toward or away from the body says nothing along
+    that face. Open is away from the stop it is shut at, whichever end of its range that is."""
+    xml = tmp_path / "sliding.xml"
+    xml.write_text(_sliding(opens))
+    world = _world({"graspable": ["slider"]})
+    world["sim"]["world"] = str(xml)
+    world["components"] = [c for c in world["components"] if c.get("name") == "worker"]
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        stand = {"position": {"x": 0.5, "y": -0.32 * opens + side_of_handle, "z": 0.0}}
+        sim.ok("approach", target=stand, standoff=0.0, facing=0.0)
+        sim.ok("grasp", hand="right", target="slider/grip")
+        sim.ok("pull", hand="right", distance=0.25)
+        opened = opens * sim.qpos("slider_slide")
+        assert opened > 0.2, opened  # opened, away from its shut stop
+        sim.ok("push", hand="right", distance=0.2)
+        assert opens * sim.qpos("slider_slide") < opened - 0.15  # shut again
+    finally:
+        engine.shutdown()
+
+
+def _part_on_a_table(z_board):
+    """A small part with a grip on a table, and a board at ``z_board`` (m) to set it on."""
+    world = _world({"graspable": ["part"]})
+    grip = {
+        "kind": "grip",
+        "at": [0.0, 0.0, 0.0, -math.pi / 2],
+        "stand": [[0.0, 0.5, -math.pi / 2]],
+    }
+    world["components"] += [
+        {
+            "box": {
+                "prefix": "table_",
+                "pose": {"position": {"x": -1.5, "y": -0.3, "z": 0.375}},
+                "size": [0.6, 0.8, 0.75],
+                "motion": "static",
+            },
+            "name": "table",
+        },
+        {
+            "box": {
+                "prefix": "part_",
+                "pose": {"position": {"x": -1.5, "y": 0.0, "z": 0.78}},
+                "size": [0.1, 0.08, 0.06],
+                "motion": "physics",
+            },
+            "name": "part",
+            "components": [{"slots": {"body": "part_box", "slots": {"grip": grip}}}],
+        },
+        {
+            "box": {
+                "prefix": "board_",
+                "pose": {"position": {"x": 2.0, "y": 2.5, "z": z_board - 0.02}},
+                "size": [0.6, 0.4, 0.04],
+                "motion": "static",
+            },
+            "name": "board",
+        },
+    ]
+    return world
+
+
+def test_a_part_in_one_hand_is_carried_at_the_side_where_the_hand_hangs_to_a_high_board():
+    """A part taken in one hand goes to a board above the shoulder carried at the body's side
+    where the hand hangs: held palm forward beside the shoulder, lifted to clear the board, the
+    hand could not make it."""
+    engine = _engine(_part_on_a_table(1.45))
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
+        part = sim.d.xpos[sim.m.body("part_box").id]
+        assert part[2] < 1.2, part  # at the side, below the board
+    finally:
+        engine.shutdown()
+
+
+def test_a_part_that_would_tip_over_a_narrow_boards_edge_is_not_let_go_on_it():
+    """A part in one hand comes down on a board above the shoulder hanging tilted from the grip,
+    an edge first, and lies down flat once let go. On a board too narrow for it to lie on (0.12 m
+    deep), it would tip over the board's edge: the place fails before letting go, saying so, and
+    the part stays in the hand. Let go, it would fall over the edge."""
+    world = _part_on_a_table(1.45)
+    for c in world["components"]:
+        if c.get("name") == "board":
+            c["box"]["size"][1] = 0.12
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
+        st = sim.run("place", at="board")
+        assert "would tip over the edge" in st.error, st.error
+        hp = next(p for p in engine.plugins if type(p).__name__ == "HumanoidPlugin")
+        assert hp.holding["r"] is not None  # still in the hand
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize("height", [1.3, 1.45])
+def test_a_part_in_one_hand_is_set_on_a_board_above_the_shoulder(height):
+    """Set down above where the hand hangs, a part held in one hand is first brought before the
+    shoulder, the palm turned in and the fingers ahead, and raised from there onto the board: held
+    palm forward and the fingers down, as it was carried, the hand could not raise it."""
+    engine = _engine(_part_on_a_table(height))
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.5, facing=math.pi / 2)
+        sim.ok("place", at="board", release=False)
+        sim.ok("release", hand="right")
+        for _ in range(500):
+            sim.e.step()
+        part = sim.d.xpos[sim.m.body("part_box").id]
+        assert height + 0.02 < part[2] < height + 0.06, part  # resting on the board
+        assert abs(part[0] - 2.0) < 0.3 and abs(part[1] - 2.5) < 0.2, part
+    finally:
+        engine.shutdown()
+
+
+def test_a_part_in_one_hand_is_raised_over_the_bench_under_the_board_not_through_it():
+    """Brought before the shoulder to be raised onto a board over a bench, a part in one hand goes
+    up clear of the bench first: coming forward where the hand hangs, it went into the bench."""
+    world = _part_on_a_table(1.45)
+    world["components"].append(
+        {
+            "box": {
+                "prefix": "bench2_",
+                "pose": {"position": {"x": 2.0, "y": 2.45, "z": 0.475}},
+                "size": [0.8, 0.5, 0.95],
+                "motion": "static",
+            },
+            "name": "bench2",
+        }
+    )
+    engine = _engine(world)
+    try:
+        engine.reset()
+        sim = Sim(engine)
+        sim.ok("approach", target="part/grip")
+        sim.ok("grasp", hand="right", target="part/grip")
+        sim.ok("carry", to="board", standoff=0.6, facing=math.pi / 2)
+        part, bench = sim.m.body("part_box").id, sim.m.body("bench2_box").id
+        deepest = 0.0
+        seq = sim.h.place("board", release=False)
+        while True:
+            sim.e.step()
+            for c in sim.d.contact[: sim.d.ncon]:
+                if {int(sim.m.geom_bodyid[c.geom1]), int(sim.m.geom_bodyid[c.geom2])} == {
+                    part,
+                    bench,
+                }:
+                    deepest = max(deepest, -float(c.dist))
+            st = sim.h.status()
+            if st.seq == seq and st.finished:
+                break
+        assert st.error == "", st.error
+        assert deepest < 0.001, deepest
+    finally:
+        engine.shutdown()
