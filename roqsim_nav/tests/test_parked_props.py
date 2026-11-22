@@ -113,8 +113,8 @@ def test_a_body_something_can_hold_is_holdable_and_one_nothing_can_is_not():
 
 def test_a_prop_something_can_hold_is_never_parked_in_the_grid():
     """The grid is built once a run: a tote standing still at the start, baked in as a parked prop,
-    would still be there in the grid once a worker has picked it up -- and a mover carrying it would
-    plan from inside its own old footprint. A crate nothing can hold is parked as before."""
+    would stay a wall where it stood once a worker has carried it away. A crate nothing can hold is
+    parked as before."""
     from types import SimpleNamespace
 
     from roqsim_nav.plugins.navigator import NavigatorPlugin
