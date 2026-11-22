@@ -9,6 +9,8 @@ target** and one or more **stances**.
   +z up, its yaw the heading what is set there is set down at, so ``place`` sets down on it.
   ``kind: press`` makes it ``<entry>/<slot>``, +x out of the face, so ``press`` pushes along -x.
 * Each stance is a site ``<entry>/<slot>/stand`` (``/stand_<k>`` for several), +x the way to face.
+  ``roqsim_motion``'s ``approach`` and ``carry`` to the slot, or to its grip, walk to it -- the
+  nearest of several -- where they are given no ``standoff`` or ``facing``.
 
 A prop whose plugin states its own slots needs none of this; this states them on anything else --
 a box standing in for a rack, a mesh model, a body of a baked scene. The poses are in the body's
