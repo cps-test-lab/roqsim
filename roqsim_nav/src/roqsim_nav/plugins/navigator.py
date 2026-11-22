@@ -701,8 +701,9 @@ class NavigatorPlugin(Plugin):
         whole route, so while it is standing still it is a wall.
 
         Nor is a prop something can hold (:func:`~roqsim_nav.obstacles.holdable_roots`): the grid
-        is built once a run, and a tote a worker picks up is not where it stood at the start --
-        a mover carrying it would plan from inside its old footprint.
+        is built once a run, and a tote a worker carries away would stay a wall where it stood for
+        every walk planned on the grid after. The price: until it is taken, no mover's grid routes
+        round it.
 
         Robots are NOT in this set even when they are motionless, and that is the distinction that
         matters: the subject stands still at spawn because nothing is driving it *yet*. Baking it

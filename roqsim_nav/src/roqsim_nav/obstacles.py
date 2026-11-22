@@ -88,9 +88,10 @@ def wall_polygons(
 
 
 def holdable_roots(model) -> set:
-    """The weld roots of the bodies with DOFs something can hold: the object of a weld equality
-    (a hand's hold, a gripper's) -- active or not, as a hold is switched on when it is taken. Such
-    a body is carried away, so it is never a parked prop in a grid built once a run."""
+    """The weld roots of the bodies with DOFs a weld equality joins -- a hand's hold or a
+    gripper's, active or not, as a hold is switched on when it is taken -- on either side but a
+    mocap body's (the hand that holds). Such a body can be carried away, so it is never a parked
+    prop in a grid built once a run."""
     out = set()
     for eq in range(model.neq):
         if int(model.eq_type[eq]) != mujoco.mjtEq.mjEQ_WELD:
