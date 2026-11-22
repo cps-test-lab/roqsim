@@ -88,7 +88,8 @@ def test_a_slot_is_a_hand_target_and_its_stances_in_the_bodys_frame():
         ({"a": {"at": [0, 0, "up"]}}, "'at' is [x, y, z]"),
         ({"a": {"at": [0, 0, 1], "stand": [[0.6, 0, float("nan")]]}}, "'stand' is a list of"),
         ({"a/grip": {"kind": "place", "at": [0, 0, 1]}}, "a slot's name is one word"),
-        ({"grip_l": {"kind": "place", "at": [0, 0, 1]}}, "a slot's name is one word"),
+        ({"grip_l": {"kind": "place", "at": [0, 0, 1]}}, "a place slot's name does not begin"),
+        ({"grip": {"kind": "press", "at": [0, 0, 1]}}, "a press slot's name does not begin"),
         ({"stand": {"at": [0, 0, 1]}}, "a slot's name is one word"),
         ({"a": {"kind": "grip", "stand": [[0.6, 0, 3.1]]}}, "'kind' 'grip' names a hand target"),
     ],
@@ -96,6 +97,19 @@ def test_a_slot_is_a_hand_target_and_its_stances_in_the_bodys_frame():
 def test_a_slot_that_states_nothing_usable_is_refused_saying_why(slots, says):
     with pytest.raises(PluginError, match=says.replace("[", r"\[").replace("]", r"\]")):
         _compiled(_world(slots))
+
+
+def test_a_grip_slot_may_be_named_grip_its_site_a_grip_under_it():
+    """Only a slot whose own site would read as a grip is refused for its name: a grip slot called
+    ``grip`` states ``rack/grip/grip``, a grip of the part ``grip``."""
+    engine = _compiled(
+        _world({"grip": {"kind": "grip", "at": [0, 0, 1], "stand": [[0.6, 0, 3.1]]}})
+    )
+    try:
+        assert engine.ctx.model.site("rack/grip/grip") is not None
+        assert engine.ctx.model.site("rack/grip/stand") is not None
+    finally:
+        engine.shutdown()
 
 
 def test_slots_on_a_body_that_is_not_there_are_refused():

@@ -46,8 +46,6 @@ from roqsim.plugin import Plugin, PluginError
 from roqsim.schema import Field
 
 KINDS = ("grip", "place", "press")
-#: A slot's name may not begin with these: its sites would read as a grip or a stance.
-RESERVED = ("grip", "stand")
 #: What a slot states; anything else is a mistake that would leave it without a stance or target.
 KEYS = ("kind", "at", "stand")
 
@@ -90,10 +88,16 @@ class SlotsPlugin(Plugin):
         if not isinstance(slots, dict) or not slots:
             return ["'slots' is a mapping of slot names to {kind, at, stand}"]
         for name, slot in slots.items():
-            if not isinstance(name, str) or not name or "/" in name or name.startswith(RESERVED):
+            kind = slot.get("kind", "place") if isinstance(slot, dict) else None
+            if not isinstance(name, str) or not name or "/" in name or name.startswith("stand"):
                 errors.append(
                     f"slot {name!r}: a slot's name is one word without '/' that does not begin "
-                    f"with {' or '.join(repr(r) for r in RESERVED)}: those name a grip or a stance"
+                    f"with 'stand': its sites would read as another slot's or as a stance"
+                )
+            elif name.startswith("grip") and kind != "grip":
+                errors.append(
+                    f"slot {name!r}: a {kind} slot's name does not begin with 'grip': its site "
+                    f"would read as a grip"
                 )
             if not isinstance(slot, dict):
                 errors.append(f"slot {name!r}: a mapping of kind, at and stand")
