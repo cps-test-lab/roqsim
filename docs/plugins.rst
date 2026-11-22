@@ -3305,9 +3305,9 @@ whose body it is, in that body's frame, its sites named for the entry::
               bin_0: {kind: grip, at: [0.1, 0.0, 0.5, 3.14159], stand: [[0.6, 0.0, 3.14159]]}
               tray: {kind: place, at: [0.0, 0.2, 0.46]}
 
-which states ``rack/bin_0/grip``, ``rack/bin_0/stand`` and ``rack/tray``. A slot's name is one word
-that does not begin with ``stand`` (nor with ``grip``, but for a grip slot), and a ``kind`` comes
-with its ``at``.
+which states ``rack/bin_0/grip``, ``rack/bin_0/stand`` and ``rack/tray``. A slot's name has no
+``/`` and does not begin with ``stand`` (nor with ``grip``, but for a grip slot), and a ``kind``
+comes with its ``at``.
 
 Writing your own
 ----------------

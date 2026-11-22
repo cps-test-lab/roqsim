@@ -88,11 +88,11 @@ class SlotsPlugin(Plugin):
         if not isinstance(slots, dict) or not slots:
             return ["'slots' is a mapping of slot names to {kind, at, stand}"]
         for name, slot in slots.items():
-            kind = slot.get("kind", "place") if isinstance(slot, dict) else None
+            kind = slot.get("kind", "place") if isinstance(slot, dict) else "place"
             if not isinstance(name, str) or not name or "/" in name or name.startswith("stand"):
                 errors.append(
-                    f"slot {name!r}: a slot's name is one word without '/' that does not begin "
-                    f"with 'stand': its sites would read as another slot's or as a stance"
+                    f"slot {name!r}: a slot's name has no '/' and does not begin with 'stand', "
+                    f"which names a stance"
                 )
             elif name.startswith("grip") and kind != "grip":
                 errors.append(
