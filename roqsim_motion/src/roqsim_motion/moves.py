@@ -2,7 +2,7 @@
 """A humanoid's moves: one entity's procedures, started through its handle, each an event.
 
 The ``humanoid`` plugin is nested under the entity whose body it moves -- a walker with
-``hands: true``, or a humanoid robot's ``spawn_model`` with ``humanoid_robot`` -- and drives that
+``hands: true`` -- and drives that
 body (``humanoid_body:<entity>``, :class:`~roqsim_motion.body.HumanoidBody`) through the motion
 core. It is a :class:`~roqsim.machine.MachinePlugin` that registers no entity of its own, so its
 moves are programs with the machine contract unchanged: ``start(move, **args)`` returning a
@@ -249,7 +249,7 @@ class HumanoidPlugin(MachinePlugin):
         if missing:
             raise MachineError(
                 f"humanoid {self.address}: {self.entity} has no grip sites ({', '.join(missing)}); "
-                f"a walker needs 'hands: true', a robot a 'humanoid_robot' nested beside this"
+                f"a walker needs 'hands: true'"
             )
         error = check_solref(spec.option, tuple(self.settings.hold.solref))
         if error:
@@ -298,8 +298,7 @@ class HumanoidPlugin(MachinePlugin):
         if self.body is None:
             raise MachineError(
                 f"humanoid {self.address}: {self.entity} published no body (humanoid_body:"
-                f"{self.entity}); nest it under a walker with 'hands: true' or a robot with "
-                f"'humanoid_robot'"
+                f"{self.entity}); nest it under a walker with 'hands: true'"
             )
         self.holding = {s: None for s in SIDES}
         self._force = {s: 0.0 for s in SIDES}

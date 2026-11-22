@@ -6,8 +6,7 @@ and the posture with :func:`roqsim_motion.ik.solve` over the gait's pose, blends
 solution in by its own weight (the trunk by the stronger hand's), and writes the thirty finger
 bones from each hand's pose; its gaze and its clips are the walker's look and motion layers
 (:mod:`roqsim_walker.layers`). It is published on the blackboard as ``humanoid_body:<name>``,
-the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through; a robot's
-body (:mod:`roqsim_motion.robot`) offers the same.
+the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through.
 
 A walker with ``hands: false`` has none: its model and its animation have nothing of the hands.
 """

@@ -45,7 +45,6 @@ where = ["src"]
 roqsim_humanoid = [
     "models/*.xml",
     "models/*.manifest.yaml",
-    "models/*.retarget.yaml",   # roqsim_motion's retargeting tables (humanoid_robot)
     "models/meshes/*.STL",
     "models/meshes/agibot_g2/*.obj",
     "models/meshes/agibot_g2/*.STL",

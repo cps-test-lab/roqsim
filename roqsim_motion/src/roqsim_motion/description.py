@@ -5,9 +5,7 @@ The motion core works on one **canonical humanoid**, whatever body it drives in 
 walker's seventeen joints (``pelvis`` the root, ``spine``, ``head``, ``shoulder_*``, ``elbow_*``,
 ``wrist_*``, ``hip_*``, ``knee_*``, ``ankle_*``, ``toe_*``), Z up, X forward, Y left, the arms
 hanging down at rest. Each joint has a rest translation from its parent and a rotation the solver
-sets; the hands' fingers are posed by :mod:`roqsim_motion.hands`, not by the solver. A body is
-mapped onto it by a retargeting table (:mod:`roqsim_motion.retarget`), so the joint names here are
-the vocabulary every table speaks.
+sets; the hands' fingers are posed by :mod:`roqsim_motion.hands`, not by the solver.
 
 Limits are per joint, as ``(axis order, {axis: (lo, hi)})`` on the joint's local rotation decomposed
 in that order (rad). The solver clamps the joints it sets to them; the rest follow the motion clip.

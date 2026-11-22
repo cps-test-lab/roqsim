@@ -28,7 +28,7 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - `roqsim_aerial/` — aerial vehicles, flight control, wind, PX4 SITL (`[px4]`). `roqsim`, `roqsim_sensors`.
 - `roqsim_nav/` — shared 2D navigation and the `navigator`; no geometry, so any family may use it. `roqsim`.
   Embodiments and local planners plug in via `roqsim_nav.outputs` / `roqsim_nav.avoidance`; nothing branches on their names.
-- `roqsim_motion/` — the humanoid motion core (whole-body IK, hands, retargeting tables) and the moves a humanoid's handle starts; no geometry. `roqsim`, `roqsim_nav`.
+- `roqsim_motion/` — the humanoid motion core (whole-body IK, hands) and the moves a humanoid's handle starts; no geometry. `roqsim`, `roqsim_nav`.
 - `roqsim_walker/` — kinematic pedestrians, a `roqsim_nav` output. `roqsim`, `roqsim_nav`, `roqsim_motion`; no robot package depends on it.
   Licences differ per character (`CREDITS.txt` beside each) and the clips are CC-BY: `roqsim_walker/THIRD_PARTY.md`.
 - `roqsim_mcp/`, `roqsim_scene_builder/` — MCP servers (introspection; scene windows and renders). `roqsim`.
