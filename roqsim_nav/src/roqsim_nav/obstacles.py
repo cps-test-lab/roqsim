@@ -87,6 +87,34 @@ def wall_polygons(
     return polys
 
 
+def holdable_roots(model, holder: str) -> set:
+    """The weld roots of the bodies with DOFs ``holder`` can hold: the other side of each weld
+    equality one of whose bodies is ``holder``'s (named ``<holder>/...``, a hand) -- active or not,
+    as a hold is switched on when it is taken. What ``holder`` can take is carried away by it, so
+    its own grid, built once a run, does not keep it as a wall."""
+    prefix = f"{holder}/"
+
+    def body_of(eq, obj):
+        if int(model.eq_objtype[eq]) == mujoco.mjtObj.mjOBJ_SITE:
+            return int(model.site_bodyid[obj])
+        return obj
+
+    def holders(body):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) or ""
+        return name.startswith(prefix)
+
+    out = set()
+    for eq in range(model.neq):
+        if int(model.eq_type[eq]) != mujoco.mjtEq.mjEQ_WELD:
+            continue
+        a, b = (body_of(eq, int(o)) for o in (model.eq_obj1id[eq], model.eq_obj2id[eq]))
+        for held, hand in ((a, b), (b, a)):
+            if holders(hand) and not holders(held) and 0 < held < model.nbody:
+                if int(model.body_weldid[held]) != 0:
+                    out.add(int(model.body_weldid[held]))
+    return out
+
+
 def _at_rest(model, data, body_id: int) -> bool:
     """Whether ``body_id`` is moving slower than :data:`RESTING_SPEED`.
 

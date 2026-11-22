@@ -92,6 +92,7 @@ from ..caution import CautionProbe
 from ..control import LAWS
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
+from ..obstacles import holdable_roots
 from ..outputs import available, resolve_output
 from ..planner import GridPlanner
 from ..state import NavState
@@ -699,6 +700,11 @@ class NavigatorPlugin(Plugin):
         somebody left in a doorway. Planning through it and then stopping in front of it wastes the
         whole route, so while it is standing still it is a wall.
 
+        Nor is a prop the mover's own hands can hold (:func:`~roqsim_nav.obstacles.holdable_roots`):
+        the grid is built once a run, and a tote a worker carries away would stay a wall where it
+        stood for every walk it plans after. Every other mover keeps it as a wall: it does not take
+        it, and a walker that does not stop for what its plan lacks would walk into it.
+
         Robots are NOT in this set even when they are motionless, and that is the distinction that
         matters: the subject stands still at spawn because nothing is driving it *yet*. Baking it
         into the grid would make every opponent plan around where the robot under test was parked at
@@ -707,6 +713,7 @@ class NavigatorPlugin(Plugin):
         """
         model = ctx.model
         roots = set()
+        holdable = holdable_roots(model, self.entity)
         for entity in ctx.entities.all():
             # The free joint, not the kind: what decides whether a prop is baked into the
             # grid is whether physics can move it, which a placement plugin registers as
@@ -717,6 +724,8 @@ class NavigatorPlugin(Plugin):
                 continue  # driven, so it is traffic rather than scenery
             bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
             if bid >= 0 and int(model.body_weldid[bid]) != 0:
+                if int(model.body_weldid[bid]) in holdable:
+                    continue  # something can take it away: it is not where the run began
                 roots.add(int(model.body_weldid[bid]))
         return tuple(sorted(roots))
 
