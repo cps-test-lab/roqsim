@@ -287,8 +287,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   nested under the entry whose `body` (as the model names it) they are on, per slot a hand target
   (`kind: grip` → `<entry>/<slot>/grip` in the grip-frame convention, `place` → `<entry>/<slot>` +z
   up, `press` → `<entry>/<slot>` +x out of the face) at `at` (x, y, z, yaw in the body's frame),
-  and stances `<entry>/<slot>/stand[_<k>]` at `stand` (`[[x, y, yaw], ...]`). `roqsim_motion`'s
-  `approach` and `carry` walk to a slot's nearest stance; `docs/plugins.rst`, "Slots".
+  and stances `<entry>/<slot>/stand[_<k>]` at `stand` (`[[x, y, yaw], ...]`); `docs/plugins.rst`,
+  "Slots".
 - **`ceiling_panels`** / **`duct`** / **`strip_light`** — what hangs under a soffit: a field of white
   acoustic panels over a rectangle (`area` + `panel` + `pitch`, only panels fully inside the rectangle
   are emitted), a round ventilation run between two points with tee drops into diffusers

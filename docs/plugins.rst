@@ -3282,21 +3282,17 @@ Slots: where to stand, where the hand goes
 ------------------------------------------
 
 A **slot** is what a prop says about working at it: where a worker stands, which way it faces, and
-where its hand goes. It is sites, by a naming convention the moves of ``roqsim_motion`` read:
+where its hand goes. It is sites, by a naming convention:
 
 * the **hand target**, named for the slot: a grip site ``<x>/<slot>/grip`` (the grip frame above),
   which ``grasp`` takes; a place frame ``<x>/<slot>`` (+z up, its yaw the heading what is set down
   there is set at), which ``place`` sets down on; or a press face ``<x>/<slot>`` (+x out of the
   face), which ``press`` pushes;
-* its **stances**, ``<x>/<slot>/stand``, or ``<x>/<slot>/stand_<k>`` for several: on the floor, +x the
-  way to face. Only their floor position and heading are read.
+* its **stances**, ``<x>/<slot>/stand``, or ``<x>/<slot>/stand_<k>`` for several: +x the way to
+  face. What a stance says is where it stands on the floor and its heading; the site itself is at
+  the height of its body's origin.
 
-``approach`` and ``carry`` to a target that states stances -- ``<x>/<slot>`` itself, or its
-``<x>/<slot>/grip`` -- walk to the nearest of them and face as it says, unless they are given a
-``standoff`` or a ``facing``; without one they stand ``standoff`` (0.6 m left out) in front of the
-target as before. ``arrived`` carries ``stance``: the stance's site, or the stand-off it used.
-
-A prop's own plugin states its slots; the ``slots`` component states them on any other body -- a
+A prop's own plugin can state its slots; the ``slots`` component states them on any other body -- a
 primitive standing in for a rack, a mesh model, a body of a baked scene -- nested under the entry
 whose body it is, in that body's frame, its sites named for the entry::
 

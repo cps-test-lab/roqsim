@@ -1,22 +1,19 @@
 """Scene plugin: slots on a body -- where a worker stands to work at it, and where its hand goes.
 
-A slot is sites on a body, by the convention ``roqsim_motion``'s moves read (``docs/plugins.rst``,
-"Slots"): a **hand target** and one or more **stances**.
+A slot is sites on a body, by a naming convention (``docs/plugins.rst``, "Slots"): a **hand
+target** and one or more **stances**.
 
 * The hand target is a site named for the slot. ``kind: grip`` makes it ``<entry>/<slot>/grip``,
   in the grip-frame convention of ``roqsim_motion.hands`` (+x out of the palm toward what it takes,
   +z along the fingers, down), so ``grasp`` takes it. ``kind: place`` makes it ``<entry>/<slot>``,
   +z up, its yaw the heading what is set there is set down at, so ``place`` sets down on it.
   ``kind: press`` makes it ``<entry>/<slot>``, +x out of the face, so ``press`` pushes along -x.
-* Each stance is a site ``<entry>/<slot>/stand`` (``/stand_<k>`` for several), on the floor, +x the
-  way to face. ``approach`` and ``carry`` to the slot, or to its grip, walk to it -- the nearest of
-  several -- where they are given no ``standoff`` or ``facing``.
+* Each stance is a site ``<entry>/<slot>/stand`` (``/stand_<k>`` for several), +x the way to face.
 
 A prop whose plugin states its own slots needs none of this; this states them on anything else --
 a box standing in for a rack, a mesh model, a body of a baked scene. The poses are in the body's
 frame (a ``box``'s origin is its centre), so a slot on a drawer moves with the drawer. A stance is
-put at the body's origin height: what the moves read of it is where it is on the floor and its
-heading.
+put at the body's origin height: what it says is where it stands on the floor and its heading.
 
 Nested under the entry it states slots on, whose name its sites carry::
 
