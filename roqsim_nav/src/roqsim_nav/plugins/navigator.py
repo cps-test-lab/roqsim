@@ -753,6 +753,7 @@ class NavigatorPlugin(Plugin):
         # After the route is rebuilt: the goal index is set against it, and a route a cancel left
         # at one point would otherwise leave the first goal skipped.
         self._core.reset()
+        self._core.exact = False
         # What `status()` and the handle's `pose` answer before the first tick.
         self._core.observe(ctx.sim_time, (x, y), None)
         self._seq.apply(0)
@@ -815,6 +816,7 @@ class NavigatorPlugin(Plugin):
 
         wanted = self._core.pref_vel
         if self._avoid is not None:
+            preferred = wanted
             entity = ctx.entities.get(self.entity)
             self._ensure_solved(ctx)
             self._avoid.submit(
@@ -825,6 +827,9 @@ class NavigatorPlugin(Plugin):
                 present=bool(entity.present) if entity is not None else True,
             )
             wanted = self._avoid.result(self._agent)
+            if self._core.exact:
+                # still an agent the others give way to, but it walks the legs it was given
+                wanted = preferred
 
         if self._caution.check(ctx, self._state.pos, 0.0, wanted):
             # Hold: do NOT advance along the path. Whether the progress clock is rebased with it
@@ -892,6 +897,7 @@ class NavigatorPlugin(Plugin):
         if not self._configured_goals or self._commanded is False:
             return
         self._commanded = False
+        self._core.exact = False
         st = self._state
         st.waypoints = np.asarray([tuple(st.pos), *self._configured_goals], dtype=float)
         st.dwell = _dwell_list(self._dwell_spec, len(st.waypoints))
@@ -1078,13 +1084,22 @@ class NavigatorPlugin(Plugin):
         self._ctx.post(lambda ctx: self._apply_start(seq))
         return seq
 
-    def send_goals(self, goals) -> int:
-        """Replace the route with ``goals`` and run it. Returns its sequence number immediately."""
+    def send_goals(self, goals, exact: bool = False) -> int:
+        """Replace the route with ``goals`` and run it. Returns its sequence number immediately.
+
+        ``exact``: the route is walked as given -- straight legs between its points, the planner not
+        asked, the avoidance model's steering not applied (its forward probe still stops the mover),
+        no recovery, no corner cut by the tracker, each point passed where its leg ends and the last
+        stopped at within 1 cm rather than at ``arrival_radius``
+        (:meth:`~roqsim_nav.behavior.NavCore.follow_exact`). For a caller that has checked the
+        legs itself, as a footprint way (:mod:`roqsim_nav.lattice`) is checked: a planned, steered
+        or cut leg would leave the way that was checked. It holds for this route only."""
         route = [tuple(float(v) for v in g)[:2] for g in goals]
         if not route:
             raise ValueError(_NO_GOALS.format(entity=self.entity))
         seq = self._seq.next()
-        self._ctx.post(lambda ctx: self._apply_goals(route, seq))
+        exact = bool(exact)
+        self._ctx.post(lambda ctx: self._apply_goals(route, seq, exact))
         return seq
 
     def cancel(self) -> int:
@@ -1117,7 +1132,7 @@ class NavigatorPlugin(Plugin):
         self._started = True
         self._seq.apply(seq)
 
-    def _apply_goals(self, route, seq: int) -> None:
+    def _apply_goals(self, route, seq: int, exact: bool = False) -> None:
         x, y, _yaw = self._output.pose(self._ctx)
         st = self._state
         st.waypoints = np.asarray([(x, y), *route], dtype=float)
@@ -1128,6 +1143,7 @@ class NavigatorPlugin(Plugin):
         st.loop = False  # a commanded route runs once; looping is a property of the configured one
         self._commanded = True
         self._core.reset()
+        self._core.exact = exact
         self._caution.reset()
         self._started = True
         self._seq.apply(seq)
@@ -1137,6 +1153,7 @@ class NavigatorPlugin(Plugin):
         self._state.waypoints = np.asarray([(x, y)], dtype=float)
         self._state.dwell = None
         self._core.reset()
+        self._core.exact = False
         self._state.done = True
         self._output.stop(self._ctx)
         self._seq.apply(seq)

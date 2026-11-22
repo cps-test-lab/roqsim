@@ -13,7 +13,7 @@ physics. Its force is bounded by whoever switched it on: :meth:`Hold.force` and
 ``slip``.
 
 **Pressing** is the body's: a walker's hands press through proxies it poses while a move needs them
-and parks under the floor otherwise (``roqsim_walker.handling``); a robot's through its own links.
+and parks under the floor otherwise (``roqsim_walker.handling``).
 :func:`contact_force` reads how hard a body is pushed, whoever pushes it.
 """
 
@@ -129,12 +129,16 @@ class Hold:
             qi = np.zeros(4)
             mujoco.mju_negQuat(qi, data.xquat[b1])
             pos = np.zeros(3)
-            mujoco.mju_rotVecQuat(pos, data.xpos[b2] - data.xpos[b1], qi)
             quat = np.zeros(4)
             mujoco.mju_mulQuat(quat, qi, data.xquat[b2])
-            # The anchor is the hand body's origin; the pose is the hand's in the object's frame, as
-            # it is now, and stays so through a later mj_setConst.
-            set_relpose(self.model, self.eq, np.zeros(3), pos, quat)
+            # The anchor is the hand's grip site, where the hand holds: a hold of the position only
+            # keeps that point on the object and lets the hand turn about it, as a hand on a handle
+            # turns. Anchored anywhere else on the hand, a turn of the hand moves the point held.
+            # The pose is the hand's in the object's frame, as it is now, and stays so through a
+            # later mj_setConst.
+            anchor = np.array(self.model.site_pos[self.hand_site], float)
+            mujoco.mju_rotVecQuat(pos, data.site_xpos[self.hand_site] - data.xpos[b1], qi)
+            set_relpose(self.model, self.eq, anchor, pos, quat)
             self.model.eq_data[self.eq][10] = (
                 1.0 if (self.whole if whole is None else whole) else 0.0
             )
@@ -170,11 +174,20 @@ class Hold:
         return float(abs(np.dot(f, axis)))
 
     def slide_axis(self, model, data):
-        """The world axis of the slide the held object is on, or ``None`` (a free object)."""
+        """The world axis the held object moves along at its grip site, or ``None`` (a free
+        object): a slide's axis, or for a hinge the tangent of the arc its grip site goes round --
+        the rest of a hold's pull is the joint's reaction to a hand a little off that line."""
         jnt = int(model.body_jntadr[self.obj_body])
-        if jnt < 0 or model.jnt_type[jnt] != mujoco.mjtJoint.mjJNT_SLIDE:
+        if jnt < 0:
             return None
-        return data.xaxis[jnt].copy()
+        kind = int(model.jnt_type[jnt])
+        if kind == mujoco.mjtJoint.mjJNT_SLIDE:
+            return data.xaxis[jnt].copy()
+        if kind == mujoco.mjtJoint.mjJNT_HINGE:
+            tangent = np.cross(data.xaxis[jnt], data.site_xpos[self.obj_site] - data.xanchor[jnt])
+            n = float(np.linalg.norm(tangent))
+            return tangent / n if n > 1e-9 else None
+        return None
 
 
 def contact_force(model, data, body: int, exclude: set | None = None) -> float:

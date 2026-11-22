@@ -6,8 +6,7 @@ and the posture with :func:`roqsim_motion.ik.solve` over the gait's pose, blends
 solution in by its own weight (the trunk by the stronger hand's), and writes the thirty finger
 bones from each hand's pose; its gaze and its clips are the walker's look and motion layers
 (:mod:`roqsim_walker.layers`). It is published on the blackboard as ``humanoid_body:<name>``,
-the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through; a robot's
-body (:mod:`roqsim_motion.robot`) offers the same.
+the interface the moves of :mod:`roqsim_motion.moves` drive any humanoid body through.
 
 A walker with ``hands: false`` has none: its model and its animation have nothing of the hands.
 """
@@ -26,6 +25,8 @@ from roqsim.pose import yaw_to_quat
 from roqsim.presence import PARK_Z
 from roqsim_motion import hands as H
 from roqsim_motion import quat as Q
+from roqsim_nav.footprint import BINS
+from roqsim_nav.lattice import STEP
 from roqsim_walker.humanoid import JOINT_NAMES, PRESS_RADIUS
 from roqsim_walker.motion import blend_quats
 
@@ -33,7 +34,16 @@ from roqsim_walker.motion import blend_quats
 WEIGHT_RATE = 2.5
 #: How fast the posture may change: rad/s for turn, lean and bend, m/s for the crouch.
 POSTURE_RATE = {"turn": 1.5, "lean": 1.0, "crouch": 0.4, "bend": 1.5}
+#: How much of its reach under the shoulder a hand carrying a load alone at the body's side hangs:
+#: the elbow a little bent.
+HANG = 0.85
 _TRUNK = ("pelvis", "spine", "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r")
+#: A grip the arm solve puts within this of its goal (m) reaches it, and the farthest ahead of the
+#: root it looks for a place's reach (m).
+PLACE_RESIDUAL = 0.01
+PLACE_SEARCH = 1.2
+#: The step the range of a place's reach is looked through by (m).
+PLACE_STEP = 0.05
 
 
 def layouts_for(
@@ -126,6 +136,8 @@ class WalkerBody(HumanoidBody):
         self.st = st
         self.layouts = layouts
         self.desc = description_for(st.skeleton)
+        #: The pelvis, heading and clip pose the arm solve last stood on (:meth:`place_reach`).
+        self._solve_ctx = None
         self._fingers = {
             side: np.array(
                 [int(model.body_mocapid[_body(model, f"{name}/{b}")]) for b in H.bone_names(side)]
@@ -171,6 +183,7 @@ class WalkerBody(HumanoidBody):
         self._last_posture = None
         self.st.face = None
         self.st.turn_rate = None
+        self.st.keep = None
 
     def grip(self, data, side):
         sid = self._grip[side]
@@ -182,10 +195,63 @@ class WalkerBody(HumanoidBody):
     def shoulder(self, data, side):
         return data.mocap_pos[self.st.mocap[f"shoulder_{side}"]].copy()
 
+    def place_reach(self, data, side: str, height: float, along=None) -> float:
+        """How far ahead of the root the walker's own arm solve puts ``side``'s grip, turned as it
+        is now, at ``height``, within PLACE_RESIDUAL of its goal: the farthest of the range up to
+        PLACE_SEARCH it makes, looked through in steps of PLACE_STEP and refined by halving, with
+        the clip pose and pelvis the solve last stood on -- bending, crouching and leaning as it
+        does for any goal, so what the reach takes in is what the arm makes. With ``along`` (a
+        floor direction, a unit 2-vector), how far that way instead: to a side. Before the solve
+        has run once there is nothing to stand on, and the shoulder's reach answers
+        (:meth:`HumanoidBody.place_reach`)."""
+        if self._solve_ctx is None:
+            return HumanoidBody.place_reach(self, data, side, height, along)
+        root, heading, local = self._solve_ctx
+        x, y, yaw = self.root()
+        if along is None:
+            ahead = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        else:
+            ahead = np.array([float(along[0]), float(along[1]), 0.0])
+        p, q = self.grip(data, side)
+        across = np.array([p[0] - x, p[1] - y, 0.0])
+        across -= ahead * float(across @ ahead)
+
+        def reaches(dist: float) -> bool:
+            goal = np.array([x, y, height]) + dist * ahead + across
+            sol = solve(self.desc, root, heading, local, {side: HandGoal(goal, q)}, self.layouts)
+            return sol.residual.get(side, 1.0) <= PLACE_RESIDUAL
+
+        # Where the arm makes the hand is not one stretch from the root out: beside the hip, at a
+        # height, it may not; further out it does. The whole range is looked through, a step at a
+        # time, and the farthest it makes refined within that step.
+        far = None
+        for k in range(int(round(PLACE_SEARCH / PLACE_STEP)) + 1):
+            if reaches(k * PLACE_STEP):
+                far = k * PLACE_STEP
+        if far is None:
+            return 0.0
+        lo, hi = far, min(far + PLACE_STEP, PLACE_SEARCH)
+        while hi - lo > 0.01:
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if reaches(mid) else (lo, mid)
+        return lo
+
     def arm_reach(self, side: str) -> float:
         return 0.97 * self.desc.arm_length(side) + float(
             np.linalg.norm(self.layouts[side].grip_pos)
         )
+
+    def follow_error(self, speed: float) -> float:
+        """With a ``body_lag`` the body is drawn on a point that follows the nav root as a
+        critically damped spring of that time constant: on a straight leg it trails along the way,
+        and round an arc of radius ``R`` it cuts inside it by ``(speed * body_lag)**2 / R`` once it
+        has settled onto it (a second-order follower of a point going round a circle). Taken at the
+        tightest arc a carry's way has (``roqsim_nav.lattice``: an arc of ``STEP`` turning one
+        heading bin), that is a bound on how far the drawn body strays from its way."""
+        lag = float(self.st.body_lag)
+        if lag <= 0.0:
+            return 0.0
+        return (float(speed) * lag) ** 2 / (STEP / (2.0 * math.pi / BINS))
 
     def root(self):
         """Where the body is drawn, and its heading: with a ``body_lag`` the point that follows the
@@ -199,6 +265,11 @@ class WalkerBody(HumanoidBody):
     def carry_height(self) -> float:
         return self.desc.root_height - 0.1
 
+    def hang_height(self, side: str) -> float:
+        # under the shoulder as it stands at rest, by most of the arm's reach
+        shoulder = self.desc.fk([0.0, 0.0, self.desc.root_height], Q.IDENTITY, {})
+        return float(shoulder[f"shoulder_{side}"][0][2]) - HANG * self.arm_reach(side)
+
     def at_rest(self) -> bool:
         st = self.st
         if st.body_lag <= 0.0 or st.body_pos is None:
@@ -211,6 +282,9 @@ class WalkerBody(HumanoidBody):
 
     def face(self, yaw):
         self.st.face = None if yaw is None else float(yaw)
+
+    def keep_heading(self, yaw):
+        self.st.keep = None if yaw is None else float(yaw)
 
     def tip(self, data, side: str):
         wid = self._wrist[side]
@@ -305,6 +379,7 @@ class WalkerBody(HumanoidBody):
                 pos = pos - rotate(wq, self.layouts[s].grip_pos)
             goals[s] = HandGoal(pos, quat)
         heading = yaw_to_quat(st.yaw)
+        self._solve_ctx = (root.copy(), heading, {n: v.copy() for n, v in local.items()})
         sol = solve(self.desc, root, heading, local, goals, self.layouts, self.posture)
         # The posture the solver chose eases from the last one at a bounded rate: a goal that crosses
         # from bending to crouching would otherwise move the body, and what it holds, at once.

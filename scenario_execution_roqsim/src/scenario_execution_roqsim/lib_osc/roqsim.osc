@@ -287,15 +287,18 @@ action machine_run:
     check: bool = true                                # fail on its error, or on a later start
 
 action humanoid_approach:
-    # Start a humanoid's `approach` and wait for that start (a walker with hands or a humanoid robot,
-    # moved by its `humanoid` component): walk to a stand-off in front of a target and face it. Every
+    # Start a humanoid's `approach` and wait for that start (a walker with hands, moved by its
+    # `humanoid` component): walk to a stand-off in front of a target and face it. Every
     # humanoid_<move> is `machine_run` with the move's parameters typed: it fails the trial on the
     # move's error unless `check: false`, and an abandoned branch cancels its own start.
-    humanoid: string                                  # the walker or robot's name in the world
-    target: string                                    # a site, body or entity by name
-    standoff: float = 0.6                             # metres in front of the target
+    humanoid: string                                  # the walker's name in the world
+    target: string                                    # a site, body or entity by name, or a slot
+    standoff: float                                   # metres in front of the target; left out:
+                                                      # its stance (a slot's <target>/stand), or 0.6
     facing: float                                     # world yaw (rad) to face; left out: the target's front
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
+    back_max: float = 0.5                             # holding something: as humanoid_carry's
+    long_way: bool = false                            # holding something: as humanoid_carry's
     check: bool = true
 
 action humanoid_reach:
@@ -332,28 +335,38 @@ action humanoid_release:
     check: bool = true
 
 action humanoid_pull:
-    # Pull what a hand holds toward the humanoid (a drawer along its slide).
+    # Pull what a hand holds toward the humanoid: a drawer along its slide by `distance` (a sliding
+    # door, its slide across the hand, along its own axis: pulled open), a door round its hinge by
+    # `angle` (the body stepping round with it where the arc leaves its reach). A door that meets
+    # something turns as far as it goes, and a `stopped` event says how far and what stopped it.
     humanoid: string
     hand: string
-    distance: float                                   # metres
+    distance: float                                   # metres along a slide; or
+    angle: float                                      # degrees round a hinge
     speed: float = 0.2                                # m/s
     check: bool = true
 
 action humanoid_push:
-    # Push what a hand holds away from the humanoid (a drawer shut).
+    # Push what a hand holds away from the humanoid: a drawer shut, a sliding door shut along its
+    # own axis, a door open away from it -- as far as it goes, as humanoid_pull's turn.
     humanoid: string
     hand: string
-    distance: float
+    distance: float                                   # as humanoid_pull's
+    angle: float
     speed: float = 0.2
     check: bool = true
 
 action humanoid_carry:
-    # Carry what the hands hold to a stand-off in front of a target, lifted clear of its surface.
+    # Carry what the hands hold to a stand-off in front of a target, lifted clear of its surface, on
+    # a way planned for the body and what it holds and walked exactly.
     humanoid: string
     to: string
-    standoff: float = 0.6
+    standoff: float                                   # as humanoid_approach's
     facing: float                                     # world yaw (rad) to face; left out: the target as seen
     via: string = ''                                  # floor points walked through first: 'x, y; x, y'
+    back_max: float = 0.5                             # m its way may step straight back at a time; 0: never
+    long_way: bool = false                            # may its way turn past half a turn on the spot
+    draw_out: bool = false                            # first draw a load beside the body out toward it (a bar from a rack's arms)
     check: bool = true
 
 action humanoid_place:

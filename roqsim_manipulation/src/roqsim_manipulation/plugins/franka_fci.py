@@ -34,15 +34,35 @@ configure.
 
 Every key, its type, unit and default: ``roqsim plugins describe franka_fci``.
 
-**What is measured.** ``tau_J`` is the link-side joint torque -- the actuator torque less the rotor
-inertia, damping and friction, which act before the torque sensor -- plus the configured sensor
-offset and noise (``tau_J_offset``, ``tau_J_noise``, per joint, drawn from ``ctx.rng_for``; zero by
-default). Everything the arm touches therefore reaches the estimate through its dynamics, as on the
-robot.
+**The joint torque controller** (``joint_torque_control``). ``tau_J_d`` is the *desired link-side*
+torque (``robot_state.h``), and the robot adds gravity and the compensation of the motor friction
+to it (the FCI documentation's ``tau_c = tau_d + tau_f + tau_g``). How its torque loop is built,
+its gains and its bandwidth are not published. Two settings:
+
+- ``link`` (the default): the robot's torque loop is modelled by what it leaves in front of the
+  program. A torque loop on a joint torque sensor divides the rotor's inertia, and its friction,
+  by ``1 + K_T`` (Albu-Schaeffer, Ott, Hirzinger, IJRR 2007); the arm's joints keep
+  :data:`LINK_ARMATURE` (the rotor reflected through the gear, franka_description's
+  ``dynamics.yaml``, divided by 6, inside the 4.5-8.2 the DLR arm's loop reached),
+  :data:`LINK_DAMPING` (the model's damping divided the same) and :data:`LINK_FRICTION` (the
+  link-side friction measured in ``tau_J`` on the Panda, which the robot does not remove: Gaz et
+  al., RA-L 2019). Written into the arm's joints at configure; each can be given per arm. The
+  link-side torque follows ``tau_J_d`` without a lag (none is published).
+- ``motor``: the command acts at the motor, and the program meets the model's own armature,
+  damping and friction loss.
+
+The setting in force is logged at configure and published on the handle (``torque_control``).
+
+**What is measured.** ``tau_J`` is the link-side joint torque -- the actuator torque less the
+joint's armature, damping and friction (what the setting above leaves in front of the program; they
+act before the torque sensor) -- plus the configured sensor offset and noise (``tau_J_offset``,
+``tau_J_noise``, per joint, drawn from ``ctx.rng_for``; zero by default). Everything the arm touches
+therefore reaches the estimate through its dynamics, as on the robot.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +102,22 @@ from ..franka.server import FCIServer, Request
 
 JOINTS = tuple(f"fr3_joint{i}" for i in range(1, 8))
 
+log = logging.getLogger(__name__)
+
+#: The rotor inertia in front of the program under the robot's torque loop (kg m^2): franka_description
+#: 2.9.0 ``robots/fr3/dynamics.yaml``'s ``motor_inertia * gear_ratio**2`` (0.606, 0.606, 0.462,
+#: 0.462, 0.206, 0.206, 0.206), divided by 6. Joint 7's 0.034 is above the 0.0075 that libfranka's
+#: ``joint_impedance_control`` example (joint 7 damping 15 N m s/rad, 1 kHz) needs to be stable.
+LINK_ARMATURE = (0.101, 0.101, 0.077, 0.077, 0.034, 0.034, 0.034)
+#: The viscous damping in front of the program (N m s/rad): the ``fr3`` model's 0.21, divided by 6.
+LINK_DAMPING = (0.035,) * 7
+#: The link-side Coulomb friction the robot leaves (N m): half the amplitude of the sigmoid Gaz,
+#: Cognetti, Oliva, Robuffo Giordano and De Luca fitted to the Panda's ``tau_J`` in motion (RA-L 4(4),
+#: 2019; the authors' ``get_FrictionTorque.m``). The Panda's, the FR3's sibling: none is published
+#: for the FR3.
+LINK_FRICTION = (0.27, 0.44, 0.32, 0.64, 0.42, 0.15, 0.28)
+TORQUE_CONTROL_MODES = ("link", "motor")
+
 
 @dataclass
 class InProcessMotion:
@@ -117,6 +153,9 @@ class FrankaHandle:
     #: The controller itself, to read; a call on it bypasses the handle's checks (a setting
     #: taken while the arm moves, for one), which the robot would refuse.
     core: FrankaCore
+    #: The joint torque controller in force: ``mode`` and the armature, damping and friction it
+    #: leaves in front of the program, per joint.
+    torque_control: dict | None = None
 
 
 def _matrix(value, name: str) -> np.ndarray:
@@ -184,6 +223,38 @@ class FrankaFCIPlugin(Plugin):
             unit="s",
             doc="wall time a client may take to answer a state before the run stops",
         ),
+        "joint_torque_control": Field(
+            dict,
+            schema={
+                "mode": Field(
+                    str,
+                    default="link",
+                    choices=TORQUE_CONTROL_MODES,
+                    doc="link: tau_J_d is the link-side torque, the robot's torque loop leaves the "
+                    "values below in front of the program; motor: the command acts at the motor, "
+                    "against the model's own armature, damping and friction loss",
+                ),
+                "armature": Field(
+                    (float, list),
+                    default=None,
+                    unit="kg m^2",
+                    doc="link: the rotor inertia left, one or per joint (default LINK_ARMATURE)",
+                ),
+                "damping": Field(
+                    (float, list),
+                    default=None,
+                    unit="N m s/rad",
+                    doc="link: the viscous damping left, one or per joint (default LINK_DAMPING)",
+                ),
+                "friction": Field(
+                    (float, list),
+                    default=None,
+                    unit="N m",
+                    doc="link: the Coulomb friction left, one or per joint (default LINK_FRICTION)",
+                ),
+            },
+            doc="the robot's joint torque controller: what of the motor a torque program meets",
+        ),
         "urdf": Field(
             str,
             default="",
@@ -213,7 +284,46 @@ class FrankaFCIPlugin(Plugin):
                 errors += CollisionBehavior.from_config(cb).errors()
             except (KeyError, ValueError) as exc:
                 errors.append(f"collision_behavior: {exc!r}")
+        jtc = config.get("joint_torque_control") or {}
+        if isinstance(jtc, dict):
+            for key in ("armature", "damping", "friction"):
+                value = jtc.get(key)
+                if value is None:
+                    continue
+                if jtc.get("mode", "link") != "link":
+                    errors.append(
+                        f"joint_torque_control.{key}: only the link mode takes it; motor runs on "
+                        "the model's own values"
+                    )
+                    continue
+                a = np.asarray(value, float) if not isinstance(value, str) else None
+                if (
+                    a is None
+                    or a.shape not in ((), (7,))
+                    or not np.all(np.isfinite(a))
+                    or np.any(a < 0)
+                ):
+                    errors.append(
+                        f"joint_torque_control.{key}: one non-negative number or seven, got {value!r}"
+                    )
         return errors
+
+    def _torque_control(self) -> dict:
+        """The joint torque controller in force, every value per joint."""
+        jtc = self.config.get("joint_torque_control") or {}
+        mode = jtc.get("mode") or "link"
+        if mode == "motor":
+            return {"mode": "motor"}
+        out = {"mode": "link"}
+        for key, default in (
+            ("armature", LINK_ARMATURE),
+            ("damping", LINK_DAMPING),
+            ("friction", LINK_FRICTION),
+        ):
+            value = jtc.get(key)
+            value = default if value is None else value
+            out[key] = [float(v) for v in np.broadcast_to(np.asarray(value, float), (7,))]
+        return out
 
     # -- set-up -------------------------------------------------------------------------------------
 
@@ -246,6 +356,18 @@ class FrankaFCIPlugin(Plugin):
             self._acts.append(aid)
         self._dofs, self._qadr, self._acts = map(np.array, (self._dofs, self._qadr, self._acts))
         self._base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + "fr3_link0")
+        self.torque_control = self._torque_control()
+        if self.torque_control["mode"] == "link":
+            # The robot's torque loop: what of the motor stays in front of the program. Written into
+            # the compiled model's numbers (no structure changes) before the first step.
+            m.dof_armature[self._dofs] = self.torque_control["armature"]
+            m.dof_damping[self._dofs] = self.torque_control["damping"]
+            m.dof_frictionloss[self._dofs] = self.torque_control["friction"]
+        log.info(
+            "franka_fci %s: joint_torque_control %s",
+            self.entity,
+            ", ".join(f"{k} {v}" for k, v in self.torque_control.items()),
+        )
         mujoco.mj_kinematics(m, ctx.data)
         R_base = ctx.data.xmat[self._base].reshape(3, 3)
         model_file = Path(resolve_model(entity.meta["model"]).path)
@@ -296,6 +418,7 @@ class FrankaFCIPlugin(Plugin):
                 set_k=self._idle(lambda T: self.core.set_k(_matrix(T, "EE_T_K"))),
                 set_ee=self._idle(lambda T: self.core.set_ee(_matrix(T, "NE_T_EE"))),
                 core=self.core,
+                torque_control=self.torque_control,
             ),
         )
         self._last_state = self.core.state(0)

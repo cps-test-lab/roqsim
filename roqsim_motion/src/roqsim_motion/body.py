@@ -1,17 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """What the moves need of a humanoid body, whichever body it is.
 
-A body -- the walker's mocap skeleton (``roqsim_walker.handling.WalkerBody``) or a humanoid robot's
-joints (:class:`roqsim_motion.robot.RobotBody`) -- is published on the blackboard as
+A body -- the walker's mocap skeleton (``roqsim_walker.handling.WalkerBody``) -- is published on
+the blackboard as
 ``humanoid_body:<entity>`` and offers the moves (:mod:`roqsim_motion.moves`) one interface: each
 hand's goal (a world pose its grip frame goes to, eased in and out), its pose (``open``, ``power``,
 ...), the posture, where its grip frame is now, and how far its arm reaches. A body may also turn
-its head toward a target and play clips over its own motion (the walker's does; a robot's raises
-``NotImplementedError`` for them, which a move reports as its failure). Every method runs on the
+its head toward a target and play clips over its own motion (the walker's does; a body that cannot
+raises ``NotImplementedError`` for them, which a move reports as its failure). Every method runs on the
 physics thread; the body solves and writes at its own update.
 """
 
 from __future__ import annotations
+
+import math
 
 import mujoco
 import numpy as np
@@ -32,7 +34,7 @@ class HumanoidBody:
     """The state every body shares; a body implements the methods that raise here."""
 
     #: Whether the body's hands touch by contact proxies the moves switch (a walker's), or by its
-    #: own geometry (a robot's).
+    #: own geometry.
     has_proxies = False
     #: How two hands hold one object: ``ride`` -- the first holds it, the second rides on its own
     #: grip site (a body posed at its own rate, whose two hands would squeeze it between two holds);
@@ -50,6 +52,23 @@ class HumanoidBody:
     #: How far in front of its root the body keeps clear of anything solid when it comes to take
     #: something by its handles (m): its front, and its knees where it crouches.
     stand_clear = 0.2
+    #: Where a hand holding a load alone carries it, at the body's side (:meth:`hang_height`): how
+    #: far ahead of the root, and how far out beside its shoulder (m).
+    one_hand_ahead = 0.05
+    one_hand_out = 0.08
+    #: A load in one hand set down higher than this above where the hand hangs (m) is first brought
+    #: before the shoulder, this far ahead of it (m), the palm turned in to raise it.
+    one_hand_raise = 0.3
+    one_hand_before = 0.45
+    #: How far ahead of the root a carry holds a load in front of the body at most (m).
+    carry_ahead = 0.42
+    #: A holding arm in a carry's footprint: a capsule of this radius from shoulder to hand (m), and
+    #: the body's geoms within this distance of its line from shoulder to grip are that arm (m).
+    arm_radius = 0.05
+    arm_near = 0.12
+    #: The height above its lowest geom (m) within which the body's geoms -- legs, hips, trunk --
+    #: make one piece of a carry's footprint.
+    body_layer = 0.3
 
     def __init__(self, name: str):
         self.name = name
@@ -145,13 +164,28 @@ class HumanoidBody:
     def gripper(self, data, side: str, closed: bool) -> None:
         """Close or open ``side``'s gripper, for a hand that has one instead of fingers."""
 
-    def place_reach(self) -> float:
-        """How far in front of the body its hands set something down, at most (m)."""
-        return 0.55
+    def place_reach(self, data, side: str, height: float, along=None) -> float:
+        """How far in front of the body's root ``side``'s hand reaches to set something down with
+        the hand at ``height`` (m), at most: its shoulder's reach (:meth:`arm_reach`) across the
+        floor at that height, from where the shoulder stands. With ``along`` (a floor direction,
+        a unit 2-vector), how far it reaches that way instead -- to a side. A body that bends to
+        reach says how far that takes it."""
+        x, y, yaw = self.root()
+        ahead = np.array([math.cos(yaw), math.sin(yaw)]) if along is None else np.asarray(along)
+        sh = self.shoulder(data, side)
+        reach, dz = self.arm_reach(side), float(sh[2] - height)
+        if abs(dz) >= reach:
+            return 0.0
+        return float((sh[:2] - [x, y]) @ ahead) + math.sqrt(reach * reach - dz * dz)
 
     def carry_height(self) -> float:
         """The hands' height carrying something in front of the body (m)."""
         return 0.8
+
+    def hang_height(self, side: str) -> float:
+        """The height of ``side``'s hand carrying a load alone at the body's side, standing (m): the
+        arm hanging, the elbow a little bent. Unstated, :meth:`carry_height`."""
+        return self.carry_height()
 
     def owns(self, model, body: int) -> bool:
         """Whether ``body`` is part of this humanoid (its contact is not what it touches)."""
@@ -178,9 +212,21 @@ class HumanoidBody:
         """Turn the standing body to ``yaw`` (world, rad); ``None``: wherever it walks."""
         raise NotImplementedError
 
+    def keep_heading(self, yaw) -> None:
+        """Keep the body at heading ``yaw`` (world, rad) while it walks, whichever way it goes -- a
+        step back; ``None``: it faces where it walks again."""
+        raise NotImplementedError
+
     def settled(self, side: str) -> bool:
         """``side``'s goal has fully taken over from the gait (or it has none)."""
         raise NotImplementedError
+
+    def follow_error(self, speed: float) -> float:
+        """How far the body may stray from the way its root is walked along at ``speed`` (m/s),
+        at most (m): a body posed where the navigator puts it, none. A way planned for the body
+        keeps that much further off what it would meet (``roqsim_nav.lattice``), and a move
+        walking it allows that much more before it fails ``left its way``."""
+        return 0.0
 
     def at_rest(self) -> bool:
         """Whether the body has come to rest where it was walked to: a body drawn behind its nav

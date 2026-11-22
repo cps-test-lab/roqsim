@@ -59,8 +59,10 @@ robot itself. Each value is held to Franka's published files, never typed from t
 
 The `franka_fci` plugin, a component of an `fr3`'s `spawn_arm` entry, runs the core on the physics
 and, with `bind:` set, serves it to libfranka over that protocol; in process, the handle
-`franka_fci:<arm>` runs a law with libfranka's field names. `docs/interfaces.rst` describes the arm
-under libfranka.
+`franka_fci:<arm>` runs a law with libfranka's field names. Its `joint_torque_control` says what of
+the motor a torque program meets: by default (`link`) the residual the robot's joint torque loop
+leaves, or (`motor`) the model's whole motor side. `docs/interfaces.rst` describes the arm under
+libfranka.
 
 The Franka files the model is built from and checked against are vendored under
 `tests/upstream/franka/`, pinned by commit and sha256 in `SOURCES.toml`. In a roqsim checkout,

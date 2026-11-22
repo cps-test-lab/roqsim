@@ -3,7 +3,7 @@
 
 """``humanoid_<move>()``: start one of a humanoid's moves and wait until that start has ended.
 
-A humanoid's moves (``roqsim_motion``: a walker with hands, or a humanoid robot) are the programs of
+A humanoid's moves (``roqsim_motion``: a walker with hands) are the programs of
 its ``humanoid`` machine, so each action here is :class:`~.machine_run.MachineRun` with the move's
 parameters typed: it starts the move through the humanoid's ``start`` endpoint with a token of its
 own, waits on that start's number through ``status``, fails the trial on the move's error (unless
@@ -39,7 +39,7 @@ class HumanoidMove(MachineRun):
         if not humanoid:
             raise ActionError(
                 f"humanoid_{self.MOVE}: `humanoid` is required -- the name in the world of the walker "
-                f"or robot whose `humanoid` component moves it",
+                f"whose `humanoid` component moves it",
                 action=self,
             )
         self._machine, self._program = str(humanoid), self.MOVE
@@ -61,6 +61,11 @@ def _unset_or(value, what: str, action, check) -> float | None:
     if reason:
         raise ActionError(f"{what} is {value:g}: {reason}", action=action)
     return value
+
+
+def _no_reason(value: float) -> str:
+    """A distance of 0 m or more is a stand-off; anything else is refused, saying so."""
+    return "" if value >= 0.0 else "a stand-off is a distance of 0 m or more"
 
 
 def _via(via: str):
@@ -94,9 +99,11 @@ class HumanoidApproach(HumanoidMove):
         self,
         humanoid: str,
         target: str,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: str = "",
+        back_max: float = 0.5,
+        long_way: bool = False,
         check: bool = True,
     ):
         facing = _unset_or(
@@ -113,9 +120,11 @@ class HumanoidApproach(HumanoidMove):
             humanoid,
             {
                 "target": target,
-                "standoff": float(standoff),
+                "standoff": _unset_or(standoff, "humanoid_approach: `standoff`", self, _no_reason),
                 "facing": facing,
                 "via": _via_of(self, via),
+                "back_max": float(back_max),
+                "long_way": bool(long_way),
             },
             check,
         )
@@ -203,10 +212,29 @@ class HumanoidPull(HumanoidMove):
     MOVE = "pull"
 
     def execute(
-        self, humanoid: str, hand: str, distance: float, speed: float = 0.2, check: bool = True
+        self,
+        humanoid: str,
+        hand: str,
+        distance: float | None = None,
+        speed: float = 0.2,
+        angle: float | None = None,
+        check: bool = True,
     ):
+        what = f"humanoid_{self.MOVE}"
+        distance = _unset_or(distance, f"{what}: `distance`", self, lambda v: "")
+        angle = _unset_or(
+            angle, f"{what}: `angle`", self, lambda v: "" if v > 0 else "degrees more than 0"
+        )
+        if (distance is None) == (angle is None):
+            raise ActionError(
+                f"{what}: a `distance` (m, along a slide) or an `angle` (deg, round a hinge), "
+                "one of the two",
+                action=self,
+            )
         self._begin(
-            humanoid, {"hand": hand, "distance": float(distance), "speed": float(speed)}, check
+            humanoid,
+            {"hand": hand, "distance": distance, "angle": angle, "speed": float(speed)},
+            check,
         )
 
 
@@ -221,9 +249,12 @@ class HumanoidCarry(HumanoidMove):
         self,
         humanoid: str,
         to: str,
-        standoff: float = 0.6,
+        standoff: float | None = None,
         facing: float | None = None,
         via: str = "",
+        back_max: float = 0.5,
+        long_way: bool = False,
+        draw_out: bool = False,
         check: bool = True,
     ):
         facing = _unset_or(
@@ -240,9 +271,12 @@ class HumanoidCarry(HumanoidMove):
             humanoid,
             {
                 "to": to,
-                "standoff": float(standoff),
+                "standoff": _unset_or(standoff, "humanoid_carry: `standoff`", self, _no_reason),
                 "facing": facing,
                 "via": _via_of(self, via),
+                "back_max": float(back_max),
+                "long_way": bool(long_way),
+                "draw_out": bool(draw_out),
             },
             check,
         )

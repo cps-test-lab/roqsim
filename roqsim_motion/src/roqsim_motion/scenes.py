@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Example scenes of a humanoid handling things: the scenarios, written on ``roqsim.scenario``'s
-helper, for any humanoid body -- a walker with hands, or a humanoid robot.
+helper, for a walker with hands.
 
-Each scene is a world (``roqsim_walker/worlds/handling_*.yaml``; the robot's in ``roqsim_humanoid``)
+Each scene is a world (``roqsim_walker/worlds/handling_*.yaml``)
 that runs the scenario below, and a twin world
 (``*_osc.yaml``) that runs the same scene as OpenSCENARIO (``*.osc``, with ``osc.roqsim``'s
 ``humanoid_*`` actions). The two give one timeline. A scenario decides which moves the worker makes
@@ -61,8 +61,7 @@ class BoxSwap(ScenarioPlugin):
 
     The cell's side is what the cell reports: a ``zone_trigger`` on the drawer (a tote is in it).
     The robot that fills the tote is not part of the scene, and the scene does not wait on what the
-    tote shows; its OpenSCENARIO twin waits on the same. The same scene drives a humanoid robot
-    (rename the handle with ``needs:``), with its own stand-offs.
+    tote shows; its OpenSCENARIO twin waits on the same.
 
     Config::
 

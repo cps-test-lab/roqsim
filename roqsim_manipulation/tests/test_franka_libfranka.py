@@ -41,7 +41,7 @@ def client():
 class Sim:
     """A world stepped in a thread of its own, as `roqsim sim` steps it; ``hooks`` run per step."""
 
-    def __init__(self, arms: dict[str, str]):
+    def __init__(self, arms: dict[str, str], **fci):
         world = {
             "sim": {"timestep": 0.001},
             "components": [
@@ -58,6 +58,7 @@ class Sim:
                                 "collision_behavior": CB,
                                 "bind": addr,
                                 "client_timeout_s": 20.0,
+                                **fci,
                             }
                         }
                     ],
@@ -224,3 +225,47 @@ def test_two_arms_two_connections_one_clock(client):
     assert ln == rn == 500
     assert ll - lf == rl - rf == 499  # each arm's callbacks are consecutive milliseconds
     assert abs(lf - rf) < 50  # and run over the same simulated time
+
+
+def _ct_bound(armature, damping, friction, amplitude=0.1, period=2.0):
+    """What of the motor the program can meet on each joint in ``ct_track``: the friction, the
+    armature at the largest planned acceleration and the damping at the largest planned speed."""
+    w = 2 * np.pi / period
+    return (
+        np.asarray(friction)
+        + np.asarray(armature) * amplitude * w**2
+        + np.asarray(damping) * amplitude * w
+    )
+
+
+@pytest.mark.parametrize("mode", ["link", "motor"])
+def test_a_computed_torque_law_on_libfrankas_model_meets_what_the_torque_controller_leaves(
+    client, mode
+):
+    """libfranka's own ``Model`` carries no rotor. Under ``link`` the program's law meets the
+    residual the robot's torque loop leaves and tracks the large joints within a few mrad; under
+    ``motor`` it meets the model's whole motor side. The link-side torque the robot measures
+    differs from the one asked for (plus the model's gravity) by that residual, and by no more."""
+    from roqsim_manipulation.plugins import franka_fci as fci
+
+    from roqsim.models import resolve_model
+
+    sim = Sim({"left": "127.0.0.2"}, joint_torque_control={"mode": mode})
+    try:
+        out = run(client, "ct_track", "127.0.0.2", 2.0, 0.1, 2.0)
+    finally:
+        sim.close()
+    assert out["ok"], out
+    if mode == "link":
+        left = fci.LINK_ARMATURE, fci.LINK_DAMPING, fci.LINK_FRICTION
+    else:
+        import mujoco
+
+        m = mujoco.MjModel.from_xml_path(str(resolve_model("fr3").path))
+        left = m.dof_armature[:7], m.dof_damping[:7], m.dof_frictionloss[:7]
+    gap = np.array(out["gap_max"])
+    # Joint 7 does not move: its link's inertia asks less than its friction (both modes).
+    assert np.all(gap[:6] <= _ct_bound(*left)[:6] + 0.15), (gap, _ct_bound(*left))
+    assert np.all(gap[:6] >= np.asarray(left[2])[:6] - 0.1), (gap, left[2])
+    if mode == "link":
+        assert max(out["err_max"][:4]) < 5e-3, out["err_max"]

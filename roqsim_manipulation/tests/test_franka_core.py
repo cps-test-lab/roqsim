@@ -840,3 +840,101 @@ def test_a_load_of_no_mass_is_taken_and_a_negative_one_refused():
     engine.shutdown()
     with pytest.raises(ValueError, match="cannot be negative"):
         _engine(load={"mass": -1.0})
+
+
+def _arm_dofs(engine):
+    m = engine.ctx.model
+    return [int(m.jnt_dofadr[m.joint(f"left_fr3_joint{i}").id]) for i in range(1, 8)]
+
+
+def test_the_joint_torque_controller_is_the_link_side_one_by_default():
+    from roqsim_manipulation.plugins import franka_fci as fci
+
+    engine = _engine()
+    m, dofs = engine.ctx.model, _arm_dofs(engine)
+    assert m.dof_armature[dofs] == pytest.approx(fci.LINK_ARMATURE)
+    assert m.dof_damping[dofs] == pytest.approx(fci.LINK_DAMPING)
+    assert m.dof_frictionloss[dofs] == pytest.approx(fci.LINK_FRICTION)
+    assert _handle(engine).torque_control["mode"] == "link"
+    engine.shutdown()
+
+
+def test_the_link_side_rotor_is_franka_descriptions_reflected_one_divided_by_six():
+    """``LINK_ARMATURE`` is held to the vendored ``dynamics.yaml``, not typed from it."""
+    import yaml
+    from _franka_upstream import DESCRIPTION, text
+    from roqsim_manipulation.plugins import franka_fci as fci
+
+    dyn = yaml.safe_load(text(DESCRIPTION / "robots/fr3/dynamics.yaml"))
+    reflected = [
+        dyn[f"joint{i}"]["dynamic"]["motor_inertia"]
+        * dyn[f"joint{i}"]["dynamic"]["gear_ratio"] ** 2
+        for i in range(1, 8)
+    ]
+    assert fci.LINK_ARMATURE == pytest.approx(np.array(reflected) / 6, abs=5e-4)
+
+
+def test_motor_keeps_the_models_own_motor_side():
+    engine = _engine(joint_torque_control={"mode": "motor"})
+    m, dofs = engine.ctx.model, _arm_dofs(engine)
+    assert m.dof_armature[dofs] == pytest.approx([0.195] * 4 + [0.074] * 3)
+    assert m.dof_damping[dofs] == pytest.approx([0.21] * 7)
+    assert m.dof_frictionloss[dofs] == pytest.approx([1.137] * 4 + [0.763, 0.44, 0.248])
+    assert _handle(engine).torque_control == {"mode": "motor"}
+    engine.shutdown()
+
+
+def test_a_world_gives_the_link_residual_per_arm():
+    from roqsim_manipulation.plugins import franka_fci as fci
+
+    engine = _engine(joint_torque_control={"armature": 0.0, "friction": [0.1] * 7})
+    m, dofs = engine.ctx.model, _arm_dofs(engine)
+    assert m.dof_armature[dofs] == pytest.approx([0.0] * 7)
+    assert m.dof_frictionloss[dofs] == pytest.approx([0.1] * 7)
+    assert m.dof_damping[dofs] == pytest.approx(fci.LINK_DAMPING)
+    engine.shutdown()
+
+
+@pytest.mark.parametrize(
+    "jtc",
+    [
+        {"mode": "motor", "armature": 0.1},
+        {"armature": [0.1, 0.1]},
+        {"friction": -0.1},
+        {"mode": "rotor"},
+    ],
+)
+def test_a_joint_torque_controller_that_is_not_one_is_refused(jtc):
+    with pytest.raises(Exception, match="joint_torque_control"):
+        _engine(joint_torque_control=jtc)
+
+
+def _joint_1_under(mode):
+    """A constant 2 N m on joint 1 (no gravity about its axis) for 50 ms: its acceleration, and
+    ``tau_J`` against the command less what acts in front of the sensor."""
+    engine = _engine(joint_torque_control={"mode": mode})
+    m, d, j = engine.ctx.model, engine.ctx.data, _arm_dofs(engine)[0]
+    tau = np.zeros(7)
+    tau[0] = 2.0
+    law, _ = _hold_law(0.1, tau)
+    _handle(engine).control(law)
+    _steps(engine, 2)
+    v0 = d.qvel[j]
+    _steps(engine, 50)
+    acc = (d.qvel[j] - v0) / 0.05
+    tau_J = _handle(engine).state()["tau_J"][0]
+    behind = m.dof_armature[j] * d.qacc[j] + m.dof_damping[j] * d.qvel[j] + m.dof_frictionloss[j]
+    engine.shutdown()
+    return acc, tau_J, 2.0 - behind
+
+
+def test_a_torque_on_joint_1_meets_the_link_and_what_the_controller_leaves():
+    """Under ``link`` the program's torque drives the link and the small residual, so the joint
+    accelerates faster than against the motor side; ``tau_J`` reads the command less what acts in
+    front of the sensor, in either mode."""
+    acc_link, tau_J_link, expected_link = _joint_1_under("link")
+    acc_motor, tau_J_motor, expected_motor = _joint_1_under("motor")
+    assert acc_link > 1.3 * acc_motor > 0
+    assert tau_J_link == pytest.approx(expected_link, abs=0.05)
+    assert tau_J_motor == pytest.approx(expected_motor, abs=0.05)
+    assert tau_J_link > tau_J_motor + 0.5  # the motor friction the robot compensates

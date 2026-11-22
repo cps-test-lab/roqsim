@@ -227,7 +227,7 @@ test-gltf:  ## Khronos glTF Validator over an `export gltf` of every bundled wor
 # scenario-execution module the tests import, so a broken install is an ImportError here and not a
 # quiet importorskip; then it fails if any skip still names scenario-execution.
 OSC_TESTS  := scenario_execution_roqsim/tests roqsim/tests/test_reset_restores_configured_state.py \
-	roqsim_walker/tests/test_scenes.py roqsim_humanoid/tests/test_handling_robot.py
+	roqsim_walker/tests/test_scenes.py
 OSC_IMPORTS := scenario_execution.actions.base_action scenario_execution.get_osc_library \
 	scenario_execution.model.model_to_py_tree scenario_execution.model.osc2_parser \
 	scenario_execution.model.types scenario_execution.scenario_execution_base \

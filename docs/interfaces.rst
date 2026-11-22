@@ -993,6 +993,12 @@ low-pass filter are libfranka's own code on the client. The robot side is the co
 
 * gravity from the robot's model and the configured end effector and load (``setLoad``,
   ``end_effector:``), so a wrong load sags the arm and biases the estimate as on the robot;
+* the joint torque controller (``joint_torque_control``): ``tau_J_d`` is the desired link-side
+  torque, and by default (``link``) the robot's torque loop leaves only a residual of the motor in
+  front of the program -- a share of the rotor's inertia and damping and the link-side friction
+  measured on the Panda, each overridable per arm; ``motor`` applies the command at the motor,
+  against the model's whole armature, damping and friction loss. Neither Franka's torque loop nor
+  its bandwidth is published: the values and their sources are in the plugin's docstring;
 * the motion-generator checks at ``rate_limiting.h``'s limits, the internal joint and Cartesian
   impedance controllers, and the reflexes at ``setCollisionBehavior``'s thresholds, each ending the
   motion with libfranka's own error flag;
