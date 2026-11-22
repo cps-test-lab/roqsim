@@ -46,6 +46,8 @@ from roqsim.plugin import Plugin, PluginError
 from roqsim.schema import Field
 
 KINDS = ("grip", "place", "press")
+#: A slot's name may not begin with these: its sites would read as a grip or a stance.
+RESERVED = ("grip", "stand")
 #: What a slot states; anything else is a mistake that would leave it without a stance or target.
 KEYS = ("kind", "at", "stand")
 
@@ -88,6 +90,11 @@ class SlotsPlugin(Plugin):
         if not isinstance(slots, dict) or not slots:
             return ["'slots' is a mapping of slot names to {kind, at, stand}"]
         for name, slot in slots.items():
+            if not isinstance(name, str) or not name or "/" in name or name.startswith(RESERVED):
+                errors.append(
+                    f"slot {name!r}: a slot's name is one word without '/' that does not begin "
+                    f"with {' or '.join(repr(r) for r in RESERVED)}: those name a grip or a stance"
+                )
             if not isinstance(slot, dict):
                 errors.append(f"slot {name!r}: a mapping of kind, at and stand")
                 continue
@@ -109,6 +116,8 @@ class SlotsPlugin(Plugin):
                 errors.append(f"slot {name!r}: 'stand' is a list of [x, y, yaw], not {stand!r}")
             if at is None and not stand:
                 errors.append(f"slot {name!r}: states neither a hand target ('at') nor a stance")
+            if at is None and "kind" in slot:
+                errors.append(f"slot {name!r}: 'kind' {kind!r} names a hand target, but no 'at'")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
