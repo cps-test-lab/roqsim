@@ -3,7 +3,7 @@
 
 """``humanoid_<move>()``: start one of a humanoid's moves and wait until that start has ended.
 
-A humanoid's moves (``roqsim_motion``: a walker with hands, or a humanoid robot) are the programs of
+A humanoid's moves (``roqsim_motion``: a walker with hands) are the programs of
 its ``humanoid`` machine, so each action here is :class:`~.machine_run.MachineRun` with the move's
 parameters typed: it starts the move through the humanoid's ``start`` endpoint with a token of its
 own, waits on that start's number through ``status``, fails the trial on the move's error (unless
@@ -39,7 +39,7 @@ class HumanoidMove(MachineRun):
         if not humanoid:
             raise ActionError(
                 f"humanoid_{self.MOVE}: `humanoid` is required -- the name in the world of the walker "
-                f"or robot whose `humanoid` component moves it",
+                f"whose `humanoid` component moves it",
                 action=self,
             )
         self._machine, self._program = str(humanoid), self.MOVE

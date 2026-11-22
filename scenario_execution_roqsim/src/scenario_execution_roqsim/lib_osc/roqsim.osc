@@ -287,11 +287,11 @@ action machine_run:
     check: bool = true                                # fail on its error, or on a later start
 
 action humanoid_approach:
-    # Start a humanoid's `approach` and wait for that start (a walker with hands or a humanoid robot,
-    # moved by its `humanoid` component): walk to a stand-off in front of a target and face it. Every
+    # Start a humanoid's `approach` and wait for that start (a walker with hands, moved by its
+    # `humanoid` component): walk to a stand-off in front of a target and face it. Every
     # humanoid_<move> is `machine_run` with the move's parameters typed: it fails the trial on the
     # move's error unless `check: false`, and an abandoned branch cancels its own start.
-    humanoid: string                                  # the walker or robot's name in the world
+    humanoid: string                                  # the walker's name in the world
     target: string                                    # a site, body or entity by name
     standoff: float = 0.6                             # metres in front of the target
     facing: float                                     # world yaw (rad) to face; left out: the target's front

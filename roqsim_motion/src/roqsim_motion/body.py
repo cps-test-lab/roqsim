@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """What the moves need of a humanoid body, whichever body it is.
 
-A body -- the walker's mocap skeleton (``roqsim_walker.handling.WalkerBody``) or a humanoid robot's
-joints (:class:`roqsim_motion.robot.RobotBody`) -- is published on the blackboard as
+A body -- the walker's mocap skeleton (``roqsim_walker.handling.WalkerBody``) -- is published on
+the blackboard as
 ``humanoid_body:<entity>`` and offers the moves (:mod:`roqsim_motion.moves`) one interface: each
 hand's goal (a world pose its grip frame goes to, eased in and out), its pose (``open``, ``power``,
 ...), the posture, where its grip frame is now, and how far its arm reaches. A body may also turn
-its head toward a target and play clips over its own motion (the walker's does; a robot's raises
-``NotImplementedError`` for them, which a move reports as its failure). Every method runs on the
+its head toward a target and play clips over its own motion (the walker's does; a body that cannot
+raises ``NotImplementedError`` for them, which a move reports as its failure). Every method runs on the
 physics thread; the body solves and writes at its own update.
 """
 
@@ -32,7 +32,7 @@ class HumanoidBody:
     """The state every body shares; a body implements the methods that raise here."""
 
     #: Whether the body's hands touch by contact proxies the moves switch (a walker's), or by its
-    #: own geometry (a robot's).
+    #: own geometry.
     has_proxies = False
     #: How two hands hold one object: ``ride`` -- the first holds it, the second rides on its own
     #: grip site (a body posed at its own rate, whose two hands would squeeze it between two holds);
