@@ -43,6 +43,7 @@ def wall_polygons(
     z_hi: float = 1.8,
     *,
     resting_roots=(),
+    labels: bool = False,
 ):
     """CCW ``[(x, y), ...]`` footprints for every static collidable wall geom
     whose vertical extent overlaps ``[z_lo, z_hi]`` (a walking body).
@@ -50,6 +51,9 @@ def wall_polygons(
     ``resting_roots`` are weld-root body ids the caller has judged to be undriven props; each is
     included as a wall for this call only while it is moving slower than :data:`RESTING_SPEED`. The
     test is per call, so the same prop is a wall in one run's grid and not in the next.
+
+    ``labels``: each footprint as ``(polygon, body name)`` instead, so a caller that finds no way
+    can say what is in it.
     """
     resting = frozenset(int(b) for b in resting_roots)
     polys = []
@@ -69,7 +73,17 @@ def wall_polygons(
             continue
         hull = _convex_hull_2d(pts)
         if len(hull) >= 3:
-            polys.append([(float(x), float(y)) for x, y in _ccw(hull)])
+            poly = [(float(x), float(y)) for x, y in _ccw(hull)]
+            if labels:
+                # a geom on the world body is named by itself: "world" names nothing
+                name = (
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b)
+                    if b
+                    else mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
+                ) or ("the world" if not b else f"body {b}")
+                polys.append((poly, name))
+            else:
+                polys.append(poly)
     return polys
 
 
@@ -212,6 +226,8 @@ def _convex_hull_2d(points: np.ndarray) -> np.ndarray:
     pts = np.unique(np.round(np.asarray(points, dtype=float), 9), axis=0)
     if len(pts) < 3:
         return pts
+    if len(pts) > 16:
+        pts = _outer(pts)
     pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
 
     def half(chain_pts):
@@ -223,6 +239,25 @@ def _convex_hull_2d(points: np.ndarray) -> np.ndarray:
         return out[:-1]
 
     return np.array(half(pts) + half(pts[::-1]))
+
+
+def _outer(pts: np.ndarray) -> np.ndarray:
+    """``pts`` less those strictly inside the polygon of its extreme points in eight directions:
+    none of them is on the hull, and a mesh's points are mostly among them, so the chain that
+    follows walks a few dozen points rather than every vertex (Akl-Toussaint)."""
+    dirs = np.array([[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]], float)
+    ext = pts[np.unique(np.argmax(pts @ dirs.T, axis=0))]
+    if len(ext) < 3:
+        return pts
+    # the extreme points in the order of their directions are a convex polygon, counter-clockwise
+    centre = ext.mean(0)
+    ext = ext[np.argsort(np.arctan2(ext[:, 1] - centre[1], ext[:, 0] - centre[0]))]
+    edge = np.roll(ext, -1, axis=0) - ext
+    rel = pts[:, None, :] - ext[None, :, :]
+    inside = np.all(
+        edge[None, :, 0] * rel[:, :, 1] - edge[None, :, 1] * rel[:, :, 0] > 1e-12, axis=1
+    )
+    return pts[~inside]
 
 
 def _cross(o, a, b) -> float:
