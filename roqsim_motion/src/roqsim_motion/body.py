@@ -32,7 +32,7 @@ class HumanoidBody:
     """The state every body shares; a body implements the methods that raise here."""
 
     #: Whether the body's hands touch by contact proxies the moves switch (a walker's), or by its
-    #: own geometry (a robot's).
+    #: own geometry.
     has_proxies = False
     #: How two hands hold one object: ``ride`` -- the first holds it, the second rides on its own
     #: grip site (a body posed at its own rate, whose two hands would squeeze it between two holds);

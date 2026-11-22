@@ -275,9 +275,8 @@ class HumanoidPlugin(MachinePlugin):
                 ex.bodyname1, ex.bodyname2 = obj, b
 
     def _own(self, body: str) -> bool:
-        """Whether a body of the model is this humanoid's: under its entity's name, or its prefix."""
-        prefix = str(self.config.get("prefix", ""))
-        return body.startswith(f"{self.entity}/") or bool(prefix and body.startswith(prefix))
+        """Whether a body of the model is this humanoid's: under its entity's name."""
+        return body.startswith(f"{self.entity}/")
 
     def configure(self, ctx) -> None:
         super().configure(ctx)

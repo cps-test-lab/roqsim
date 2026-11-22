@@ -13,7 +13,7 @@ physics. Its force is bounded by whoever switched it on: :meth:`Hold.force` and
 ``slip``.
 
 **Pressing** is the body's: a walker's hands press through proxies it poses while a move needs them
-and parks under the floor otherwise (``roqsim_walker.handling``); a robot's through its own links.
+and parks under the floor otherwise (``roqsim_walker.handling``).
 :func:`contact_force` reads how hard a body is pushed, whoever pushes it.
 """
 
