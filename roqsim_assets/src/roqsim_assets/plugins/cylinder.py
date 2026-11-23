@@ -12,9 +12,10 @@ adjacent 0.15 m boxes touch at their corners and leave no gap; two tangent 0.15 
 same pitch leave one. A benchmark whose difficulty is defined by how tightly the robot must squeeze
 measures something different if its round obstacles are squared off.
 
-By default the cylinder is **welded scenery** -- static, with no free joint -- and is declared in the
-world YAML rather than baked into the scene, so it stays out of the occupancy grid the map is
-generated from. ``motion: physics`` gives it a free joint, exactly as on ``box``: physics can move it
+By default (``motion: physics``) the cylinder has a free joint, exactly as on ``box``; scenery that
+must not move says ``motion: static``, which welds it. It is declared in the world YAML rather than
+baked into the scene, so it stays out of the occupancy grid the map is generated from. With its free
+joint physics can move it
 and ``simulation_interfaces``' ``SetEntityState`` can teleport it (that service rejects any entity
 without a free ``base_joint``). That is what makes a cylinder a *workpiece* -- a can, a bottle, a
 billet -- and not only an obstacle, and it is why ``radius`` matters as config: a graspable round

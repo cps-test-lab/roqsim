@@ -11,7 +11,7 @@ cylinder::
       - {pose: {position: {x: 0.31, y: 0.08}}, radius: 0.042, height: 0.15, mass: 0.3}
 
 Each entry accepts every key ``cylinder`` does (``pose``, ``radius``, ``height``, ``color``,
-``collide``, ``friction``, ``free``, ``mass``, and an optional ``name``), because each one *is* a
+``collide``, ``friction``, ``motion``, ``mass``, and an optional ``name``), because each one *is* a
 cylinder: this plugin owns the list, not the geometry.
 
 Why a list and not a count
