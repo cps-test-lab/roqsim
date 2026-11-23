@@ -136,8 +136,8 @@ def test_hit_geometry_adds_the_walker_s_arms(tmp_path):
     try:
         model = engine.ctx.model
         plugins = {p.address: p for p in engine.plugins}
-        solid = {c for _, c in plugins["robot.solid"]._pairs}
-        every = {c for _, c in plugins["robot.all"]._pairs}
+        solid = {c for _, c, _ in plugins["robot.solid"]._pairs}
+        every = {c for _, c, _ in plugins["robot.all"]._pairs}
         added = every - solid
         assert added, "no geom added"
         for g in added:

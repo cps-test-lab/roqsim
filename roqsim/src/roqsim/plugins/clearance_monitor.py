@@ -153,7 +153,8 @@ class ClearanceMonitorPlugin(Plugin):
         entities = self.config.get("entities")
         self.entities = None if entities is None else list(entities)
         self.hit_geometry = bool(self.config.get("hit_geometry", False))
-        self._pairs: list[tuple[int, int]] | None = None  # resolved at the first measurement
+        self._pairs: list[tuple[int, int, bool]] | None = None  # resolved at first measurement
+        self._hit_group = -1  # the group a hit geom must still be in to count
         self.distmax = float(self.config.get("distmax", 5.0))
         self.compute_rate_hz = float(self.config.get("compute_rate_hz", 200.0))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
@@ -310,7 +311,15 @@ class ClearanceMonitorPlugin(Plugin):
             self._resolve_entities(ctx)
         best = self.distmax
         best_geom = -1
-        for watched, candidate in self._pairs:
+        for watched, candidate, unpaired in self._pairs:
+            # Checked at every measurement, not once: an entity that goes absent
+            # (roqsim.presence) has its contact flags zeroed and its geoms moved out of their
+            # group at run time, and what is absent is not clearance.
+            if unpaired:
+                if int(model.geom_group[candidate]) != self._hit_group:
+                    continue
+            elif not self._can_pair(model, watched, candidate):
+                continue
             distance = mujoco.mj_geomDistance(model, data, watched, candidate, best, None)
             # MuJoCo returns distmax when the pair is farther than the cutoff it was
             # given; passing `best` narrows the cutoff as the scan improves, so later
@@ -334,12 +343,13 @@ class ClearanceMonitorPlugin(Plugin):
                 best, report.minimum, report.at_time, report.geom, saturated
             )
 
-    def _pairs_of(self, model, candidates, unpaired) -> list[tuple[int, int]]:
-        """The (watched, candidate) pairs to measure: those MuJoCo could put in contact, and every
-        pair with a geom of *unpaired*, measured whatever its collision flags say."""
+    def _pairs_of(self, model, candidates, unpaired) -> list[tuple[int, int, bool]]:
+        """The (watched, candidate, unpaired) triples to measure: the pairs MuJoCo could put in
+        contact, and every pair with a geom of *unpaired*, measured whatever its collision flags
+        say. Each is checked again at every measurement, since presence changes both."""
         unpaired = set(unpaired)
         return [
-            (w, c)
+            (w, c, c in unpaired)
             for w in self._watched
             for c in candidates
             if c in unpaired or self._can_pair(model, w, c)
@@ -368,6 +378,7 @@ class ClearanceMonitorPlugin(Plugin):
             owned.update(geoms)
         candidates = [g for g in self._candidates if g in owned]
         hits = []
+        self._hit_group = COLLISION_GROUP
         if self.hit_geometry:
             hits = [
                 g
