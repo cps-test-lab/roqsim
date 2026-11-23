@@ -797,6 +797,16 @@ shape of the document and there is no entity name to spell wrong. Their ``ignore
 agree: if one excludes the floor and the other does not, clearance reads zero forever while contact
 reads clean, and the two describe different worlds.
 
+By default clearance is to the nearest of everything the robot could touch, walls included. To
+report one separation per kind of obstacle, give each its own monitor with ``entities``: only the
+named entities' geoms count, a walker's limbs with its pelvis. ``hit_geometry: true`` adds their
+collision-group geoms that do not collide, which for a walker are its arms::
+
+   - clearance_monitor: {entities: [pedestrian_1, pedestrian_2], hit_geometry: true}
+     name: clearance_humans
+   - clearance_monitor: {entities: [obstacle]}
+     name: clearance_obstacle
+
 Three things about it:
 
 * **It measures real geometry.** ``mj_geomDistance`` against the actual shapes, so no footprint

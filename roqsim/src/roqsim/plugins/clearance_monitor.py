@@ -47,6 +47,8 @@ Config::
       body: ""               # a body of the entity, as a path within it; default: its root
       ignore: [floor]        # geom NAMES that never count (default: ['floor'])
       ignore_prefixes: []    # geom name prefixes that never count
+      entities: null         # entity names: measure to their geoms alone (default: every geom)
+      hit_geometry: false    # with `entities`: also their collision-group geoms that do not collide
       distmax: 5.0           # [m] cutoff: beyond this the distance is not computed
       compute_rate_hz: 200.0 # how often the distance is MEASURED
       rate_hz: 30.0          # how often the endpoint is PUBLISHED
@@ -82,6 +84,17 @@ against a budget the simulator may already be over. Poses reach a consumer at ~3
 measuring at 200 Hz resolves ~1.5 mm at walking pace: far finer than anything downstream can
 use, at a fraction of the cost. Raise it if a fast pass matters more than throughput; the
 trade is stated here rather than hidden in a default.
+
+**To what.** By default every geom the entity could touch counts, the room's walls with the
+rest. ``entities`` narrows that to the named entities' geoms (:func:`roqsim.presence.entity_geoms`,
+which follows an entity's ``bodies`` as well as its root: a walker's limbs are bodies of the world,
+not children of its pelvis, and their geoms have no names an ``ignore`` could match). Two monitors
+on one robot, each with its own ``name:`` and ``entities``, then give one separation per kind of
+obstacle, where one monitor would report only the nearest of them. ``hit_geometry: true`` adds the
+named entities' geoms in the collision group (:data:`roqsim.scene_content.COLLISION_GROUP`) that do
+not collide: a walker's arms, which rays see and contacts ignore so that a swinging arm does not
+shove a robot, are still part of how close it came. Entities register while the world configures,
+so the names are resolved at the first measurement, and a name no entity has fails it there.
 
 ``distmax`` is the other performance knob and it is a real one: the cost is a distance query
 per (watched geom, candidate geom) pair, and the cutoff lets MuJoCo reject far pairs
@@ -137,6 +150,10 @@ class ClearanceMonitorPlugin(Plugin):
         self.body = self.config.get("body", "")
         self.ignore = list(self.config.get("ignore", ["floor"]))
         self.ignore_prefixes = list(self.config.get("ignore_prefixes", []))
+        entities = self.config.get("entities")
+        self.entities = None if entities is None else list(entities)
+        self.hit_geometry = bool(self.config.get("hit_geometry", False))
+        self._pairs: list[tuple[int, int]] | None = None  # resolved at the first measurement
         self.distmax = float(self.config.get("distmax", 5.0))
         self.compute_rate_hz = float(self.config.get("compute_rate_hz", 200.0))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
@@ -159,6 +176,20 @@ class ClearanceMonitorPlugin(Plugin):
         for key in ("ignore", "ignore_prefixes"):
             if key in config and not isinstance(config[key], list):
                 errors.append(f"'{key}' must be a list of strings")
+        entities = config.get("entities")
+        if entities is not None and (
+            not isinstance(entities, list)
+            or not entities
+            or not all(isinstance(e, str) and e for e in entities)
+        ):
+            errors.append("'entities' must be a non-empty list of entity names")
+        if "hit_geometry" in config and not isinstance(config["hit_geometry"], bool):
+            errors.append("'hit_geometry' must be true or false")
+        if config.get("hit_geometry") and entities is None:
+            errors.append(
+                "'hit_geometry' needs 'entities': counting every non-colliding geom of the world "
+                "would measure to decoration"
+            )
         return errors
 
     # -- lifecycle ---------------------------------------------------------------------------
@@ -188,7 +219,7 @@ class ClearanceMonitorPlugin(Plugin):
             )
 
         watched = set(self._watched)
-        ignored = set()
+        self._ignored = ignored = set()
         for gid in range(model.ngeom):
             name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
             if name in self.ignore or any(name.startswith(p) for p in self.ignore_prefixes):
@@ -203,11 +234,13 @@ class ClearanceMonitorPlugin(Plugin):
             # matches no watched geom cannot be hit and is not clearance.
             and any(self._can_pair(model, gid, w) for w in self._watched)
         ]
-        if not self._candidates:
+        if not self._candidates and self.entities is None:
             raise RuntimeError(
                 "clearance_monitor: nothing left to measure against -- every geom outside "
                 f"{body_name!r} is ignored, so this would report a constant distance forever"
             )
+        if self.entities is None:
+            self._pairs = self._pairs_of(model, self._candidates, ())
         missing = [
             n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
         ]
@@ -273,18 +306,17 @@ class ClearanceMonitorPlugin(Plugin):
         if float(data.time) < self._next_due - 1e-3 * model.opt.timestep:
             return
         self._next_due = float(data.time) + 1.0 / self.compute_rate_hz
+        if self._pairs is None:
+            self._resolve_entities(ctx)
         best = self.distmax
         best_geom = -1
-        for watched in self._watched:
-            for candidate in self._candidates:
-                if not self._can_pair(model, watched, candidate):
-                    continue
-                distance = mujoco.mj_geomDistance(model, data, watched, candidate, best, None)
-                # MuJoCo returns distmax when the pair is farther than the cutoff it was
-                # given; passing `best` narrows the cutoff as the scan improves, so later
-                # pairs are rejected sooner.
-                if distance < best:
-                    best, best_geom = distance, candidate
+        for watched, candidate in self._pairs:
+            distance = mujoco.mj_geomDistance(model, data, watched, candidate, best, None)
+            # MuJoCo returns distmax when the pair is farther than the cutoff it was
+            # given; passing `best` narrows the cutoff as the scan improves, so later
+            # pairs are rejected sooner.
+            if distance < best:
+                best, best_geom = distance, candidate
 
         saturated = best_geom < 0
         name = (
@@ -301,6 +333,62 @@ class ClearanceMonitorPlugin(Plugin):
             self._report = ClearanceReport(
                 best, report.minimum, report.at_time, report.geom, saturated
             )
+
+    def _pairs_of(self, model, candidates, unpaired) -> list[tuple[int, int]]:
+        """The (watched, candidate) pairs to measure: those MuJoCo could put in contact, and every
+        pair with a geom of *unpaired*, measured whatever its collision flags say."""
+        unpaired = set(unpaired)
+        return [
+            (w, c)
+            for w in self._watched
+            for c in candidates
+            if c in unpaired or self._can_pair(model, w, c)
+        ]
+
+    def _resolve_entities(self, ctx: SimContext) -> None:
+        """Narrow the candidates to the named entities' geoms, once every entity is registered."""
+        from ..presence import entity_geoms
+        from ..scene_content import COLLISION_GROUP
+
+        model = ctx.model
+        owned: set[int] = set()
+        for name in self.entities:
+            entity = ctx.entities.get(name)
+            if entity is None:
+                raise RuntimeError(
+                    f"clearance_monitor {self.address}: no entity {name!r} is registered; the "
+                    f"world has {sorted(ctx.entities.names())}"
+                )
+            geoms = entity_geoms(model, entity)
+            if not geoms:
+                raise RuntimeError(
+                    f"clearance_monitor {self.address}: entity {name!r} has no geometry to "
+                    "measure to"
+                )
+            owned.update(geoms)
+        candidates = [g for g in self._candidates if g in owned]
+        hits = []
+        if self.hit_geometry:
+            hits = [
+                g
+                for g in sorted(owned)
+                if g not in self._ignored
+                and not self._collidable(model, g)
+                and int(model.geom_group[g]) == COLLISION_GROUP
+            ]
+        if not candidates and not hits:
+            raise RuntimeError(
+                f"clearance_monitor {self.address}: entities {self.entities} have no geom the "
+                "watched body could touch, so this would report a constant distance forever"
+            )
+        self._pairs = self._pairs_of(model, candidates + hits, hits)
+        _log.info(
+            "clearance_monitor %s: measuring to %d geom(s) of %s (%d that do not collide)",
+            self.address,
+            len(candidates) + len(hits),
+            ", ".join(self.entities),
+            len(hits),
+        )
 
     @staticmethod
     def _collidable(model, gid: int) -> bool:
