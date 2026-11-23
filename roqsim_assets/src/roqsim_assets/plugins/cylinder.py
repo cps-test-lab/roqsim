@@ -15,9 +15,8 @@ measures something different if its round obstacles are squared off.
 By default (``motion: physics``) the cylinder has a free joint, exactly as on ``box``; scenery that
 must not move says ``motion: static``, which welds it. It is declared in the world YAML rather than
 baked into the scene, so it stays out of the occupancy grid the map is generated from. With its free
-joint physics can move it
-and ``simulation_interfaces``' ``SetEntityState`` can teleport it (that service rejects any entity
-without a free ``base_joint``). That is what makes a cylinder a *workpiece* -- a can, a bottle, a
+joint, physics can move it and ``simulation_interfaces``' ``SetEntityState`` can teleport it (that
+service rejects any entity without a free ``base_joint``). That is what makes a cylinder a *workpiece* -- a can, a bottle, a
 billet -- and not only an obstacle, and it is why ``radius`` matters as config: a graspable round
 object's diameter has to match the gripper's stroke, and a modelled asset scaled uniformly cannot
 change its diameter without changing its height.
