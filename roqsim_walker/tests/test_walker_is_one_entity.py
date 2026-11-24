@@ -108,3 +108,12 @@ def test_a_model_override_on_a_walker_selects_its_limbs(engine):
     ids = set(plugin._targets[0].ids)
     for limb in LIMBS:
         assert set(_limb_geoms(engine.ctx.model, limb)) <= ids, limb
+
+
+def test_a_limb_s_penetration_is_the_walker_s(engine):
+    from roqsim.interpenetration import _entity_by_body, _owner_of
+
+    model = engine.ctx.model
+    owner = _entity_by_body(model, engine.ctx.entities)
+    for limb in LIMBS:
+        assert _owner_of(model, _bid(model, limb), owner) == "pedestrian", limb

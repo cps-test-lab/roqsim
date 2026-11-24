@@ -52,6 +52,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from .presence import entity_root_ids
 from .solref import MAX_IMP, MIN_IMP, solref_floor
 
 #: The absolute floor of the tolerance, in metres. A start pose is written by hand, snapped from a
@@ -241,20 +242,21 @@ def _flex_body(model, flex: int) -> int:
 
 
 def _entity_by_body(model, entities) -> dict[int, str]:
+    """Each root body of every entity -- its ``body`` and each of its ``bodies``, so a walker's
+    limbs are the walker's -- mapped to the entity's name."""
     if entities is None:
         return {}
     owner: dict[int, str] = {}
     for entity in entities.all():
-        if not entity.body:
-            continue
-        body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-        if body > 0:
-            owner[body] = entity.name
+        for body in entity_root_ids(model, entity, strict=False):
+            if body > 0:
+                owner[body] = entity.name
     return owner
 
 
 def _owner_of(model, body: int, owner: dict[int, str]) -> str | None:
-    """The entity whose base body is *body* or its nearest ancestor -- the most specific owner."""
+    """The entity with a root body that is *body* or its nearest ancestor -- the most specific
+    owner."""
     while body > 0:
         if body in owner:
             return owner[body]
