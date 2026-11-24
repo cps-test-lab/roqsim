@@ -802,7 +802,9 @@ report one separation per kind of obstacle, give each its own monitor with ``ent
 named entities' geoms count, a walker's limbs with its pelvis. ``hit_geometry: true`` adds their
 collision-group geoms that do not collide, which for a walker are its arms. A named entity
 counts while it is present, so one the world starts absent is measured from the moment it
-appears; an absent walker's limbs stay in the world and are still measured::
+appears, and an absent walker is absent limbs and all. The monitor's own side is the whole entity
+it is nested under as well, so one under a walker watches its limbs beside its pelvis; ``body``
+narrows it to one body and that body's subtree::
 
    - clearance_monitor: {entities: [pedestrian_1, pedestrian_2], hit_geometry: true}
      name: clearance_humans

@@ -40,6 +40,16 @@ def _limb_geoms(model, limb: str) -> list[int]:
     return geoms
 
 
+def _collidable_limb_geoms(model, limb: str) -> list[int]:
+    geoms = [
+        g
+        for g in _limb_geoms(model, limb)
+        if int(model.geom_contype[g]) or int(model.geom_conaffinity[g])
+    ]
+    assert geoms, f"{limb} carries no collidable geom, so it proves nothing"
+    return geoms
+
+
 def test_an_absent_walker_hides_and_frees_every_limb(engine):
     ctx = engine.ctx
     model = ctx.model
@@ -63,3 +73,17 @@ def test_an_absent_walker_hides_and_frees_every_limb(engine):
         for g in before
     }
     assert after == before
+
+
+def test_a_clearance_monitor_under_a_walker_watches_its_limbs(tmp_path):
+    world = _world(tmp_path, [])
+    world["components"][1]["components"] = [{"clearance_monitor": {}, "name": "near"}]
+    engine = _engine(world)
+    try:
+        model = engine.ctx.model
+        plugin = next(p for p in engine.plugins if p.address == "pedestrian.near")
+        watched = set(plugin._watched)
+        for limb in ("pedestrian/knee_l", "pedestrian/ankle_r"):
+            assert set(_collidable_limb_geoms(model, limb)) <= watched, limb
+    finally:
+        engine.shutdown()
