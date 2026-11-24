@@ -96,3 +96,15 @@ def test_a_contact_scope_on_a_walker_watches_its_limbs(engine):
     scope = resolve_contact_scope(engine.ctx, "pedestrian", plugin="test")
     for limb in LIMBS:
         assert all(scope.watched[g] for g in _limb_geoms(model, limb)), limb
+
+
+def test_a_model_override_on_a_walker_selects_its_limbs(engine):
+    from roqsim.plugins.model_override import ModelOverridePlugin
+
+    config = {"overrides": [{"field": "geom_friction", "entity": "pedestrian", "to": 0.0}]}
+    plugin = ModelOverridePlugin(config, name="slip")
+    assert not plugin.validate_config(config)
+    plugin.configure(engine.ctx)
+    ids = set(plugin._targets[0].ids)
+    for limb in LIMBS:
+        assert set(_limb_geoms(engine.ctx.model, limb)) <= ids, limb

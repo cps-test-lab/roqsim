@@ -1016,6 +1016,9 @@ and, for a wheel that keeps its grip only until it does not::
        overrides: [{field: geom_friction, select: [wheel_left_tyre, wheel_right_tyre], to: 0.02}]
      name: traction_fault
 
+A geom field's objects may also be named as ``bodies: [...]`` (every geom of each body's subtree)
+or ``entity: <name>``, every geom of that entity taken whole -- a walker's limbs with its pelvis.
+
 The plugin is inert until fired, so adding it changes nothing about a nominal run.
 
 **Firing it is a service call, and the reply is the point.** Over ROS 2 the inbound endpoint is a
