@@ -1450,8 +1450,10 @@ reports which PIXELS an object covers -- what an IoU, a mask AP or a training se
 That publishes a ``mono8`` class image, a ``16UC1`` instance image and a
 ``vision_msgs/Detection2DArray`` of tight boxes, all off one render through the named MJCF camera.
 
-**Three selectors, because a label does not always follow a body.** ``bodies`` and ``entities``
-label everything a body or a whole kinematic subtree carries -- what a parcel or a pedestrian is.
+**Three selectors, because a label does not always follow a body.** ``bodies`` labels everything a
+body carries, and ``entities`` everything an entity is -- each of its root bodies with its subtree,
+so a walker's limbs are labelled with its pelvis, as one instance -- what a parcel or a pedestrian
+is.
 ``geoms`` labels named geoms directly, which is what the *parts* of a procedural prop are: a
 ``shelf`` compiles to one body carrying its boards and its legs as separate geoms, and a
 ``workbench`` its top and its frame, so a body-granular vocabulary can only call the whole thing

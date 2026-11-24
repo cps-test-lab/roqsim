@@ -80,7 +80,7 @@ PARCELS = {"class_id": 1, "name": "parcel", "bodies": ["parcel_*"]}
 ROBOT = {"class_id": 2, "name": "robot", "entities": ["robot"]}
 
 
-def _engine(*, classes=None, capture=True, **config):
+def _engine(*, classes=None, capture=True, scene="_Scene", **config):
     """An engine with the segmentation camera nested under the scene entity, captured once."""
     from roqsim.engine import Engine
 
@@ -88,7 +88,7 @@ def _engine(*, classes=None, capture=True, **config):
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "components": [{f"{__name__}:_Scene": {}, "name": "robot", "components": [entry]}],
+            "components": [{f"{__name__}:{scene}": {}, "name": "robot", "components": [entry]}],
         }
     )
     engine = Engine(cfg)
@@ -172,6 +172,39 @@ def test_instance_ids_are_body_ids_and_a_subtree_is_one_instance():
     }
     # The wheel is a link of the robot, not an object: its pixels carry the base's id.
     assert _body_id(engine, "wheel") not in present
+
+
+class _TwoRootScene(_Scene):
+    """The scene with an arm that is a root body of its own, owned by the robot through
+    ``Entity.bodies`` -- the shape of a walker, whose limbs are bodies of the world."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        arm = spec.worldbody.add_body(name="arm", pos=[-0.45, -1.2, 0.15])
+        arm.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.1, 0.1, 0.1], mass=1.0)
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(
+                name=self.name,
+                kind="robot",
+                body="base_link",
+                bodies=("arm",),
+                meta={"prefix": "", "namespace": ""},
+            )
+        )
+
+
+def test_an_entity_class_labels_every_body_of_the_entity_as_one_instance():
+    engine = _engine(scene="_TwoRootScene", instances=True)
+    plugin = _plugin(engine)
+    model = engine.ctx.model
+    arm = _body_id(engine, "arm")
+    (geom,) = [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) == arm]
+    assert plugin._class_of_geom[geom] == ROBOT["class_id"]
+    assert plugin._instance_of_geom[geom] == _body_id(engine, "base_link")
+    instances = plugin._instance_img
+    assert arm not in set(instances[instances != 0].tolist())
 
 
 def test_the_instance_image_is_only_published_when_asked_for():
