@@ -87,3 +87,12 @@ def test_a_clearance_monitor_under_a_walker_watches_its_limbs(tmp_path):
             assert set(_collidable_limb_geoms(model, limb)) <= watched, limb
     finally:
         engine.shutdown()
+
+
+def test_a_contact_scope_on_a_walker_watches_its_limbs(engine):
+    from roqsim.contact_scope import resolve_contact_scope
+
+    model = engine.ctx.model
+    scope = resolve_contact_scope(engine.ctx, "pedestrian", plugin="test")
+    for limb in LIMBS:
+        assert all(scope.watched[g] for g in _limb_geoms(model, limb)), limb

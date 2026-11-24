@@ -633,8 +633,10 @@ Navigation: detecting a collision
 ---------------------------------
 
 A navigation trial usually fails by touching something, and ``contact_monitor`` is the observable
-for that. It watches an entity's whole kinematic subtree (chassis *and* wheels) and reports any
-contact against a geom outside its ``ignore`` list::
+for that. It watches the whole entity it is nested under -- its root body's subtree (chassis *and*
+wheels) and every other root the entity owns (``Entity.bodies``: a walker's limbs, which are bodies
+of the world rather than children of its pelvis) -- and reports any contact against a geom outside
+its ``ignore`` list::
 
    - spawn_robot: {model: turtlebot4}
      name: robot
@@ -654,7 +656,7 @@ Three things are worth knowing before reaching for a proximity check instead:
 * **A flex is a side like a geom.** A MuJoCo ``<flexcomp>`` touches things through its vertices and
   elements, not through geoms, and MuJoCo reports its side of a contact with geom id ``-1``. The
   watched set holds the flexes the entity owns -- those whose vertex (or node) bodies all lie in its
-  subtree, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
+  bodies, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
   watchable, ``ignore`` may name a flex, and the report names a flex side ``flex:<name>[v<i>]`` (or
   ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
   flex contact a collision of the model's last geom.
@@ -878,7 +880,7 @@ Four things about it:
   samples it would decimate are the integral.
 * **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
   implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
-  every contact with exactly one side in the watched subtree (a geom, or a flex the entity owns) and
+  every contact with exactly one side in the watched entity (a geom, or a flex the entity owns) and
   neither side in ``ignore`` / ``ignore_prefixes`` -- so they cannot disagree about which contacts
   they describe. ``contact_location`` and ``bumper`` resolve it too. Their
   ``ignore`` lists should agree for the same reason clearance's should.
