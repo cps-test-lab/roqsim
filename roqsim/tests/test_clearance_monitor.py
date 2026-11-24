@@ -478,15 +478,18 @@ def test_an_entity_that_goes_absent_during_the_run_no_longer_counts(world):
     from roqsim.presence import set_present
 
     engine = _engine(world)
-    engine.ctx.entities.add(Entity(name="post", kind="object", body="post"))
-    _drive_to(engine, 0.0)
-    assert _report(engine).geom == "post_geom"
+    try:
+        engine.ctx.entities.add(Entity(name="post", kind="object", body="post"))
+        _drive_to(engine, 0.0)
+        assert _report(engine).geom == "post_geom"
 
-    set_present(engine.ctx, engine.ctx.entities.get("post"), False)
-    engine.reset()
-    _drive_to(engine, 0.0)
-    report = _report(engine)
-    assert report.saturated and report.current == pytest.approx(5.0)
+        set_present(engine.ctx, engine.ctx.entities.get("post"), False)
+        engine.reset()
+        _drive_to(engine, 0.0)
+        report = _report(engine)
+        assert report.saturated and report.current == pytest.approx(5.0)
+    finally:
+        engine.shutdown()
 
 
 def test_a_named_entity_that_starts_absent_is_measured_once_it_appears(world):

@@ -343,9 +343,12 @@ class ClearanceMonitorPlugin(Plugin):
     def _counts(self, model, watched: int, candidate: int) -> bool:
         """Whether this pair is clearance now: MuJoCo could put it in contact, or the candidate
         is hit geometry a monitor with ``hit_geometry`` counts. Asked at every measurement, not
-        once: presence (roqsim.presence) zeroes an absent entity's contact flags and moves its
-        geoms out of their group at run time and restores both when it appears, so an entity
-        counts exactly while it is present, whichever it was when the run began."""
+        once: presence (roqsim.presence) zeroes the contact flags of an absent entity's ``body``
+        subtree and moves its geoms out of their group at run time, and restores both when it
+        appears. A named entity's pairs are all kept, so it counts from the moment it is
+        present, whichever it was when the run began; without ``entities`` the pairs are those
+        that could touch when the monitor configured, and one of them stops counting while its
+        entity is absent."""
         if self._can_pair(model, watched, candidate):
             return True
         return (

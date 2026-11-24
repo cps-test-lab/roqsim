@@ -201,7 +201,7 @@ def entity_geoms(model, entity) -> list[int]:
     registered it would otherwise lose a part without a word.
     """
     geoms: set[int] = set()
-    for name in ([entity.body] if entity.body else []) + list(getattr(entity, "bodies", ())):
+    for name in ([entity.body] if entity.body else []) + list(entity.bodies):
         root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
         if root < 0:
             raise RuntimeError(f"entity {entity.name!r} names body {name!r}, which the model lacks")
