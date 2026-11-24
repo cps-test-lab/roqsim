@@ -72,14 +72,16 @@ def test_focus_names_an_object_in_the_scene_or_is_refused():
 
     No GL needed: the lookup runs on the built model, before any frame is drawn.
     """
-    from roqsim_scene_builder.scene_window import focus_body_id, load_engine
+    from roqsim_scene_builder.scene_window import focus_body_ids, load_engine
 
     engine, _view = load_engine("roqsim_assets:industrial_table")
     try:
         (name,) = engine.ctx.entities.names()
-        assert focus_body_id(engine.ctx, name) > 0
+        assert focus_body_ids(engine.ctx, name) == [
+            engine.ctx.model.body(engine.ctx.entities.get(name).body).id
+        ]
         with pytest.raises(ValueError, match=f"no object 'nosuch' in scene.*available: {name}"):
-            focus_body_id(engine.ctx, "nosuch")
+            focus_body_ids(engine.ctx, "nosuch")
     finally:
         engine.shutdown()
 
@@ -151,3 +153,23 @@ def test_a_load_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkey
     with pytest.raises(RuntimeError, match="injected"):
         load_engine(str(world))
     assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]
+
+
+def test_focus_on_an_entity_takes_every_root_body_it_owns():
+    """A walker's limbs are bodies of the world beside its pelvis (``Entity.bodies``); the window
+    opens framing all of them."""
+    from types import SimpleNamespace
+
+    import mujoco
+    from roqsim_scene_builder.scene_window import focus_body_ids
+
+    from roqsim.context import Entity, EntityRegistry
+
+    model = mujoco.MjModel.from_xml_string(
+        "<mujoco><worldbody><body name='pelvis'><geom size='.1'/></body>"
+        "<body name='arm' pos='1 0 0'><geom size='.1'/></body></worldbody></mujoco>"
+    )
+    entities = EntityRegistry()
+    entities.add(Entity(name="walker", kind="pedestrian", body="pelvis", bodies=("arm",)))
+    ctx = SimpleNamespace(model=model, entities=entities)
+    assert focus_body_ids(ctx, "walker") == [model.body("pelvis").id, model.body("arm").id]

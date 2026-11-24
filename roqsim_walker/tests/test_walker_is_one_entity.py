@@ -143,3 +143,25 @@ def test_ignoring_a_walker_ignores_its_limbs(engine):
     probe.resolve_ignored(ctx)
     assert _limbs(ctx.model) <= probe._ignored
     assert not _limbs(ctx.model) & probe._own
+
+
+def test_render_focus_on_a_walker_frames_its_limbs(engine):
+    from roqsim.render import _entity_bodies
+
+    model = engine.ctx.model
+    ids = set(_entity_bodies(model, engine.ctx, ["pedestrian"]))
+    assert _bid(model, "pedestrian/pelvis") in ids
+    assert {_bid(model, limb) for limb in LIMBS} <= ids
+
+
+def test_a_preview_of_a_walker_frames_its_limbs(engine):
+    from roqsim.rendering import autoframe, preview_camera
+
+    model, data = engine.ctx.model, engine.ctx.data
+    walker = engine.ctx.entities.get("pedestrian")
+    roots = [_bid(model, walker.body)] + [_bid(model, name) for name in walker.bodies]
+    cam = preview_camera(model, data, [walker])
+    whole = autoframe(model, data, roots)
+    pelvis = autoframe(model, data, roots[:1])
+    assert cam.distance == pytest.approx(whole.distance)
+    assert cam.distance != pytest.approx(pelvis.distance)

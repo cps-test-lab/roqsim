@@ -65,7 +65,7 @@ from roqsim import (
     walk_delta,
 )  # the camera-walk vocabulary is shared with the roqsim viewer
 from roqsim.pose import parse_pose, yaw_of
-from roqsim.presence import subtree_geom_ids
+from roqsim.presence import entity_root_ids, subtree_geom_ids
 from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in one module
     BG,
     FAIL_BG,
@@ -384,8 +384,9 @@ def write_result(
 # --- GUI ------------------------------------------------------------------------------------------
 
 
-def focus_body_id(ctx, name: str) -> int:
-    """The body id of the scene object ``name`` names, for the window to open looking at.
+def focus_body_ids(ctx, name: str) -> list[int]:
+    """The root body ids of the scene object ``name`` names, for the window to open looking at: its
+    ``body`` and each of its ``bodies``, so a walker is framed limbs and all.
 
     Raises ``ValueError`` naming the objects there are when the scene has no such object, or when it
     has one with no body to frame.
@@ -396,7 +397,10 @@ def focus_body_id(ctx, name: str) -> int:
         raise ValueError(f"no object {name!r} in scene to focus on; available: {available}")
     if not entity.body:
         raise ValueError(f"object {name!r} has no body to focus on")
-    return mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+    try:
+        return entity_root_ids(ctx.model, entity)
+    except RuntimeError as err:  # it names a body the model lacks
+        raise ValueError(f"object {name!r}: {err}") from err
 
 
 def run_window(
@@ -457,15 +461,15 @@ def run_window(
         stack.callback(fr.close)
         ctx = engine.ctx
         try:
-            bid = focus_body_id(ctx, focus_object) if focus_object else None
+            bids = focus_body_ids(ctx, focus_object) if focus_object else None
         except ValueError as err:
             # The caller asked to look at something the scene does not have; a window opened on
             # some other view would answer a question nobody asked.
             print(f"roqsim-scene-builder: {err}", file=sys.stderr, flush=True)
             return 2
-        if bid is not None:
+        if bids is not None:
             # Open looking at the requested object, from an angle with a clear line of sight to it.
-            fr.camera = focus_camera(ctx.model, ctx.data, [bid], aspect=width / height)
+            fr.camera = focus_camera(ctx.model, ctx.data, bids, aspect=width / height)
         elif is_model_ref(target) and not view:
             # A single model/robot shown by itself: zoom onto it, not the empty room it stands in.
             fr.camera = preview_camera(
