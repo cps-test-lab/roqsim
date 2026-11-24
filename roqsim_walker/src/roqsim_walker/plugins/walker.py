@@ -300,7 +300,7 @@ class WalkerPlugin(Plugin):
             )
             kw["hands"] = self._layouts
             kw["finger_weights"] = fingers
-        build_humanoid(
+        self._bones = build_humanoid(
             spec,
             name=self.walker_name,
             mesh=blueprint["mesh"] if use_skin else None,
@@ -352,6 +352,11 @@ class WalkerPlugin(Plugin):
                 name=self.walker_name,
                 kind="pedestrian",
                 body=f"{self.walker_name}/pelvis",
+                # Every limb is a mocap body of the world, not a child of the pelvis, so each is
+                # named for whatever asks for the walker's geometry.
+                bodies=tuple(
+                    f"{self.walker_name}/{bone}" for bone in self._bones if bone != "pelvis"
+                ),
                 meta={
                     "walker": self.blueprint,
                     "namespace": ns,

@@ -194,6 +194,21 @@ def entity_geom_ids(model, body_name: str) -> list[int]:
     return subtree_geom_ids(model, root)
 
 
+def entity_geoms(model, entity) -> list[int]:
+    """Every geom of *entity*: of its ``body`` and of each of its ``bodies``, with their subtrees.
+
+    Empty for an entity with no body. A name that matches no body is refused, since an entity that
+    registered it would otherwise lose a part without a word.
+    """
+    geoms: set[int] = set()
+    for name in ([entity.body] if entity.body else []) + list(entity.bodies):
+        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        if root < 0:
+            raise RuntimeError(f"entity {entity.name!r} names body {name!r}, which the model lacks")
+        geoms.update(subtree_geom_ids(model, root))
+    return sorted(geoms)
+
+
 def arm_gravity_compensation(spec) -> None:
     """Make ``body_gravcomp`` writable at run time, by marking the world body before compile.
 

@@ -90,6 +90,10 @@ class Entity:
     name: str
     kind: str  # "robot" | "object" | "pedestrian" | ...
     body: str | None = None  # MuJoCo body name, when applicable
+    #: Root bodies the entity owns beside ``body``, each with its subtree: the parts that are not
+    #: below ``body`` in the tree (a walker's limbs are mocap bodies of the world, not children
+    #: of its pelvis). :func:`roqsim.presence.entity_geoms` reads both.
+    bodies: tuple[str, ...] = ()
     meta: dict = field(default_factory=dict)
     #: Whether anything can perceive or touch it. Absent entities stay in the compiled model
     #: -- nothing can add a body to one at runtime -- but are excluded from raycasts, from

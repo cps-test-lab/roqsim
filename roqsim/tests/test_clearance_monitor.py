@@ -470,3 +470,45 @@ def test_a_rate_the_timestep_divides_measures_on_every_period(world):
         assert gaps == {10}, f"measurement spacing in steps: {sorted(gaps)}"
     finally:
         engine.shutdown()
+
+
+def test_an_entity_that_goes_absent_during_the_run_no_longer_counts(world):
+    # Presence zeroes an entity's contact flags at run time, after the monitor configured, so
+    # whether a pair could touch is a question for every measurement, not for setup alone.
+    from roqsim.presence import set_present
+
+    engine = _engine(world)
+    try:
+        engine.ctx.entities.add(Entity(name="post", kind="object", body="post"))
+        _drive_to(engine, 0.0)
+        assert _report(engine).geom == "post_geom"
+
+        set_present(engine.ctx, engine.ctx.entities.get("post"), False)
+        engine.reset()
+        _drive_to(engine, 0.0)
+        report = _report(engine)
+        assert report.saturated and report.current == pytest.approx(5.0)
+    finally:
+        engine.shutdown()
+
+
+def test_a_named_entity_that_starts_absent_is_measured_once_it_appears(world):
+    # Which geoms of a named entity count is asked at every measurement: an obstacle compiled in
+    # absent and spawned during the trial is clearance from then on.
+    from roqsim.presence import set_present
+
+    world["components"][0]["components"] = [{"clearance_monitor": {"entities": ["post"]}}]
+    engine = _engine(world)
+    try:
+        post = Entity(name="post", kind="object", body="post")
+        engine.ctx.entities.add(post)
+        set_present(engine.ctx, post, False)
+        _drive_to(engine, 0.0)
+        assert _report(engine).saturated
+
+        set_present(engine.ctx, post, True)
+        _drive_to(engine, 0.0)
+        report = _report(engine)
+        assert report.geom == "post_geom" and not report.saturated
+    finally:
+        engine.shutdown()
