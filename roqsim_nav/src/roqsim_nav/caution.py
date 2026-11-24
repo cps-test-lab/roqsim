@@ -38,7 +38,7 @@ import mujoco
 import numpy as np
 
 from roqsim import raycast
-from roqsim.presence import subtree_geom_ids
+from roqsim.presence import entity_geoms, subtree_geom_ids
 
 from .control import STOPPED
 
@@ -135,6 +135,7 @@ class CautionProbe:
         self.blockage_radius = self.width / 2.0 if radius is None else float(radius)
         self.ignore = tuple(cfg.get("ignore") or ())
         self._own: set[int] = set()
+        self._footprint: set[int] = set()
         self._ignored: set[int] = set()
         self._resolved = False
         self._radius: float | None = None
@@ -180,9 +181,11 @@ class CautionProbe:
         document, and components are configured with their owner rather than at the end, so half of
         them would not exist yet. They are resolved in :meth:`resolve_ignored` instead.
         """
-        model = ctx.model
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-        self._own = subtree_geoms(model, bid) if bid >= 0 else set()
+        # The whole mover: a walker's limbs are roots of their own (Entity.bodies), and a probe
+        # that saw them would find its own arm in the way.
+        self._own = set(entity_geoms(ctx.model, entity, strict=False))
+        bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body or "")
+        self._footprint = subtree_geoms(ctx.model, bid) if bid >= 0 else set()
 
     def resolve_ignored(self, ctx) -> None:
         """Resolve ``ignore`` once every entity in the world has registered itself.
@@ -202,9 +205,8 @@ class CautionProbe:
                     f"caution.ignore names {name!r}, which is not an entity in this world. "
                     f"This world has: {known}"
                 )
-            obid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, other.body)
-            if obid >= 0:
-                ignored |= subtree_geoms(model, obid)
+            # The whole entity, so `ignore: [walker]` takes a walker's limbs with its pelvis.
+            ignored |= set(entity_geoms(model, other, strict=False))
         self._ignored = ignored
         self._resolved = True
 
@@ -277,13 +279,15 @@ class CautionProbe:
 
         Yaw-invariant (a bounding sphere per geom), so a rotating body never reports a radius below
         its true extent. Measured rather than configured: a world author should not have to restate
-        geometry the model already carries.
+        geometry the model already carries. Measured over the root body's subtree: the other roots
+        an entity owns (``Entity.bodies``, a walker's limbs) are its own to the probe's rays but not
+        part of the footprint.
         """
         if self._radius is None:
             model, data = ctx.model, ctx.data
             origin = np.asarray(origin_xy, dtype=float)
             self._radius = 0.0
-            for g in self._own:
+            for g in self._footprint:
                 d = float(np.linalg.norm(data.geom_xpos[g][:2] - origin))
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius

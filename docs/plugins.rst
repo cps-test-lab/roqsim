@@ -566,7 +566,10 @@ just fit better.
 ``stop`` is the forward probe. The planner's grid holds static walls and nothing else, so a mover
 also looks ahead along the corridor it is about to occupy, and what it sees is exactly the complement
 of the grid: a body with degrees of freedom, or a mocap body -- precisely what ``wall_polygons``
-refuses to rasterize. A wall at a corner is the planner's business and never the probe's. Holding is
+refuses to rasterize. A wall at a corner is the planner's business and never the probe's. The
+probe never sees its own mover, and ``ignore: [...]`` names entities it never stops for; both take
+an entity whole, so a walker's own limbs are not in its way and ``ignore: [walker_1]`` passes a
+walker's legs as well as its pelvis. Holding is
 the default response, because a stopped mover is still on its path and resumes on the leg it was on,
 while a re-routing one has quietly changed a trajectory the experiment may have been holding fixed.
 

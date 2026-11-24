@@ -117,3 +117,29 @@ def test_a_limb_s_penetration_is_the_walker_s(engine):
     owner = _entity_by_body(model, engine.ctx.entities)
     for limb in LIMBS:
         assert _owner_of(model, _bid(model, limb), owner) == "pedestrian", limb
+
+
+def _limbs(model) -> set[int]:
+    return {g for limb in LIMBS for g in _limb_geoms(model, limb)}
+
+
+def test_a_walker_s_caution_probe_owns_its_limbs(engine):
+    """A probe that saw them would find the walker's own arm in its way."""
+    from roqsim_nav.caution import CautionProbe
+
+    ctx = engine.ctx
+    probe = CautionProbe({})
+    probe.attach(ctx, ctx.entities.get("pedestrian"))
+    assert _limbs(ctx.model) <= probe._own
+
+
+def test_ignoring_a_walker_ignores_its_limbs(engine):
+    """`avoidance: {stop: true, ignore: [walker]}`: a robot must not stop for the walker's legs."""
+    from roqsim_nav.caution import CautionProbe
+
+    ctx = engine.ctx
+    probe = CautionProbe({"ignore": ["pedestrian"]})
+    probe.attach(ctx, ctx.entities.get("robot"))
+    probe.resolve_ignored(ctx)
+    assert _limbs(ctx.model) <= probe._ignored
+    assert not _limbs(ctx.model) & probe._own
