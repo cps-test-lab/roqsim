@@ -800,7 +800,9 @@ reads clean, and the two describe different worlds.
 By default clearance is to the nearest of everything the robot could touch, walls included. To
 report one separation per kind of obstacle, give each its own monitor with ``entities``: only the
 named entities' geoms count, a walker's limbs with its pelvis. ``hit_geometry: true`` adds their
-collision-group geoms that do not collide, which for a walker are its arms::
+collision-group geoms that do not collide, which for a walker are its arms. A named entity
+counts while it is present, so one the world starts absent is measured from the moment it
+appears; an absent walker's limbs stay in the world and are still measured::
 
    - clearance_monitor: {entities: [pedestrian_1, pedestrian_2], hit_geometry: true}
      name: clearance_humans

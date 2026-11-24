@@ -94,7 +94,10 @@ obstacle, where one monitor would report only the nearest of them. ``hit_geometr
 named entities' geoms in the collision group (:data:`roqsim.scene_content.COLLISION_GROUP`) that do
 not collide: a walker's arms, which rays see and contacts ignore so that a swinging arm does not
 shove a robot, are still part of how close it came. Entities register while the world configures,
-so the names are resolved at the first measurement, and a name no entity has fails it there.
+so the names are resolved at the first measurement, and a name no entity has fails it there. A
+named entity counts while it is present: one the world starts absent is measured from the moment
+it appears. Presence hides an entity's ``body`` subtree only, so an absent walker's limbs, which
+still block and are still seen, are still measured.
 
 ``distmax`` is the other performance knob and it is a real one: the cost is a distance query
 per (watched geom, candidate geom) pair, and the cutoff lets MuJoCo reject far pairs
@@ -113,7 +116,8 @@ from .. import endpoint
 from ..context import SimContext
 from ..frames import entity_body
 from ..plugin import Plugin
-from ..presence import subtree_geom_ids
+from ..presence import entity_geoms, subtree_geom_ids
+from ..scene_content import COLLISION_GROUP
 from ..types import Duration, Length
 
 _log = logging.getLogger(__name__)
@@ -153,8 +157,7 @@ class ClearanceMonitorPlugin(Plugin):
         entities = self.config.get("entities")
         self.entities = None if entities is None else list(entities)
         self.hit_geometry = bool(self.config.get("hit_geometry", False))
-        self._pairs: list[tuple[int, int, bool]] | None = None  # resolved at first measurement
-        self._hit_group = -1  # the group a hit geom must still be in to count
+        self._pairs: list[tuple[int, int]] | None = None  # resolved at first measurement
         self.distmax = float(self.config.get("distmax", 5.0))
         self.compute_rate_hz = float(self.config.get("compute_rate_hz", 200.0))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
@@ -241,7 +244,7 @@ class ClearanceMonitorPlugin(Plugin):
                 f"{body_name!r} is ignored, so this would report a constant distance forever"
             )
         if self.entities is None:
-            self._pairs = self._pairs_of(model, self._candidates, ())
+            self._pairs = [(w, c) for w in self._watched for c in self._candidates]
         missing = [
             n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
         ]
@@ -311,14 +314,8 @@ class ClearanceMonitorPlugin(Plugin):
             self._resolve_entities(ctx)
         best = self.distmax
         best_geom = -1
-        for watched, candidate, unpaired in self._pairs:
-            # Checked at every measurement, not once: an entity that goes absent
-            # (roqsim.presence) has its contact flags zeroed and its geoms moved out of their
-            # group at run time, and what is absent is not clearance.
-            if unpaired:
-                if int(model.geom_group[candidate]) != self._hit_group:
-                    continue
-            elif not self._can_pair(model, watched, candidate):
+        for watched, candidate in self._pairs:
+            if not self._counts(model, watched, candidate):
                 continue
             distance = mujoco.mj_geomDistance(model, data, watched, candidate, best, None)
             # MuJoCo returns distmax when the pair is farther than the cutoff it was
@@ -343,23 +340,25 @@ class ClearanceMonitorPlugin(Plugin):
                 best, report.minimum, report.at_time, report.geom, saturated
             )
 
-    def _pairs_of(self, model, candidates, unpaired) -> list[tuple[int, int, bool]]:
-        """The (watched, candidate, unpaired) triples to measure: the pairs MuJoCo could put in
-        contact, and every pair with a geom of *unpaired*, measured whatever its collision flags
-        say. Each is checked again at every measurement, since presence changes both."""
-        unpaired = set(unpaired)
-        return [
-            (w, c, c in unpaired)
-            for w in self._watched
-            for c in candidates
-            if c in unpaired or self._can_pair(model, w, c)
-        ]
+    def _counts(self, model, watched: int, candidate: int) -> bool:
+        """Whether this pair is clearance now: MuJoCo could put it in contact, or the candidate
+        is hit geometry a monitor with ``hit_geometry`` counts. Asked at every measurement, not
+        once: presence (roqsim.presence) zeroes an absent entity's contact flags and moves its
+        geoms out of their group at run time and restores both when it appears, so an entity
+        counts exactly while it is present, whichever it was when the run began."""
+        if self._can_pair(model, watched, candidate):
+            return True
+        return (
+            self.hit_geometry
+            and not self._collidable(model, candidate)
+            and int(model.geom_group[candidate]) == COLLISION_GROUP
+        )
 
     def _resolve_entities(self, ctx: SimContext) -> None:
-        """Narrow the candidates to the named entities' geoms, once every entity is registered."""
-        from ..presence import entity_geoms
-        from ..scene_content import COLLISION_GROUP
+        """Narrow the candidates to the named entities' geoms, once every entity is registered.
 
+        By ownership alone: which of them count is :meth:`_counts`' question at each
+        measurement, so an entity that is absent now is measured once it appears."""
         model = ctx.model
         owned: set[int] = set()
         for name in self.entities:
@@ -376,29 +375,19 @@ class ClearanceMonitorPlugin(Plugin):
                     "measure to"
                 )
             owned.update(geoms)
-        candidates = [g for g in self._candidates if g in owned]
-        hits = []
-        self._hit_group = COLLISION_GROUP
-        if self.hit_geometry:
-            hits = [
-                g
-                for g in sorted(owned)
-                if g not in self._ignored
-                and not self._collidable(model, g)
-                and int(model.geom_group[g]) == COLLISION_GROUP
-            ]
-        if not candidates and not hits:
+        candidates = sorted(owned - set(self._watched) - self._ignored)
+        if not candidates:
             raise RuntimeError(
-                f"clearance_monitor {self.address}: entities {self.entities} have no geom the "
-                "watched body could touch, so this would report a constant distance forever"
+                f"clearance_monitor {self.address}: entities {self.entities} have no geom "
+                "outside the watched body and the ignored names, so this would report a "
+                "constant distance forever"
             )
-        self._pairs = self._pairs_of(model, candidates + hits, hits)
+        self._pairs = [(w, c) for w in self._watched for c in candidates]
         _log.info(
-            "clearance_monitor %s: measuring to %d geom(s) of %s (%d that do not collide)",
+            "clearance_monitor %s: measuring to %d geom(s) of %s",
             self.address,
-            len(candidates) + len(hits),
+            len(candidates),
             ", ".join(self.entities),
-            len(hits),
         )
 
     @staticmethod
