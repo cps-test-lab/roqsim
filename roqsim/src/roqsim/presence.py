@@ -44,6 +44,11 @@ through a soft block reaches the floor behind it).
 
 The originals are saved once, so returning is exact rather than a guess at what the world declared.
 
+What goes absent is the whole entity: its ``body`` and each of its ``bodies``
+(:attr:`roqsim.context.Entity.bodies`), with their subtrees (:func:`entity_bodies`). A walker's
+limbs are bodies of the world, not children of its pelvis, and an absent walker goes absent limbs
+and all.
+
 Presence composes
 -----------------
 
@@ -91,7 +96,7 @@ import logging
 
 import mujoco
 
-from .flex import entity_flex_ids
+from .flex import entity_flexes
 
 _log = logging.getLogger(__name__)
 
@@ -194,19 +199,50 @@ def entity_geom_ids(model, body_name: str) -> list[int]:
     return subtree_geom_ids(model, root)
 
 
-def entity_geoms(model, entity) -> list[int]:
-    """Every geom of *entity*: of its ``body`` and of each of its ``bodies``, with their subtrees.
+def entity_root_ids(model, entity, *, strict: bool = True) -> list[int]:
+    """The root body ids of *entity*: its ``body``, then each of its ``bodies``, in that order.
 
-    Empty for an entity with no body. A name that matches no body is refused, since an entity that
-    registered it would otherwise lose a part without a word.
+    Empty for an entity with no body. *entity* is an :class:`~roqsim.context.Entity` or anything
+    with its ``body`` (and, optionally, ``bodies``) attributes. With *strict*, a name that matches
+    no body is refused, since an entity that registered it would otherwise lose a part without a
+    word; without it, such a name is left out, for a reader that may hold an entity of another
+    model.
     """
-    geoms: set[int] = set()
-    for name in ([entity.body] if entity.body else []) + list(entity.bodies):
+    roots: list[int] = []
+    body = getattr(entity, "body", None)
+    for name in ([body] if body else []) + list(getattr(entity, "bodies", ()) or ()):
         root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
         if root < 0:
-            raise RuntimeError(f"entity {entity.name!r} names body {name!r}, which the model lacks")
-        geoms.update(subtree_geom_ids(model, root))
-    return sorted(geoms)
+            if strict:
+                raise RuntimeError(
+                    f"entity {entity.name!r} names body {name!r}, which the model lacks"
+                )
+            continue
+        roots.append(int(root))
+    return roots
+
+
+def entity_bodies(model, entity, *, strict: bool = True) -> list[int]:
+    """Every body of *entity*: its ``body`` and each of its ``bodies``, with their subtrees,
+    ascending.
+
+    The one way an entity resolves to bodies, so that a multi-body entity -- a walker, whose limbs
+    are bodies of the world and not children of its pelvis -- is taken whole by every reader.
+    *strict* is :func:`entity_root_ids`'.
+    """
+    bodies: set[int] = set()
+    for root in entity_root_ids(model, entity, strict=strict):
+        bodies.update(subtree_body_ids(model, root))
+    return sorted(bodies)
+
+
+def entity_geoms(model, entity, *, strict: bool = True) -> list[int]:
+    """Every geom of *entity*: of its ``body`` and of each of its ``bodies``, with their subtrees.
+
+    Empty for an entity with no body. *strict* is :func:`entity_root_ids`'.
+    """
+    bodies = set(entity_bodies(model, entity, strict=strict))
+    return [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies]
 
 
 def arm_gravity_compensation(spec) -> None:
@@ -246,8 +282,10 @@ def set_present(ctx, entity, present: bool) -> bool:
         entity.present = bool(present)
         return True
 
-    geoms = entity_geom_ids(ctx.model, entity.body)
-    flexes = entity_flex_ids(ctx.model, entity.body)
+    # The whole entity: a walker's limbs are roots of their own (Entity.bodies), and an absent
+    # walker whose limbs stayed would still be seen and still collide.
+    geoms = entity_geoms(ctx.model, entity)
+    flexes = entity_flexes(ctx.model, entity)
     if present:
         _restore(ctx, entity)
         _restore_flexes(ctx, entity)
@@ -352,7 +390,7 @@ def _freeze(ctx, entity) -> None:
     its controller is driving it, and presence does not silence controllers.
     """
     model, data = ctx.model, ctx.data
-    bodies = entity_body_ids(model, entity.body)
+    bodies = entity_bodies(model, entity)
     holds = ctx.presence_holds.setdefault("gravcomp", {})
     for bid in _take(holds, bodies, lambda b: float(model.body_gravcomp[b])):
         model.body_gravcomp[bid] = 1.0

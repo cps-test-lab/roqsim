@@ -1398,7 +1398,8 @@ the next step, and hands that copy to ZeroMQ without another. Adding a new backe
 -  **Can I spawn arbitrary bodies at runtime?** Not by recompiling. A world declares everything a
    trial may bring in, and ``SpawnEntity`` / ``DeleteEntity`` *activate* one of those rather than
    creating it: see :mod:`roqsim.presence`. An absent entity keeps its pose and is excluded from
-   raycasts, rendering and contacts, and from what ``GetEntities`` lists. Parking it out of sight
+   raycasts, rendering and contacts, and from what ``GetEntities`` lists -- all of it, its
+   ``bodies`` with its root, so an absent walker leaves no limb behind. Parking it out of sight
    instead is the obvious alternative and is worse -- a free body accelerates under gravity for as
    long as it is away, so it returns with whatever velocity it accumulated. An entry that registers
    an entity — **any** of them, which is what ``provides_entity`` declares — takes ``present: false``
