@@ -159,8 +159,8 @@ def interpenetrations(
     """Every pair of sides in ``data.contact`` overlapping beyond tolerance, deepest first.
 
     Reads the contacts as they stand -- call it after ``mj_forward`` on the state to be judged.
-    *entities* (a :class:`roqsim.context.EntityRegistry`) attributes each side to the entity whose
-    body subtree holds it; without one, sides are named by geom or flex and body only. Contacts
+    *entities* (a :class:`roqsim.context.EntityRegistry`) attributes each side to the entity that
+    owns its body; without one, sides are named by geom or flex and body only. Contacts
     between the same two sides are folded into one entry carrying the deepest, so a box sunk into a
     table is one finding rather than one per corner.
     """

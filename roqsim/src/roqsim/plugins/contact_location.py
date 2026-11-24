@@ -21,7 +21,7 @@ Config::
     contact_location:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # a body of the entity, as a path within it; default: its root
+      body: ""               # a body of the entity, as a path within it; default: the whole entity
       namespace: ""          # transport scope for the endpoint
       ignore: [floor]        # geom or flex NAMES that never count (default: ['floor'])
       ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
@@ -42,7 +42,7 @@ rate-limited for logging; ``ctx.blackboard.get(f"contact_location:{address}")`` 
 giving the current reading, the same convention ``contact_monitor`` and ``force_torque`` use.
 
 Which contacts: the ones ``contact_monitor`` counts, by the same
-:class:`roqsim.contact_scope.ContactScope` -- exactly one side in the watched subtree (a geom, or a
+:class:`roqsim.contact_scope.ContactScope` -- exactly one side in the watched entity (a geom, or a
 flex the entity owns), neither side in ``ignore``. A reading and a verdict over one geometry then
 cannot disagree about which contacts they describe.
 
