@@ -1004,6 +1004,21 @@ def test_tracks_and_exclude_narrow_the_channels(tracks, exclude, bodies, joints)
     assert [n for _, n, _ in got_joints] == joints
 
 
+def test_an_entity_pattern_selects_every_body_the_entity_owns():
+    """A body an entity owns through ``Entity.bodies`` -- a walker's limb, a root of its own -- is
+    that entity's track, as a child of its root body is."""
+    model = mujoco.MjModel.from_xml_string(_ARM_XML)
+    ctx = _Ctx(model, mujoco.MjData(model))
+    ctx.entities = EntityRegistry()
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="r/base", bodies=("crate",), meta={"prefix": "r/"})
+    )
+    got_bodies, _, _ = select_tracks(model, ctx.entities, "robot/crate")
+    assert [n for _, n in got_bodies] == ["crate"]
+    got_bodies, _, _ = select_tracks(model, ctx.entities, "robot/**")
+    assert [n for _, n in got_bodies] == ["crate", "r/base", "r/link", "r/tool"]
+
+
 def test_a_pattern_that_matches_nothing_refuses_naming_what_exists(tmp_path):
     """A typo must fail the run's start, not record a run that lacks the track it is judged on."""
     model, ctx = _arm()
