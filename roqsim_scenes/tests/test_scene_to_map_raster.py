@@ -35,3 +35,12 @@ def test_a_face_inside_a_cell_occupies_that_cell():
 def test_a_point_left_of_the_origin_is_outside_the_map():
     assert _occupied_columns(-5.42) == set()
     assert _cell(-5.42, ORIGIN[0], 0.05) == -1
+
+
+def test_a_mesh_face_stored_as_float32_on_an_edge_occupies_both_cells():
+    # MuJoCo keeps mesh vertices as float32: a face meant at -5.1 m is at -5.099999904632568 m.
+    face = float(np.float32(-5.1))
+    assert face != -5.1
+    assert _occupied_columns(face) == _occupied_columns(-5.1) == {5, 6}
+    assert _occupied_columns(-float(np.float32(5.1))) == {5, 6}
+    assert _occupied_columns(float(np.float32(5.1))) == {209, 210}

@@ -266,7 +266,17 @@ def _slice_segments(
     return segs
 
 
-_EDGE = 1e-9  # in cells: (v - origin) / res is off by ~1e-12 at most, a real offset by far more
+_F32 = float(np.finfo(np.float32).eps)
+
+
+def _edge(v: float, res: float) -> float:
+    """How close to a cell edge, in cells, a coordinate v counts as on it.
+
+    MuJoCo keeps mesh vertices as float32, so a mesh face meant at -5.1 m is at -5.0999999046 m:
+    a few float32 steps of |v|. A few micrometres at a centimetre-scale cell, far below any offset a
+    scene means.
+    """
+    return 4 * _F32 * (abs(v) + 1.0) / res
 
 
 def _cell(v: float, origin: float, res: float) -> int:
@@ -276,7 +286,7 @@ def _cell(v: float, origin: float, res: float) -> int:
     cell's edge in metres is on it as a float too, where an origin of -5.1 - 0.3 puts 5.0 m at
     207.99999999999997 cells.
     """
-    return int(np.floor((v - origin) / res + _EDGE))
+    return int(np.floor((v - origin) / res + _edge(v, res)))
 
 
 def _cells(v: float, origin: float, res: float) -> tuple[int, ...]:
@@ -288,7 +298,7 @@ def _cells(v: float, origin: float, res: float) -> tuple[int, ...]:
     """
     f = (v - origin) / res
     k = round(f)
-    if abs(f - k) < _EDGE:
+    if abs(f - k) < _edge(v, res):
         return (k - 1, k)
     return (int(np.floor(f)),)
 
@@ -382,8 +392,8 @@ def main(argv: list | None = None) -> int:
         geometry = _load_scene(args.scene)
     origin = np.array(args.origin) if args.origin else lo - args.pad
     far = hi + args.pad
-    w = int(np.ceil((far[0] - origin[0]) / args.resolution - _EDGE))
-    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - _EDGE))
+    w = int(np.ceil((far[0] - origin[0]) / args.resolution - _edge(far[0], args.resolution)))
+    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - _edge(far[1], args.resolution)))
 
     segs = []
     for verts, faces in geometry:
