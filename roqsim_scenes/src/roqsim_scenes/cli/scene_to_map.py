@@ -266,6 +266,9 @@ def _slice_segments(
     return segs
 
 
+_EDGE = 1e-9  # in cells: (v - origin) / res is off by ~1e-12 at most, a real offset by far more
+
+
 def _cell(v: float, origin: float, res: float) -> int:
     """The index of the cell [origin + i*res, origin + (i+1)*res) holding v.
 
@@ -273,7 +276,21 @@ def _cell(v: float, origin: float, res: float) -> int:
     cell's edge in metres is on it as a float too, where an origin of -5.1 - 0.3 puts 5.0 m at
     207.99999999999997 cells.
     """
-    return int(np.floor((v - origin) / res + 1e-9))
+    return int(np.floor((v - origin) / res + _EDGE))
+
+
+def _cells(v: float, origin: float, res: float) -> tuple[int, ...]:
+    """The cells a wall face at v occupies: the one holding it, and on a cell's edge both beside it.
+
+    A face has no width, and a slice does not say which side of it the solid is on. On an edge one
+    cell is the wall and the other the room; marking both keeps every wall on the map whichever side
+    it is, the same on both sides of a room, at the cost of one cell of the free side.
+    """
+    f = (v - origin) / res
+    k = round(f)
+    if abs(f - k) < _EDGE:
+        return (k - 1, k)
+    return (int(np.floor(f)),)
 
 
 def _raster(segs, origin, res, w, hgt) -> np.ndarray:
@@ -282,10 +299,10 @@ def _raster(segs, origin, res, w, hgt) -> np.ndarray:
         n = max(2, int(np.linalg.norm(q - p) / (res * 0.5)) + 1)
         for t in np.linspace(0, 1, n):
             x, y = p + t * (q - p)
-            cx = _cell(x, origin[0], res)
-            cy = _cell(y, origin[1], res)
-            if 0 <= cx < w and 0 <= cy < hgt:
-                grid[cy, cx] = _OCC
+            for cy in _cells(y, origin[1], res):
+                for cx in _cells(x, origin[0], res):
+                    if 0 <= cx < w and 0 <= cy < hgt:
+                        grid[cy, cx] = _OCC
     return grid
 
 
@@ -365,8 +382,8 @@ def main(argv: list | None = None) -> int:
         geometry = _load_scene(args.scene)
     origin = np.array(args.origin) if args.origin else lo - args.pad
     far = hi + args.pad
-    w = int(np.ceil((far[0] - origin[0]) / args.resolution - 1e-9))
-    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - 1e-9))
+    w = int(np.ceil((far[0] - origin[0]) / args.resolution - _EDGE))
+    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - _EDGE))
 
     segs = []
     for verts, faces in geometry:
