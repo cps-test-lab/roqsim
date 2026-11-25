@@ -168,8 +168,11 @@ class CautionProbe:
         #: While it does, the corridor is looked at every tick, so the settle runs from the moment
         #: it cleared rather than from whichever tick it happened to be looked at.
         self._sweep_held = False
-        #: Whether the rays have held the mover since it last set off. Only such a hold is ended by
-        #: :meth:`_sweep`: the settle that runs once at the start of a move is no hold of the rays.
+        #: Whether a hold the rays began is still to be ended: from the rays' hit until a settle
+        #: ends with the filled-in corridor (:meth:`_sweep`) clear. A settle that the corridor
+        #: restarted is looked at again when it ends, so something that left the corridor and came
+        #: back meanwhile holds the mover again. The settle a mover keeps once at the start of a
+        #: move is no hold of the rays, and is not looked at this way.
         self._ray_held = False
         #: Last verdict, for status reporting and tests.
         self.blocked = False
@@ -264,8 +267,9 @@ class CautionProbe:
         """Whether the mover should hold still this tick.
 
         Returns ``True`` while blocked, including during the ``clear_time`` settle after the way
-        opens again, and for as long as something reaches into the corridor filled in when that
-        settle is over (:meth:`_sweep`); then the settle runs again from the moment it is clear.
+        opens again. A settle after a hold of the rays also ends only with the filled-in corridor
+        (:meth:`_sweep`) clear: while something reaches into it, the mover holds, and the settle
+        runs again from the moment it is clear.
         """
         if not self.enabled:
             return False
@@ -311,7 +315,6 @@ class CautionProbe:
             # at this way, so it walks as before.
             points = self._sweep(ctx, origin_xy, heading)
             self._sweep_held = bool(points)
-            self._ray_held = bool(points)
             if points:
                 self._clear_since = now
                 self.blocked = True
@@ -320,6 +323,8 @@ class CautionProbe:
                     points, key=lambda p: float(np.linalg.norm(p - np.asarray(origin_xy)))
                 )
                 return True
+            if not self.blocked:
+                self._ray_held = False
         if not self.blocked:
             # Only once the way is open AND has stayed open: a clear ray during the settle is not
             # the same as being through, and treating it as such re-arms the yield window on every

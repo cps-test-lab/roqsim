@@ -1,6 +1,6 @@
 """A walker that held for a robot sets off again only when the corridor it holds for is clear.
 
-The encounter as a study met it: a walker with ``avoidance: {steer: none, stop: true}`` holds for a
+The encounter: a walker with ``avoidance: {steer: none, stop: true}`` holds for a
 robot in its way, and the robot comes to stand beside its way, 40 degrees off its heading and close.
 The robot is a TurtleBot's shape: a base lower than the walker's scan plane (its obstacle band's
 floor plus 5 cm, 0.15 m) and above it only a lidar and a camera bracket, narrower than the rays'

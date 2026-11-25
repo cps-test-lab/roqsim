@@ -685,6 +685,24 @@ def test_a_robot_that_drives_across_and_on_is_held_for_until_its_base_has_left(t
     assert with_sweep == pytest.approx(base_out + 0.5, abs=0.06)  # within a navigator tick
 
 
+def test_a_robot_back_in_the_corridor_before_the_settle_is_over_holds_it_again(tmp_path):
+    """The corridor must stay clear for the whole settle, not only at its end."""
+    engine = _held_engine(tmp_path, LOW_ROBOT, clear_time=0.5)
+    try:
+        held = _xy(engine)
+        _place(engine, (0.0, 0.075))  # the post between the rays, the base in the way
+        _run(engine, 2.0)
+        _place(engine, (0.0, 8.0))  # out of the corridor for less than `clear_time` ...
+        _run(engine, 0.2)
+        _place(engine, (0.0, 0.075))  # ... and back
+        _run(engine, 3.0)
+        assert _xy(engine) == pytest.approx(held, abs=0.01), (
+            "it set off into the base that came back"
+        )
+    finally:
+        engine.shutdown()
+
+
 #: A loose mat, lower than the cart's scan plane: the rays pass over it, the corridor holds it.
 MAT = """<mujoco model="mat">
   <worldbody><body name="base"><geom name="g" type="box" size=".15 .15 .02" pos="0 0 .02"/></body>
